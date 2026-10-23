@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ecbTable } from './fx-fixture';
 import type { Txn } from '@/components/MonthBreakdown';
 import { investedAssets, trailingFlows, type AssetAccount, type AssetInstitution } from '@/lib/fire/inputs';
-import { assetsLeftOut, convertedNote, fiFigures, spendingLeftOut } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, convertedNote, fiFigures, gapText, spendingGap, spendingLeftOut } from '@/lib/fire/progress';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import {
   askText,
@@ -12,9 +12,12 @@ import {
   isPlanCurrencyRecord,
   keptText,
   planCurrencyState,
+  firstText,
   readCurrencyAnswer,
   recordedCurrency,
   relabelOffer,
+  shownFrom,
+  unconfirmedText,
   shownReliably,
   typedAmounts,
   type LoadState,
@@ -35,7 +38,7 @@ const TYPED = plan({ age: 40, targetAge: 55, spending: 40_000, savings: 30_000, 
 let seq = 0;
 const acct = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: `a${++seq}`, name: 'Account', type: 'investment', balance: 100_000, currency: 'USD', ...over });
 const inst = (accounts: AssetAccount[], over: Partial<AssetInstitution> = {}): AssetInstitution => ({ name: 'Broker', item_id: 'item-1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts, ...over });
-const LOADED: LoadState = { balancesAsOf: '2026-09-14T12:00:00.000Z', institutions: 1, txnsLoading: false, txnsFailed: false, unread: 0 };
+const LOADED: LoadState = { balancesAsOf: '2026-09-14T12:00:00.000Z', balancesSaved: false, institutions: 1, txnsLoading: false, txnsFailed: false, unread: 0 };
 
 describe('what a record is for', () => {
   test('a plan holds typed amounts once any figure, start balance, part-time income, income or one-off is typed; never for ages and rates alone', () => {
@@ -88,10 +91,12 @@ describe('what a record is for', () => {
   });
 
   test('the route’s answer, as the page reads it', () => {
-    expect(readCurrencyAnswer({ plan: null, currency: 'USD' })).toEqual({ currency: 'USD', problem: null });
-    expect(readCurrencyAnswer({ plan: null, currency: null, currency_problem: 'newer' })).toEqual({ currency: null, problem: 'newer' });
-    expect(readCurrencyAnswer({ currency: 'usd', currency_problem: 'odd' })).toEqual({ currency: null, problem: null });
-    expect(readCurrencyAnswer(null)).toEqual({ currency: null, problem: null });
+    expect(readCurrencyAnswer({ plan: null, currency: 'USD' })).toEqual({ currency: 'USD', problem: null, was: null });
+    expect(readCurrencyAnswer({ plan: null, currency: null, currency_problem: 'newer' })).toEqual({ currency: null, problem: 'newer', was: null });
+    // A record of other amounts: which currency it said, to offer first.
+    expect(readCurrencyAnswer({ plan: null, currency: null, currency_problem: 'stale', currency_was: 'USD' })).toEqual({ currency: null, problem: 'stale', was: 'USD' });
+    expect(readCurrencyAnswer({ currency: 'usd', currency_problem: 'odd', currency_was: 'USD' })).toEqual({ currency: null, problem: null, was: null });
+    expect(readCurrencyAnswer(null)).toEqual({ currency: null, problem: null, was: null });
   });
 });
 
@@ -203,24 +208,35 @@ describe('what the tab says', () => {
   const tie = { assets: investedAssets([inst([acct({ currency: 'EUR' }), acct()])], false), flows: null };
 
   test('the question names what is shown, why it can’t be taken, and the currencies to choose from; never an amount', () => {
-    const state = planCurrencyState(TYPED, { currency: null, problem: null }, 'EUR');
-    expect(state).toEqual({ kind: 'unknown', shown: 'EUR', problem: null });
-    const ask = askText(state as Extract<typeof state, { kind: 'unknown' }>, 'tie');
+    const state = planCurrencyState(TYPED, { currency: null, problem: null, was: null }, 'EUR');
+    expect(state).toEqual({ kind: 'unknown', shown: 'EUR', problem: null, was: null });
+    const ask = askText(state as Extract<typeof state, { kind: 'unknown' }>, 'tie', 'accounts');
     expect(ask).toContain('Your plan’s figures were saved before Nya kept the currency they were typed in.');
-    expect(ask).toContain('They’re shown in EUR for now, the currency most of your accounts are in, but as many of your invested accounts are in another currency');
+    expect(ask).toContain('They’re shown in EUR for now, the currency most of your invested accounts are in, but as many of your invested accounts are in another currency');
     expect(ask).toContain('Nothing on the Plan can be saved until you say');
     expect(ask).not.toMatch(/\d/);
     expect(candidates('EUR', tie)).toEqual(['EUR', 'USD']);
+    // A record that no longer fits: said as that, its currency offered first.
+    const stale = askText({ kind: 'unknown', shown: 'EUR', problem: 'stale', was: 'USD' }, null, 'accounts');
+    expect(stale).toStartWith('Nya recorded your plan’s figures as USD, but they were changed since in a way that didn’t record a currency');
+    expect(stale).not.toContain('saved before Nya kept');
+    expect(candidates('EUR', tie, { was: 'USD' })).toEqual(['USD', 'EUR']);
     // A record that can't be read, or a newer version's.
-    expect(askText({ kind: 'unknown', shown: 'USD', problem: 'unreadable' }, null)).toStartWith('The record of the currency your plan’s figures are in couldn’t be read.');
-    expect(askText({ kind: 'unknown', shown: 'USD', problem: 'newer' }, null)).toContain('recorded by a newer version of Nya');
+    expect(askText({ kind: 'unknown', shown: 'USD', problem: 'unreadable', was: null }, null, 'accounts')).toStartWith('The record of the currency your plan’s figures are in couldn’t be read.');
+    expect(askText({ kind: 'unknown', shown: 'USD', problem: 'newer', was: null }, null, 'accounts')).toContain('recorded by a newer version of Nya');
+    // Where the shown currency came from, as it is: never "your accounts" for the dashboard's, and nothing shown when there is none.
+    expect(askText({ kind: 'unknown', shown: 'USD', problem: null, was: null }, 'none', 'dashboard')).toContain('They’re shown in USD for now, your accounts’ main currency, but there are no accounts or transactions to tell it from.');
+    expect(askText({ kind: 'unknown', shown: null, problem: null, was: null }, 'none', null)).not.toContain('shown in');
+    // Before a first amount.
+    expect(firstText('EUR', 'tie', 'accounts')).toStartWith('Which currency will you type your plan’s figures in?');
   });
 
   test('recorded, nothing typed, or not known', () => {
-    expect(planCurrencyState(TYPED, { currency: 'USD', problem: null }, 'USD')).toEqual({ kind: 'recorded', currency: 'USD' });
-    expect(planCurrencyState(DEFAULT_PLAN, { currency: null, problem: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
-    expect(planCurrencyState(null, { currency: null, problem: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
-    expect(planCurrencyState(TYPED, { currency: null, problem: 'newer' }, 'USD')).toEqual({ kind: 'unknown', shown: 'USD', problem: 'newer' });
+    expect(planCurrencyState(TYPED, { currency: 'USD', problem: null, was: null }, 'USD')).toEqual({ kind: 'recorded', currency: 'USD' });
+    expect(planCurrencyState(DEFAULT_PLAN, { currency: null, problem: null, was: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
+    expect(planCurrencyState(null, { currency: null, problem: null, was: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
+    expect(planCurrencyState(TYPED, { currency: null, problem: 'newer', was: null }, 'USD')).toEqual({ kind: 'unknown', shown: 'USD', problem: 'newer', was: null });
+    expect(planCurrencyState(TYPED, { currency: null, problem: 'stale', was: 'USD' }, 'EUR')).toEqual({ kind: 'unknown', shown: 'EUR', problem: 'stale', was: 'USD' });
   });
 
   test('kept in its currency, the tab says so when what is measured is in another: converted, or, without a home currency, not counted', () => {
@@ -252,10 +268,12 @@ describe('Home’s FI card', () => {
     const { NO_CONNECTIONS_WITHOUT } = await import('@/lib/no-transactions');
     const assets = investedAssets([inst([acct({ currency: 'EUR' }), acct()])], false);
     const inputs = { flows: null, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, 0) };
-    const view = (unconfirmed: boolean) =>
+    const view = (unconfirmed: string | null) =>
       renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(TYPED, inputs, null), unconfirmed, plan: TYPED, saved: true, repaired: false, inputs, onOpenPlan: () => {} }));
-    expect(view(true)).toContain('Shown in EUR, the currency most of your accounts are in: which one your plan’s figures were typed in isn’t known yet. Opening the Plan tab settles it.');
-    expect(view(false)).not.toContain('isn’t known yet');
+    const said = unconfirmedText('EUR', shownFrom('EUR', inputs));
+    expect(said).toBe('Shown in EUR, the currency most of your invested accounts are in: which currency your plan’s figures were typed in isn’t known yet. The Plan tab settles it, or asks you.');
+    expect(view(said)).toContain(said);
+    expect(view(null)).not.toContain('isn’t known yet');
   });
 });
 
@@ -274,5 +292,97 @@ describe('the assets sheet', () => {
     expect(html).toContain('$100,000');
     expect(html).toContain('€800');
     expect(html).not.toContain('$800');
+  });
+});
+
+describe('never from the dashboard’s saved copy, nor where most of the spending is elsewhere', () => {
+  const usdBroker = [inst([acct()])];
+  const t = (over: Partial<Txn>): Txn => ({ transaction_id: `t${++seq}`, date: '2026-09-01', name: 'Shop', amount: 100, pending: false, account_name: 'Checking', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'EUR', ...over }) as Txn;
+
+  test('the saved copy of the balances is still loading, whatever its date', () => {
+    const i = { assets: investedAssets(usdBroker, false), flows: null };
+    expect(shownReliably('USD', i, LOADED)).toEqual({ ok: true });
+    expect(shownReliably('USD', i, { ...LOADED, balancesSaved: true })).toEqual({ ok: false, why: 'loading' });
+  });
+
+  test('a USD brokerage with the spending in EUR: not taken, so the tab asks', () => {
+    const rows = [t({ date: '2025-09-20' }), t({}), t({ iso_currency_code: 'USD' })];
+    const i = { assets: investedAssets(usdBroker, false), flows: trailingFlows(rows, '2026-09-14') };
+    expect(i.flows!.mostIn).toBe('EUR');
+    expect(shownReliably('USD', i, LOADED)).toEqual({ ok: false, why: 'spending' });
+  });
+});
+
+describe('without a home currency, no figure from a part of what it measures', () => {
+  // The review's probe: a USD brokerage, and a year of spending all but
+  // three rows in EUR (test/zz-probe-spend.test.ts in its clone).
+  let n = 0;
+  const t = (over: Partial<Txn>): Txn => ({ transaction_id: `s${++n}`, date: '2026-09-01', name: 'Shop', amount: 100, pending: false, account_name: 'Checking', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'EUR', ...over }) as Txn;
+  const rows: Txn[] = [t({ date: '2025-09-20', iso_currency_code: 'USD' })];
+  for (let m = 0; m < 12; m++) for (let k = 0; k < 30; k++) rows.push(t({ date: `2026-${String(((m + 9) % 12) + 1).padStart(2, '0')}-0${(k % 9) + 1}`.replace(/^2026-(10|11|12)/, '2025-$1') }));
+  rows.push(t({ iso_currency_code: 'USD' }), t({ iso_currency_code: 'USD', date: '2026-05-05' }));
+  const broker = [inst([acct({ balance: 500_000 })])];
+  const typed = plan({ partTimeIncome: 10_000 });
+
+  test('recorded in USD: spending isn’t measured from the three dollar rows, so no FI number, progress, years or savings rate rests on them, and it says why', () => {
+    const assets = investedAssets(broker, false, null, Date.now(), 'USD');
+    const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
+    expect(flows.count).toBe(3);
+    expect(spendingGap(flows)).toEqual({ what: 'spending', counted: 3, leftOut: [{ currency: 'EUR', count: 360 }], into: 'USD' });
+    const f = fiFigures(typed, { flows, assets, workplace: null }, 'USD');
+    expect(f.view.spending.value).toBeNull();
+    expect(f.view.fiNumber).toBeNull();
+    expect(f.view.progress).toBeNull();
+    expect(f.view.yearsToFi).toBeNull();
+    expect(f.savingsRate).toBeNull();
+    expect(gapText(spendingGap(flows)!)).toBe(
+      'Not measured: more than a tenth of what would count is in another currency than the Plan’s, USD (360 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
+    );
+    // Typed, the figure is the person's own, and the FI number is back.
+    expect(fiFigures({ ...typed, spending: 36_500 }, { flows, assets, workplace: null }, 'USD').view.fiNumber).toBe(912_500);
+  });
+
+  test('not recorded: the euros are most of it, so they are counted and the dollars named, as before, with the can’t-be-compared note', () => {
+    const assets = investedAssets(broker, false);
+    const flows = trailingFlows(rows, '2026-09-14', { into: assets.currency })!;
+    expect(flows.currency).toBe('EUR');
+    expect(spendingGap(flows)).toBeNull();
+    const f = fiFigures(typed, { flows, assets, workplace: null }, 'USD');
+    expect(f.view.spending.value).toBe(36_500);
+    expect(f.currencyNote).toContain('Your investments are in USD and your spending in EUR');
+  });
+
+  test('a tenth is the line: exactly a tenth left out is measured from the rest, more is not', () => {
+    const tenth = [...Array.from({ length: 9 }, () => t({ iso_currency_code: 'USD' })), t({})];
+    expect(spendingGap(trailingFlows([t({ date: '2025-09-20', iso_currency_code: 'USD' }), ...tenth.slice(1)], '2026-09-14', { currency: 'USD' }))).toBeNull();
+    expect(spendingGap(trailingFlows([t({ date: '2025-09-20', iso_currency_code: 'USD' }), ...tenth.slice(2), t({})], '2026-09-14', { currency: 'USD' }))).not.toBeNull();
+  });
+
+  test('invested assets the same, by account: said as “they’re in USD” with three accounts in EUR and one small one in dollars', () => {
+    const accounts = [inst([acct({ currency: 'EUR' }), acct({ currency: 'EUR' }), acct({ currency: 'EUR' }), acct({ balance: 1_000 })])];
+    const assets = investedAssets(accounts, false, null, Date.now(), 'USD');
+    expect(assetsGap(assets)).toEqual({ what: 'assets', counted: 1, leftOut: [{ currency: 'EUR', count: 3 }], into: 'USD' });
+    const f = fiFigures(plan({ spending: 40_000 }), { flows: null, assets, workplace: null }, 'USD');
+    expect(f.view.fiNumber).toBe(1_000_000);
+    expect(f.view.assets.value).toBeNull();
+    expect(f.view.progress).toBeNull();
+    expect(gapText(assetsGap(assets)!)).toContain('(3 accounts in EUR)');
+    // With a home currency they are converted, so nothing is a gap.
+    const FX = ecbTable({ home: 'USD' });
+    expect(assetsGap(investedAssets(accounts, false, { home: 'USD', latest: FX.latest, own: [] }, Date.parse('2026-09-14T18:00:00Z'), 'USD'))).toBeNull();
+  });
+
+  test('Home says it too: no FI number, and why', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const React = await import('react');
+    const { FiProgressView } = await import('@/components/FiProgressCard');
+    const { transactionCoverage } = await import('@/lib/fire/progress');
+    const { NO_CONNECTIONS_WITHOUT } = await import('@/lib/no-transactions');
+    const assets = investedAssets(broker, false, null, Date.now(), 'USD');
+    const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
+    const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, rows.length) };
+    const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(typed, inputs, 'USD'), plan: typed, saved: true, repaired: false, inputs, onOpenPlan: () => {} }));
+    expect(html).toContain('Not measured: more than a tenth of what would count is in another currency');
+    expect(html).not.toContain('FI number');
   });
 });

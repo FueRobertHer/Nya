@@ -89,13 +89,24 @@ export function createWholeListStore<T>(opts: {
   const reloadHint = opts.reloadHint ?? 'press Refresh to try again';
   let state: ListState<T> = initialListState(opts.empty);
   let loadSeq = 0;
+  // The save under way, if any: a load asked for meanwhile waits for it.
+  let saveRun: Promise<boolean> | null = null;
 
   const set = (patch: Partial<ListState<T>>) => {
     state = { ...state, ...patch };
     opts.onChange(state);
   };
 
+  // A load asked for while a save runs waits until it ends: the save's answer,
+  // or the reload after a failed one, is what the server holds, and a load
+  // taken in between could show an older list as ready mid-save, from which
+  // the next save would overwrite what the first one wrote.
   async function load(): Promise<void> {
+    while (saveRun) await saveRun;
+    return loadNow();
+  }
+
+  async function loadNow(): Promise<void> {
     const mine = ++loadSeq;
     set({ status: 'loading', error: null, damage: undefined });
     let res: Response;
@@ -128,7 +139,19 @@ export function createWholeListStore<T>(opts: {
     if (data) opts.onAnswer?.(data);
   }
 
-  async function save(next: T): Promise<boolean> {
+  function save(next: T): Promise<boolean> {
+    const run = saving(next);
+    // Started (and not refused): what a load waits for until it ends.
+    if (state.saving && !saveRun) {
+      saveRun = run;
+      void run.finally(() => {
+        if (saveRun === run) saveRun = null;
+      });
+    }
+    return run;
+  }
+
+  async function saving(next: T): Promise<boolean> {
     if (state.status !== 'ready') {
       // Loading, or a load that failed: only the first is a matter of waiting.
       set({ saveError: state.status === 'error' ? `${Noun} could not be loaded, so they can’t be saved yet; ${reloadHint}.` : `${Noun} are still loading. Try again in a moment.` });
@@ -165,7 +188,7 @@ export function createWholeListStore<T>(opts: {
     // Back to the last list the server confirmed straight away, so even if
     // the reload below fails too, nothing on the page shows an unsaved list.
     set({ value: before, saveError: refusal ? `Not saved: ${refusal}` : `Could not save ${opts.noun}. Showing what is saved.` });
-    await load(); // still marked saving, so nothing else starts meanwhile
+    await loadNow(); // still marked saving, so nothing else starts meanwhile
     set({ saving: false });
     return false;
   }

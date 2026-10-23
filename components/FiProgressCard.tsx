@@ -35,8 +35,8 @@ import type { Txn } from './MonthBreakdown';
 import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { PAYROLL_NOTE, dayName, pct, progressText, savingsRateText, wholeMoney, yearsToFiText } from './plan-text';
 import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/plan';
-import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, type CurrencyAnswer } from '@/lib/fire/plan-currency';
-import { assetsLeftOut, fiFigures, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
+import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, shownFrom, unconfirmedText, type CurrencyAnswer } from '@/lib/fire/plan-currency';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
@@ -114,7 +114,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   return (
     <FiProgressView
       figures={figures}
-      unconfirmed={planCurrencyState(stored, answer, figures.currency).kind === 'unknown'}
+      unconfirmed={planCurrencyState(stored, answer, figures.currency).kind === 'unknown' ? unconfirmedText(figures.currency, shownFrom(figures.currency, inputs)) : null}
       plan={plan}
       saved={stored !== null}
       repaired={repair.fixed.length > 0}
@@ -141,7 +141,7 @@ export function ready(s: { plan: 'loading' | 'failed' | 'loaded'; txns: Txn[] | 
  *  FI number to show. */
 export function FiProgressView({
   figures,
-  unconfirmed = false,
+  unconfirmed = null,
   plan,
   saved,
   repaired,
@@ -149,8 +149,9 @@ export function FiProgressView({
   onOpenPlan,
 }: {
   figures: FiFigures;
-  /** Which currency the plan's typed figures are in isn't known yet. */
-  unconfirmed?: boolean;
+  /** Which currency the plan's typed figures are in isn't known yet: what
+   *  to say (lib/fire/plan-currency.ts unconfirmedText). */
+  unconfirmed?: string | null;
   plan: FirePlan;
   /** A plan was saved; otherwise these are the defaults. */
   saved: boolean;
@@ -160,7 +161,29 @@ export function FiProgressView({
   onOpenPlan: () => void;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
-  if (view.fiNumber === null) return null;
+  // Without a home currency, a figure that would rest on a part of what it
+  // measures isn't measured (lib/fire/progress.ts): said, rather than an FI
+  // number from the rest, or none and nothing said.
+  const flowsGap = view.spending.source === 'typed' ? null : spendingGap(inputs.flows);
+  const accountsGap = view.assets.source === 'typed' ? null : assetsGap(inputs.assets);
+  if (view.fiNumber === null) {
+    if (!flowsGap) return null;
+    return (
+      <div className="card fi-card">
+        <div className="inst-header">
+          <div className="inst-name">Financial independence</div>
+          <button className="plan-edit" onClick={onOpenPlan}>
+            {saved ? 'Your plan' : 'Set up your plan'}
+          </button>
+        </div>
+        <div className="as-of stale">{gapText(flowsGap)}</div>
+        {accountsGap && (
+          <div className="as-of stale">{gapText(accountsGap)}</div>
+        )}
+        {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
+      </div>
+    );
+  }
   const money = (n: number) => wholeMoney(n, currency);
   // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
   // rule: transactions that couldn't be read, or that a connection doesn't
@@ -230,7 +253,7 @@ export function FiProgressView({
       {/* Transactions entered by hand only: the connections that bring in
           none are named, as the Plan names them beside its figures. */}
       {inputs.flows && inputs.coverage.named && <p className="panel-note">{inputs.coverage.named}</p>}
-      {inputs.flows && leftOut.otherCurrencies && (
+      {inputs.flows && !flowsGap && leftOut.otherCurrencies && (
         <div className="as-of stale">
           <Masked>{leftOut.otherCurrencies}</Masked>
         </div>
@@ -243,9 +266,13 @@ export function FiProgressView({
       )}
       {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
-      {unconfirmed && currency && (
-        <div className="as-of stale">{`Shown in ${currency}, the currency most of your accounts are in: which one your plan’s figures were typed in isn’t known yet. Opening the Plan tab settles it.`}</div>
+      {flowsGap && (
+        <div className="as-of stale">{gapText(flowsGap)}</div>
       )}
+      {accountsGap && (
+        <div className="as-of stale">{gapText(accountsGap)}</div>
+      )}
+      {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
       {convertedNote && <div className="as-of">{convertedNote}</div>}
       {repaired && <div className="as-of stale">Your saved plan has values this version of Nya can&apos;t use, so these use the defaults for them. The Plan tab says which.</div>}
     </div>

@@ -3101,6 +3101,7 @@ export default function Dashboard({
                 institutions={planInstitutions}
                 holdings={planHoldings}
                 balancesAsOf={asOf}
+                balancesSaved={balancesSaved}
                 currency={accountCurrency}
                 txnFx={txnFx}
                 balanceFx={base?.fx ?? null}

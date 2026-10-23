@@ -42,8 +42,8 @@ export type PlanSavers = {
 export function planSavers(o: {
   /** The open scenario's saver, or null with the Plan open. */
   scenario: Save | null;
-  /** The Plan's own store. */
-  savePlan: (next: FirePlan) => Promise<boolean>;
+  /** The Plan's own store: true once saved, or why it wasn't sent. */
+  savePlan: Save;
   /** The Plan as the tab shows it (the repaired one while a repair waits). */
   plan: FirePlan;
   /** The repaired Plan, while a saved one this release can't take waits. */
@@ -62,7 +62,7 @@ export function planSavers(o: {
   const { savePlan, plan, repaired } = o;
   return {
     form: savePlan,
-    allocationMix: savePlan,
+    allocationMix: async (next) => (await savePlan(next)) === true,
     method: (method) => void savePlan({ ...plan, method }),
     repair: repaired ? () => void savePlan(repaired) : null,
     allocationSettings: true,

@@ -30,11 +30,19 @@
 //   - recorded: the record holds; its currency, whatever the accounts are in.
 //   - follows: the plan holds no typed amount, so nothing can be relabelled:
 //     the accounts' currency, as before.
-//   - unknown: typed amounts and no record that holds (every Plan saved
-//     before this release). The tab records the currency it shows when that
-//     can be told reliably (shownReliably), and asks the person otherwise.
-//     Until then the figures are shown in the accounts' currency, said to be
-//     unconfirmed, and nothing on the Plan is saved.
+//   - unknown: typed amounts and no record that holds. With no record at
+//     all (every Plan saved before this release), the tab records the
+//     currency it shows when that can be told reliably (shownReliably) and no
+//     save is under way, and asks otherwise. With a record that no longer
+//     fits (stale), or one that can't be read, it always asks, offering the
+//     recorded currency first: a record is never replaced without the
+//     person's word. Until then the figures are shown in the accounts'
+//     currency, said to be unconfirmed, and nothing on the Plan is saved.
+//
+// THE FIRST AMOUNT. The save that gives a plan its first typed amount
+// records the currency in its own write: the one shown, when it can be told
+// reliably, else the one the person picked (the tab asks first), so this
+// release never leaves typed amounts without a record.
 
 import type { FirePlan } from './plan';
 import type { InvestedAssets, TrailingFlows } from './inputs';
@@ -132,27 +140,30 @@ export function recordedCurrency(plan: FirePlan | null, record: PlanCurrencyReco
 }
 
 /** What the route answers beside the plan: the recorded currency when the
- *  record holds, and why a record there can't be read (`unreadable`: damaged
- *  bytes, which only the person's answer replaces; `newer`: a later
- *  release's, which is never written over). */
-export type CurrencyAnswer = { currency: string | null; problem: 'unreadable' | 'newer' | null };
+ *  record holds, and why a record there doesn't (`stale`: a record of other
+ *  amounts, whose currency is `was`, which only the person's answer
+ *  replaces; `unreadable`: damaged bytes, likewise; `newer`: a later
+ *  release's, which is never written over). No currency and no problem: no
+ *  record at all, or a plan with nothing typed. */
+export type CurrencyAnswer = { currency: string | null; problem: 'stale' | 'unreadable' | 'newer' | null; was: string | null };
 
-export const NO_ANSWER: CurrencyAnswer = { currency: null, problem: null };
+export const NO_ANSWER: CurrencyAnswer = { currency: null, problem: null, was: null };
 
 /** The answer as the page reads it from /api/fire-plan's body. */
 export function readCurrencyAnswer(data: Record<string, unknown> | null | undefined): CurrencyAnswer {
-  const c = data?.currency;
+  const code = (v: unknown) => (typeof v === 'string' && CURRENCY_CODE.test(v) ? v : null);
   const p = data?.currency_problem;
-  return {
-    currency: typeof c === 'string' && CURRENCY_CODE.test(c) ? c : null,
-    problem: p === 'unreadable' || p === 'newer' ? p : null,
-  };
+  const problem = p === 'stale' || p === 'unreadable' || p === 'newer' ? p : null;
+  return { currency: code(data?.currency), problem, was: problem === 'stale' ? code(data?.currency_was) : null };
 }
 
 /** How far the accounts and transactions have loaded, as the page has it. */
 export type LoadState = {
   /** When the balances were loaded; null while they load. */
   balancesAsOf: string | null;
+  /** The balances are the dashboard's saved copy, shown until its own load
+   *  answers: possibly from before an account was added elsewhere. */
+  balancesSaved: boolean;
   institutions: number;
   txnsLoading: boolean;
   /** The transactions failed to load. */
@@ -162,15 +173,18 @@ export type LoadState = {
 };
 
 /** Why the currency the Plan is shown in can't be told reliably now. */
-export type NotReliable = 'loading' | 'problem' | 'empty-balance' | 'tie' | 'mixed' | 'none';
+export type NotReliable = 'loading' | 'problem' | 'empty-balance' | 'tie' | 'mixed' | 'spending' | 'none';
 
 /**
  * Whether the currency the Plan is shown in now (lib/fire/progress.ts
  * planCurrency: the accounts', the transactions', the dashboard's) is one it
  * would be shown in on any load, so that it can be taken as the one a plan's
- * figures were typed in: everything has loaded without a problem, no counted
- * account reads empty (it could hold the other currency), and the count has a
- * clear winner. With no investment account to go by, every counted
+ * figures were typed in: the accounts have loaded from the server (never
+ * the dashboard's saved copy) and the transactions too, without a problem; no
+ * counted account reads empty (it could hold the other currency); the count
+ * has a clear winner; and most of the year's spending is in it too (else the
+ * figures would be measured from the rest, lib/fire/progress.ts
+ * spendingGap). With no investment account to go by, every counted
  * transaction must be in one currency. The dashboard's own currency alone is
  * never enough.
  */
@@ -180,7 +194,7 @@ export function shownReliably(
   load: LoadState
 ): { ok: true } | { ok: false; why: NotReliable } {
   const { assets, flows } = inputs;
-  if (!load.balancesAsOf || load.txnsLoading) return { ok: false, why: 'loading' };
+  if (!load.balancesAsOf || load.balancesSaved || load.txnsLoading) return { ok: false, why: 'loading' };
   if (load.institutions === 0 && !flows) return { ok: false, why: 'none' };
   if (load.txnsFailed || load.unread > 0 || assets.caveats.length > 0) return { ok: false, why: 'problem' };
   if (assets.unknown > 0) return { ok: false, why: 'empty-balance' };
@@ -189,6 +203,7 @@ export function shownReliably(
   if (counts.length > 0) {
     if (counts.length > 1 && counts[1].count === counts[0].count) return { ok: false, why: 'tie' };
     if (counts[0].currency !== shown) return { ok: false, why: 'mixed' };
+    if (flows?.mostIn && flows.mostIn !== shown) return { ok: false, why: 'spending' };
     return { ok: true };
   }
   // No investment account: the transactions', only when all are in it.
@@ -200,30 +215,46 @@ export function shownReliably(
 export type PlanCurrencyState =
   | { kind: 'recorded'; currency: string }
   | { kind: 'follows'; currency: string | null }
-  | { kind: 'unknown'; shown: string | null; problem: CurrencyAnswer['problem'] };
+  | { kind: 'unknown'; shown: string | null; problem: CurrencyAnswer['problem']; was: string | null };
 
+/** From the plan the server last confirmed (never one a save has yet to
+ *  write) and its answer. */
 export function planCurrencyState(stored: FirePlan | null, answer: CurrencyAnswer, shown: string | null): PlanCurrencyState {
   if (answer.currency) return { kind: 'recorded', currency: answer.currency };
   if (!stored || !hasTypedAmounts(stored)) return { kind: 'follows', currency: shown };
-  return { kind: 'unknown', shown, problem: answer.problem };
+  return { kind: 'unknown', shown, problem: answer.problem, was: answer.was };
 }
 
 /** The currency the Plan is worked out and shown in, in any state. */
 export const currencyOfState = (s: PlanCurrencyState): string | null => (s.kind === 'unknown' ? s.shown : s.currency);
 
 /** The currencies to offer when asking which one the figures are in: the
- *  one shown first, then the others in sight (the accounts', most first,
- *  and the transactions'), each once. */
-export function candidates(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }): string[] {
+ *  one a record that no longer fits said, first; the one shown; then the
+ *  others in sight (the accounts', most first, the transactions', and the
+ *  home currency), each once. Any other is in the list of every code. */
+export function candidates(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }, more: { was?: string | null; home?: string | null } = {}): string[] {
   const out: string[] = [];
   const add = (c: string | null | undefined) => {
     if (c && CURRENCY_CODE.test(c) && !out.includes(c)) out.push(c);
   };
+  add(more.was);
   add(shown);
   for (const c of inputs.assets.byCurrency ?? []) add(c.currency);
+  add(inputs.flows?.mostIn);
   add(inputs.flows?.currency);
+  add(more.home);
   return out;
 }
+
+/** Where the shown currency came from, for saying so truly. */
+export function shownFrom(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }): 'accounts' | 'transactions' | 'dashboard' | null {
+  if (!shown) return null;
+  if ((inputs.assets.byCurrency ?? [])[0]?.currency === shown) return 'accounts';
+  if (inputs.flows?.mostIn === shown || inputs.flows?.currency === shown) return 'transactions';
+  return 'dashboard';
+}
+
+const FROM_TEXT = { accounts: 'the currency most of your invested accounts are in', transactions: 'the currency most of your transactions are in', dashboard: 'your accounts’ main currency' } as const;
 
 /** Why the shown currency can't be taken for the figures', after "They're
  *  shown in USD, ...". */
@@ -232,19 +263,49 @@ const UNRELIABLE_TEXT: Record<Exclude<NotReliable, 'loading'>, string> = {
   'empty-balance': 'an account’s balance reads empty just now, so it may read otherwise once it doesn’t',
   tie: 'as many of your invested accounts are in another currency, so it could as well be that one',
   mixed: 'your accounts and transactions are in more than one currency',
-  none: 'there are no accounts to tell it from',
+  spending: 'most of your spending is in another currency',
+  none: 'there are no accounts or transactions to tell it from',
 };
 
-/** The question, when the Plan's currency isn't known. */
-export function askText(state: Extract<PlanCurrencyState, { kind: 'unknown' }>, why: NotReliable | null): string {
-  if (state.problem === 'newer') {
-    return `The currency your plan’s figures are in was recorded by a newer version of Nya, so it can’t be read here. They’re shown in ${state.shown ?? 'no currency'} for now, and nothing on the Plan can be saved until that version is back.`;
-  }
-  const start = state.problem === 'unreadable' ? 'The record of the currency your plan’s figures are in couldn’t be read.' : 'Your plan’s figures were saved before Nya kept the currency they were typed in.';
-  if (!state.shown) return `${start} Which currency are they in? Nothing on the Plan can be saved until you say.`;
-  const shownAs = `They’re shown in ${state.shown} for now, the currency most of your accounts are in`;
+const shownText = (shown: string | null, from: ReturnType<typeof shownFrom>, why: NotReliable | null) => {
+  if (!shown || !from) return '';
   const reason = why && why !== 'loading' ? `, but ${UNRELIABLE_TEXT[why]}` : '';
-  return `${start} ${shownAs}${reason}. Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
+  return ` They’re shown in ${shown} for now, ${FROM_TEXT[from]}${reason}.`;
+};
+
+/** The question, when the Plan's currency isn't known: true to why. */
+export function askText(state: Extract<PlanCurrencyState, { kind: 'unknown' }>, why: NotReliable | null, from: ReturnType<typeof shownFrom>): string {
+  if (state.problem === 'newer') {
+    return `The currency your plan’s figures are in was recorded by a newer version of Nya, so it can’t be read here.${state.shown ? ` They’re shown in ${state.shown} for now.` : ''} Nothing on the Plan can be saved until that version is back.`;
+  }
+  const start =
+    state.problem === 'stale'
+      ? `Nya recorded your plan’s figures as ${state.was ?? 'another currency'}, but they were changed since in a way that didn’t record a currency (an older version of Nya, a page open since before the update, or a save that didn’t finish), so whether they’re still in ${state.was ?? 'it'} can’t be told.`
+      : state.problem === 'unreadable'
+        ? 'The record of the currency your plan’s figures are in couldn’t be read.'
+        : 'Your plan’s figures were saved before Nya kept the currency they were typed in.';
+  return `${start}${shownText(state.shown, from, why)} Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
+}
+
+/** Before a plan's first typed amount, when the currency can't be told from
+ *  the accounts: which one the person will type in. */
+export function firstText(shown: string | null, why: NotReliable, from: ReturnType<typeof shownFrom>): string {
+  return `Which currency will you type your plan’s figures in? Nya keeps them in it, whatever your accounts are in.${shownText(shown, from, why)} Say which before you type an amount.`;
+}
+
+/** Home's FI card, while the currency isn't known. */
+export function unconfirmedText(shown: string | null, from: ReturnType<typeof shownFrom>): string {
+  const lead = shown && from ? `Shown in ${shown}, ${FROM_TEXT[from]}: which currency your plan’s figures were typed in isn’t known yet.` : 'Which currency your plan’s figures were typed in isn’t known yet.';
+  return `${lead} The Plan tab settles it, or asks you.`;
+}
+
+/** Once recorded, the line the tab always shows. */
+export const recordedText = (currency: string) => `Your plan’s figures are in ${currency}, the currency they were typed in.`;
+
+/** What a change of the recorded currency means, before it is made. */
+export function relabelText(from: string, to: string, scenariosIn: number): string {
+  const scenarios = scenariosIn > 0 ? ` ${scenariosIn} scenario${scenariosIn === 1 ? '' : 's'} with amounts typed in ${from} then aren’t worked out until you say their amounts are in ${to} too.` : '';
+  return `Every figure you typed in your plan is then read in ${to}, exactly as typed: nothing is converted. That is right only if you typed them in ${to}, not ${from}.${scenarios}`;
 }
 
 const join = (list: readonly string[]) => (list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);

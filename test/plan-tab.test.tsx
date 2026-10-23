@@ -190,13 +190,18 @@ describe('the FI card', () => {
   });
 
   test('names what another currency left out of spending and of assets', () => {
+    // Ten accounts counted, one left out: under a tenth, so measured from the rest, and said.
+    const ten = Array.from({ length: 10 }, (_, i) => ({ ...assets().accounts[0], account_id: `a${i}`, balance: 25_000 }));
     const t = card(plan(), {
       f: { ...flows, leftOut: [{ currency: 'JPY', count: 2 }] },
-      a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }),
+      a: assets({ accounts: ten, leftOut: [{ currency: 'EUR', count: 1 }] }),
     });
     expect(t).toContain("2 transactions in JPY aren't in your spending or savings, which are in USD.");
     expect(t).toContain("1 account in EUR isn't in this figure, which is in USD.");
     expect(card(plan())).not.toContain("aren't in your spending");
+    // More than a tenth (one of three): not measured from the rest, and why (lib/fire/progress.ts assetsGap).
+    const gap = card(plan(), { m: { spending: 40_000, savings: 30_000, assets: null }, a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }) });
+    expect(gap).toContain('Not measured: more than a tenth of what would count is in another currency than the Plan’s, USD (1 account in EUR).');
   });
 
   test('says how many transactions the person excluded were left out of spending', () => {

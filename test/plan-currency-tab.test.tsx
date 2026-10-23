@@ -1,14 +1,22 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, click, outline, FakeElement } from './mini-dom';
+import { installDom, click, outline, pressThrough, type, FakeElement } from './mini-dom';
 
 // The Plan tab and the currency its typed figures are in, rendered
-// (react-dom/client over test/mini-dom.ts): a plan saved before the currency
-// was recorded gets it recorded at once when the accounts show it reliably,
-// and is asked about otherwise, with nothing saved until the person says; a
-// recorded currency stays whatever the accounts' count does (a tie, a hidden
-// account, a balance that reads empty); each save sends it; and with amounts
-// hidden, what the tab says about it names currencies, never an amount. Every
-// request is answered here, by path; nothing reaches a network.
+// (react-dom/client over test/mini-dom.ts):
+//   - a plan saved before the currency was recorded gets it recorded at once
+//     when the accounts, truly loaded (never the dashboard's saved copy), show
+//     it reliably, and is asked about otherwise (a tie, spending elsewhere,
+//     nothing in sight, with any code offered), with nothing saved meanwhile;
+//   - a record that no longer fits is asked about, its currency first, and
+//     never replaced on the tab's own;
+//   - the save that gives a plan its first amount records the currency in
+//     its own write, and nothing about the currency starts while a save is
+//     under way;
+//   - a recorded currency stays whatever the accounts' count does, each save
+//     sends it, and changing it is confirmed first and can be undone;
+//   - the card announces what it records and its errors, and with amounts
+//     hidden it names currencies, never an amount.
+// Every request is answered here, by path; nothing reaches a network.
 //
 // A rendered element never goes into a matcher that diffs (see
 // test/plan-tab-scenarios.test.tsx): elements are counted, or outlined first.
@@ -31,18 +39,20 @@ const { MASK, setAmountsHidden } = await import('@/lib/format');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type AssetInstitution = import('@/lib/fire/inputs').AssetInstitution;
 type AssetAccount = import('@/lib/fire/inputs').AssetAccount;
+type Txn = import('@/components/MonthBreakdown').Txn;
 
 afterEach(() => setAmountsHidden(false));
 
 // Spending typed, assets measured: what the accounts hold counts.
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000 };
+const UNTYPED = { ...DEFAULT_PLAN, age: 40 };
 const AS_OF = '2026-10-23T12:00:00.000Z';
 const USD = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: 'usd', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 300_000, currency: 'USD', ...over });
 const EUR = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: 'eur', name: 'Depot', type: 'investment', subtype: 'brokerage', balance: 250_000, currency: 'EUR', ...over });
 const broker = (accounts: AssetAccount[]): AssetInstitution[] => [{ name: 'Broker', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts }];
 
 type Call = { method: string; url: string; body: any };
-type Answer = (call: Call) => [number, unknown];
+type Answer = (call: Call) => [number, unknown] | Promise<[number, unknown]>;
 
 function serve(answers: Record<string, Answer | [number, unknown]>) {
   const calls: Call[] = [];
@@ -50,10 +60,43 @@ function serve(answers: Record<string, Answer | [number, unknown]>) {
     const call = { method: init?.method ?? 'GET', url, body: init?.body ? JSON.parse(String(init.body)) : null };
     calls.push(call);
     const a = answers[`${call.method} ${url}`];
-    const [status, body] = typeof a === 'function' ? a(call) : (a ?? [404, { error: 'not here' }]);
+    const [status, body] = typeof a === 'function' ? await a(call) : (a ?? [404, { error: 'not here' }]);
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   };
   return calls;
+}
+
+/** A plan route on a fake server that keeps the plan and its record as the
+ *  real one does: a record holds while its amounts are the plan's, and only
+ *  the person's answer replaces one. */
+function planServer(start: { plan: any; record?: { currency: string; amounts: unknown } | null }) {
+  const s = { plan: start.plan, record: start.record ?? null };
+  const fits = () => !!s.record && JSON.stringify(s.record.amounts) === JSON.stringify(typedAmounts(s.plan));
+  const typed = () => s.plan && JSON.stringify(typedAmounts(s.plan)) !== JSON.stringify(typedAmounts(DEFAULT_PLAN));
+  const answer = () => {
+    if (!s.plan || !typed()) return { plan: s.plan, currency: null };
+    if (fits()) return { plan: s.plan, currency: s.record!.currency };
+    return s.record ? { plan: s.plan, currency: null, currency_problem: 'stale', currency_was: s.record.currency } : { plan: s.plan, currency: null };
+  };
+  return {
+    s,
+    answers: {
+      'GET /api/fire-plan': (): [number, unknown] => [200, answer()],
+      'PUT /api/fire-plan': (c: Call): [number, unknown] => {
+        if (c.body.currency) s.record = { currency: c.body.currency, amounts: typedAmounts(c.body.plan) };
+        s.plan = c.body.plan;
+        return [200, answer()];
+      },
+      'POST /api/fire-plan': (c: Call): [number, unknown] => {
+        if (JSON.stringify(c.body.amounts) !== JSON.stringify(typedAmounts(s.plan))) return [409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }];
+        if (s.record && !c.body.answered && !(fits() && s.record.currency === c.body.currency)) return [409, { error: 'A currency is recorded for your plan already.', stale: true }];
+        s.record = { currency: c.body.currency, amounts: c.body.amounts };
+        return [200, answer()];
+      },
+      'GET /api/plan-scenarios': [200, EMPTY] as [number, unknown],
+      'GET /api/allocation-settings': [200, { settings: null }] as [number, unknown],
+    },
+  };
 }
 
 const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
@@ -66,6 +109,7 @@ async function render(props: Partial<PlanTabProps> = {}) {
   const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: broker([USD()]), balancesAsOf: AS_OF, currency: 'USD', holdings: [], ...props };
   await act(async () => root.render(<PlanTab {...all} />));
   await settle();
+  const region = () => container.findAll((e) => e.getAttribute('aria-label') === 'Your plan’s currency')[0] ?? null;
   return {
     rerender: async (more: Partial<PlanTabProps>) => {
       await act(async () => root.render(<PlanTab {...all} {...more} />));
@@ -75,7 +119,19 @@ async function render(props: Partial<PlanTabProps> = {}) {
     text: () => container.textContent,
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
     buttons: (text: string) => container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === text),
-    region: () => container.findAll((e) => e.getAttribute('aria-label') === 'Your plan’s currency')[0] ?? null,
+    dialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog')[0] ?? null,
+    region,
+    /** The card's words, without the list of every currency's name. */
+    said: () => {
+      const r = region();
+      if (!r) return '';
+      const options = r.findAll((e) => e.tagName === 'OPTION').map((o) => o.textContent);
+      let t = r.textContent;
+      for (const o of options) t = t.replace(o, '');
+      return t;
+    },
+    status: () => container.findAll((e) => e.getAttribute('role') === 'status').map((e) => e.textContent).join(' '),
+    alerts: () => container.findAll((e) => e.getAttribute('role') === 'alert').map((e) => e.textContent),
   };
 }
 
@@ -86,29 +142,43 @@ const press = async (el: FakeElement | null | undefined) => {
 };
 const posts = (calls: Call[]) => calls.filter((c) => c.url === '/api/fire-plan' && c.method === 'POST');
 const puts = (calls: Call[]) => calls.filter((c) => c.url === '/api/fire-plan' && c.method === 'PUT');
+const gets = (calls: Call[]) => calls.filter((c) => c.url === '/api/fire-plan' && c.method === 'GET');
+
+/** Types a spending figure into its form and saves it. */
+async function saveSpending(tab: Awaited<ReturnType<typeof render>>, value: string, settleMs = 400) {
+  await press(tab.byLabel('Edit annual spending'));
+  const dialog = tab.dialog()!;
+  const own = dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'My own')[0];
+  if (own && own.getAttribute('aria-pressed') !== 'true') await press(own);
+  const field = dialog.findAll((e) => e.tagName === 'INPUT')[0];
+  await act(async () => type(field, value));
+  await press(dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
+  await settle(settleMs);
+  return dialog;
+}
+
+/** Picks a code from the card's list of every currency, and presses it. */
+async function another(tab: Awaited<ReturnType<typeof render>>, code: string, verb = 'They’re in') {
+  const select = tab.region()!.findAll((e) => e.tagName === 'SELECT')[0];
+  await act(async () => type(select, code));
+  await press(tab.buttons(`${verb} ${code}`)[0]);
+}
 
 describe('a plan saved before its currency was recorded', () => {
-  test('shown in a currency that can be told reliably: recorded at once, for the plan as stored, and then editable', async () => {
-    const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN, currency: null }],
-      'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
-      'GET /api/plan-scenarios': [200, EMPTY],
-      'GET /api/allocation-settings': [200, { settings: null }],
-    });
+  test('shown in a currency that can be told reliably: recorded at once, for the plan as stored, announced, and then editable', async () => {
+    const server = planServer({ plan: PLAN });
+    const calls = serve(server.answers);
     const tab = await render();
     expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN) }]);
-    expect(tab.region()).toBeNull();
+    expect(tab.said()).toContain('Your plan’s figures are in USD, the currency they were typed in.');
+    expect(tab.status()).toContain('Your plan’s figures are recorded as USD.');
     expect(tab.byLabel('Edit your ages')?.disabled).toBe(false);
     expect(tab.text()).toContain('$1,000,000');
     await tab.unmount();
   });
 
   test('while the accounts load: nothing recorded, nothing asked yet, nothing saved', async () => {
-    const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN, currency: null }],
-      'GET /api/plan-scenarios': [200, EMPTY],
-      'GET /api/allocation-settings': [200, { settings: null }],
-    });
+    const calls = serve(planServer({ plan: PLAN }).answers);
     const tab = await render({ balancesAsOf: null, txns: null, txnsLoading: true });
     expect(posts(calls).length).toBe(0);
     expect(tab.region()).toBeNull();
@@ -116,53 +186,197 @@ describe('a plan saved before its currency was recorded', () => {
     await tab.unmount();
   });
 
+  test('the transactions in, the balances not: still loading, nothing recorded', async () => {
+    const calls = serve(planServer({ plan: PLAN }).answers);
+    const tab = await render({ balancesAsOf: null });
+    expect(posts(calls).length).toBe(0);
+    await tab.rerender({ balancesAsOf: AS_OF });
+    expect(posts(calls).map((c) => c.body.currency)).toEqual(['USD']);
+    await tab.unmount();
+  });
+
+  test('the dashboard’s saved copy of the balances, whatever its date: nothing recorded from it, until its own load answers', async () => {
+    const calls = serve(planServer({ plan: PLAN }).answers);
+    const tab = await render({ balancesSaved: true });
+    expect(posts(calls).length).toBe(0);
+    await tab.rerender({ balancesSaved: false });
+    expect(posts(calls).map((c) => c.body.currency)).toEqual(['USD']);
+    await tab.unmount();
+  });
+
   test('a tie between two currencies: asked, never guessed; nothing on the Plan saves until the person says, and then it stays in what they said', async () => {
-    let recorded: string | null = null;
-    const calls = serve({
-      'GET /api/fire-plan': () => [200, { plan: PLAN, currency: recorded }],
-      'POST /api/fire-plan': (c) => {
-        recorded = c.body.currency;
-        return [200, { plan: PLAN, currency: recorded }];
-      },
-      'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan, currency: c.body.currency }],
-      'GET /api/plan-scenarios': [200, EMPTY],
-      'GET /api/allocation-settings': [200, { settings: null }],
-    });
+    const server = planServer({ plan: PLAN });
+    const calls = serve(server.answers);
     // As many accounts in each: the order puts EUR first, so it is shown in EUR.
     const tab = await render({ institutions: broker([EUR(), USD()]) });
     expect(posts(calls).length).toBe(0);
-    const region = tab.region()!;
-    expect(region.textContent).toContain('They’re shown in EUR for now');
-    expect(region.textContent).toContain('as many of your invested accounts are in another currency');
+    expect(tab.said()).toContain('They’re shown in EUR for now, the currency most of your invested accounts are in, but as many of your invested accounts are in another currency');
     expect(tab.text()).toContain('€1,000,000');
     expect(tab.byLabel('Edit your ages')?.disabled).toBe(true);
     expect(tab.byLabel('Edit annual spending')?.disabled).toBe(true);
     expect(tab.buttons('They’re in EUR').length).toBe(1);
     await press(tab.buttons('They’re in USD')[0]);
-    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN) }]);
+    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN), answered: true }]);
     // In USD now: the spending as typed, the euros not counted as dollars.
     expect(tab.text()).toContain('$1,000,000');
     expect(tab.text()).not.toContain('€1,000,000');
-    expect(tab.text()).toContain('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Some of your accounts are in EUR');
+    expect(tab.said()).toContain('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Some of your accounts are in EUR');
     expect(tab.byLabel('Edit your ages')?.disabled).toBe(false);
     expect(puts(calls).length).toBe(0);
     await tab.unmount();
   });
 
+  test('a USD brokerage with the spending in EUR: asked, rather than recorded in the currency that would leave most of the spending out', async () => {
+    const calls = serve(planServer({ plan: PLAN }).answers);
+    const rows = [
+      { transaction_id: 'e1', date: '2025-11-01', name: 'Shop', amount: 100, pending: false, account_name: 'Konto', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'EUR' },
+      { transaction_id: 'e2', date: '2026-09-01', name: 'Shop', amount: 100, pending: false, account_name: 'Konto', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'EUR' },
+    ] as Txn[];
+    const tab = await render({ txns: rows });
+    expect(posts(calls).length).toBe(0);
+    expect(tab.said()).toContain('but most of your spending is in another currency');
+    expect(tab.buttons('They’re in USD').length).toBe(1);
+    expect(tab.buttons('They’re in EUR').length).toBe(1);
+    await tab.unmount();
+  });
+
   test('a record that can’t be read: asked, and the answer replaces it, as only the person’s may', async () => {
     const calls = serve({
+      ...planServer({ plan: PLAN }).answers,
       'GET /api/fire-plan': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
-      'GET /api/plan-scenarios': [200, EMPTY],
-      'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
     // Not recorded on its own, even though USD can be told: the bytes there aren't the tab's to replace.
     expect(posts(calls).length).toBe(0);
-    expect(tab.region()!.textContent).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
+    expect(tab.said()).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
     await press(tab.buttons('They’re in USD')[0]);
-    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN), replace_unreadable: true }]);
-    expect(tab.region()).toBeNull();
+    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN), answered: true }]);
+    expect(tab.said()).toContain('Your plan’s figures are in USD');
+    await tab.unmount();
+  });
+
+  test('nothing in sight to offer: any code from the list, so the Plan is never locked', async () => {
+    const calls = serve(planServer({ plan: PLAN }).answers);
+    const tab = await render({ institutions: [], txns: [], currency: null });
+    expect(posts(calls).length).toBe(0);
+    expect(tab.said()).toContain('Which currency are they in?');
+    expect(tab.byLabel('Edit your ages')?.disabled).toBe(true);
+    await another(tab, 'JPY');
+    expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([['JPY', true]]);
+    expect(tab.byLabel('Edit your ages')?.disabled).toBe(false);
+    await tab.unmount();
+  });
+});
+
+describe('a record that no longer fits', () => {
+  test('never replaced on the tab’s own, even when the accounts tell another currency reliably: asked, its own currency first', async () => {
+    // Recorded USD for other amounts (a save that didn't finish, say); every account in EUR now.
+    const server = planServer({ plan: { ...PLAN, spending: 60_000 }, record: { currency: 'USD', amounts: typedAmounts(PLAN) } });
+    const calls = serve(server.answers);
+    const tab = await render({ institutions: broker([EUR()]), currency: 'EUR' });
+    expect(posts(calls).length).toBe(0);
+    expect(tab.said()).toContain('Nya recorded your plan’s figures as USD, but they were changed since in a way that didn’t record a currency');
+    const offered = tab.region()!.findAll((e) => e.tagName === 'BUTTON').map((b) => b.textContent.trim());
+    expect(offered.slice(0, 2)).toEqual(['They’re still in USD', 'They’re in EUR']);
+    expect(tab.byLabel('Edit your ages')?.disabled).toBe(true);
+    await press(tab.buttons('They’re still in USD')[0]);
+    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts({ ...PLAN, spending: 60_000 }), answered: true }]);
+    expect(tab.text()).toContain('$1,500,000');
+    await tab.unmount();
+  });
+});
+
+describe('the first amount', () => {
+  test('its save records the currency in its own write, and nothing else is sent', async () => {
+    const server = planServer({ plan: UNTYPED });
+    const calls = serve(server.answers);
+    const tab = await render();
+    await saveSpending(tab, '40000');
+    expect(puts(calls).map((c) => [c.body.currency, c.body.plan.spending])).toEqual([['USD', 40_000]]);
+    expect(posts(calls).length).toBe(0);
+    expect(server.s.record).toEqual({ currency: 'USD', amounts: typedAmounts({ ...UNTYPED, spending: 40_000 }) });
+    expect(tab.said()).toContain('Your plan’s figures are in USD');
+    await tab.unmount();
+  });
+
+  test('while its save is under way, nothing about the currency starts, and no reload lands in between', async () => {
+    const server = planServer({ plan: UNTYPED });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const calls = serve({
+      ...server.answers,
+      'PUT /api/fire-plan': async (c) => {
+        await held;
+        return server.answers['PUT /api/fire-plan'](c);
+      },
+    });
+    const tab = await render();
+    await saveSpending(tab, '40000', 200);
+    // The save is out and held: the page shows the plan with the amount, and asks nothing.
+    expect(puts(calls).length).toBe(1);
+    expect(posts(calls).length).toBe(0);
+    expect(gets(calls).length).toBe(1);
+    expect(tab.region()?.textContent ?? '').not.toContain('Which currency');
+    release();
+    await settle(400);
+    expect(posts(calls).length).toBe(0);
+    expect(gets(calls).length).toBe(1);
+    expect(server.s.plan.spending).toBe(40_000);
+    expect(tab.text()).toContain('$1,000,000');
+    expect(tab.byLabel('Edit your ages')?.disabled).toBe(false);
+    // The next save keeps the amount.
+    await press(tab.byLabel('Edit your ages'));
+    await press(tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
+    expect(puts(calls).map((c) => c.body.plan.spending)).toEqual([40_000, 40_000]);
+    await tab.unmount();
+  });
+
+  test('a save under way holds back the tab’s own record, even once the accounts can tell it, until the save is answered', async () => {
+    const server = planServer({ plan: PLAN });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const calls = serve({
+      ...server.answers,
+      'PUT /api/fire-plan': async (c) => {
+        await held;
+        return server.answers['PUT /api/fire-plan'](c);
+      },
+    });
+    // Not known, and the balances not in yet: nothing recorded, nothing saved.
+    const tab = await render({ balancesAsOf: null });
+    expect(posts(calls).length).toBe(0);
+    // A save got past the disabled controls (test/mini-dom.ts pressThrough): held open.
+    await act(async () => void pressThrough(tab.byLabel('Edit your ages')!));
+    await settle();
+    await act(async () => void pressThrough(tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]));
+    await settle();
+    expect(puts(calls).length).toBe(1);
+    await tab.rerender({ balancesAsOf: AS_OF });
+    expect(posts(calls).length).toBe(0);
+    release();
+    await settle(400);
+    // Answered: now the tab records it, for the plan the server holds.
+    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN) }]);
+    await tab.unmount();
+  });
+
+  test('with no currency in sight: asked first, from any code, and the save waits for it (a plan never saved, too)', async () => {
+    const server = planServer({ plan: null });
+    const calls = serve(server.answers);
+    const tab = await render({ institutions: [], txns: [], currency: null });
+    expect(tab.said()).toContain('Which currency will you type your plan’s figures in?');
+    const dialog = await saveSpending(tab, '40000');
+    expect(puts(calls).length).toBe(0);
+    expect(dialog.textContent).toContain('Say which currency you type your plan’s figures in first');
+    await press(dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Cancel')[0]);
+    await settle(400);
+    await another(tab, 'JPY', 'In');
+    expect(tab.said()).toContain('You’ll type your plan’s figures in JPY');
+    await saveSpending(tab, '4000000');
+    expect(puts(calls).map((c) => [c.body.currency, c.body.plan.spending])).toEqual([['JPY', 4_000_000]]);
+    expect(tab.said()).toContain('Your plan’s figures are in JPY');
+    expect(tab.byLabel('Edit your ages')?.disabled).toBe(false);
     await tab.unmount();
   });
 });
@@ -184,10 +398,9 @@ describe('a recorded currency', () => {
       expect(tab.text()).toContain('$1,000,000');
       // The FI number in dollars, as typed; the euros only named where they are left out.
       expect(tab.text()).not.toContain('€1,000,000');
-      expect(tab.region()?.textContent ?? '').not.toContain('Which currency');
+      expect(tab.said()).not.toContain('Which currency');
     }
-    // All in EUR now, without a home currency: said, with a way to say the figures are in EUR after all.
-    expect(tab.region()!.textContent).toContain('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Your accounts are in EUR: without a home currency nothing is converted');
+    expect(tab.said()).toContain('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Your accounts are in EUR: without a home currency nothing is converted');
     expect(tab.buttons('They’re in EUR').length).toBe(1);
     await tab.unmount();
   });
@@ -198,6 +411,40 @@ describe('a recorded currency', () => {
     await press(tab.byLabel('Edit your ages'));
     await press(tab.buttons('Save')[0]);
     expect(puts(calls).map((c) => [c.body.currency, c.body.plan.spending])).toEqual([['USD', 40_000]]);
+    await tab.unmount();
+  });
+
+  test('changing it is confirmed first, with what it means, and the one before is offered back', async () => {
+    const server = planServer({ plan: PLAN, record: { currency: 'USD', amounts: typedAmounts(PLAN) } });
+    const calls = serve(server.answers);
+    const tab = await render({ institutions: broker([EUR()]), currency: 'EUR' });
+    await press(tab.buttons('They’re in EUR')[0]);
+    // Nothing yet: the drawer says what it means.
+    expect(posts(calls).length).toBe(0);
+    const dialog = tab.dialog()!;
+    expect(dialog.textContent).toContain('Read your plan’s figures as EUR, not USD?');
+    expect(dialog.textContent).toContain('Every figure you typed in your plan is then read in EUR, exactly as typed: nothing is converted.');
+    await press(dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Read them as EUR')[0]);
+    expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([['EUR', true]]);
+    expect(tab.text()).toContain('€1,000,000');
+    expect(tab.said()).toContain('Changed from USD.');
+    await press(tab.buttons('They’re in USD')[0]);
+    expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([
+      ['EUR', true],
+      ['USD', true],
+    ]);
+    expect(tab.text()).toContain('$1,000,000');
+    // Change, always there: confirmed the same way.
+    await press(tab.byLabel('Change the currency your plan’s figures are in'));
+    expect(tab.dialog()!.textContent).toContain('They’re recorded as USD.');
+    await tab.unmount();
+  });
+
+  test('an answer that isn’t recorded says why, as an alert', async () => {
+    serve({ ...planServer({ plan: PLAN }).answers, 'POST /api/fire-plan': [500, { error: 'Failed to record the currency of plan assumptions' }] });
+    const tab = await render({ institutions: broker([EUR(), USD()]) });
+    await press(tab.buttons('They’re in USD')[0]);
+    expect(tab.alerts()).toContain('Failed to record the currency of plan assumptions');
     await tab.unmount();
   });
 });
@@ -240,18 +487,14 @@ describe('scenarios against the Plan’s currency', () => {
   });
 });
 
+
 describe('with amounts hidden', () => {
   test('what the tab says about the currency names currencies, never an amount', async () => {
     setAmountsHidden(true);
-    serve({
-      'GET /api/fire-plan': [200, { plan: PLAN, currency: null }],
-      'GET /api/plan-scenarios': [200, EMPTY],
-      'GET /api/allocation-settings': [200, { settings: null }],
-    });
+    serve(planServer({ plan: PLAN }).answers);
     const tab = await render({ institutions: broker([EUR(), USD()]) });
-    const region = tab.region()!;
-    expect(region.textContent).toContain('EUR');
-    expect(region.textContent).not.toMatch(/\d/);
+    expect(tab.said()).toContain('EUR');
+    expect(tab.said()).not.toMatch(/\d/);
     expect(tab.text()).toContain(MASK);
     expect(tab.text()).not.toContain('1,000,000');
     expect(tab.buttons('They’re in USD').map(outline)).toEqual(['<button>They’re in USD</button>']);

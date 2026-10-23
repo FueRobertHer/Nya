@@ -201,7 +201,10 @@ describe('the FI card on Home', () => {
 
   test('names what the year’s figures leave out, in the Plan’s own words: excluded transactions, other currencies', () => {
     const f = { ...flows, excludedCount: 2, leftOut: [{ currency: 'JPY', count: 3 }] };
-    const a = assets({ leftOut: [{ currency: 'CAD', count: 1 }] });
+    // Ten accounts counted and one left out: under a tenth, so measured from
+    // the rest and named (more is not measured: lib/fire/progress.ts assetsGap).
+    const ten = Array.from({ length: 10 }, (_, k) => ({ ...assets().accounts[0], account_id: `a${k}`, balance: 25_000 }));
+    const a = assets({ accounts: ten, leftOut: [{ currency: 'CAD', count: 1 }] });
     const i = inputs({ flows: f, assets: a });
     const h = home(plan(), i);
     const t = planTab(plan(), i);
@@ -233,9 +236,11 @@ describe('the FI card on Home', () => {
         transaction_code: null,
         ...over,
       }) as Txn;
+    // Spending in ten rows, so the one in yen is under a tenth of what counts
+    // (more would leave the year unmeasured: lib/fire/progress.ts spendingGap).
     const year = [
       txn({ date: '2025-10-09', amount: -70_000, category: 'income', name: 'Pay' }),
-      txn({ date: '2025-10-09', amount: 40_000 }),
+      ...Array.from({ length: 10 }, () => txn({ date: '2025-10-09', amount: 4_000 })),
       // A car bought outright and excluded, and spending in yen: in no figure.
       txn({ date: '2026-03-01', amount: 20_000, excluded: true, name: 'Car' }),
       txn({ date: '2026-04-01', amount: 900_000, iso_currency_code: 'JPY', name: 'Tokyo' }),

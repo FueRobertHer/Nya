@@ -115,10 +115,12 @@ export function scenarioOutcome(
   base: FirePlan,
   s: ScenarioEntry,
   measured: Measured,
-  planCurrency: string | null
+  planCurrency: string | null,
+  /** Whether the Plan's currency is known (lib/fire/plan-currency.ts). */
+  known = true
 ): { kind: 'not-run'; reason: string } | { kind: 'figures'; figures: PlanFigures } {
   const other = otherCurrency(s, planCurrency);
-  if (other && planCurrency) return { kind: 'not-run', reason: currencyText(other, planCurrency) };
+  if (other && planCurrency) return { kind: 'not-run', reason: currencyText(other, planCurrency, known) };
   const r = resolveScenario(base, s);
   if (!r.ok) return { kind: 'not-run', reason: resolveErrorText(r.field, r.error, base, s) };
   const f = planFigures(r.plan, measured, s.events);
@@ -204,6 +206,7 @@ export function ScenariosCard({
   baseFigures,
   measured,
   planCurrency,
+  planCurrencyKnown = true,
   canOpen,
   planState,
   whyNot,
@@ -224,6 +227,8 @@ export function ScenariosCard({
   baseFigures: PlanFigures;
   measured: Measured;
   planCurrency: string | null;
+  /** Whether the Plan's currency is known (lib/fire/plan-currency.ts). */
+  planCurrencyKnown?: boolean;
   /** The Plan has loaded and waits on no repair. */
   canOpen: boolean;
   /** How the saved Plan's load went: until it has loaded, nothing is
@@ -284,11 +289,11 @@ export function ScenariosCard({
       .map((id): { column: Omit<CompareColumn, 'outcome'>; entry: ScenarioEntry | null; before: ReturnType<typeof scenarioOutcome> } => {
         if (id === 'plan') return { column: { id, name: 'Your plan', isPlan: true }, entry: null, before: { kind: 'figures', figures: baseFigures } };
         const entry = list.find((s) => s.id === id) as ScenarioEntry;
-        return { column: { id, name: entry.name, isPlan: false }, entry, before: scenarioOutcome(base, entry, measured, planCurrency) };
+        return { column: { id, name: entry.name, isPlan: false }, entry, before: scenarioOutcome(base, entry, measured, planCurrency, planCurrencyKnown) };
       });
     // ids and selected are derived from list and chosen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, chosen, base, baseFigures, measured, planCurrency]);
+  }, [list, chosen, base, baseFigures, measured, planCurrency, planCurrencyKnown]);
   const wanted = compareJobs(
     columns.map((c) => c.before),
     method
@@ -581,6 +586,7 @@ export function ScenarioBar({
   problem,
   other,
   planCurrency,
+  planCurrencyKnown = true,
   confirmWhyNot,
   editable,
   money,
@@ -600,6 +606,8 @@ export function ScenarioBar({
   /** The currency its amounts were typed in, when it isn't the Plan's now. */
   other: string | null;
   planCurrency: string | null;
+  /** Whether the Plan's currency is known (lib/fire/plan-currency.ts). */
+  planCurrencyKnown?: boolean;
   /** Why "They're in" isn't offered now (accounts still loading, or with a
    *  problem), or null. */
   confirmWhyNot: string | null;
@@ -649,7 +657,7 @@ export function ScenarioBar({
       </p>
       {other && planCurrency && (
         <>
-          <div className="error">{currencyText(other, planCurrency)}</div>
+          <div className="error">{currencyText(other, planCurrency, planCurrencyKnown)}</div>
           {confirmWhyNot ? (
             <p className="panel-note">{confirmWhyNot}</p>
           ) : (

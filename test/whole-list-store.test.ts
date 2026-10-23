@@ -158,6 +158,22 @@ describe('saving', () => {
     expect(store.get()).toMatchObject({ saving: false, saveError: null });
   });
 
+  test('a load asked for while a save is in flight waits for it, so no older list lands as ready in between', async () => {
+    const { server, store } = await loaded({ Food: 300 });
+    const save = store.save({ Food: 300, Rent: 1000 });
+    const reload = store.load();
+    // Only the save is out: the load hasn't gone yet, and the list on screen is the one being saved.
+    expect(server.pending).toEqual(['PUT']);
+    expect(store.get()).toMatchObject({ saving: true, value: { Food: 300, Rent: 1000 } });
+    await server.release();
+    expect(await save).toBe(true);
+    // Now it goes, and reads what the save wrote.
+    expect(server.pending).toEqual(['GET']);
+    await server.release();
+    await reload;
+    expect(store.get()).toMatchObject({ status: 'ready', saving: false, value: { Food: 300, Rent: 1000 } });
+  });
+
   test('a second save while one is in flight is refused, not sent', async () => {
     const { server, store } = await loaded();
     const first = store.save({ Food: 300, Rent: 1000 });
