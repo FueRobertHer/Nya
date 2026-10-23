@@ -1317,10 +1317,11 @@ export function FiCard({
         warnings={[
           leftOut.otherCurrencies,
           uncategorizedNote(flows.uncategorized ?? 0),
-          // IOUs you owe typed for days before the bank's history: outside the
-          // span measured, so left out rather than scaled up (lib/fire/inputs.ts).
+          // IOUs you owe typed for days before the earliest transaction: outside
+          // the span measured, so left out here rather than scaled up (they
+          // still count in budgets and reports; lib/fire/inputs.ts).
           flows.iousBefore
-            ? `${flows.iousBefore.count === 1 ? 'An IOU' : `${flows.iousBefore.count} IOUs`} you owe from before ${dayName(flows.from)} (${money(flows.iousBefore.amount)}) ${flows.iousBefore.count === 1 ? "isn't" : "aren't"} counted: your spending is measured from your bank's history, which begins then.`
+            ? `${flows.iousBefore.count === 1 ? 'An IOU' : `${flows.iousBefore.count} IOUs`} you owe from before ${dayName(flows.from)} (${money(flows.iousBefore.amount)}) ${flows.iousBefore.count === 1 ? "isn't" : "aren't"} counted here: your spending is measured from your transactions, which begin then.`
             : null,
           cashHint,
           // Said by where the rows came from: Plaid gives a loan's kind when it
