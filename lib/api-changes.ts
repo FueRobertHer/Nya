@@ -2,7 +2,7 @@
 //
 // The record of changes made with API tokens: every write a token sends
 // through the API or the MCP server, and every undo of one, with what it
-// changed, so the person can see it, undo it, or forget it (Manage, API
+// changed, so the person can see it, undo it, or forget it (Settings, Your data and privacy, API
 // tokens, components/ApiChanges.tsx), and a token that can write can read its
 // own (/api/v1/changes, list_changes). Two stores on the storage seam
 // (lib/repo.ts), inside the container:

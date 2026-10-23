@@ -1,7 +1,7 @@
 // lib/weekly-summary/send-now.ts
 //
 // The weekly summary from the app (app/api/weekly-summary, the Weekly summary
-// card under Manage on the Accounts tab, components/WeeklySummaryCard.tsx):
+// card in Settings, Preferences, components/WeeklySummaryCard.tsx):
 // whether this copy of Nya can send one at all, saving the setting, the
 // preview, and "Send me one now".
 //

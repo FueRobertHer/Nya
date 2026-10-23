@@ -39,7 +39,7 @@ export default function RestoreAnswers({
     <div className="restore-section">
       <div className="section-label">Banks from your download</div>
       <p className="panel-note">
-        Their transactions count once each account is linked to its new one when you connect the bank again (the Accounts tab offers it), or once you say the bank
+        Their transactions count once each account is linked to its new one when you connect the bank again (Settings, Connections offers it), or once you say the bank
         is gone: then they count as an ended account’s, up to the day you give. While a bank waits, no net worth total is recorded.
       </p>
       {view.unreadable && (
@@ -228,7 +228,7 @@ function HolderQuestion({
             ))}
         </div>
         <p className="panel-note">
-          If it is: link each account to its new one on the Accounts tab (Earlier accounts), or say which aren’t at this connection under its bank above.
+          If it is: link each account to its new one in Settings, Connections (Earlier accounts), or say which aren’t at this connection under its bank above.
         </p>
       </div>
     );

@@ -319,7 +319,7 @@ export default function SecurityPage() {
         </p>
         <p>Encrypting these as well is planned.</p>
         <p>
-          Your data, under Manage on the Accounts tab, lists what Nya keeps about you kind by kind: which of it is plain
+          Your data, in Settings under Your data and privacy, lists what Nya keeps about you kind by kind: which of it is plain
           text, and which key the rest is encrypted with, your account’s own or one this copy of Nya shares.
         </p>
         <p>

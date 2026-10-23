@@ -1,6 +1,6 @@
 'use client';
 
-// Receipts and documents, under Manage accounts (#47): every file kept, what
+// Receipts and documents, in Settings, Your data and privacy (#47): every file kept, what
 // is used of the space this copy of Nya allows, and the files as ZIP files.
 //
 // THE LIST. Newest first, fifty at a time, each with its thumbnail (fetched

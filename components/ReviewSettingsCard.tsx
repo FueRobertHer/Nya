@@ -1,6 +1,6 @@
 'use client';
 
-// The review queue's settings, under Manage (lib/review-store.ts): turning it
+// The review queue's settings, in Settings, Transactions (lib/review-store.ts): turning it
 // on, from today or a little before (never years of history), or off, which
 // keeps every approval; when its records can't be read, removing only the
 // damaged ones, once the person confirms (settings a later release wrote are

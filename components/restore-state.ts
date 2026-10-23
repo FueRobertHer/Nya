@@ -53,7 +53,7 @@ export type RestoreState = {
 
 /** A restored account whose entry can't be read (app/api/user-restore): what
  *  the directory calls it ("Chase Checking ••1111"; null: nothing it can
- *  read); where the Earlier accounts list (Manage) lists it, by the name it
+ *  read); where the Earlier accounts list (Settings, Connections) lists it, by the name it
  *  shows there (lib/earlier-names.ts) and its days, and whether some of the
  *  rows a restore brought back for it are in a form this version doesn't
  *  know (`unrecognised`: then that list offers no Forget for it, as
@@ -236,29 +236,29 @@ const ROWS_UNKNOWN =
  *  (see UnreadableAccount). `remove`: this card does it. */
 function unlistedWay(u: NonNullable<UnreadableAccount['unlisted']>): { words: string; remove: boolean } {
   const then = u.listable ? 'then forget it under Earlier accounts' : 'then forget it here';
-  const left = (why: string, way: string) => `It isn’t listed under Earlier accounts (Manage), since ${why}. To forget it, ${way}, ${then}; ${ASK}`;
+  const left = (why: string, way: string) => `It isn’t listed under Earlier accounts (Settings, Connections), since ${why}. To forget it, ${way}, ${then}; ${ASK}`;
   switch (u.why) {
     case 'unknown':
       return u.rows?.unrecognised
         ? {
-            words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage), and ${ROWS_UNKNOWN}`,
+            words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Settings, Connections), and ${ROWS_UNKNOWN}`,
             remove: false,
           }
-        : { words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage). Forget it here for good, ${ASK}`, remove: true };
+        : { words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Settings, Connections). Forget it here for good, ${ASK}`, remove: true };
     case 'live':
       return { words: left('it is one of your connected accounts', 'disconnect its bank (Accounts tab)'), remove: false };
     case 'connected':
       return { words: left('its bank is still connected', 'disconnect that bank (Accounts tab)'), remove: false };
     case 'link-unreadable':
-      return { words: left('a link saved for it can’t be read', 'remove that link (Manage, Reconnected accounts, Unreadable)'), remove: false };
+      return { words: left('a link saved for it can’t be read', 'remove that link (Settings, Connections, Reconnected accounts, Unreadable)'), remove: false };
     case 'linked':
-      return { words: left(`it is linked to ${u.others[0] ?? 'another account'}, whose history it is part of`, 'unlink it (Manage, Reconnected accounts, Linked)'), remove: false };
+      return { words: left(`it is linked to ${u.others[0] ?? 'another account'}, whose history it is part of`, 'unlink it (Settings, Connections, Reconnected accounts, Linked)'), remove: false };
     case 'linked-to': {
       const known = u.others.filter((o): o is string => o !== null);
       const rest = u.others.length - known.length;
       const from = [...known, ...(rest === 0 ? [] : [rest === 1 ? (known.length > 0 ? 'another earlier account' : 'an earlier account') : `${plainNumber(rest)} ${known.length > 0 ? 'other ' : ''}earlier accounts`])];
       const many = u.others.length > 1;
-      return { words: left(`${joined(from)} ${many ? 'are' : 'is'} linked to it`, `unlink ${many ? 'them' : 'that one'} (Manage, Reconnected accounts, Linked)`), remove: false };
+      return { words: left(`${joined(from)} ${many ? 'are' : 'is'} linked to it`, `unlink ${many ? 'them' : 'that one'} (Settings, Connections, Reconnected accounts, Linked)`), remove: false };
     }
     case 'manual':
       return { words: `It has a manual account’s id, so it can’t be forgotten as an earlier account: ask whoever runs this copy of Nya.`, remove: false };
@@ -307,7 +307,7 @@ export function unreadableNotes(
   } else if (state.accounts_unreadable.broken_links && entries.some((a) => a.unlisted?.why !== 'link-unreadable')) {
     out.push({
       key: 'broken-links',
-      words: 'A saved link can’t be read, so no account can be forgotten until it is removed: remove it first (Manage, Reconnected accounts, Unreadable).',
+      words: 'A saved link can’t be read, so no account can be forgotten until it is removed: remove it first (Settings, Connections, Reconnected accounts, Unreadable).',
       empty: false,
     });
   }
@@ -343,8 +343,8 @@ export function unreadableNotes(
       const { name, first, last, unrecognised } = one.a.listed;
       const days = first || last ? ` (${first ? day(first) : 'unknown'} to ${last ? day(last) : 'unknown'})` : '';
       // The list offers no Forget for it then (app/api/account-links).
-      if (unrecognised) return { key, words: `${what} It is listed under Earlier accounts (Manage) as ${name}${days}, but ${ROWS_UNKNOWN}`, empty: false };
-      return { key, words: `${what} Forget it under Earlier accounts (Manage), where it is listed as ${name}${days}, ${ASK}`, empty: false };
+      if (unrecognised) return { key, words: `${what} It is listed under Earlier accounts (Settings, Connections) as ${name}${days}, but ${ROWS_UNKNOWN}`, empty: false };
+      return { key, words: `${what} Forget it under Earlier accounts (Settings, Connections), where it is listed as ${name}${days}, ${ASK}`, empty: false };
     }
     if (!one.a.unlisted) return { key, words: `${what} Ask whoever runs this copy of Nya.`, empty: false };
     const way = unlistedWay(one.a.unlisted);

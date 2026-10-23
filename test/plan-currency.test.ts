@@ -336,7 +336,7 @@ describe('without a home currency, no figure from a part of what it measures', (
     expect(f.view.yearsToFi).toBeNull();
     expect(f.savingsRate).toBeNull();
     expect(gapText(spendingGap(flows)!)).toBe(
-      'Not measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (360 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
+      'Not measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (360 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card in Settings, Preferences to convert them, or type your spending.'
     );
     // Typed, the figure is the person's own, and the FI number is back.
     expect(fiFigures({ ...typed, spending: 36_500 }, { flows, assets, workplace: null }, 'USD').view.fiNumber).toBe(912_500);
@@ -561,7 +561,7 @@ describe('the year weighed on each side, money out apart from money in (review r
     expect(f.view.yearsToFi).toBeNull();
     expect(f.savingsRate).toBeNull();
     expect(gapText(g!)).toBe(
-      'Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (36 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
+      'Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (36 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card in Settings, Preferences to convert them, or type your spending.'
     );
     // By count the same, as before.
     expect(spendingGap(flows)).toMatchObject({ judged: 'count', sides: ['spending'] });
@@ -607,7 +607,7 @@ describe('the year weighed on each side, money out apart from money in (review r
     expect(f.savingsRate).toBeNull();
     expect(notWorkedOutText(f.view, 'below')).toBe('Not worked out: your savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
     expect(gapText(byAmount!, 'year')).toBe(
-      'The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so figures from the rest would leave that much of the year out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your savings.'
+      'The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so figures from the rest would leave that much of the year out. Choose a home currency on the Currency card in Settings, Preferences to convert them, or type your savings.'
     );
     // The spending figure's own words are never asked of it: the Plan tab's
     // spending note waits on the spending side, and Home's on an unmeasured

@@ -349,11 +349,11 @@ describe('the page around it', () => {
     expect(unreadable).not.toContain('<button');
   });
 
-  test('found from Activity and from Manage', () => {
+  test('found from Activity, and only there', () => {
     expect(renderToStaticMarkup(<ReportsEntry />)).toContain('href="/reports"');
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
     expect(dashboard).toContain("{tab === 'activity' && <ReportsEntry />}");
-    expect(dashboard).toContain('{manageMode && <ReportsEntry />}');
+    expect(dashboard.match(/<ReportsEntry \/>/g)?.length).toBe(1);
   });
 
   test('gated like the dashboard: signed out, the page sends to the login and the data is refused', async () => {

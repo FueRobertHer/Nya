@@ -159,7 +159,7 @@ export function inUseMessage(scan: AccountScan): string {
   const list = named.length <= 1 ? named.join('') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
   const what = `This account already has ${list}. A restore brings back a whole copy, so it goes only into an account with nothing in it yet.`;
   const how = scan.unseen
-    ? ' Some of it is data Nya doesn’t show here: empty this account first (Manage, Bring back a download), or ask whoever runs this copy of Nya.'
-    : ' To bring in transactions, import a file into an account instead (Manage). To restore this file here, empty this account first.';
+    ? ' Some of it is data Nya doesn’t show here: empty this account first (Settings, Your data and privacy, Bring back a download), or ask whoever runs this copy of Nya.'
+    : ' To bring in transactions, import a file into an account instead (Accounts tab). To restore this file here, empty this account first.';
   return what + how;
 }

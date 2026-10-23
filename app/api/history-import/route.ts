@@ -162,7 +162,7 @@ async function linkedAccount(ctx: Ctx, account_id: unknown): Promise<{ account: 
   }
   const [{ links, unreadable }, live] = await Promise.all([readLinks(ctx), liveAccountIds(ctx, { strict: true })]);
   if (unreadable.size > 0) {
-    return NextResponse.json({ error: 'A saved account link can’t be read, so this account’s earlier imports can’t be found. Remove it on the Accounts tab first.' }, { status: 409 });
+    return NextResponse.json({ error: 'A saved account link can’t be read, so this account’s earlier imports can’t be found. Remove it in Settings, Connections first.' }, { status: 409 });
   }
   return { account, links: effectiveLinks(links, live) };
 }

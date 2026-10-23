@@ -16,7 +16,7 @@ import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 // the Activity tab, choosing the transaction a file goes on, getting a
 // photo ready (its size, what a file is), the words the sheets say, the
 // viewer (a photo kept from view while amounts are hidden, a PDF never drawn
-// in the page), the Manage card's filters and its reminder, and the Activity
+// in the page), the Receipts and documents card's filters and its reminder, and the Activity
 // list's paperclip, there only where the file store is connected.
 
 const MB = 1024 * 1024;
@@ -253,7 +253,7 @@ describe('a transaction’s sheet', () => {
   });
 });
 
-describe('the Manage card', () => {
+describe('the Receipts and documents card in Settings', () => {
   test('narrows by what needs the person, by year and by money out', () => {
     const files = [
       file({ id: 'a' }),

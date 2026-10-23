@@ -241,7 +241,7 @@ async function reserve(ctx: Ctx, id: string, bytes: number, quota: number, now: 
     const u = cur ?? (await usageFromRecords(ctx));
     const inProgress = Object.values(u.uploads).filter((x) => Date.parse(x.expires_at) > now).length;
     if (u.bytes + bytes > quota) {
-      throw new AttachmentRefused(413, `Your receipts and documents use ${mb(u.bytes)} of the ${mb(quota)} this account can keep. Delete some under Manage, Receipts and documents.`);
+      throw new AttachmentRefused(413, `Your receipts and documents use ${mb(u.bytes)} of the ${mb(quota)} this account can keep. Delete some in Settings, Your data and privacy, Receipts and documents.`);
     }
     if (u.files >= MAX_FILES) throw new AttachmentRefused(413, `This account keeps at most ${MAX_FILES.toLocaleString('en-US')} receipts and documents. Delete some first.`);
     if (inProgress >= MAX_UPLOADS) throw new AttachmentRefused(429, `At most ${MAX_UPLOADS} files can be sent at once. Wait for one to finish.`);

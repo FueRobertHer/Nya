@@ -1,6 +1,6 @@
 'use client';
 
-// Accounts tab, under Manage accounts: linking an account's history across a
+// Settings, Connections: linking an account's history across a
 // reconnect (lib/links.ts).
 //
 // Shows only when there is something to decide or undo:
