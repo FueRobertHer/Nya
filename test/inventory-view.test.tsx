@@ -86,6 +86,7 @@ describe('Your data, in words', () => {
   test('which key, as each value claims it', () => {
     expect(encryptionText(row({ encryption: { kind: 'plain' } }))).toBe('No: kept as plain text.');
     expect(encryptionText(row({ encryption: { kind: 'token' } }))).toContain('The token that reaches each bank is encrypted');
+    expect(encryptionText(row({ encryption: { kind: 'wrapped' } }))).toContain('locked by the master key');
     expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 0, shared: 0, unclear: 0, not_ciphertext: 0 } }))).toBe('Yes, whenever any is stored.');
     expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 4, shared: 0, unclear: 0, not_ciphertext: 0 } }))).toBe('Yes, with your account’s own key.');
     expect(encryptionText(base)).toBe('Yes, with a key this copy of Nya shares between accounts.');

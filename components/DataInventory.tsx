@@ -17,6 +17,7 @@ import { plainNumber } from '@/lib/format';
 type Encryption =
   | { kind: 'plain' }
   | { kind: 'token' }
+  | { kind: 'wrapped' }
   | { kind: 'encrypted'; own: number; shared: number; unclear: number; not_ciphertext: number };
 
 export type InventoryRow = {
@@ -70,6 +71,7 @@ export function encryptionText(r: InventoryRow): string {
   const e = r.encryption;
   if (e.kind === 'plain') return 'No: kept as plain text.';
   if (e.kind === 'token') return 'The token that reaches each bank is encrypted; the rest of each record is plain text.';
+  if (e.kind === 'wrapped') return 'The key is kept locked by the master key, which is never in the database; its id and dates are plain text.';
   const parts: string[] = [];
   const total = e.own + e.shared + e.unclear + e.not_ciphertext;
   if (total === 0) return 'Yes, whenever any is stored.';

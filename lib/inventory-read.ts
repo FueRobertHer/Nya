@@ -43,10 +43,13 @@ import { containerEntry, families, GROUPS, keptRows, kindOf, outsideEntries, SEE
  *  of Nya shares (the original single key or a shared data key), under a key
  *  whose id can't be read (`unclear`), or don't look encrypted at all
  *  (`not_ciphertext`: they can't be read). Claims read from each value's
- *  first bytes, never decrypted. */
+ *  first bytes, never decrypted. `token`: the Plaid Items' records, whose
+ *  access token alone is encrypted; `wrapped`: the data key's record, whose
+ *  key is locked by the master key. */
 export type Encryption =
   | { kind: 'plain' }
   | { kind: 'token' }
+  | { kind: 'wrapped' }
   | { kind: 'encrypted'; own: number; shared: number; unclear: number; not_ciphertext: number };
 
 export type InventoryRow = {
@@ -197,12 +200,13 @@ const rowOf = (
  *  count here, or a failure (named, never zero). */
 type OutsideRead = { status: 'read'; count: number } | { status: 'not-counted' } | { status: 'unreadable' };
 
+/** A part of the list that couldn't be read (see the header). */
+const FAILED = Symbol('failed');
 const quiet = <T>(what: string, run: () => Promise<T>): Promise<T | typeof FAILED> =>
   run().catch((err) => {
     console.error(`Your data: ${what} could not be read.`, err instanceof Error ? err.name : typeof err);
     return FAILED;
   });
-const FAILED = Symbol('failed');
 
 /**
  * Everything Nya keeps about the person whose container this is, counted and
@@ -308,7 +312,7 @@ export async function readInventory(ctx: Ctx, opts: { userId: string | null; now
         status: read.status,
         count: read.status === 'read' ? read.count : null,
         chars: null,
-        encryption: { kind: 'plain' },
+        encryption: { kind: o.wrapped ? 'wrapped' : 'plain' },
       },
       { included: (o.download ?? '').startsWith('In your download'), text: o.download ?? 'Not in your download.' }
     );

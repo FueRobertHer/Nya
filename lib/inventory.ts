@@ -116,6 +116,8 @@ export type Outside = Entry & {
   about_you: boolean;
   /** Only with Clerk accounts: with the shared password there are no people. */
   clerk?: boolean;
+  /** What it keeps is a key locked by the master key, beside plain text. */
+  wrapped?: true;
 };
 
 // Units, shared by many entries.
@@ -158,7 +160,6 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'The form earlier versions of Nya read, kept beside your budgets on categories and groups.',
     unit: VALUE,
     kept: 'Your data',
-    seen: ['shared', 'api', 'email'],
   },
   'history:accounts:est:flat': {
     group: 'history',
@@ -188,7 +189,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Each account’s balance on each recorded day',
     unit: DAY,
     kept: 'Your data',
-    seen: ['shared', 'api'],
+    seen: ['api'],
     plain: DAYS_PLAIN,
   },
   'history:accounts:est': {
@@ -667,15 +668,17 @@ const STORES: Readonly<Record<string, Entry>> = {
   'imported-transactions': {
     group: 'transactions',
     name: 'Transactions imported into linked accounts',
-    unit: ENTRY,
+    unit: ACCOUNT,
     kept: 'Your data',
     seen: ['api'],
+    plain: ACCOUNT_IDS,
   },
   'imported-twins': {
     group: 'transactions',
     name: 'Which bank transactions stand for rows you imported',
-    unit: ENTRY,
+    unit: CONNECTION,
     kept: 'Your data',
+    plain: ITEM_IDS,
   },
   imports: {
     group: 'imports',
@@ -848,7 +851,6 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Whether it is on, its day and your time zone.',
     unit: VALUE,
     kept: 'The weekly summary',
-    seen: ['email'],
   },
   'weekly-summary-sends': {
     group: 'machinery',
@@ -931,6 +933,7 @@ const OUTSIDE: Readonly<Record<string, Outside>> = {
     plain: 'Its id, when it was made and when your data was moved to it, beside your account’s random id. The key itself is locked.',
     download: 'Not in your download: a key, not your data.',
     about_you: true,
+    wrapped: true,
   },
   grants: {
     group: 'sharing',

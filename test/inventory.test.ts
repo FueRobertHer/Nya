@@ -230,7 +230,7 @@ describe('reading it', () => {
     const inv = await readInventory(ctx, { userId: null, now: NOW });
     expect(inv.key).toEqual({ own: true, since: '2026-02-01T00:00:00.000Z', moved: null });
     expect(row(inv, 'manual:accounts')).toMatchObject({ status: 'read', count: 4, encryption: { kind: 'encrypted', own: 2, shared: 1, unclear: 0, not_ciphertext: 1 } });
-    expect(row(inv, 'crypto:')).toMatchObject({ where: 'environment', status: 'read', count: 1 });
+    expect(row(inv, 'crypto:')).toMatchObject({ where: 'environment', status: 'read', count: 1, encryption: { kind: 'wrapped' } });
   });
 
   test('a key nothing names is counted as such, never left out; a family kept for the whole environment found inside the container is one', async () => {
