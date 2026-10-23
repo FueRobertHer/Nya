@@ -126,7 +126,7 @@ describe('a form left open never saves to another plan', () => {
   test('the scenario is deleted elsewhere while a form is open: the drawer closes, and nothing reaches the Plan', async () => {
     let gone = false;
     const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN }],
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
       'GET /api/plan-scenarios': () => (gone ? listing() : listing(entry())),
       'PUT /api/plan-scenarios': () => {
         gone = true;
@@ -160,7 +160,7 @@ describe('a form left open never saves to another plan', () => {
   test('changed on another device: the drawer closes on the new version, says so, and a second Save can’t undo it', async () => {
     const newer = entry({ rev: 'r2', set: { targetAge: 50, withdrawalRate: 0.035 } });
     const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN }],
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
       'GET /api/plan-scenarios': listing(entry()),
       'PUT /api/plan-scenarios': [409, { error: 'This scenario was changed on another device: here it is as it is now.', stale: true, scenario: newer }],
       'GET /api/allocation-settings': [200, { settings: null }],
@@ -200,7 +200,7 @@ describe('a form left open never saves to another plan', () => {
     const stale = 'This scenario was changed on another device: here it is as it is now.';
     let listed = entry();
     const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN }],
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
       'GET /api/plan-scenarios': () => listing(listed),
       'PUT /api/plan-scenarios': () => {
         listed = newer;
@@ -223,7 +223,7 @@ describe('a form left open never saves to another plan', () => {
 
   test('with the Plan open, its forms save the Plan, and never a scenario', async () => {
     const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN }],
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
       'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan }],
       'GET /api/plan-scenarios': listing(entry()),
       'GET /api/allocation-settings': [200, { settings: null }],
@@ -241,7 +241,7 @@ describe('a form left open never saves to another plan', () => {
   });
 
   test('back to your plan puts focus on the scenario’s row', async () => {
-    serve({ 'GET /api/fire-plan': [200, { plan: PLAN }], 'GET /api/plan-scenarios': listing(entry()), 'GET /api/allocation-settings': [200, { settings: null }] });
+    serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/plan-scenarios': listing(entry()), 'GET /api/allocation-settings': [200, { settings: null }] });
     const tab = await render();
     await press(tab.byLabel('Open Retire at 50'));
     expect((dom.document.activeElement as FakeElement).textContent).toBe('Scenario: Retire at 50');
@@ -266,9 +266,28 @@ describe('what the tab waits for', () => {
   ];
   const inEuros = entry({ currency: 'EUR', set: { targetAge: 50, spending: 45_000 } });
 
-  test('“They’re in” only once the accounts have all loaded without a problem, transactions included', async () => {
+  test('with the Plan’s currency recorded, “They’re in” is offered at once: it can’t move while the accounts load, or with a problem', async () => {
     const calls = serve({
-      'GET /api/fire-plan': [200, { plan: PLAN }],
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
+      'GET /api/plan-scenarios': listing(inEuros),
+      'PUT /api/plan-scenarios': (c) => [200, { scenario: { ...inEuros, ...c.body.scenario, rev: 'r2' } }],
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render({ institutions, balancesAsOf: null, txns: null, txnsLoading: true, txnNotes: ['Chase: needs to be reconnected'] });
+    await press(tab.byLabel('Open Retire at 50'));
+    expect(tab.text()).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
+    const confirm = tab.buttons('They’re in USD')[0];
+    expect(confirm).toBeDefined();
+    await press(confirm);
+    expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body.scenario.currency)).toEqual(['USD']);
+    expect(savedPlan(calls)).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('with nothing typed in the Plan, its currency is the accounts’: “They’re in” waits until they have all loaded without a problem, transactions included', async () => {
+    const untyped = { ...DEFAULT_PLAN, age: 40, targetAge: 55 };
+    const calls = serve({
+      'GET /api/fire-plan': [200, { plan: untyped, currency: null }],
       'GET /api/plan-scenarios': listing(inEuros),
       'PUT /api/plan-scenarios': (c) => [200, { scenario: { ...inEuros, ...c.body.scenario, rev: 'r2' } }],
       'GET /api/allocation-settings': [200, { settings: null }],
@@ -303,7 +322,7 @@ describe('what the tab waits for', () => {
 
   test('a scenario refused for lasting changes below zero shows its life events, to change', async () => {
     const below = entry({ set: {}, events: [{ id: 'x', kind: 'spending', label: 'Mortgage paid off', fromAge: 41, yearly: -45_000, years: null }] });
-    serve({ 'GET /api/fire-plan': [200, { plan: PLAN }], 'GET /api/plan-scenarios': listing(below), 'GET /api/allocation-settings': [200, { settings: null }] });
+    serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/plan-scenarios': listing(below), 'GET /api/allocation-settings': [200, { settings: null }] });
     const tab = await render();
     await press(tab.byLabel('Open Retire at 50'));
     expect(tab.text()).toContain('Its lasting changes in spending take your spending in retirement below zero');

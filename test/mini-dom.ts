@@ -192,7 +192,20 @@ export class FakeElement extends FakeNode {
   attributes = new Map<string, string>();
   style = styleObject();
   dataset: Record<string, string> = {};
-  value = '';
+  private typed = '';
+  /** A field's value; an option's is its value attribute, else its text. */
+  get value(): string {
+    return this.tagName === 'OPTION' ? (this.getAttribute('value') ?? this.textContent) : this.typed;
+  }
+  set value(v: string) {
+    this.typed = String(v);
+  }
+  /** A select's options, as React reads and marks them. */
+  get options(): FakeElement[] {
+    return this.findAll((e) => e.tagName === 'OPTION');
+  }
+  selected = false;
+  defaultSelected = false;
   checked = false;
   disabled = false;
   scrollTop = 0;
@@ -379,7 +392,9 @@ export function pressThrough(el: FakeElement): unknown {
 
 /** Typing a whole new value into a field. */
 export function type(el: FakeElement, value: string) {
-  el.value = value;
+  // Past React's own record of the value (it wraps the property to tell a
+  // change it made from one a person made), as a browser's typing is.
+  Object.getOwnPropertyDescriptor(FakeElement.prototype, 'value')!.set!.call(el, value);
   el.dispatchEvent(new FakeEvent('input'));
   el.dispatchEvent(new FakeEvent('change'));
 }

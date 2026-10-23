@@ -114,9 +114,11 @@ export async function seedEveryKind(
   await allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [{ ticker: 'VFIFX', split: { 'us-stocks': 60, bonds: 40 } }], accounts: [], target: null } as never);
   const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
   await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD', changes: [{ on: ago(10), from: null, to: 'USD' }] } as never);
-  const { firePlanStore } = await import('@/lib/fire-plan');
+  const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
   const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
+  const { currencyRecord } = await import('@/lib/fire/plan-currency');
   await firePlanStore.set(ctx, DEFAULT_PLAN);
+  await planCurrencyStore.set(ctx, currencyRecord(DEFAULT_PLAN, 'USD'));
   const { plannedStore } = await import('@/lib/planned-store');
   const { EMPTY_PLANNED } = await import('@/lib/planned');
   await plannedStore.set(ctx, EMPTY_PLANNED);

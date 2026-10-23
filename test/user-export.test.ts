@@ -1244,6 +1244,7 @@ describe('stores built on the storage seam', () => {
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
+      'fire-plan-currency',
       'goal-plans',
       'history-imports',
       'holdings:history',

@@ -419,22 +419,36 @@ export function upgradePlan(stored: unknown): unknown {
 }
 
 /** What Nya measured, for the inputs a plan can override. Null when there is
- *  nothing to measure from (no transactions, no investment accounts). */
+ *  nothing to measure from (no transactions, no investment accounts), or
+ *  when there is but it isn't measured (`unmeasured`: without a home
+ *  currency, more than a tenth of it is in another currency, lib/fire/
+ *  progress.ts). The two are kept apart all the way through: nothing to
+ *  measure from counts as none, a figure not measured is never counted as
+ *  zero, and what rests on it isn't worked out. */
 export type Measured = {
   spending: number | null;
   savings: number | null;
   assets: number | null;
+  unmeasured?: readonly ('spending' | 'savings' | 'assets')[];
 };
 
-/** Where an input came from, for the label beside it. */
-export type Source = 'measured' | 'typed' | 'none';
+/** Where an input came from, for the label beside it: `unmeasured` is there
+ *  to measure from but isn't measured (see Measured). */
+export type Source = 'measured' | 'typed' | 'none' | 'unmeasured';
 
 export type Input = { value: number | null; source: Source };
 
-function input(typed: number | null, measured: number | null): Input {
+function input(typed: number | null, measured: number | null, unmeasured = false): Input {
   if (typed !== null) return { value: typed, source: 'typed' };
+  if (unmeasured) return { value: null, source: 'unmeasured' };
   if (measured !== null) return { value: measured, source: 'measured' };
   return { value: null, source: 'none' };
+}
+
+/** The inputs of a view that are there but not measured (typed ones never
+ *  are), for saying why what rests on them isn't worked out. */
+export function unmeasuredOf(view: Pick<FiView, 'spending' | 'savings' | 'assets'>): ('spending' | 'savings' | 'assets')[] {
+  return (['spending', 'savings', 'assets'] as const).filter((k) => view[k].source === 'unmeasured');
 }
 
 export type FiView = {
@@ -450,8 +464,9 @@ export type FiView = {
   yearsToFi: number | null;
   /** The age then, when the age is known and it ever happens. */
   fiAge: number | null;
-  /** Coast FI, when both ages are known. */
-  coast: { number: number; years: number; reached: boolean } | null;
+  /** Coast FI, when both ages are known; `reached` null when invested
+   *  assets aren't measured. */
+  coast: { number: number; years: number; reached: boolean | null } | null;
   /** Barista FI, when part-time income is set. */
   barista: { number: number; yearsTo: number | null } | null;
   /** The balance projected at the target age, when both ages are known. */
@@ -470,23 +485,28 @@ export function formulasTake(plan: FirePlan): boolean {
  *  measured. Total: for rates the formulas don't take, the figures are left
  *  out (null) rather than thrown on, so no stored plan can stop the tab. */
 export function fiView(plan: FirePlan, measured: Measured): FiView {
-  const spending = input(plan.spending, measured.spending);
-  const savings = input(plan.savings, measured.savings);
-  const assets = input(plan.assets, measured.assets);
+  const off = new Set(measured.unmeasured ?? []);
+  const spending = input(plan.spending, measured.spending, off.has('spending'));
+  const savings = input(plan.savings, measured.savings, off.has('savings'));
+  const assets = input(plan.assets, measured.assets, off.has('assets'));
   if (!formulasTake(plan)) {
     return { spending, savings, assets, fiNumber: null, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
   }
   const fi = spending.value === null ? null : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
+  // Nothing to measure from counts as none; a figure not measured is never
+  // counted as zero, so nothing that rests on it is worked out.
+  const blocked = savings.source === 'unmeasured' || assets.source === 'unmeasured';
   const a = assets.value ?? 0;
   const c = savings.value ?? 0;
-  const yearsToFi = fi === null || (assets.value === null && savings.value === null) ? null : yearsToTarget(a, c, plan.realReturn, fi);
+  const neither = assets.value === null && savings.value === null;
+  const yearsToFi = fi === null || blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, fi);
   const fiAge = yearsToFi !== null && Number.isFinite(yearsToFi) && plan.age !== null ? plan.age + yearsToFi : null;
   const span = plan.age !== null && plan.targetAge !== null ? plan.targetAge - plan.age : null;
   const coastNumber = fi !== null && span !== null ? coastFiNumber(fi, plan.realReturn, span) : null;
   let barista: FiView['barista'] = null;
   if (plan.partTimeIncome > 0 && spending.value !== null) {
     const number = baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
-    barista = { number, yearsTo: assets.value === null && savings.value === null ? null : yearsToTarget(a, c, plan.realReturn, number) };
+    barista = { number, yearsTo: blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, number) };
   }
   return {
     spending,
@@ -496,9 +516,9 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
     progress: fi !== null && fi > 0 && assets.value !== null ? assets.value / fi : null,
     yearsToFi,
     fiAge,
-    coast: coastNumber === null || span === null ? null : { number: coastNumber, years: Math.max(0, span), reached: a >= coastNumber },
+    coast: coastNumber === null || span === null ? null : { number: coastNumber, years: Math.max(0, span), reached: assets.source === 'unmeasured' ? null : a >= coastNumber },
     barista,
-    atTargetAge: span !== null && (assets.value !== null || savings.value !== null) ? projectBalance(a, c, plan.realReturn, Math.max(0, span)) : null,
+    atTargetAge: span !== null && !blocked && !neither ? projectBalance(a, c, plan.realReturn, Math.max(0, span)) : null,
   };
 }
 

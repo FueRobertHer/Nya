@@ -17,6 +17,7 @@
 // And a plan that starts with more than it would have says so in its own
 // success cell, and in what a screen reader is given for it.
 
+import { notMeasuredWhat, unmeasuredNeed } from '@/lib/fire/progress';
 import type { SimResult } from '@/lib/fire/simulate';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { Missing } from '@/lib/fire/plan';
@@ -104,6 +105,9 @@ export function yearsDiffText(d: number): string {
 export function fiDateText(f: PlanFigures, today: string): string {
   const years = f.view.yearsToFi;
   if (f.short) return f.short.kind === 'cost' ? 'none: a cost it can’t pay from its investments (below)' : 'none: a year takes out more than there is (below)';
+  // A figure not measured is never taken as zero: said, rather than "--".
+  const waits = years === null && f.view.fiNumber !== null ? notMeasuredWhat(f.view) : null;
+  if (waits) return `not worked out: ${waits} measured (the FI card above says why)`;
   if (years === null || years === 0 || years === Infinity) return yearsToFiText(years);
   const year = Math.floor(Number(today.slice(0, 4)) + (Number(today.slice(5, 7)) - 1) / 12 + years);
   return `${yearsToFiText(years)}${f.view.fiAge !== null ? `, around age ${Math.round(f.view.fiAge)}` : ''} (around ${year})`;
@@ -120,7 +124,10 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     if (c.outcome.kind === 'not-run') return { ...empty, value: 'not worked out (below)' };
     const r = c.outcome.result;
     if (needsResult && r === 'pending') return { ...empty, pending: true };
-    if (needsResult && typeof r === 'object' && r !== null && 'missing' in r) return { ...empty, value: MISSING_TEXT[r.missing] };
+    if (needsResult && typeof r === 'object' && r !== null && 'missing' in r) {
+      const need = unmeasuredNeed(r.missing, c.outcome.figures.view);
+      return { ...empty, value: need ? `needs ${need} (the FI card above says why)` : MISSING_TEXT[r.missing] };
+    }
     if (needsResult && typeof r === 'object' && r !== null && 'error' in r) return { ...empty, value: 'couldn’t be worked out' };
     const result = resultOf(c);
     if (needsResult && result && base && !sameWay(result, base)) return { ...empty, value: 'worked out another way, so not compared' };
@@ -129,8 +136,10 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
   };
 
   // When every plan worked out ends, if they all end together: at an age,
-  // or, with no age to count from (the age is your plan's, so every plan has
-  // one or none), after a number of years.
+  // or, where one has no age to count from, after a number of years. A plan
+  // can have an age when your plan has none: a scenario that sets a
+  // retirement age starts at it (lib/fire/plan.ts startAge). Plans of both
+  // kinds are compared by how long they run, as plans with no age are.
   const ends = columns.flatMap((c) => {
     if (c.outcome.kind !== 'figures' || !('sim' in c.outcome.figures.engine)) return [];
     const { startAge, sim } = c.outcome.figures.engine;
@@ -140,7 +149,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
   const endsTogether =
     ends.length === 0 ? null
     : !noAge && ends.every((e) => e.age === ends[0].age) ? `at ${ends[0].age}`
-    : ends.every((e) => e.age === null && e.years === ends[0].years) ? `after ${ends[0].years} years`
+    : noAge && ends.every((e) => e.years === ends[0].years) ? `after ${ends[0].years} years`
     : null;
   /** When a plan ends: the age, or after how many years. */
   const endOf = (fig: PlanFigures) => ('sim' in fig.engine ? (fig.engine.startAge !== null ? `at ${fig.engine.startAge + fig.engine.sim.years}` : `after ${fig.engine.sim.years} years`) : '');

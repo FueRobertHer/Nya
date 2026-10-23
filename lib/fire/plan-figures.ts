@@ -22,7 +22,7 @@
 
 import { projectBalance } from './fi';
 import { compileEvents, hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
-import { enginePlan, fiView, formulasTake, planYears, startAge, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
+import { enginePlan, fiView, formulasTake, planYears, startAge, unmeasuredOf, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
 
 export type StartsWith = {
   balance: number;
@@ -100,7 +100,8 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
   let view: FiView = { ...core, spending: display.spending };
   let short: Shortfall | null = null;
   let walkedSavings: number | null = null;
-  const walked = hasWalk(compiled.walk) && core.fiNumber !== null && (core.assets.value !== null || core.savings.value !== null) && formulasTake(plan);
+  // Never from a figure that isn't measured (lib/fire/plan.ts Measured).
+  const walked = hasWalk(compiled.walk) && core.fiNumber !== null && (core.assets.value !== null || core.savings.value !== null) && unmeasuredOf(core).length === 0 && formulasTake(plan);
   if (walked) {
     const a = core.assets.value ?? 0;
     const c = core.savings.value ?? 0;
@@ -127,7 +128,7 @@ function startsWith(plan: FirePlan, view: FiView, engine: EnginePlan | { missing
   const atAge = engine.startAge;
   const base = { balance, from: plan.start, atAge, projected: null, short: null, more: false };
   if (plan.start === 'assets' || plan.age === null || atAge === null || !formulasTake(plan)) return base;
-  if (view.assets.value === null && view.savings.value === null) return base;
+  if ((view.assets.value === null && view.savings.value === null) || unmeasuredOf(view).length > 0) return base;
   const a = view.assets.value ?? 0;
   const c = view.savings.value ?? 0;
   const years = Math.max(0, atAge - plan.age);

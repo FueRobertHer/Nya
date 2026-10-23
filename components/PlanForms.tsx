@@ -199,7 +199,7 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
   },
 };
 
-type CountedAccount = { account_id: string; name: string; institution: string; balance: number };
+type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null };
 
 export function FigureForm(
   props: SaveProps & {
@@ -288,7 +288,7 @@ export function FigureForm(
                     {a.name} <span className="plan-muted">· {a.institution}</span>
                   </span>
                   <span className="num">
-                    <Masked>{wholeMoney(a.balance, props.currency)}</Masked>
+                    <Masked>{wholeMoney(a.balance, a.currency ?? props.currency)}</Masked>
                   </span>
                 </li>
               ))}
