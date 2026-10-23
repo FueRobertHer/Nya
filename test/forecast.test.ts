@@ -522,6 +522,13 @@ describe('what it says it may be missing', () => {
     // Planned far from its due date, or for another amount: still said.
     expect(notesFor(withCard, [{ ...payment, date: '2026-11-05' }])).toEqual([named]);
     expect(notesFor(withCard, [{ ...payment, amount: 2000 }])).toEqual([named]);
+    // Part of it planned near its due date: what is planned is said, and the
+    // rest is what isn't in the forecast, never the whole statement.
+    expect(notesFor(withCard, [{ ...payment, amount: 300 }])).toEqual([
+      "Sapphire's payment, statement balance $812.40, is due on 2026-10-22. The $300.00 you planned around then may be part of it; the rest, $512.40, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.",
+    ]);
+    // In two parts that come to it: planned.
+    expect(notesFor(withCard, [{ ...payment, amount: 400 }, { ...payment, id: 'p2', amount: 412.4, date: '2026-10-24' }])).toEqual([]);
   });
 
   test('pay that stopped coming or varies too much, and a series on an account of unknown type', () => {

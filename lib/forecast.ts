@@ -718,8 +718,9 @@ export function forecastNotes(opts: {
   // with what is owed of its statement, from Plaid's payment details. Not said
   // when that statement is paid already (a payment on or after its issue
   // date covers it), when a planned expense near the due date is that
-  // payment, or when a payment held for a card it can't tell is near what this
-  // one owes: it may be that one.
+  // payment (or planned expenses there come to it together, paid in parts),
+  // or when a payment held for a card it can't tell is near what this one
+  // owes: it may be that one. With less planned there, the rest is said.
   const paid = opts.series?.cardsPaid;
   const close = (a: number, b: number | null | undefined) => b !== null && b !== undefined && b > 0 && Math.abs(a - b) <= b * CARD_NEAR;
   if (opts.until)
@@ -735,14 +736,18 @@ export function forecastNotes(opts: {
         if (owed === 0) continue;
         const figure = owed ?? l.minimum_payment;
         if (paid?.unknown.some((x) => close(x, figure) || close(x, l.minimum_payment))) continue;
-        const planned = (opts.planned ?? []).some(
+        const around = (opts.planned ?? []).filter(
           (p) =>
             p.kind === 'expense' &&
             inCurrency({ iso_currency_code: p.currency }, position.currency) &&
-            plannedDates(p, addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS), 1).length > 0 &&
-            (close(p.amount, figure) || close(p.amount, l.minimum_payment))
+            plannedDates(p, addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS), 1).length > 0
         );
-        if (planned) continue;
+        if (around.some((p) => close(p.amount, figure) || close(p.amount, l.minimum_payment))) continue;
+        // Planned near the due date for less than it: maybe part of it, paid
+        // in parts. Together near it, that is planned; less, the rest is
+        // what the forecast doesn't hold, said with what was planned.
+        const part = figure ? Math.round(around.filter((p) => p.amount < figure).reduce((n, p) => n + p.amount, 0) * 100) / 100 : 0;
+        if (part > 0 && close(part, figure)) continue;
         const money = (n: number) => formatMoney(n, a.currency ?? position.currency);
         const amount =
           owed === null
@@ -752,7 +757,11 @@ export function forecastNotes(opts: {
             : since > 0
               ? `, ${money(owed)} left of its statement,`
               : `, statement balance ${money(owed)},`;
-        notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
+        if (part > 0 && figure && part < figure)
+          notes.push(
+            `${a.name}'s payment${amount} is due ${days.day(due)}. The ${money(part)} you planned around then may be part of it; the rest, ${money(Math.round((figure - part) * 100) / 100)}, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.`
+          );
+        else notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
       }
 
   // Pay left out, named.
