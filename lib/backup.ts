@@ -619,6 +619,11 @@ export async function backupProblem(now: Date = new Date()): Promise<BackupProbl
     return null;
   }
   if (!status) return null;
+  return problemOf(status, now);
+}
+
+/** What a backups record says is wrong, or null. */
+function problemOf(status: Status, now: Date): BackupProblem | null {
   if (status.last_failed) return { last_ok: status.last_ok, reason: status.reason };
   // Two days: the cron runs at 16:00 UTC, so yesterday's copy being the
   // newest is normal for most of the day.
@@ -628,17 +633,18 @@ export async function backupProblem(now: Date = new Date()): Promise<BackupProbl
   return null;
 }
 
-/** What the dashboard says of backups: backupProblem, and, where backups are
- *  kept, that none has been recorded at all (`none`). Never throws. */
+/** What the dashboard says of backups: backupProblem's, and, where backups
+ *  are kept, that none has been recorded at all (`none`). From the one read
+ *  backupProblem makes. Never throws. */
 export async function backupNotice(now: Date = new Date()): Promise<BackupProblem | null> {
-  const problem = await backupProblem(now);
-  if (problem) return problem;
+  let status: Status | null;
   try {
-    if (backupRetention()?.kept && !(await backupRecordExists())) return { last_ok: null, reason: null, none: true };
+    status = await readStatus();
   } catch {
-    // A notice, never a reason to fail the page.
+    return null;
   }
-  return null;
+  if (!status) return backupRetention()?.kept ? { last_ok: null, reason: null, none: true } : null;
+  return problemOf(status, now);
 }
 
 // ---- The nightly sweep of receipts and documents (lib/attachment-sweep.ts) ----
@@ -677,6 +683,11 @@ export async function readAttachmentSweep(): Promise<AttachmentSweepStatus | nul
     if (err instanceof SyntaxError) return null;
     throw err;
   }
+  return sweepOf(status);
+}
+
+/** The sweep's record inside the backups' one, or null. */
+function sweepOf(status: Status | null): AttachmentSweepStatus | null {
   const parsed = status?.attachments;
   if (!parsed || typeof parsed !== 'object') return null;
   const s = parsed as Partial<AttachmentSweepStatus>;
@@ -736,15 +747,16 @@ export type AttachmentSweepProblem = { last_ok: string | null; reason: string | 
  *  when it never ran (no files kept here) or the record can't be read: a
  *  notice, never a reason to fail a page. */
 export async function attachmentSweepProblem(now: Date = new Date()): Promise<AttachmentSweepProblem | null> {
-  let s: AttachmentSweepStatus | null;
+  let status: Status | null;
   try {
-    // Paused while the backups' record isn't there (review nit 22), where
-    // files can be kept at all (a master key: lib/attachments.ts).
-    if (backupRetention()?.kept && masterKeyConfigured() && !(await backupRecordExists())) return { last_ok: null, reason: null, held: false, paused: true };
-    s = await readAttachmentSweep();
+    status = await readStatus();
   } catch {
     return null;
   }
+  // Paused while the backups' record isn't there (review nit 22), where
+  // files can be kept at all (a master key: lib/attachments.ts).
+  if (!status) return backupRetention()?.kept && masterKeyConfigured() ? { last_ok: null, reason: null, held: false, paused: true } : null;
+  const s = sweepOf(status);
   if (!s) return null;
   if (s.last_failed) return { last_ok: s.last_ok, reason: s.reason, held: false };
   if (s.held && now.getTime() - Date.parse(s.held.at) < 7 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: true };
