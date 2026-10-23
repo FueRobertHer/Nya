@@ -46,10 +46,12 @@ import { readFlowFx } from '@/lib/fx/read';
 // written or a tag renamed shows on the next load with nothing dropped.
 //
 // EXCHANGE RATES (`fx`), with a home currency chosen: what the page converts
-// the rows' totals with (lib/fx/totals.ts), read after the cache on every
-// load (lib/fx/read.ts readFlowFx), so no cached payload holds a converted
-// figure and a change of home currency or rate needs no cache dropped.
-// Absent without one: every total is then today's.
+// the rows' totals with (lib/fx/totals.ts), for the rows' currencies and the
+// person's accounts' (the Plan converts a year of spending into its
+// accounts' currency), read after the cache on every load (lib/fx/read.ts
+// readFlowFx), so no cached payload holds a converted figure and a change of
+// home currency or rate needs no cache dropped. Absent without one: every
+// total is then today's.
 
 export async function GET(req: Request) {
   try {
@@ -81,7 +83,7 @@ export async function GET(req: Request) {
       // load, never cached: the cached part is Plaid's alone.
       withImportedFiles(ctx, plaid.without_transactions ?? []),
     ]);
-    const fx = await readFlowFx(ctx, transactions);
+    const fx = await readFlowFx(ctx, transactions, Date.now(), { accounts: true });
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).

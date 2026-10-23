@@ -91,6 +91,8 @@ import { canRunOut, vpwExpectedReturn } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
 import { plainNumber } from '@/lib/format';
+import type { FxTable } from '@/lib/fx/rates';
+import type { PageFx } from '@/lib/fx/view';
 
 /** The grid's rows and columns; the plan's own rate and length are added. */
 const GRID_RATES = [0.03, 0.035, 0.04, 0.045, 0.05];
@@ -214,9 +216,25 @@ export type PlanTabProps = {
   /** Every position the dashboard loaded, each with its account (hidden
    *  accounts' included: the allocation leaves those out itself). */
   holdings: AllocHolding[];
+  /** With a home currency: what the transactions convert with
+   *  (/api/transactions `fx`) and what balances do (/api/net-worth
+   *  base.fx), into the Plan's currency (lib/fire/inputs.ts). */
+  txnFx?: FxTable | null;
+  balanceFx?: PageFx | null;
 };
 
-export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_CONNECTIONS_WITHOUT, institutions, balancesAsOf, currency, holdings }: PlanTabProps) {
+export default function PlanTab({
+  txns,
+  txnsLoading,
+  txnNotes,
+  txnWithout = NO_CONNECTIONS_WITHOUT,
+  institutions,
+  balancesAsOf,
+  currency,
+  holdings,
+  txnFx = null,
+  balanceFx = null,
+}: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   const store = useMemo(
     () =>
@@ -253,7 +271,16 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
   // manual accounts are cash on hand, whose spending entered by hand is what
   // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
   // them for the label.
-  const inputs = usePlanInputs({ txns, txnNotes, without: txnWithout, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
+  const inputs = usePlanInputs({
+    txns,
+    txnNotes,
+    without: txnWithout,
+    institutions,
+    includeCash: plan.includeCash,
+    planFunding: plan.planFunding,
+    fx: txnFx,
+    balanceFx,
+  });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(plan, inputs, currency);
   const view = figures.view;
@@ -265,8 +292,10 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
   // either, only amounts in one currency are added up, and the notes beside
   // them name the rest.
   const currencyNote = figures.currencyNote;
+  // With a home currency: what was converted into the Plan's currency.
+  const convertedNote = figures.convertedNote;
   // In the plan's currency, so its mix is of what the plan counts.
-  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: plan.includeCash });
+  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: plan.includeCash, fx: balanceFx });
 
   const engine = enginePlan(plan, view);
   const sim = 'sim' in engine ? engine.sim : null;
@@ -439,6 +468,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
         workplace={workplace}
         workplaceCount={contributions === null ? null : contributions.length}
         currencyNote={currencyNote}
+        convertedNote={convertedNote}
         cashOn={cashOn}
         cashUnmarked={cashUnmarked}
         money={money}
@@ -523,7 +553,7 @@ export default function PlanTab({ txns, txnsLoading, txnNotes, txnWithout = NO_C
             currency={displayCurrency}
             measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
-            assetsFor={(includeCash) => investedAssets(institutions, includeCash)}
+            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
           />
         )}
@@ -655,6 +685,7 @@ export function FiCard({
   workplace,
   workplaceCount,
   currencyNote,
+  convertedNote = null,
   cashOn = [],
   cashUnmarked = false,
   money,
@@ -682,6 +713,9 @@ export function FiCard({
   /** How many workplace plans there are to measure, null while unknown. */
   workplaceCount: number | null;
   currencyNote: string | null;
+  /** What was converted into the Plan's currency (lib/fire/progress.ts
+   *  convertedNote), with a home currency. */
+  convertedNote?: string | null;
   /** The names of the cash accounts the cash spending was entered on. */
   cashOn?: string[];
   /** Spending was entered by hand on a manual account not marked as cash. */
@@ -911,6 +945,7 @@ export function FiCard({
         </>
       )}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
+      {convertedNote && <div className="as-of">{convertedNote}</div>}
 
       <div className="plan-rows">
         <Row label="Years to FI" value={yearsLine} note={yearsNote} />

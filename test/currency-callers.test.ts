@@ -27,7 +27,8 @@ const ALLOWED: Record<string, string> = {
     'The share of net worth an institution’s held balances are, in their currency when they share one; converted into the home currency when one is chosen (lib/fx/view.ts).',
   'lib/api-read.ts#netWorthCurrency':
     'The API’s version 1 fields keep their meaning: one total per currency, and the currency the recorded totals are labelled with. base converts (lib/fx/api-base.ts).',
-  'lib/fire/inputs.ts#investedAssets:currency': 'Until step 2: the Plan’s invested assets in their main currency; the Plan doesn’t convert yet, and says so.',
+  'lib/fire/inputs.ts#investedAssets:currency':
+    'The Plan’s currency, the one most of its accounts are in, which what the person types in the Plan is in: with a home currency the rest converts into it (lib/fx/net-worth.ts balancesIn), never relabelled.',
   'lib/forecast.ts#cashPosition:currency': 'Until step 2: the cash forecast in its cash accounts’ main currency.',
   'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
   // Flows.
@@ -35,7 +36,6 @@ const ALLOWED: Record<string, string> = {
   'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
   'lib/api-read.ts#readRecurring:currency': STEP_2,
   'lib/api-read.ts#readSpending:currency': STEP_2,
-  'lib/fire/inputs.ts#trailingFlows:currency': STEP_2,
   'lib/report/build.ts#buildReport:currency': STEP_2,
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
   'lib/weekly-summary/gather.ts#gatherWeekly:spending': STEP_2,

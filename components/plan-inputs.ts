@@ -3,7 +3,8 @@
 // The Plan's automatic inputs, gathered in one hook for the two screens that
 // show FI figures: the Plan tab and the FI card on Home. A year of spending
 // and income from the dashboard's transactions (by lib/fire/inputs.ts's
-// rules: one currency, excluded rows left out, cash withdrawals and the cash
+// rules: one currency, the Plan's, what is in another converted into it with
+// a home currency chosen, excluded rows left out, cash withdrawals and the cash
 // spending entered on an account marked as cash on hand counted once), the
 // invested assets from its accounts, what went into workplace plans, from
 // one /api/investment-activity request per plan (as the Accounts tab makes
@@ -34,6 +35,8 @@ import {
 import type { PlanFunding } from '@/lib/fire/plan';
 import { transactionCoverage, type FiInputs, type TransactionCoverage } from '@/lib/fire/progress';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import type { FxTable } from '@/lib/fx/rates';
+import type { PageFx } from '@/lib/fx/view';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -123,6 +126,8 @@ export function usePlanInputs({
   institutions,
   includeCash,
   planFunding,
+  fx = null,
+  balanceFx = null,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
@@ -132,6 +137,11 @@ export function usePlanInputs({
   institutions: AssetInstitution[];
   includeCash: boolean;
   planFunding: PlanFunding[];
+  /** What the transactions convert with (/api/transactions `fx`), null
+   *  without a home currency. */
+  fx?: FxTable | null;
+  /** What balances convert with (/api/net-worth base.fx), null without one. */
+  balanceFx?: PageFx | null;
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
@@ -139,7 +149,11 @@ export function usePlanInputs({
   // what cash withdrawals were spent on (lib/fire/inputs.ts trailingFlows),
   // by name for the label.
   const cashAccounts = useMemo(() => cashAccountIds(institutions), [institutions]);
-  const flows = useMemo(() => (txns ? trailingFlows(txns, today, { cashAccounts }) : null), [txns, today, cashAccounts]);
+  // The accounts first: their currency is the Plan's, which the year's
+  // flows are converted into with a home currency (lib/fire/inputs.ts).
+  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx), [institutions, includeCash, balanceFx]);
+  const into = assets.currency;
+  const flows = useMemo(() => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into }) : null), [txns, today, cashAccounts, fx, into]);
   const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, a.name] as const))), [institutions]);
   const cashOn = useMemo(() => (flows?.cashEnteredOn ?? []).map((id) => accountNames.get(id) ?? 'a cash account'), [flows, accountNames]);
   // Spending entered by hand on a manual account not marked as cash: if it is
@@ -153,7 +167,6 @@ export function usePlanInputs({
   // hand included.
   const transactionCount = txns?.length ?? 0;
   const coverage = useMemo(() => transactionCoverage(without, transactionCount), [without, transactionCount]);
-  const assets = useMemo(() => investedAssets(institutions, includeCash), [institutions, includeCash]);
   const contributions = useWorkplaceContributions(institutions);
   // Payments out of the bank that may have paid for a contribution, so it
   // isn't counted twice (lib/fire/inputs.ts workplaceSavings).

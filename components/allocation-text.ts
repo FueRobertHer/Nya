@@ -165,7 +165,9 @@ export function mixLeftOutText(m: PlanMix, currency: string | null): string | nu
     : null;
   const one = m.otherCurrencies.length === 1;
   const other = m.otherCurrencies.length
-    ? `${names(m.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))} in ${one ? 'another currency' : 'other currencies'} ${one ? 'is' : 'are'} left out${classes ? ' too' : ''}: the allocation doesn't convert currencies.`
+    ? `${names(m.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))} in ${one ? 'another currency' : 'other currencies'} ${one ? 'is' : 'are'} left out${classes ? ' too' : ''}: ${
+        m.converting ? `there is no rate to convert ${one ? 'it' : 'them'} at` : "the allocation doesn't convert currencies"
+      }.`
     : null;
   const all = [classes, other].filter((x): x is string => !!x);
   return all.length ? all.join(' ') : null;

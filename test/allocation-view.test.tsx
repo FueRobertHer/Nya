@@ -478,7 +478,7 @@ describe('the mix over time', () => {
     expect(t).toContain("Rollover IRA at Schwab isn't linked now, so on the days it was recorded it is counted from its positions alone.");
     expect(t).toContain('Leaves out Rollover IRA at Schwab (not recorded that day)');
     expect(t).toContain("Positions with no currency in an account that isn't linked now are left out: its currency isn't known.");
-    expect(t).toContain("Money in CAD is left out: the allocation doesn't convert currencies.");
+    expect(t).toContain("Money in CAD is left out: the allocation over time doesn't convert currencies.");
     expect(t).toContain("1 recorded day couldn't be read, so it isn't drawn.");
   });
 

@@ -17,6 +17,8 @@ import { readSettingsForDisplay, type CurrencySettings } from './settings';
 import { readEcbFields } from './ecb-store';
 import { fieldsFor, tableFromFields, yearsFor, LATEST_FIELD, FETCH_FIELD } from './fields';
 import { NO_FX, type FxTable } from './rates';
+import { directoryCurrencies } from '../links';
+import { getManualAccountsReport, MANUAL_CURRENCY } from '../manual';
 
 /** What a reader will convert: the currencies its amounts are in, and the
  *  days they fall on (the newest publication is always read). */
@@ -76,15 +78,30 @@ export async function readLatestRates(): Promise<Pick<FxTable, 'latest' | 'fetch
 /** A row of flows as readFlowFx reads it: its day and currency. */
 type FlowRow = { date: string; iso_currency_code: string | null; unofficial_currency_code?: string | null };
 
+/** The currencies the person's accounts are in, as far as is known without
+ *  asking a bank: the account directory's (linked accounts) and the manual
+ *  accounts'. LENIENT, for showing figures: an entry that can't be read is
+ *  left out (its rows still bring their own currency). */
+async function accountCurrencies(ctx: Ctx): Promise<Set<string>> {
+  const [linked, manual] = await Promise.all([directoryCurrencies(ctx), getManualAccountsReport(ctx)]);
+  const out = new Set<string>();
+  for (const a of linked) if (a.currency) out.add(a.currency);
+  for (const a of manual.accounts) out.add(a.currency ?? MANUAL_CURRENCY);
+  return out;
+}
+
 /**
  * What the page converts its loaded transactions with (lib/fx/totals.ts):
  * the table for the rows' currencies, over the days from the oldest of them
  * to today; null without a home currency, or with settings that can't be
  * used, so every total is today's. Read after the transactions' cache, on
  * every load, never cached: a change of home currency or of a rate needs no
- * cache cleared.
+ * cache cleared. `accounts`: the currencies of the person's accounts too, so
+ * the Plan can convert a year of spending into its accounts' currency when
+ * no row is in it (lib/fire/inputs.ts trailingFlows), read only with a home
+ * currency chosen.
  */
-export async function readFlowFx(ctx: Ctx, rows: readonly FlowRow[], now: number = Date.now()): Promise<FxTable | null> {
+export async function readFlowFx(ctx: Ctx, rows: readonly FlowRow[], now: number = Date.now(), opts: { accounts?: boolean } = {}): Promise<FxTable | null> {
   const today = new Date(now).toISOString().slice(0, 10);
   let from = today;
   const currencies = new Set<string>();
@@ -93,6 +110,9 @@ export async function readFlowFx(ctx: Ctx, rows: readonly FlowRow[], now: number
     if (c) currencies.add(c);
     if (r.date < from) from = r.date;
   }
-  const { fx } = await readFx(ctx, { currencies, from, to: today });
+  const known = await readSettingsForDisplay(ctx);
+  if (!known.settings.home) return null;
+  if (opts.accounts) for (const c of await accountCurrencies(ctx)) currencies.add(c);
+  const { fx } = await readFx(ctx, { currencies, from, to: today }, known);
   return fx.home ? fx : null;
 }

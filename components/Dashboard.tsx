@@ -2110,6 +2110,8 @@ export default function Dashboard({
                   txnWithout={txnWithout}
                   institutions={planInstitutions}
                   currency={accountCurrency}
+                  txnFx={txnFx}
+                  balanceFx={base?.fx ?? null}
                   onOpenPlan={() => {
                     window.scrollTo(0, 0);
                     setTab('plan');
@@ -3064,6 +3066,8 @@ export default function Dashboard({
                 holdings={planHoldings}
                 balancesAsOf={asOf}
                 currency={accountCurrency}
+                txnFx={txnFx}
+                balanceFx={base?.fx ?? null}
               />
             )}
           </>

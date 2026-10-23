@@ -64,4 +64,11 @@ describe('the transactions’ exchange rates', () => {
     // Never in a cached payload.
     expect(JSON.stringify(await readCache(ctx, CacheKey.Transactions))).not.toContain('"home"');
   });
+
+  test('with the rates of the accounts’ currencies too, which no row is in: the Plan converts into its accounts’ currency', async () => {
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
+    await saveManualAccount(ctx, { account_id: 'manual_isa', name: 'ISA', institution_name: 'Broker', type: 'investment', subtype: null, balance: 5_000, currency: 'GBP', updated_at: '2026-09-01T00:00:00.000Z' });
+    const fx = asFxTable((await load()).fx)!;
+    expect(Object.keys(fx.series).filter((id) => id.startsWith('GBP:'))).toContain('GBP:2026');
+  });
 });

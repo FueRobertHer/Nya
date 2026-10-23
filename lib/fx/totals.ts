@@ -62,10 +62,11 @@ export type TotalsIn<T> = {
 };
 
 export type TotalsInOptions<T> = {
-  /** Into what: the home currency (the default), or `'most'`, the currency
+  /** Into what: the home currency (the default); `'most'`, the currency
    *  most of `over` is in (the budgets', which keep the currency they are
-   *  typed in), converting the rest into it. */
-  into?: 'home' | 'most';
+   *  typed in), converting the rest into it; or a currency named (the
+   *  Plan's, which its typed figures are in). */
+  into?: 'home' | 'most' | { currency: string };
   /** The rows the totals' currency is decided over today, when they are not
    *  all of `rows` (a window): without a home currency, and for `'most'`. */
   over?: readonly T[];
@@ -80,7 +81,7 @@ const ONE = (n: number) => Math.round(n * 1e8) / 1e8;
 export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable | null | undefined, opts: TotalsInOptions<T> = {}): TotalsIn<T> {
   const today = totalsCurrency(opts.over ?? rows);
   if (!fx || !fx.home) return { currency: today, rows: [...rows], conversion: null };
-  const into = opts.into === 'most' ? today : fx.home;
+  const into = opts.into === 'most' ? today : typeof opts.into === 'object' ? opts.into.currency : fx.home;
   if (into === null) return { currency: null, rows: [...rows], conversion: null };
 
   const counters = new Map<string, ReturnType<typeof transactionCounter>>();
