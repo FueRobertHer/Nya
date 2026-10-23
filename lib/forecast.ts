@@ -132,6 +132,8 @@ export type CashAccount = {
   balance: number;
   /** Typed by hand: a manual account's, never one a connector feeds. */
   manual: boolean;
+  /** Its subtype, when known ("cash" for cash on hand). */
+  subtype?: string;
   updated_at?: string;
   /** Its own currency, when it is converted into the forecast's (`balance`
    *  is then in it, as the account shows it). */
@@ -191,6 +193,8 @@ export type PendingRow = {
   name: string;
   amount: number;
   pending: boolean;
+  /** Its account's id, where the reader gives one (a report's read does). */
+  account_id?: string;
   account_name: string;
   account_type?: string | null;
   institution_name: string;
@@ -268,18 +272,30 @@ export function cashPosition(
       institution,
       balance: a.balance,
       manual,
+      ...(a.subtype ? { subtype: a.subtype } : {}),
       ...(a.updated_at ? { updated_at: a.updated_at } : {}),
       ...(foreign ? { currency: a.currency! } : {}),
     });
   }
   const leftOut = [...others].map(([c, count]) => ({ currency: c, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
 
-  // Pending on an included account (a row names its account by name and
-  // institution, and its type when known); in another currency, converted as
-  // its account is, with a home currency.
+  // Pending on an included account: by its id where the row has one that is
+  // one of these accounts' (so two accounts of one name at one bank are two),
+  // else as a row names its account, by name and institution; and its type
+  // when known. In another currency, converted as its account is, with a
+  // home currency.
+  const known = new Set(institutions.flatMap((i) => i.accounts.map((a) => a.account_id)));
+  const ids = new Set(included.map((a) => a.account_id));
   const accounts = new Set(included.map((a) => `${a.institution}|${a.name}`));
+  const byId = (t: PendingRow) => t.account_id !== undefined && known.has(t.account_id);
+  const accountOf = (t: PendingRow) => (byId(t) ? `id:${t.account_id}` : `${t.institution_name}|${t.account_name}`);
   const onCash = txns
-    .filter((t) => t.pending && accounts.has(`${t.institution_name}|${t.account_name}`) && (t.account_type === undefined || t.account_type === null || t.account_type === 'depository'))
+    .filter(
+      (t) =>
+        t.pending &&
+        (byId(t) ? ids.has(t.account_id!) : accounts.has(`${t.institution_name}|${t.account_name}`)) &&
+        (t.account_type === undefined || t.account_type === null || t.account_type === 'depository')
+    )
     .flatMap((t) => {
       if (inCurrency(t, currency)) return [t];
       const c = currencyOf(t);
@@ -297,7 +313,7 @@ export function cashPosition(
       const other = deposits.find(
         (d) =>
           !paired.has(d) &&
-          `${d.institution_name}|${d.account_name}` !== `${t.institution_name}|${t.account_name}` &&
+          accountOf(d) !== accountOf(t) &&
           toMinor(-d.amount, scale) === toMinor(t.amount, scale) &&
           Math.abs(dayNumber(d.date) - dayNumber(t.date)) <= 3
       );

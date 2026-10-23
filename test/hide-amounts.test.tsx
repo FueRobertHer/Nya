@@ -55,6 +55,14 @@ import type { Goal } from '@/lib/goal-model';
 import type { GoalAccount } from '@/lib/goal-view';
 import { localDate, localMonth } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
+import { RunwayView } from '@/components/RunwayReport';
+import { YearOverYearView } from '@/components/YearOverYearReport';
+import { cashPosition } from '@/lib/forecast';
+import { buildRunwayInputs, projectRunway, DEFAULT_WHAT_IF } from '@/lib/report/runway';
+import type { RunwayReport } from '@/lib/report/runway-read';
+import { buildYearOverYear } from '@/lib/report/year-over-year';
+import type { YearOverYearReport } from '@/lib/report/year-over-year-read';
+import { PLANNED as RUNWAY_PLANNED, ROWS as RUNWAY_ROWS, TODAY as RUNWAY_TODAY } from './runway-fixture';
 
 // Hide amounts (components/hide-amounts.ts): the switch that shows the app's
 // structure while hiding its figures. Every money amount the main screens
@@ -764,6 +772,50 @@ const TO_REVIEW: Txn[] = [...ROWS.map((t) => ({ ...t, needs_review: true as cons
 /** The split Costco run, approved at another amount than the bank's now. */
 const changedSplit = () => splitRows().map((t) => (t.split_of === 'Costco' ? { ...t, needs_review: true as const, review_changed: { amount: 140, currency: 'USD' } } : t));
 
+/** The runway's hand-worked case (test/runway-fixture.ts), as the report
+ *  page draws it, a month marked short and a card owed beside it. */
+const RUNWAY: RunwayReport = (() => {
+  const position = cashPosition([
+    {
+      institution_name: 'Chase',
+      accounts: [
+        { account_id: 'chk', name: 'Checking', type: 'depository', balance: 7000, currency: 'USD' },
+        { account_id: 'sav', name: 'Savings', type: 'depository', balance: 5000, currency: 'USD' },
+      ],
+    },
+  ]);
+  const built = buildRunwayInputs({ today: RUNWAY_TODAY, position, rows: RUNWAY_ROWS, planned: RUNWAY_PLANNED, dismissed: [], short: [{ month: '2026-08', institutions: ['Citi'] }] });
+  return {
+    ...built,
+    version: 1,
+    time_zone: 'America/New_York',
+    generated_at: '2026-10-22T15:00:00.000Z',
+    cash_accounts: built.position.included.map((a) => ({ account_id: a.account_id, name: a.name, institution: a.institution, balance: a.balance, manual: a.manual, as_of: '2026-10-21' })),
+    owed_on_cards: 600,
+    stale_balances: [],
+    gaps: [],
+    data_as_of: null,
+    notes: [],
+  };
+})();
+/** Year over year over the same rows, and last year's. */
+const YOY: YearOverYearReport = {
+  ...buildYearOverYear({
+    rows: [...RUNWAY_ROWS, ...RUNWAY_ROWS.map((t) => ({ ...t, transaction_id: `${t.transaction_id}-25`, date: `2025${t.date.slice(4)}`, amount: Math.round(t.amount * 0.9 * 100) / 100 }))],
+    taxonomy: categoriesFor({}, { words: ['food and drink', 'rent and utilities', 'income', 'general merchandise'] }).taxonomy,
+    currency: 'USD',
+    today: RUNWAY_TODAY,
+    short: new Map([['2026-08', { uncertain: true, institutions: ['Citi'] }]]),
+  }),
+  version: 1,
+  today: RUNWAY_TODAY,
+  time_zone: 'America/New_York',
+  generated_at: '2026-10-22T15:00:00.000Z',
+  gaps: [],
+  data_as_of: null,
+  caveats: { hidden: false, scope: { investment: false, loans: false }, names_unread: false, notes: [] },
+};
+
 const SCREENS: Record<string, () => React.ReactElement> = {
   'Home: the net worth chart': () => (
     <NetWorthChart
@@ -914,6 +966,8 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     <PlanFanChart bands={{ p10: [100_000, 80_000, 0], p25: [100_000, 90_000, 50_000], p50: [100_000, 105_000, 110_000], p75: [100_000, 120_000, 150_000], p90: [100_000, 140_000, 200_000] }} startAge={60} currency="USD" />
   ),
   'Reports: the report on screen': () => <ReportView report={report()} />,
+  'Reports: the runway, its chart, inputs and what it can’t see': () => <RunwayView runway={RUNWAY} projection={projectRunway(RUNWAY, { ...DEFAULT_WHAT_IF, months: 3 })} />,
+  'Reports: year over year, by month and by group': () => <YearOverYearView report={YOY} />,
   'Activity: the cash flow, where money came from and went': () => <CashFlowSankey txns={FLOW} taxonomy={taxonomy} currency="USD" onPick={() => {}} />,
   'Activity: a split transaction and a group, with their parts and transactions': () => (
     <MonthBreakdown txns={splitRows()} notes={[]} loading={false} taxonomy={splitSet} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} />

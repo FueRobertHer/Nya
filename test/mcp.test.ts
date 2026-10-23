@@ -193,6 +193,8 @@ describe('tools', () => {
       'list_tags',
       'list_rules',
       'get_goals',
+      'get_runway',
+      'get_year_over_year',
       'get_holdings',
     ]);
     for (const t of tools) {

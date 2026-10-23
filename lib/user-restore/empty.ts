@@ -84,6 +84,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['notes on the timeline', ['timeline-notes']],
   ['holdings history', ['holdings:history']],
   ['planned bills and income', ['planned-items']],
+  ['runway scenarios you saved', ['runway-scenarios']],
 ];
 
 const GROUP_OF = new Map<string, string>(GROUPS.flatMap(([words, families]) => families.map((f) => [f, words] as const)));

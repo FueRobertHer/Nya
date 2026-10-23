@@ -11,7 +11,9 @@
 // Worked out here, from what the dashboard already loaded, and never stored or
 // sent anywhere: it is an estimate, labelled as one, and every date in it is
 // an expectation ("around Oct 15"). The only thing saved is the warning's
-// figure, with its currency, beside the planned items (lib/planned.ts).
+// figure, with its currency, beside the planned items (lib/planned.ts). Its
+// foot links to the runway (components/RunwayReport.tsx), which carries the
+// cash forward with the everyday spending in it.
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
@@ -328,6 +330,15 @@ export default function ForecastCard({
         planned. A card&apos;s own charges aren&apos;t in it, since the card&apos;s payment is what leaves your checking, and that
         payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren&apos;t in
         it either. On a day with money both in and out, the money out is counted first.
+      </div>
+      {/* The runway carries this forward with the everyday spending in it
+          (lib/report/runway.ts), on the report page. */}
+      <div className="chart-note">
+        How long your cash would last at your recent spending, with your income and without it:{' '}
+        <a className="forecast-runway-link" href="/reports?report=runway">
+          see your runway
+        </a>
+        .
       </div>
 
       <Sheet open={whatIfOpen} title="What if I buy…" onClose={() => setWhatIfOpen(false)}>

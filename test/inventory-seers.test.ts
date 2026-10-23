@@ -234,7 +234,7 @@ describe('who else can see each kind, as the code reads it', () => {
     expect(await emptyKinds()).toEqual([]);
     const reads = new Set<string>();
     // Every endpoint, and the ones that read more for one account, for each kind of account.
-    const asks: [string, string][] = OPERATIONS.map((op) => [op.name, op.name === 'me' ? '' : 'include_hidden=true']);
+    const asks: [string, string][] = OPERATIONS.map((op) => [op.name, 'include_hidden' in (op.args ?? {}) ? 'include_hidden=true' : '']);
     for (const id of ['acc_chk', 'acc_ira', 'manual_house', 'acc_save']) asks.push(['balance-history', `account_id=${id}&include_estimated=true&include_hidden=true`]);
     asks.push(['holdings', 'account_id=acc_ira&include_hidden=true']);
     for (const [name, query] of asks) {

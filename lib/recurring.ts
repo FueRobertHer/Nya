@@ -376,14 +376,15 @@ const AVERAGE_DAYS = 182;
  *  paid early: half a period, never more than a month. */
 const EARLY_MAX_DAYS = 31;
 /** How many days apart a payment from checking and the payment received on a
- *  card's side may post. */
-const CARD_PAYMENT_DAYS = 5;
+ *  card's side may post (the runway matches them alike, lib/report/runway.ts). */
+export const CARD_PAYMENT_DAYS = 5;
 /** How far from its saved amount a dismissal still applies, for a series
  *  whose amount moves: a share of it, or this many cents. */
 const DISMISS_NEAR = 0.25;
 const DISMISS_FLOOR_CENTS = 50;
-/** Plaid's detail for paying a card off (as lib/fire/inputs.ts reads it). */
-const CARD_PAYMENT = 'credit card payment';
+/** Plaid's detail for paying a card off (as lib/fire/inputs.ts and the
+ *  runway read it). */
+export const CARD_PAYMENT = 'credit card payment';
 /** Categories of everyday spending, where two visits a year apart at the
  *  same amount are chance, not a bill. */
 const EVERYDAY: ReadonlySet<string> = new Set(['food and drink', 'transportation']);
@@ -438,6 +439,14 @@ function groupOf(t: RecurringRow, kind: RecurringKind): string {
 function groupKey(t: RecurringRow): string | null {
   const kind = kindOf(t);
   return kind ? groupOf(t, kind) : null;
+}
+
+/** The group a posted row belongs to (RecurringSeries.group), or null when it
+ *  can belong to none: for a reader that asks how a total counts a series'
+ *  own rows (the runway, lib/report/runway.ts, which adds a loan's payment
+ *  the spending rule leaves out). */
+export function seriesGroupOf(t: RecurringRow): string | null {
+  return groupKey(t);
 }
 
 // --- fitting a schedule ------------------------------------------------------

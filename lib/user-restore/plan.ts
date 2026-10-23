@@ -105,6 +105,7 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
   'allocation-settings': 'your allocation settings',
   'planned-items': 'your planned bills and income',
   'report-settings': 'your report settings',
+  'runway-scenarios': (n) => `${n} saved runway ${n === 1 ? 'scenario' : 'scenarios'}`,
   'review-settings': 'your review queue setting',
   'weekly-summary': 'your weekly summary setting',
   'currency-settings': 'your home currency and your own exchange rates: every figure shows in its own currency until you choose again',
@@ -573,6 +574,7 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...value('fire-plan'),
     ...value('allocation-settings'),
     ...value('report-settings'),
+    ...entries('runway-scenarios'),
     ...value('currency-settings'),
     ...value('weekly-summary'),
   ];

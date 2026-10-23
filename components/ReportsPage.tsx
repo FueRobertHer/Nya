@@ -1,9 +1,13 @@
 'use client';
 
-// The report page (app/reports, #43): pick a tax year or a range of days, read
-// the report (components/ReportView.tsx), mark the categories that matter for
-// taxes, then print it or save it as a PDF from the browser's print window, or
-// download its totals as CSV. The report is made on the server
+// The report page (app/reports): three reports, chosen at the top. For an
+// accountant (#43): pick a tax year or a range of days, read the report
+// (components/ReportView.tsx), mark the categories that matter for taxes,
+// then print it or save it as a PDF from the browser's print window, or
+// download its totals as CSV. The runway (components/RunwayReport.tsx) and
+// year over year (components/YearOverYearReport.tsx) each read and print
+// their own, and `?report=runway` or `?report=year-over-year` in the address
+// opens one. The report is made on the server
 // (app/api/reports) from what Nya has stored, in this browser's time zone,
 // which it says; the form checks the period by the server's own rules
 // (lib/report/period.ts) before asking. Everything here but the report is for
@@ -23,6 +27,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReportView } from './ReportView';
+import RunwayReport from './RunwayReport';
+import YearOverYearReport from './YearOverYearReport';
 import { Sheet } from './Sheet';
 import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
@@ -38,6 +44,20 @@ export type ReportForm = { kind: 'year' | 'range'; year: number; start: string; 
 function browserZone(): string {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return isTimeZone(tz) ? tz : 'UTC';
+}
+
+/** The reports the page offers, as the address names them. */
+export type ReportChoice = 'accountant' | 'runway' | 'year-over-year';
+const CHOICES: { choice: ReportChoice; label: string }[] = [
+  { choice: 'accountant', label: 'For your accountant' },
+  { choice: 'runway', label: 'Runway' },
+  { choice: 'year-over-year', label: 'Year over year' },
+];
+
+/** The report the address asks for (`?report=`), else the accountant's. */
+export function reportChoice(search: string): ReportChoice {
+  const r = new URLSearchParams(search).get('report');
+  return r === 'runway' || r === 'year-over-year' ? r : 'accountant';
 }
 
 /** Whether the address asks for the accounts you stopped tracking
@@ -104,6 +124,7 @@ export default function ReportsPage() {
   const [stoppedOpen, setStoppedOpen] = useState(false);
   const [forgetting, setForgetting] = useState(false);
   const [stoppedError, setStoppedError] = useState<string | null>(null);
+  const [which, setWhich] = useState<ReportChoice | null>(null);
   // Only the latest request's answer is shown: one asked for earlier may come back later.
   const latest = useRef(0);
 
@@ -162,12 +183,21 @@ export default function ReportsPage() {
     const f = formFrom(window.location.search, day);
     // Read before load() rewrites the address to the form's.
     const opening = asksStopped(window.location.search);
+    const choice = reportChoice(window.location.search);
     setZone(tz);
     setToday(day);
     setForm(f);
-    void load(f, tz);
+    setWhich(choice);
+    if (choice === 'accountant') void load(f, tz);
     void loadStopped(opening);
   }, [load, loadStopped]);
+
+  const choose = (next: ReportChoice) => {
+    setWhich(next);
+    if (next !== 'accountant') window.history.replaceState(null, '', `/reports?report=${next}`);
+    else if (form && !report) void load(form, zone);
+    else if (form) window.history.replaceState(null, '', `/reports?${reportQuery(form)}`);
+  };
 
   const forget = async (id: string, label: string) => {
     const sure = window.confirm(
@@ -213,12 +243,24 @@ export default function ReportsPage() {
       <div className="no-print">
         <h1>Reports</h1>
         <p className="sub">
-          A summary of a tax year, or of any dates, by category and by month, with what it may be missing. Print it, or save it as a PDF, for your
-          accountant.
+          A summary of a tax year, or of any dates, for your accountant; how long your cash would last; and this year against last. Each says what it may be
+          missing. Print one, or save it as a PDF.
         </p>
+        {which && (
+          <div className="chart-ranges report-choice" role="group" aria-label="Which report">
+            {CHOICES.map((c) => (
+              <button key={c.choice} className="chart-range" aria-pressed={which === c.choice} onClick={() => choose(c.choice)}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {form && (
+      {which === 'runway' && <RunwayReport />}
+      {which === 'year-over-year' && <YearOverYearReport />}
+
+      {form && which === 'accountant' && (
         <div className="card no-print report-controls">
           <div className="button-pair report-kind" role="group" aria-label="Kind of report">
             <button className={form.kind === 'year' ? '' : 'secondary'} aria-pressed={form.kind === 'year'} onClick={() => make({ kind: 'year', currency: null })}>
@@ -306,8 +348,8 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
-      {report && (
+      {which === 'accountant' && loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
+      {which === 'accountant' && report && (
         <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
           <ReportView report={report} />
         </div>

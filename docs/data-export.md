@@ -131,7 +131,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals, each with its plan: its allocation, monthly target, target date and whether it is archived. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -686,6 +686,24 @@ The categories you marked as mattering for your taxes on the report page ([featu
 | --- | --- |
 | `v` | The shape's version: 1. |
 | `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. Each is a category's words, one of its `text` keys in [`categories`](#categories), which a rename never changes and a merge moves to the category it went into, so the mark follows the category. A category stays marked when no transaction is in it, and so do words no category has any more. |
+
+#### `runway-scenarios`
+
+The what-ifs you saved by name on the [runway](features.md#runway) (`lib/report/runway-scenarios.ts`), each under a random id: only their settings, never a figure worked out from them, which the runway works out again from your data whenever one is opened. The runway itself is never stored, so it is not here. Each `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `name` | Its name, up to 40 characters. |
+| `months` | The full months the spending is read over: 3, 6 or 12. |
+| `lower_by` | Spending lower by this much a month; 0 for none. |
+| `currency` | The currency `lower_by` is in, or `null` with nothing lower. On a runway in another currency it isn't applied. |
+| `income_until` | The last day income comes (YYYY-MM-DD), or `null` while it keeps coming. |
+| `planned` | Whether your planned items are in it. |
+| `leave_out_one_offs` | Whether the one-offs are left out: large outflows from the spending, large inflows from the income. |
+| `count_moved_out` | Whether what left your checking and savings as transfers to accounts outside them, and as cash taken out, counts as spending. Absent on a scenario saved before it was kept: read as `false`. |
+| `saved_at` | When you saved it. |
+
 #### `timeline-notes`
 
 The notes on your net-worth timeline (`lib/timeline-notes.ts`, [features.md](features.md#notes-on-the-timeline)): yours under random ids, and the ones Nya writes when an account ends, under `lifecycle.` and the account's id, and when an account it assumed closed came back, under `missed.` and a random id, which its window in [`account-lifecycle`](#account-lifecycle) keeps (`missed[].note`), since a day is never part of an id. Each `value`: `date` (the day it marks), `text` (up to 200 characters), `kind` (`user` for yours, `auto` for Nya's), `account_id` (the account an `auto` note is about; absent on yours), `created_at`, and `updated_at` once it changed. They are also rows of the [balances CSV](#nya-balances-datecsv).
