@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, UnreadableEntriesError, describeUnreadable } from '@/lib/repo';
-import { changeMaker, changeStore, forgetChange, forgetTokenChanges, isChangeId, listChanges, pruneChanges, tokenRef } from '@/lib/api-changes';
+import { changeMaker, changeStore, forgetChange, forgetTokenChanges, isChangeId, listChanges, pruneChanges, settleClaimsOf, tokenRef } from '@/lib/api-changes';
 import { apiTokenStore } from '@/lib/api-token-store';
 import { undoChange } from '@/lib/api-undo';
 import { ApiFailure } from '@/lib/api-spec';
@@ -27,7 +27,9 @@ import { getManualAccountsReport } from '@/lib/manual';
 //   POST    { action: 'forget-token', id }  the same for every change made
 //           by the token that made this one.
 //   DELETE  { id }  removes a change whose stored bytes are damaged, once the
-//           person confirms (only those: one unrecognised is intact data).
+//           person confirms (only those: one unrecognised is intact data),
+//           its key's claim marked made first, so a retry of the key never
+//           makes again what it may have made.
 //
 // An undo made here is recorded as the app's, counts against no token's
 // limits, and works whether or not this copy lets tokens write, so a change
@@ -140,6 +142,8 @@ export async function DELETE(req: Request) {
     } catch (err) {
       if (!(err instanceof UnreadableEntriesError) || !err.unreadable.includes(body.id)) throw err;
     }
+    // What it began can't be told now: its key, sent again, is refused.
+    await settleClaimsOf(ctx, body.id);
     await changeStore.remove(ctx, body.id);
     return NextResponse.json({ removed: true });
   } catch (err) {

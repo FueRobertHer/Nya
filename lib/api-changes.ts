@@ -27,7 +27,9 @@
 //                    IDEMPOTENCY_HOURS, each as a SHA-256 beside the SHA-256
 //                    of its request, the change it is for, and `made` once
 //                    what it made is there (so a key sent again after the
-//                    person deleted it never makes it again). Small (a few
+//                    person deleted it never makes it again), or once its
+//                    change's record is removed as damaged, when what it
+//                    began can't be told (settleClaimsOf). Small (a few
 //                    hundred claims at most), changed with a compare-and-set
 //                    per token. Bookkeeping: never exported, never backed up.
 //
@@ -316,6 +318,21 @@ export async function markMade(ctx: Ctx, tokenId: string, keyHash: string, chang
     );
   } catch (err) {
     console.error('API changes: a key could not be marked made', err instanceof Error ? err.name : typeof err);
+  }
+}
+
+/**
+ * Before a change's record is removed as damaged (the app's list, which
+ * can't tell whose it was or what it began): every key claim naming it, any
+ * token's, is marked made, so the key sent again is never taken for "the
+ * claim alone" and made again (lib/api-writes.ts keyedCreate). Strict: a
+ * token's claims that can't be read stop the removal.
+ */
+export async function settleClaimsOf(ctx: Ctx, changeId: string): Promise<void> {
+  for (const tokenId of await claimStore.ids(ctx)) {
+    await claimStore.update(ctx, tokenId, (cur) =>
+      cur?.claims.some((c) => c.change === changeId) ? { ...cur, claims: cur.claims.map((c) => (c.change === changeId ? { ...c, made: true as const } : c)) } : cur
+    );
   }
 }
 

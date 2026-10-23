@@ -576,6 +576,24 @@ describe('idempotency keys', () => {
     expect([refused.status, refused.body.error.code]).toEqual([409, 'conflict']);
   });
 
+  test('a change removed in the app as damaged: its key, sent again, never makes it again', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged' } });
+    expect(first.status).toBe(201);
+    // Stopped before its key was marked made, then its record damaged and removed in the app.
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    const removed = await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }));
+    expect(removed.body).toEqual({ removed: true });
+    setSystemTime(new Date(LATER));
+    const again = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged' } });
+    expect([again.status, again.body.error.code, again.body.error.message]).toEqual([
+      409,
+      'conflict',
+      'What this Idempotency-Key began may have been made and removed since, so nothing was made again. Check, and if you still want it, send the request with a new key.',
+    ]);
+    expect(await rows()).toHaveLength(1);
+  });
+
   test('stopped after its row landed, before its key was marked made, then deleted in the app: refused, never made again', async () => {
     const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-crash' } });
     expect(first.status).toBe(201);
