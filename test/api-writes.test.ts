@@ -806,6 +806,20 @@ describe('versions', () => {
     expect(await isBackfillDone(ctx)).toBe(true);
   });
 
+  test('a night whose clear of the flag fails keeps the mark, and the next night catches it up', async () => {
+    const { markBackfillDone, isBackfillDone } = await import('@/lib/history');
+    const { catchUpRebuilds } = await import('@/lib/api-rebuilds');
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 100 } })).status).toBe(200);
+    await markBackfillDone(ctx);
+    setSystemTime(new Date(NOW + 3_600_000));
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 101 } })).status).toBe(200);
+    fake.failNext('del');
+    await quietly(() => catchUpRebuilds(ctx, NOW + 2 * 3_600_000));
+    expect(await isBackfillDone(ctx)).toBe(true);
+    await catchUpRebuilds(ctx, NOW + 20 * 3_600_000);
+    expect(await isBackfillDone(ctx)).toBe(false);
+  });
+
   test('a stale version is refused and nothing is written; none is 428; a weak one never matches', async () => {
     const { transaction } = await versionOf(`transactions/${MARKET}`);
     // The person edits it in the app meanwhile.
@@ -893,7 +907,7 @@ describe('a write that something else takes away meanwhile', () => {
     }
     expect([undone.status, undone.body.error.code, undone.body.error.message]).toEqual([409, 'conflict', 'Its account was deleted meanwhile, and the transaction went with it. It wasn’t undone.']);
     const undos = [...(await changeStore.getAll(ctx)).values()].filter((c) => c.op === 'undo');
-    expect(undos.map((c) => [c.state, c.error])).toEqual([['failed', 'conflict']]);
+    expect(undos.map((c) => [c.state, c.error])).toEqual([['failed', 'account-gone']]);
   });
 });
 
@@ -1023,9 +1037,10 @@ describe('what a write can never do', () => {
   });
 
   test('a manual account crossing between held and owed', async () => {
+    const { OWED_FLIP } = await import('@/lib/manual-account-writes');
     const { account } = await versionOf(`manual-accounts/${WALLET}`);
     const r = await send('PATCH', `manual-accounts/${WALLET}`, { body: { type: 'credit' }, headers: { 'if-match': account.version } });
-    expect([r.status, r.body.error.code, r.body.error.message]).toEqual([409, 'conflict', expect.stringContaining('held and money owed')]);
+    expect([r.status, r.body.error.code, r.body.error.message]).toEqual([409, 'conflict', OWED_FLIP]);
     expect((await getManualAccount(ctx, WALLET))!.type).toBe('depository');
     // Within one side: allowed.
     expect((await send('PATCH', `manual-accounts/${WALLET}`, { body: { type: 'other' }, headers: { 'if-match': account.version } })).status).toBe(200);

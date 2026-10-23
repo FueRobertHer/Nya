@@ -22,7 +22,7 @@ const { decrypt } = await import('@/lib/crypto');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { getManualAccount, setManualBalance, changeManualAccount } = await import('@/lib/manual');
 const { markBackfillDone, isBackfillDone } = await import('@/lib/history');
-const { saveAccountEdit, setAccountBalance, createManualAccount, AccountEditRefused } = await import('@/lib/manual-account-writes');
+const { saveAccountEdit, setAccountBalance, createManualAccount, AccountEditRefused, OWED_FLIP } = await import('@/lib/manual-account-writes');
 const route = await import('@/app/api/manual-accounts/route');
 
 const ctx = TEST_CTX;
@@ -56,19 +56,22 @@ beforeEach(async () => {
 });
 
 describe('the Update form, through the shared function', () => {
-  test('a change of type asks for the estimated history to be rebuilt, as a moved balance does; a rename does not', async () => {
+  test('a change of type asks for the estimated history to be rebuilt, as a moved balance does; a rename does not; across to owed is refused', async () => {
     const { account } = (await call('POST', FORM)).body;
     const id = account.account_id;
     await markBackfillDone(ctx);
     expect((await call('PATCH', { ...FORM, account_id: id, name: 'Purse' })).status).toBe(200);
     expect(await isBackfillDone(ctx)).toBe(true);
-    // Within one side (held), and across to owed: both rebuild.
+    // Within one side (held): rebuilt.
     expect((await call('PATCH', { ...FORM, account_id: id, name: 'Purse', type: 'other' })).status).toBe(200);
     expect(await isBackfillDone(ctx)).toBe(false);
     await markBackfillDone(ctx);
-    expect((await call('PATCH', { ...FORM, account_id: id, name: 'Purse', type: 'credit' })).status).toBe(200);
-    expect(await isBackfillDone(ctx)).toBe(false);
-    expect(await stored(id)).toMatchObject({ type: 'credit', balance: 100, updated_at: account.updated_at });
+    // Across to owed: refused, nothing written, nothing rebuilt
+    // (test/owed-flip.test.ts has every reader).
+    const across = await call('PATCH', { ...FORM, account_id: id, name: 'Coins', type: 'credit' });
+    expect([across.status, across.body.error]).toEqual([409, OWED_FLIP]);
+    expect(await isBackfillDone(ctx)).toBe(true);
+    expect(await stored(id)).toMatchObject({ name: 'Purse', type: 'other', balance: 100, updated_at: account.updated_at });
   });
 
   test('a balance pushed between its read and its write is read again: what it compares is from the attempt that wrote', async () => {

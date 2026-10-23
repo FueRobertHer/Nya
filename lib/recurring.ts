@@ -1181,6 +1181,23 @@ export function upcomingBills(
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
 }
 
+/** A dismissal as stored: a series' group, then its amount in cents, maybe
+ *  exact (=), a part's side (@low, @high) and a count (#n). */
+const DISMISSED = /^(.*)\|(=?)(\d+)(?:@(low|high))?(?:#\d+)?$/;
+
+/** The group a dismissal names, as dismissedSeries reads it, or null for one
+ *  it can't read. */
+export function dismissedGroup(entry: string): string | null {
+  return DISMISSED.exec(entry)?.[1] ?? null;
+}
+
+/** The groups a posted row's series could have, of either kind (its kind
+ *  hangs on how its category is filed): for a reader that must not miss
+ *  one (lib/api-undo.ts). None for a pending row, which is in no series. */
+export function seriesGroupsOfEither(t: RecurringRow): string[] {
+  return t.pending ? [] : (['bill', 'income'] as const).map((kind) => groupOf(t, kind));
+}
+
 /**
  * Which series the person said aren't recurring, each with the dismissal that
  * says so (see IDENTITY): a dismissal names a group and an amount, and applies
@@ -1201,7 +1218,7 @@ export function dismissedSeries(series: readonly RecurringSeries[], dismissed: r
   }
   const pairs: { gap: number; id: string; entry: string }[] = [];
   for (const entry of dismissed) {
-    const m = /^(.*)\|(=?)(\d+)(?:@(low|high))?(?:#\d+)?$/.exec(entry);
+    const m = DISMISSED.exec(entry);
     if (!m) continue;
     const exactly = m[2] === '=';
     const saved = Number(m[3]);

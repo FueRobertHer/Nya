@@ -64,10 +64,12 @@ export async function catchUpRebuilds(ctx: Ctx, now: number = Date.now()): Promi
       marked = err.unreadable;
     }
     if (marked.length === 0) return;
-    // Removed first: a push that marks meanwhile keeps its mark for the next
-    // night, and one that marked before has its balance in by the clear.
+    // Cleared first, so a clear that fails keeps the marks for the next
+    // night. A push marking in the moment between the two loses its mark
+    // only if it also wrote its balance after the clear and the estimate was
+    // rebuilt in that same moment.
+    await clearBackfillDone(ctx, { strict: true });
     await apiWriteDays.remove(ctx, ...marked);
-    await clearBackfillDone(ctx);
   } catch (err) {
     console.error('API: a skipped rebuild of the estimate could not be caught up', err instanceof Error ? err.name : typeof err);
   }

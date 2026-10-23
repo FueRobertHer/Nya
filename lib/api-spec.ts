@@ -667,7 +667,7 @@ const ACCOUNT_FIELDS = {
   type: {
     kind: 'choice',
     values: MANUAL_TYPE_NAMES,
-    description: 'Money held (depository, investment, other) or owed (credit, loan). A change between held and owed is refused: it changes how the account’s past balances count, so it is made in the app.',
+    description: 'Money held (depository, investment, other) or owed (credit, loan). A change between held and owed is refused, as it is in the app: it would change how the account’s past balances count. Close the account in the app and add a new one of the other kind instead.',
   },
   subtype: { kind: 'text', max: FIELD_LIMITS.subtype, nullable: true, description: 'A kind of its own, like checking or a house; null for none.' },
 } as const satisfies Record<string, Arg>;

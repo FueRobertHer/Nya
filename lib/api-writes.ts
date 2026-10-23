@@ -28,8 +28,9 @@
 //     counted once it is made (lib/api-run.ts checkDay, countDay);
 //   - WHAT A WRITE NEVER DOES: change a bank's transaction (Plaid's, a
 //     connector's, one imported from a file), write to an account a connector
-//     feeds, cross a manual account between money held and owed (it changes
-//     how its past balances count: the app does that), fill the room the
+//     feeds, cross a manual account between money held and owed (it would
+//     change how its past balances count, so the app's own Update refuses it
+//     too: lib/manual-account-writes.ts OWED_FLIP), fill the room the
 //     app's own limits keep for what it makes itself (API_ROOM), or reach
 //     another container: everything here takes the token's own `ctx`.
 
@@ -387,8 +388,6 @@ function wanted(input: ResourceInput): string {
   return v;
 }
 
-const crossesOwed = (from: string, to: string) => isOwedType(from) !== isOwedType(to);
-
 const ACCOUNT_ROOM = Math.floor(MAX_MANUAL_ACCOUNTS * API_ROOM);
 
 async function createAccount(auth: Authenticated, spec: ResourceSpec, input: ResourceInput): Promise<ResourceAnswer> {
@@ -428,6 +427,8 @@ async function updateAccount(auth: Authenticated, input: ResourceInput): Promise
   let before: ManualAccount | null = null;
   let after: ManualAccount | null = null;
   const { change, day } = await recorded(auth, input, 'manual-account.update', { kind: 'manual-account', id: input.id! }, async () => {
+    // A type across money held and owed is refused inside the write, as the
+    // app's Update is (lib/manual-account-writes.ts OWED_FLIP).
     const saved = await saveAccountEdit(
       auth.ctx,
       input.id!,
@@ -436,12 +437,11 @@ async function updateAccount(auth: Authenticated, input: ResourceInput): Promise
         now: new Date(input.now ?? Date.now()),
         check: (current) => {
           if (accountVersion(current) !== want) stale();
-          if (fields.type && crossesOwed(current.type, fields.type)) {
-            fail(409, 'conflict', 'A change between money held and money owed changes how its past balances count. Make it in the app.');
-          }
         },
       }
-    );
+    ).catch((err) => {
+      throw appRefusal(err) ?? err;
+    });
     if (!saved) fail(404, 'not_found', 'No manual account has that id.');
     before = saved!.before;
     after = saved!.account;
