@@ -5963,3 +5963,50 @@ button.review-keys-toggle {
 .currency-rate-pair .field:last-child {
   flex: 0 0 104px;
 }
+/* --- Runway and year over year (components/RunwayReport.tsx,
+   RunwayChart.tsx, YearOverYearReport.tsx; app/reports): the choice of
+   report at the top of the page, the runway's what-if (on screen only), and
+   the rows of the year over year tables. Their pages print as the other
+   reports do (.report, .report-page). --- */
+
+.report-choice {
+  margin: 12px 0 4px;
+}
+
+/* The two what-if fields side by side; each may shrink below its own width,
+   so both fit on a 320 px phone. */
+.runway-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 10px;
+  margin-top: 8px;
+}
+
+.runway-fields input {
+  min-width: 0;
+}
+
+.runway-chart {
+  margin-top: 8px;
+}
+
+.runway-scenario-actions {
+  display: flex;
+  gap: 14px;
+  flex: none;
+}
+
+.forecast-runway-link {
+  color: var(--accent);
+}
+
+/* A category under its group's row. */
+.yoy-category {
+  padding-left: 18px !important;
+}
+
+@media print {
+  .runway-chart .chart-readout {
+    display: none;
+  }
+}

@@ -357,9 +357,11 @@ export function projectRunway(inputs: RunwayInputs, whatIf: RunwayWhatIf): Runwa
   return { what_if: whatIf, window: w, without_income: none.line, with_income: ongoing.line, chart };
 }
 
-/** Months to one decimal, for saying: "7.2". */
+/** A count of months to one decimal, rounded down so the runway never says
+ *  more than it worked out: "7.3" for 7.39. A count, never an amount. */
 export function monthsText(months: number): string {
-  return (Math.floor(months * 10) / 10).toFixed(1);
+  const tenths = Math.floor(months * 10);
+  return `${Math.floor(tenths / 10)}.${tenths % 10}`;
 }
 
 /** A payment outside the spending that the runway adds (paymentsOutsideSpending). */
