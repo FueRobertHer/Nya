@@ -230,7 +230,8 @@ export type CashPosition = {
   /** The charges still pending on them, taken off where it starts, and
    *  those left out for their currency, by currency, most first, as the
    *  accounts are (`leftOut`): in another currency with no home currency,
-   *  or with no rate (named in `conversion`). Absent: none. */
+   *  or with no rate (named in `conversion`). cashPosition always gives it,
+   *  empty when none is; optional only for a position built by hand. */
   pending: { amount: number; count: number; leftOut?: LeftOut };
   /** Where it starts: the balances less what is pending. */
   start: number;

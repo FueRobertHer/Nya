@@ -179,13 +179,18 @@ describe('a number written as an amount past the formatters', () => {
       'already saved',
       'skipped payments',
       'updated balance',
+      // A phrase's place for a name takes the app's own name, never any, and
+      // "more" alone counts only closing a list.
+      'already in ${goal.name}',
+      'kept as ${goal.name}’s own',
+      'more',
+      'more.',
     ];
     const counts = [
       'transactions',
       'of them',
       'of your stored transactions',
       'more not listed',
-      'more',
       'to answer',
       'with no category',
       'already in Nya',
@@ -200,9 +205,13 @@ describe('a number written as an amount past the formatters', () => {
       'skipped',
       'updated from the file',
     ];
-    const cases = Object.fromEntries([...amounts, ...counts].map((words, i) => [`Words${i}`, `return <p>{balance.toLocaleString()} ${words}</p>;`]));
+    const inTemplate = (words: string) => (words.includes('${') ? `return <p>{\`\${balance.toLocaleString()} ${words}\`}</p>;` : `return <p>{balance.toLocaleString()} ${words}</p>;`);
+    const cases = Object.fromEntries([...amounts, ...counts].map((words, i) => [`Words${i}`, inTemplate(words)]));
+    // "and 3 more" closing a list, as the import sheet writes it.
+    cases.AndMore = 'return <p>{`, and ${n.toLocaleString()} more`}</p>;';
+    cases.SaveMore = 'return <p>{`Save ${n.toLocaleString()} more`}</p>;';
     const found = scan(cases);
-    expect(found.bypasses).toEqual(Object.fromEntries(amounts.map((_, i) => [`Words${i}`, [7]])));
+    expect(found.bypasses).toEqual({ ...Object.fromEntries(amounts.map((_, i) => [`Words${i}`, [7]])), SaveMore: [7] });
   });
 
   test('guarded only by what writes the mask in its place: hiddenFigure around it, its own statement’s switch, or its function’s early return', () => {

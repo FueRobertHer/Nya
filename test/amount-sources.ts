@@ -586,21 +586,23 @@ const ENDS = '(?=[\\s\\u00a0]*(?:[`\'"<.,;:)}]|$))';
  *  A number followed by anything else is taken for an amount ("40 spent",
  *  "40 dollars", "40 a month"), and so is one followed by words that only
  *  begin as one of these phrases does ("40 still owed", "40 of the goal",
- *  "40 more to save", "40 to go"). A word that counts nothing ("more",
- *  "new") is a phrase alone only where it ends the text ("and 3 more"). A
- *  count said some other way goes through plainNumber. */
+ *  "40 more to save", "40 to go"). A word that counts nothing ("new",
+ *  "skipped") is a phrase alone only where it ends the text, and "more" only
+ *  closing a list ("and 3 more", saysWhatItIs). A name the app puts in a
+ *  phrase is the variable it puts there ("already in ${name}"), never any.
+ *  A count said some other way goes through plainNumber. */
 const COUNT_WORDS = new RegExp(
   String.raw`^\s+(?:` +
     [
       // What it counts.
       String.raw`(?:accounts?|categor(?:y|ies)|characters?|days?|files?|lines?|months?|parts?|rows?|rules?|runs?|starts?|tags?|transactions?|years?)\b`,
       // How its sentence goes on.
-      String.raw`already (?:imported|there|in (?:Nya\b|\$\{))`,
+      String.raw`already (?:imported|there|in (?:Nya\b|\$\{name\}))`,
       String.raw`an earlier file brought\b`,
       String.raw`end tags?\b`,
-      String.raw`kept (?:as (?:the bank’s|your banks’|rows an earlier file|they were|\$\{[^}]*\}’s own)|for a later import)`,
+      String.raw`kept (?:as (?:the bank’s|your banks’|rows an earlier file|they were|\$\{shown\.institution_name\}’s own)|for a later import)`,
       String.raw`listed twice in the file\b`,
-      String.raw`more(?: not listed\b|${ENDS})`,
+      String.raw`more not listed\b`,
       String.raw`new${ENDS}`,
       String.raw`of (?:them|the transactions this file adds|your stored transactions?|\$\{\w+\}’s transactions|its lines|this file)\b`,
       String.raw`opening balances and balance adjustments\b`,
@@ -641,6 +643,9 @@ function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | '
   if (/\bNumber\($/.test(before) && text[end + 1] === ')' && !drawnAt(lx, dot)) return true;
   if (method !== 'toLocaleString') return false;
   if (COUNT_WORDS.test(after)) return true;
+  // "and 3 more" closing a template's list: the one place "more" alone is a
+  // count ("Save 40 more" is an amount).
+  if (/^\s+more(?=\s*`)/.test(after) && /\band \$\{$/.test(before)) return true;
   if (/\.length$/.test(receiver)) return true;
   if (/\bnew\s+$/.test(before) && /^Date\b/.test(receiver)) return true;
   // "3 rows", its noun chosen by it: `${n.toLocaleString()} ${n === 1 ? ...`.
