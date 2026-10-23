@@ -1619,14 +1619,15 @@ function contract(b: Backend) {
     });
 
     test('heads read at most HEADS_STEP_BYTES of hash values a step; a value past it is not looked at, and strings always are', async () => {
+      // Three values of half the budget each, so two fit whichever order
+      // Redis gives the fields in (a hash of large values keeps none).
       const half = HEADS_STEP_BYTES / 2;
-      await b.raw.hset(notesKey(), 'n1', `v2.k7-0a1b2c3d.-.${'A'.repeat(half - 20)}`);
-      await b.raw.hset(notesKey(), 'n2', `v2.k7-0a1b2c3d.-.${'B'.repeat(half - 20)}`);
-      await b.raw.hset(notesKey(), 'n3', `v2.k7-0a1b2c3d.-.${'C'.repeat(half)}`);
+      const head = 'v2.k7-0a1b2c3d.-.';
+      for (const [id, ch] of [['n1', 'A'], ['n2', 'B'], ['n3', 'C']]) await b.raw.hset(notesKey(), id, `${head}${ch.repeat(half - head.length)}`);
       await b.raw.set(ctxKey('txns:item1'), `v2.k7-0a1b2c3d.-.${'D'.repeat(half * 3)}`);
       const m = await measureContainer(A, { heads: true });
       const heads = Object.fromEntries(m.keys.map((k) => [k.key, k.heads]));
-      // The first two fit the step's budget; the third, read past it, is "+".
+      // Two fit the step's budget; the third, read past it, is "+".
       expect(Object.values(heads['seam-contract-notes']!).reduce((n, x) => n + x, 0)).toBe(3);
       expect(heads['seam-contract-notes']!['+']).toBe(1);
       expect(heads['seam-contract-notes']!['k7-0a1b2c3d']).toBe(2);
