@@ -163,9 +163,10 @@ export type Proposal = {
   also: string[];
   /** A batched cashout: the people it would pay back together. */
   several?: string[];
-  /** The row counts in totals as it is (money in, not a transfer): listed
-   *  first, since until it is confirmed it counts beside the part already
-   *  out of spending. */
+  /** The row counts in totals as it is (money in as income, money out as a
+   *  purchase: not a transfer, not excluded): listed first, since until it
+   *  is confirmed it counts beside what is already counted of it (the part
+   *  out of spending, or your part of an IOU). */
   counted: boolean;
 };
 
@@ -256,7 +257,9 @@ export function proposals(
   const paying = opts.paying ?? new Set<string>();
   const windows: PersonWindow[] = [];
   for (const person of people) {
-    if (person.archived) continue;
+    // An archived person has nothing open (lib/shared-expenses/edits.ts
+    // archives only then, and gives them nothing new), so has no window;
+    // one with something open all the same is matched as anyone is.
     const mine = items.filter((i) => i.person === person.id && i.open !== 0);
     for (const currency of new Set(mine.map((i) => i.currency))) {
       const scale = unitScale(currency);
@@ -292,7 +295,10 @@ export function proposals(
     const app = appOf(t);
     // A store's refund, or a merchant's: at most possible.
     const capped = t.category_kind === 'expense' || (!!t.counterparty && app === null);
-    const counted = t.amount < 0 && !isExcluded(t) && !isTransfer({ transaction_code: t.transaction_code ?? null, category: t.category ?? null, category_kind: t.category_kind });
+    // Counted in totals as it is until confirmed (money in as income, money
+    // out as a purchase): listed first, since it counts beside what is
+    // already counted of it.
+    const counted = !isExcluded(t) && !isTransfer({ transaction_code: t.transaction_code ?? null, category: t.category ?? null, category_kind: t.category_kind });
     const found: Proposal[] = [];
     for (const w of windows) {
       if (w.currency !== currency || t.date < w.from || dayNumber(t.date) > w.until) continue;
@@ -374,7 +380,9 @@ function several(t: MatchRow, windows: readonly PersonWindow[], app: KnownApp, c
     their_app: false,
     named: false,
     days: 0,
-    allocations: ws.flatMap((w) => w.all.map((i) => ({ item: i.id, amount: Math.abs(i.open) }))),
+    // Each person's balance, as one payment of it would close it: only what
+    // is open, and an item closed past its amount closes no more.
+    allocations: ws.flatMap((w) => allocationsFor('balance', w.balanceUnits, w, null, 0)),
     preselect: false,
     choice: false,
     also: [],
@@ -418,8 +426,14 @@ function allocationsFor(fit: Fit, units: number, w: PersonWindow, request: Payme
     if (asked.length > 0 && net === units) return asked.map((i) => ({ item: i.id, amount: i.open }));
   }
   if (fit === 'balance' || fit === 'over') {
-    // The balance nets both ways: every open item, each whole.
-    return w.all.filter((i) => i.open > 0).map((i) => ({ item: i.id, amount: i.open }));
+    // The balance nets both ways: every open item, each whole, when they
+    // come to no more than the amount. An item closed past its amount (two
+    // payments confirmed at once) takes off the balance but closes nothing,
+    // so then the oldest first, up to the amount, as Confirm would take.
+    const whole = w.all.filter((i) => i.open > 0);
+    const net = Math.abs(whole.reduce((n, i) => n + (i.direction === 'to_you' ? 1 : -1) * toUnits(i.open, w.scale), 0));
+    if (net <= units) return whole.map((i) => ({ item: i.id, amount: i.open }));
+    return close(w.items, units);
   }
   if (fit === 'items') return w.items.filter((_, i) => i < SUBSET_ITEMS && (mask >> i) & 1).map((i) => ({ item: i.id, amount: i.open }));
   return close(w.items, units);

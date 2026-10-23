@@ -106,6 +106,24 @@ describe('amounts', () => {
     const items = states([share('a', 'alex', 35), share('s', 'sam', 20)]);
     const [p] = proposals([rowOf('v', -55)], [alex, sam], items);
     expect([p.fit, p.tier, p.preselect, p.several]).toEqual(['several', 'possible', false, ['alex', 'sam']]);
+    expect(p.allocations).toEqual([{ item: 'a', amount: 35 }, { item: 's', amount: 20 }]);
+  });
+
+  test('a batched cashout offers only what is open: an item closed past its amount is left out, as Confirm would refuse it', () => {
+    const items = itemsOf(new Map([share('a', 'alex', 35), share('a2', 'alex', 10, '2026-10-04'), share('s', 'sam', 20)]), new Map());
+    // Two payments of $10 each closed a2, $10 past what it was: Alex's
+    // balance is $25.
+    const payment = (row: string) => [row, { version: 1, account_id: 'chk', row: { amount: -10, currency: 'USD', date: '2026-10-06' }, allocations: [{ item: 'a2', amount: 10 }], confirmed_at: AT }] as const;
+    const paid = paidOf(new Map([payment('v1'), payment('v2')] as never), items);
+    const states_ = [...items.values()].map((i) => itemState(i, paid));
+    expect(states_.find((i) => i.id === 'a2')!.open).toBe(-10);
+    const [p] = proposals([rowOf('v', -45)], [alex, sam], states_);
+    expect([p.fit, p.several]).toEqual(['several', ['alex', 'sam']]);
+    // Never a2, and never more than the row: $25 of the $35, and Sam's $20.
+    expect(p.allocations).toEqual([{ item: 'a', amount: 25 }, { item: 's', amount: 20 }]);
+    // Alex alone paying the balance: the same, as Confirm takes it.
+    const [one] = proposals([rowOf('v', -25, { name: 'VENMO CASHOUT ALEX SMITH' })], [alex], states_);
+    expect([one.fit, one.allocations]).toEqual(['balance', [{ item: 'a', amount: 25 }]]);
   });
 });
 
@@ -120,7 +138,7 @@ describe('what is never proposed, and ambiguity', () => {
     ]);
   });
 
-  test('pending, another currency, dismissed, already a payment, shared, before the oldest item, past the window, archived', () => {
+  test('pending, another currency, dismissed, already a payment, shared, before the oldest item, past the window; an archived person with something open is matched', () => {
     const v = (over: Partial<MatchRow>) => rowOf('v', -20, over);
     const only = [alex];
     expect(proposals([v({ pending: true })], only, items)).toEqual([]);
@@ -130,7 +148,9 @@ describe('what is never proposed, and ambiguity', () => {
     expect(proposals([v({ shared: {} })], only, items)).toEqual([]);
     expect(proposals([v({ date: '2026-10-01' })], only, items)).toEqual([]);
     expect(proposals([v({ date: '2026-12-01' })], only, items)).toEqual([]);
-    expect(proposals([v({})], [{ ...alex, archived: true }], items)).toEqual([]);
+    // Archived, with something open all the same (archived on one device as
+    // something was shared on another): matched as anyone is.
+    expect(proposals([v({})], [{ ...alex, archived: true }], items).length).toBeGreaterThan(0);
   });
 
   test('ranked the same on every device', () => {
