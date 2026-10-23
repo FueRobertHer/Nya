@@ -1650,6 +1650,7 @@ export async function readCategories(
     ...activity.notes,
     ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said']),
     ...withoutTransactionsNotes(activity.view, historyCount(activity.rows), 'list'),
+    ...[iousNote(activity.rows, () => true)].filter((n): n is string => n !== null),
   ];
   const describe = describer(ix);
   const categories = [...seen].map(([bucket, c]): ApiCategory => {
@@ -1876,6 +1877,8 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
   // A bank whose files cover the month in its place is counted, as the
   // Budgets tab counts it (lib/no-transactions.ts coveredOutOf).
   const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(coveredOutOf(activity.view, opts.month), windowRows, 'totals')];
+  const ious = iousNote(activity.rows, (d) => d.startsWith(opts.month));
+  if (ious) notes.push(ious);
   const orphans = placeBudgets(read.budgetsNow, ix).orphans;
   if (orphans.length > 0) {
     notes.push(`${orphans.length} budget${orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
@@ -1997,6 +2000,19 @@ export type ApiSpending = SpendingTotals & {
  * ("September 2026"), any other range as this period. Null with none. The
  * last of spending's notes, and of the cash flow's (lib/api-cash-flow.ts).
  */
+/**
+ * What a total counts that the list of transactions doesn't have: an IOU you
+ * owe for something (#49, lib/shared-expenses/rows.ts), your part of what
+ * someone else paid, which is a row of the read layer's on no account, never
+ * a transaction. Said under each total, with where they are listed, so a
+ * total reconciles with /transactions. Null with none in `within`.
+ */
+export function iousNote(rows: readonly Txn[], within: (day: string) => boolean): string | null {
+  const n = rows.filter((t) => t.shared_iou !== undefined && within(t.date)).length;
+  if (n === 0) return null;
+  return `Includes ${n === 1 ? '1 IOU' : `${n} IOUs`} you owe, your part of what someone else paid: /transactions doesn’t list ${n === 1 ? 'it' : 'them'}, /shared-expenses does`;
+}
+
 export function importedNote(rows: readonly Txn[], range: { from: string; to: string }): string | null {
   const { from, to } = range;
   const whole = from.endsWith('-01') && to === lastDayOf(from.slice(0, 7));
@@ -2022,6 +2038,8 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
   const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;
+  const ious = iousNote(activity.rows, inRange);
+  if (ious) notes.push(ious);
   // With a home currency, the same totals over the rows converted into it
   // (lib/fx/totals.ts), as the Activity tab counts them.
   let base: ApiSpendingBase | null = null;

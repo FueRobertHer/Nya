@@ -33,7 +33,7 @@
 // named).
 
 import type { Ctx } from './containers';
-import { firstDay, importedNote, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+import { firstDay, importedNote, iousNote, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
 import { coveredOutOfDays } from './no-transactions';
 import { cashFlow, inPeriod } from './cash-flow';
 import { historyCount, totalsCurrency, type LeftOut } from './spending';
@@ -106,6 +106,8 @@ export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; c
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
+  const ious = iousNote(activity.rows, inRange);
+  if (ious) notes.push(ious);
   const fx = await readFlowFx(ctx, activity.rows);
   let base: ApiCashFlowBase | null = null;
   if (fx) {
