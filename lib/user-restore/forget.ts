@@ -10,12 +10,20 @@
 // what keeps them while the account waits to be linked), so this is the one
 // place they go. A book nobody can read keeps what was said about its rows:
 // which rows those were can't be told.
+//
+// NEVER WHAT THIS VERSION DOESN'T KNOW. An entry or a book in a form this
+// version doesn't know (a newer version wrote it, or a fault: sealed under
+// another account's key, say) is intact as far as this code can tell, and is
+// never removed (lib/repo.ts, ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR
+// REMOVAL): forgetting the account is refused, before anything is changed
+// (restoredForgetRefusal).
 
 import type { Ctx } from '../containers';
 import { forgetAnnotations } from '../txn-annotations';
 import { forgetOverrides } from '../overrides';
 import { forgetSplitsAndGroups } from '../split-gone';
 import { StoredDataUnreadableError } from '../stored-json';
+import { UnreadableEntriesError } from '../repo';
 import { restoredAccountsStore, restoredBookId, restoredId, restoredTxnStore } from './store';
 import { bookIdsOf } from './restored';
 
@@ -31,6 +39,50 @@ async function booksOf(ctx: Ctx, account_id: string): Promise<string[]> {
   const ids: string[] = [];
   for (let part = 1; part <= 10_000 && (await restoredTxnStore.has(ctx, restoredBookId(account_id, part))); part++) ids.push(restoredBookId(account_id, part));
   return ids;
+}
+
+/** What a restore brought back for one account, as forgetting it would take
+ *  it: the rows that can be read, counted, with their first and last days;
+ *  whether a book of them can't be read (its rows uncounted); and whether one
+ *  is in a form this version doesn't know (see the header). Storage failing
+ *  throws. */
+export type RestoredRows = { count: number; first: string | null; last: string | null; unreadable: boolean; unrecognised: boolean };
+
+export async function restoredRowsOf(ctx: Ctx, account_id: string): Promise<RestoredRows> {
+  const out: RestoredRows = { count: 0, first: null, last: null, unreadable: false, unrecognised: false };
+  for (const id of await booksOf(ctx, account_id)) {
+    let book;
+    try {
+      book = await restoredTxnStore.get(ctx, id);
+    } catch (err) {
+      if (err instanceof UnreadableEntriesError && err.unrecognised.length > 0) out.unrecognised = true;
+      else if (err instanceof StoredDataUnreadableError) out.unreadable = true;
+      else throw err;
+      continue;
+    }
+    for (const r of book?.rows ?? []) {
+      out.count++;
+      if (out.first === null || r.bank.date < out.first) out.first = r.bank.date;
+      if (out.last === null || r.bank.date > out.last) out.last = r.bank.date;
+    }
+  }
+  return out;
+}
+
+/** The words that refuse forgetting this account (lib/links.ts
+ *  forgetEarlierAccount), read before it changes anything: what a restore
+ *  brought back for it, its entry or a book, is in a form this version
+ *  doesn't know (see the header). Null when nothing is. */
+export async function restoredForgetRefusal(ctx: Ctx, account_id: string): Promise<string | null> {
+  let unknown = false;
+  try {
+    await restoredAccountsStore.get(ctx, account_id);
+  } catch (err) {
+    if (err instanceof UnreadableEntriesError && err.unrecognised.length > 0) unknown = true;
+    else if (!(err instanceof StoredDataUnreadableError)) throw err;
+  }
+  if (!unknown && !(await restoredRowsOf(ctx, account_id)).unrecognised) return null;
+  return 'What a restore brought back for this account is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here: ask whoever runs this copy of Nya.';
 }
 
 /** Forgets what a restore brought back for one account (see the header),

@@ -15,7 +15,11 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const { MASK, setAmountsHidden } = await import('@/lib/format');
 const { broughtLines, leftOutLines, waitingBanks, dayAfter, canUndo, looksProtected, accountWords, sharingLines, unreadableNotes } = await import('@/components/restore-state');
-const { PreviewView, RecordSummary } = await import('@/components/RestoreCard');
+const { PreviewView, RecordSummary, UnreadableNotesView } = await import('@/components/RestoreCard');
+type UnreadableAccount = import('@/components/restore-state').UnreadableAccount;
+type UnrecognisedAccount = import('@/components/restore-state').UnrecognisedAccount;
+type RestoredRows = import('@/lib/user-restore/forget').RestoredRows;
+const { earlierNames } = await import('@/lib/earlier-names');
 const { collect, previewOf } = await import('@/lib/user-restore/file');
 const { downloadText, sourceOf, EXPORTED } = await import('./restore-run');
 
@@ -128,7 +132,7 @@ describe('what waits, and for how long undo lasts', () => {
   });
 
   test('what can’t be read says what to do: emptying only for the record itself while restores are on, the Accounts tab’s repair for an end', () => {
-    const none = { entries: [], ends: false };
+    const none = { entries: [], unrecognised: [], ends: false, unnamed: false, broken_links: false };
     expect(unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: none })).toEqual([]);
     const record = unreadableNotes({ enabled: true, record_unreadable: true, accounts_unreadable: none });
     expect(record.map((n) => n.empty)).toEqual([true]);
@@ -139,22 +143,146 @@ describe('what waits, and for how long undo lasts', () => {
     expect(off.map((n) => n.empty)).toEqual([false]);
     expect(off[0].words).not.toContain('Empty this account');
     expect(off[0].words).toContain('turned off on this copy of Nya: ask whoever runs it.');
-    const ends = unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries: [], ends: true } });
+    const ends = unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { ...none, ends: true } });
     expect(ends.map((n) => n.empty)).toEqual([false]);
     expect(ends[0].words).toContain('Remove the damaged closure on the Accounts tab');
   });
 
+  const damaged = (entries: UnreadableAccount[], over: { unnamed?: boolean; broken_links?: boolean; unrecognised?: UnrecognisedAccount[] } = {}) =>
+    unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries, unrecognised: [], ends: false, unnamed: false, broken_links: false, ...over } }, (d) => `[${d}]`);
+  const ROWS: RestoredRows = { count: 2, first: '2026-01-03', last: '2026-01-04', unreadable: false, unrecognised: false };
+  const WHAT = (subject: string) => `What Nya keeps about ${subject}, which a restore brought back, can’t be read, so no net worth total is recorded until it can be.`;
+  const unlisted = (
+    account_id: string,
+    label: string | null,
+    why: NonNullable<UnreadableAccount['unlisted']>['why'],
+    others: (string | null)[] = [],
+    listable = true,
+    rows: RestoredRows | null = why === 'unknown' ? ROWS : null
+  ): UnreadableAccount => ({
+    account_id,
+    label,
+    listed: null,
+    unlisted: { why, others, listable, rows },
+  });
+
   test('an account whose details can’t be read is named as the Earlier accounts list names it before it is forgotten', () => {
-    const entries = [
-      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', first: '2025-12-30', last: '2026-10-06', listed: true },
-      { account_id: 'acc_gone', label: null, first: '2024-01-01', last: null, listed: true },
-      { account_id: 'acc_chk', label: 'Chase Checking ••1111', first: null, last: null, listed: false },
+    const notes = damaged([
+      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', listed: { name: 'Chase Sapphire ••2222', first: '2025-12-30', last: '2026-10-06' }, unlisted: null },
+      { account_id: 'acc_gone', label: null, listed: { name: 'Balance history', first: '2024-01-01', last: null }, unlisted: null },
+    ]);
+    expect(notes.map((n) => [n.empty, n.words, n.remove])).toEqual([
+      [false, `${WHAT('Chase Sapphire ••2222')} Forget it under Earlier accounts (Manage), where it is listed as Chase Sapphire ••2222 ([2025-12-30] to [2026-10-06]), or ask whoever runs this copy of Nya.`, undefined],
+      [false, `${WHAT('an account')} Forget it under Earlier accounts (Manage), where it is listed as Balance history ([2024-01-01] to unknown), or ask whoever runs this copy of Nya.`, undefined],
+    ]);
+  });
+
+  test('three damaged accounts at once that the list would show alike are told apart, there and in the notes', () => {
+    // As the Earlier accounts list holds them: three with no name it can
+    // read, over the same days, and one more, named.
+    const list = [
+      { id: 'acc_9f2Lq7', label: null, first: '2025-11-01', last: '2025-11-02' },
+      { id: 'acc_Xw31Bd', label: null, first: '2025-11-01', last: '2025-11-02' },
+      { id: 'acc_kP0z5e', label: null, first: '2025-11-01', last: '2025-11-02' },
+      { id: 'acc_card', label: 'Chase Sapphire ••2222', first: '2025-12-30', last: '2026-10-06' },
     ];
-    const notes = unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries, ends: false } }, (d) => `[${d}]`);
-    expect(notes.map((n) => [n.empty, n.words])).toEqual([
-      [false, 'What Nya keeps about Chase Sapphire ••2222, which a restore brought back, can’t be read, so no net worth total is recorded until it can be. Forget it under Earlier accounts (Manage), where it is listed as Chase Sapphire ••2222 ([2025-12-30] to [2026-10-06]), or ask whoever runs this copy of Nya.'],
-      [false, 'What Nya keeps about an account, which a restore brought back, can’t be read, so no net worth total is recorded until it can be. Forget it under Earlier accounts (Manage), where it is listed as Balance history ([2024-01-01] to unknown), or ask whoever runs this copy of Nya.'],
-      [false, 'What Nya keeps about Chase Checking ••1111, which a restore brought back, can’t be read, so no net worth total is recorded until it can be. It is linked to another account, so it can be forgotten only once that link is removed (Manage, Reconnected accounts); or ask whoever runs this copy of Nya.'],
+    const names = earlierNames(list);
+    expect([...names.values()]).toEqual(['Balance history · …2Lq7', 'Balance history · …31Bd', 'Balance history · …0z5e', 'Chase Sapphire ••2222']);
+    const notes = damaged(list.slice(0, 3).map((e) => ({ account_id: e.id, label: null, listed: { name: names.get(e.id)!, first: e.first, last: e.last }, unlisted: null })));
+    expect(new Set(notes.map((n) => n.words)).size).toBe(3);
+    expect(notes.map((n) => n.words.slice(n.words.indexOf('listed as ')))).toEqual([
+      'listed as Balance history · …2Lq7 ([2025-11-01] to [2025-11-02]), or ask whoever runs this copy of Nya.',
+      'listed as Balance history · …31Bd ([2025-11-01] to [2025-11-02]), or ask whoever runs this copy of Nya.',
+      'listed as Balance history · …0z5e ([2025-11-01] to [2025-11-02]), or ask whoever runs this copy of Nya.',
+    ]);
+  });
+
+  test('one the list doesn’t show is told why, with what works for that reason, never a link that isn’t there', () => {
+    const notes = damaged([
+      unlisted('acc_unk', null, 'unknown', [], false),
+      unlisted('acc_old', 'Chase Old Checking ••0000', 'linked', ['Chase Checking ••1111']),
+      unlisted('acc_chk', 'Chase Checking ••1111', 'linked-to', ['Chase Old Checking ••0000']),
+      unlisted('acc_two', null, 'linked-to', [null, null], false),
+      unlisted('acc_brk', null, 'link-unreadable', [], false),
+      unlisted('acc_live', 'Ally Savings ••7777', 'live'),
+      unlisted('acc_conn', 'Ally Checking ••8888', 'connected'),
+      unlisted('manual_x', null, 'manual'),
+    ]);
+    const way = (n: { words: string }) => n.words.slice(n.words.indexOf('can be. ') + 'can be. '.length);
+    expect(notes.map(way)).toEqual([
+      'Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage). Forget it here for good, or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Manage), since it is linked to Chase Checking ••1111, whose history it is part of. To forget it, unlink it (Manage, Reconnected accounts, Linked), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Manage), since Chase Old Checking ••0000 is linked to it. To forget it, unlink that one (Manage, Reconnected accounts, Linked), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Manage), since 2 earlier accounts are linked to it. To forget it, unlink them (Manage, Reconnected accounts, Linked), then forget it here; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Manage), since a link saved for it can’t be read. To forget it, remove that link (Manage, Reconnected accounts, Unreadable), then forget it here; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Manage), since it is one of your connected accounts. To forget it, disconnect its bank (Accounts tab), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Manage), since its bank is still connected. To forget it, disconnect that bank (Accounts tab), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It has a manual account’s id, so it can’t be forgotten as an earlier account: ask whoever runs this copy of Nya.',
+    ]);
+    expect(notes.every((n) => !n.words.includes('It is linked to another account'))).toBe(true);
+    // Only the one nothing else can show is forgotten from the card.
+    expect(notes.map((n) => n.remove?.account_id ?? null)).toEqual(['acc_unk', null, null, null, null, null, null, null]);
+    expect(notes[0].remove!.confirm).toBe(
+      'Forget this account for good? The 2 transactions a restore brought back for it ([2026-01-03] to [2026-01-04]), and what you said about them, are deleted, and this can’t be undone. To keep a copy, cancel and choose Download my data first.'
+    );
+    // The download is offered first, once, as undo offers it.
+    const html = renderToStaticMarkup(<UnreadableNotesView notes={notes} busy={false} onRemove={() => {}} download={<button className="secondary">Download my data first</button>} />);
+    expect(html.match(/<button[^>]*>Forget it<\/button>/g)?.length).toBe(1);
+    expect(html.match(/Download my data first/g)?.length).toBe(1);
+    expect(html.indexOf('Download my data first')).toBeLessThan(html.indexOf('>Forget it<'));
+    expect(html.match(/<p class="stale-note">/g)?.length).toBe(8);
+  });
+
+  test('the confirm says what forgetting takes: how many transactions and over which days, or that some can’t be read, or that there are none', () => {
+    const confirm = (rows: RestoredRows | null) => damaged([unlisted('acc_unk', null, 'unknown', [], false, rows)])[0].remove!.confirm;
+    const rest = ', and this can’t be undone. To keep a copy, cancel and choose Download my data first.';
+    expect(confirm({ ...ROWS, count: 1, last: '2026-01-03' })).toBe(`Forget this account for good? The transaction a restore brought back for it ([2026-01-03]), and what you said about it, are deleted${rest}`);
+    expect(confirm({ ...ROWS, count: 1234 })).toContain('The 1,234 transactions a restore brought back for it ([2026-01-03] to [2026-01-04]), and what you said about them, are deleted');
+    expect(confirm({ ...ROWS, unreadable: true })).toContain('The 2 transactions a restore brought back for it that can be read ([2026-01-03] to [2026-01-04]), those that can’t be, and what you said about them, are deleted');
+    expect(confirm({ count: 0, first: null, last: null, unreadable: true, unrecognised: false })).toContain('The transactions a restore brought back for it, which can’t be read, are deleted');
+    expect(confirm({ count: 0, first: null, last: null, unreadable: false, unrecognised: false })).toBe(`Forget this account for good? A restore brought back no transactions for it, and what Nya keeps about it is deleted${rest}`);
+  });
+
+  test('what this version doesn’t know is said apart, a newer version’s or a fault, and nothing offers to forget it', () => {
+    const NEWER = (subject: string) =>
+      `What Nya keeps about ${subject}, which a restore brought back, is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, and no net worth total is recorded meanwhile: ask whoever runs this copy of Nya.`;
+    const notes = damaged([], { unrecognised: [{ account_id: 'acc_card', label: 'Chase Sapphire ••2222' }, { account_id: 'acc_x1111', label: null }, { account_id: 'acc_y1111', label: null }], broken_links: true });
+    expect(notes.map((n) => [n.key, n.words, n.remove])).toEqual([
+      ['account:acc_card', NEWER('Chase Sapphire ••2222'), undefined],
+      ['account:acc_x1111', NEWER('an account (…x1111)'), undefined],
+      ['account:acc_y1111', NEWER('an account (…y1111)'), undefined],
+    ]);
+    // Said even when the damaged ones can't be named, beside them.
+    const both = damaged([{ account_id: 'a', label: null, listed: null, unlisted: null }], { unnamed: true, unrecognised: [{ account_id: 'acc_card', label: null }] });
+    expect(both.map((n) => [n.key, n.remove])).toEqual([
+      ['unnamed', undefined],
+      ['account:acc_card', undefined],
+    ]);
+    // An account with nothing to list it by whose transactions this version
+    // doesn't know isn't forgotten from here either.
+    const rows = damaged([unlisted('acc_unk', null, 'unknown', [], false, { ...ROWS, unrecognised: true })]);
+    expect(rows[0].remove).toBeUndefined();
+    expect(rows[0].words).toContain('are in a form this version of Nya doesn’t know: a newer version wrote them, or it is a fault. They are kept as they are, so it can’t be forgotten here: ask whoever runs this copy of Nya.');
+  });
+
+  test('two that would read the same are told apart by the end of each id; a link that can’t be read is said once', () => {
+    const notes = damaged([unlisted('acc_aaaa1111', null, 'unknown', [], false), unlisted('acc_bbbb1111', null, 'unknown', [], false)], { broken_links: true });
+    expect(notes.map((n) => n.key)).toEqual(['broken-links', 'account:acc_aaaa1111', 'account:acc_bbbb1111']);
+    expect(notes[0].words).toBe('A saved link can’t be read, so no account can be forgotten until it is removed: remove it first (Manage, Reconnected accounts, Unreadable).');
+    expect(notes[1].words.startsWith(WHAT('an account (…a1111)'))).toBe(true);
+    expect(notes[2].words.startsWith(WHAT('an account (…b1111)'))).toBe(true);
+    expect(notes[1].remove!.confirm.startsWith('Forget this account (…a1111) for good?')).toBe(true);
+    // Its own link is the one to remove: said there, not twice.
+    expect(damaged([unlisted('acc_brk', null, 'link-unreadable', [], false)], { broken_links: true }).map((n) => n.key)).toEqual(['account:acc_brk']);
+  });
+
+  test('when what names them can’t be read, the note says so, and nothing else about them', () => {
+    const blank = (account_id: string): UnreadableAccount => ({ account_id, label: null, listed: null, unlisted: null });
+    expect(damaged([blank('a')], { unnamed: true }).map((n) => n.words)).toEqual([
+      'What Nya keeps about an account a restore brought back can’t be read, so no net worth total is recorded until it can be. Its name couldn’t be read just now either, so this card can’t say how to forget it: try again later, or ask whoever runs this copy of Nya.',
+    ]);
+    expect(damaged([blank('a'), blank('b'), blank('c')], { unnamed: true, broken_links: true }).map((n) => n.words)).toEqual([
+      'What Nya keeps about 3 accounts a restore brought back can’t be read, so no net worth total is recorded until it can be. Their names couldn’t be read just now either, so this card can’t say how to forget them: try again later, or ask whoever runs this copy of Nya.',
     ]);
   });
 
