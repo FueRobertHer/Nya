@@ -5963,3 +5963,87 @@ button.review-keys-toggle {
 .currency-rate-pair .field:last-child {
   flex: 0 0 104px;
 }
+
+/* --- Your data (components/DataInventory.tsx) and storage across accounts
+   (components/AdminStorage.tsx): pages of the app's cards, a kind of data or
+   an account to each row, folded so a phone shows the list first --- */
+
+/* One kind of data: its name and how much of it, on one line that wraps;
+   its facts open under it. */
+.inventory-row {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.inventory-row > summary,
+.inventory-none > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.inventory-row > summary::-webkit-details-marker,
+.inventory-none > summary::-webkit-details-marker {
+  display: none;
+}
+
+.inventory-row > summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
+.inventory-name {
+  min-width: 0;
+  font-size: 15px;
+}
+
+.inventory-figures {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+.inventory-figures.stale {
+  color: var(--warn);
+}
+
+.inventory-facts {
+  margin-top: 4px;
+}
+
+/* The kinds with nothing stored, folded under their heading. */
+.inventory-none {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.inventory-none > summary {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-storage-items {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.admin-storage-items li {
+  margin-bottom: 6px;
+}
+
+.admin-storage-items .type-tag {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.admin-storage-row > .type-tag {
+  overflow-wrap: anywhere;
+}
+
+.admin-storage-more {
+  width: 100%;
+  margin-top: 4px;
+}

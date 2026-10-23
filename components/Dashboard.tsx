@@ -11,6 +11,7 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import InventoryEntry from './InventoryEntry';
 import RestoreCard from './RestoreCard';
 import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
@@ -2878,6 +2879,11 @@ export default function Dashboard({
                     )}
                   />
                 )}
+
+                {/* What Nya keeps about you, kind by kind (app/your-data),
+                    beside the download; for the admin, also storage
+                    across accounts (app/admin/storage). */}
+                {manageMode && <InventoryEntry admin={admin} />}
 
                 {/* Bringing a download back, and its undo, beside the
                     download (components/RestoreCard.tsx). */}

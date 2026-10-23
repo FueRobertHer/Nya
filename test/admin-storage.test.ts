@@ -33,6 +33,7 @@ const { readAdminStorage, MAX_PAGE } = await import('@/lib/admin-storage');
 const { maxBlobChars } = await import('@/lib/blob');
 const { forgetEpochs } = await import('@/lib/sessions');
 const route = await import('@/app/api/admin/storage/route');
+const { default: AdminStoragePage } = await import('@/app/admin/storage/page');
 
 const admin = TEST_CTX;
 const OTHER = { container: '7c1d9e4a-52b3-4f6e-9a08-3d2e1f0a9b8c' } as typeof admin;
@@ -242,5 +243,18 @@ describe('the route', () => {
 
     clerk.signedIn = 'user_a';
     expect((await get()).status).toBe(200);
+  });
+
+  test('the page too: anyone else gets the 404 page, the admin the view', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_a,user_b';
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_b: OTHER.container });
+    clerk.signedIn = 'user_b';
+    await expect(AdminStoragePage()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    clerk.signedIn = null;
+    await expect(AdminStoragePage()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    clerk.signedIn = 'user_a';
+    expect(await AdminStoragePage()).toBeTruthy();
   });
 });
