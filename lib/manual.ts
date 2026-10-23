@@ -21,6 +21,7 @@ import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt, sealedAway } from './crypto';
 import { READ_ENTRIES, UPDATE_ENTRY, openStored, type Opened } from './repo';
+import { isOwedType } from './balance';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
@@ -245,16 +246,69 @@ export async function removeManualAccount(ctx: Ctx, account_id: string): Promise
   await redis().hdel(ACCOUNTS_HASH(ctx), account_id);
 }
 
+/** What changeManualAccount did: the account as it was read on the attempt
+ *  that settled (null: there was none), and what it wrote (null: nothing). */
+export type AccountChange = { before: ManualAccount | null; written: ManualAccount | null };
+
+/**
+ * Changes one account's record as one compare-and-set on its field (the
+ * storage seam's scripts, lib/repo.ts: read exactly, then write only if
+ * unchanged since), so a balance pushed or a rename saved at the same moment
+ * is read again, never written over. `fn` is given the account as stored
+ * (null when there is none) and answers the record to write, or null to
+ * write nothing; it may run more than once, so it only computes, and it may
+ * throw to refuse. Writing where there was none only ever creates: a field
+ * filled meanwhile is read again. Throws if the account can't be read, and
+ * after a few tries if it kept changing.
+ */
+export async function changeManualAccount(ctx: Ctx, account_id: string, fn: (current: ManualAccount | null) => ManualAccount | null): Promise<AccountChange> {
+  const key = ACCOUNTS_HASH(ctx);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
+    const stored = raw ? raw.slice(1) : null; // exactly as stored, past READ_ENTRIES's "v"
+    let current: ManualAccount | null = null;
+    if (stored !== null) {
+      try {
+        current = parseStoredAccount(account_id, await decrypt(ctx, stored));
+      } catch (err) {
+        throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+      }
+    }
+    const next = fn(current);
+    if (next === null) return { before: current, written: null };
+    if (next.account_id !== account_id) throw new Error('A manual account is written under its own id');
+    const sealed = await encrypt(ctx, JSON.stringify(next));
+    const seen = stored === null ? '' : createHash('sha1').update(stored, 'utf8').digest('hex');
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, sealed])) === 1) return { before: current, written: next };
+  }
+  throw new Error(`Manual account ${account_id} kept changing, so it wasn't saved`);
+}
+
+/** What setManualBalance did. */
+export type BalanceSet = 'set' | 'missing' | 'owed-negative';
+
 /**
  * Updates just the balance, leaving every other field alone, so an automated push
- * (the ingest endpoint) can't rewrite the name or type. Returns false if the
- * account doesn't exist, for the caller to report.
+ * (the ingest endpoint) can't rewrite the name or type: one compare-and-set
+ * (changeManualAccount), so a rename saved at the same moment is never lost.
+ * A negative balance on a card or a loan is refused against the type as read
+ * in that same step ('owed-negative'), so a type changed meanwhile can't let
+ * one through. 'missing' when the account doesn't exist, for the caller to
+ * report.
  */
-export async function setManualBalance(ctx: Ctx, account_id: string, balance: number): Promise<boolean> {
-  const existing = await getManualAccount(ctx, account_id);
-  if (!existing) return false;
-  await saveManualAccount(ctx, { ...existing, balance, updated_at: new Date().toISOString() });
-  return true;
+export async function setManualBalance(ctx: Ctx, account_id: string, balance: number, now: Date = new Date()): Promise<BalanceSet> {
+  let refused = false;
+  const { before } = await changeManualAccount(ctx, account_id, (current) => {
+    refused = false; // this may run more than once
+    if (!current) return null;
+    if (isOwedType(current.type) && balance < 0) {
+      refused = true;
+      return null;
+    }
+    return { ...current, balance, updated_at: now.toISOString() };
+  });
+  if (!before) return 'missing';
+  return refused ? 'owed-negative' : 'set';
 }
 
 /**

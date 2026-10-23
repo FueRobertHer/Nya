@@ -1,26 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
-import {
-  getManualAccounts,
-  getManualAccount,
-  saveManualAccount,
-  setManualCurrency,
-  currencyField,
-  normalizeInstitutionName,
-  isManualId,
-  newManualId,
-  MANUAL_TYPES,
-  MAX_BALANCE,
-  MAX_MANUAL_ACCOUNTS,
-  MANUAL_CURRENCY,
-  type ManualAccount,
-  type ManualType,
-} from '@/lib/manual';
-import { isOwedType } from '@/lib/balance';
-import { isCurrencyCode, knownCurrency } from '@/lib/manual-txn-input';
-import { clearCaches } from '@/lib/cache';
-import { clearBackfillDone } from '@/lib/history';
+import { getManualAccounts, getManualAccount, setManualCurrency, isManualId, newManualId, MANUAL_CURRENCY, MAX_MANUAL_ACCOUNTS } from '@/lib/manual';
+import { AccountEditRefused, createManualAccount, CURRENCY_ERROR, currencyOf, invalidate, saveAccountEdit, validateAccountFields as validate } from '@/lib/manual-account-writes';
 import { deleteManualAccount } from '@/lib/manual-account-delete';
 import { followAccountCurrency } from '@/lib/import/commit';
 import { relabelCount, relabelTypedRows, type RelabelResult } from '@/lib/manual-relabel';
@@ -60,25 +42,11 @@ import { loggable } from '@/lib/log-safe';
 // GET with `account_id`, `relabel_from` and `currency` answers `relabel`
 // ({ moved, kept }), every row the move would take, older ones too. A move
 // has no undo (lib/manual-relabel.ts).
-
-type DraftInput = {
-  name?: unknown;
-  institution_name?: unknown;
-  type?: unknown;
-  subtype?: unknown;
-  balance?: unknown;
-  currency?: unknown;
-};
-
-type Validated = Omit<ManualAccount, 'account_id' | 'updated_at'>;
-
-const CURRENCY_ERROR = 'The currency is a three-letter ISO code, like USD or EUR';
-
-/** A currency a request names: undefined when it names none. */
-function currencyOf(given: unknown): { error: string } | { currency: string | undefined } {
-  if (given === undefined) return { currency: undefined };
-  return isCurrencyCode(given) && knownCurrency(given) ? { currency: given } : { error: CURRENCY_ERROR };
-}
+//
+// What is stored, refused and cleared is lib/manual-account-writes.ts, which
+// the API's writes call too, so the two never differ: each write is one
+// compare-and-set on the account's field, and a change of type, like a moved
+// balance, clears the backfill flag.
 
 /** The currency the rows typed on the account were entered in, to move into
  *  its corrected one (see the header): undefined when the request asks for
@@ -108,47 +76,6 @@ async function relabelOrSay(ctx: Ctx, account_id: string, from: string | undefin
   }
 }
 
-/** Shared field validation for create and update. Returns an error string, or
- *  the cleaned fields, with the currency when the request names one. */
-function validate(body: DraftInput): { error: string } | { value: Validated; currency: string | undefined } {
-  const name = String(body?.name ?? '').trim().slice(0, 60);
-  const institution_name = normalizeInstitutionName(String(body?.institution_name ?? '')).slice(0, 60);
-  const type = String(body?.type ?? '') as ManualType;
-  const subtype = body?.subtype == null ? null : String(body.subtype).trim().slice(0, 40) || null;
-  const balance = Number(body?.balance);
-
-  if (!name || !institution_name) return { error: 'Name and institution are required' };
-  if (!MANUAL_TYPES.includes(type)) return { error: 'Invalid account type' };
-  // Unlike a savings goal, a balance of 0 is meaningful and a negative one is
-  // legitimate (an overdrawn checking account), so only reject values that
-  // aren't real numbers.
-  if (!Number.isFinite(balance) || Math.abs(balance) > MAX_BALANCE) {
-    return { error: 'Invalid balance' };
-  }
-  // Credit and loan balances are amounts OWED, which computeNetWorth()
-  // subtracts. Accepting a negative here would double-negate into positive net
-  // worth, so a "-500" card balance is a user error, not a credit.
-  if (isOwedType(type) && balance < 0) {
-    return { error: 'Credit and loan balances are the amount owed, so they cannot be negative' };
-  }
-  const currency = currencyOf(body?.currency);
-  if ('error' in currency) return currency;
-  return { value: { name, institution_name, type, subtype, balance }, currency: currency.currency };
-}
-
-/** Cached payloads still hold the old balances. The backfill flag is cleared only
- *  when the numbers actually moved: the estimated layer was reconstructed without
- *  this account, so it would sit short by its balance with a step at the
- *  estimated/real seam. A rename changes no total, and recomputing forces a full
- *  Plaid transaction re-pull. */
-async function invalidate(ctx: Ctx, balanceChanged: boolean): Promise<void> {
-  // Flag first, cache second. The other order leaves a window where a
-  // /api/net-worth request reads the flag as still set and re-caches
-  // `backfill_stale: false`, pinning it for the TTL and dropping the recompute
-  // this call just asked for. (/api/hidden-accounts does the same.)
-  if (balanceChanged) await clearBackfillDone(ctx);
-  await clearCaches(ctx);
-}
 
 /** The count the offer to move an account's typed rows shows (see the
  *  header): what the move would take now, nothing written. */
@@ -192,23 +119,14 @@ export async function POST(req: Request) {
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
 
     // Throws (and 500s) rather than treating an unreadable hash as empty.
-    const existing = await getManualAccounts(ctx);
-    if (existing.length >= MAX_MANUAL_ACCOUNTS) {
+    const made = await createManualAccount(ctx, result.value, result.currency, { id: newManualId() });
+    if ('limit' in made) {
       return NextResponse.json(
         { error: `At most ${MAX_MANUAL_ACCOUNTS} manual accounts` },
         { status: 400 }
       );
     }
-
-    const account: ManualAccount = {
-      ...result.value,
-      ...currencyField(result.currency ?? MANUAL_CURRENCY),
-      account_id: newManualId(),
-      updated_at: new Date().toISOString(),
-    };
-    await saveManualAccount(ctx, account);
-    await invalidate(ctx, true);
-    return NextResponse.json({ account });
+    return NextResponse.json({ account: made.account });
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
@@ -248,26 +166,20 @@ export async function PATCH(req: Request) {
     const result = validate(body);
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
 
-    const existing = await getManualAccount(ctx, account_id);
-    if (!existing) {
+    // Every field the form sends, the currency the one chosen or, from a page
+    // that names none, its own; one compare-and-set (lib/manual-account-writes.ts).
+    let saved;
+    try {
+      saved = await saveAccountEdit(ctx, account_id, { fields: result.value, currency: result.currency });
+    } catch (err) {
+      if (err instanceof AccountEditRefused) return NextResponse.json({ error: err.message }, { status: err.status });
+      throw err;
+    }
+    if (!saved) {
       return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
     }
-
-    const balanceChanged = existing.balance !== result.value.balance;
-    const was = existing.currency ?? MANUAL_CURRENCY;
-    const currency = result.currency ?? was;
-    const account: ManualAccount = {
-      ...result.value,
-      // The one chosen, or, from a page that names none, its own.
-      ...currencyField(currency),
-      account_id,
-      // Only stamp updated_at when the balance actually moved, so the "Updated
-      // ..." line reflects the last real balance change rather than a rename.
-      updated_at: balanceChanged ? new Date().toISOString() : existing.updated_at,
-    };
-    await saveManualAccount(ctx, account);
-    await followAccountCurrency(ctx, account_id, was, currency);
-    await invalidate(ctx, balanceChanged);
+    const { account } = saved;
+    const currency = account.currency ?? MANUAL_CURRENCY;
     // The rows typed on it, moved into its new currency when the person said so.
     const relabelled = await relabelOrSay(ctx, account_id, moving.from, currency);
     if (relabelled === 'unread') return NextResponse.json({ error: RELABEL_UNREAD, account }, { status: 409 });

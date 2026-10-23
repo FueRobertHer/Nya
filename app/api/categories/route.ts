@@ -1,28 +1,10 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import type { Ctx } from '@/lib/containers';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
-import { loggable } from '@/lib/log-safe';
-import {
-  addCategory,
-  addGroup,
-  CategoryError,
-  deleteCategory,
-  deleteGroup,
-  mergeCategories,
-  moveCategory,
-  orderGroups,
-  renameCategory,
-  renameGroup,
-  setArchived,
-  setCategoryIcon,
-  type Taxonomy,
-} from '@/lib/categories';
-import { changeTaxonomy, ensureTaxonomy, newCategoryId, readTaxonomy } from '@/lib/category-store';
-import { categoryUsage } from '@/lib/category-usage';
-import { loadBudgets, moveMergedBudgets } from '@/lib/budget-store';
+import { CategoryError, type Taxonomy } from '@/lib/categories';
+import { ensureTaxonomy } from '@/lib/category-store';
 import { BudgetError } from '@/lib/budget-set';
-import { dropMonths, moveMergedMonths } from '@/lib/budget-months-store';
+import { changeCategories } from '@/lib/category-actions';
 
 // Your categories and their groups (lib/categories.ts), for the Categories
 // screen under Manage (components/CategoryManager.tsx) and the lists to choose
@@ -53,10 +35,10 @@ import { dropMonths, moveMergedMonths } from '@/lib/budget-months-store';
 //   rename-group    { id, name }
 //   order-groups    { ids }                 (every group's id, in the order wanted)
 //   delete-group    { id }                  (only when empty, with no budget of its own)
+//
+// Each action is lib/category-actions.ts, which the API's writes call too.
 
 const MAX_BODY_CHARS = 16 * 1024;
-/** An id as the page sends one. */
-const isId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
 
 function failure(err: unknown, what: string): NextResponse {
   const unavailable = containerUnavailable(err);
@@ -81,25 +63,6 @@ export async function GET() {
   }
 }
 
-/** A deleted category's or group's record of budgets by month dropped (it
- *  had no budget, or it couldn't have been deleted). Best effort: one left
- *  behind is read as gone, and dropped by the next note of the budget set
- *  (lib/rollover.ts noteBudgets). */
-async function dropDeleted(ctx: Ctx, kind: 'categories' | 'groups', id: string): Promise<void> {
-  try {
-    await dropMonths(ctx, kind, id);
-  } catch (err) {
-    console.error('Deleted a category or group; its budgets by month go on the next change:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
-  }
-}
-
-/** An id field of the body, or a refusal. */
-function id(body: Record<string, unknown>, field = 'id'): string {
-  const v = body[field];
-  if (!isId(v)) throw new CategoryError('Invalid request');
-  return v;
-}
-
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
@@ -114,90 +77,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
 
-    let taxonomy: Taxonomy;
-    switch (body.action) {
-      case 'add-category':
-        taxonomy = await changeTaxonomy(ctx, (t) => addCategory(t, { name: body.name, group: body.group, icon: body.icon }, newCategoryId).taxonomy);
-        break;
-      case 'rename-category': {
-        const target = id(body);
-        taxonomy = await changeTaxonomy(ctx, (t) => renameCategory(t, target, body.name));
-        break;
-      }
-      case 'set-icon': {
-        const target = id(body);
-        taxonomy = await changeTaxonomy(ctx, (t) => setCategoryIcon(t, target, body.icon));
-        break;
-      }
-      case 'move-category': {
-        const target = id(body);
-        taxonomy = await changeTaxonomy(ctx, (t) => moveCategory(t, target, body.group));
-        break;
-      }
-      case 'archive': {
-        const target = id(body);
-        if (typeof body.archived !== 'boolean') throw new CategoryError('Invalid request');
-        const archived = body.archived;
-        taxonomy = await changeTaxonomy(ctx, (t) => setArchived(t, target, archived));
-        break;
-      }
-      case 'merge': {
-        const target = id(body);
-        const into = id(body, 'into');
-        taxonomy = await changeTaxonomy(ctx, (t) => mergeCategories(t, target, into));
-        // Its budget moves to the one it went into. Counted together already
-        // (lib/budget-set.ts placeBudgets follows the merge), so a failure here
-        // loses nothing, and the merge, saved, is answered as made: the next
-        // save of budgets moves it.
-        try {
-          await moveMergedBudgets(ctx, taxonomy);
-        } catch (err) {
-          console.error('Merged categories; their budgets move on the next save:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
-        }
-        // And what they had by month, and their rollover: read as merged
-        // meanwhile too (lib/rollover.ts placeMonths), so a failure here loses
-        // nothing either.
-        try {
-          await moveMergedMonths(ctx, taxonomy);
-        } catch (err) {
-          console.error('Merged categories; their budgets by month move on the next change:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
-        }
-        break;
-      }
-      case 'delete-category': {
-        const target = id(body);
-        // What uses it, read strictly before anything is changed, for the
-        // keys it has now: a merge into it before the delete lands changes
-        // them, and the delete is refused (lib/categories.ts deleteCategory).
-        // A use added in between otherwise (another device choosing it) is
-        // words that file nowhere afterwards: the next load gives them a
-        // category again.
-        const usage = await categoryUsage(ctx, (await readTaxonomy(ctx)) ?? (await ensureTaxonomy(ctx)), target);
-        taxonomy = await changeTaxonomy(ctx, (t) => deleteCategory(t, target, usage));
-        await dropDeleted(ctx, 'categories', target);
-        break;
-      }
-      case 'add-group':
-        taxonomy = await changeTaxonomy(ctx, (t) => addGroup(t, { name: body.name, kind: body.kind }, newCategoryId).taxonomy);
-        break;
-      case 'rename-group': {
-        const target = id(body);
-        taxonomy = await changeTaxonomy(ctx, (t) => renameGroup(t, target, body.name));
-        break;
-      }
-      case 'order-groups':
-        taxonomy = await changeTaxonomy(ctx, (t) => orderGroups(t, body.ids));
-        break;
-      case 'delete-group': {
-        const target = id(body);
-        const { budgets } = await loadBudgets(ctx);
-        taxonomy = await changeTaxonomy(ctx, (t) => deleteGroup(t, target, budgets.groups[target] !== undefined));
-        await dropDeleted(ctx, 'groups', target);
-        break;
-      }
-      default:
-        return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
-    }
+    const taxonomy: Taxonomy | null = await changeCategories(ctx, body);
+    if (!taxonomy) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     return NextResponse.json({ categories: taxonomy });
   } catch (err) {
     return failure(err, 'Failed to change your categories');

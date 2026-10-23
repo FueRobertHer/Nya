@@ -2,35 +2,26 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { getManualAccount, isManualId, moveManualBalance, MAX_BALANCE, type ManualAccount } from '@/lib/manual';
-import { getKeptAccount } from '@/lib/kept-accounts';
 import { isOwedType } from '@/lib/balance';
 import { clearNetWorthCache } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { balanceAfter, readTxnFields, DEFAULT_CURRENCY } from '@/lib/manual-txn-input';
 import {
-  addManualTxn,
-  deleteManualTxn,
-  editManualTxn,
   InvalidTxnError,
   isManualTxnId,
   locateManualTxn,
   manualRowForDisplay,
-  newManualTxn,
   newManualTxnId,
   noteBalanceUpdate,
-  removeAccountTxns,
   type ManualTxn,
   type ManualTxnChanges,
 } from '@/lib/manual-txns';
-import { forgetAnnotations } from '@/lib/txn-annotations';
-import { forgetSplitsAndGroups } from '@/lib/split-gone';
+import { addRow, changeManualTransaction, removeManualTransaction } from '@/lib/manual-txn-writes';
 import { storeFailure } from '@/lib/store-failure';
 import { choiceForId, fileForAnswer } from '@/lib/category-store';
 import { CategoryError } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { loggable } from '@/lib/log-safe';
-import { followEdit } from '@/lib/review-store';
-import { currencyOf } from '@/lib/spending';
 
 // Transactions on manual accounts (lib/manual-txns.ts), ONE ROW PER REQUEST:
 // POST adds one, PATCH changes one, DELETE removes one, each named by its id,
@@ -70,6 +61,9 @@ import { currencyOf } from '@/lib/spending';
 // (choiceText), which the release before categories had ids reads too; a page
 // from that release still sends the words themselves (`category`). The row in
 // each answer is filed as the Activity tab files it.
+//
+// What is stored and cleaned up is lib/manual-txn-writes.ts, which the API's
+// writes call too, so the two never differ.
 
 /** Far more than any one transaction's fields need. */
 const MAX_BODY_CHARS = 8 * 1024;
@@ -263,13 +257,11 @@ export async function POST(req: Request) {
           );
         }
       }
-      ({ row, added } = await addManualTxn(ctx, newManualTxn(account.account_id, fields, new Date(), id)));
       // An account deleted while this was saved (app/api/manual-accounts
       // DELETE) mustn't be left a book nothing shows: its row goes with it.
-      if (added && !(await getManualAccount(ctx, account.account_id))) {
-        await removeAccountTxns(ctx, account.account_id);
-        return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
-      }
+      const put = await addRow(ctx, account, fields, id);
+      if (put === 'account-gone') return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
+      ({ row, added } = put);
       if (!update) return NextResponse.json({ transaction: await shown(ctx, row, account), added, balance_updated: false });
     }
 
@@ -354,28 +346,12 @@ export async function PATCH(req: Request) {
     }
     if (Object.keys(changes).length === 0) return NextResponse.json({ error: 'Nothing to change' }, { status: 400 });
 
-    const saved = await editManualTxn(ctx, body.id, changes, { from: body.account_id as string | undefined });
-    if (!saved) return NextResponse.json({ error: 'That transaction was deleted or moved since this page loaded. Reload to see it.' }, { status: 404 });
-    // Moved into an account deleted meanwhile: the row goes with it, as the
-    // account's rows do (app/api/manual-accounts DELETE). An edit in place
-    // can't bring a deleted book back: it writes only where its row is.
-    if (target && !(await getManualAccount(ctx, target.account_id))) {
-      await removeAccountTxns(ctx, target.account_id);
-      return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
-    }
-    // A SimpleFIN account's row (its category changed) answers like the rest.
-    const on = target ?? (await getKeptAccount(ctx, saved.account_id));
-    if (!on) return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
-    const row = manualRowForDisplay(on, saved);
-    // A new amount or currency is the person's own word: an approval of the
-    // row follows it (lib/review-store.ts followEdit). Best effort: one that
-    // can't follow leaves the row in the queue, said as an amount changed.
-    if (changes.amount !== undefined || changes.currency !== undefined) {
-      await followEdit(ctx, saved.id, { amount: row.amount, currency: currencyOf(row) }).catch((err) =>
-        console.warn('manual-transactions: an approval did not follow the edit', loggable(err))
-      );
-    }
-    return NextResponse.json({ transaction: await fileForAnswer(ctx, row) });
+    // Moved into an account deleted meanwhile, the row goes with it; an
+    // approval follows a new amount (lib/manual-txn-writes.ts).
+    const changed = await changeManualTransaction(ctx, body.id, changes, { from: body.account_id as string | undefined, target: target ?? undefined });
+    if (changed === 'gone') return NextResponse.json({ error: 'That transaction was deleted or moved since this page loaded. Reload to see it.' }, { status: 404 });
+    if (changed === 'account-gone') return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
+    return NextResponse.json({ transaction: await fileForAnswer(ctx, manualRowForDisplay(changed.on, changed.saved)) });
   } catch (err) {
     if (err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     return storeFailure(err, 'Failed to save the transaction');
@@ -393,11 +369,8 @@ export async function DELETE(req: Request) {
     if (body instanceof NextResponse) return body;
     if (!isManualTxnId(body.id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
     if (body.account_id !== undefined && !isAccountId(body.account_id)) return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
-    const deleted = await deleteManualTxn(ctx, body.id, body.account_id as string | undefined);
-    // Best effort: an exclusion left behind names a row that no longer exists,
-    // which is never shown.
-    await forgetAnnotations(ctx, [body.id]).catch((err) => console.warn('manual-transactions: an exclusion was left behind', loggable(err)));
-    await forgetSplitsAndGroups(ctx, [body.id]).catch((err) => console.warn('manual-transactions: a split or a group was left behind', loggable(err)));
+    // What was said about it goes too, best effort (lib/manual-txn-writes.ts).
+    const deleted = await removeManualTransaction(ctx, body.id, body.account_id as string | undefined);
     return NextResponse.json({ success: true, deleted });
   } catch (err) {
     // A row from SimpleFIN: the bank's, never deleted alone.

@@ -108,7 +108,18 @@ export async function POST(req: Request) {
           continue;
         }
 
-        await setManualBalance(ctx, account_id, balance);
+        // One compare-and-set (lib/manual.ts), which checks the type again as
+        // it writes: a card or a loan made of this account meanwhile refuses
+        // a negative balance there too.
+        const set = await setManualBalance(ctx, account_id, balance);
+        if (set === 'missing') {
+          results.push({ account_id, status: 'not_found' });
+          continue;
+        }
+        if (set === 'owed-negative') {
+          results.push({ account_id, status: 'invalid', reason: 'Credit and loan balances are the amount owed, so they cannot be negative' });
+          continue;
+        }
         results.push({ account_id, status: 'updated' });
       } catch (err) {
         console.error(`Ingest failed for ${account_id}`, loggable(err));

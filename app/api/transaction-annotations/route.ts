@@ -1,20 +1,11 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
-import {
-  AnnotationError,
-  changeAnnotation,
-  checkNote,
-  isTransactionId,
-  stripTags,
-  TooManyAnnotationsError,
-  type AnnotationChange,
-  type TxnAnnotation,
-} from '@/lib/txn-annotations';
-import { ensureTag, isTagId, liveTagIds, MAX_TAGS_PER_TRANSACTION, readTagSet, TagError, type Tag } from '@/lib/tags';
-import { finishDeleting } from '@/lib/tag-delete';
-import { editManualTxn, findManualTxn, InvalidTxnError, isConnectorRow, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
+import { AnnotationError, checkNote, isTransactionId, TooManyAnnotationsError } from '@/lib/txn-annotations';
+import { isTagId, MAX_TAGS_PER_TRANSACTION, TagError } from '@/lib/tags';
+import { InvalidTxnError, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
 import { isManualId } from '@/lib/manual';
 import { storeFailure } from '@/lib/store-failure';
+import { annotateTransaction } from '@/lib/annotate';
 
 // What the person says about one transaction (lib/txn-annotations.ts), one
 // transaction per request: whether it is left out of budgets and reports, the
@@ -57,6 +48,8 @@ import { storeFailure } from '@/lib/store-failure';
 // deletion swept the records before this one landed (lib/tag-delete.ts), is
 // taken back off once the record is saved, so the two end with no record
 // holding it, whichever lands first.
+//
+// The change itself is lib/annotate.ts, which the API's writes call too.
 
 const MAX_BODY_CHARS = 8 * 1024;
 
@@ -96,64 +89,22 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: 'Say what to change' }, { status: 400 });
     }
 
-    // Tags put on must exist (a tag deleted on another device since the page
-    // loaded is refused, never put back); a name typed is found or made.
-    let created: Tag | null = null;
-    let live: Set<string> | undefined;
-    let gone: Set<string> | undefined;
-    if (add.length > 0 || remove.length > 0 || body.new_tag !== undefined) {
-      await finishDeleting(ctx);
-      if (body.new_tag !== undefined) {
-        const made = await ensureTag(ctx, { name: body.new_tag });
-        if (made.created) created = made.tag;
-        if (!add.includes(made.tag.id)) add.push(made.tag.id);
-      }
-      const tagSet = await readTagSet(ctx);
-      live = liveTagIds(tagSet);
-      gone = new Set(tagSet?.deleting ?? []);
-      if (add.some((id) => !live!.has(id))) {
-        return NextResponse.json({ error: 'That tag no longer exists. Reload to see your tags as they are.' }, { status: 404 });
-      }
-    }
-    // Taking off a tag that no longer exists changes nothing.
-    const off = live ? remove.filter((id) => live!.has(id)) : remove;
-
-    // A note on a row entered by hand or imported into a manual account is
-    // the row's own; one on a row SimpleFIN brought is kept beside it, as a
-    // bank row's is, and so is one on a row imported into a linked account.
-    let rowNote: string | null | undefined;
-    let noteBeside = !manual;
-    if (manual && note !== undefined) {
-      const moved = () => NextResponse.json({ error: 'That transaction was deleted or moved since this page loaded. Reload to see it.' }, { status: 404 });
-      const found = await findManualTxn(ctx, transaction_id, account_id as string | undefined);
-      if (!found) return moved();
-      if (isConnectorRow(found.row)) noteBeside = true;
-      else {
-        const saved = await editManualTxn(ctx, transaction_id, { note: note || null }, { from: found.account_id });
-        if (!saved) return moved();
-        rowNote = saved.note;
-      }
-    }
-    const change: AnnotationChange = {
-      ...(excluded !== undefined ? { excluded } : {}),
-      ...(add.length > 0 ? { add } : {}),
-      ...(off.length > 0 ? { remove: off } : {}),
-      ...(note !== undefined && noteBeside ? { note } : {}),
-    };
-    let saved: TxnAnnotation | null = Object.keys(change).length > 0 ? await changeAnnotation(ctx, transaction_id, { ...change, ...(gone?.size ? { gone } : {}) }) : null;
-    // A tag deleted while this was saved: taken back off (see TAGS THAT EXIST).
-    if (saved && add.length > 0) {
-      const now = liveTagIds(await readTagSet(ctx));
-      const gone = add.filter((id) => !now.has(id));
-      if (gone.length > 0) saved = await stripTags(ctx, transaction_id, gone);
-    }
+    const done = await annotateTransaction(ctx, transaction_id, {
+      excluded: excluded as boolean | undefined,
+      add,
+      remove,
+      note,
+      new_tag: body.new_tag as string | undefined,
+      account_id: account_id as string | undefined,
+    });
+    if (!done.ok) return NextResponse.json({ error: done.message }, { status: done.status });
     return NextResponse.json({
       transaction_id,
-      excluded: saved?.excluded === true,
-      tags: saved?.tags ?? [],
-      untagged: saved?.untagged ?? [],
-      note: rowNote !== undefined ? rowNote : (saved?.note ?? null),
-      ...(created ? { created_tag: created } : {}),
+      excluded: done.excluded,
+      tags: done.tags,
+      untagged: done.untagged,
+      note: done.note,
+      ...(done.created_tag ? { created_tag: done.created_tag } : {}),
     });
   } catch (err) {
     if (err instanceof TooManyAnnotationsError || err instanceof AnnotationError || err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });

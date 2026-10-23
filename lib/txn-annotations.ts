@@ -214,9 +214,20 @@ export function changedRecord(current: TxnAnnotation | null, change: AnnotationC
 }
 
 /** Changes what is said about one transaction, in one compare-and-set (see
- *  changeRecord), and returns the record as saved. */
-export function changeAnnotation(ctx: Ctx, transaction_id: string, change: AnnotationChange, now: Date = new Date()): Promise<TxnAnnotation> {
-  return changeRecord(ctx, transaction_id, (current) => changedRecord(current, change, now));
+ *  changeRecord), and returns the record as saved. `expect`, a caller's own
+ *  check of the record as it is now (the API's version), runs inside that
+ *  compare-and-set and throws to refuse. */
+export function changeAnnotation(
+  ctx: Ctx,
+  transaction_id: string,
+  change: AnnotationChange,
+  now: Date = new Date(),
+  expect?: (current: TxnAnnotation | null) => void
+): Promise<TxnAnnotation> {
+  return changeRecord(ctx, transaction_id, (current) => {
+    expect?.(current);
+    return changedRecord(current, change, now);
+  });
 }
 
 /**

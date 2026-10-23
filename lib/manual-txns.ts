@@ -325,7 +325,7 @@ export async function editManualTxn(
   ctx: Ctx,
   id: string,
   changes: ManualTxnChanges,
-  opts: { from?: string; now?: Date } = {}
+  opts: { from?: string; now?: Date; expect?: (row: ManualTxn) => void } = {}
 ): Promise<ManualTxn | null> {
   const found = await findManualTxn(ctx, id, opts.from);
   if (!found) return null;
@@ -341,6 +341,10 @@ export async function editManualTxn(
     if (!book || !row) return new Map();
     const refused = connectorRowRefusal(row, changes);
     if (refused) throw new InvalidTxnError(refused);
+    // A caller's own check of the row as it is now (the API's version): it
+    // throws to refuse, inside this compare-and-set, so nothing landing in
+    // between can slip past it.
+    opts.expect?.(row);
     const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
     // A name the person gives a row imported with one is theirs: no rule
     // renames it (ManualTxn.named). A SimpleFIN row's is refused above.
@@ -388,7 +392,7 @@ function withoutRow(book: ManualTxnBook | null, id: string): ManualTxnBook | nul
  * wherever it is now, since the person asked for this row to go. False when
  * it is nowhere.
  */
-export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Promise<boolean> {
+export async function deleteManualTxn(ctx: Ctx, id: string, from?: string, opts: { expect?: (row: ManualTxn) => void } = {}): Promise<boolean> {
   for (const where of from !== undefined ? [from, undefined] : [undefined]) {
     const found = await findManualTxn(ctx, id, where);
     if (!found) continue;
@@ -401,6 +405,8 @@ export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Prom
       if (row && isConnectorRow(row)) {
         throw new InvalidTxnError(`This transaction came from your bank through ${throughWhom(row)}, so it can’t be deleted here. You can leave it out of budgets instead.`);
       }
+      // A caller's own check, inside this compare-and-set (see editManualTxn).
+      if (row) opts.expect?.(row);
       removed = !!row;
       return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
     });
