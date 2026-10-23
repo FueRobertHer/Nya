@@ -174,6 +174,10 @@ export type Continued = {
   at: string;
   until: string | null;
   by_id: boolean;
+  /** Set when an undo of it began: from then on no sync merges a row into
+   *  the account (lib/connectors/sync.ts mergeRecords reads the entry again
+   *  inside the book's compare-and-set), so the undo's rows stand. */
+  undoing?: string;
 };
 
 /** A tracked account. Version 2 is one carried on (`continued`): the release
@@ -330,7 +334,8 @@ function isContinued(v: unknown): v is Continued {
     (f.sign === null || (OWED_SIGNS as readonly unknown[]).includes(f.sign)) &&
     isTime(v.at) &&
     (v.until === null || isCalendarDay(v.until)) &&
-    typeof v.by_id === 'boolean'
+    typeof v.by_id === 'boolean' &&
+    (v.undoing === undefined || isTime(v.undoing))
   );
 }
 

@@ -142,10 +142,11 @@ export type ManualTxn = TxnFields & {
   named?: string;
   /** On a row a connector account carried on from an account a restore
    *  brought back took over (lib/connectors/sync.ts mergeRecords): the row
-   *  as it was, its source and id there, its day and its name (its amount
-   *  and currency are the same, by the rule that matched them), which
-   *  undoing the carrying on puts back. Absent on every other row. */
-  continues?: { source: string; source_id: string | null; date: string; name: string };
+   *  as it was, its source and id there, its day, name and amount (an update
+   *  by id since can change it), and its content key when it had one (absent:
+   *  none), which undoing the carrying on puts back. Absent on every other
+   *  row. */
+  continues?: { source: string; source_id: string | null; date: string; name: string; amount: number; source_key?: string };
   created_at: string;
   /** When it was last changed in the app. An import that replaces it with
    *  its file's version, and the undo of that, leave it as it was: neither is
@@ -175,7 +176,14 @@ const isSource = (v: unknown) => typeof v === 'string' && v.length <= 40 && /^[a
 /** What a row taken over by a carried-on account was (ManualTxn
  *  `continues`). */
 const isContinues = (v: unknown) =>
-  isRecord(v) && isSource(v.source) && isTextOrNull(v.source_id) && isCalendarDay(v.date) && typeof v.name === 'string' && (v.name as string).length <= 1000;
+  isRecord(v) &&
+  isSource(v.source) &&
+  isTextOrNull(v.source_id) &&
+  isCalendarDay(v.date) &&
+  typeof v.name === 'string' &&
+  (v.name as string).length <= 1000 &&
+  isAmount(v.amount) &&
+  (v.source_key === undefined || (typeof v.source_key === 'string' && v.source_key.length <= 64));
 
 /**
  * One stored row. The shape and types only, not today's limits (a payee's

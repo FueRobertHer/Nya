@@ -45,13 +45,18 @@
 // are found by id: the old ones' ids are another server's (the review's Nit
 // 3), left to the match by content.
 //
-// UNDO puts the entry back as it was (Continued `from`), on its old
-// connection where that is still there, else on a connection of its own with
-// no credential, waiting for a token as a restored one does; gives the rows
-// taken over their old source, id, day and name back; removes the rows the
-// new provider added, with what was said about them, as letting an account
-// go removes them; and offers the provider's account again. Balances
-// recorded meanwhile stay where they were: history is never rewritten.
+// UNDO marks the entry as being undone first (`undoing`): from then on no
+// sync merges a row into it, since mergeRecords reads the entry again inside
+// the book's compare-and-set, so a sync landing part way through can't take
+// the rows over again. Then it gives the rows taken over what they were
+// (their source, id, day, name, amount and content key), removes the rows
+// the new provider added, with what was said about them, as letting an
+// account go removes them, offers the provider's account again, and puts
+// the entry back as it was (Continued `from`), on its old connection where
+// that is still there, else on a connection of its own with no credential,
+// waiting for a token as a restored one does. Stopped part way, it is run
+// again. Balances recorded meanwhile stay where they were: history is never
+// rewritten.
 
 import type { Ctx } from '../containers';
 import { addDays } from '../manual-txn-input';
@@ -233,7 +238,7 @@ export function takeOver(stored: ManualTxn, row: ImportRow): ManualTxn {
     currency: row.currency,
     name: row.name,
     ...(row.source_key ? { source_key: row.source_key } : {}),
-    continues: { source: stored.source, source_id: stored.source_id, date: stored.date, name: stored.name },
+    continues: { source: stored.source, source_id: stored.source_id, date: stored.date, name: stored.name, amount: stored.amount, ...(stored.source_key ? { source_key: stored.source_key } : {}) },
   };
 }
 
@@ -258,7 +263,12 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
   const entry = await connectorAccountsStore.get(ctx, account_id);
   if (!entry || entry.version !== 2 || !entry.continued) throw new CarryOnRefused('That account wasn’t carried on from your download.', 404);
   const c = entry.continued;
-  // The rows first: taken over ones put back, the new provider's removed.
+  const at = new Date(now).toISOString();
+  // First marked as being undone: from then on no sync merges a row into it
+  // (mergeRecords reads the entry again inside the book's compare-and-set),
+  // so a sync landing part way through never takes the rows over again.
+  await connectorAccountsStore.update(ctx, account_id, (cur) => (cur && cur.version === 2 && cur.continued ? { ...cur, continued: { ...cur.continued, undoing: cur.continued.undoing ?? at } } : cur));
+  // The rows: taken over ones put back as they were, the new provider's removed.
   let gone: string[] = [];
   await manualTxnStore.update(ctx, account_id, (book) => {
     if (!book) return book;
@@ -266,8 +276,16 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
     const rows: ManualTxn[] = [];
     for (const r of book.rows) {
       if (r.continues) {
-        const { continues, ...rest } = r;
-        rows.push({ ...rest, source: continues.source, source_id: continues.source_id, date: continues.date, name: continues.name });
+        const { continues, source_key: _key, ...rest } = r;
+        rows.push({
+          ...rest,
+          source: continues.source,
+          source_id: continues.source_id,
+          date: continues.date,
+          name: continues.name,
+          amount: continues.amount,
+          ...(continues.source_key ? { source_key: continues.source_key } : {}),
+        });
       } else if (r.source === entry.connector && r.created_at >= c.at) gone.push(r.id);
       else rows.push(r);
     }
@@ -277,7 +295,10 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
     await forgetAnnotations(ctx, gone).catch((err) => console.warn('connectors: exclusions were left behind', loggable(err)));
     await forgetSplitsAndGroups(ctx, gone).catch((err) => console.warn('connectors: splits or groups were left behind', loggable(err)));
   }
-  // Then the entry, on its old connection where it is still there.
+  // Then the connections' lists, while the entry still names the one that
+  // carried it on (so an undo stopped here, run again, finds it): off that
+  // one, offered there again, and on its old connection where that is still
+  // there, else on one of its own with no credential.
   const old = await connectionsStore.get(ctx, c.from.connection_id);
   const home = old ? c.from.connection_id : newConnectionId();
   if (!old) {
@@ -285,7 +306,7 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
       version: 1,
       connector: c.from.connector,
       host: c.from.host ?? '',
-      created_at: new Date(now).toISOString(),
+      created_at: at,
       last_fetch: null,
       last_answer_at: null,
       tracked: [],
@@ -295,6 +316,21 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
   }
   const carriedBy = entry.connection_id;
   const offer: AvailableAccount = { remote_id: entry.remote_id, name: entry.name, institution: entry.institution_name, institution_key: entry.institution_key, currency: entry.currency, currency_text: entry.currency };
+  if (carriedBy !== home) {
+    await connectionsStore.update(ctx, carriedBy, (n) =>
+      n
+        ? {
+            ...n,
+            tracked: n.tracked.filter((t) => t.account_id !== account_id),
+            available: n.available.some((a) => a.remote_id === offer.remote_id) ? n.available : [...n.available, offer],
+          }
+        : n
+    );
+  }
+  await connectionsStore.update(ctx, home, (h) =>
+    h ? { ...h, tracked: [...h.tracked.filter((t) => t.account_id !== account_id), { remote_id: c.from.remote_id, account_id }] } : h
+  );
+  // Last, the entry: as it was, version 1 again.
   await connectorAccountsStore.update(ctx, account_id, (cur) => {
     if (!cur || cur.version !== 2) return cur;
     const { continued: _c, ...rest } = cur;
@@ -316,20 +352,6 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
       ok_at: null,
     };
   });
-  await connectionsStore.update(ctx, home, (h) =>
-    h ? { ...h, tracked: [...h.tracked.filter((t) => t.account_id !== account_id), { remote_id: c.from.remote_id, account_id }] } : h
-  );
-  if (carriedBy !== home) {
-    await connectionsStore.update(ctx, carriedBy, (n) =>
-      n
-        ? {
-            ...n,
-            tracked: n.tracked.filter((t) => t.account_id !== account_id),
-            available: n.available.some((a) => a.remote_id === offer.remote_id) ? n.available : [...n.available, offer],
-          }
-        : n
-    );
-  }
   await clearBackfillDone(ctx);
   await clearCaches(ctx);
   return { removed: gone.length };

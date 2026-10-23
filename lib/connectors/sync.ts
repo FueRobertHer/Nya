@@ -239,10 +239,22 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
       await manualTxnStore.updateMany(
         ctx,
         chunk.map((p) => p.account.account_id),
-        (books) => {
+        async (books) => {
           counts = { added: 0, updated: 0 }; // this may run more than once
           const writes = new Map<string, ManualTxnBook | null>();
+          // A carried-on account is read again here, inside the books'
+          // compare-and-set (lib/connectors/continue.ts UNDO): one an undo
+          // has begun on, or that is no longer this connection's carried-on
+          // account, takes nothing more from this answer.
+          const carried = chunk.filter((p) => p.account.continued).map((p) => p.account.account_id);
+          const fresh = carried.length > 0 ? await connectorAccountsStore.getMany(ctx, carried) : new Map<string, ConnectorAccount>();
+          const stale = (a: ConnectorAccount) => {
+            if (!a.continued) return false;
+            const now = fresh.get(a.account_id);
+            return !now || now.version !== 2 || !!now.continued?.undoing || now.connection_id !== a.connection_id || now.remote_id !== a.remote_id;
+          };
           for (const { account, rows } of chunk) {
+            if (stale(account)) continue;
             const book = books.get(account.account_id) ?? null;
             const next = [...(book?.rows ?? [])];
             const index = new Map<string, number>();

@@ -54,7 +54,7 @@ afterAll(() => {
  *  transactions, then downloaded. */
 async function oldCopy(): Promise<{ text: string; restored: string }> {
   server.accounts = [
-    fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': ago(1), transactions: [txn('c1', 3, '-12.50', 'COFFEE'), txn('c2', 10, '2500.00', 'PAYROLL'), txn('c3', 40, '-80.00', 'GROCER')] }),
+    fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': ago(1), transactions: [txn('c1', 3, '-12.50', 'COFFEE'), txn('c2', 10, '2500.00', 'PAYROLL'), txn('c3', 40, '-80.00', 'GROCER'), txn('c4', 6, '-9.99', 'SNACK'), txn('c5', 6, '-9.99', 'SNACK')] }),
   ];
   const { connection_id } = await connect(OTHER, 'simplefin', server.setupToken(`old-${Math.random()}`), NOW - 2 * DAY);
   await trackAccounts(OTHER, connection_id, [{ remote_id: 'CHK', type: 'depository' }], NOW - 2 * DAY);
@@ -83,7 +83,8 @@ beforeEach(async () => {
       name: 'Checking',
       balance: '1492.48',
       'balance-date': ago(1),
-      transactions: [txn('n1', 3, '-12.50', 'COFFEE'), txn('n2', 10, '2500.00', 'PAYROLL'), txn('n3', 1, '-5.00', 'NEW ROW'), txn('n4', 4, '-7.77', 'LATE ROW')],
+      // Two snacks alike, the same day and amount, as in the download.
+      transactions: [txn('n1', 3, '-12.50', 'COFFEE'), txn('n2', 10, '2500.00', 'PAYROLL'), txn('n3', 1, '-5.00', 'NEW ROW'), txn('n4', 4, '-7.77', 'LATE ROW'), txn('n5', 6, '-9.99', 'SNACK'), txn('n6', 6, '-9.99', 'SNACK')],
     }),
   ];
 });
@@ -95,6 +96,8 @@ async function connectNew(): Promise<string> {
 }
 
 const bookOf = async (id: string) => ((await manualTxnStore.get(ctx, id))?.rows ?? []).map((r) => [r.source_id, r.date, r.amount, r.name, r.continues?.source_id ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+/** Every row of an account's book, whole, in id order. */
+const wholeBook = async (id: string) => [...((await manualTxnStore.get(ctx, id))?.rows ?? [])].sort((a, b) => (a.id < b.id ? -1 : 1));
 /** What Activity counts of the account's rows, to the cent. */
 const shownSum = async (id: string) => {
   const ids = new Set(((await manualTxnStore.get(ctx, id))?.rows ?? []).map((r) => r.id));
@@ -150,15 +153,19 @@ describe('carried on', () => {
     const [oldId] = [...(await connectionsStore.getAll(ctx)).keys()].filter((id) => id !== conn);
     expect((await connectionsStore.get(ctx, oldId))!.tracked).toEqual([]);
     // The coffee and the payroll are the same rows, under the new ids, with
-    // what they were kept; the grocer stays; the late row and the new one
-    // are added.
-    expect(await bookOf(OLD.restored)).toEqual([
+    // what they were kept; the two snacks alike are each taken over once,
+    // one to one; the grocer stays; the late row and the new one are added.
+    const book0 = await bookOf(OLD.restored);
+    expect(book0.filter((r) => r[3] !== 'SNACK')).toEqual([
       ['c3', dayOf(NOW - 40 * DAY), expect.any(Number), 'GROCER', null],
       ['n1', dayOf(NOW - 3 * DAY), expect.any(Number), 'COFFEE', 'c1'],
       ['n2', dayOf(NOW - 10 * DAY), expect.any(Number), 'PAYROLL', 'c2'],
       ['n3', dayOf(NOW - 1 * DAY), expect.any(Number), 'NEW ROW', null],
       ['n4', dayOf(NOW - 4 * DAY), expect.any(Number), 'LATE ROW', null],
     ]);
+    const snacks = book0.filter((r) => r[3] === 'SNACK');
+    expect(snacks.map((r) => r[0]).sort()).toEqual(['n5', 'n6']);
+    expect(snacks.map((r) => r[4]).sort()).toEqual(['c4', 'c5']);
     // Activity counts each once: every row of the book, and nothing else of it.
     const counted = await shownSum(OLD.restored);
     const book = (await manualTxnStore.get(ctx, OLD.restored))!.rows;
@@ -166,19 +173,21 @@ describe('carried on', () => {
     expect(counted).not.toBe(0);
     // The same window sent again matches nothing twice.
     await syncConnection(ctx, conn, { purpose: 'refresh', now: NOW + 13 * 3_600_000 });
-    expect((await manualTxnStore.get(ctx, OLD.restored))!.rows).toHaveLength(5);
+    expect((await manualTxnStore.get(ctx, OLD.restored))!.rows).toHaveLength(7);
     expect(await shownSum(OLD.restored)).toBe(counted);
     // What the first answers found: of the rows SimpleFIN sent up to the
-    // last day from the download, two were in it and one was added.
-    expect(carryEvidence(entry, (await manualTxnStore.get(ctx, OLD.restored))!.rows)).toEqual({ until: dayOf(NOW - 3 * DAY), matched: 2, added: 1 });
+    // last day from the download, four were in it and one was added.
+    expect(carryEvidence(entry, (await manualTxnStore.get(ctx, OLD.restored))!.rows)).toEqual({ until: dayOf(NOW - 3 * DAY), matched: 4, added: 1 });
   });
 
   test('undone, exactly: the rows it took over given back, those it added removed, the account waiting on its old connection again', async () => {
-    const before = await bookOf(OLD.restored);
+    const before = await wholeBook(OLD.restored);
     const conn = await connectNew();
     await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], NOW);
     expect(await undoCarryOn(ctx, OLD.restored)).toEqual({ removed: 2 });
-    expect(await bookOf(OLD.restored)).toEqual(before);
+    // Every field of every row as it was: its source, id, content key, day,
+    // name and amount.
+    expect(await wholeBook(OLD.restored)).toEqual(before);
     const entry = (await connectorAccountsStore.get(ctx, OLD.restored))!;
     expect(entry).toMatchObject({ version: 1, remote_id: 'CHK' });
     expect(entry.continued).toBeUndefined();
@@ -187,6 +196,34 @@ describe('carried on', () => {
     expect((await connectionsStore.get(ctx, conn))!).toMatchObject({ tracked: [], available: [expect.objectContaining({ remote_id: 'CHK2' })] });
     expect((await waitingRestored(ctx)).map((w) => w.account.account_id)).toEqual([OLD.restored]);
     await expect(undoCarryOn(ctx, OLD.restored)).rejects.toThrow('wasn’t carried on');
+  });
+
+  test('undone after the provider corrected a row it took over: that row’s amount and content key as they were', async () => {
+    const before = await wholeBook(OLD.restored);
+    const conn = await connectNew();
+    await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], NOW);
+    // The bank corrects the coffee, under the same id: an update by id.
+    server.accounts[0].transactions = server.accounts[0].transactions.map((t) => (t.id === 'n1' ? { ...t, amount: '-13.00' } : t));
+    await syncConnection(ctx, conn, { purpose: 'refresh', now: NOW + 13 * 3_600_000 });
+    const coffee = (await manualTxnStore.get(ctx, OLD.restored))!.rows.find((r) => r.source_id === 'n1')!;
+    expect(Math.abs(coffee.amount)).toBe(13);
+    await undoCarryOn(ctx, OLD.restored);
+    expect(await wholeBook(OLD.restored)).toEqual(before);
+  });
+
+  test('a sync landing while it is being undone merges nothing: the undo’s rows stand', async () => {
+    const before = await wholeBook(OLD.restored);
+    const conn = await connectNew();
+    await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], NOW);
+    const carried = await wholeBook(OLD.restored);
+    // The undo's first step, then a sync of the new connection before its next.
+    const entry = (await connectorAccountsStore.get(ctx, OLD.restored))!;
+    await connectorAccountsStore.set(ctx, OLD.restored, { ...entry, continued: { ...entry.continued!, undoing: new Date().toISOString() } });
+    server.accounts[0].transactions = [...server.accounts[0].transactions, txn('n7', 2, '-3.00', 'ANOTHER')];
+    await syncConnection(ctx, conn, { purpose: 'refresh', now: NOW + 13 * 3_600_000 });
+    expect(await wholeBook(OLD.restored)).toEqual(carried);
+    await undoCarryOn(ctx, OLD.restored);
+    expect(await wholeBook(OLD.restored)).toEqual(before);
   });
 
   test('a carrying on that stopped part way is finished by the same choice made again', async () => {
