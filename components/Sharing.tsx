@@ -75,7 +75,7 @@ export type SharingPayload = {
   /** What I can share, and (`waiting`) a shared account a connector feeds
    *  that is only waiting for its balance: its share can be kept or ended,
    *  not begun or changed, until it has one (lib/sharing.ts). */
-  accounts?: { id: string; label: string; institution?: string; name?: string; waiting?: true; investment?: true; own_rate?: true }[];
+  accounts?: { id: string; label: string; institution?: string; name?: string; waiting?: true; investment?: true }[];
   /** The goals I could share, and whether they couldn't be read. */
   goals?: ShareableGoal[];
   goals_unreadable?: true;
@@ -574,7 +574,7 @@ export function SharingPanelView({
               .filter((a) => !a.waiting)
               .map((a) => {
                 const c = draft[a.id] ?? 'none';
-                return { id: a.id, label: a.label, level: c === 'none' ? null : c, investment: a.investment === true, ownRate: a.own_rate === true };
+                return { id: a.id, label: a.label, level: c === 'none' ? null : c, investment: a.investment === true };
               })}
           />
           <EndPicker saved={current.expires_at} choice={endChoice} day={endDay} onChoice={onEndChoice} onDay={onEndDay} />

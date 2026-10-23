@@ -23,16 +23,7 @@ import type { ShareViews } from './share-kinds';
 /** One of the person's accounts that counts in their net worth, with what
  *  the other person sees of it: a level, or null when it isn't shared (or is
  *  shared but shows no balance just now: paused, ended, or waiting for one). */
-export type FactAccount = {
-  id: string;
-  label: string;
-  level: Level | null;
-  investment: boolean;
-  /** Its currency is one a rate of the person's own converts into their home
-   *  currency (lib/share-views.ts ownRatedAccountIds): a converted figure
-   *  that counts it, beside it in its own currency, gives that rate away. */
-  ownRate?: boolean;
-};
+export type FactAccount = { id: string; label: string; level: Level | null; investment: boolean };
 
 /** A goal shared: its name, whether it is projected (tracked against an
  *  account, so it has a when), and the account it counts. */
@@ -45,7 +36,7 @@ export type InferenceFacts = {
   goals?: readonly FactGoal[];
 };
 
-export type InferenceId = 'net_worth_rest' | 'income' | 'goal_contribution' | 'goal_target' | 'holdings_total' | 'budget_amounts' | 'spending_amounts' | 'own_rate';
+export type InferenceId = 'net_worth_rest' | 'income' | 'goal_contribution' | 'goal_target' | 'holdings_total' | 'budget_amounts' | 'spending_amounts';
 export type Inference = { id: InferenceId; text: string };
 
 /** A balance is shown: the account is shared at a level above "exists". */
@@ -174,27 +165,6 @@ export function inferences(f: InferenceFacts): Inference[] {
     out.push({
       id: 'spending_amounts',
       text: 'With what you spent against your budgets and your spending as percentages, they can work out about how much you spent in all, and in each group.',
-    });
-  }
-
-  // A figure converted into the home currency (decision 5) beside what it
-  // converts, seen in its own currency, through a rate of the person's own:
-  // the ECB's rates for everything else are public, so what is left is that
-  // rate. Net worth counts every account's balance; holdings in amounts the
-  // investment accounts'; spending in amounts, and budgets in amounts, the
-  // transactions of an account shared with them.
-  const ownSeen = known.filter((a) => a.ownRate);
-  const figures = [
-    ...(v.net_worth ? ['your net worth'] : []),
-    ...(v.holdings?.detail === 'amounts' && ownSeen.some((a) => a.investment) ? ['your holdings in amounts'] : []),
-    ...(v.spending?.detail === 'amounts' && ownSeen.some((a) => a.level === 'transactions') ? ['your spending in amounts'] : []),
-    ...(v.budgets?.detail === 'amounts' && ownSeen.some((a) => a.level === 'transactions') ? ['what you spend against your budgets'] : []),
-  ];
-  if (ownSeen.length > 0 && figures.length > 0) {
-    const one = ownSeen.length === 1;
-    out.push({
-      id: 'own_rate',
-      text: `They see ${balancesOf(ownSeen)} in ${one ? 'its' : 'their'} own currency, and ${list(figures)} converted into your home currency with your own exchange rate for ${one ? 'it' : 'them'}: with the ECB’s rates for the rest, which are public, they may be able to work out your rate.`,
     });
   }
   return out;

@@ -75,14 +75,20 @@
 // nothing of the share, as for its accounts).
 //
 // THE OWNER'S HOME CURRENCY (decision 5). Once the owner has chosen one, a
-// net worth, spending or holdings share is in it, converted as their own
-// screens convert (net worth's base, lib/fx/totals.ts totalsIn, the
-// allocation's inputsIn), and a budgets share counts spending in other
-// currencies converted into the budgets' own, as their Budgets tab does. Each
-// says only that it is converted, at the ECB's daily rates and, where one was
-// used, the owner's own rates (SharedConversion): never a rate's value, nor
-// which currency an own rate is for. What has no rate is named by its
-// currency alone, as before.
+// net worth (and its history), spending or holdings share is in it,
+// converted as their own screens convert (net worth's base, lib/fx/totals.ts
+// totalsIn, the allocation's inputsIn), and a budgets share counts spending
+// in other currencies converted into the budgets' own, as their Budgets tab
+// does. NEVER AT THE OWNER'S OWN RATES: a share converts at the European
+// Central Bank's daily rates alone (`publicRates`, lib/fx/read.ts), which
+// are public, so nothing in it can give an own rate away, beside an
+// account's own-currency balance or otherwise. What only an own rate would
+// convert (a currency the ECB doesn't publish, such as ARS or BTC) is left
+// out of the converted figures and named by its currency alone ("there is
+// no public rate for it"), and its account still shows in its own currency
+// where its account is shared. When the home currency itself has no public
+// rate, the share converts nothing, as before a home currency. Each says
+// only that it is converted at the ECB's daily rates (SharedConversion).
 
 import type { Ctx } from './containers';
 import { readAccounts, readHoldings, readNetWorth, readNetWorthAndHistory, budgetsAnswer, type ApiAccount, type ApiAccounts } from './api-read';
@@ -95,9 +101,7 @@ import { coveredOutOfDays, noTransactionsView, spendingUnknown, type NoTransacti
 import { withImportedFiles } from './history-import/without-files';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
 import { allocate, inputsIn, isMoney, shareLabel, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
-import { accountCurrencies, readFlowFx } from './fx/read';
-import { readSettingsForDisplay } from './fx/settings';
-import { toBase } from './fx/api-base';
+import { readFlowFx } from './fx/read';
 import { conversionIn, totalsIn } from './fx/totals';
 import { CLASS_NAMES, SLOTS, ASSET_CLASSES, type Slot } from './allocation/classes';
 import { BUCKET_NAMES, BUCKET_SLOTS } from './allocation/buckets';
@@ -133,6 +137,7 @@ import {
   type NetWorthShare,
   type NetWorthView,
   type ShareViews,
+  type SharedConversion,
   type SharedViews,
   type SpendingGroup,
   type SpendingLine,
@@ -182,10 +187,11 @@ async function ownerToday(theirs: Ctx, now: number): Promise<string> {
 // ---- Net worth ----
 
 async function netWorthView(theirs: Ctx, s: NetWorthShare, reads: Reads, balancesShown: PromiseLike<ReadonlySet<string>> | ReadonlySet<string>): Promise<NetWorthView | Unreadable> {
+  // At the ECB's rates alone (see THE OWNER'S HOME CURRENCY).
   const read =
     s.detail === 'history'
-      ? readNetWorthAndHistory(theirs, { includeEstimated: true, interval: 'week' }, { base: true })
-      : readNetWorth(theirs, { base: true }).then((now) => ({ now, history: null }));
+      ? readNetWorthAndHistory(theirs, { includeEstimated: true, interval: 'week' }, { base: 'public' })
+      : readNetWorth(theirs, { base: 'public' }).then((now) => ({ now, history: null }));
   const [{ now, history }, listed] = await Promise.all([read, s.accounts ? reads.accounts() : Promise.resolve(null)]);
   // An account that couldn't be read, or hasn't been loaded, would leave the
   // total short: none is shown rather than a short one.
@@ -203,7 +209,7 @@ async function netWorthView(theirs: Ctx, s: NetWorthShare, reads: Reads, balance
         from: now.balances_from,
         other_currencies: base.left_out.map((l) => ({ currency: l.currency, accounts: l.accounts })),
         without_balance: now.accounts_without_balance,
-        converted: { own_rates: base.own_rates.length > 0 },
+        converted: SHARE_CONVERSION,
       }
     : {
         detail: s.detail,
@@ -229,31 +235,17 @@ async function netWorthView(theirs: Ctx, s: NetWorthShare, reads: Reads, balance
     // rows above it don't. Those without one count in no total, and are said
     // by without_balance.
     const shown = await balancesShown;
+    // Each in its own currency, as the account rows show it: the total
+    // beside it converts at public rates only.
     view.accounts = listed.accounts
       .filter((a) => countsNow(a) && a.balance !== null && shown.has(a.id))
       .map((a) => ({ label: labelOf(a), balance: a.balance!, currency: a.currency, debt: a.is_debt, as_of: a.as_of }));
-    // Converted with a rate of the owner's own: its balance converted alone,
-    // never beside its own currency's, which with the converted total would
-    // give that rate away (decision 5). One at the ECB's rates keeps its own:
-    // those are public.
-    const owned = new Set(base ? base.parts.filter((p) => p.currency !== now.base_currency && p.rate_source === 'own').map((p) => p.currency) : []);
-    if (base && owned.size > 0) {
-      const home = now.base_currency!;
-      const main = now.totals[0]?.currency ?? null;
-      const fx = await readFlowFx(theirs, [], Date.now(), { also: [...owned] });
-      const today = new Date().toISOString().slice(0, 10);
-      view.accounts = view.accounts.flatMap((a) => {
-        const c = a.currency ?? main;
-        if (!c || !owned.has(c)) return [a];
-        // A balance that couldn't be converted isn't shown: in its own
-        // currency beside the total it would give the rate away too.
-        const converted = fx ? toBase(fx, a.balance, c, today) : null;
-        return converted === null ? [] : [{ ...a, balance: converted, currency: home, converted: true as const }];
-      });
-    }
   }
   return view;
 }
+
+/** What a share says of a conversion: the ECB's daily rates, nothing else. */
+const SHARE_CONVERSION: SharedConversion = { rates: 'ecb' };
 
 // ---- Transactions, for spending and budgets ----
 
@@ -295,8 +287,8 @@ function leftOutWords(leftOut: LeftOut, currency: string | null, what: string, w
   if (leftOut.length === 0) return null;
   const names = leftOut.map((l) => l.currency).sort();
   const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-  // Converted: what is left out has no rate to convert it at.
-  return `${what} in ${list} isn’t in ${where}${currency ? `, which are in ${currency}` : ''}${converted ? ': there is no rate for it' : ''}.`;
+  // Converted: what is left out has no public rate to convert it at.
+  return `${what} in ${list} isn’t in ${where}${currency ? `, which are in ${currency}` : ''}${converted ? ': there is no public rate for it' : ''}.`;
 }
 
 /** A category's and its group's names, as the owner's own screens show them. */
@@ -340,8 +332,9 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
   const finished = await finishActivity(theirs, bank.payload, bank.hidden);
   if (transactionsDamaged(bank.sources, finished.manual_unread, finished.unread_notes.length)) return UNREADABLE;
   // As the Activity tab counts them: in the one currency most rows are in,
-  // or, once the owner chose a home currency, converted into it.
-  const counting = totalsIn(finished.transactions, await readFlowFx(theirs, finished.transactions));
+  // or, once the owner chose a home currency, converted into it at the ECB's
+  // rates alone (see THE OWNER'S HOME CURRENCY).
+  const counting = totalsIn(finished.transactions, await readFlowFx(theirs, finished.transactions, Date.now(), { publicRates: true }));
   const rows = counting.rows;
   const currency = counting.currency;
   const describe = describer(indexTaxonomy(finished.taxonomy));
@@ -374,7 +367,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
     detail: s.detail,
     by: s.by,
     currency,
-    ...(counting.conversion ? { converted: { own_rates: counting.conversion.own.length > 0 } } : {}),
+    ...(counting.conversion ? { converted: SHARE_CONVERSION } : {}),
     months,
     ...(incomplete ? { may_be_incomplete: true as const } : {}),
     ...(bank.own_read.exclusions ? {} : { exclusions_unread: true as const }),
@@ -415,7 +408,9 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, today: string): Promise
   // Both months from one read of the transactions, as the Budgets tab reads
   // a month, the income pool left unread: it is never shown, and its setting
   // changes no budget's carry.
-  const reads = await readBudgetMonths(theirs, { months: [thisMonth, addMonths(thisMonth, -1)], today: thisMonth, pool: false });
+  // Spending in other currencies at the ECB's rates alone (see THE OWNER'S
+  // HOME CURRENCY).
+  const reads = await readBudgetMonths(theirs, { months: [thisMonth, addMonths(thisMonth, -1)], today: thisMonth, pool: false, publicRates: true });
   const { activity } = reads[0];
   // The notes too, as spending's: rows imported from files that can't be
   // read leave a month short.
@@ -452,7 +447,7 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, today: string): Promise
     detail: s.detail,
     by: s.by,
     currency: reads[0].currency,
-    ...(conv.length > 0 ? { converted: { own_rates: conv.some((c) => c!.own.length > 0) } } : {}),
+    ...(conv.length > 0 ? { converted: SHARE_CONVERSION } : {}),
     months,
     ...(filing ? { filing_unread: true as const } : {}),
   };
@@ -483,11 +478,12 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promis
     .flatMap((h) =>
       h.positions.map((p) => ({ account_id: h.account_id, name: p.name, ticker: p.ticker, security_type: p.type, is_cash_equivalent: p.cash_equivalent, value: p.value, currency: p.currency }))
     );
-  // In the owner's home currency once they chose one, at the newest rates,
-  // as the Plan's allocation converts (inputsIn); else the main one.
-  const fx = await readFlowFx(theirs, [], Date.now(), { accounts: true });
+  // In the owner's home currency once they chose one, at the ECB's newest
+  // rates alone (see THE OWNER'S HOME CURRENCY), as the Plan's allocation
+  // converts (inputsIn); else the main one.
+  const fx = await readFlowFx(theirs, [], Date.now(), { accounts: true, publicRates: true });
   const currency = fx?.home ?? dominantCurrency(counted.map((a) => ({ iso_currency_code: a.currency })));
-  const converting = fx ? inputsIn([...institutions.values()], holdings, { home: fx.home!, latest: fx.latest, own: [...fx.own] }, currency) : null;
+  const converting = fx ? inputsIn([...institutions.values()], holdings, { home: fx.home!, latest: fx.latest, own: [] }, currency) : null;
   const alloc = allocate({ institutions: converting?.institutions ?? [...institutions.values()], holdings: converting?.holdings ?? holdings, settings, currency });
   const amounts = s.detail === 'amounts';
   const lines = <K extends string>(totals: Record<K, number>, order: readonly K[], names: Record<K, string>): HoldingsLine[] =>
@@ -496,7 +492,7 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promis
   if (counted.length === 0) notes.push('No investment accounts to show.');
   if ((alloc.classes.unclassified ?? 0) !== 0) notes.push('Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.');
   for (const o of alloc.otherCurrencies)
-    notes.push(fx ? `What is held in ${o.currency} isn’t counted here: there is no rate for it.` : `What is held in ${o.currency} isn’t counted here: their totals don’t convert currencies.`);
+    notes.push(fx ? `What is held in ${o.currency} isn’t counted here: there is no public rate for it.` : `What is held in ${o.currency} isn’t counted here: their totals don’t convert currencies.`);
   if (alloc.unpriced > 0) notes.push(`${alloc.unpriced === 1 ? 'A position' : `${alloc.unpriced} positions`} with no value ${alloc.unpriced === 1 ? 'isn’t' : 'aren’t'} counted.`);
   // As net worth says an account with no balance yet: never counted as nothing.
   if (alloc.noBalance > 0) {
@@ -510,7 +506,7 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promis
   return {
     detail: s.detail,
     currency,
-    ...(converting?.converted ? { converted: { own_rates: converting.converted.own.length > 0 } } : {}),
+    ...(converting?.converted ? { converted: SHARE_CONVERSION } : {}),
     as_of: days[days.length - 1] ?? null,
     from: days[0] ?? null,
     ...(amounts ? { total: tidy(alloc.total) } : {}),
@@ -686,24 +682,6 @@ export async function shareableGoals(ctx: Ctx): Promise<ShareableGoal[]> {
  *  on: a remembered record that can't be read, or records that can't be read
  *  at all just now (the report throws for a key that can't be had), leave
  *  their accounts to the directory. */
-/** Of these accounts, those in a currency a rate of the owner's own converts
- *  into their home currency (or every one in another currency, when their own
- *  rate is for the home currency itself): what a converted figure counting
- *  one, beside it in its own currency, gives away (lib/share-inference.ts
- *  own_rate). None without a home currency. LENIENT, for these words only:
- *  an account whose currency isn't known is taken to be in none. */
-export async function ownRatedAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
-  const { settings } = await readSettingsForDisplay(ctx);
-  const home = settings.home;
-  if (!home || settings.own.length === 0) return new Set();
-  const own = new Set(settings.own.map((o) => o.currency));
-  const currencies = await accountCurrencies(ctx).catch(() => new Map<string, string>());
-  return new Set(ids.filter((id) => {
-    const c = currencies.get(id);
-    return !!c && c !== home && (own.has(c) || own.has(home));
-  }));
-}
-
 export async function investmentAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
   const [types, kept, remembered] = await Promise.all([
     directoryTypes(ctx, [...ids]),

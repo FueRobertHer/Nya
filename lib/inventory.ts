@@ -589,7 +589,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   'currency-settings': {
     group: 'settings',
     name: 'Your home currency and your own exchange rates',
-    about: 'People you share with see the currency what you share is in, and whether your own rates were used, never a rate itself.',
+    about: 'People you share with see the currency what you share is in, converted at the European Central Bank’s rates alone: a share never uses your own rates, and never shows a rate.',
     unit: VALUE,
     kept: 'Your home currency and your own exchange rates',
     seen: ['shared', 'api', 'email'],

@@ -13,7 +13,10 @@ import type { NoRate } from './rates';
  *  publish it, and there is no rate of the person's for it), rather than
  *  `currency`'s: then a rate for the home currency is the remedy. */
 export const homeUnrated = (currency: string, why: NoRate | string, unrated: string, home: string): boolean =>
-  unrated === home && currency !== home && why !== 'not-fetched';
+  unrated === home && currency !== home && why !== 'not-fetched' && why !== 'unread';
+
+/** Said when the rates couldn't be read just now (NoRate 'unread'). */
+export const UNREAD_RATES = 'the exchange rates couldn’t be read just now; try again in a moment';
 
 /**
  * Why `currency` couldn't be converted into `home`, as the end of a
@@ -24,6 +27,7 @@ export const homeUnrated = (currency: string, why: NoRate | string, unrated: str
  */
 export function reasonText(currency: string, why: NoRate | string, unrated: string, home: string, days: 'now' | 'one' | 'many' = 'now'): string {
   if (why === 'not-fetched') return days === 'now' ? 'Nya doesn’t have the ECB’s rates yet' : `Nya doesn’t have the ECB’s rates for ${days === 'one' ? 'that day' : 'those days'} yet`;
+  if (why === 'unread') return UNREAD_RATES;
   if (homeUnrated(currency, why, unrated, home)) {
     return why === 'quote' ? `nothing can be converted into ${home}, as your rate for it is in a currency the ECB has no rate for` : `nothing can be converted into ${home}, as the ECB doesn’t publish it`;
   }

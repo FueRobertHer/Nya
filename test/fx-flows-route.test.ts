@@ -80,9 +80,18 @@ describe('the transactions’ exchange rates', () => {
       const body = (await res.json()) as any;
       expect(body.transactions).toHaveLength(2);
       const t = totalsIn(body.transactions, asFxTable(body.fx));
-      // No rate on any day: the dollars stay in their own currency, named, and why.
+      // No rate on any day: the dollars stay in their own currency, named, and
+      // why: the rates couldn't be read just now, never that Nya lacks them.
+      expect(body.fx.unread).toBe(true);
       expect(t.rows.map((r: any) => r.iso_currency_code)).toEqual(['USD', 'USD']);
-      expect(t.conversion?.unrated).toEqual([{ currency: 'USD', why: 'not-fetched', unrated: 'USD' }]);
+      expect(t.conversion?.unrated).toEqual([{ currency: 'USD', why: 'unread', unrated: 'USD' }]);
+      const { reasonText } = await import('@/lib/fx/words');
+      expect(reasonText('USD', 'unread', 'USD', 'EUR', 'many')).toBe('the exchange rates couldn’t be read just now; try again in a moment');
+      expect(reasonText('USD', 'unread', 'USD', 'EUR', 'many')).not.toContain('yet');
+      const { flowsConverted, flowsNotes } = await import('@/lib/fx/api-base');
+      const base = flowsConverted(t.conversion!, { own: [] }, [{ currency: 'USD', count: 2 }]);
+      expect(base.left_out).toEqual([{ currency: 'USD', transactions: 2, why: 'rates_unreadable' }]);
+      expect(flowsNotes(base, 'EUR')[0]).toBe('2 transactions in USD aren’t in base, which is in EUR: the exchange rates couldn’t be read just now; try again in a moment');
     } finally {
       fake.hmget = hmget;
       console.error = error;

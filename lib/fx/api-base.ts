@@ -32,11 +32,11 @@ export const apiOwnRates = (own: readonly OwnRate[]): ApiOwnRate[] => own.map((o
  *  a currency with no rate that day; or the home currency itself has none (the
  *  ECB doesn't publish it, with no rate of the person's for it), so nothing
  *  converts into it. Version 1 may add reasons. */
-export type ApiNoRate = 'no_rate' | 'not_fetched' | 'quote_has_no_rate' | 'base_has_no_rate';
+export type ApiNoRate = 'no_rate' | 'not_fetched' | 'rates_unreadable' | 'quote_has_no_rate' | 'base_has_no_rate';
 
 /** `unrated`: whose rate is missing (lib/fx/net-worth.ts). */
 export const apiNoRate = (currency: string, why: NoRate, unrated: string, home: string): ApiNoRate =>
-  why === 'not-fetched' ? 'not_fetched' : homeUnrated(currency, why, unrated, home) ? 'base_has_no_rate' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate';
+  why === 'not-fetched' ? 'not_fetched' : why === 'unread' ? 'rates_unreadable' : homeUnrated(currency, why, unrated, home) ? 'base_has_no_rate' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate';
 
 export type ApiBasePart = {
   currency: string;
@@ -199,7 +199,9 @@ export function baseNotes(base: ApiBase, home: string): string[] {
     const why =
       l.why === 'not_fetched'
         ? 'Nya doesn’t have the ECB’s rates yet'
-        : l.why === 'quote_has_no_rate'
+        : l.why === 'rates_unreadable'
+          ? 'the exchange rates couldn’t be read just now; try again in a moment'
+          : l.why === 'quote_has_no_rate'
           ? `your own rate for ${l.currency} is in a currency the ECB has no rate for`
           : `there is no rate for ${l.currency}; you can set your own in the app`;
     notes.push(`${which} in base, which is in ${home}: ${why}`);
@@ -271,7 +273,9 @@ export function flowsNotes(b: ApiFlowsConverted, home: string): string[] {
         ? `the ECB doesn’t publish ${home}; you can set a rate of your own for it in the app`
         : l.why === 'not_fetched'
           ? 'Nya doesn’t have the ECB’s rates for those days yet'
-          : l.why === 'quote_has_no_rate'
+          : l.why === 'rates_unreadable'
+            ? 'the exchange rates couldn’t be read just now; try again in a moment'
+            : l.why === 'quote_has_no_rate'
             ? `your own rate for ${l.currency} is in a currency the ECB has no rate for`
             : `there is no rate for ${l.currency} on those days; you can set your own in the app`;
     notes.push(`${which} in base, which is in ${home}: ${why}`);

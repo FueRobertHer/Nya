@@ -215,10 +215,16 @@ export async function readMe(auth: Authenticated): Promise<ApiMe> {
  *  them for figures is (lib/fx/settings.ts). */
 type HomeRead = { settings: CurrencySettings | null; note: string | null };
 
-async function readHome(ctx: Ctx): Promise<HomeRead> {
+/** `publicRates` (a share's net worth, lib/share-views.ts): the ECB's rates
+ *  alone, never the person's own. */
+async function readHome(ctx: Ctx, publicRates = false): Promise<HomeRead> {
   const { settings, problem } = await readSettingsForDisplay(ctx);
-  return { settings: settings.home ? settings : null, note: problem ? SETTINGS_UNREADABLE_NOTE : null };
+  return { settings: settings.home ? (publicRates ? { ...settings, own: [] } : settings) : null, note: problem ? SETTINGS_UNREADABLE_NOTE : null };
 }
+
+/** Whether, and how, a net worth answer converts: `'public'` at the ECB's
+ *  rates alone (a share). */
+type BaseAsk = boolean | 'public';
 
 /** The rates an answer converts with, read once: for the currencies given,
  *  from `from` to today. Null without a home currency. */
@@ -736,8 +742,8 @@ type NetWorthRead = {
   split: { points: SplitPoint[]; breaks: string[]; main: string | null } | null;
 };
 
-async function netWorthRead(ctx: Ctx, includeHidden: boolean, opts: { base?: boolean; split?: boolean } = {}): Promise<NetWorthRead> {
-  const [read, home] = await Promise.all([accountsRead(ctx, includeHidden), opts.base ? readHome(ctx) : null]);
+async function netWorthRead(ctx: Ctx, includeHidden: boolean, opts: { base?: BaseAsk; split?: boolean } = {}): Promise<NetWorthRead> {
+  const [read, home] = await Promise.all([accountsRead(ctx, includeHidden), opts.base ? readHome(ctx, opts.base === 'public') : null]);
   // Accounts that ended are subtracted from their end day either way: they
   // are no longer the person's to count, hidden or not.
   const hidden = includeHidden ? undefined : read.hidden;
@@ -826,7 +832,7 @@ function converted(home: HomeRead, fx: FxTable | null, counted: readonly ApiAcco
 /** Net worth now, from each account's newest measured balance, per currency,
  *  and the newest recorded point of its history. With `base`, converted into
  *  the home currency the person chose. */
-export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean; base?: boolean } = {}): Promise<ApiNetWorth> {
+export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean; base?: BaseAsk } = {}): Promise<ApiNetWorth> {
   const now = Date.now();
   const nw = await netWorthRead(ctx, !!opts.includeHidden, { base: opts.base });
   return netWorthOf(nw, await netWorthRates(ctx, nw, now), now);
@@ -1018,9 +1024,9 @@ export async function readBalanceHistory(ctx: Ctx, q: HistoryQuery): Promise<Api
 
 /** Net worth now and its history, from one read of each (get_net_worth).
  *  With `base`, converted into the home currency the person chose. */
-export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>, opts: { base?: boolean } = {}): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
+export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>, opts: { base?: BaseAsk } = {}): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
   const now = Date.now();
-  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden, { base: opts.base, split: opts.base }), readDrawState(ctx)]);
+  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden, { base: opts.base, split: !!opts.base }), readDrawState(ctx)]);
   const fx = await netWorthRates(ctx, nw, now);
   return { now: netWorthOf(nw, fx, now), history: netWorthHistoryOf(nw, q, drawn, fx) };
 }

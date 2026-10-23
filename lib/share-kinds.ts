@@ -264,9 +264,9 @@ export type Unreadable = { unreadable: true };
 export const isUnreadable = (v: unknown): v is Unreadable => isPlain(v) && v.unreadable === true;
 
 /** A figure converted into the owner's home currency (decision 5): at the
- *  ECB's daily rates, and, where it was, at the owner's own rates. Never a
- *  rate's value, nor which currency their own rate is for. */
-export type SharedConversion = { own_rates: boolean };
+ *  ECB's daily rates alone, never the owner's own (lib/share-views.ts), and
+ *  never a rate's value. */
+export type SharedConversion = { rates: 'ecb' };
 
 /** One account behind a net worth: as its own share labels it, with its
  *  newest measured balance (Plaid's sign: a card's or a loan's is owed). */
@@ -276,9 +276,6 @@ export type NetWorthAccount = {
   currency: string | null;
   debt: boolean;
   as_of: string | null;
-  /** Its balance converted into the total's currency, its own not shown: it
-   *  is converted with a rate of the owner's own (decision 5). */
-  converted?: true;
 };
 
 export type NetWorthView = {
@@ -286,8 +283,9 @@ export type NetWorthView = {
   /** The currency the total is in: the one most accounts are in, or the
    *  owner's home currency once they chose one (`converted`). */
   currency: string | null;
-  /** The total, and the history, converted into it, as the owner's own net
-   *  worth is; `other_currencies` are then the ones with no rate. */
+  /** The total, and the history, converted into it at the ECB's rates, as
+   *  the owner's own net worth is but never at their own rates;
+   *  `other_currencies` are then the ones with no public rate. */
   converted?: SharedConversion;
   /** Each account's newest measured balance added up, in `currency`. Null
    *  with no account to count. */

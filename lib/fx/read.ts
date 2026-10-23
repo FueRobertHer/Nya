@@ -123,8 +123,19 @@ type Early = { settings: ReturnType<typeof readSettingsForDisplay>; accounts: Pr
  * rows of other currencies without a rate, so every total leaves them out
  * and names them, never fails the load; settings that can't be read convert
  * nothing, as before.
+ *
+ * `publicRates` (a share, lib/share-views.ts): the ECB's rates alone, never
+ * the person's own, so what only an own rate converts is left out and
+ * named; and nothing converted when the home currency has no public rate.
  */
-export function flowFxReader(ctx: Ctx, opts: { accounts?: boolean; also?: readonly string[] } = {}): (rows: readonly FlowRow[], now?: number) => Promise<FxTable | null> {
+/** What a flows read is asked for (readFlowFx). */
+type FlowOpts = { accounts?: boolean; also?: readonly string[]; publicRates?: boolean };
+
+/** Whether the home currency can be converted into at the ECB's rates alone:
+ *  the euro, or one its newest publication has. */
+const publicHome = (fx: FxTable): boolean => fx.home === 'EUR' || (fx.latest !== null && fx.home !== null && Object.hasOwn(fx.latest.rates, fx.home));
+
+export function flowFxReader(ctx: Ctx, opts: FlowOpts = {}): (rows: readonly FlowRow[], now?: number) => Promise<FxTable | null> {
   const settings = readSettingsForDisplay(ctx);
   const early: Early = {
     settings,
@@ -144,12 +155,12 @@ export async function readFlowFx(
   ctx: Ctx,
   rows: readonly FlowRow[],
   now: number = Date.now(),
-  opts: { accounts?: boolean; also?: readonly string[] } = {}
+  opts: FlowOpts = {}
 ): Promise<FxTable | null> {
   return flowFxReader(ctx, opts)(rows, now);
 }
 
-async function readWith(ctx: Ctx, early: Early, rows: readonly FlowRow[], now: number, opts: { accounts?: boolean; also?: readonly string[] }): Promise<FxTable | null> {
+async function readWith(ctx: Ctx, early: Early, rows: readonly FlowRow[], now: number, opts: FlowOpts): Promise<FxTable | null> {
   const today = new Date(now).toISOString().slice(0, 10);
   let from = today;
   const currencies = new Set<string>();
@@ -161,9 +172,11 @@ async function readWith(ctx: Ctx, early: Early, rows: readonly FlowRow[], now: n
     else if (r.account_id) unlabelled.add(r.account_id);
     if (r.date < from) from = r.date;
   }
-  const known = await early.settings;
-  if (!known.settings.home) return null;
-  const home = known.settings.home;
+  const read = await early.settings;
+  if (!read.settings.home) return null;
+  // A share's: the ECB's rates alone, never the person's own.
+  const known = opts.publicRates ? { ...read, settings: { ...read.settings, own: [] } } : read;
+  const home = known.settings.home!;
   // The accounts' currencies: all of them when asked, else only for rows
   // that say none (rare: the oldest stored history).
   const byAccount = (await early.accounts) ?? (unlabelled.size > 0 ? await accountCurrencies(ctx).catch(() => new Map<string, string>()) : null);
@@ -180,12 +193,16 @@ async function readWith(ctx: Ctx, early: Early, rows: readonly FlowRow[], now: n
   const labelled = Object.keys(accounts).length > 0 ? { accounts } : {};
   try {
     const { fx } = await readFx(ctx, { currencies, from, to: today }, known);
-    return fx.home ? { ...fx, ...labelled } : null;
+    if (!fx.home) return null;
+    // A share converts nothing when the home currency has no public rate, or
+    // nothing in another currency needed one: as before a home currency.
+    if (opts.publicRates && !publicHome(fx)) return null;
+    return { ...fx, ...labelled };
   } catch (err) {
     // The rates couldn't be read just now: none on any day, so what is in
-    // another currency is left out and named, as for rates not yet fetched.
+    // another currency is left out and named, with that reason (`unread`).
     console.error('Exchange rates could not be read for the transactions', err instanceof Error ? err.name : err);
     const years = yearsFor(from <= today ? from : today, today);
-    return { ...NO_FX, home, own: known.settings.own, missing_years: years, ...labelled };
+    return { ...NO_FX, home, own: known.settings.own, missing_years: years, unread: true, ...labelled };
   }
 }

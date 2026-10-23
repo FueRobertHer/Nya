@@ -436,7 +436,7 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
  */
 export async function readBudgetMonths(
   ctx: Ctx,
-  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false; plain?: true }
+  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false; plain?: true; publicRates?: true }
 ): Promise<BudgetMonthRead[]> {
   const { today } = opts;
   const window = windowStart();
@@ -451,7 +451,11 @@ export async function readBudgetMonths(
   const from = opts.months.map((m) => (m > today ? m : neededFrom(stored, income, m))).sort()[0];
   const since = from !== undefined && `${from}-01` < window ? `${from}-01` : window;
   const activity = await readMonthActivity(ctx, { since, includeHidden: opts.includeHidden });
-  const [{ budgets: budgetsNow, taxonomy }, fx] = await Promise.all([budgetsForReading(ctx, activity.taxonomy), readFlowFx(ctx, activity.rows)]);
+  // A share's (`publicRates`): at the ECB's rates alone, never the person's own.
+  const [{ budgets: budgetsNow, taxonomy }, fx] = await Promise.all([
+    budgetsForReading(ctx, activity.taxonomy),
+    readFlowFx(ctx, activity.rows, Date.now(), { publicRates: opts.publicRates }),
+  ]);
   // Noted in memory, as the app would note it today: nothing is written.
   const months = noteBudgets(stored ?? startMonths(budgetsNow, today), budgetsNow, today, indexTaxonomy(taxonomy));
   return opts.months.map((month) => {

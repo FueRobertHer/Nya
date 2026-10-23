@@ -144,7 +144,13 @@ function netWorthNow(now: any): string {
     const n = left.reduce((s: number, l: any) => s + l.accounts, 0);
     return n > 0 ? `${plural(n, 'account')} in ${left.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: ${why}` : '';
   };
-  const left = [out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'), out((l) => l.why !== 'not_fetched', 'no rate')].filter(Boolean).join('; ');
+  const left = [
+    out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'),
+    out((l) => l.why === 'rates_unreadable', 'the rates couldn’t be read just now'),
+    out((l) => l.why !== 'not_fetched' && l.why !== 'rates_unreadable', 'no rate'),
+  ]
+    .filter(Boolean)
+    .join('; ');
   const stale = b.rates_stale ? ' The newest rates Nya has may be out of date: see notes.' : '';
   return `Net worth ${money(b.net_worth, home)}, converted into ${home}${rates ? ` at ${rates}` : ''}${left ? ` (${left})` : ''}${datedFrom(now.balances_from, now.balances_to)}.${stale}`;
 }
@@ -160,7 +166,13 @@ function convertedFlows(b: any, home: string): string {
     const n = left.reduce((s: number, l: any) => s + (l.transactions ?? l.bills ?? 0), 0);
     return n > 0 ? `${plural(n, 'transaction')} in ${left.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: ${why}` : '';
   };
-  const left = [out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'), out((l) => l.why !== 'not_fetched', 'no rate')].filter(Boolean).join('; ');
+  const left = [
+    out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'),
+    out((l) => l.why === 'rates_unreadable', 'the rates couldn’t be read just now'),
+    out((l) => l.why !== 'not_fetched' && l.why !== 'rates_unreadable', 'no rate'),
+  ]
+    .filter(Boolean)
+    .join('; ');
   return `converted into ${home}${rates ? ` at ${rates}` : ''}${left ? ` (${left})` : ''}`;
 }
 

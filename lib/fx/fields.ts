@@ -156,5 +156,6 @@ export function asFxTable(v: unknown): FxTable | null {
   if (!Array.isArray(v.missing_years) || !v.missing_years.every((y) => typeof y === 'string' && YEAR.test(y))) return null;
   if (v.unusable !== undefined && !(Array.isArray(v.unusable) && v.unusable.every((id) => typeof id === 'string'))) return null;
   if (v.accounts !== undefined && !(isObject(v.accounts) && Object.values(v.accounts).every((c) => typeof c === 'string' && /^[A-Z0-9]{2,10}$/.test(c)))) return null;
+  if (v.unread !== undefined && v.unread !== true) return null;
   return v as unknown as FxTable;
 }

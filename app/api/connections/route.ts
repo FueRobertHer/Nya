@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { signedInCtx } from '@/lib/data-ctx';
 import { myConnections, removeConnection, saveConnection, shareableAccounts, SharingRefused, waitingAccounts } from '@/lib/sharing';
-import { investmentAccountIds, ownRatedAccountIds, shareableGoals } from '@/lib/share-views';
+import { investmentAccountIds, shareableGoals } from '@/lib/share-views';
 import { viewsChangeProblem } from '@/lib/share-kinds';
 import { storeFailure } from '@/lib/store-failure';
 
@@ -36,11 +36,8 @@ export async function GET() {
     const listed = [...shareable, ...shared].sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
     // Which are investment accounts, for the drawer's warnings about what
     // holdings shared as percentages give away beside one's balance.
-    const ids = listed.map((a) => a.id);
-    // And which a rate of mine converts into my home currency, for what a
-    // converted figure gives away beside its balance (lib/share-inference.ts).
-    const [investment, ownRated] = await Promise.all([investmentAccountIds(me.ctx, ids), ownRatedAccountIds(me.ctx, ids)]);
-    const accounts = listed.map((a) => ({ ...a, ...(investment.has(a.id) ? { investment: true as const } : {}), ...(ownRated.has(a.id) ? { own_rate: true as const } : {}) }));
+    const investment = await investmentAccountIds(me.ctx, listed.map((a) => a.id));
+    const accounts = listed.map((a) => (investment.has(a.id) ? { ...a, investment: true } : a));
     // The goals I could share. A display read: goals that can't be read are
     // left out and said (goals_unreadable), never a reason the drawer can't
     // open; a save that adds one reads them strictly.

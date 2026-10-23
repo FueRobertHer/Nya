@@ -90,10 +90,11 @@ export function SharedViewsList({ views, whose }: { views: SharedViews; whose: s
 }
 
 /** A figure converted into the owner's home currency (decision 5), in
- *  words: whose rates, never a rate. */
+ *  words: at the ECB's daily rates, which are public; a share never uses the
+ *  owner's own (lib/share-views.ts). */
 export function convertedWords(into: string | null, c: SharedConversion | undefined, lead = 'Converted into'): string | null {
   if (!c || !into) return null;
-  return `${lead} ${into} at the ECB’s daily rates${c.own_rates ? ', and their own rates' : ''}.`;
+  return `${lead} ${into} at the European Central Bank’s daily rates.`;
 }
 
 // ---- Net worth ----
@@ -109,7 +110,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
       {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
       {v.other_currencies.map((o) => (
         <p key={o.currency} className="panel-note">{`${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: ${
-          v.converted ? 'there is no rate for it' : 'their totals don’t convert currencies'
+          v.converted ? 'there is no public rate for it' : 'their totals don’t convert currencies'
         }.`}</p>
       ))}
       {v.without_balance > 0 && (
@@ -137,7 +138,6 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
               <span>
                 <span className="incoming-account-name">{a.label}</span>
                 {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
-                {a.converted && <span className="incoming-account-date"> · converted</span>}
               </span>
               <span className="incoming-account-value">
                 <Masked>{`${formatMoney(a.balance, a.currency)}${a.debt ? ' owed' : ''}`}</Masked>

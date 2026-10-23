@@ -1013,7 +1013,7 @@ describe('a viewer reaches nothing that isn’t shared with them', () => {
 });
 
 describe('with the owner’s home currency (decision 5)', () => {
-  test('net worth, spending, budgets and holdings in it, converted as the owner’s own screens convert, saying so, never a rate', async () => {
+  test('net worth, spending, budgets and holdings in it, converted at the ECB’s rates, saying so, never a rate', async () => {
     const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
     const { ecbHash } = await import('./fx-fixture');
     await fake.hset(testKey('fx:ecb'), ecbHash());
@@ -1027,42 +1027,87 @@ describe('with the owner’s home currency (decision 5)', () => {
     const views = await partnerViews();
     // Net worth: the owner's own, in their home currency.
     const own = await readNetWorth(ctx, { base: true });
-    expect(views.net_worth).toMatchObject({ currency: 'USD', total: own.base!.net_worth, converted: { own_rates: false } });
+    expect(views.net_worth).toMatchObject({ currency: 'USD', total: own.base!.net_worth, converted: { rates: 'ecb' } });
     // Spending: the euros at their rate, counted, as the owner's Activity tab
     // counts them once they chose a home currency, to the cent.
     const paris = monthOf(dateOf('t_paris'));
     const month = views.spending.months.find((m: any) => m.month === paris);
     const theirs = await readSpending(ctx, { from: `${paris}-01`, to: `${paris}-31` });
-    expect(views.spending).toMatchObject({ currency: 'USD', converted: { own_rates: false } });
+    expect(views.spending).toMatchObject({ currency: 'USD', converted: { rates: 'ecb' } });
     expect(month.total).toBe(theirs.base!.money_out);
     expect(month.left_out).toBeNull();
     // Budgets keep their currency; the euros count against them, converted.
-    expect(views.budgets).toMatchObject({ currency: 'USD', converted: { own_rates: false } });
+    expect(views.budgets).toMatchObject({ currency: 'USD', converted: { rates: 'ecb' } });
     expect(views.holdings.currency).toBe('USD');
     // What a share shows of the conversion: that it is one, never a rate.
     const text = JSON.stringify(views);
-    expect(text).not.toMatch(/1\.1551|0\.8657|rate_day|own_rates":\[/);
+    expect(text).not.toMatch(/1\.1551|0\.8657|rate_day|own_rates/);
   });
 
-  test('an account a rate of the owner’s own converts: listed converted only, and the preview says the rate could be worked out', async () => {
+  test('never at the owner’s own rates: what only one converts is left out and named, its account in its own currency, and the preview is what they get', async () => {
     const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
     const { ecbHash } = await import('./fx-fixture');
+    const { addManualTxn, newManualTxn } = await import('@/lib/manual-txns');
     await fake.hset(testKey('fx:ecb'), ecbHash());
-    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD', own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }] });
+    const today = NOW.toISOString().slice(0, 10);
+    // The reviewer's probe: pesos and coins the ECB doesn't publish, each at
+    // a rate of the owner's own, both accounts' balances shared.
     await saveManualAccount(ctx, { account_id: 'manual_pesos', name: 'Pesos', institution_name: 'Banco', type: 'depository', subtype: null, balance: 1_000_000, currency: 'ARS', updated_at: NOW.toISOString() });
-    await shareViews({ net_worth: { detail: 'total', accounts: true } }, { acc_chk: 'balance', manual_pesos: 'balance' });
-    const nw = (await partnerViews()).net_worth;
-    expect(nw.converted).toEqual({ own_rates: true });
-    const pesos = nw.accounts.find((a: any) => a.label.includes('Pesos'));
-    // 1,000,000 ARS at the owner's 0.00071 USD: 710 USD, never beside its pesos.
-    expect(pesos).toMatchObject({ balance: 710, currency: 'USD', converted: true });
-    expect(JSON.stringify(nw)).not.toContain('1000000');
-    // One at the ECB's rates, or in the home currency, keeps its own.
-    expect(nw.accounts.find((a: any) => a.label.includes('Checking'))).toMatchObject({ currency: 'USD' });
-    expect(nw.accounts.find((a: any) => a.label.includes('Checking')).converted).toBeUndefined();
-    // The preview says what the account's own share still gives away.
+    await saveManualAccount(ctx, { account_id: 'manual_coins', name: 'Coins', institution_name: 'Wallet', type: 'investment', subtype: null, balance: 0.5, currency: 'BTC', updated_at: NOW.toISOString() });
+    await addManualTxn(ctx, newManualTxn('manual_pesos', { amount: 5000, currency: 'ARS', date: today, name: 'Kiosco', category: 'food and drink', note: null }));
+    // What the ECB's rates alone give, read before any own rate is set.
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD' });
+    const paris = monthOf(dateOf('t_paris'));
+    const publicNet = (await readNetWorth(ctx, { base: true })).base!.net_worth;
+    const publicSpent = (await readSpending(ctx, { from: `${paris}-01`, to: `${paris}-31` })).base!.money_out;
+    // Now the owner's own rates: for both, and for the euro too, which the
+    // ECB does publish.
+    const at = '2026-09-01T10:00:00.000Z';
+    await currencySettingsStore.set(ctx, {
+      ...NO_SETTINGS,
+      home: 'USD',
+      own: [
+        { currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: at },
+        { currency: 'BTC', rate: '61000', quote: 'USD', from: null, set_at: at },
+        { currency: 'EUR', rate: '1.5', quote: 'USD', from: null, set_at: at },
+      ],
+    });
+    // The owner's own screens use them.
+    expect((await readNetWorth(ctx, { base: true })).base!.net_worth).not.toBe(publicNet);
+    await shareViews(
+      {
+        net_worth: { detail: 'history', accounts: true },
+        spending: { detail: 'amounts', by: 'group' },
+        budgets: { detail: 'amounts', by: 'group' },
+        holdings: { detail: 'amounts', positions: false },
+      },
+      { acc_chk: 'balance', manual_pesos: 'balance', manual_coins: 'balance' }
+    );
+    const views = await partnerViews();
+    const nw = views.net_worth;
+    // At the ECB's rates alone: the total is the public one, the pesos and
+    // coins left out of it and named.
+    expect(nw).toMatchObject({ currency: 'USD', total: publicNet, converted: { rates: 'ecb' } });
+    expect(nw.other_currencies).toEqual(expect.arrayContaining([{ currency: 'ARS', accounts: 1 }, { currency: 'BTC', accounts: 1 }]));
+    // Each account in its own currency, as the account rows show it.
+    expect(nw.accounts.find((a: any) => a.label.includes('Pesos'))).toMatchObject({ balance: 1_000_000, currency: 'ARS' });
+    expect(nw.accounts.find((a: any) => a.label.includes('Coins'))).toMatchObject({ balance: 0.5, currency: 'BTC' });
+    expect(nw.accounts.every((a: any) => a.converted === undefined)).toBe(true);
+    // Spending: the euros at the ECB's rate, never the owner's 1.5; the pesos
+    // named.
+    expect(views.spending.months.find((m: any) => m.month === paris).total).toBe(publicSpent);
+    const now = views.spending.months.find((m: any) => m.month === today.slice(0, 7));
+    expect(now.left_out).toContain('ARS');
+    expect(now.left_out).toContain('there is no public rate for it');
+    expect(views.holdings.notes).toContain('What is held in BTC isn’t counted here: there is no public rate for it.');
+    // Nothing an own rate worked out is anywhere in it: 1,000,000 pesos at
+    // 0.00071 (710), half a coin at 61,000 (30,500), the 5,000 pesos (3.55).
+    const numbers = new Set((JSON.stringify(views).match(/-?\d+(\.\d+)?/g) ?? []).map(Number));
+    for (const leaked of [710, 30500, 3.55, 0.00071, 61000]) expect(numbers.has(leaked)).toBe(false);
+    // The owner's preview is exactly what they get, and warns of no rate.
     const preview = await previewOf();
     expect(preview.status).toBe(200);
-    expect((preview.body.inferences ?? []).map((i: any) => i.id)).toContain('own_rate');
+    expect(preview.body.view.views).toEqual(views);
+    expect((preview.body.inferences ?? []).map((i: any) => i.id)).not.toContain('own_rate');
   });
 });

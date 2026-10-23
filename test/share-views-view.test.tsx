@@ -287,15 +287,6 @@ describe('on the card of the one it is shared with', () => {
     expect(page).not.toContain('What is spent in October 2026 may be off');
   });
 
-  test('an account the owner’s own rate converts is marked converted, its own currency never shown', () => {
-    const nw = VIEWS.net_worth as any;
-    const page = text(card({ net_worth: { ...nw, converted: { own_rates: true }, accounts: [nw.accounts[0], { label: 'Pesos', balance: 710, currency: 'USD', debt: false, as_of: '2026-10-19', converted: true }] } }));
-    expect(page).toContain('Pesos');
-    expect(page).toContain('Pesos · Oct 19 · converted $710.00');
-    expect(page).not.toContain('ARS');
-    expect(page.match(/· converted/g)).toHaveLength(1);
-  });
-
   test('a net worth with one point of history says when it begins, not a chart of one', () => {
     const one = text(card({ net_worth: { ...(VIEWS.net_worth as any), history: [{ date: '2026-10-18', value: 1 }], accounts: undefined } }));
     expect(one).toContain('Its history begins Oct 18');
@@ -617,29 +608,29 @@ test('the card for a kind lists itself under its own name, whoever’s it is', (
 });
 
 describe('a share in the owner’s home currency', () => {
-  test('says it is converted, at whose rates, never a rate; what has no rate is named as having none', () => {
+  test('says it is converted at the ECB’s rates, never a rate nor anyone’s own; what has none is named as having no public rate', () => {
     const views: SharedViews = {
-      net_worth: { detail: 'total', currency: 'EUR', total: 1000, as_of: '2026-09-14', from: '2026-09-14', other_currencies: [{ currency: 'AED', accounts: 1 }], without_balance: 0, converted: { own_rates: true } },
+      net_worth: { detail: 'total', currency: 'EUR', total: 1000, as_of: '2026-09-14', from: '2026-09-14', other_currencies: [{ currency: 'AED', accounts: 1 }], without_balance: 0, converted: { rates: 'ecb' } },
       spending: {
         detail: 'shares',
         by: 'group',
         currency: 'EUR',
-        converted: { own_rates: false },
+        converted: { rates: 'ecb' },
         months: [{ month: '2026-09', so_far: true, groups: [{ name: 'Food', pct: 100, label: '100%' }], left_out: null }],
       },
       budgets: {
         detail: 'progress',
         by: 'group',
         currency: 'USD',
-        converted: { own_rates: false },
+        converted: { rates: 'ecb' },
         months: [{ month: '2026-09', total: { name: 'All budgets', pct: 50, label: '50%', over: false }, groups: [], left_out: null, may_be_incomplete: false }],
       },
     };
     const t = text(renderToStaticMarkup(<SharedViewsList views={views} whose="Sam’s" />));
-    expect(t).toContain('Converted into EUR at the ECB’s daily rates, and their own rates.');
-    expect(t).toContain('1 account in AED isn’t in this total: there is no rate for it.');
-    expect(t).toContain('Converted into EUR at the ECB’s daily rates.');
-    expect(t).toContain('Spending in other currencies counts converted into USD at the ECB’s daily rates.');
+    expect(t).toContain('Converted into EUR at the European Central Bank’s daily rates.');
+    expect(t).toContain('1 account in AED isn’t in this total: there is no public rate for it.');
+    expect(t).toContain('Spending in other currencies counts converted into USD at the European Central Bank’s daily rates.');
+    expect(t).not.toMatch(/own rate|their own rates/);
     expect(t).not.toContain('a share doesn’t convert');
   });
 });
