@@ -129,6 +129,31 @@ describe('AccountLinksView', () => {
     expect(html).toContain('Same account as');
   });
 
+  test('three earlier accounts that would read the same are told apart by the end of each id, so Forget takes the one meant', () => {
+    const alike = (id: string) => ({ id, label: null, first: '2025-11-01', last: '2025-11-02', hidden: false });
+    const html = renderToStaticMarkup(
+      <AccountLinksView
+        open={{ earlier: true }}
+        data={{
+          suggestions: [],
+          unclaimed: [],
+          links: [],
+          earlier: [alike('acc_9f2Lq7'), alike('acc_Xw31Bd'), alike('acc_kP0z5e'), { id: 'A7', label: 'Chase Checking ••4821', first: '2025-11-01', last: '2025-11-02', hidden: false }],
+        }}
+        busy={false}
+        error=""
+        preview={null}
+        picked={{}}
+        onPreview={noop}
+        onPick={noop}
+        onAct={noop}
+      />
+    );
+    const names = [...html.matchAll(/<span>([^<(]+) \(/g)].map((m) => m[1]);
+    expect(names).toEqual(['Balance history · …2Lq7', 'Balance history · …31Bd', 'Balance history · …0z5e', 'Chase Checking ••4821']);
+    expect(html.match(/>Forget</g)?.length).toBe(4);
+  });
+
   test('says what was refused, in the server’s words when it gave some', () => {
     expect(refusalText('forget', {})).toBe('Could not forget that account');
     expect(refusalText('link', {})).toBe('Could not update the link');

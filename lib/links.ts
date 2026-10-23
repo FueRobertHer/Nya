@@ -45,7 +45,8 @@ import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } f
 import { rememberedIdsByItem, rememberedAccountsReport, couldNotRead, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 import { forgetImportedHistory } from './history-import/commit';
-import { forgetRestoredAccount } from './user-restore/forget';
+import { forgetRestoredAccount, restoredForgetRefusal } from './user-restore/forget';
+import type { Unlisted } from './earlier-names';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -641,6 +642,33 @@ export function isManualChoice(old: string, to: string, choices: Unclaimed[]): b
 /** An earlier account the user can forget: what it was, and its span. */
 export type Earlier = { id: string; label: string | null; first: string | null; last: string | null };
 
+/** What decides which earlier accounts can be forgotten (forgettableAccounts,
+ *  whyUnlisted): loadSuggestionInputs, with the live accounts read strictly. */
+type ForgetInputs = {
+  directory: Record<string, DirectoryEntry>;
+  spans: Record<string, Span>;
+  liveIds: Set<string>;
+  links: Map<string, Link>;
+  unreadableLinks?: Set<string>;
+};
+
+/** Why each id isn't an earlier account the user can forget, in the order
+ *  lib/earlier-names.ts Unlisted gives, or null for one that is. */
+function unlistedBy(input: ForgetInputs, storedItems: Set<string>): (id: string) => Unlisted | null {
+  const { directory, spans, liveIds, links } = input;
+  const targets = new Set([...links.values()].map((l) => l.to));
+  return (id) => {
+    if (liveIds.has(id)) return 'live';
+    if (isManualId(id)) return 'manual';
+    if (directory[id] && storedItems.has(directory[id].item_id)) return 'connected';
+    if (input.unreadableLinks?.has(id)) return 'link-unreadable';
+    if (links.has(id)) return 'linked';
+    if (targets.has(id)) return 'linked-to';
+    if (!directory[id] && !spans[id]) return 'unknown';
+    return null;
+  };
+}
+
 /**
  * The earlier accounts the user can FORGET (forgetEarlierAccount): accounts
  * of an institution that is no longer connected. Not live, not manual, not
@@ -651,22 +679,11 @@ export type Earlier = { id: string; label: string | null; first: string | null; 
  * safe; it goes when the institution is disconnected. `hidden` says it is
  * hidden, which forgetting keeps out of past totals. Pure. Most recent first.
  */
-export function forgettableAccounts(
-  input: {
-    directory: Record<string, DirectoryEntry>;
-    spans: Record<string, Span>;
-    liveIds: Set<string>;
-    links: Map<string, Link>;
-    unreadableLinks?: Set<string>;
-  },
-  hidden: Set<string>,
-  storedItems: Set<string>
-): (Earlier & { hidden: boolean })[] {
-  const { directory, spans, liveIds, links } = input;
-  const linked = new Set([...links.keys(), ...[...links.values()].map((l) => l.to), ...(input.unreadableLinks ?? [])]);
+export function forgettableAccounts(input: ForgetInputs, hidden: Set<string>, storedItems: Set<string>): (Earlier & { hidden: boolean })[] {
+  const { directory, spans } = input;
+  const unlisted = unlistedBy(input, storedItems);
   return [...new Set([...Object.keys(directory), ...Object.keys(spans)])]
-    .filter((id) => !liveIds.has(id) && !isManualId(id) && !linked.has(id))
-    .filter((id) => !directory[id] || !storedItems.has(directory[id].item_id))
+    .filter((id) => unlisted(id) === null)
     .map((id) => ({
       id,
       label: directory[id] ? label(directory[id], id) : null,
@@ -675,6 +692,12 @@ export function forgettableAccounts(
       hidden: hidden.has(id),
     }))
     .sort((a, b) => ((a.last ?? '') < (b.last ?? '') ? 1 : (a.last ?? '') > (b.last ?? '') ? -1 : a.id < b.id ? -1 : 1));
+}
+
+/** Why forgettableAccounts doesn't list this account (lib/earlier-names.ts
+ *  Unlisted), or null when it does. Pure. */
+export function whyUnlisted(input: ForgetInputs, storedItems: Set<string>, id: string): Unlisted | null {
+  return unlistedBy(input, storedItems)(id);
 }
 
 /** A refusal to show the user: nothing was changed. */
@@ -733,10 +756,20 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * (lib/holdings-history.ts forgetAccountHoldings): left as they are. Holdings
  * records this version does not recognise stop the forget before anything is
  * changed, for an account that could be in them (UnreadableEntriesError).
+ * What a restore brought back for it in a form this version doesn't know
+ * stops it the same way, as a refusal (lib/user-restore/forget.ts
+ * restoredForgetRefusal).
+ *
+ * `unlisted` also takes an account the list can't show for having nothing to
+ * list it by (whyUnlisted 'unknown': no directory entry that can be read, and
+ * no balance history), for the restore card, which offers it for a restored
+ * account whose entry can't be read either (app/api/user-restore/forget).
+ * Every other check stands.
  */
 export async function forgetEarlierAccount(
   ctx: Ctx,
-  id: string
+  id: string,
+  opts: { unlisted?: boolean } = {}
 ): Promise<{ changed: number; unreadableDates: string[]; holdingsDamaged: boolean }> {
   const [inputs, hidden, items] = await Promise.all([
     liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
@@ -745,11 +778,14 @@ export async function forgetEarlierAccount(
   ]);
   if (inputs.unreadableLinks.size > 0) throw new ForgetRefused('A saved link can\'t be read. Remove it first.');
   const storedItems = new Set(items.map((i) => i.item_id));
-  const found = forgettableAccounts(inputs, new Set(hidden.keys()), storedItems).find((e) => e.id === id);
+  const found =
+    forgettableAccounts(inputs, new Set(hidden.keys()), storedItems).find((e) => e.id === id) ??
+    (opts.unlisted && whyUnlisted(inputs, storedItems, id) === 'unknown' ? { id, label: null, first: null, last: null, hidden: hidden.has(id) } : undefined);
   if (!found) throw new ForgetRefused('That account can\'t be forgotten: its institution is still connected, it is linked, or it is unknown.');
   if (!inputs.directory[id]) {
-    // Known only from balances: make sure no connected institution still
-    // stores it. Strict: an unreadable store is not an absent one.
+    // Known only from balances, or not even those (`unlisted`): make sure no
+    // connected institution still stores it. Strict: an unreadable store is
+    // not an absent one.
     for (const item of items) {
       const [txnIds, invIds] = await Promise.all([storedAccountIds(ctx, item.item_id), storedInvestmentAccountIds(ctx, item.item_id, true)]);
       if (txnIds.has(id) || invIds.includes(id)) {
@@ -762,6 +798,11 @@ export async function forgetEarlierAccount(
   // its balances: refused when forgetting them would put it back.
   const refusal = await (await import('./lifecycle')).endedForgetRefusal(ctx, id, found.hidden);
   if (refusal) throw new ForgetRefused(refusal);
+  // What a restore brought back for it, in a form this version doesn't know,
+  // is never removed (lib/user-restore/forget.ts): refused here, before
+  // anything is changed.
+  const unknown = await restoredForgetRefusal(ctx, id);
+  if (unknown) throw new ForgetRefused(unknown);
 
   // What it held, from every month of holdings history. First, as the one
   // step that stops for what is stored (a record this version does not
