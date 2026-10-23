@@ -522,13 +522,32 @@ describe('what it says it may be missing', () => {
     // Planned far from its due date, or for another amount: still said.
     expect(notesFor(withCard, [{ ...payment, date: '2026-11-05' }])).toEqual([named]);
     expect(notesFor(withCard, [{ ...payment, amount: 2000 }])).toEqual([named]);
-    // Part of it planned near its due date: what is planned is said, and the
-    // rest is what isn't in the forecast, never the whole statement.
-    expect(notesFor(withCard, [{ ...payment, amount: 300 }])).toEqual([
-      "Sapphire's payment, statement balance $812.40, is due on 2026-10-22. The $300.00 you planned around then may be part of it; the rest, $512.40, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.",
+    // Part of it planned near its due date, under the card's name or its
+    // bank's: what is planned is said, and the rest is what isn't in the
+    // forecast, never the whole statement.
+    const partly = (planned: number) =>
+      `Sapphire's payment, statement balance $812.40, is due on 2026-10-22. The $${planned.toFixed(2)} you planned around then for it may be part of it; the rest, $${(812.4 - planned).toFixed(2)}, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.`;
+    expect(notesFor(withCard, [{ ...payment, amount: 300 }])).toEqual([partly(300)]);
+    expect(notesFor(withCard, [{ ...payment, name: 'chase card', amount: 300 }])).toEqual([partly(300)]);
+    // Each time it falls near the due date: weekly, twice.
+    expect(notesFor(withCard, [{ ...payment, amount: 100, date: '2026-10-18', cadence: 'weekly' }])).toEqual([partly(200)]);
+    // Parts under its name that come to it or more: no part, so said as
+    // before, never quiet.
+    expect(notesFor(withCard, [{ ...payment, amount: 400 }, { ...payment, id: 'p2', amount: 412.4, date: '2026-10-24' }])).toEqual([named]);
+    // Planned items that name neither the card nor its bank are no part of it
+    // (review): a gym, rent, or the month's other bills near the due date.
+    expect(notesFor(withCard, [{ ...payment, name: 'Gym', amount: 55 }])).toEqual([named]);
+    expect(notesFor(withCard, [{ ...payment, name: 'Sapphires club', amount: 300 }])).toEqual([named]);
+    const small = withLiability({ last_statement_balance: 400 });
+    expect(
+      notesFor(small, [
+        { ...payment, id: 'phone', name: 'Phone', amount: 85, date: '2026-10-20' },
+        { ...payment, id: 'net', name: 'Internet', amount: 70, date: '2026-10-21' },
+        { ...payment, id: 'car', name: 'Car insurance', amount: 160, date: '2026-10-24' },
+      ])
+    ).toEqual([
+      "Sapphire's payment, statement balance $400.00, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
     ]);
-    // In two parts that come to it: planned.
-    expect(notesFor(withCard, [{ ...payment, amount: 400 }, { ...payment, id: 'p2', amount: 412.4, date: '2026-10-24' }])).toEqual([]);
   });
 
   test('pay that stopped coming or varies too much, and a series on an account of unknown type', () => {

@@ -718,9 +718,13 @@ export function forecastNotes(opts: {
   // with what is owed of its statement, from Plaid's payment details. Not said
   // when that statement is paid already (a payment on or after its issue
   // date covers it), when a planned expense near the due date is that
-  // payment (or planned expenses there come to it together, paid in parts),
-  // or when a payment held for a card it can't tell is near what this one
-  // owes: it may be that one. With less planned there, the rest is said.
+  // payment, or when a payment held for a card it can't tell is near what this
+  // one owes: it may be that one. Planned items name no account, so only one
+  // whose name names the card (namesCard: the card's name or its bank's) is
+  // taken for a part of its payment, each time it falls near the due date:
+  // when they come to less than it, what they come to is said, and the rest.
+  // Rent or a phone bill due the same week is no part of it, and nothing they
+  // come to ever quiets the note.
   const paid = opts.series?.cardsPaid;
   const close = (a: number, b: number | null | undefined) => b !== null && b !== undefined && b > 0 && Math.abs(a - b) <= b * CARD_NEAR;
   if (opts.until)
@@ -736,18 +740,13 @@ export function forecastNotes(opts: {
         if (owed === 0) continue;
         const figure = owed ?? l.minimum_payment;
         if (paid?.unknown.some((x) => close(x, figure) || close(x, l.minimum_payment))) continue;
+        const [from, to] = [addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS)];
         const around = (opts.planned ?? []).filter(
-          (p) =>
-            p.kind === 'expense' &&
-            inCurrency({ iso_currency_code: p.currency }, position.currency) &&
-            plannedDates(p, addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS), 1).length > 0
+          (p) => p.kind === 'expense' && inCurrency({ iso_currency_code: p.currency }, position.currency) && plannedDates(p, from, to, 1).length > 0
         );
         if (around.some((p) => close(p.amount, figure) || close(p.amount, l.minimum_payment))) continue;
-        // Planned near the due date for less than it: maybe part of it, paid
-        // in parts. Together near it, that is planned; less, the rest is
-        // what the forecast doesn't hold, said with what was planned.
-        const part = figure ? Math.round(around.filter((p) => p.amount < figure).reduce((n, p) => n + p.amount, 0) * 100) / 100 : 0;
-        if (part > 0 && close(part, figure)) continue;
+        const forCard = around.filter((p) => namesCard(p.name, [a.name, i.institution_name]));
+        const part = Math.round(forCard.reduce((n, p) => n + p.amount * plannedDates(p, from, to).length, 0) * 100) / 100;
         const money = (n: number) => formatMoney(n, a.currency ?? position.currency);
         const amount =
           owed === null
@@ -759,7 +758,7 @@ export function forecastNotes(opts: {
               : `, statement balance ${money(owed)},`;
         if (part > 0 && figure && part < figure)
           notes.push(
-            `${a.name}'s payment${amount} is due ${days.day(due)}. The ${money(part)} you planned around then may be part of it; the rest, ${money(Math.round((figure - part) * 100) / 100)}, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.`
+            `${a.name}'s payment${amount} is due ${days.day(due)}. The ${money(part)} you planned around then for it may be part of it; the rest, ${money(Math.round((figure - part) * 100) / 100)}, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.`
           );
         else notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
       }
@@ -795,6 +794,18 @@ export function forecastNotes(opts: {
       `${join(unique(unplaced.map((s) => s.name)))} ${unplaced.length === 1 ? 'is' : 'are'} on an account whose type isn't known, so ${unplaced.length === 1 ? "it isn't" : "they aren't"} in this forecast.`
     );
   return notes;
+}
+
+/** Whether a planned item's name names a card: its account's name or its
+ *  bank's, as whole words, in any case ("Sapphire payment", "chase card";
+ *  never "Sapphires"). */
+export function namesCard(name: string, names: readonly string[]): boolean {
+  return names.some((n) => {
+    const words = n.trim();
+    if (!words) return false;
+    const escaped = words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(name);
+  });
 }
 
 /** A sentence of what was left out for its currency, with why each has no
