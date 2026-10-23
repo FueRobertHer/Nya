@@ -53,6 +53,9 @@ const {
   COUNTER_TAKE,
   openStored,
   openStoredJson,
+  measureContainer,
+  measureContainers,
+  HEADS_STEP_BYTES,
 } = await import('@/lib/repo');
 const { encodeJsonText } = await import('@/lib/blob');
 const { declaredStores, declaredStore, declaredPublicStore } = await import('@/lib/stores');
@@ -1534,6 +1537,141 @@ function contract(b: Backend) {
       await notBlamed(() => shared.getManyReport(['a']));
       b.failNext('hset');
       await notBlamed(() => shared.setMany([['a', NOTE]]));
+    });
+  });
+
+  describe('measuring a whole container', () => {
+    test("every key, the older stores' and the seam's, measured as stored, and nothing of another container's", async () => {
+      await list.set(A, [NOTE]);
+      await notes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', { text: 'a much longer note than the other one', amount: 1 }],
+      ]);
+      await b.raw.hset(notesKey(), 'n3', 'damaged');
+      await b.raw.set(ctxKey('history:backfill-done'), '3');
+      await counter.take(A);
+      await notes.set(B, 'n1', RENT);
+      const storedList = (await b.raw.get(listKey()))!;
+      const stored = await b.raw.hgetall(notesKey());
+      const chars = Object.entries(stored).reduce((n, [id, v]) => n + id.length + String(v).length, 0);
+      const longest = Math.max(...Object.values(stored).map((v) => String(v).length));
+
+      const m = await measureContainer(A);
+      expect(m).toEqual({
+        keys: [
+          { key: 'history:backfill-done', type: 'string', entries: 1, chars: 1, largest: 1 },
+          { key: 'seam-contract-counter', type: 'string', entries: 1, chars: 1, largest: 1 },
+          { key: 'seam-contract-list', type: 'string', entries: 1, chars: storedList.length, largest: storedList.length },
+          { key: 'seam-contract-notes', type: 'hash', entries: 3, chars, largest: longest },
+        ],
+        unmeasured: [],
+      });
+      const theirs = await measureContainer(B);
+      expect(theirs.keys.map((k) => k.key)).toEqual(['seam-contract-notes']);
+      expect(theirs.keys[0].entries).toBe(1);
+    });
+
+    test('an empty container is no keys, and nothing is written measuring one', async () => {
+      expect(await measureContainer(A)).toEqual({ keys: [], unmeasured: [] });
+      await notes.set(A, 'n1', NOTE);
+      const before = await b.raw.hgetall(notesKey());
+      const sent = await sentBy(() => measureContainer(A, { heads: true }));
+      expect(new Set(sent)).toEqual(new Set(['scan', 'eval']));
+      expect(await b.raw.hgetall(notesKey())).toEqual(before);
+    });
+
+    test('heads: the key each value claims, counted from its first bytes, never a value', async () => {
+      await list.set(A, [NOTE]); // under k0: no master in these tests
+      await notes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', RENT],
+      ]);
+      await b.raw.hset(notesKey(), 'n3', `v2.k7-0a1b2c3d.-.${BODY}`);
+      await b.raw.hset(notesKey(), 'n4', 'v2.not a key id');
+      await b.raw.hset(notesKey(), 'n5', '{"plain":"json"}');
+      await b.raw.hset(notesKey(), 'n6', 'QUJD'); // base64, too short to be ciphertext
+      await b.raw.hset(notesKey(), 'n7', `v3.k0.-.${BODY}`);
+      const m = await measureContainer(A, { heads: true });
+      expect(m.keys.map((k) => [k.key, k.heads])).toEqual([
+        ['seam-contract-list', { k0: 1 }],
+        ['seam-contract-notes', { k0: 2, 'k7-0a1b2c3d': 1, '?': 1, '-': 3 }],
+      ]);
+      // Without heads, nothing is said of them.
+      expect((await measureContainer(A)).keys.every((k) => k.heads === undefined)).toBe(true);
+    });
+
+    test('bytes as stored: damaged bytes that are not text count what they hold', async () => {
+      await b.raw.hsetBytes(notesKey(), 'n9', new Uint8Array([0xff, 0xfe, 0x41]));
+      expect((await measureContainer(A, { heads: true })).keys).toEqual([
+        { key: 'seam-contract-notes', type: 'hash', entries: 1, chars: 5, largest: 3, heads: { '-': 1 } },
+      ]);
+    });
+
+    test('a hundred keys a step, after one walk', async () => {
+      for (let i = 0; i < 150; i++) await b.raw.set(ctxKey(`txns:item${String(i).padStart(3, '0')}`), 'x');
+      const sent = await sentBy(async () => {
+        const m = await measureContainer(A);
+        expect(m.keys.length).toBe(150);
+        expect(m.keys[0]).toEqual({ key: 'txns:item000', type: 'string', entries: 1, chars: 1, largest: 1 });
+      });
+      expect(sent.filter((c) => c === 'eval').length).toBe(2);
+      expect(sent.filter((c) => c !== 'eval' && c !== 'scan')).toEqual([]);
+    });
+
+    test('heads read at most HEADS_STEP_BYTES of hash values a step; a value past it is not looked at, and strings always are', async () => {
+      // Three values of half the budget each, so two fit whichever order
+      // Redis gives the fields in (a hash of large values keeps none).
+      const half = HEADS_STEP_BYTES / 2;
+      const head = 'v2.k7-0a1b2c3d.-.';
+      for (const [id, ch] of [['n1', 'A'], ['n2', 'B'], ['n3', 'C']]) await b.raw.hset(notesKey(), id, `${head}${ch.repeat(half - head.length)}`);
+      await b.raw.set(ctxKey('txns:item1'), `v2.k7-0a1b2c3d.-.${'D'.repeat(half * 3)}`);
+      const m = await measureContainer(A, { heads: true });
+      const heads = Object.fromEntries(m.keys.map((k) => [k.key, k.heads]));
+      // Two fit the step's budget; the third, read past it, is "+".
+      expect(Object.values(heads['seam-contract-notes']!).reduce((n, x) => n + x, 0)).toBe(3);
+      expect(heads['seam-contract-notes']!['+']).toBe(1);
+      expect(heads['seam-contract-notes']!['k7-0a1b2c3d']).toBe(2);
+      // A string's head comes from its first bytes, whatever its size.
+      expect(heads['txns:item1']).toEqual({ 'k7-0a1b2c3d': 1 });
+    });
+
+    test('several containers with one walk: each its own keys, as one at a time would measure them, without heads', async () => {
+      await list.set(A, [NOTE]);
+      await notes.setMany(A, [
+        ['n1', NOTE],
+        ['n2', RENT],
+      ]);
+      await notes.set(B, 'n1', RENT);
+      const C = { container: '5d6e7f80-1a2b-4c3d-8e9f-a0b1c2d3e4f5' } as typeof A;
+      await b.raw.set(ctxKey('history:backfill-done', C), '3');
+      const one = { a: await measureContainer(A), b: await measureContainer(B) };
+      const sent = await sentBy(async () => {
+        const both = await measureContainers([A, B, A]);
+        expect([...both.keys()]).toEqual([A.container, B.container]);
+        expect(both.get(A.container)).toEqual(one.a);
+        expect(both.get(B.container)).toEqual(one.b);
+      });
+      // One walk for both: as many SCAN pages as one container's walk takes.
+      const oneWalk = await sentBy(() => measureContainer(A));
+      expect(sent.filter((c) => c === 'scan').length).toBe(oneWalk.filter((c) => c === 'scan').length);
+      expect(sent.filter((c) => c === 'eval').length).toBe(2);
+      expect((await measureContainers([C])).get(C.container)!.keys.map((k) => k.key)).toEqual(['history:backfill-done']);
+      expect((await measureContainers([])).size).toBe(0);
+      // A container with nothing is measured as nothing.
+      const D = { container: '6e7f8091-2b3c-4d4e-9f0a-b1c2d3e4f506' } as typeof A;
+      expect((await measureContainers([D])).get(D.container)).toEqual({ keys: [], unmeasured: [] });
+      b.failNext('scan');
+      await notBlamed(() => measureContainers([A, B]));
+    });
+
+    test('a step that fails names its keys, never leaves them out; a walk that fails throws', async () => {
+      await list.set(A, [NOTE]);
+      await notes.set(A, 'n1', NOTE);
+      b.failNext('eval');
+      const { result } = await quietly(() => measureContainer(A));
+      expect(result).toEqual({ keys: [], unmeasured: ['seam-contract-list', 'seam-contract-notes'] });
+      b.failNext('scan');
+      await notBlamed(() => measureContainer(A));
     });
   });
 

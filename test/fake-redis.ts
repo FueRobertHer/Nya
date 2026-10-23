@@ -829,6 +829,51 @@ export class FakeRedis {
       }
       return [h.size, chars, `v${largest}`, most];
     }
+    // How much each key holds (measureContainer): its type, entries, bytes
+    // and largest value, and with heads, the key each value claims from its
+    // first 64 bytes, counted, as the Lua does, reading at most the step's
+    // budget of hash values (ARGV[2]) and calling the rest "+".
+    if (name === '-- nya:repo-measure-keys') {
+      const heads = args[0] === '1';
+      const budget = Number(args[1]) || 0;
+      let spent = 0;
+      const claim = (bytes: Buffer, n: number) => {
+        const head = bytes.subarray(0, 64).toString('latin1');
+        const id = /^v2\.(k[A-Za-z0-9-]+)\./.exec(head);
+        if (id) return id[1];
+        if (head.startsWith('v2.')) return '?';
+        if (n >= 40 && /^[A-Za-z0-9+/=]+$/.test(head)) return 'k0';
+        return '-';
+      };
+      const encode = (claims: Map<string, number>) => `v${[...claims].map(([c, k]) => `${c}=${k}`).join(',')}`;
+      return keys.map((key) => {
+        const claims = new Map<string, number>();
+        if (this.strings.has(key)) {
+          const bytes = Buffer.from(this.strings.get(key)!, 'utf8');
+          if (heads) claims.set(claim(bytes, bytes.length), 1);
+          return ['string', 1, bytes.length, bytes.length, encode(claims)];
+        }
+        const h = this.hashes.get(key);
+        if (!h || h.size === 0) return ['none', 0, 0, 0, 'v'];
+        let chars = 0;
+        let most = 0;
+        for (const [field, value] of h) {
+          const raw = this.rawFields.get(key)?.get(field);
+          const bytes = raw && raw.text === value ? Buffer.from(raw.bytes) : Buffer.from(value, 'utf8');
+          chars += Buffer.byteLength(field, 'utf8') + bytes.length;
+          most = Math.max(most, bytes.length);
+          if (heads) {
+            let c = '+';
+            if (spent + bytes.length <= budget) {
+              spent += bytes.length;
+              c = claim(bytes, bytes.length);
+            }
+            claims.set(c, (claims.get(c) ?? 0) + 1);
+          }
+        }
+        return ['hash', h.size, chars, most, encode(claims)];
+      });
+    }
     // A counter store's: GET or INCR, and the expiry, as one step. Like
     // Redis, INCR refuses a value that is not an integer, and a hash at the
     // key is WRONGTYPE.
