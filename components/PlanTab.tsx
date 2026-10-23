@@ -937,7 +937,7 @@ export default function PlanTab({
             currency={displayCurrency}
             measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
-            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx)}
+            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), currencyAnswer.currency)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
           />
         )}

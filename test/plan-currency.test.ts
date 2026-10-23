@@ -258,3 +258,21 @@ describe('Home’s FI card', () => {
     expect(view(false)).not.toContain('isn’t known yet');
   });
 });
+
+describe('the assets sheet', () => {
+  test('lists each account counted in its own currency, never in the Plan’s label', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const React = await import('react');
+    const { FigureForm } = await import('@/components/PlanForms');
+    const FX = ecbTable({ home: 'USD' });
+    const PAGE: PageFx = { home: 'USD', latest: FX.latest, own: [] };
+    const institutions = [inst([acct({ name: 'Brokerage', balance: 100_000 }), acct({ name: 'Depot', balance: 800, currency: 'EUR' })])];
+    const assetsFor = (includeCash: boolean) => investedAssets(institutions, includeCash, PAGE, Date.parse('2026-09-14T18:00:00Z'), 'USD');
+    const html = renderToStaticMarkup(
+      React.createElement(FigureForm, { plan: plan(), onSave: async () => true, onDone: () => {}, editable: true, kind: 'assets', measured: assetsFor(false).total, measuredText: '', currency: 'USD', assetsFor })
+    );
+    expect(html).toContain('$100,000');
+    expect(html).toContain('€800');
+    expect(html).not.toContain('$800');
+  });
+});
