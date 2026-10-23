@@ -739,7 +739,7 @@ async function turningOverNote(ctx: Ctx): Promise<string[]> {
   const ids = await signJobStore.ids(ctx);
   if (ids.length === 0) return [];
   return [
-    `The history of ${ids.length === 1 ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${ids.length === 1 ? 'it is' : 'they are'}: until that finishes, some of ${ids.length === 1 ? 'its' : 'their'} earlier days in account_history are in the other sign. Nya’s daily update finishes it; download again after.`,
+    `The history of ${ids.length === 1 ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${ids.length === 1 ? 'it is' : 'they are'}: until that finishes, some of ${ids.length === 1 ? 'its' : 'their'} earlier days in account_history are in the other sign. Nya’s daily update tries again, and whoever runs your Nya can finish it: download again once it is done.`,
   ];
 }
 

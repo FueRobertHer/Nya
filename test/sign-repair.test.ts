@@ -371,6 +371,10 @@ describe('a repair under way', () => {
     expect((await ops({ container: ctx.container })).body.accounts).toEqual([
       expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 3, error: 'TypeError', stopped: true } }),
     ]);
+    // A download meanwhile says so in its notes.
+    expect((await collectUserData({ ctx, userId: null })).notes).toContain(
+      'The history of one account (manual_eur) is being turned over to match what it is: until that finishes, some of its earlier days in account_history are in the other sign. Nya’s daily update tries again, and whoever runs your Nya can finish it: download again once it is done.'
+    );
     // The operator finishes it.
     expect(real).toBe(history.negateAccountOn);
     expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).body.negated).toBe(3);
