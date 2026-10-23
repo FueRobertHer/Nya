@@ -59,7 +59,8 @@ const NEWER = 'That scenario was saved by a newer version of Nya, so it can’t 
  *  plans apart by name. Entries that can't be read are left out of this
  *  check, never mistaken for none: the save still goes through the strict
  *  count and compare-and-set. Two saves of one name sent together can each
- *  pass; the page then shows both, and either can be renamed. */
+ *  pass; the page then shows both, either can be renamed, and both can still
+ *  be changed (an edit is refused only for a new name that is taken). */
 async function nameUsed(ctx: Awaited<ReturnType<typeof dataCtx>>, name: string, exceptId: string | null): Promise<boolean> {
   const { entries } = await planScenariosStore.getAllReport(ctx);
   return nameTaken([...entries].map(([id, s]) => ({ id, name: s.name })), name, exceptId);
@@ -118,6 +119,13 @@ class Stale extends Error {
   }
 }
 
+/** A rename to a name another scenario has. */
+class Taken extends Error {
+  constructor() {
+    super('taken');
+  }
+}
+
 export async function PUT(req: Request) {
   const b = await bodyOf(req);
   if (!b) return bad('Send the id, the scenario and the version it was based on, as JSON');
@@ -134,19 +142,24 @@ export async function PUT(req: Request) {
   const rev = crypto.randomUUID();
   try {
     const ctx = await dataCtx(now);
-    if (await nameUsed(ctx, parsed.ok.name, id)) return taken();
+    const usedElsewhere = await nameUsed(ctx, parsed.ok.name, id);
     let written: PlanScenario | null;
     try {
       written = await planScenariosStore.update(ctx, id, (current) => {
         // Gone: nothing is written, so a change can never make one again.
         if (current === null) return null;
         if (current.rev !== basedOn) throw new Stale(current);
+        // Only a rename is refused for a name another has: a scenario whose
+        // name two already share (two saves sent together) can still be
+        // changed, and renamed apart.
+        if (usedElsewhere && !nameTaken([{ id, name: current.name }], parsed.ok.name)) throw new Taken();
         return { version: 1, ...parsed.ok, createdAt: current.createdAt, savedAt: new Date(now).toISOString(), rev };
       });
     } catch (err) {
       if (err instanceof Stale) {
         return NextResponse.json({ error: 'This scenario was changed on another device: here it is as it is now.', stale: true, scenario: { id, ...err.current } }, { status: 409 });
       }
+      if (err instanceof Taken) return taken();
       if (err instanceof UnreadableEntriesError && err.unrecognised.includes(id)) return NextResponse.json({ error: NEWER }, { status: 409 });
       throw err;
     }

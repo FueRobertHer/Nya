@@ -158,6 +158,23 @@ describe('saved plan scenarios, on the storage seam', () => {
     expect(await planScenariosStore.count(ctx)).toBe(2);
   });
 
+  test('two that already share a name (saved at the same moment) can both still be changed, and renamed apart, but not renamed to it', async () => {
+    await planScenariosStore.set(ctx, 'a', stored('Retire at 50', { rev: 'ra' }));
+    await planScenariosStore.set(ctx, 'b', stored('retire at 50', { rev: 'rb' }));
+    const edit = await call('PUT', { id: 'a', based_on: 'ra', scenario: draft({ name: 'Retire at 50', set: { targetAge: 52 } }) });
+    expect(edit.res.status).toBe(200);
+    expect(edit.body.scenario.set.targetAge).toBe(52);
+    const apart = await call('PUT', { id: 'b', based_on: 'rb', scenario: draft({ name: 'Retire at 52' }) });
+    expect(apart.res.status).toBe(200);
+    // Renamed to a name the other has: refused, and nothing written.
+    const back = await call('PUT', { id: 'b', based_on: apart.body.scenario.rev, scenario: draft({ name: 'RETIRE at 50' }) });
+    expect([back.res.status, back.body.error]).toEqual([409, 'Another scenario has that name: choose another, so they can be told apart.']);
+    expect((await planScenariosStore.get(ctx, 'b'))?.name).toBe('Retire at 52');
+    // A stale edit is still said to be stale first, with the version as it is now.
+    const stale = await call('PUT', { id: 'b', based_on: 'rb', scenario: draft({ name: 'Retire at 50' }) });
+    expect([stale.res.status, stale.body.stale, stale.body.scenario.name]).toEqual([409, true, 'Retire at 52']);
+  });
+
   test('at most MAX_PLAN_SCENARIOS, counting one that can’t be read', async () => {
     for (let i = 0; i < MAX_PLAN_SCENARIOS - 1; i++) await planScenariosStore.set(ctx, `s${i}`, stored(`S${i}`));
     await fake.hset(ctxKey('plan-scenarios'), { broken: 'damaged-bytes-not-ciphertext-at-all' });
