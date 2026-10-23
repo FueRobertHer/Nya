@@ -93,6 +93,7 @@ import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { formatMoney, dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import AccruedInterestNote from './AccruedInterestNote';
+import OwedFlipNote, { crossesOwed } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
@@ -264,6 +265,10 @@ type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance' | 'currency'> & 
   /** With its currency corrected: also move the transactions typed on it
    *  into the new one (lib/manual-relabel.ts), only when the person ticks it. */
   relabel?: boolean;
+  /** The account as it was when Update opened (null when adding): a type
+   *  across money held and owed from its own is offered as a close instead
+   *  (components/OwedFlipNote.tsx). */
+  kept?: ManualAccount | null;
 };
 
 // "cash" is a choice, not a type: saved as depository with the subtype
@@ -1329,7 +1334,7 @@ export default function Dashboard({
     setManualMoved(null);
     setEditingManual(true);
     const currency = account.currency ?? 'USD';
-    setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency });
+    setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency, kept: account });
   }, []);
 
   const submitManualDraft = useCallback(() => {
@@ -3260,6 +3265,17 @@ export default function Dashboard({
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'
                 : 'Negative balances are allowed (e.g. an overdrawn account).'}
             </p>
+            {shownManualDraft.kept && crossesOwed(shownManualDraft.kept.type, shownManualDraft.type) && (
+              <OwedFlipNote
+                toOwed={isOwedType(shownManualDraft.type)}
+                disabled={savingManual}
+                onClose={() => {
+                  const a = shownManualDraft.kept!;
+                  setManualDraft(null);
+                  lifecycle.open({ account_id: a.account_id, name: a.name, mask: null, institution: a.institution_name, balance: a.balance, type: a.type, currency: a.currency ?? 'USD', lastKnown: false });
+                }}
+              />
+            )}
 
             {editingManualShown && shownManualDraft.account_id && (
               <p className="panel-note manual-id">
@@ -3280,6 +3296,7 @@ export default function Dashboard({
                   !shownManualDraft.institution_name.trim() ||
                   shownManualDraft.balance.trim() === '' ||
                   !Number.isFinite(Number(shownManualDraft.balance)) ||
+                  (!!shownManualDraft.kept && crossesOwed(shownManualDraft.kept.type, shownManualDraft.type)) ||
                   (isOwedType(shownManualDraft.type) && Number(shownManualDraft.balance) < 0)
                 }
                 onClick={submitManualDraft}
