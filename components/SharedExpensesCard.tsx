@@ -34,7 +34,7 @@ import IouSheet from './IouSheet';
 import HandoffSheet from './HandoffSheet';
 
 /** What the transactions' read says of shared expenses (lib/activity.ts). */
-export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'> & Partial<Pick<ShareResult, 'away' | 'moves'>>;
+export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'> & Partial<Pick<ShareResult, 'away' | 'coming' | 'moves'>>;
 
 /** A person's balances in the home currency, at the newest rates: an
  *  estimate to read, never stored, asked for or matched on; null without a
@@ -183,7 +183,11 @@ export default function SharedExpensesCard({
       const t = byId.get(m.transaction_id);
       return t ? [{ ...m, t }] : [];
     });
-  const away = (facts?.away?.shares.length ?? 0) + (facts?.away?.payments.length ?? 0);
+  // Waiting: on an account disconnected and linked to nothing yet, or, after
+  // a re-link, for their transactions to come in.
+  const awayShares = (facts?.away?.shares ?? []).map((id) => card.shares.find((s) => s.transaction_id === id)).filter((s) => !!s);
+  const awayPayments = (facts?.away?.payments ?? []).map((id) => card.payments.find((p) => p.transaction_id === id)).filter((p) => !!p);
+  const coming = (facts?.coming?.shares.length ?? 0) + (facts?.coming?.payments.length ?? 0);
 
   const goneShares = (facts?.gone.shares ?? []).map((id) => card.shares.find((s) => s.transaction_id === id)).filter((s) => !!s);
   const gonePayments = (facts?.gone.payments ?? []).map((id) => card.payments.find((p) => p.transaction_id === id)).filter((p) => !!p);
@@ -445,11 +449,39 @@ export default function SharedExpensesCard({
           </div>
         );
       })}
-      {away > 0 && (
+      {/* On a bank disconnected: it carries once the bank is back and linked.
+          Keep it, for a bank that won't be: what is owed stays, no longer
+          said to wait (and still carries if it comes back). Never Remove:
+          its transaction may yet come back. */}
+      {awayShares.map((s) => (
+        <div key={`away:${s.transaction_id}`} className="stale-note">
+          {s.what}, {shownDay(s.date)}: on an account you disconnected. Once you add the bank back and link the account to its earlier one, it carries across to the same
+          transaction. What is owed of it stays as it is meanwhile.
+          <div className="card-actions">
+            <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'keep', transaction_id: s.transaction_id }, false)}>
+              Keep it without the bank
+            </button>
+          </div>
+        </div>
+      ))}
+      {awayPayments.map((p) => (
+        <div key={`away-pay:${p.transaction_id}`} className="stale-note">
+          A payment you confirmed on {shownDay(p.row.date)} is on an account you disconnected. Once you add the bank back and link the account to its earlier one, it carries
+          across to the same transaction. What it paid back stays paid meanwhile.
+          <div className="card-actions">
+            <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
+              Keep it without the bank
+            </button>
+          </div>
+        </div>
+      ))}
+      {/* After a re-link, before their transactions have come: nothing to do
+          yet, and never Remove, since each is likely on its way. */}
+      {coming > 0 && (
         <p className="stale-note">
-          {away === 1 ? 'A shared transaction, or a payment you confirmed, is' : `${away} shared transactions or payments you confirmed are`} on an account you disconnected.
-          Once you add the bank back and link the account to its earlier one, {away === 1 ? 'it carries' : 'they carry'} across to the same transactions; one that doesn’t is
-          listed here to move. What is owed stays as it is meanwhile.
+          {coming === 1 ? 'A shared transaction, or a payment you confirmed, from before you re-linked waits' : `${coming} shared transactions or payments you confirmed from before you re-linked wait`}{' '}
+          for {coming === 1 ? 'its transaction' : 'their transactions'} to come in from your bank: {coming === 1 ? 'it carries' : 'they carry'} across once{' '}
+          {coming === 1 ? 'it does' : 'they do'}. What is owed stays as it is meanwhile.
         </p>
       )}
       {(facts?.twice ?? []).map((tw) => {

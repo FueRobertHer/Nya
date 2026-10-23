@@ -12,6 +12,7 @@ import IouSheet from '@/components/IouSheet';
 import PersonSheet from '@/components/PersonSheet';
 import { messageMoney } from '@/lib/shared-expenses/links';
 import { canPayBack, canShare, SharedRowLine, type SharedRowHooks } from '@/components/SharedRows';
+import { SplitActions } from '@/components/SplitRows';
 import { balanceText, letGoText, reasonsText, rowLine, splitUnits, whoseText } from '@/components/shared-expenses-text';
 import type { Proposal } from '@/lib/shared-expenses/match';
 import { localDate } from '@/lib/local-date';
@@ -337,3 +338,39 @@ describe('the other sheets, and what the card says of a few cases', () => {
     expect(messageMoney(1200, 'JPY')).toBe('¥1,200');
   });
 });
+
+describe('what waits after a disconnect or a re-link, and a shared row’s other actions', () => {
+  const none = { shares: [] as string[], payments: [] as string[] };
+  const cardSays = (facts: Parameters<typeof SharedExpensesCard>[0]['facts']) =>
+    text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf())} txns={[]} facts={facts} tags={[]} taxonomy={null} currency="USD" />));
+
+  test('on a bank disconnected: it waits, with a way to keep it for a bank that won’t come back, never to remove it', () => {
+    const said = cardSays({ gone: none, away: { shares: ['t-dinner'], payments: [] }, twice: [] });
+    expect(said).toContain('Dinner,');
+    expect(said).toContain('on an account you disconnected. Once you add the bank back and link the account to its earlier one, it carries across to the same transaction.');
+    expect(said).toContain('Keep it without the bank');
+    expect(said).not.toContain('Remove it');
+  });
+
+  test('after a re-link, before its transaction has come in: it waits, said, with nothing to remove', () => {
+    const said = cardSays({ gone: none, away: none, coming: { shares: ['t-dinner'], payments: [] }, twice: [] });
+    expect(said).toContain('A shared transaction, or a payment you confirmed, from before you re-linked waits for its transaction to come in from your bank: it carries across once it does.');
+    expect(said).not.toContain('Remove it');
+    expect(said).not.toContain('Keep it');
+    // Once it is gone, it can be removed.
+    expect(cardSays({ gone: { shares: ['t-dinner'], payments: [] }, twice: [] })).toContain('Remove it');
+  });
+
+  test('a row shared whole, or paying something back, offers no split or group; a split one with a shared part keeps Edit split', () => {
+    const actions = (t: Txn) => text(renderToStaticMarkup(<SplitActions t={t} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />)).trim();
+    const shared_ = txn({ transaction_id: 'n-d', amount: 60, shared: { your_part: 60, people: [{ person: 'alex', item: 'e', amount: 60 }], counted: true }, shared_carried_from: 't-d' });
+    expect(actions(shared_)).toBe('It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.');
+    const paying = txn({ transaction_id: 'n-v', amount: 0, settles: { rest: 0, people: [{ person: 'alex', item: 'e', amount: 35, direction: 'to_you' }], counted: true, kept_under: 't-v' } });
+    expect(actions(paying)).toBe('It pays something back under Shared expenses: reopen that payment to split it or group it.');
+    expect(actions(txn({ transaction_id: 'x', shared_unapplied: 'currency' }))).toContain('stop sharing it');
+    const split = txn({ transaction_id: 's', shared: { part: 'p1', your_part: 5, people: [], counted: true }, split_parts: [txn({ transaction_id: 'part:p1' })] as never });
+    expect(actions(split)).toContain('Edit split');
+    expect(actions(txn({ transaction_id: 'plain' }))).toContain('Group with others');
+  });
+});
+

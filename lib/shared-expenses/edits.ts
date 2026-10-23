@@ -32,6 +32,9 @@ import { isSplitOrGroupId, toUnits, unitScale } from '../split-rows';
 import { splitStore } from '../splits';
 import { findTransactions, type FoundTxn } from '../txn-lookup';
 import { assembleBankRows, finishActivity } from '../activity';
+import { IMPORTED_TXN_PREFIX } from '../history-import/view';
+import { sharedAccounts } from './read';
+import type { Carried } from './rows';
 import { MANY_AT_ONCE } from '../repo';
 import { itemState, itemsOf, paidOf, allClosed, type Item } from './balances';
 import {
@@ -365,7 +368,7 @@ async function shareTarget(ctx: Ctx, found: FoundTxn, part: unknown): Promise<{ 
  * money out and in a currency, one in a group, one that pays something back,
  * and, given `updated_at`, one changed since the edit was opened.
  */
-export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareInput, now = new Date()): Promise<Share> {
+export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareInput, now = new Date(), known?: ReadonlyMap<string, Carried>): Promise<Share> {
   const seen = seenOf(input.updated_at);
   const carriedFrom = input.carried_from === undefined || input.carried_from === null ? null : checkTransactionId(input.carried_from);
   if (carriedFrom === transaction_id) fail('That is the same transaction.');
@@ -374,6 +377,14 @@ export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareIn
   await refuseGrouped(ctx, transaction_id, 'share it');
   if (await expensePaymentsStore.has(ctx, transaction_id)) fail('This transaction pays something back: reopen that payment to share it instead.', 409);
   const found = await stored(ctx, transaction_id);
+  // What applies to it from elsewhere (a re-link's carry, a file's row it
+  // stands for): a carried share is changed here only from where it is kept,
+  // as the read says, never on the request's word.
+  const carried = (known ?? (await carriedOnto(ctx, [transaction_id]))).get(transaction_id);
+  if (carried?.kind === 'payment') fail('This transaction pays something back: reopen that payment to share it instead.', 409);
+  if (carriedFrom ? carried?.kind !== 'share' || carried.from !== carriedFrom || carriedFrom.startsWith(IMPORTED_TXN_PREFIX) : carried?.kind === 'share') {
+    fail(carriedFrom ? 'That share isn’t carried to this transaction. Reload to see it as it is.' : 'This transaction is shared already. Reload to see it as it is, and change it there.', 409);
+  }
   if (found.pending) fail('A pending transaction can’t be shared: the bank gives it a new id when it posts. Share it once it has posted.', 409);
   if (!found.currency) fail('This transaction doesn’t say its currency, so what someone owes of it can’t be kept.', 409);
   if (!(found.amount > 0)) fail('Only money out can be shared: you paid, and they owe you their part.', 409);
@@ -398,6 +409,7 @@ export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareIn
   const before = await expenseSharesStore.get(ctx, carriedFrom ?? transaction_id);
   if (carriedFrom && !before) fail('Nothing is shared under that transaction any more. Reload to see it as it is.', 404);
   if (carriedFrom && before?.part) fail('A share of a split part doesn’t carry across a re-link: share the transaction again.', 409);
+  if (carriedFrom && before && before.currency !== currency) fail('That transaction is in another currency.', 409);
   for (const w of wanted) {
     const kept = before?.entries.find((e) => e.person === w.person);
     if (kept && toUnits(kept.amount, scale) === toUnits(w.amount, scale)) continue;
@@ -494,25 +506,38 @@ async function moveTarget(ctx: Ctx, to: string, account: unknown, doing: string)
   if (!found.currency) fail('That transaction doesn’t say its currency.', 409);
   // Shared or paying, though nothing is stored under its id: what a re-link
   // carried to it (lib/shared-expenses/rows.ts, ACROSS A RE-LINK).
-  const carried = await carriedOnto(ctx, to);
-  if (carried === 'shared') fail('That transaction is shared already.', 409);
-  if (carried === 'paying') fail('That transaction pays something back already.', 409);
+  const carried = (await carriedOnto(ctx, [to])).get(to);
+  if (carried?.kind === 'share') fail('That transaction is shared already.', 409);
+  if (carried?.kind === 'payment') fail('That transaction pays something back already.', 409);
   return found;
 }
 
-/** What a share or payment from before a re-link makes of a transaction it
- *  was carried to: shared, paying something back, or null for neither. As
- *  the Activity tab reads it (hidden and ended accounts' rows among them),
- *  since what carries is decided by the link and the rows, one to one: a
- *  key two rows have carries to neither, so either can be moved to. Read
- *  only while something holds a key a disconnect recorded, or can't be read. */
-async function carriedOnto(ctx: Ctx, id: string): Promise<'shared' | 'paying' | null> {
+/** What applies to each of these transactions though nothing is stored
+ *  under its id, applied or not (lib/shared-expenses/rows.ts ShareResult
+ *  `onto`): a share or payment carried across a re-link to it, or that of a
+ *  row imported from a file it stands for. As the Activity tab reads it (hidden and ended
+ *  accounts' rows among them), since what carries is decided by the link
+ *  and the rows, one to one: a key two rows have carries to neither, so
+ *  either is free. Every write onto a transaction asks (a share, a payment,
+ *  a move, a split, a group), so none lands beside what applies there.
+ *  Read only while something holds a key a disconnect recorded, is kept
+ *  under an imported row's id, or can't be read; then the links are read
+ *  strictly, so an edit fails rather than take links it couldn't read for
+ *  none. */
+export async function carriedOnto(ctx: Ctx, ids: readonly string[]): Promise<Map<string, Carried>> {
+  const out = new Map<string, Carried>();
+  if (ids.length === 0) return out;
   const kept = await Promise.all([expenseSharesStore.getAllReport(ctx), expensePaymentsStore.getAllReport(ctx)]);
-  const carrying = kept.some((r) => r.unreadable.length + r.unrecognised.length > 0 || [...r.entries.values()].some((v) => v.carry_key));
-  if (!carrying) return null;
+  const carrying = kept.some((r) => r.unreadable.length + r.unrecognised.length > 0 || [...r.entries].some(([id, v]) => v.carry_key || id.startsWith(IMPORTED_TXN_PREFIX)));
+  if (!carrying) return out;
+  await sharedAccounts(ctx);
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, withAccountIds: true, keepEnded: true });
-  const row = (await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true })).transactions.find((t) => t.transaction_id === id);
-  return row?.shared ? 'shared' : row?.settles ? 'paying' : null;
+  const onto = (await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true })).shared_onto;
+  for (const id of ids) {
+    const c = onto.get(id);
+    if (c) out.set(id, c);
+  }
+  return out;
 }
 
 /** Moves a share to the transaction a gone one came back as (the bank sent
@@ -552,6 +577,8 @@ export async function shareMany(ctx: Ctx, person: string, ids: readonly string[]
   if (ids.length > MAX_BATCH) fail(`At most ${MAX_BATCH} at once.`);
   if (how.kind === 'amount') fail('Choose half, an even split or a percentage.');
   const out: { id: string; ok: boolean; error?: string }[] = [];
+  // What applies to them from elsewhere, read once for all of them.
+  const carried = await carriedOnto(ctx, ids);
   for (const id of ids) {
     try {
       const found = await stored(ctx, id);
@@ -561,7 +588,7 @@ export async function shareMany(ctx: Ctx, person: string, ids: readonly string[]
       // Their part rounded down to the minor unit: yours is never less.
       const theirs = how.kind === 'half' ? Math.floor(whole / 2) : how.kind === 'even' ? Math.floor(whole / how.ways) : Math.floor((whole * how.percent) / 100);
       if (theirs <= 0) fail('Nothing to share.', 409);
-      await saveShare(ctx, id, { entries: [{ person, amount: theirs / scale, how }], updated_at: null }, now);
+      await saveShare(ctx, id, { entries: [{ person, amount: theirs / scale, how }], updated_at: null }, now, carried);
       out.push({ id, ok: true });
     } catch (err) {
       if (!(err instanceof ExpenseError)) throw err;
@@ -700,6 +727,10 @@ export async function confirmPayment(ctx: Ctx, row_id: string, input: PaymentInp
   if (await expenseSharesStore.has(ctx, row_id)) fail('This transaction is shared: a shared expense can’t also be a repayment.', 409);
   if (await expenseDismissedStore.has(ctx, row_id)) fail('You said this paid nothing back: undo that first.', 409);
   const found = await stored(ctx, row_id);
+  // A share or payment that applies to it from elsewhere, as for its own.
+  const carried = (await carriedOnto(ctx, [row_id])).get(row_id);
+  if (carried?.kind === 'share') fail('This transaction is shared: a shared expense can’t also be a repayment.', 409);
+  if (carried?.kind === 'payment') fail('This payment was already confirmed.', 409);
   if (found.pending) fail('A pending transaction can’t be confirmed: it gets a new id when it posts.', 409);
   if (!found.currency) fail('This transaction doesn’t say its currency.', 409);
   const currency = found.currency!;
@@ -971,9 +1002,28 @@ export async function saveSettings(ctx: Ctx, input: SettingsInput, now = new Dat
  * app/api/transaction-groups, which refuse with their own error and a 409.
  * `parts` are the ids of the parts a split would keep.
  */
-export async function sharesBlock(ctx: Ctx, transaction_id: string, change: 'group' | 'split' | 'unsplit', parts: readonly string[] = []): Promise<string | null> {
+export async function sharesBlock(
+  ctx: Ctx,
+  transaction_id: string,
+  change: 'group' | 'split' | 'unsplit',
+  parts: readonly string[] = [],
+  /** carriedOnto's answer, when the caller asks for several at once. */
+  known?: ReadonlyMap<string, Carried>
+): Promise<string | null> {
   const [share, paying] = await Promise.all([expenseSharesStore.get(ctx, transaction_id), expensePaymentsStore.has(ctx, transaction_id)]);
   if (paying) return 'This transaction pays something back under Shared expenses: reopen that payment first.';
+  // One applying from elsewhere (a re-link's carry, a file's row it stands
+  // for) is whole and says how the row counts, as its own would; a split
+  // transaction is never carried to, so undoing a split asks nothing.
+  if (!share && change !== 'unsplit') {
+    const carried = (known ?? (await carriedOnto(ctx, [transaction_id]))).get(transaction_id);
+    if (carried?.kind === 'payment') return 'This transaction pays something back under Shared expenses: reopen that payment first.';
+    if (carried?.kind === 'share') {
+      return change === 'group'
+        ? 'This transaction is shared under Shared expenses, which says how it counts: stop sharing it to group it.'
+        : 'This transaction is shared whole under Shared expenses: stop sharing it to split it, then share one of its parts.';
+    }
+  }
   if (!share) return null;
   if (change === 'group') return 'This transaction is shared under Shared expenses, which says how it counts: stop sharing it to group it.';
   if (change === 'split' && !share.part) return 'This transaction is shared whole under Shared expenses: stop sharing it to split it, then share one of its parts.';
