@@ -403,6 +403,14 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     kept: 'The app’s own records about your data',
     plain: ALL_PLAIN,
   },
+  'sign-repairs': {
+    group: 'machinery',
+    name: 'An account’s past balances being turned over',
+    about: 'While an account’s kind changes between money held and money owed, which days of its balance history are turned over so each goes on counting as it was recorded. Gone once that is done.',
+    unit: ACCOUNT,
+    kept: 'The app’s own records about your data',
+    plain: 'Each account’s id, as a field name.',
+  },
   'sessions:': {
     group: 'access',
     name: 'Your sign-out-everywhere count',

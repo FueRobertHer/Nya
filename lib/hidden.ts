@@ -107,6 +107,14 @@ export async function setAccountHidden(ctx: Ctx,
   await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify(value)) });
 }
 
+/** A hidden account's entry with the type it is subtracted as changed, as
+ *  it was hidden otherwise (lib/sign-repair.ts, whose re-sign reads every
+ *  day of it by that type): under the links lock, as every write here. */
+export async function setHiddenType(ctx: Ctx, account_id: string, entry: HiddenAccount, type: string): Promise<void> {
+  const value: HiddenAccount = { ...entry, type };
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify(value)) });
+}
+
 /** Marks a hidden account as being forgotten, with the tag its progress is
  *  kept under (see HiddenAccount.forget_tag). */
 export async function markForgetting(ctx: Ctx, account_id: string, entry: HiddenAccount, forget_tag: string): Promise<void> {

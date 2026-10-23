@@ -86,6 +86,8 @@ import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
 import { loggable } from '../log-safe';
 import { isOwedType } from '../balance';
+import { retypeWithHistory, signJobStore } from '../sign-repair';
+import { ForgetRefused } from '../links';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
  *  holds the person's banks there; a second is for another server that speaks
@@ -296,11 +298,35 @@ export async function othersOf(ctx: Ctx, connection_id: string, accounts: Connec
 /** Changes what kind of account tracked accounts are. With the sign as the
  *  protocol has it (owed negative), their contribution to net worth stays the
  *  balance SimpleFIN reports, and the kind says whether it is money held or
- *  owed; a card or a loan reported positive waits for confirmSigns. */
+ *  owed; a card or a loan reported positive waits for confirmSigns. A change
+ *  between money held and owed also re-signs the account's past balances
+ *  (lib/sign-repair.ts retypeWithHistory), since its recorded values follow
+ *  its kind: every earlier day goes on counting as it was recorded. */
 export async function retypeAccounts(ctx: Ctx, changes: { account_id: string; type: ManualType }[]): Promise<number> {
   let changed = 0;
-  for (let i = 0; i < changes.length; i += MANY_AT_ONCE) {
-    const chunk = changes.slice(i, i + MANY_AT_ONCE);
+  // Across held and owed: one at a time, each with its history.
+  const current = await connectorAccountsStore.getMany(ctx, changes.map((c) => c.account_id));
+  const crossing = changes.filter((c) => {
+    const a = current.get(c.account_id);
+    return !!a && a.type !== c.type && isOwedType(a.type) !== isOwedType(c.type);
+  });
+  for (const c of crossing) {
+    try {
+      if (await retypeWithHistory(ctx, c.account_id, current.get(c.account_id)!.type, c.type)) changed++;
+    } catch (err) {
+      // Another change to accounts holds the lock: nothing changed.
+      if (err instanceof ForgetRefused) throw new ConnectorRefused(err.message, 409);
+      // The kind changed, and its job is kept: finished by the nightly snapshot
+      // (lib/snapshot-job.ts), or by the next change of it.
+      if (!(await signJobStore.has(ctx, c.account_id))) throw err;
+      console.error('Connectors: an account’s past balances could not all be re-signed yet', loggable(err));
+      const name = current.get(c.account_id)!.name;
+      throw new ConnectorRefused(`The kind of ${name} was changed, but not every earlier day of its history could be turned over to match yet: that is finished by Nya’s next daily update, and until then some of those days may count the other way.`, 503);
+    }
+  }
+  const rest = changes.filter((c) => !crossing.includes(c));
+  for (let i = 0; i < rest.length; i += MANY_AT_ONCE) {
+    const chunk = rest.slice(i, i + MANY_AT_ONCE);
     let here = 0;
     await connectorAccountsStore.updateMany(
       ctx,

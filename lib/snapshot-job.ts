@@ -76,6 +76,7 @@ import { clearCaches } from './cache';
 import { pruneAccessLog } from './access-log';
 import { pruneChanges } from './api-changes';
 import { catchUpRebuilds } from './api-rebuilds';
+import { finishSignJobs } from './sign-repair';
 import { nightlyLogIds } from './sharing';
 import { MAIL_BUDGET_MS, prepareNotices, sendNotices, type PendingNotices, type SendOptions } from './connection-notices';
 import { checkContainerKey, ContainerKeyError } from './crypto';
@@ -326,6 +327,10 @@ export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = n
   // estimate has it rebuilt on the next visit (lib/api-rebuilds.ts). Never
   // throws.
   await catchUpRebuilds(ctx, Date.now());
+  // An account's past re-signed when its kind changed between money held
+  // and owed (lib/sign-repair.ts), finished here if it was cut off, before
+  // today's point is recorded. Never throws.
+  await finishSignJobs(ctx);
   // The daily fetch from the connectors the person brought (SimpleFIN,
   // lib/connectors/sync.ts), beside Plaid's: a few requests within a deadline
   // shorter than Plaid's worst case. It never throws; its accounts are read

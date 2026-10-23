@@ -1756,6 +1756,82 @@ export async function dropFoldProgress(ctx: Ctx, tag: string): Promise<void> {
   await redis().del(FOLD_PROGRESS(ctx, tag));
 }
 
+// Re-signing one account's balances (lib/sign-repair.ts)
+//
+// An account whose kind changed between money held and money owed has its
+// per-account values on chosen days negated, every total left as recorded,
+// so each day reads as it was counted. Only the reads and the one write it
+// needs live here, beside the layers they touch.
+
+/** The per-account layers a re-sign reads and writes, by a letter of its own:
+ *  recorded (r), partial (p), walked estimate (e), flat per date (f) and
+ *  walked past the estimate (x). */
+export type SignLayer = 'r' | 'p' | 'e' | 'f' | 'x';
+const SIGN_LAYER_KEY: Record<SignLayer, (ctx: Ctx) => string> = {
+  r: ACCOUNTS_HASH,
+  p: ACCOUNTS_PARTIAL_HASH,
+  e: ACCOUNTS_EST_HASH,
+  f: ACCOUNTS_EST_FLAT_BY_DATE,
+  x: ACCOUNTS_EST_EXT_HASH,
+};
+
+/** Every layer as stored, by date: the totals (recorded, estimated) and the
+ *  per-account maps, encrypted, as a re-sign plans from them. */
+export type SignLayers = { totals: Record<string, string>; estTotals: Record<string, string> } & Record<SignLayer, Record<string, string>>;
+
+/** Reads every layer a re-sign plans from. With `split`, the legacy flat
+ *  record is first copied to each estimated date still relying on it (as a
+ *  fold does), so each date's flat balances are a value of their own to
+ *  negate; without (a dry run, which writes nothing), those dates read it
+ *  where it is. */
+export async function readSignLayers(ctx: Ctx, opts: { split: boolean }): Promise<SignLayers> {
+  const legacyBlob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+  if (legacyBlob && opts.split) {
+    const [estTotals0, flatd0] = await Promise.all([
+      redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+      redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
+    ]);
+    for (const date of Object.keys(estTotals0 ?? {})) {
+      if (!flatd0?.[date]) await redis().eval(HISTORY_SET_IF_ABSENT, [ACCOUNTS_EST_FLAT_BY_DATE(ctx)], [date, legacyBlob]);
+    }
+  }
+  const [totals, estTotals, r, p, e, f, x] = await Promise.all(
+    [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ...(['r', 'p', 'e', 'f', 'x'] as const).map((l) => SIGN_LAYER_KEY[l](ctx))].map(
+      async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {}
+    )
+  );
+  if (legacyBlob && !opts.split) for (const date of Object.keys(estTotals)) f[date] ??= legacyBlob;
+  return { totals, estTotals, r, p, e, f, x };
+}
+
+/** A stored map or total, decrypted, or null when it can't be read for good
+ *  (damaged: nothing can be decided from it). A failure that may pass throws. */
+export async function readSignValue(ctx: Ctx, blob: string): Promise<string | null> {
+  try {
+    return await decrypt(ctx, blob);
+  } catch (err) {
+    if (unreadableForGood(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Negates one account's value in one layer on one date, in one step
+ * (HISTORY_FOLD, with no total), only while the stored map is still
+ * `expected` and the step isn't marked done under `tag`: 'done', 'already'
+ * (an earlier attempt did it), or 'changed' (rewritten since: left as it is).
+ */
+export async function negateAccountOn(ctx: Ctx, layer: SignLayer, date: string, account_id: string, expected: string, tag: string): Promise<'done' | 'already' | 'changed'> {
+  const plain = await readSignValue(ctx, expected);
+  if (plain === null) return 'changed';
+  const map = JSON.parse(plain) as Record<string, number>;
+  if (typeof map[account_id] !== 'number') return 'changed';
+  const next = await encrypt(ctx, JSON.stringify({ ...map, [account_id]: map[account_id] === 0 ? 0 : -map[account_id] }));
+  const answer = Number(await redis().eval(HISTORY_FOLD, [SIGN_LAYER_KEY[layer](ctx), FOLD_PROGRESS(ctx, tag)], [date, `${layer}:${date}`, expected, next]));
+  if (answer === 1) evictDecrypted(ctx, expected);
+  return answer === 1 ? 'done' : answer === 2 ? 'already' : 'changed';
+}
+
 // Estimated history drawn from imported transactions (#52)
 //
 // lib/history-import/extend.ts continues the estimated layer back from its
