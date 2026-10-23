@@ -5,10 +5,11 @@
 // A store is declared in its own module, next to its type and shape check, and
 // registers itself when that module loads. Each such module is imported below,
 // so anything that walks every store sees all of them, whatever its own code
-// happens to load: the key inventory (classify() in lib/reencrypt.ts) and the
+// happens to load: the key inventory (classify() in lib/reencrypt.ts), the
 // person's data download (lib/user-export.ts, which gives each store declared
-// exportable a section of its own). test/repo.test.ts fails if a module
-// declares a store and is not imported here.
+// exportable a section of its own) and their list of what Nya keeps about them
+// (lib/inventory.ts). test/repo.test.ts fails if a module declares a store and
+// is not imported here.
 //
 // Only stores built on the seam are here. Anything walking this catalogue
 // misses the older stores, goals and budgets and history among them, until

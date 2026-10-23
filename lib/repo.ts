@@ -67,7 +67,9 @@
 // declared store is in the key inventory by construction. A store holding a
 // credential that a restore must never bring back (API tokens, a connector's
 // credential) is declared `backup: false`, and lib/export.ts leaves its key out
-// of every backup.
+// of every backup. And give it an entry in lib/inventory.ts, in plain words,
+// so the person's list of what Nya keeps about them (Your data) names it:
+// test/inventory.test.ts fails until it has one.
 //
 // READS ARE STRICT unless the method's name says otherwise. A read answers with
 // what is stored, or says exactly why it cannot:
