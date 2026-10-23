@@ -575,6 +575,13 @@ describe('names', () => {
     expect(safeName('word '.repeat(30))!.length).toBeLessThanOrEqual(60);
   });
 
+  test('never one shaped like a link or an address, which a program could have named: counted instead', () => {
+    for (const bad of ['Verify at evil.example', 'https://x', 'www.bank-login', 'Pay me@there', 'St.Louis trip', 'Login.SECURE']) {
+      expect([bad, safeName(bad)]).toEqual([bad, null]);
+    }
+    for (const fine of ['Dr. Smith', 'e.g. snacks', 'Food & drink', 'A. B. Groceries']) expect([fine, safeName(fine)]).toEqual([fine, fine]);
+  });
+
   test('never one that spells out a number or a currency, in any case, plural or run together', () => {
     for (const bad of [
       'Fifty dollars a week',

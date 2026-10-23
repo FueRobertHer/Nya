@@ -29,6 +29,10 @@
 //     as those languages join them), but for their words for one, which are
 //     their word for "a" too, and the few that are English words as well
 //     (due, once, sept, seize, elf, null);
+//   - the shape of a link or an address (://, www., an @, or a letter or
+//     digit, a dot and two letters, as in example.com): a program with a
+//     token that can make changes can name a category or a budget, and an
+//     email Nya sends must not carry a link of someone else's choosing;
 //   - a letter outside the Latin alphabet, since no list of words can tell
 //     whether "五百元" or "пятьдесят рублей" spells an amount.
 // A bank's name (safeBankName) comes from Plaid, SimpleFIN or Lunch Flow, never from the
@@ -133,6 +137,8 @@ const FIGURE_WORDS = new Set([...NUMBER_WORDS, ...MONEY_WORDS, ...OTHER_NUMBER_W
 const FIGURE_CHARS = /[\p{N}\p{Sc}%‰‱٪﹪％]/u;
 /** A letter outside the Latin alphabet. */
 const NOT_LATIN = /[^\P{L}\p{sc=Latin}]/u;
+/** The shape of a link or an address (see NAMES). */
+const LINK_SHAPE = /:\/\/|www\.|@|[\p{L}\p{N}-]\.\p{L}{2,}/iu;
 
 /** One of the words, or its plural ("tens", "twenties", "pennies"). */
 function isFigureWord(w: string): boolean {
@@ -197,7 +203,7 @@ function cut(one: string): string {
  *  can't be (see NAMES). */
 export function safeName(raw: string): string | null {
   const one = tidyName(raw);
-  if (!one || FIGURE_CHARS.test(one) || NOT_LATIN.test(one) || spellsFigure(one)) return null;
+  if (!one || FIGURE_CHARS.test(one) || NOT_LATIN.test(one) || LINK_SHAPE.test(one) || spellsFigure(one)) return null;
   return cut(one);
 }
 
