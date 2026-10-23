@@ -90,7 +90,7 @@ import {
   wrapFileKey,
   type PartName,
 } from './attachment-crypto';
-import { attachmentObjects, objectPath, objectPaths, withLimit, type AttachmentObjects } from './attachment-objects';
+import { attachmentObjects, containerFolder, objectPath, objectPaths, parseObjectPath, withLimit, type AttachmentObjects } from './attachment-objects';
 import { attachmentsMode } from './attachments-mode';
 
 // ---- Limits ----
@@ -813,6 +813,26 @@ export async function placeWaiting(ctx: Ctx, rows: readonly StoredTxn[], history
   }
 }
 
+/** Right after the person links an earlier account to `to`
+ *  (lib/links.ts linkAccounts): the files waiting on it are placed on the
+ *  linked account's stored rows where they can be (placeWaiting), so they
+ *  show at once rather than at the next sync. Never throws. */
+export async function placeAfterLink(ctx: Ctx, to: string, now: number = Date.now()): Promise<void> {
+  try {
+    const { getItems } = await import('./storage');
+    const { readStoredItem } = await import('./transactions');
+    for (const item of await getItems(ctx)) {
+      const stored = await readStoredItem(ctx, item.item_id);
+      if (!Object.hasOwn(stored.accounts, to) && !Object.values(stored.txns).some((t) => t.account_id === to)) continue;
+      await placeWaiting(ctx, Object.values(stored.txns), !stored.history_pending, now);
+      return;
+    }
+  } catch (err) {
+    console.warn('attachments: files waiting on a linked account were left for the next sync', loggable(err));
+    await markForCheck(ctx, now);
+  }
+}
+
 /** Five days, in ms: how far apart a pending row and a posted one can be
  *  dated and still be taken for the same purchase when counting alike. */
 const ALIKE_DAYS_MS = 5 * 86_400_000;
@@ -905,4 +925,44 @@ export async function releaseAllAttachments(ctx: Ctx, now: number = Date.now()):
   const left = await placeStore.ids(ctx);
   if (left.length > 0) await placeStore.remove(ctx, ...left);
   return n;
+}
+
+// ---- When the account goes ----
+
+/**
+ * Every object in the account's folder of the file store, deleted, for its
+ * deletion (lib/account-deletion.ts step 3b): how many files went, and how
+ * many were left (the store out of reach, or its time up), null when the
+ * folder couldn't even be listed, undefined when no file store is connected
+ * (so none can have been kept). Never throws: once the account's key is
+ * destroyed, whatever is left can't be read, and the nightly sweep deletes a
+ * deleted account's folder.
+ */
+export async function deleteContainerFiles(ctx: Ctx): Promise<{ deleted: number; left: number } | null | undefined> {
+  let store: AttachmentObjects | null;
+  let objects: { pathname: string }[];
+  try {
+    store = attachmentObjects();
+    // No file store connected: none can have been kept.
+    if (!store) return undefined;
+    const connected = store;
+    objects = await withLimit('a listing', 15_000, (signal) => connected.list(containerFolder(ctx), signal));
+  } catch (err) {
+    console.error('Account deletion: the file store couldn’t be listed', loggable(err));
+    return null;
+  }
+  const files = (paths: { pathname: string }[]) => new Set(paths.map((o) => parseObjectPath(ctx, o.pathname)?.id ?? o.pathname)).size;
+  const total = files(objects);
+  let done = 0;
+  try {
+    for (; done < objects.length; done += 100) {
+      const page = objects.slice(done, done + 100).map((o) => o.pathname);
+      await withLimit('a delete', 15_000, (signal) => store!.del(page, signal));
+    }
+    return { deleted: total, left: 0 };
+  } catch (err) {
+    console.error('Account deletion: files were left in the file store for the nightly sweep', loggable(err));
+    const left = files(objects.slice(done));
+    return { deleted: total - left, left };
+  }
 }

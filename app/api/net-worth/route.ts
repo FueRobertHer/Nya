@@ -1,4 +1,4 @@
-import { backupProblem, type BackupProblem } from '@/lib/backup';
+import { attachmentSweepProblem, backupProblem, type AttachmentSweepProblem, type BackupProblem } from '@/lib/backup';
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
@@ -90,8 +90,10 @@ async function baseFields(
 // the hidden set can't be read, the note says nothing.
 async function staleFlag(
   ctx: Ctx
-): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null; imported_history?: ImportedHistoryView }> {
-  const [done, backup_problem, drawn] = await Promise.all([isBackfillDone(ctx), backupProblem(), readDrawState(ctx)]);
+): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null; attachments_problem: AttachmentSweepProblem | null; imported_history?: ImportedHistoryView }> {
+  // The nightly clean-up of receipts and documents says so too, the same way
+  // (lib/attachment-sweep.ts): a notice, never a reason to fail the load.
+  const [done, backup_problem, drawn, attachments_problem] = await Promise.all([isBackfillDone(ctx), backupProblem(), readDrawState(ctx), attachmentSweepProblem()]);
   // The accounts that ended too (lib/lifecycle.ts), which the chart leaves
   // out from their end day: an end that can't be read fails the load itself,
   // so here it only says nothing more.
@@ -108,7 +110,7 @@ async function staleFlag(
       )
     : { hidden: new Set<string>(), ended: new Map<string, { from: string }>() };
   const view = seen ? importedHistoryView(drawn, seen.hidden, seen.ended) : null;
-  return { backfill_stale: !done || (!!drawn && drawn.built !== drawn.generation), backup_problem, ...(view ? { imported_history: view } : {}) };
+  return { backfill_stale: !done || (!!drawn && drawn.built !== drawn.generation), backup_problem, attachments_problem, ...(view ? { imported_history: view } : {}) };
 }
 
 /**

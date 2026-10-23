@@ -70,8 +70,9 @@ export type Collected = {
   books: Map<string, BookEntry[]>;
   /** The facts of the transactions that damaged entries name (`problems`). */
   facts: Map<string, Fact>;
-  /** Not brought back, counted: API tokens and sharing connections. */
-  never: { api_tokens: number; sharing: number };
+  /** Not brought back, counted: API tokens, sharing connections, and
+   *  receipts and documents (absent from what was collected before them). */
+  never: { api_tokens: number; sharing: number; attachments?: number };
 };
 
 // ---- Whether it can be brought back ----
@@ -118,7 +119,7 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
 
 /** Parts a restore never brings back: what the file is missing of them
  *  changes nothing. */
-const LISTED_ONLY: ReadonlySet<string> = new Set(['api_tokens', 'sharing', 'connection-notices', 'connection-syncs', 'connection-warnings']);
+const LISTED_ONLY: ReadonlySet<string> = new Set(['api_tokens', 'attachments', 'sharing', 'connection-notices', 'connection-syncs', 'connection-warnings']);
 
 /** What the file says it is missing (`problems`), restored without or not:
  *  one damaged entry the person can do without, named with the transactions
@@ -584,6 +585,7 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
   ];
   if (c.bank.pending.size > 0) left_out.pending_transactions = c.bank.pending.size;
   if (c.never.api_tokens > 0) left_out.api_tokens = c.never.api_tokens;
+  if ((c.never.attachments ?? 0) > 0) left_out.attachments = c.never.attachments!;
   if (c.never.sharing > 0) left_out.sharing_connections = c.never.sharing;
   return { before, after, left_out };
 }

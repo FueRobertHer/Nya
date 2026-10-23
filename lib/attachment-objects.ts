@@ -198,7 +198,9 @@ export type ReadBytes = (url: string, token: string, signal: AbortSignal) => Pro
 
 /** Vercel Blob, private, with the read-write token given on every call. */
 export function vercelAttachmentObjects(token: string, deps: { sdk?: () => Promise<BlobSdk>; read?: ReadBytes } = {}): AttachmentObjects {
-  const host = privateHost(token);
+  // Worked out when first read, so a token that isn't one fails the read
+  // that needs it, never the code that only lists or deletes.
+  const host = () => privateHost(token);
   const sdk = deps.sdk ?? (() => import('@vercel/blob'));
   const read = deps.read ?? readBytes;
   return {
@@ -220,7 +222,7 @@ export function vercelAttachmentObjects(token: string, deps: { sdk?: () => Promi
       }
     },
     async get(pathname, signal) {
-      const url = new URL(`https://${host}/${pathname}`);
+      const url = new URL(`https://${host()}/${pathname}`);
       url.searchParams.set('cache', '0');
       return read(url.toString(), token, signal);
     },

@@ -103,7 +103,7 @@ export async function collect(source: FileSource): Promise<Collected> {
     entries: new Map(),
     books: new Map(),
     facts: new Map(),
-    never: { api_tokens: 0, sharing: 0 },
+    never: { api_tokens: 0, sharing: 0, attachments: 0 },
   };
   const header: Record<string, unknown> = {};
   let wanted = new Set<string>();
@@ -145,6 +145,7 @@ export async function collect(source: FileSource): Promise<Collected> {
         check(CORE[part as keyof typeof CORE].whole!, e.value, part);
         c.core[part] = e.value;
         if (part === 'api_tokens') c.never.api_tokens = (e.value as unknown[]).length;
+        if (part === 'attachments') c.never.attachments = (e.value as unknown[]).length;
         if (part === 'sharing' && isRecord(e.value) && Array.isArray(e.value.connections)) c.never.sharing = e.value.connections.length;
         return;
       }

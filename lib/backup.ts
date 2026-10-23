@@ -557,7 +557,7 @@ export function rewriteKeyArchivesAfterDeletion(
 
 const STATUS = () => kEnv('backups:status');
 
-type Status = { last_ok: string | null; last_failed: string | null; reason: string | null };
+type Status = { last_ok: string | null; last_failed: string | null; reason: string | null; attachments?: unknown };
 
 async function readStatus(): Promise<Status | null> {
   const raw = await redis().get<unknown>(STATUS());
@@ -580,9 +580,11 @@ export async function recordOutcome(
   try {
     const write = async () => {
       const prev = await readStatus();
+      // The receipts sweep's own record rides along unchanged (below).
+      const kept = prev?.attachments !== undefined ? { attachments: prev.attachments } : {};
       const next: Status = outcome.ok
-        ? { last_ok: now.toISOString(), last_failed: null, reason: null }
-        : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200) };
+        ? { last_ok: now.toISOString(), last_failed: null, reason: null, ...kept }
+        : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200), ...kept };
       await redis().set(STATUS(), JSON.stringify(next));
     };
     const timeout = new Promise<never>((_, reject) => {
@@ -615,5 +617,101 @@ export async function backupProblem(now: Date = new Date()): Promise<BackupProbl
   if (status.last_ok && now.getTime() - Date.parse(status.last_ok) > 2 * 86_400_000) {
     return { last_ok: status.last_ok, reason: null };
   }
+  return null;
+}
+
+// ---- The nightly sweep of receipts and documents (lib/attachment-sweep.ts) ----
+//
+// Its outcome, and where it got to, kept inside the backups' own record
+// (backups:status, environment-wide, plain text, no ciphertext) as its
+// `attachments` field: it cleans up the same private store, and Vercel sends
+// no alert for a failed cron either. A field of that record rather than a key
+// of its own, since no new key family is built by hand
+// (test/storage-boundary.test.ts). Each writer keeps the other's part: the
+// backup's recordOutcome carries it over, and the sweep writes only it. The
+// two run at different times of night (vercel.json), so the read and the
+// write of one never meet the other's.
+
+export type AttachmentSweepStatus = {
+  last_ok: string | null;
+  last_failed: string | null;
+  reason: string | null;
+  /** The container after which the next run carries on, or null to start
+   *  from the first. */
+  cursor: string | null;
+  /** When the store-wide pass last ran. */
+  listed_at: string | null;
+  /** The breaker held a pass back (B1): when, and in how many accounts. */
+  held?: { at: string; containers: number };
+};
+
+/** The sweep's record, or null when none was ever kept (or it can't be
+ *  parsed: then the sweep starts from the first account, which only redoes
+ *  work). Throws when storage fails. */
+export async function readAttachmentSweep(): Promise<AttachmentSweepStatus | null> {
+  let status: Status | null;
+  try {
+    status = await readStatus();
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+  const parsed = status?.attachments;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const s = parsed as Partial<AttachmentSweepStatus>;
+  const iso = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null);
+  return {
+    last_ok: iso(s.last_ok),
+    last_failed: iso(s.last_failed),
+    reason: typeof s.reason === 'string' ? s.reason.slice(0, 200) : null,
+    cursor: typeof s.cursor === 'string' && s.cursor.length <= 64 ? s.cursor : null,
+    listed_at: iso(s.listed_at),
+    ...(s.held && typeof s.held === 'object' && iso(s.held.at) && Number.isInteger(s.held.containers) ? { held: { at: s.held.at, containers: s.held.containers } } : {}),
+  };
+}
+
+/** Records the sweep's record. Best effort, given up on after RECORD_LIMIT_MS. */
+export async function recordAttachmentSweep(status: AttachmentSweepStatus): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`took longer than ${RECORD_LIMIT_MS / 1000}s`)), RECORD_LIMIT_MS);
+    });
+    const write = async () => {
+      let prev: Status | null = null;
+      try {
+        prev = await readStatus();
+      } catch (err) {
+        if (!(err instanceof SyntaxError)) throw err;
+      }
+      const next: Status = { last_ok: prev?.last_ok ?? null, last_failed: prev?.last_failed ?? null, reason: prev?.reason ?? null, attachments: status };
+      await redis().set(STATUS(), JSON.stringify(next));
+    };
+    await Promise.race([write(), timeout]);
+  } catch (err) {
+    console.error('Receipts sweep outcome not recorded', err instanceof Error ? err.message : err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type AttachmentSweepProblem = { last_ok: string | null; reason: string | null; held: boolean };
+
+/** Something the dashboard should say about the sweep, or null: its last run
+ *  failed, its breaker held a pass back in the last week, or none has
+ *  succeeded for nine days (it walks every account at least weekly). Null
+ *  when it never ran (no files kept here) or the record can't be read: a
+ *  notice, never a reason to fail a page. */
+export async function attachmentSweepProblem(now: Date = new Date()): Promise<AttachmentSweepProblem | null> {
+  let s: AttachmentSweepStatus | null;
+  try {
+    s = await readAttachmentSweep();
+  } catch {
+    return null;
+  }
+  if (!s) return null;
+  if (s.last_failed) return { last_ok: s.last_ok, reason: s.reason, held: false };
+  if (s.held && now.getTime() - Date.parse(s.held.at) < 7 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: true };
+  if (s.last_ok && now.getTime() - Date.parse(s.last_ok) > 9 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: false };
   return null;
 }

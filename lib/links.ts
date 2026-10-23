@@ -836,6 +836,9 @@ export async function forgetEarlierAccount(
   if (dismissed.length > 0) await redis().hdel(dismissedKey(ctx), ...dismissed);
   await forgetCarried(ctx, id);
   await forgetCarriedAnnotations(ctx, id);
+  // The receipts waiting on it stay, not on a transaction (lib/attachments.ts;
+  // never throws): a forget never deletes a file.
+  await (await import('./attachments')).forgetEarlierAttachments(ctx, id);
   // The transactions imported into it from files (#52), their records, and
   // what was said about them: kept past its disconnect for a re-link, gone now.
   await forgetImportedHistory(ctx, id);
@@ -891,6 +894,9 @@ export async function dismissAll(ctx: Ctx, old: string, now: number = Date.now()
 export async function linkAccounts(ctx: Ctx, old: string, to: string, evidence: Record<string, unknown>, now: number = Date.now()): Promise<void> {
   const link: Link = { to, linked_at: new Date(now).toISOString(), evidence };
   await redis().hset(linksKey(ctx), { [old]: await encrypt(ctx, JSON.stringify(link)) });
+  // The receipts waiting on the earlier account go onto the linked one's
+  // transactions where they can (lib/attachments.ts; never throws).
+  await (await import('./attachments')).placeAfterLink(ctx, to, now);
 }
 
 export async function unlinkAccount(ctx: Ctx, old: string): Promise<void> {

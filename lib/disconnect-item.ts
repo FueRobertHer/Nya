@@ -75,6 +75,17 @@ export async function disconnectItem(
     console.error('disconnect: could not record which transactions stood for imported ones to carry across a re-link', err instanceof Error ? err.message : err);
   }
 
+  // And its receipts and documents wait on their accounts, by content, so
+  // that linking a re-added account places them again (lib/attachments.ts).
+  // Never deleted here. Best effort: a failure marks the account for the
+  // nightly check, which places them from what was kept when they were added.
+  try {
+    if (stored) await (await import('./attachments')).retireAttachments(ctx, stored);
+  } catch (err) {
+    console.error('disconnect: could not record which receipts wait for a re-link', err instanceof Error ? err.name : err);
+    await (await import('./attachments')).markForCheck(ctx);
+  }
+
   await removeItem(ctx, item_id);
   // Drop this Item's persisted sync cursor + transactions.
   await clearItemTransactions(ctx, item_id);

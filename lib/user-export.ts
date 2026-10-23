@@ -100,6 +100,8 @@ import { exportedGoals } from './goal-export';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
 import { apiTokenStore } from './api-token-store';
+import { attachmentStore } from './attachment-stores';
+import { exportedAttachments } from './attachment-zip';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
@@ -485,6 +487,23 @@ export const SECTIONS: readonly ExportSection[] = [
         problems: countedProblems('api_tokens', report),
       };
     },
+  },
+  {
+    key: 'attachments',
+    what: 'receipts and documents',
+    // The list of them (lib/attachment-zip.ts exportedAttachments): what each
+    // file is, which transaction it is on (or the disconnected account it
+    // waits on), what that transaction said when it was attached, and its
+    // name in the ZIP download, which has the files themselves. Never a
+    // file's key, nor where it is stored: the store itself is not exportable,
+    // since each record holds its file's key. A record that can't be used is
+    // named among the problems, never a reason to stop (rule 1).
+    read: async ({ ctx }) => {
+      const report = await attachmentStore.getAllReport(ctx);
+      return { value: exportedAttachments(report.entries), problems: idProblems('attachments', report) };
+    },
+    mentions: (files) =>
+      ((files as { on: { earlier_account_id?: string } | null }[] | null) ?? []).flatMap((f) => (f.on?.earlier_account_id ? [f.on.earlier_account_id] : [])),
   },
   section({
     key: 'sharing',
