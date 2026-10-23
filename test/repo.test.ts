@@ -751,6 +751,7 @@ function contract(b: Backend) {
         ['hgetall', () => notes.getAll(A)],
         ['hgetall', () => notes.getAllLenient(A)],
         ['hgetall', () => notes.getAllReport(A)],
+        ['hgetall', () => notes.getAllReportNamingSealed(A)],
         ['eval', () => notes.get(A, 'n1')],
         ['eval', () => notes.getMany(A, ['n1'])],
         ['eval', () => notes.update(A, 'n1', () => RENT)],
@@ -1259,6 +1260,7 @@ function contract(b: Backend) {
           () => notes.getAll(A),
           () => notes.getAllLenient(A),
           () => notes.getAllReport(A),
+          () => notes.getAllReportNamingSealed(A),
           () => notes.get(A, 'n1'),
           () => notes.getMany(A, ['n1', 'n2']),
           () => notes.update(A, 'n1', () => RENT),
@@ -1337,6 +1339,28 @@ function contract(b: Backend) {
       expect((await notes.get(A, 'n2').catch((e) => e)).unreadable).toEqual(['n2']);
       await b.raw.set(listKey(), tampered(await encrypt(TEST_CTX, JSON.stringify([RENT]))));
       expect(await list.getReport(A)).toEqual({ value: null, unreadable: true, unrecognised: false });
+    });
+
+    test('getAllReportNamingSealed names an entry under another k0, or a key the key store lacks, as unavailable, and answers the rest', async () => {
+      await notes.set(A, 'n1', NOTE); // under the key this deployment has now
+      await b.raw.hset(notesKey(), 'n2', await underAnotherK0(JSON.stringify(RENT)));
+      // A tampered k0 value looks exactly the same: the deployment's too.
+      await b.raw.hset(notesKey(), 'n3', tampered(await encrypt(TEST_CTX, JSON.stringify(RENT))));
+      await b.raw.hset(notesKey(), 'n4', 'not-ciphertext-but-long-enough-to-be-tried');
+      await b.raw.hset(notesKey(), 'n5', await encrypt(TEST_CTX, 'not json'));
+      expect(await notes.getAllReportNamingSealed(A)).toEqual({ entries: new Map([['n1', NOTE]]), unreadable: ['n4'], unrecognised: ['n5'], unavailable: ['n2', 'n3'] });
+      // Every other read still throws it, as the deployment's problem.
+      expect(await notBlamed(() => notes.getAllReport(A))).toBeInstanceOf(DecryptFailedError);
+      // Under a data key the key store lacks, the same.
+      process.env.MASTER_KEY = MASTER;
+      forgetActiveKey();
+      await notes.remove(A, 'n2', 'n3', 'n4', 'n5');
+      await b.raw.hset(notesKey(), 'n6', 'v2.k9-0badc0de.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+      expect(await notes.getAllReportNamingSealed(A)).toEqual({ entries: new Map([['n1', NOTE]]), unreadable: [], unrecognised: [], unavailable: ['n6'] });
+      expect(await notBlamed(() => notes.getAllReport(A))).toBeInstanceOf(UnknownKeyError);
+      // Nothing was changed by reading.
+      expect(await b.raw.hget(notesKey(), 'n6')).toBe('v2.k9-0badc0de.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+      expect(await notes.count(A)).toBe(2);
     });
   });
 

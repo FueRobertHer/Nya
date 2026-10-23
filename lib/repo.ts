@@ -96,7 +96,10 @@
 //   ONLY UNREADABLE ENTRIES MAY EVER BE OFFERED FOR REMOVAL, and only once the
 // person confirms. MapStore.getAllReport names both kinds instead of throwing,
 // so a route can show what it read, offer to remove the unreadable ids, and
-// report the unrecognised ones as a problem to fix. MapStore.replaceUnreadable
+// report the unrecognised ones as a problem to fix. MapStore.getAllReportNamingSealed
+// also names, apart from both, the entries sealed under a key this deployment
+// can't use (lib/crypto.ts sealedAway), for a display that answers rather than
+// stops: the deployment's problem, never damage. MapStore.replaceUnreadable
 // is that removal with a value put in its place, in one step: it writes only
 // over an entry whose bytes are damaged and still the bytes it read, so it can
 // never replace one that reads, or one that is unrecognised.
@@ -193,7 +196,7 @@
 import { createHash } from 'node:crypto';
 import { redis, kc, kEnv, containerPrefix } from './storage';
 import { isEnvWide, type Ctx } from './containers';
-import { encrypt, formatOf, DecryptFailedError, KeyNotForContainerError, MalformedCiphertextError, UnsupportedFormatError } from './crypto';
+import { encrypt, formatOf, sealedAway, DecryptFailedError, KeyNotForContainerError, MalformedCiphertextError, UnsupportedFormatError } from './crypto';
 import { StoredDataUnreadableError } from './stored-json';
 import { decryptJsonText, encodeJsonText, maxBlobChars, blobWarnChars } from './blob';
 import { listedKind } from './key-families';
@@ -349,6 +352,17 @@ export type MapStore<T> = Declared & {
    *  (which may be offered for removal) and the unrecognised ones (which may
    *  not). For a route that shows what it read and helps repair the rest. */
   getAllReport(ctx: Ctx): Promise<{ entries: Map<string, T>; unreadable: string[]; unrecognised: string[] }>;
+  /** getAllReport, but an entry sealed under a key this deployment can't use
+   *  (lib/crypto.ts sealedAway: a failed decrypt under k0, which a replaced
+   *  PLAID_ENCRYPTION_KEY looks exactly like, or a data key the key store
+   *  lacks) is named in `unavailable` instead of thrown, so one such entry
+   *  doesn't take down an answer the others can give. The deployment's
+   *  problem, never damage: never offered for removal, never passed over for
+   *  another value. For a display that names what it can't show rather than
+   *  stopping, as lib/manual.ts getManualAccountsReport names a manual account.
+   *  What says nothing about any one entry (a master key that can't open the
+   *  data keys, storage out of reach) still throws. */
+  getAllReportNamingSealed(ctx: Ctx): Promise<{ entries: Map<string, T>; unreadable: string[]; unrecognised: string[]; unavailable: string[] }>;
   /** LENIENT. Every entry it can use, in id order. Only for conveniences that
    *  nothing writes, deletes or records on. A deployment problem still throws. */
   getAllLenient(ctx: Ctx): Promise<Map<string, T>>;
@@ -1038,21 +1052,34 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
 
   /** Entries decoded, in the order given: the usable ones, and the ids of the
    *  unreadable and the unrecognised. A deployment problem is thrown: it says
-   *  nothing about the entries, so none is reported or left out for it. */
-  const decodeAll = async (ctx: Ctx, entries: (readonly [string, unknown])[]) => {
-    const results = await Promise.all(entries.map(async ([id, stored]) => ({ id, d: await decode(ctx, codec, stored) })));
+   *  nothing about the entries, so none is reported or left out for it. Only
+   *  when asked (`sealed`, for getAllReportNamingSealed) is an entry sealed
+   *  under a key this deployment can't use named in `unavailable` instead. */
+  const decodeAll = async (ctx: Ctx, entries: (readonly [string, unknown])[], sealed = false) => {
+    const results = await Promise.all(
+      entries.map(async ([id, stored]) => {
+        try {
+          return { id, d: await decode(ctx, codec, stored) };
+        } catch (err) {
+          if (sealed && sealedAway(err)) return { id, d: null };
+          throw err;
+        }
+      })
+    );
     const values = new Map<string, T>();
     const unreadable: string[] = [];
     const unrecognised: string[] = [];
+    const unavailable: string[] = [];
     let cause: unknown;
     for (const { id, d } of results) {
-      if (d.ok) values.set(id, d.value);
+      if (d === null) unavailable.push(id);
+      else if (d.ok) values.set(id, d.value);
       else {
         (d.flaw === 'unreadable' ? unreadable : unrecognised).push(id);
         cause ??= d.cause;
       }
     }
-    return { values, unreadable: unreadable.sort(), unrecognised: unrecognised.sort(), cause };
+    return { values, unreadable: unreadable.sort(), unrecognised: unrecognised.sort(), unavailable: unavailable.sort(), cause };
   };
 
   const strict = (r: Awaited<ReturnType<typeof decodeAll>>) => {
@@ -1062,14 +1089,15 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     return r.values;
   };
 
-  const readAll = async (ctx: Ctx) => {
+  const readAll = async (ctx: Ctx, sealed = false) => {
     // Uncaught: a failure to reach storage is never an empty map.
     const stored = (await redis().hgetall<Record<string, unknown>>(key(ctx))) ?? {};
     return decodeAll(
       ctx,
       Object.keys(stored)
         .sort()
-        .map((id) => [id, stored[id]] as const)
+        .map((id) => [id, stored[id]] as const),
+      sealed
     );
   };
 
@@ -1173,6 +1201,10 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     async getAllReport(ctx) {
       const { values, unreadable, unrecognised } = await readAll(ctx);
       return { entries: values, unreadable, unrecognised };
+    },
+    async getAllReportNamingSealed(ctx) {
+      const { values, unreadable, unrecognised, unavailable } = await readAll(ctx, true);
+      return { entries: values, unreadable, unrecognised, unavailable };
     },
     getAllLenient: async (ctx) => (await readAll(ctx)).values,
     set: (ctx, id, value) => setMany(ctx, [[id, value]]),

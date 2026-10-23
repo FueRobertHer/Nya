@@ -129,6 +129,78 @@ describe('AccountLinksView', () => {
     expect(html).toContain('Same account as');
   });
 
+  // A forget the server would refuse (what a restore brought back for it is
+  // in a form this version doesn't know) is never offered: its words instead.
+  test('an earlier account whose forget would be refused is listed with why, and no Forget', () => {
+    const why = 'What a restore brought back for this account is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here: ask whoever runs this copy of Nya.';
+    const html = renderToStaticMarkup(
+      <AccountLinksView
+        open={{ earlier: true }}
+        data={{
+          suggestions: [],
+          unclaimed: [],
+          links: [],
+          earlier: [
+            { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+            { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, refused: why },
+          ],
+        }}
+        busy={false}
+        error=""
+        preview={null}
+        picked={{}}
+        onPreview={noop}
+        onPick={noop}
+        onAct={noop}
+      />
+    );
+    expect(html.match(/>Forget</g)?.length).toBe(1);
+    expect(html).toContain('Chase Sapphire ••2222 (');
+    expect(html).toContain('a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here');
+  });
+
+  test('until the server has checked which can be forgotten, none offers Forget; one it couldn’t check says so', () => {
+    const list = (over: Partial<AccountLinksPayload>) =>
+      renderToStaticMarkup(
+        <AccountLinksView
+          open={{ earlier: true }}
+          data={{
+            suggestions: [],
+            unclaimed: [],
+            links: [],
+            earlier: [
+              { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+              { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: true },
+            ],
+            ...over,
+          }}
+          busy={false}
+          error=""
+          preview={null}
+          picked={{}}
+          onPreview={noop}
+          onPick={noop}
+          onAct={noop}
+        />
+      );
+    const waiting = list({ earlier_checked: false });
+    expect(waiting).toContain('Checking which of them can be forgotten…');
+    expect(waiting).not.toContain('>Forget<');
+    const done = list({ earlier_checked: true });
+    expect(done).not.toContain('Checking which');
+    expect(done.match(/>Forget</g)?.length).toBe(1);
+    expect(done).toContain('Chase Sapphire ••2222 (Jan 1, 2024 to Jun 30, 2025). Whether it can be forgotten couldn’t be checked just now: try again later.');
+  });
+
+  test('points to where the accounts SimpleFIN or Lunch Flow kept up to date that were let go are forgotten, even with nothing else to show', () => {
+    const empty = { suggestions: [], unclaimed: [], links: [] };
+    expect(view({ ...empty, stopped: 0 })).toBe('');
+    const one = view({ ...empty, stopped: 1 });
+    expect(one).toContain('An account SimpleFIN or Lunch Flow kept up to date was let go');
+    expect(one).toContain('To forget it, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.');
+    expect(view({ ...empty, stopped: 3 })).toContain('3 accounts SimpleFIN or Lunch Flow kept up to date were let go');
+  });
+
   test('three earlier accounts that would read the same are told apart by the end of each id, so Forget takes the one meant', () => {
     const alike = (id: string) => ({ id, label: null, first: '2025-11-01', last: '2025-11-02', hidden: false });
     const html = renderToStaticMarkup(

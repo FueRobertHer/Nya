@@ -15,8 +15,12 @@ import { parseCsv } from './csv-parse';
 // or the download.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
-// Connecting Lunch Flow is off unless the deployment turns it on (lib/connectors/switch.ts).
-process.env.LUNCHFLOW_ENABLED = '1';
+// Connecting Lunch Flow is off unless the deployment turns it on
+// (lib/connectors/switch.ts). Turned on before each test: test/preload.ts
+// clears it before and after each one.
+beforeEach(() => {
+  process.env.LUNCHFLOW_ENABLED = '1';
+});
 
 const plaidCalls: string[] = [];
 mock.module('@/lib/plaid', () => ({
@@ -50,6 +54,7 @@ const connectRoute = await import('@/app/api/connectors/connect/route');
 const accountsRoute = await import('@/app/api/connectors/accounts/route');
 const refreshRoute = await import('@/app/api/connectors/refresh/route');
 const endedRoute = await import('@/app/api/connectors/ended/route');
+const linksRoute = await import('@/app/api/account-links/route');
 const transactions = await import('@/app/api/transactions/route');
 const manualTxns = await import('@/app/api/manual-transactions/route');
 const recategorize = await import('@/app/api/recategorize/route');
@@ -223,6 +228,8 @@ describe('connecting through the routes', () => {
       ['Credit Card', 'Lunch Flow', false],
       ['Everyday', 'Lunch Flow', true],
     ]);
+    // And Manage accounts points there (components/AccountLinks.tsx).
+    expect((await (await linksRoute.GET()).json()).stopped).toBe(2);
   });
 
   test('Refresh is refused once the day’s requests are spent, saying when they come back', async () => {
@@ -236,10 +243,6 @@ describe('connecting through the routes', () => {
 });
 
 describe('the switch (LUNCHFLOW_ENABLED, lib/connectors/switch.ts)', () => {
-  afterEach(() => {
-    process.env.LUNCHFLOW_ENABLED = '1';
-  });
-
   test('off, a new connection is refused before anything is counted or sent; on, it connects', async () => {
     for (const value of [undefined, '0', 'true']) {
       if (value === undefined) delete process.env.LUNCHFLOW_ENABLED;

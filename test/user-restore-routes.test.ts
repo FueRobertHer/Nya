@@ -386,6 +386,14 @@ describe('the routes', () => {
     const refused = await call('POST', '/api/user-restore/forget', { account_id: 'acc_newer', confirm: true });
     expect(refused.status).toBe(409);
     expect(refused.body.error).toContain('a newer version wrote it, or it is a fault');
+    // The Earlier accounts list names it with those words, and offers no
+    // Forget for it (components/AccountLinks.tsx), once it is opened; the
+    // others as before. Closed, it reads nothing a restore brought back.
+    const closed = await (await linksRoute.GET(new Request('http://localhost/api/account-links'))).json();
+    expect([closed.earlier_checked, closed.earlier.filter((e: any) => e.refused || e.unchecked)]).toEqual([false, []]);
+    const earlier = (await (await linksRoute.GET(new Request('http://localhost/api/account-links?earlier=1'))).json()).earlier as { id: string; refused?: string }[];
+    expect(earlier.find((e) => e.id === 'acc_card')?.refused).toContain('a newer version wrote it, or it is a fault');
+    expect(earlier.filter((e) => e.refused).map((e) => e.id)).toEqual(['acc_card']);
     const viaList = await linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'forget', old: 'acc_card' }) }));
     expect(viaList.status).toBe(409);
     expect((await viaList.json()).error).toContain('a newer version wrote it, or it is a fault');
@@ -393,6 +401,45 @@ describe('the routes', () => {
     expect(await fake.hget(ctxKey('restored-accounts'), 'acc_newer')).not.toBeNull();
     expect(await fake.hget(ctxKey('accounts:directory'), 'acc_card')).not.toBeNull();
     expect(await restoredTxnStore.has(ctx, 'acc_card.1')).toBe(true);
+  });
+
+  test('a damaged entry the Earlier accounts list shows, whose rows this version doesn’t know, isn’t told to be forgotten there, and the list offers no Forget', async () => {
+    await restoreAll(OLD.text);
+    await fake.hset(ctxKey('restored-accounts'), { acc_card: 'not a value Nya wrote' });
+    const book = await restoredTxnStore.get(ctx, 'acc_card.1');
+    const sealed = await encrypt(ctx, JSON.stringify({ ...book, version: 2 }));
+    await fake.hset(ctxKey('restored-transactions'), { 'acc_card.1': sealed });
+    const state = (await call('GET', '/api/user-restore')).body;
+    expect(state.accounts_unreadable.entries).toEqual([
+      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', listed: { name: 'Chase Sapphire ••2222', first: expect.any(String), last: expect.any(String), unrecognised: true }, unlisted: null },
+    ]);
+    const [note] = unreadableNotes(state);
+    expect(note.words).toContain('It is listed under Earlier accounts (Manage) as Chase Sapphire ••2222');
+    expect(note.words).toContain('a newer version wrote them, or it is a fault. They are kept as they are, so it can’t be forgotten here');
+    expect(note.words).not.toContain('Forget it');
+    expect(note.remove).toBeUndefined();
+    const earlier = (await (await linksRoute.GET(new Request('http://localhost/api/account-links?earlier=1'))).json()).earlier as { id: string; refused?: string }[];
+    expect(earlier.find((e) => e.id === 'acc_card')?.refused).toContain('a newer version wrote it, or it is a fault');
+    // As the forget itself says, and nothing changed.
+    const viaList = await linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'forget', old: 'acc_card' }) }));
+    expect(viaList.status).toBe(409);
+    expect((await fake.hget(ctxKey('restored-transactions'), 'acc_card.1')) as unknown).toBe(sealed);
+  });
+
+  test('an earlier account whose restored books can’t be checked is said so, with no Forget, and the rest are listed as they are', async () => {
+    await restoreAll(OLD.text);
+    const book = await restoredTxnStore.get(ctx, 'acc_card.1');
+    // Sealed under another PLAID_ENCRYPTION_KEY: neither damaged nor unknown.
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(book))));
+    await fake.hset(ctxKey('restored-transactions'), { 'acc_card.1': Buffer.concat([iv, sealed]).toString('base64') });
+    const body = await (await linksRoute.GET(new Request('http://localhost/api/account-links?earlier=1'))).json();
+    expect(body.earlier_checked).toBe(true);
+    const card = body.earlier.find((e: any) => e.id === 'acc_card');
+    expect([card.unchecked, card.refused]).toEqual([true, undefined]);
+    // Listed, never the whole list emptied for one account's check.
+    expect(body.earlier.filter((e: any) => e.id !== 'acc_card').every((e: any) => !e.unchecked && !e.refused)).toBe(true);
   });
 
   test('a damaged entry with nothing to list it by whose rows this version doesn’t know isn’t offered for forgetting, and the route refuses it', async () => {

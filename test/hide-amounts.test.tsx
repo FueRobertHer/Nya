@@ -126,8 +126,11 @@ function exposed(html: string): string {
  *  currency's symbol beside a digit ("$12", "-$12", "CA$5", "12 €"), a code
  *  before or after one ("CHF 12.00", "12.50 DOGE"), a figure with cents or
  *  finer ("1,234.56", a quantity's "12.345"), thousands ("1,234"), or a
- *  compact figure ("1.2K"); never a percentage. */
-const CODES = '(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|DOGE|BTC|ETH)';
+ *  compact figure ("1.2K"); never a percentage. A code is any three capitals
+ *  (en-US writes every currency without a symbol of its own with its code,
+ *  "SEK 12,000"), which errs towards reporting, or a longer one Plaid gives a
+ *  cryptocurrency. */
+const CODES = '(?:[A-Z]{3}|DOGE)';
 const AMOUNT = new RegExp(
   [
     String.raw`\p{Sc}[\s ]?[-+]?\d`,
@@ -1264,8 +1267,9 @@ const NOT_VIEWS = new Set(['hide-amounts.test.tsx', 'developers.test.tsx']);
 
 /** What a view draws that only looks like an amount: a file's example
  *  figures (EXAMPLES), a sync service's own price (SimpleFIN's, Lunch
- *  Flow's), an exchange rate (RATE), and a count written with thousands,
- *  followed by what it counts or after its name; but never a number with a
+ *  Flow's), an exchange rate (RATE), a count written with thousands,
+ *  followed by what it counts or after its name, and a number beside three
+ *  capitals that are no currency's code (NOT_CODES); but never a number with a
  *  currency's symbol or code beside it, which is an amount whatever follows. */
 const PRICES = ['($15 a year', '(about $35 a year for two bank connections'];
 /** An exchange rate as lib/format.ts formatRate writes one, "1 USD = 0.86573
@@ -1281,8 +1285,25 @@ const COUNT = new RegExp(
   String.raw`(?<!(?:\p{Sc}|\b${CODES})[\s\u00a0]?[-+]?)\b\d{1,3}(?:,\d{3})+(?![\s\u00a0]?(?:\p{Sc}|${CODES}\b))(?=(?:\s+[A-Z][\w-]*)*\s+[a-z])|(?<=^Transactions: )[\d,]+$`,
   'gu'
 );
+/** Three capitals beside a number that are no currency's code, in the two
+ *  shapes the views draw: a time's zone ("around 16:00 CET"), and a word of
+ *  a bank's description written in capitals ("SHELL OIL 5544", "LANDLORD
+ *  REF 99812", a store's or a payment's number), told by the capitals word
+ *  before it, and never a real currency's code (ISO 4217, as Intl knows
+ *  them): "CARD PAYMENT SEK 950" is an amount, as is a whole figure en-US
+ *  writes after ISK or that the Plan writes in any currency. Only a whole
+ *  number, so a figure with cents or thousands there is still an amount. */
+const ISO_CODES = Intl.supportedValuesOf('currency').join('|');
+const NOT_CODES = new RegExp(
+  [String.raw`\b\d{1,2}:\d{2}(?=[\s\u00a0][A-Z]{3}\b)`, String.raw`(?<=\b[A-Z]{2,}[\s\u00a0](?!(?:${ISO_CODES})\b)[A-Z]{3}[\s\u00a0])\d+(?![\d.,])`].join('|'),
+  'gu'
+);
 function withoutLookalikes(line: string): string {
-  return [...EXAMPLES, ...PRICES].reduce((t, e) => t.split(e).join(''), line).replace(RATE, '#').replace(COUNT, '#');
+  return [...EXAMPLES, ...PRICES]
+    .reduce((t, e) => t.split(e).join(''), line)
+    .replace(RATE, '#')
+    .replace(COUNT, '#')
+    .replace(NOT_CODES, '#');
 }
 
 describe('a backstop over every view the suites draw, amounts hidden', () => {
@@ -1299,6 +1320,9 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       '1 BTC = 61,000 USD, every day, past ones included',
       'The ECB’s of Sep 14, 2026: 1 USD = 0.86573 EUR',
       '1 ARS = 0.00071 USD, from Sep 1, 2026',
+      'published for information each working day around 16:00 CET; a weekend',
+      'Aug 6, 2026 · SHELL OIL 5544',
+      'ONLINE TRANSFER TO LANDLORD REF 99812',
     ];
     for (const line of lookalikes) expect([line, AMOUNT.test(withoutLookalikes(line))]).toEqual([line, false]);
     const amounts = [
@@ -1312,6 +1336,24 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       '12,000 € a year',
       '$1,234.56 spent',
       '$450 a month',
+      // A currency with no symbol of its own is written with its code, any
+      // three capitals, before the figures or after them.
+      'SEK 12,000 a year',
+      'PLN 45,000 a year after tax',
+      'ZAR 1,234 more than last month',
+      '12,000 NOK a year',
+      'SEK 950',
+      '950 SEK',
+      'KRW 1,234,567 in all',
+      'Groceries SEK 950 this month',
+      'CARD PAYMENT SEK 1,250',
+      'CARD PAYMENT SEK 950.00',
+      // A whole figure after a real code, behind a word in capitals: still one.
+      'CARD PAYMENT SEK 950',
+      'Roth IRA CHF 950',
+      'ATM ISK 12500',
+      'HSA NOK 400 this month',
+      'opens at 16:00 CET with SEK 950',
       // Beside a rate, an amount is still one, before it or after it, and a
       // rate's shape around one never makes it pass.
       'USD $1,234 is €1,068.30 (1 USD = 0.86573 EUR)',

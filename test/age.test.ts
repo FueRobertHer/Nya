@@ -285,6 +285,13 @@ const PIECES = (text: string, size: number) => () => {
   return out;
 };
 const PASSPHRASE = 'piano orbit lantern harvest';
+/** How long a test that derives a key at the real setting may take: scrypt
+ *  at N = 2^18 is a quarter of a gigabyte of memory-hard work, about a
+ *  second here with the machine to itself, and a test of the age command
+ *  makes up to three. The work is fixed, so a machine busy with other work
+ *  only stretches the wait, past bun's default 5 s in a full run: this bound
+ *  guards against a hang, never measures speed. */
+const REAL_SETTING_MS = 30_000;
 
 async function protect(text: string, opts: { pieces?: number; passphrase?: string } = {}) {
   const bytes = enc(text);
@@ -328,7 +335,7 @@ describe('a protected download', () => {
     const made = await protectFile({ filename: 'f', chunks: () => [enc('hi')] }, 2, PASSPHRASE);
     const header = parseHeader(new Uint8Array(Buffer.concat([...made.chunks()])));
     expect(header.stanzas.map((s) => [s.type, s.args[1]])).toEqual([['scrypt', '18']]);
-  });
+  }, REAL_SETTING_MS);
 
   test('an empty file opens as an empty file', async () => {
     const { file } = await protect('');
@@ -468,7 +475,7 @@ describe.skipIf(!CLI)('the age command', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, REAL_SETTING_MS);
 
   test('what the age command protects with a passphrase opens here', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'nya-age-'));
@@ -483,5 +490,5 @@ describe.skipIf(!CLI)('the age command', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, REAL_SETTING_MS);
 });

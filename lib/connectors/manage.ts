@@ -231,12 +231,14 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
       // New accounts' history is fetched afresh, from the recent window back;
       // what the others have already is matched, never added twice.
       history: null,
-      // The last request's word was about what was tracked then (a listing to
-      // choose from names no account, so its problems would read as any
-      // bank's): forgotten, as connecting again forgets it, so until the
-      // fetch below answers (skipped when the day's requests are spent) the
-      // accounts say they wait for it.
-      last_fetch: null,
+      // With nothing tracked before, the last request was a listing to choose
+      // from, which names no account, so its problems would read as any
+      // bank's: forgotten, as connecting again forgets it, so until the fetch
+      // below answers (skipped when the day's requests are spent) the
+      // accounts say they wait for it. With some tracked, it was about them,
+      // and stands for them meanwhile; the new ones, with no balance yet,
+      // wait all the same (lib/connectors/institutions.ts issueOf).
+      last_fetch: current.tracked.length === 0 ? null : current.last_fetch,
     };
   });
   if (ids.size === 0) throw new ConnectorRefused('That connection no longer exists.', 404);
