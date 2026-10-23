@@ -1498,15 +1498,16 @@ function measured(key: string, row: unknown, heads: boolean): KeyMeasure | null 
   return out;
 }
 
-/** Every key matching `prefix*`, once each (SCAN may repeat one), a page at
- *  a time. Throws when a page can't be had: what it would have found is not
- *  known. */
-async function walk(prefix: string): Promise<string[]> {
+/** Every key matching `prefix*` that `keep` keeps, once each (SCAN may
+ *  repeat one), a page at a time: only those are held, so a walk of many
+ *  containers' keys holds no more than the ones asked for. Throws when a page
+ *  can't be had: what it would have found is not known. */
+async function walk(prefix: string, keep: (key: string) => boolean = () => true): Promise<string[]> {
   const found = new Set<string>();
   let cursor: string | number = 0;
   do {
     const [next, page] = (await redis().scan(cursor, { match: `${prefix}*`, count: MEASURE_SCAN_PAGE })) as [string | number, string[]];
-    for (const key of page) if (key.startsWith(prefix) && key.length > prefix.length) found.add(key);
+    for (const key of page) if (key.startsWith(prefix) && key.length > prefix.length && keep(key)) found.add(key);
     cursor = next;
   } while (String(cursor) !== '0');
   return [...found].sort();
@@ -1578,13 +1579,15 @@ export async function measureContainers(ctxs: readonly Ctx[]): Promise<Map<Ctx['
     prefixes.set(ctx.container, prefix);
   }
   const found = new Map<string, string[]>([...prefixes.keys()].map((c) => [c, []]));
-  for (const key of await walk(shared)) {
+  /** The container a key is in, when it is one asked for. */
+  const askedFor = (key: string): string | null => {
     const end = key.indexOf(':', shared.length);
-    if (end < 0) continue;
+    if (end < 0) return null;
     const container = key.slice(shared.length, end);
     const prefix = prefixes.get(container);
-    if (prefix !== undefined && key.length > prefix.length) found.get(container)!.push(key);
-  }
+    return prefix !== undefined && key.length > prefix.length ? container : null;
+  };
+  for (const key of await walk(shared, (key) => askedFor(key) !== null)) found.get(askedFor(key)!)!.push(key);
   for (const ctx of ctxs) {
     if (out.has(ctx.container)) continue;
     out.set(ctx.container, await measureKeys(ctx, prefixes.get(ctx.container)!, found.get(ctx.container)!, false));
