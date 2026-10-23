@@ -12,8 +12,12 @@ import { FakeLunchFlow, daysAgo, lfAccount, lfTxn } from './lunchflow-fake';
 // another's reach, and the key never in storage in the clear nor in a log.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
-// Connecting Lunch Flow is off unless the deployment turns it on (lib/connectors/switch.ts).
-process.env.LUNCHFLOW_ENABLED = '1';
+// Connecting Lunch Flow is off unless the deployment turns it on
+// (lib/connectors/switch.ts). Turned on before each test: test/preload.ts
+// clears it before and after each one.
+beforeEach(() => {
+  process.env.LUNCHFLOW_ENABLED = '1';
+});
 
 const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
@@ -206,6 +210,27 @@ describe('tracking and the daily fetch', () => {
     await nextDay();
     await syncConnection(ctx, connection_id, { purpose: 'refresh', now: NOW });
     expect([(await card('Monzo')).error, (await card('Monzo')).health?.detail?.issue]).toEqual([null, 'ok']);
+  });
+
+  test('an account tracked beside others while the day’s requests are spent waits for its answer, and the others keep theirs', async () => {
+    seedServer();
+    const { connection_id } = await connect(ctx, 'lunchflow', server.key, NOW);
+    await trackAccounts(ctx, connection_id, [{ remote_id: '1470', type: 'depository' }], NOW);
+    const before = (await connectionsStore.get(ctx, connection_id))!.last_fetch;
+    expect([before?.failure, (await card('Monzo')).health?.detail?.issue]).toEqual([null, 'ok']);
+    while (await takeRequest(ctx));
+    const res = await trackAccounts(ctx, connection_id, [{ remote_id: '2001', type: 'depository' }], NOW);
+    expect(res?.skipped).toBe('budget');
+    // The last request was about what was tracked then, and stands for it.
+    expect((await connectionsStore.get(ctx, connection_id))!.last_fetch).toEqual(before);
+    expect((await card('Monzo')).health?.detail?.issue).toBe('ok');
+    const asb = await card('ASB');
+    expect(asb.health?.detail?.issue).toBe('waiting');
+    expect(connectorHealthText('ASB', asb.health!)).toContain("Waiting for Lunch Flow's answer about ASB");
+    // Its first answer, once requests come back, brings it.
+    await nextDay();
+    await syncConnection(ctx, connection_id, { purpose: 'refresh', now: NOW });
+    expect((await card('ASB')).health?.detail?.issue).toBe('ok');
   });
 
   test('the first fetch brings two years of the tracked accounts’ posted transactions, in Plaid’s sign, under Lunch Flow’s ids', async () => {

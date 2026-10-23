@@ -41,16 +41,19 @@ export type RestoreState = {
 /** A restored account whose entry can't be read (app/api/user-restore): what
  *  the directory calls it ("Chase Checking ••1111"; null: nothing it can
  *  read); where the Earlier accounts list (Manage) lists it, by the name it
- *  shows there (lib/earlier-names.ts) and its days; or, for one it doesn't,
- *  why not (lib/earlier-names.ts Unlisted), the accounts a link joins it to
- *  by what the directory calls them, whether it would be listed once that
- *  is undone, and, for one with nothing to list it by, which this card
- *  forgets, what that takes of the rows a restore brought back for it
+ *  shows there (lib/earlier-names.ts) and its days, and whether some of the
+ *  rows a restore brought back for it are in a form this version doesn't
+ *  know (`unrecognised`: then that list offers no Forget for it, as
+ *  lib/user-restore/forget.ts restoredForgetRefusal refuses it); or, for one
+ *  it doesn't, why not (lib/earlier-names.ts Unlisted), the accounts a link
+ *  joins it to by what the directory calls them, whether it would be listed
+ *  once that is undone, and, for one with nothing to list it by, which this
+ *  card forgets, what that takes of the rows a restore brought back for it
  *  (`rows`; null otherwise). Both null: not named (`unnamed`). */
 export type UnreadableAccount = {
   account_id: string;
   label: string | null;
-  listed: { name: string; first: string | null; last: string | null } | null;
+  listed: { name: string; first: string | null; last: string | null; unrecognised?: boolean } | null;
   unlisted: { why: Unlisted; others: (string | null)[]; listable: boolean; rows: RestoredRows | null } | null;
 };
 
@@ -180,6 +183,11 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
 }
 
 const ASK = 'or ask whoever runs this copy of Nya.';
+/** Why an account whose rows a restore brought back are in a form this
+ *  version doesn't know can't be forgotten, here or anywhere (lib/repo.ts:
+ *  only damaged entries may be offered for removal). */
+const ROWS_UNKNOWN =
+  'some of the transactions a restore brought back for it are in a form this version of Nya doesn’t know: a newer version wrote them, or it is a fault. They are kept as they are, so it can’t be forgotten here: ask whoever runs this copy of Nya.';
 
 /** How a restored account whose entry can't be read is forgotten, when the
  *  Earlier accounts list doesn't show it: why it doesn't, and what works
@@ -191,8 +199,7 @@ function unlistedWay(u: NonNullable<UnreadableAccount['unlisted']>): { words: st
     case 'unknown':
       return u.rows?.unrecognised
         ? {
-            words:
-              'Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage), and some of the transactions a restore brought back for it are in a form this version of Nya doesn’t know: a newer version wrote them, or it is a fault. They are kept as they are, so it can’t be forgotten here: ask whoever runs this copy of Nya.',
+            words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage), and ${ROWS_UNKNOWN}`,
             remove: false,
           }
         : { words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage). Forget it here for good, ${ASK}`, remove: true };
@@ -291,8 +298,10 @@ export function unreadableNotes(
     }
     const what = `What Nya keeps about ${subject}, which a restore brought back, can’t be read, so no net worth total is recorded until it can be.`;
     if (one.a.listed) {
-      const { name, first, last } = one.a.listed;
+      const { name, first, last, unrecognised } = one.a.listed;
       const days = first || last ? ` (${first ? day(first) : 'unknown'} to ${last ? day(last) : 'unknown'})` : '';
+      // The list offers no Forget for it then (app/api/account-links).
+      if (unrecognised) return { key, words: `${what} It is listed under Earlier accounts (Manage) as ${name}${days}, but ${ROWS_UNKNOWN}`, empty: false };
       return { key, words: `${what} Forget it under Earlier accounts (Manage), where it is listed as ${name}${days}, ${ASK}`, empty: false };
     }
     if (!one.a.unlisted) return { key, words: `${what} Ask whoever runs this copy of Nya.`, empty: false };

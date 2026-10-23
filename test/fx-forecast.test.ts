@@ -68,7 +68,7 @@ describe('where it starts', () => {
     expect(p.currency).toBe('USD');
     // 500 × 1.1551 = 577.55; the pending 10 × 1.1551 = 11.55.
     expect(p.balances).toBe(cents(1000 + 577.55));
-    expect(p.pending).toEqual({ amount: 11.55, count: 1 });
+    expect(p.pending).toEqual({ amount: 11.55, count: 1, leftOut: [] });
     expect(p.start).toBe(cents(1000 + 577.55 - 11.55));
     // Listed as the account shows it, in its own currency.
     expect(p.included.find((a) => a.account_id === 'eur')).toMatchObject({ balance: 500, currency: 'EUR' });
@@ -76,6 +76,31 @@ describe('where it starts', () => {
     expect(p.conversion).toEqual({ into: 'USD', from: [{ currency: 'EUR', count: 1 }], own: [], unrated: [{ currency: 'BTC', why: 'not-published', unrated: 'BTC' }] });
     const notes = forecastNotes({ institutions: INSTITUTIONS, position: p, eventsLeftOut: [], today: TODAY, days: { day: (d) => d, instant: (d) => d, snapshot: (d) => d } });
     expect(notes).toContain("1 cash account in BTC isn't in this forecast, which is in USD: there is no rate for BTC.");
+  });
+
+  test('a pending charge in a currency with no rate is left out and named, with why, as an account is: never dropped without a word', () => {
+    // On the dollar checking account: a charge in pesos (the ECB publishes
+    // no peso rate), one in euros, which converts, and a peso refund, which
+    // takes nothing off either way.
+    const p = cashPosition(
+      INSTITUTIONS,
+      [pending(10), pending(5000, { account_name: 'Checking', iso_currency_code: 'ARS' }), pending(-200, { account_name: 'Checking', iso_currency_code: 'ARS', name: 'Refund' })],
+      { fx: FX, today: TODAY }
+    );
+    expect(p.pending).toEqual({ amount: 11.55, count: 1, leftOut: [{ currency: 'ARS', count: 1 }] });
+    expect(p.start).toBe(cents(1000 + 577.55 - 11.55));
+    const notes = forecastNotes({ institutions: INSTITUTIONS, position: p, eventsLeftOut: [], today: TODAY, days: { day: (d) => d, instant: (d) => d, snapshot: (d) => d } });
+    // Each sentence says why for its own currencies only.
+    expect(notes.filter((n) => n.includes(' in BTC') || n.includes(' in ARS'))).toEqual([
+      "1 cash account in BTC isn't in this forecast, which is in USD: there is no rate for BTC.",
+      "1 pending charge in ARS isn't in this forecast, which is in USD: there is no rate for ARS.",
+    ]);
+    // Without a home currency it is left out for its currency, as before, and now said.
+    const before = cashPosition(INSTITUTIONS, [pending(5000, { account_name: 'Checking', iso_currency_code: 'ARS' })]);
+    expect(before.pending).toEqual({ amount: 0, count: 0, leftOut: [{ currency: 'ARS', count: 1 }] });
+    expect(forecastNotes({ institutions: INSTITUTIONS, position: before, eventsLeftOut: [], today: TODAY, days: { day: (d) => d, instant: (d) => d, snapshot: (d) => d } })).toContain(
+      "1 pending charge in ARS isn't in this forecast, which is in USD."
+    );
   });
 });
 

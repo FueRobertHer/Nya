@@ -93,7 +93,9 @@ const scanView = (scan: AccountScan) => ({ ...scan, message: scan.found.length >
  * Each of these accounts as the Earlier accounts list (Manage) shows it, so
  * a note that says to forget one names the one it means (forgetting is for
  * good): what the directory calls it, and the name and days the list shows
- * it by, told apart from any that would read the same (lib/earlier-names.ts);
+ * it by, told apart from any that would read the same (lib/earlier-names.ts),
+ * with whether rows a restore brought back for it are in a form this version
+ * doesn't know (then the list offers no Forget for it, and the note says why);
  * or, for one the list leaves out, why (lib/links.ts whyUnlisted), the
  * accounts a link joins it to, whether the list would show it once that is
  * undone, and, for one the card itself forgets (nothing to list it by), what
@@ -123,10 +125,13 @@ async function named(
         const why = e ? null : whyUnlisted(inputs, stored, id);
         const others =
           why === 'linked' ? [inputs.links.get(id)!.to] : why === 'linked-to' ? [...inputs.links].filter(([, l]) => l.to === id).map(([old]) => old).sort() : [];
+        // Rows this version doesn't know make its forget refused, so the list
+        // offers none for it (app/api/account-links): the note says so.
+        const unknownRows = e ? (await restoredRowsOf(ctx, id)).unrecognised : false;
         return {
           account_id: id,
           label: labelOf(id),
-          listed: e ? { name: names.get(id)!, first: e.first, last: e.last } : null,
+          listed: e ? { name: names.get(id)!, first: e.first, last: e.last, ...(unknownRows ? { unrecognised: true } : {}) } : null,
           unlisted: why
             ? { why, others: others.map(labelOf), listable: !!inputs.directory[id] || !!inputs.spans[id], rows: why === 'unknown' ? await restoredRowsOf(ctx, id) : null }
             : null,

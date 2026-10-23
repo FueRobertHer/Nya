@@ -5,18 +5,23 @@ import { totalNotes } from '@/components/total-notes';
 import { reconnectAlerts } from '@/components/Insights';
 import { monthGapNotes, monthGaps, stoppedConnections, joinNames } from '@/lib/month-coverage';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
+import { localDate } from '@/lib/local-date';
 
 // What the person sees of connection health (#51): the health view, the
 // "Reconnect soon" note on a card, the Home total's notes, the Home alert,
-// and Activity's months. Instants sit at noon UTC, so the local day is the
-// same in any time zone a test machine is likely to have.
+// and Activity's months. An instant the views show as a day is noon on that
+// day in the machine's time zone (noon), so the day shown is the one written
+// in any zone: no one instant is the same day everywhere (Pacific/Kiritimati
+// is 14 hours ahead of UTC).
 
+/** Noon on `day` in the machine's time zone, as an ISO instant. */
+const noon = (day: string) => new Date(`${day}T12:00:00`).toISOString();
 const noop = () => {};
 const health = (cause: Cause, over: Partial<ConnectionHealth> = {}): ConnectionHealth => ({
   ...CAUSES[cause],
   cause,
   side: 'bank',
-  last_ok_at: '2026-09-12T12:00:00.000Z',
+  last_ok_at: noon('2026-09-12'),
   ...over,
 });
 const inst = (name: string, h: ConnectionHealth, over: Partial<HealthInstitution> = {}): HealthInstitution & { health: ConnectionHealth } => ({
@@ -30,7 +35,7 @@ const inst = (name: string, h: ConnectionHealth, over: Partial<HealthInstitution
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&apos;/g, "'").replace(/\s+/g, ' ');
 const view = (rows: (HealthInstitution & { health: ConnectionHealth })[], over: Record<string, unknown> = {}) =>
   renderToStaticMarkup(
-    <ConnectionHealthView rows={rows} open={true} onToggle={noop} unavailable={false} connecting={false} onReconnect={noop} onRemove={noop} onManageAccounts={noop} now={Date.parse('2026-10-08T12:00:00Z')} {...over} />
+    <ConnectionHealthView rows={rows} open={true} onToggle={noop} unavailable={false} connecting={false} onReconnect={noop} onRemove={noop} onManageAccounts={noop} now={Date.parse(noon('2026-10-08'))} {...over} />
   );
 const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]).filter((b) => b.trim() !== '');
 
@@ -40,7 +45,7 @@ describe('the connection health view', () => {
       inst('Chase', health('login', { side: 'you', code: 'ITEM_LOGIN_REQUIRED' })),
       inst('Amex', health('revoked', { side: 'you' })),
       inst('Ally', health('institution_down')),
-      inst('Citi', health('ok', { side: 'none', last_ok_at: '2026-10-08T12:00:00.000Z' })),
+      inst('Citi', health('ok', { side: 'none', last_ok_at: noon('2026-10-08') })),
     ];
     const html = view(rows);
     const t = text(html);
@@ -78,8 +83,8 @@ describe('the connection health view', () => {
   });
 
   test('reconnect soon, with the date Plaid gave, or around the one it implied', () => {
-    const exact = inst('Chase', health('consent_ending', { ends_at: '2026-10-15T12:00:00.000Z', ends_estimated: false, last_ok_at: '2026-10-08T12:00:00.000Z' }));
-    const about = inst('Amex', health('disconnect_pending', { ends_at: '2026-10-14T12:00:00.000Z', ends_estimated: true, last_ok_at: '2026-10-08T12:00:00.000Z' }));
+    const exact = inst('Chase', health('consent_ending', { ends_at: noon('2026-10-15'), ends_estimated: false, last_ok_at: noon('2026-10-08') }));
+    const about = inst('Amex', health('disconnect_pending', { ends_at: noon('2026-10-14'), ends_estimated: true, last_ok_at: noon('2026-10-08') }));
     const t = text(view([exact, about]));
     expect(t).toContain('Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing');
     expect(t).toContain('Plaid says this connection ends around Oct 14.');
@@ -190,12 +195,12 @@ describe('the connection health view', () => {
 });
 
 describe('the Reconnect soon note on a card', () => {
-  const now = Date.parse('2026-10-08T12:00:00Z');
+  const now = Date.parse(noon('2026-10-08'));
   test('the badge, the date and a Reconnect button, only while Plaid says it will end', () => {
-    const soon = { item_id: 'item_chase', institution_name: 'Chase', health: health('consent_ending', { ends_at: '2026-10-15T12:00:00.000Z' }) };
+    const soon = { item_id: 'item_chase', institution_name: 'Chase', health: health('consent_ending', { ends_at: noon('2026-10-15') }) };
     const html = renderToStaticMarkup(<ReconnectSoonNote inst={soon} connecting={false} onReconnect={noop} now={now} />);
     expect(text(html)).toContain('Reconnect soon · Oct 15 Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.');
-    const about = { item_id: 'item_amex', institution_name: 'Amex', health: health('disconnect_pending', { ends_at: '2026-10-15T12:00:00.000Z', ends_estimated: true }) };
+    const about = { item_id: 'item_amex', institution_name: 'Amex', health: health('disconnect_pending', { ends_at: noon('2026-10-15'), ends_estimated: true }) };
     expect(text(renderToStaticMarkup(<ReconnectSoonNote inst={about} connecting={false} onReconnect={noop} now={now} />))).toContain('Reconnect soon · about Oct 15 Plaid says this connection ends around Oct 15.');
     expect(buttons(html)).toEqual(['Reconnect']);
     expect(html).toContain('aria-label="Reconnect Chase"');
@@ -208,7 +213,7 @@ describe('the Reconnect soon note on a card', () => {
   // Review nit: a consent end already past (on a connection that still
   // answered, or in a payload made before it) said "Reconnect before then".
   test('past its date, it says it was due then, and to reconnect now', () => {
-    const past = health('consent_ending', { ends_at: '2026-10-05T12:00:00.000Z' });
+    const past = health('consent_ending', { ends_at: noon('2026-10-05') });
     expect(endsText(past, now)).toBe('Plaid said this connection would end on Oct 5');
     expect(healthText('Chase', past, {}, now)).toBe('Plaid said this connection would end on Oct 5. Reconnect now to keep it syncing: it takes a minute.');
     expect(badgeOf(past, now)).toBe('Reconnect now');
@@ -301,8 +306,8 @@ describe('the Home alert a few days before a connection ends', () => {
 });
 
 describe("Activity's months say when they may be incomplete", () => {
-  const day = (iso: string) => iso.slice(5, 10);
-  const stopped = [{ institution_name: 'Chase', last_ok_at: '2026-09-12T12:00:00.000Z' }];
+  const day = (iso: string) => localDate(new Date(iso)).slice(5);
+  const stopped = [{ institution_name: 'Chase', last_ok_at: noon('2026-09-12') }];
 
   test('a connection that stopped leaves the months after its last sync in question, not those before', () => {
     expect(monthGapNotes('2026-08', [], stopped, day)).toEqual([]);
@@ -311,8 +316,8 @@ describe("Activity's months say when they may be incomplete", () => {
     // Never recorded: any month could be short.
     expect(monthGapNotes('2025-01', [], [{ institution_name: 'Amex', last_ok_at: null }], day)).toEqual(["Amex isn't syncing, so this month may be missing some of its transactions."]);
     // December rolls into January.
-    expect(monthGaps('2025-12', [], [{ institution_name: 'C', last_ok_at: '2025-12-31T12:00:00.000Z' }]).stopped).toHaveLength(1);
-    expect(monthGaps('2025-12', [], [{ institution_name: 'C', last_ok_at: '2026-01-02T12:00:00.000Z' }]).stopped).toHaveLength(0);
+    expect(monthGaps('2025-12', [], [{ institution_name: 'C', last_ok_at: noon('2025-12-31') }]).stopped).toHaveLength(1);
+    expect(monthGaps('2025-12', [], [{ institution_name: 'C', last_ok_at: noon('2026-01-02') }]).stopped).toHaveLength(0);
   });
 
   test('an institution missing from the load is in question every month, named once', () => {

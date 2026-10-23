@@ -678,6 +678,63 @@ describe("a merchant's series never take each other's charges", () => {
     ]);
   });
 
+  test('a dismissed paycheck of two deposits a date stays dismissed as its average moves, and never moves to the other', () => {
+    // The two nurses again: one paycheck dismissed (the lower), then a
+    // payday on, and another.
+    let seed = 5;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+    const dates = Array.from({ length: 24 }, (_, i) => addDays('2026-01-09', i * 14));
+    const pay = dates.map((d) => [d, -Math.round((2400 + rand() * 300) * 100) / 100, -Math.round((1900 + rand() * 250) * 100) / 100] as const);
+    const upTo = (n: number, both = n) =>
+      pay.slice(0, n).flatMap(([d, a, b], i) => [row(d, a, on({ name: 'MERCY HOSPITAL PAYROLL', category: 'income' })), ...(i < both ? [row(d, b, on({ name: 'MERCY HOSPITAL PAYROLL', category: 'income' }))] : [])]);
+    const before = detectRecurring(upTo(20));
+    const lower = before.find((s) => s.amount < 2150)!;
+    for (const n of [21, 22, 23]) {
+      const now = detectRecurring(upTo(n));
+      const gone = dismissedSeries(now, [lower.id]);
+      expect(now.find((s) => s.amount < 2150)!.amount).not.toBe(lower.amount);
+      expect([n, [...gone.keys()].map((id) => now.find((s) => s.id === id)!.amount < 2150)]).toEqual([n, [true]]);
+    }
+    // She leaves: her deposits stop, and once they are out of the year read
+    // the other paycheck stands alone. Her dismissal never becomes his.
+    const later = detectRecurring(upTo(24, 18).filter((t) => t.date >= addDays(pay[18][0], 1)));
+    expect(later.map((s) => s.amount > 2400)).toEqual([true]);
+    expect(dismissedSeries(later, [lower.id]).size).toBe(0);
+    // While both still show, the higher one's dismissal is the higher one's.
+    const higher = before.find((s) => s.amount > 2400)!;
+    const now = detectRecurring(upTo(22));
+    expect([...dismissedSeries(now, [higher.id]).keys()].map((id) => now.find((s) => s.id === id)!.amount > 2400)).toEqual([true]);
+  });
+
+  test('after raises for both, one person’s dismissed pay never becomes the other’s', () => {
+    // Review: A at 2,500 to 2,800 and B at 1,950 to 2,200 for a year, A
+    // dismissed; then raises, A at 3,200 to 3,500 and B at 2,550 to 2,800,
+    // where A's saved amount now falls among B's deposits.
+    let seed = 11;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+    const dates = Array.from({ length: 54 }, (_, i) => addDays('2025-01-10', i * 14));
+    const raised = (i: number) => i >= 27;
+    const rows = dates.flatMap((d, i) => [
+      row(d, -Math.round(((raised(i) ? 3200 : 2500) + rand() * 300) * 100) / 100, on({ name: 'MERCY HOSPITAL PAYROLL', category: 'income' })),
+      row(d, -Math.round(((raised(i) ? 2550 : 1950) + rand() * 250) * 100) / 100, on({ name: 'MERCY HOSPITAL PAYROLL', category: 'income' })),
+    ]);
+    const year = detectRecurring(rows.filter((t) => t.date < dates[27]));
+    const a = year.find((s) => s.amount > 2400)!;
+    const late = detectRecurring(rows);
+    const b = late.find((s) => s.amount < 2900)!;
+    // B's deposits now hold A's saved amount: still never B's.
+    expect(b.part && Math.round(b.part.low * 100) <= Math.round(a.amount * 100) && Math.round(a.amount * 100) <= Math.round(b.part.high * 100)).toBe(true);
+    expect([...dismissedSeries(late, [a.id]).keys()]).not.toContain(b.id);
+    // A, raised past its own saved amount, is listed again rather than
+    // hidden on a guess.
+    expect(dismissedSeries(late, [a.id]).size).toBe(0);
+    // A dismissal saved before parts said which they were (no side in its
+    // id) names a series by its amount exactly, as it did.
+    const unsided = a.id.replace(/@(?:low|high)/, '');
+    expect([...dismissedSeries(year, [unsided]).keys()]).toEqual([a.id]);
+    expect(dismissedSeries(late, [unsided]).size).toBe(0);
+  });
+
   test('paychecks at two amounts on alternate weeks come to what was paid', () => {
     const rows = Array.from({ length: 28 }, (_, i) => row(addDays('2026-03-06', i * 7), i % 2 ? -1876.54 : -2345.67, on({ name: 'ACME PAYROLL', category: 'income' }))).filter((t) => t.date < '2026-10-09');
     const s = only(rows);
