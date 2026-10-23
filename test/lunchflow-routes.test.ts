@@ -15,8 +15,12 @@ import { parseCsv } from './csv-parse';
 // or the download.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
-// Connecting Lunch Flow is off unless the deployment turns it on (lib/connectors/switch.ts).
-process.env.LUNCHFLOW_ENABLED = '1';
+// Connecting Lunch Flow is off unless the deployment turns it on
+// (lib/connectors/switch.ts). Turned on before each test: test/preload.ts
+// clears it before and after each one.
+beforeEach(() => {
+  process.env.LUNCHFLOW_ENABLED = '1';
+});
 
 const plaidCalls: string[] = [];
 mock.module('@/lib/plaid', () => ({
@@ -236,10 +240,6 @@ describe('connecting through the routes', () => {
 });
 
 describe('the switch (LUNCHFLOW_ENABLED, lib/connectors/switch.ts)', () => {
-  afterEach(() => {
-    process.env.LUNCHFLOW_ENABLED = '1';
-  });
-
   test('off, a new connection is refused before anything is counted or sent; on, it connects', async () => {
     for (const value of [undefined, '0', 'true']) {
       if (value === undefined) delete process.env.LUNCHFLOW_ENABLED;
