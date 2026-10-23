@@ -389,7 +389,7 @@ describe('the privacy page', () => {
     expect(page).not.toContain('lawyer');
   });
 
-  test('makes the seven commitments, each with what is true today and, where some of it is to come, what is not', () => {
+  test('makes the eight commitments, each with what is true today and, where some of it is to come, what is not', () => {
     const html = privacyHtml();
     const promises = [
       'We never sell or share your financial data.',
@@ -397,6 +397,7 @@ describe('the privacy page', () => {
       'You can delete everything, and it reaches backups and connected services.',
       'You decide what anyone else sees, and you can see what they see about you.',
       'You can see who can read what, including us.',
+      'Receipts and documents are never shared.',
       'AI features are opt-in and act only on what you point them at.',
       'You can leave.',
     ];
@@ -445,7 +446,12 @@ describe('the privacy page', () => {
       expect(security()).toContain('no SimpleFIN or Lunch Flow access');
       expect(security()).toContain('never left running at Plaid, SimpleFIN or Lunch Flow.');
       expect(privacy()).toContain('Undo, offered while a restore is unfinished and for 7 days after it finishes, empties the account again.');
-      expect(privacy()).toContain('until you connect it again and link its accounts (then they count as its own)');
+      expect(privacy()).toContain('they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give)');
+      expect(privacy()).toContain('What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download');
+      expect(security()).toContain('A bank brought back from Plaid counts before you link it only on your answer, never inferred');
+      expect(security()).toContain('so a bank connected again doesn’t count them twice before you answer');
+      expect(security()).not.toContain('never counted twice');
+      expect(security()).toContain('is asked of you while one waits, never assumed, says what it matched, and can be undone.');
     } finally {
       if (saved === undefined) delete process.env.RESTORE_ENABLED;
       else process.env.RESTORE_ENABLED = saved;
@@ -845,5 +851,69 @@ describe('a data key per account, on both pages', () => {
     delete process.env.DATABASE_BACKUP_DAYS;
     expect(security()).not.toContain('database host');
     expect(privacy()).toContain('Its own internal copies follow its own policy.');
+  });
+});
+
+// Receipts and documents (#47): said wherever a file store and a master key
+// let this copy keep them (files may be there even where adding is off),
+// and said to be off where they can't be kept.
+describe('receipts and documents', () => {
+  const on = (quota: string | null) => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('kept');
+    if (quota) process.env.ATTACHMENTS_QUOTA_MB = quota;
+    else delete process.env.ATTACHMENTS_QUOTA_MB;
+  };
+  const PRIVATE =
+    'A receipt can show what you bought, at a pharmacy say, so Nya treats what you attach as more private than the transaction it is on: it is never shared, even where the transaction is, never sent to a program with an API token, never in an email, and never kept on your device by Nya. You can delete one at any time: once it is gone from the file store (at once, or by a later nightly run if the store can’t be reached), no backup can bring it back. This copy of Nya keeps one copy of each file, so download them to keep your own.';
+  const ENCRYPTED =
+    'Receipts and documents you attach to transactions are encrypted on Nya’s server before they are stored, each with a key of its own, and kept in a private Vercel Blob store. The store never holds those keys: each is kept only in the database and its backups, locked with your account’s own data key. So the file store, or a copy of it, holds nothing readable on its own.';
+
+  test('kept here: the commitment, how they are encrypted, who reads them, the download and the deletion', () => {
+    on('1024');
+    const priv = privacy();
+    const sec = security();
+    expect(priv).toContain(`Receipts and documents are never shared. True today ${PRIVATE}`);
+    expect(priv).not.toContain('Adding new receipts and documents is off');
+    expect(priv).toContain('Stores the receipts and documents you attach, encrypted; each file’s key is locked in the database, apart from the files.');
+    expect(priv).toContain('Receipts and documents you attach Until you delete them, or delete your account.');
+    expect(priv).toContain('Your receipts and documents come as a download of their own: under Manage, Receipts and documents, as ZIP files of about 50 MB each');
+    expect(priv).toContain('Your receipts and documents are deleted from the file store (part of them by a later nightly run if the store can’t be reached), and the key that would open them is destroyed.');
+    // Reading receipts is still to come.
+    expect(priv).toContain('Planned Reading receipts: off unless you turn it on, and only for the receipt you choose.');
+    expect(sec).toContain(ENCRYPTED);
+    expect(sec).toContain('Whoever runs this copy of Nya can read them, as they can read the rest of your data.');
+    expect(sec).toContain('for receipts and documents: a random id for each, and which of your transactions have one, by their ids; in the file store, each encrypted file’s size and when it was uploaded.');
+    expect(sec).toContain('It also stores your receipts and documents, encrypted; each file’s key is locked in the database, apart from the files.');
+    expect(sec.match(/Never your receipts or documents\./g)).toHaveLength(3);
+    expect(sec).toContain('Your receipts and documents are deleted from the file store, part of them by a later nightly run if the store can’t be reached, and the key that would open any copy left of them is destroyed with your account’s key.');
+    expect(sec).toContain('Receipts and documents download the same way, as ZIP files of about 50 MB each');
+  });
+
+  test('kept, with adding off (no quota set): what is there is still described, and adding is said to be off', () => {
+    on(null);
+    expect(privacy()).toContain(`${PRIVATE} Not turned on here Adding new receipts and documents is off on this copy of Nya; any already attached stay as described.`);
+    expect(privacy()).toContain('Adding new ones is off on this copy of Nya.');
+    expect(security()).toContain(`${ENCRYPTED}`);
+    expect(security()).toContain('as they can read the rest of your data. Adding new ones is off on this copy of Nya.');
+  });
+
+  test('not kept here (no file store, or no master key): built, and off', () => {
+    for (const setup of [() => backupsAre('none'), () => (backupsAre('kept'), delete process.env.MASTER_KEY)]) {
+      process.env = { ...saved };
+      process.env.MASTER_KEY = MASTER;
+      process.env.ATTACHMENTS_QUOTA_MB = '1024';
+      setup();
+      const priv = privacy();
+      expect(priv).toContain(
+        'Receipts and documents are never shared. True today This copy of Nya keeps no receipts or documents: nothing can be attached to a transaction here. Not turned on here Attaching receipts and documents to transactions: built, and off on this copy of Nya until whoever runs it turns it on.'
+      );
+      expect(priv).toContain('Receipts and documents you attach None: nothing can be attached to a transaction on this copy of Nya.');
+      expect(priv).not.toContain('Stores the receipts and documents you attach');
+      expect(priv).not.toContain('Your receipts and documents come as a download of their own');
+      const sec = security();
+      expect(sec).not.toContain('Receipts and documents you attach to transactions are encrypted');
+      expect(sec).not.toContain('Never your receipts or documents.');
+    }
   });
 });

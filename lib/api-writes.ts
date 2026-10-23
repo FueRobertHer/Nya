@@ -293,7 +293,10 @@ async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: Resou
     if (change.state === 'pending') await settleChange(auth.ctx, found.change, { state: 'failed', error: 'stopped' });
     fail(409, 'conflict', MAYBE_REMOVED);
   }
-  if (found.made) fail(409, 'conflict', REMOVED_SINCE);
+  // Its change's record gone with the claim marked made: removed in the app as
+  // damaged (lib/api-changes.ts settleClaimsOf), so what it began can't be
+  // told. Never made again.
+  if (found.made) fail(409, 'conflict', MAYBE_REMOVED);
   // No change was ever begun under the claim (the first stopped before it
   // wrote one): made now, under a new id, by one takeover alone (the claim is
   // pointed at it only while it still names the first).

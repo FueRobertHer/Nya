@@ -67,6 +67,14 @@ const mcp = await import('@/app/api/mcp/route');
 const { seedEveryKind } = await import('./seers-fixture');
 const { setTransportForTests } = await import('@/lib/connectors/http');
 const { measureContainer } = await import('@/lib/repo');
+// The file store receipts and documents are kept in (lib/attachment-objects.ts),
+// recorded too: a path that reads or lists it to answer is as much a reader
+// as one that reads a key, and none of these paths may (S15).
+const { FakeObjects } = await import('./attachment-fixture');
+const { setAttachmentObjectsForTests } = await import('@/lib/attachment-objects');
+const files = new FakeObjects();
+setAttachmentObjectsForTests(files);
+afterAll(() => setAttachmentObjectsForTests(undefined));
 
 let server: FakeSimplefin;
 beforeAll(async () => {
@@ -90,6 +98,7 @@ function familyOf(key: string): string | null {
 /** The families `run` reads: in the owner's container, and environment-wide. */
 async function readsOf(run: () => Promise<unknown>): Promise<Set<string>> {
   touched.clear();
+  const filesBefore = files.calls.length;
   recording = true;
   const [error, warn] = [console.error, console.warn];
   console.error = console.warn = () => {};
@@ -106,6 +115,8 @@ async function readsOf(run: () => Promise<unknown>): Promise<Set<string>> {
     if (key.startsWith(inside)) out.add(familyOf(key.slice(inside.length)) ?? `? ${key.slice(inside.length)}`);
     else if (key.startsWith(env) && !key.startsWith(testKey('c:'))) out.add(familyOf(key.slice(env.length)) ?? `? ${key.slice(env.length)}`);
   }
+  // Any call to the file store: never expected (see above).
+  for (const call of files.calls.slice(filesBefore)) out.add(`? the file store (${call.op})`);
   return out;
 }
 
@@ -197,6 +208,7 @@ const NOT_HELD: Readonly<Record<string, string>> = {
   'move:': 'the record of the one-time data move, read only by that move',
   'history:forgetting:': 'the progress of forgetting an account, read only by the forgetting',
   'sign-repairs': 'a re-sign of an account’s past balances under way, read only by the re-sign and the nightly job that finishes it',
+  'restored-sign-repairs': 'what a restore found of a re-sign its file left under way, read only by the restore’s finish, its card, the operator’s repair and the nightly job that finishes re-signs',
   'connector-secrets': 'the credential, read only by the sync, which these paths never run; the connection made here holds one, and a restore leaves it out',
 };
 /** Counters hold a count for a window, read only to limit how often: their

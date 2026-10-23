@@ -12,6 +12,7 @@ import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 import { restoreEnabled } from '@/lib/user-restore/enabled';
 import { UNDO_DAYS } from '@/lib/user-restore/ids';
+import { attachmentsMode, type AttachmentsMode } from '@/lib/attachments-mode';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -60,7 +61,33 @@ const downloadEmail = (mail: boolean) =>
 /** What the pages say of a data key per account, as this copy is set up. */
 type Keys = ReturnType<typeof keyDeletionText>;
 
-const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean, writes: boolean): Commitment[] => [
+/** Whether receipts and documents can be kept here (lib/attachments-mode.ts):
+ *  a file store connected, and a master key, without which no account has
+ *  the data key of its own a file needs (lib/attachments.ts). */
+function filesHere(): AttachmentsMode {
+  const mode = attachmentsMode();
+  return masterKeyConfigured() ? mode : { ...mode, connected: false, uploads: false };
+}
+
+/** The commitment on receipts and documents, as this copy is set up. */
+function receiptsCommitment(files: AttachmentsMode): Commitment {
+  const promise = 'Receipts and documents are never shared.';
+  if (!files.connected) {
+    return {
+      promise,
+      today: 'This copy of Nya keeps no receipts or documents: nothing can be attached to a transaction here.',
+      next: { label: 'Not turned on here', text: 'Attaching receipts and documents to transactions: built, and off on this copy of Nya until whoever runs it turns it on.' },
+    };
+  }
+  return {
+    promise,
+    today:
+      'A receipt can show what you bought, at a pharmacy say, so Nya treats what you attach as more private than the transaction it is on: it is never shared, even where the transaction is, never sent to a program with an API token, never in an email, and never kept on your device by Nya. You can delete one at any time: once it is gone from the file store (at once, or by a later nightly run if the store can’t be reached), no backup can bring it back. This copy of Nya keeps one copy of each file, so download them to keep your own.',
+    ...(files.uploads ? {} : { next: { label: 'Not turned on here' as const, text: 'Adding new receipts and documents is off on this copy of Nya; any already attached stay as described.' } }),
+  };
+}
+
+const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean, writes: boolean, files: AttachmentsMode): Commitment[] => [
   {
     promise: 'We never sell or share your financial data.',
     today:
@@ -73,7 +100,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
       restore
         ? ' Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.'
         : ''
-    }`,
+    }${files.connected ? ' Your receipts and documents come as ZIP files of their own, under Receipts and documents beside it.' : ''}`,
     ...(restore
       ? {}
       : {
@@ -115,6 +142,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
       text: 'A managed key service that records every use of the master key, so access by whoever runs Nya leaves a trace.',
     },
   },
+  receiptsCommitment(files),
   {
     promise: 'AI features are opt-in and act only on what you point them at.',
     today: `Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.${
@@ -149,10 +177,12 @@ function databaseBackups(days: number | null): string {
   return '';
 }
 
-const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, writes: boolean): [string, string][] => [
+const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, writes: boolean, files: AttachmentsMode): [string, string][] => [
   [
     'Vercel',
-    `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'} Handles every request and response, and keeps the app’s logs.`,
+    `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'}${
+      files.connected ? ' Stores the receipts and documents you attach, encrypted; each file’s key is locked in the database, apart from the files.' : ''
+    } Handles every request and response, and keeps the app’s logs.`,
   ],
   [
     'Upstash',
@@ -208,13 +238,29 @@ function countsRow(backups: BackupRetention): string {
   return `${kept} Nightly backups keep a copy of all but those of SimpleFIN and Lunch Flow up to ${backupDaysAtMost(backups)} days more, while the nightly backup keeps running.`;
 }
 
+/** How long receipts and documents are kept (lib/attachments.ts), as this
+ *  copy is set up: shown whenever a file store is connected, since files may
+ *  be there even where adding new ones is off. */
+function attachmentsRow(backups: BackupRetention, files: AttachmentsMode): string {
+  if (!files.connected) return 'None: nothing can be attached to a transaction on this copy of Nya.';
+  const records =
+    backups === null
+      ? 'the nightly backups keep only its record, until their retention setting, which is not valid on this copy of Nya, is fixed and they are deleted in turn.'
+      : backups.kept
+        ? `the nightly backups keep only its record, for up to ${backupDaysAtMost(backups)} days while they run.`
+        : 'this copy of Nya takes no backups.';
+  return `Until you delete them, or delete your account. When a transaction goes (your bank removes it, you delete it, you forget its account, you empty your account to bring back a download), its receipts stay, under Receipts and documents, for you to attach again or delete. Once a file you delete is gone from the file store (at once, or by a later nightly run if the store can’t be reached), no backup can bring it back; ${records} This copy of Nya keeps one copy of each file: download them to keep your own.${
+    files.uploads ? '' : ' Adding new ones is off on this copy of Nya.'
+  }`;
+}
+
 function backupsRow(backups: BackupRetention): string {
   if (backups === null) return 'None taken and none deleted while the retention setting is not valid.';
   if (!backups.kept) return 'None: no backup store is set up for this copy of Nya.';
   return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
 }
 
-const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: boolean): [string, string][] => [
+const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: boolean, files: AttachmentsMode): [string, string][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'How each bank connection is doing',
@@ -229,8 +275,9 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ],
   [
     'A download you brought back',
-    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you connect it again and link its accounts (then they count as its own), or Forget it. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
+    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you Forget it: they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give). What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download, until you Forget it, undo the restore, empty the account or delete it. An account from SimpleFIN or Lunch Flow you carry on with the one you track in its place keeps what it was, so undoing that puts it back. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
   ],
+  ['Receipts and documents you attach', attachmentsRow(backups, files)],
   [
     'A SimpleFIN connection',
     'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing, until you forget it on the Reports page, or delete your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
@@ -311,6 +358,9 @@ export default function PrivacyPage() {
   // What tokens can do here: the wording about changes shows only where
   // they can make them (lib/api-writes-enabled.ts).
   const writes = apiWritesEnabled();
+  // Whether receipts and documents can be kept here, from the settings alone
+  // (filesHere).
+  const files = filesHere();
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
@@ -318,7 +368,7 @@ export default function PrivacyPage() {
       </section>
 
       <h2>Our commitments</h2>
-      {commitments(backups, mail, keys, restore, writes).map((c) => (
+      {commitments(backups, mail, keys, restore, writes, files).map((c) => (
         <section className="card info-section" key={c.promise}>
           <h3>{c.promise}</h3>
           <dl className="info-status">
@@ -337,7 +387,7 @@ export default function PrivacyPage() {
       <InfoSection title="Who processes your data">
         <table className="info-table">
           <tbody>
-            {processors(backups, mail, dbDays, writes).map(([name, what]) => (
+            {processors(backups, mail, dbDays, writes, files).map(([name, what]) => (
               <tr key={name}>
                 <th scope="row">{name}</th>
                 <td>{what}</td>
@@ -365,7 +415,7 @@ export default function PrivacyPage() {
             </tr>
           </thead>
           <tbody>
-            {retention(backups, mail, keys, writes).map(([what, howLong]) => (
+            {retention(backups, mail, keys, writes, files).map(([what, howLong]) => (
               <tr key={what}>
                 <th scope="row">{what}</th>
                 <td>{howLong}</td>
@@ -397,13 +447,21 @@ export default function PrivacyPage() {
           Flow API key you give it, which are credentials rather than your data, your API tokens themselves (each one’s
           name and dates are in), your sign-in, and other people’s data; the JSON file lists what it leaves out.
         </p>
+        {files.connected && (
+          <p>
+            Your receipts and documents come as a download of their own: under Manage, Receipts and documents, as ZIP
+            files of about 50 MB each, decrypted, behind the same fresh sign-in and counted as one download. Protect them
+            with a passphrase, since they show what you bought. The JSON file lists them, without the files themselves.
+          </p>
+        )}
         {restore && (
           <p>
             Bring back a download, beside it, brings a JSON download into an account with nothing in it yet, in this copy of
             Nya or another. The file is read in your browser and never stored: only what it holds is written, into your
             account, encrypted as the rest of your data is. A fresh sign-in comes first, and{' '}
             {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
-            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again. Undo,
+            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again.
+            {files.connected ? ' Nor, yet, do your receipts and documents: keep your ZIP download of them.' : ''} Undo,
             offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
           </p>
         )}
@@ -423,6 +481,12 @@ export default function PrivacyPage() {
             {backups?.kept ? ' The receipt gives the date.' : ''}
           </li>
           {keys.key.length > 0 && <li>{keys.key.join(' ')}</li>}
+          {files.connected && (
+            <li>
+              Your receipts and documents are deleted from the file store (part of them by a later nightly run if the store
+              can’t be reached), and the key that would open them is destroyed.
+            </li>
+          )}
           {keys.notReached.length > 0 && (
             <li>
               What deleting your key doesn’t reach:{' '}

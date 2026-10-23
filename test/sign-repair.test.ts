@@ -391,9 +391,9 @@ describe('a repair under way', () => {
     expect((await ops({ container: ctx.container })).body.accounts).toEqual([
       expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 3, error: 'TypeError', stopped: true } }),
     ]);
-    // A download meanwhile says so in its notes.
+    // A download meanwhile says so in its notes, and that the daily update no longer tries.
     expect((await collectUserData({ ctx, userId: null })).notes).toContain(
-      'The history of one account (manual_eur) is being turned over to match what it is: until that finishes, some of its earlier days in account_history are in the other sign. Nya’s daily update tries again, and whoever runs your Nya can finish it: download again once it is done.'
+      'The history of one account (manual_eur) is being turned over to match what it is: until that finishes, some of its earlier days in account_history are in the other sign. Nya’s daily update has stopped trying, so whoever runs your Nya has to finish it: download again once it is done.'
     );
     // The operator finishes it.
     expect(real).toBe(history.negateAccountOn);
@@ -519,6 +519,73 @@ describe('a long repair, a little each night', () => {
     for (const [d] of job.plan!.r!) expect([d, (await stored('history:accounts', d)).manual_eur]).toEqual([d, -5000]);
   });
 
+  test('a night that gets through any of it sets the failed nights back: only three in a row stop it', async () => {
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(Date.parse('2026-08-01T00:00:00Z') + i * 86_400_000).toISOString().slice(0, 10);
+      await put('history:accounts', { [d]: { chk: 1000, manual_eur: 5000 } });
+      await put('history:net-worth', { [d]: '6000' });
+    }
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    const failNights = async (n: number) => {
+      const failing = spyOn(history, 'negateAccountOn').mockImplementation(async () => {
+        throw new TypeError('the function was stopped');
+      });
+      try {
+        for (let night = 0; night < n; night++) await quiet(() => finishSignJobs(ctx, { nightly: true }));
+      } finally {
+        failing.mockRestore();
+      }
+    };
+    await failNights(2);
+    expect(await signJobStore.get(ctx, 'manual_eur')).toMatchObject({ failures: 2, error: 'TypeError' });
+    // A night that turns two days over, then stops at its time.
+    const real = history.negateAccountOn;
+    let calls = 0;
+    const someThenSlow = spyOn(history, 'negateAccountOn').mockImplementation(async (...args) => {
+      if (++calls === 2) setSystemTime(new Date(Date.now() + 2000));
+      return real(...args);
+    });
+    try {
+      await quiet(() => finishSignJobs(ctx, { budgetMs: 1000, nightly: true }));
+    } finally {
+      someThenSlow.mockRestore();
+    }
+    const moved = (await signJobStore.get(ctx, 'manual_eur'))!;
+    expect([moved.kind, moved.failures, moved.error]).toEqual(['repair', undefined, undefined]);
+    // Two failing nights more: not three in a row, so it is still tried.
+    await failNights(2);
+    expect(await signJobStore.get(ctx, 'manual_eur')).toMatchObject({ failures: 2 });
+    expect((await ops({ container: ctx.container })).body.accounts[0].pending.stopped).toBe(false);
+  });
+
+  test('a night that gets through some of it and then fails counts as the first of a new run, and a job kept moving so is never stopped', async () => {
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(Date.parse('2026-08-01T00:00:00Z') + i * 86_400_000).toISOString().slice(0, 10);
+      await put('history:accounts', { [d]: { chk: 1000, manual_eur: 5000 } });
+      await put('history:net-worth', { [d]: '6000' });
+    }
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    const real = history.negateAccountOn;
+    let left = (await signJobStore.get(ctx, 'manual_eur'))!.plan!.r!.length;
+    // Each night one day goes through, and the next fails.
+    for (let night = 1; night <= 5; night++) {
+      let calls = 0;
+      const oneThenFail = spyOn(history, 'negateAccountOn').mockImplementation(async (...args) => {
+        if (++calls === 2) throw new TypeError('the function was stopped');
+        return real(...args);
+      });
+      try {
+        await quiet(() => finishSignJobs(ctx, { nightly: true }));
+      } finally {
+        oneThenFail.mockRestore();
+      }
+      const job = (await signJobStore.get(ctx, 'manual_eur'))!;
+      expect([night, job.failures, job.error, job.plan!.r!.length]).toEqual([night, 1, 'TypeError', left - 1]);
+      left = job.plan!.r!.length;
+    }
+    expect((await ops({ container: ctx.container })).body.accounts[0].pending.stopped).toBe(false);
+  });
+
   test('a night that runs out of time before a single day counts as failing, and three stop it', async () => {
     await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
     // Something slow before its first day, each night.
@@ -535,5 +602,37 @@ describe('a long repair, a little each night', () => {
       expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 3, error: 'Stalled', stopped: true } }),
     ]);
     await expect(forgetEarlierAccount(ctx, 'manual_eur')).rejects.toThrow(SIGN_JOB_STOPPED);
+  });
+});
+
+describe('the download, with jobs under way', () => {
+  const noteOf = async () => ((await collectUserData({ ctx, userId: null })).notes ?? []).filter((n: string) => n.includes('being turned over'));
+  const tries = (ids: string) =>
+    `The history of ${ids.includes(',') ? `${ids.split(',').length} accounts` : 'one account'} (${ids}) is being turned over to match what ${ids.includes(',') ? 'they are' : 'it is'}: until that finishes, some of ${ids.includes(',') ? 'their' : 'its'} earlier days in account_history are in the other sign. Nya’s daily update tries again, and whoever runs your Nya can finish it: download again once it is done.`;
+  const stoppedFor = (ids: string) =>
+    `The history of ${ids.includes(',') ? `${ids.split(',').length} accounts` : 'one account'} (${ids}) is being turned over to match what ${ids.includes(',') ? 'they are' : 'it is'}: until that finishes, some of ${ids.includes(',') ? 'their' : 'its'} earlier days in account_history are in the other sign. Nya’s daily update has stopped trying, so whoever runs your Nya has to finish it: download again once it is done.`;
+
+  test('one the daily update still tries says so, after a night or two that failed too', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    expect(await noteOf()).toEqual([tries('manual_eur')]);
+    await signJobStore.update(ctx, 'manual_eur', (j) => (j ? { ...j, failures: 2, error: 'TypeError' } : j));
+    expect(await noteOf()).toEqual([tries('manual_eur')]);
+  });
+
+  test('one tried and one stopped: a note each, naming its own', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    await signJobStore.set(ctx, 'manual_old', { v: 1, kind: 'repair', from: 'depository', to: 'depository', at: new Date(NOW).toISOString(), tag: 'sign-old', plan: {}, failures: 3, error: 'TypeError' });
+    expect(await noteOf()).toEqual([tries('manual_eur'), stoppedFor('manual_old')]);
+  });
+
+  test('one that can’t be read is never said to be tried, and one gone since it was listed says nothing', async () => {
+    fake.hashes.set(ctxKey('sign-repairs'), new Map([['manual_bad', 'not a stored value']]));
+    const ids = signJobStore.ids.bind(signJobStore);
+    const listed = spyOn(signJobStore, 'ids').mockImplementation(async (c: any) => [...(await ids(c)), 'manual_gone']);
+    try {
+      expect(await quiet(() => noteOf())).toEqual([stoppedFor('manual_bad')]);
+    } finally {
+      listed.mockRestore();
+    }
   });
 });

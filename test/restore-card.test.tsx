@@ -291,3 +291,76 @@ describe('what waits, and for how long undo lasts', () => {
     expect(looksProtected(new TextEncoder().encode('{"format": "nya-export"'))).toBe(false);
   });
 });
+
+type View = import('@/lib/user-restore/answering').AnswersView;
+const words = await import('@/components/restore-state');
+const { default: RestoreAnswers } = await import('@/components/RestoreAnswers');
+
+describe('the banks from your download, and the answers that count them', () => {
+  const account = (over: Record<string, unknown> = {}) => ({
+    account_id: 'acc_chk',
+    name: 'Checking',
+    mask: '1111',
+    type: 'depository',
+    currency: 'USD',
+    rows: { first: '2025-11-20', last: '2026-01-04', count: 3 },
+    hidden: false,
+    end: null,
+    counted: null,
+    held_by: [] as string[] | 'unread',
+    apart: { items: [] as string[], accounts: [] as string[] },
+    handed_to: null,
+    ...over,
+  });
+  const item = { kind: 'item' as const, id: 'item_new', institution: 'Chase', institution_id: 'ins_3', accounts: [{ account_id: 'new_chk', name: 'Checking', mask: '1111' }] };
+  const sf = { kind: 'connector' as const, id: 'manual_sf', institution: 'Chase', name: 'Total Checking', card: 'abc', kept: false, via: 'simplefin' as const };
+  const view = (accounts: ReturnType<typeof account>[], holders: View['holders'] = []): View => ({
+    banks: [{ institution_name: 'Chase', accounts: accounts as never, prefill: '2026-01-05', latest: '2026-10-07' }],
+    holders,
+    unreadable: false,
+  });
+
+  test('where each account’s transactions stand, in words', () => {
+    const line = (over: Record<string, unknown>) => words.accountLine(account(over) as never, [item, sf]);
+    expect(line({})).toBe('Checking ••1111, transactions Nov 20, 2025 to Jan 4, 2026: waiting for an answer');
+    expect(line({ end: { state: 'untracked', from: '2026-01-05' } })).toBe('Checking ••1111, transactions Nov 20, 2025 to Jan 4, 2026: not followed from Jan 5, 2026: its transactions aren’t counted');
+    expect(line({ counted: 'person', end: { state: 'closed', on: '2026-10-07' } })).toBe('Checking ••1111, transactions Nov 20, 2025 to Jan 4, 2026: counted up to its end (closed on Oct 7, 2026)');
+    expect(line({ counted: 'file', end: { state: 'closed', on: '2026-01-03' } })).toContain('counted up to its end (closed on Jan 3, 2026), as in your other copy');
+    expect(line({ counted: 'person', held_by: ['item_new', 'manual_sf'] })).toContain('counted once you say whether Chase and Chase Total Checking through SimpleFIN hold it');
+    expect(line({ counted: 'person', held_by: 'unread' })).toContain('counted, but not while what holds it can’t be read');
+    expect(line({ counted: 'person', handed_to: { account_id: 'manual_sf', cut: '2026-01-04' } })).toContain('carried on by Chase Total Checking through SimpleFIN: counted before Jan 4, 2026');
+    expect(line({ counted: 'person', handed_to: { account_id: 'manual_sf', cut: null } })).toContain('counted whole until that account has transactions of its own');
+    expect(line({ hidden: true })).toContain('Checking ••1111 (hidden)');
+  });
+
+  test('a waiting bank is asked whether it is gone, with the day prefilled and its latest said', () => {
+    const html = text(renderToStaticMarkup(<RestoreAnswers view={view([account()])} busy={false} onAnswer={async () => {}} onStopFollowing={async () => {}} />));
+    expect(html).toContain('Is Chase gone? Its transactions can count as an ended account’s, up to the day you give. Nya has them up to your download, so Oct 7, 2026 at the latest.');
+    expect(html).toContain('Count Chase’s transactions');
+    expect(html).toContain('Stop following, without counting them');
+    expect(html).not.toContain('Connected since');
+  });
+
+  test('a card that still owes asks before what it owes stops counting', () => {
+    const html = text(renderToStaticMarkup(<RestoreAnswers view={view([account({ type: 'credit' })])} busy={false} onAnswer={async () => {}} onStopFollowing={async () => {}} />));
+    expect(html).toContain('Stop counting what its cards and loans owe from then too');
+  });
+
+  test('a counted bank held by connections made since asks about each, and offers the answers', () => {
+    const v = view([account({ counted: 'person', end: { state: 'closed', on: '2026-10-07' }, held_by: ['item_new', 'manual_sf'] })], [item, sf]);
+    expect(words.openHolders(v).map((h) => h.id)).toEqual(['item_new', 'manual_sf']);
+    const html = text(renderToStaticMarkup(<RestoreAnswers view={v} busy={false} onAnswer={async () => {}} onStopFollowing={async () => {}} />));
+    expect(html).toContain('Is Chase one of the banks from your download? Its accounts: Checking ••1111.');
+    expect(html).toContain('None of them');
+    expect(html).toContain('None of these are at Chase');
+    expect(html).toContain('Is Chase Total Checking through SimpleFIN one of the accounts from your download?');
+    expect(html).toContain('It carries on Chase Checking ••1111');
+    expect(html).toContain('Don’t count Chase’s transactions');
+  });
+
+  test('a connection said not to be among them can be asked about again', () => {
+    const v = view([account({ counted: 'person', apart: { items: ['item_new'], accounts: [] } })], [item]);
+    expect(words.answeredHolders(v)).toEqual([{ holder: item, account_ids: ['acc_chk'] }]);
+    expect(text(renderToStaticMarkup(<RestoreAnswers view={v} busy={false} onAnswer={async () => {}} onStopFollowing={async () => {}} />))).toContain('Ask about Chase again');
+  });
+});

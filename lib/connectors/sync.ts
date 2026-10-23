@@ -89,6 +89,7 @@ import {
   type StoredProblem,
 } from './store';
 import { answeredWhole } from './institutions';
+import { matchCarried, takeOver } from './continue';
 import { connectorOf } from './registry';
 import { CONNECTOR_WORDS, ConnectorFailure, type ConnectorDef, type ConnectorKind, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
 import { manualTxnStore, newManualTxnId, type ManualTxn, type ManualTxnBook } from '../manual-txns';
@@ -238,24 +239,35 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
       await manualTxnStore.updateMany(
         ctx,
         chunk.map((p) => p.account.account_id),
-        (books) => {
+        async (books) => {
           counts = { added: 0, updated: 0 }; // this may run more than once
           const writes = new Map<string, ManualTxnBook | null>();
+          // A carried-on account is read again here, inside the books'
+          // compare-and-set (lib/connectors/continue.ts UNDO): one an undo
+          // has begun on, or that is no longer this connection's carried-on
+          // account, takes nothing more from this answer.
+          const carried = chunk.filter((p) => p.account.continued).map((p) => p.account.account_id);
+          const fresh = carried.length > 0 ? await connectorAccountsStore.getMany(ctx, carried) : new Map<string, ConnectorAccount>();
+          const stale = (a: ConnectorAccount) => a.continued !== undefined && movedSince(a, fresh.get(a.account_id) ?? null);
           for (const { account, rows } of chunk) {
+            if (stale(account)) continue;
             const book = books.get(account.account_id) ?? null;
             const next = [...(book?.rows ?? [])];
             const index = new Map<string, number>();
+            // Carried on from an account a restore brought back (lib/
+            // connectors/continue.ts): across servers, only rows from the
+            // new connection are found by id.
+            const c = account.continued;
+            const fromNew = (r: ManualTxn) => !c || c.by_id || r.created_at >= c.at || r.continues !== undefined;
             next.forEach((r, n) => {
-              if (r.source === account.connector && r.source_id) index.set(r.source_id, n);
+              if (r.source === account.connector && r.source_id && fromNew(r)) index.set(r.source_id, n);
             });
             let changed = false;
+            const unknown: ImportRow[] = [];
             for (const row of rows) {
               const n = index.get(row.source_id!);
               if (n === undefined) {
-                index.set(row.source_id!, next.length);
-                next.push(newRow(account.account_id, row, at));
-                counts.added++;
-                changed = true;
+                unknown.push(row);
                 continue;
               }
               const stored = next[n];
@@ -266,6 +278,23 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
                 counts.updated++;
                 changed = true;
               }
+            }
+            // The rows it doesn't have by id: for a carried-on account, those
+            // that may be ones from the download take them over, by the
+            // import's rule; the rest are added.
+            const { taken, added } = c ? matchCarried(c, next, unknown) : { taken: [], added: unknown };
+            for (const { row, at: n } of taken) {
+              next[n] = takeOver(next[n], row);
+              index.set(row.source_id!, n);
+              counts.updated++;
+              changed = true;
+            }
+            for (const row of added) {
+              if (index.has(row.source_id!)) continue;
+              index.set(row.source_id!, next.length);
+              next.push(newRow(account.account_id, row, at));
+              counts.added++;
+              changed = true;
             }
             if (changed) writes.set(account.account_id, { version: 1, rows: next });
           }
@@ -373,6 +402,17 @@ function windowExtras(conn: ConnectorConnection, today: string): { offered: stri
  *  not written back. One the answer reported no problem about (`troubled`
  *  lists those it did) was synced cleanly: its `ok_at` is the time of its
  *  balance. */
+/** Whether an account's entry is no longer the one a sync read (`read`) when
+ *  it began: gone, moved to another connection or provider id (carried on,
+ *  or put back by an undo), no longer carried on as it was, or being
+ *  undone (lib/connectors/continue.ts UNDO). What the sync's answer says of
+ *  the account it read is then not this one's: none of it is written. */
+export function movedSince(read: ConnectorAccount, now: ConnectorAccount | null): boolean {
+  if (!now) return true;
+  if (now.connection_id !== read.connection_id || now.remote_id !== read.remote_id || now.version !== read.version) return true;
+  return !!now.continued?.undoing;
+}
+
 async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remote: RemoteAccount }[], at: string, troubled: ReadonlySet<string>): Promise<void> {
   for (let i = 0; i < pairs.length; i += MANY_AT_ONCE) {
     const chunk = pairs.slice(i, i + MANY_AT_ONCE);
@@ -382,8 +422,10 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
       (current) => {
         const writes = new Map<string, ConnectorAccount | null>();
         for (const { account, remote } of chunk) {
-          const now = current.get(account.account_id);
-          if (!now) continue;
+          const now = current.get(account.account_id) ?? null;
+          // Carried on, put back, or being undone since the sync began: its
+          // answer is another account's now.
+          if (!now || movedSince(account, now)) continue;
           writes.set(account.account_id, {
             ...now,
             name: remote.name,
@@ -473,7 +515,7 @@ async function noteLeftOut(
     const now = next(was);
     if (!now || sameWindows(now, was)) continue;
     await connectorAccountsStore.update(ctx, a.account_id, (c) => {
-      if (!c) return c;
+      if (!c || movedSince(a, c)) return c;
       const changed = next(c.left_out);
       if (!changed || sameWindows(changed, c.left_out ?? [])) return c;
       const { left_out: _was, ...rest } = c;

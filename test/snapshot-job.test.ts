@@ -106,11 +106,14 @@ describe('the fan-out', () => {
     await runSnapshots(registry, { scheduledFor: DATE, work });
     const again = await runSnapshots(registry, { scheduledFor: DATE, work });
     expect(again.results.map((r) => r.status)).toEqual(['already', 'failed']);
-    expect(ran).toEqual([A, B, B]);
+    // A and B run side by side the first time, so either may start first;
+    // the second time B alone runs.
+    expect(ran.slice(0, 2).sort()).toEqual([A, B].sort());
+    expect(ran.slice(2)).toEqual([B]);
     expect((await readRun({ container: B }, DATE))?.attempts).toBe(2);
     // Another date is its own run.
     await runSnapshots(registry, { scheduledFor: '2026-09-26', work });
-    expect(ran).toEqual([A, B, B, A, B]);
+    expect(ran.slice(3).sort()).toEqual([A, B].sort());
   });
 
   test('containers that are not active are filtered out before anything is read or written', async () => {

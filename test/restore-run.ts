@@ -9,6 +9,7 @@
 
 import { expect } from 'bun:test';
 import { ctxKey, TEST_CTX, type FakeRedis } from './fake-redis';
+import { resetEachTest } from './shared-reset';
 import { bankTxn } from './restore-fixture';
 import type { Ctx } from '@/lib/containers';
 import { collectUserData, buildUserExport, exportFile, fileChunks } from '@/lib/user-export';
@@ -24,12 +25,19 @@ import { assembleBankRows, finishActivity } from '@/lib/activity';
 import * as restoreRoute from '@/app/api/user-restore/route';
 import * as batchRoute from '@/app/api/user-restore/batch/route';
 import * as forgetRoute from '@/app/api/user-restore/forget/route';
+import * as answersRoute from '@/app/api/user-restore/answers/route';
 
 export const EXPORTED = new Date('2026-10-06T12:00:00.000Z');
 
 /** Batches sent through the fetch, and after how many it fails as a dropped
- *  connection does. */
+ *  connection does. Set back before each test of every file that loads this
+ *  (test/preload.ts), so a test that makes the batches fail can't fail
+ *  another file's restore. */
 export const sent = { batches: 0, failAfter: Infinity };
+resetEachTest(() => {
+  sent.batches = 0;
+  sent.failAfter = Infinity;
+});
 
 /** The routes, as the page's fetch reaches them. */
 export const fetcher: Fetcher = async (input, init) => {
@@ -44,6 +52,7 @@ export const fetcher: Fetcher = async (input, init) => {
     return batchRoute.POST(req);
   }
   if (url.pathname === '/api/user-restore/forget') return forgetRoute.POST(req);
+  if (url.pathname === '/api/user-restore/answers') return answersRoute.POST(req);
   throw new Error(`no route ${url.pathname}`);
 };
 

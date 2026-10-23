@@ -245,6 +245,29 @@ export function* sealPayload(key: Uint8Array, plaintext: Iterable<Uint8Array>): 
   yield seal(key, chunkNonce(counter, true), buffer.subarray(0, fill));
 }
 
+/** sealPayload for plaintext that arrives a piece at a time asynchronously
+ *  (receipts and documents read from the file store a file at a time,
+ *  lib/attachment-zip.ts): the same chunks, sealed the same way. */
+export async function* sealPayloadAsync(key: Uint8Array, plaintext: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array<ArrayBuffer>> {
+  const buffer = new Uint8Array(CHUNK_SIZE);
+  let fill = 0;
+  let counter = 0;
+  for await (const piece of plaintext) {
+    let at = 0;
+    while (at < piece.length) {
+      if (fill === CHUNK_SIZE) {
+        yield seal(key, chunkNonce(counter++, false), buffer);
+        fill = 0;
+      }
+      const n = Math.min(CHUNK_SIZE - fill, piece.length - at);
+      buffer.set(piece.subarray(at, at + n), fill);
+      fill += n;
+      at += n;
+    }
+  }
+  yield seal(key, chunkNonce(counter, true), buffer.subarray(0, fill));
+}
+
 /** How many bytes an encrypted file is: its header, the nonce, the plaintext
  *  and a tag for each chunk (at least one). */
 export function encryptedSize(headerBytes: number, plaintextBytes: number): number {

@@ -19,7 +19,7 @@
 
 import type { Ctx } from './containers';
 import { getItems } from './storage';
-import { readStoredTxns, StateUnreadableError } from './transactions';
+import { contentKey, readStoredTxns, StateUnreadableError } from './transactions';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
 import { importedTwinsStore, importedTxnStore, IMPORTED_TXN_PREFIX } from './history-import/store';
@@ -45,6 +45,11 @@ export type FoundTxn = {
   /** Its name as stored (the merchant, else the bank's words; a manual row's
    *  payee), for a refusal to name it. */
   name: string;
+  /** A posted bank row's content key (lib/transactions.ts contentKey: the
+   *  account, the day, the amount and the bank's own words), what carries a
+   *  receipt on it across a re-link (lib/attachments.ts). Absent for a
+   *  pending row and for rows that keep their id (manual and imported). */
+  content?: string;
 };
 
 /** Where a row imported into a linked account is looked for, as a refusal
@@ -106,6 +111,7 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
           currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
           pending: t.pending,
           name: t.merchant_name || t.name,
+          ...(t.pending ? {} : { content: contentKey(t.account_id, t) }),
         });
       }
     }
@@ -168,7 +174,16 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
       for (const r of book.rows) {
         if (!restored.has(r.id)) continue;
         const b = r.bank;
-        found.set(r.id, { transaction_id: r.id, account_id: r.account_id, date: b.date, amount: b.amount, currency: b.iso_currency_code ?? b.unofficial_currency_code ?? null, pending: false, name: b.merchant_name || b.name });
+        found.set(r.id, {
+          transaction_id: r.id,
+          account_id: r.account_id,
+          date: b.date,
+          amount: b.amount,
+          currency: b.iso_currency_code ?? b.unofficial_currency_code ?? null,
+          pending: false,
+          name: b.merchant_name || b.name,
+          content: contentKey(r.account_id, b),
+        });
       }
     }
     unreadRestored = unreadable.length + unrecognised.length > 0;

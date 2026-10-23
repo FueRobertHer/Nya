@@ -7,6 +7,9 @@ import { confirmSigns, disconnect, keepRefusal, MAX_CONNECTIONS } from '@/lib/co
 import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
+import { countedBanks } from '@/lib/user-restore/answering';
+import { carryOnView } from '@/lib/connectors/continue';
+import { carryOnEnabled } from '@/lib/user-restore/enabled';
 
 // The connections to SimpleFIN or Lunch Flow the person made
 // (lib/connectors/): GET lists them for the Accounts tab, with their
@@ -28,11 +31,20 @@ export async function GET() {
     for (const a of all) if (!connections.has(a.connection_id)) orphaned.set(a.connection_id, [...(orphaned.get(a.connection_id) ?? []), a]);
     // Each connection's offers say when another connection tracks them.
     const othersOf = (id: string) => all.filter((a) => a.connection_id !== id).map((account) => ({ account, host: connections.get(account.connection_id)?.host ?? null }));
+    // Carrying an account a restore brought back on (lib/connectors/
+    // continue.ts): what Choose accounts asks, and what the first answers
+    // found for each account carried on.
+    const { carry, evidence } = await carryOnView(ctx, connections, all, carryOnEnabled());
     return NextResponse.json({
-      connections: [...connections].map(([id, c]) => connectionView(id, c, all, othersOf(id))),
-      orphaned: [...orphaned].map(([connection_id, list]) => ({ connection_id, connector: list[0].connector, accounts: list.map(accountView) })),
+      connections: [...connections].map(([id, c]) => connectionView(id, c, all, othersOf(id), evidence)),
+      carry_on: carry,
+      orphaned: [...orphaned].map(([connection_id, list]) => ({ connection_id, connector: list[0].connector, accounts: list.map((a) => accountView(a)) })),
       requests: requests ? { ...requests, limit: DAILY_REQUESTS } : null,
       max_connections: MAX_CONNECTIONS,
+      // The banks from a download counted before a link, which an account
+      // tracked here holds until it is answered for (Choose accounts says
+      // so: lib/user-restore/answering.ts countedBanks).
+      restored_counted: await countedBanks(ctx),
     });
   } catch (err) {
     return connectorError(err, 'Failed to load your connections');

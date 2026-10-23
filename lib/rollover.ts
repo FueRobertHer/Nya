@@ -828,7 +828,8 @@ export type MonthGap =
    *  (`refused`), or the person didn't allow (`no_consent`). */
   | { kind: 'without'; institution: string; reason: 'refused' | 'no_consent' }
   /** A bank a restore brought back whose transactions that month wait to be
-   *  linked to the bank connected again (lib/user-restore/restored.ts). */
+   *  linked to the bank connected again, or answered for
+   *  (lib/user-restore/restored.ts, answers.ts). */
   | { kind: 'held'; institution: string }
   /** Something the read couldn't read, in words ("your own categories"). */
   | { kind: 'unread'; what: string }
@@ -925,7 +926,7 @@ export function gapText(g: MonthGap, day: (isoOrDay: string) => string): string 
     case 'unread':
       return `${g.what} couldn’t be read`;
     case 'held':
-      return `${g.institution}’s transactions from your download wait for its accounts to be linked`;
+      return `${g.institution}’s transactions from your download wait for its accounts to be linked, or for your answer about it`;
     case 'exclusions':
       return `whether you excluded ${g.count} transaction${g.count === 1 ? '' : 's'} couldn’t be read`;
   }

@@ -43,7 +43,8 @@ import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
-import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
+import RestoreAnswers from './RestoreAnswers';
+import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, signRepairLines, turningLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -136,7 +137,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'What was brought back couldn’t be read.');
       const next = data as RestoreState;
-      setState((was) => (keep && was && !scan ? { ...next, scan: was.scan, sharing: was.sharing } : next));
+      setState((was) => (keep && was && !scan ? { ...next, scan: was.scan, sharing: was.sharing, tokens: was.tokens } : next));
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'What was brought back couldn’t be read.');
@@ -333,6 +334,18 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
     onChanged?.();
   };
 
+  /** One answer about the banks brought back (components/RestoreAnswers.tsx),
+   *  then the state read again. */
+  const answerBanks = async (body: Record<string, unknown>) => {
+    setError(null);
+    setPhase({ kind: 'working', what: 'Saving…' });
+    const answer = await ask('POST', '/api/user-restore/answers', body);
+    if (!isHint(answer) && !answer.ok) setError(answer.error);
+    setPhase({ kind: 'idle' });
+    await load(false, true);
+    onChanged?.();
+  };
+
   if (loadError) {
     return (
       <div className="card download-card restore-card">
@@ -392,6 +405,11 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
           />
 
           {record && <RecordSummary record={record} />}
+          {signRepairLines(state.sign_repairs).map((l) => (
+            <p key={l.text} className={l.warn ? 'stale-note' : 'panel-note'}>
+              {l.text}
+            </p>
+          ))}
 
           {unfinished && record?.status === 'writing' && record.done < record.plan.batches && (
             <p className="stale-note">
@@ -477,6 +495,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             <PreviewView
               loaded={phase.loaded}
               sharing={sharingLines(state.sharing ?? [])}
+              tokens={tokensLine(state.tokens)}
               withoutOk={withoutOk}
               onWithoutOk={setWithoutOk}
               passwordField={passwordField}
@@ -488,9 +507,16 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             />
           )}
 
-          {record?.status === 'finished' && banks.length > 0 && (
+          {!unfinished && state.answers && state.answers.banks.length > 0 && (
+            <RestoreAnswers view={state.answers} busy={busy} onAnswer={answerBanks} onStopFollowing={stopFollowing} />
+          )}
+
+          {record?.status === 'finished' && !state.answers && banks.length > 0 && (
             <div className="restore-section">
               <div className="section-label">Waiting for an answer</div>
+              {state.answers === null && (
+                <p className="stale-note">What you answered about these banks can’t be read right now: their transactions aren’t counted meanwhile.</p>
+              )}
               <p className="panel-note">
                 No net worth total is recorded while a bank brought back waits: a total without it would be short for good. For each one, connect it again and link
                 each account to its new one when Nya offers (its transactions then count once), or stop following it.
@@ -641,6 +667,7 @@ export function RecordSummary({ record }: { record: RecordView }) {
 export function PreviewView({
   loaded,
   sharing = [],
+  tokens = null,
   withoutOk,
   onWithoutOk,
   passwordField,
@@ -652,6 +679,8 @@ export function PreviewView({
 }: {
   loaded: Loaded;
   sharing?: readonly string[];
+  /** The API tokens made here, which stay (tokensLine), or null. */
+  tokens?: string | null;
   withoutOk: boolean;
   onWithoutOk: (ok: boolean) => void;
   passwordField: ReactNode;
@@ -664,6 +693,8 @@ export function PreviewView({
   const p = loaded.preview;
   const brought = broughtLines(p.brought, p.history);
   const left = leftOutLines(p.left_out, p.collected.never);
+  const counted = countedLines(p.counted ?? []);
+  const turning = turningLines(p.turning ?? []);
   return (
     <div className="restore-section">
       <div className="section-label">What comes back</div>
@@ -679,6 +710,26 @@ export function PreviewView({
           <li key={l}>{l}</li>
         ))}
       </ul>
+      {counted.length > 0 && (
+        <>
+          <div className="section-label">Accounts that ended</div>
+          <ul className="restore-list">
+            {counted.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {turning.length > 0 && (
+        <>
+          <div className="section-label">Balance history being turned over</div>
+          <ul className="restore-list">
+            {turning.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </>
+      )}
       {sharing.length > 0 && (
         <>
           <div className="section-label">Shared already</div>
@@ -688,6 +739,12 @@ export function PreviewView({
               <li key={l}>{l}</li>
             ))}
           </ul>
+        </>
+      )}
+      {tokens && (
+        <>
+          <div className="section-label">API tokens</div>
+          <p className="panel-note">{tokens}</p>
         </>
       )}
       {p.collected.notes.length > 0 && (

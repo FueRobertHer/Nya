@@ -170,6 +170,14 @@ export type Txn = {
   // a payment carries across a re-link (lib/shared-expenses/rows.ts); never
   // sent, gone with the facts above.
   content_key?: string;
+
+  // Whether it has receipts or documents (lib/attachments.ts), for the
+  // person's own Activity alone (lib/activity.ts finishActivity's
+  // `attached`): true, or null when that couldn't be read; absent for none,
+  // and on every row the API or a share answers. `attached_on`: the ids whose
+  // files it shows (its own, and the imported rows it stands for).
+  attached?: true | null;
+  attached_on?: string[];
   // On a posted bank row, the pending one it replaced (Plaid's
   // pending_transaction_id), whose approval is its own until the sync that
   // removes the pending one moves it (lib/review-store.ts). Never sent.
@@ -1230,6 +1238,16 @@ async function syncItem(ctx: Ctx,
     // reads this module's rows itself.
     await (await import('./history-import/twins')).keepImportedTwins(ctx, item, stored.txns, state.txns);
     const write = await writeState(ctx, item.item_id, state);
+    // The receipts and documents on rows this sync removed follow them (to the
+    // posted row a pending one became, now or in a later sync, or a re-post
+    // among the rows it added), and those waiting on an
+    // earlier account linked to this one are placed once its history is in
+    // (lib/attachments.ts). Before the prune below, as approvals move. Never
+    // fails the sync. Imported here, when needed, as it reads this module.
+    if (write.persisted) {
+      const added = new Set(Object.keys(state.txns).filter((id) => !Object.hasOwn(stored.txns, id)));
+      await (await import('./attachments')).settleAfterSync(ctx, { removed, added, rows: Object.values(state.txns), historyIn: !state.history_pending && !hasMore });
+    }
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.
     if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed, Object.values(state.txns));

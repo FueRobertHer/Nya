@@ -49,14 +49,16 @@ export type SignJob = {
   plan?: SignPlan;
   /** The days it left as they were, each with why nothing says how it was counted. */
   left?: [string, Why][];
-  /** Nights it failed (or turned nothing over, out of time: 'Stalled'), and
-   *  the last failure's kind: past MAX_FAILED_NIGHTS
+  /** Nights in a row it failed (or turned nothing over, out of time:
+   *  'Stalled') without getting through any of it: a run that gets through
+   *  some sets the count back, so one that then fails counts as the first
+   *  of a new run. With the last failure's kind: past MAX_FAILED_NIGHTS
    *  the nightly job leaves it to the operator, whose dry run names it. */
   failures?: number;
   error?: string;
 };
 
-/** How many nights a job may fail before the nightly job stops trying it. */
+/** How many nights in a row a job may fail, getting nowhere, before the nightly job stops trying it. */
 export const MAX_FAILED_NIGHTS = 3;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -126,3 +128,35 @@ export const SIGN_JOB_STOPPED = 'Its past balances are being turned over to matc
 
 /** The words for a job pending, by how it has gone. */
 export const pendingWords = (job: SignJob): string => ((job.failures ?? 0) >= MAX_FAILED_NIGHTS ? SIGN_JOB_STOPPED : SIGN_JOB_PENDING);
+
+/** What became of an account a download was turning over as it was made,
+ *  once brought back here (lib/sign-turning.ts; lib/sign-repair.ts
+ *  planRestoredRepairs): `named` by the file, not looked at yet; `planned`,
+ *  a repair job planned where the restored totals prove every day (and
+ *  finished here, as any job is); `none`, nothing left to turn over; or
+ *  `waiting`, some day can't be told exactly (`days`, the first of them),
+ *  so nothing was turned over and it waits for the operator's repair
+ *  (app/api/ops/sign-repair), which clears it. */
+export type RestoredSignRepair = { v: 1; state: 'named' | 'planned' | 'none' | 'waiting'; days: string[]; set_at: string };
+
+function isRestoredSignRepair(v: unknown): v is RestoredSignRepair {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    Object.keys(r).every((k) => ['v', 'state', 'days', 'set_at'].includes(k)) &&
+    r.v === 1 &&
+    (r.state === 'named' || r.state === 'planned' || r.state === 'none' || r.state === 'waiting') &&
+    Array.isArray(r.days) &&
+    r.days.length <= 10 &&
+    r.days.every((d) => typeof d === 'string' && DAY.test(d)) &&
+    isText(r.set_at, 40) &&
+    !Number.isNaN(Date.parse(r.set_at))
+  );
+}
+
+/** By account id: bookkeeping of a restore, beside the jobs. */
+export const restoredSignRepairsStore = defineMapStore<RestoredSignRepair>('restored-sign-repairs', {
+  what: 'balance sign repairs a download was making',
+  isValid: isRestoredSignRepair,
+  exportable: false, // what a restore found of a job the other copy left: bookkeeping, about this copy
+});

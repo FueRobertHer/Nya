@@ -24,10 +24,12 @@ const STOPPED: ReadonlySet<string> = new Set(['needs_reauth', 'outage', 'relink'
 
 export type Incomplete =
   | { institution_name: string; coverage: 'missing' | 'importing' }
-  /** A bank a restore brought back whose transactions wait to be linked to
-   *  the bank connected again (lib/user-restore/restored.ts): counted in no
-   *  month from `from` to `to` (its first and last restored days) until
-   *  then. */
+  /** A bank a restore brought back whose transactions wait (lib/user-
+   *  restore/restored.ts): to be linked to the bank connected again, or
+   *  answered for under Bring back a download (counted as an ended
+   *  account's, or said not to be at a connection made since:
+   *  lib/user-restore/answers.ts). Counted in no month from `from` to `to`
+   *  (its first and last restored days) until then. */
   | { institution_name: string; coverage: 'held'; from: string; to: string };
 export type Stopped = { institution_name: string; last_ok_at: string | null };
 
@@ -84,8 +86,8 @@ export function monthGaps(
  *  month", "October"). */
 export function heldNote(names: readonly string[], period = 'this month'): string {
   return names.length === 1
-    ? `Doesn't include ${names[0]}'s transactions from your download: they count once its accounts are linked to the bank connected again (Accounts tab), so ${period} may be incomplete.`
-    : `Doesn't include the transactions from your download of ${joinNames([...names])}: they count once each bank's accounts are linked to the bank connected again (Accounts tab), so ${period} may be incomplete.`;
+    ? `Doesn't include ${names[0]}'s transactions from your download: they count once its accounts are linked to the bank connected again (Accounts tab), or once you answer for it (Manage, Bring back a download), so ${period} may be incomplete.`
+    : `Doesn't include the transactions from your download of ${joinNames([...names])}: they count once each bank's accounts are linked to the bank connected again (Accounts tab), or once you answer for it (Manage, Bring back a download), so ${period} may be incomplete.`;
 }
 
 /** "A", "A and B", "A, B and C". */

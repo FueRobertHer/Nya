@@ -47,8 +47,12 @@
 // whose review was matched against them, as it says itself
 // (`matched_restored`, lib/history-import/store.ts): what the person
 // answered there (a row of its own beside a restored one) stands, however
-// often the accounts are unlinked and linked again. An import from before
-// that was kept is judged by its time alone.
+// often the accounts are unlinked and linked again. Its summary repeats it,
+// and every writer of a summary keeps it (summaryOfEntry, and the undo's
+// spread of what is stored, the release before's too). An import made before
+// that was kept, during a link that has changed since (undone and made
+// again, or made to another account), is judged by its time alone, so a row
+// the person said was new beside a restored one could be paired with it.
 //
 // THE TOTALS HOLD (totalsHold). While a restore is still being written or
 // undone, or a restored account is neither linked nor ended (Stop following),

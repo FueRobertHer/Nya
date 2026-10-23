@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
+import { attachedIds } from '@/lib/attachments';
+import { personMode } from '@/lib/attachment-http';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
@@ -80,14 +82,18 @@ export async function GET(req: Request) {
     }
 
     const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note, shared_expenses }, without_transactions] = await Promise.all([
-      finishActivity(ctx, plaid, hidden, { grow: true }),
+      // With which rows have receipts or documents: this route is the
+      // person's own Activity (lib/activity.ts `attached`). Read from the
+      // index's field names alone; one that can't be read says so on each
+      // row, never "none".
+      finishActivity(ctx, plaid, hidden, { grow: true, attached: await attachedIds(ctx).catch(() => null) }),
       // With what the files imported into each one's accounts cover, for one
       // whose transactions don't come in: a month they cover isn't said to be
       // missing them (lib/history-import/without-files.ts). Read on every
       // load, never cached: the cached part is Plaid's alone.
       withImportedFiles(ctx, plaid.without_transactions ?? []),
     ]);
-    const fx = await readRates(transactions);
+    const [fx, files] = await Promise.all([readRates(transactions), personMode()]);
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -120,6 +126,9 @@ export async function GET(req: Request) {
       // The review queue (lib/review-store.ts): on from a day, or off; what
       // needs review is marked on each row (lib/review-layer.ts).
       review,
+      // Whether receipts and documents can be opened here, and added
+      // (lib/attachments-mode.ts): the Activity tab offers them only then.
+      attachments: { connected: files.connected, uploads: files.uploads },
       as_of: plaid.as_of,
       from_cache: fromCache,
     });

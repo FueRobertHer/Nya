@@ -27,7 +27,7 @@
 import { readJsonBytes, JsonReadError, type JsonEvent, type JsonPath } from './stream';
 import { CORE, HEADER, checkFormat, problemShape, seamEntry, type Check } from './shapes';
 import { CORE_PARTS, HEADER_PARTS, NEVER_CORE, SEAM, isKnownPart } from './parts';
-import { acrossParts, accountsOf, Batcher, historySpan, restoreProblems, restoredRowOf, smallParts, type BookEntry, type Collected, type Fact, type Without } from './plan';
+import { acrossParts, accountsOf, Batcher, endedInFile, historySpan, turningIn, restoreProblems, restoredRowOf, smallParts, type BookEntry, type Collected, type Fact, type Without } from './plan';
 import { BATCH_BYTES, BOOK_ROWS, investmentCoverageId, investmentPartId, MAX_BATCHES, restoredBookId } from './ids';
 import { isRecord } from './records';
 
@@ -103,7 +103,7 @@ export async function collect(source: FileSource): Promise<Collected> {
     entries: new Map(),
     books: new Map(),
     facts: new Map(),
-    never: { api_tokens: 0, sharing: 0 },
+    never: { api_tokens: 0, sharing: 0, attachments: 0 },
   };
   const header: Record<string, unknown> = {};
   let wanted = new Set<string>();
@@ -145,6 +145,7 @@ export async function collect(source: FileSource): Promise<Collected> {
         check(CORE[part as keyof typeof CORE].whole!, e.value, part);
         c.core[part] = e.value;
         if (part === 'api_tokens') c.never.api_tokens = (e.value as unknown[]).length;
+        if (part === 'attachments') c.never.attachments = (e.value as unknown[]).length;
         if (part === 'sharing' && isRecord(e.value) && Array.isArray(e.value.connections)) c.never.sharing = e.value.connections.length;
         return;
       }
@@ -297,6 +298,12 @@ export type Preview = {
   left_out: Record<string, number>;
   history: { first: string; last: string } | null;
   earlier: { exported_at: string; restored_at: string }[];
+  /** The accounts the file says ended that count here as they did there,
+   *  up to their end (plan.ts endedInFile), each named as the card names it. */
+  counted: { institution_name: string; name: string | null; mask: string | null; day: string }[];
+  /** The accounts the file says were being turned over to match their kind
+   *  (plan.ts turningIn), which the finish repairs where it can. */
+  turning: { account_id: string; name: string }[];
 };
 
 /** What the file would bring back (see Preview). */
@@ -316,7 +323,8 @@ export function previewOf(c: Collected): Preview {
   if (isRecord(prior) && isRecord(prior.source) && typeof prior.source.exported_at === 'string' && typeof prior.started_at === 'string') {
     earlier.push(...(Array.isArray(prior.earlier) ? (prior.earlier as Preview['earlier']) : []), { exported_at: prior.source.exported_at, restored_at: prior.started_at });
   }
-  return { collected: c, refuse, without, brought, left_out: small.left_out, history: historySpan(c), earlier: earlier.slice(-50) };
+  const counted = endedInFile(c, accounts.restored).map(({ account: a, day }) => ({ institution_name: a.institution_name, name: a.name, mask: a.mask, day }));
+  return { collected: c, refuse, without, brought, left_out: small.left_out, history: historySpan(c), earlier: earlier.slice(-50), counted, turning: turningIn(c) };
 }
 
 /** A batch as it is built: its part, its body (exactly the bytes sent), and

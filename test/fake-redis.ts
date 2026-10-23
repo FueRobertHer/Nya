@@ -980,8 +980,15 @@ export const TEST_CTX = { container: TEST_CONTAINER } as { container: any };
 
 /** Registers TEST_CONTAINER as the one active container, so a route's
  *  dataCtx() resolves to it. Pair with forgetEpochs() (lib/sessions.ts), which
- *  drops the few seconds the deployment's container is reused for. */
+ *  drops the few seconds the deployment's container is reused for.
+ *
+ *  It also forgets what lib/crypto keeps of containers' keys for a minute:
+ *  every file stores TEST_CONTAINER's data, so a key entry read from an
+ *  earlier file's store (one wrapped under a MASTER_KEY that file set and
+ *  then took away) would otherwise be used for this one's, and fail. Loaded
+ *  here, after the file has mocked lib/storage. */
 export async function registerTestContainer(fake: FakeRedis, status: 'active' | 'restoring' | 'archived' = 'active'): Promise<void> {
+  (await import('@/lib/crypto')).forgetActiveKey();
   await fake.hset(testKey('containers'), {
     [TEST_CONTAINER]: JSON.stringify({ status, primary: true, created_at: '2026-01-01T00:00:00.000Z' }),
   });

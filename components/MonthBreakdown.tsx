@@ -52,6 +52,8 @@ import ReviewBar from "./ReviewBar";
 import ReviewNote from "./ReviewNote";
 import CardMode from "./CardMode";
 import { SharedRowActions, SharedRowLine, type SharedRowHooks } from "./SharedRows";
+import AttachmentSection from "./AttachmentSection";
+import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -175,6 +177,10 @@ export type Txn = {
   shared_twice?: string[];
   settles?: SettlesMark;
   settles_unapplied?: SettlesUnapplied;
+  // As in lib/transactions.ts (#47): whether it has receipts or documents
+  // (null when that couldn't be read), and the ids whose files it shows.
+  attached?: true | null;
+  attached_on?: string[];
   // And, as in lib/transactions.ts, the review queue's marks
   // (lib/review-layer.ts ReviewMarks): whether it needs review, when it was
   // approved, what changed since, and the merchant's default that filed it.
@@ -375,6 +381,7 @@ export default function MonthBreakdown({
   onSplitsChanged,
   review,
   shared,
+  onAttachmentsChanged,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -436,6 +443,10 @@ export default function MonthBreakdown({
   /** Shared expenses (#49, components/SharedRows.tsx): each row's line, and
    *  sharing or confirming a payment from its detail. Without it, none. */
   shared?: SharedRowHooks;
+  /** After a receipt or document is added, moved or deleted (#47): the list
+   *  read again, for its paperclips. Without it (no file store connected),
+   *  no receipt is shown, offered or filtered by. */
+  onAttachmentsChanged?: () => void;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
@@ -462,6 +473,11 @@ export default function MonthBreakdown({
   const [reviewOnly, setReviewOnly] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(false);
   const reviewing = reviewOnly && !!review?.view?.on;
+  // The filter by receipt (#47, components/receipt-filter.ts), and the amount
+  // a transaction without one is over.
+  const [receiptChoice, setReceiptChoice] = useState<ReceiptChoice>("");
+  const [receiptOver, setReceiptOver] = useState("");
+  const byReceipt: ReceiptChoice = onAttachmentsChanged ? receiptChoice : "";
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -617,7 +633,12 @@ export default function MonthBreakdown({
   const listed = picked ?? monthTxns;
   // A split transaction is kept whole, every part of it, when any part is
   // (#39): its parts are listed under it, and its split edited from all.
-  const visible = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags), [listed, query, filterTag, reviewing, tags]);
+  const searched = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags), [listed, query, filterTag, reviewing, tags]);
+  // Then the filter by receipt (#47): every part of a split transaction has
+  // its transaction's mark and amount, so it keeps them all or none.
+  const receipted = useMemo(() => receiptRows(searched, byReceipt, receiptOver), [searched, byReceipt, receiptOver]);
+  const visible = receipted.rows;
+  const filtering = !!(query || filterTag || reviewing || byReceipt);
   // Once a pick has filled the list: the list into view, and focus on the
   // line saying what it shows, so a pick made from the chart's table by
   // keyboard goes on from the list rather than from the button left above.
@@ -946,7 +967,7 @@ export default function MonthBreakdown({
           <div className="inst-total">
             {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
             {countTransactions(visible)}
-            {query || filterTag || reviewing ? ` of ${countTransactions(listed)}` : ""}
+            {filtering ? ` of ${countTransactions(listed)}` : ""}
           </div>
         </div>
         {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
@@ -959,6 +980,27 @@ export default function MonthBreakdown({
           onChange={(e) => setQuery(e.target.value)}
         />
         <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
+        {onAttachmentsChanged && (
+          <div className="receipt-filter">
+            <select className="text-input" value={receiptChoice} onChange={(e) => setReceiptChoice(e.target.value as ReceiptChoice)} aria-label="Show transactions by receipt">
+              <option value="">With or without a receipt</option>
+              <option value="with">Has a receipt or document</option>
+              <option value="without">No receipt, money out over…</option>
+            </select>
+            {receiptChoice === "without" && (
+              <input
+                className="text-input"
+                inputMode="decimal"
+                autoComplete="off"
+                value={receiptOver}
+                onChange={(e) => setReceiptOver(e.target.value)}
+                placeholder="0"
+                aria-label="Money out over, in each transaction’s own currency"
+              />
+            )}
+          </div>
+        )}
+        {unknownNote(receipted.unknown) && <div className="stale-note">{unknownNote(receipted.unknown)}</div>}
         {/* The review queue, while it is on: its count, filter, Card Mode and approving what's listed. */}
         {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
 
@@ -990,9 +1032,13 @@ export default function MonthBreakdown({
 
         {visible.length === 0 ? (
           <p className="empty-note">
-            {reviewing && !query && !filterTag
+            {reviewing && !query && !filterTag && !byReceipt
               ? "Nothing listed needs review."
-              : query || filterTag
+              : byReceipt === "with" && !query && !filterTag
+              ? "No transaction listed has a receipt or document."
+              : byReceipt === "without" && !query && !filterTag
+              ? "Nothing listed over that amount is missing a receipt."
+              : query || filterTag || byReceipt
               ? "No transactions match your search."
               : flowPick
                 ? "Nothing to list."
@@ -1056,6 +1102,13 @@ export default function MonthBreakdown({
                               )}
                               {t.note && (
                                 <span className="note-tag" title={t.note}> · note</span>
+                              )}
+                              {onAttachmentsChanged && t.attached === true && (
+                                <span className="attach-tag" title="Has a receipt or document">
+                                  {" · "}
+                                  <PaperclipIcon />
+                                  <span className="visually-hidden">has a receipt or document</span>
+                                </span>
                               )}
                               {review?.view?.on && needsReview(t) && <span className="review-tag"> · to review</span>}
                               <TagChips ids={t.tags} tags={tags} />
@@ -1269,6 +1322,8 @@ export default function MonthBreakdown({
                                 </ul>
                               </div>
                             )}
+                            {/* Its receipts and documents (#47), read as it opens. */}
+                            {onAttachmentsChanged && <AttachmentSection t={whole(t)} rows={txns} onChanged={onAttachmentsChanged} />}
                             {!t.group_members && <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />}
                           </div>
                         )}
@@ -1344,5 +1399,14 @@ export default function MonthBreakdown({
         </>
       )}
     </>
+  );
+}
+
+/** The mark of a transaction with a receipt or document. */
+function PaperclipIcon() {
+  return (
+    <svg className="attach-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+    </svg>
   );
 }

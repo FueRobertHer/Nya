@@ -502,6 +502,12 @@ export async function finishActivity(
     endedFrom?: ReadonlyMap<string, string>;
     subjects?: Map<string, RuleSubject>;
     followLinks?: boolean;
+    /** The transactions with receipts or documents placed on them
+     *  (lib/attachments.ts attachedIds), or null when that couldn't be read:
+     *  for the person's own Activity alone (app/api/transactions). The API,
+     *  shares and every other reader never pass it, so their rows never say
+     *  whether a transaction has one, and never read the store. */
+    attached?: ReadonlySet<string> | null;
   } = {}
 ): Promise<{
   transactions: Txn[];
@@ -606,6 +612,10 @@ export async function finishActivity(
   // its transaction is gone (lib/shared-expenses/rows.ts).
   const rowFacts = new Map<string, { account?: string; key?: string }>();
   for (const t of transactions) rowFacts.set(t.transaction_id, { account: t.account_id ?? t.account_ref, key: t.content_key });
+  // Which rows have receipts or documents, for the person's own Activity (see
+  // `attached`): a row's own and those of the rows it stands for, before the
+  // layers take `stands_for` off; a split's parts keep their transaction's.
+  if (opts.attached !== undefined) markAttached(transactions, stands, opts.attached);
   // The categories first, which the rules read; then the rules, what was
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
@@ -637,6 +647,18 @@ export async function finishActivity(
     ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
     ...(stands.size > 0 ? { stands } : {}),
   });
+  // A group's row has them when one of its transactions does.
+  if (opts.attached !== undefined) {
+    for (const r of expanded.rows) {
+      const members = (r as { group_members?: Txn[] }).group_members;
+      if (!members) continue;
+      const on = members.flatMap((m) => m.attached_on ?? []);
+      if (members.some((m) => m.attached === true)) {
+        r.attached = true;
+        r.attached_on = [...new Set(on)];
+      } else if (members.some((m) => m.attached === null)) r.attached = null;
+    }
+  }
   // After them, shared expenses (lib/shared-expenses/rows.ts): a shared
   // transaction at your part beside the others' parts, a payment that paid
   // something back beside what it paid, and an IOU you owe for something as
@@ -689,4 +711,22 @@ export async function finishActivity(
     tags: tagRead.set,
     manual_unread: manual.unread,
   };
+}
+
+/** Marks each row with receipts or documents (finishActivity's `attached`):
+ *  its own, or those of the rows it stands for (a posted one's: a pending
+ *  bank row stands in for nothing yet), `attached_on` naming them; with the
+ *  index unreadable (null), every row says it isn't known. */
+export function markAttached(rows: Txn[], stands: ReadonlyMap<string, readonly string[]>, attached: ReadonlySet<string> | null): void {
+  for (const t of rows) {
+    if (attached === null) {
+      t.attached = null;
+      continue;
+    }
+    const on = [t.transaction_id, ...(t.pending ? [] : (stands.get(t.transaction_id) ?? []))].filter((id) => attached.has(id));
+    if (on.length > 0) {
+      t.attached = true;
+      t.attached_on = on;
+    }
+  }
 }
