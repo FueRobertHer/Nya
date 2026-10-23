@@ -880,8 +880,10 @@ export async function planRestoredRepairs(ctx: Ctx, opts: { until?: number; befo
 
 /** One account a restore's file was turning over, as the restore card says
  *  it: by name, what became of it, and the days nothing told (`waiting`);
- *  `pending` while its job is still under way. */
-export type RestoredRepairView = { account_id: string; name: string; state: RestoredSignRepair['state']; days: string[]; pending: boolean };
+ *  `pending` while its job is still under way, and `stopped` once the
+ *  nightly job has stopped trying it (MAX_FAILED_NIGHTS), as for any job:
+ *  then whoever runs the copy has to finish it. */
+export type RestoredRepairView = { account_id: string; name: string; state: RestoredSignRepair['state']; days: string[]; pending: boolean; stopped: boolean };
 
 /** What the card says of the accounts a restore's file was turning over (see
  *  BROUGHT BACK): those not looked at yet, those whose repair is under way,
@@ -891,10 +893,10 @@ export async function restoredRepairsView(ctx: Ctx): Promise<RestoredRepairView[
   const entries = await restoredSignRepairsStore.getAll(ctx);
   const out: RestoredRepairView[] = [];
   for (const [id, r] of entries) {
-    const pending = !!(await pendingJobOf(ctx, id));
-    if (r.state === 'none' || (r.state === 'planned' && !pending)) continue;
+    const job = await pendingJobOf(ctx, id);
+    if (r.state === 'none' || (r.state === 'planned' && !job)) continue;
     const name = (await getManualAccount(ctx, id))?.name ?? (await connectorAccountsStore.get(ctx, id))?.name ?? 'An account';
-    out.push({ account_id: id, name, state: r.state, days: r.days, pending });
+    out.push({ account_id: id, name, state: r.state, days: r.days, pending: !!job, stopped: !!job && (job.failures ?? 0) >= MAX_FAILED_NIGHTS });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name) || a.account_id.localeCompare(b.account_id));
 }

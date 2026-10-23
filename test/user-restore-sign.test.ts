@@ -54,8 +54,8 @@ const history = await import('@/lib/history');
 const { getHiddenAccounts } = await import('@/lib/hidden');
 const { projectViews } = await import('@/lib/share-views');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
-const { signJobStore, runSignJob, repairSignFlip, finishSignJobs } = await import('@/lib/sign-repair');
-const { restoredSignRepairsStore } = await import('@/lib/sign-repair-store');
+const { signJobStore, runSignJob, repairSignFlip, finishSignJobs, restoredRepairsView } = await import('@/lib/sign-repair');
+const { restoredSignRepairsStore, MAX_FAILED_NIGHTS } = await import('@/lib/sign-repair-store');
 const { turningOverWords, turningOverIds } = await import('@/lib/sign-turning');
 const { classOfKey, keptWhenEmptied } = await import('@/lib/user-restore/classes');
 const { SEAM } = await import('@/lib/user-restore/parts');
@@ -247,14 +247,14 @@ describe('a download made while a job was pending', () => {
     await sendBatches(source, c, record, { fetcher, plan });
     const finished = await quiet(() => restoreCall('POST', `/api/user-restore/batch?restore_id=${encodeURIComponent(record.id)}&finish=1`));
     expect(finished.status).toBe(200);
-    expect(finished.body.sign_repairs).toEqual([{ account_id: 'manual_eur', name: 'Euro savings', state: 'waiting', days: ['2026-09-12'], pending: false }]);
+    expect(finished.body.sign_repairs).toEqual([{ account_id: 'manual_eur', name: 'Euro savings', state: 'waiting', days: ['2026-09-12'], pending: false, stopped: false }]);
     expect(await restoredSignRepairsStore.get(ctx, 'manual_eur')).toMatchObject({ state: 'waiting', days: ['2026-09-12'] });
     expect(await pendingIds()).toEqual([]);
     // Nothing turned over: every value as the file had it.
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_eur: 5000 });
     for (const d of EST) expect(await stored('history:accounts:est:flatd', d)).toEqual({ manual_eur: 5000 });
     const state = await restoreCall('GET', '/api/user-restore');
-    expect(state.body.sign_repairs).toEqual([{ account_id: 'manual_eur', name: 'Euro savings', state: 'waiting', days: ['2026-09-12'], pending: false }]);
+    expect(state.body.sign_repairs).toEqual([{ account_id: 'manual_eur', name: 'Euro savings', state: 'waiting', days: ['2026-09-12'], pending: false, stopped: false }]);
     expect(signRepairLines(state.body.sign_repairs)).toEqual([
       {
         text: 'Euro savings’s balance history was being turned over to match its kind in your other copy, and nothing says how it was counted on Sep 12, 2026: so nothing was turned over, and some of its earlier days may count the other way. Whoever runs your Nya can repair it, after looking at what it would change.',
@@ -294,6 +294,40 @@ describe('a download made while a job was pending', () => {
     expect(await restoredSignRepairsStore.get(ctx, 'manual_eur')).toMatchObject({ state: 'planned' });
     expect(await pendingIds()).toEqual([]);
     for (const d of EST) expect(await stored('history:accounts:est:flatd', d)).toEqual({ manual_eur: -5000 });
+  });
+
+  test('one planned that the nightly job has stopped trying is said so: whoever runs the copy has to finish it', async () => {
+    // A restored repair is an ordinary job: planned, then failing on
+    // MAX_FAILED_NIGHTS nights in a row without getting through any of it.
+    const at = new Date(NOW).toISOString();
+    await restoredSignRepairsStore.set(ctx, 'manual_eur', { v: 1, state: 'planned', days: [], set_at: at });
+    const job = { v: 1, kind: 'repair', from: 'credit', to: 'credit', at, tag: 'sign-x', plan: { f: EST.map((d) => [d, 5000] as [string, number]) } } as const;
+    await signJobStore.set(ctx, 'manual_eur', { ...job, failures: MAX_FAILED_NIGHTS - 1, error: 'Stalled' });
+    // Still tried: the next daily update finishes it.
+    expect(await restoredRepairsView(ctx)).toEqual([{ account_id: 'manual_eur', name: 'Euro savings', state: 'planned', days: [], pending: true, stopped: false }]);
+    expect(signRepairLines(await restoredRepairsView(ctx))).toEqual([
+      { text: 'Euro savings’s balance history is being turned over to match its kind, as your other copy had begun: Nya’s next daily update finishes it.', warn: false },
+    ]);
+    // Stopped: the nightly job leaves it as it is, and the card says so, as
+    // the download's note says of a job stopped (lib/sign-turning.ts).
+    await signJobStore.set(ctx, 'manual_eur', { ...job, failures: MAX_FAILED_NIGHTS, error: 'Stalled' });
+    await finishSignJobs(ctx);
+    expect(await signJobStore.get(ctx, 'manual_eur')).toEqual({ ...job, failures: MAX_FAILED_NIGHTS, error: 'Stalled' });
+    for (const d of EST) expect(await stored('history:accounts:est:flatd', d)).toEqual({ manual_eur: 5000 });
+    const state = await restoreCall('GET', '/api/user-restore');
+    expect(state.body.sign_repairs).toEqual([{ account_id: 'manual_eur', name: 'Euro savings', state: 'planned', days: [], pending: true, stopped: true }]);
+    expect(signRepairLines(state.body.sign_repairs)).toEqual([
+      {
+        text: 'Euro savings’s balance history is being turned over to match its kind, as your other copy had begun, and Nya’s daily update has stopped trying, so whoever runs your Nya has to finish it.',
+        warn: true,
+      },
+    ]);
+    // The operator's repair, once the cause is fixed, finishes it, and the
+    // card no longer names it.
+    const res: Response = await opsRoute.POST(new Request('http://x/api/ops/sign-repair', { method: 'POST', headers: { authorization: 'Bearer s3cret' }, body: JSON.stringify({ container: ctx.container, account_id: 'manual_eur', repair: true }) }));
+    expect(res.status).toBe(200);
+    expect(await pendingIds()).toEqual([]);
+    expect(await restoredRepairsView(ctx)).toEqual([]);
   });
 
   test('a file with nothing being turned over names nothing, and its finish writes nothing of it', async () => {
