@@ -83,6 +83,7 @@ import { allocationSettingsStore } from './allocation-settings';
 import { plannedStore } from './planned-store';
 import { ownerSharesAccount } from './sharing';
 import { dismissedGroup, seriesGroupsOfEither } from './recurring';
+import { signJobStore, SIGN_JOB_PENDING } from './sign-repair-store';
 
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
@@ -330,6 +331,9 @@ async function undoAccountMade(ctx: Ctx, c: Change, now: number, run: Run): Prom
   const life = { first: c.at.slice(0, 10), last: new Date(now).toISOString().slice(0, 10) };
   return withLinksLock(ctx, async () => {
     run.held = true;
+    // Never beside a job turning its balances over (lib/sign-repair.ts): its
+    // fold would read them half in each sign.
+    if (await signJobStore.has(ctx, id)) refuse(`${SIGN_JOB_PENDING} It wasn’t undone.`);
     const cur = await getManualAccount(ctx, id);
     const reached = run.resume ? run.progress : undefined;
     if (cur) {

@@ -4,6 +4,7 @@ import { getContainer, isContainerId, type Ctx } from '@/lib/containers';
 import { checkContainerKey } from '@/lib/crypto';
 import { findSignFlips, repairSignFlip, SignRepairRefused } from '@/lib/sign-repair';
 import { ForgetRefused } from '@/lib/links';
+import { storeFailure } from '@/lib/store-failure';
 
 // Accounts whose past balances are read the other way on some days: a manual
 // account changed between money held and money owed under a release before
@@ -14,15 +15,21 @@ import { ForgetRefused } from '@/lib/links';
 //
 //   {"container": "<id>"}
 //         the dry run: every such account in the container, with the days
-//         its totals say were counted the other way (how many, by layer, the
-//         first and the last), or the days that can't be told and why, and
-//         a repair already under way. Writes nothing.
+//         its totals prove, or its neighbours say, were counted the other way
+//         (how many, by layer, the first and the last), the days that refuse
+//         a repair and why, the days nothing tells (`undetermined`), and a
+//         repair already under way, with the nights it failed. Writes nothing.
 //   {"container": "<id>", "account_id": "<id>", "repair": true}
 //         repairs that one account, or finishes its repair if one is under
-//         way: refused (409), with nothing written, when a day can't be told.
+//         way (`pending` when it stopped at its time: send it again), or
+//         drops one planned for a kind the account no longer has
+//         (`abandoned`): refused (409), with nothing written, when a day
+//         can't be told.
 //
 // Anything else is refused. Locked like every /api/ops route (lib/ops.ts).
-// Answers name ids, days and counts, never an amount or a name.
+// Answers name ids, days and counts, never an amount or a name. Errors as on
+// the storage seam (lib/store-failure.ts): 503 for a container whose key
+// can't be used, 409 for a store that can't be read or kept changing.
 
 // A repair negates each day in one step under the links lock, which is
 // sized to this (lib/links.ts LINKS_LOCK_REQUEST_SECONDS).
@@ -66,12 +73,18 @@ export async function POST(req: Request) {
     await checkContainerKey(ctx);
     if (dry) return NextResponse.json({ container, accounts: await findSignFlips(ctx) });
     const done = await repairSignFlip(ctx, b.account_id as string);
-    return NextResponse.json({ container, account_id: b.account_id, negated: done.negated });
+    return NextResponse.json({
+      container,
+      account_id: b.account_id,
+      negated: done.negated,
+      ...(done.left.length > 0 ? { undetermined: { count: done.left.length, days: done.left.slice(0, 10) } } : {}),
+      ...(done.pending ? { pending: true } : {}),
+      ...(done.abandoned ? { abandoned: done.abandoned } : {}),
+    });
   } catch (err) {
     if (err instanceof SignRepairRefused) return NextResponse.json({ error: err.message, days: err.days }, { status: 409 });
     if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
-    console.error('Sign repair failed:', err instanceof Error ? err.name : typeof err);
-    return bad('The repair failed; check the logs and try again: what was done is kept, and the rest is finished by trying again.', 500);
+    return storeFailure(err, dry ? 'The dry run failed; check the logs and try again.' : 'The repair failed; check the logs and try again: what was done is kept, and the rest is finished by trying again.');
   }
 }
 

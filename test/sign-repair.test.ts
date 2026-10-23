@@ -190,11 +190,11 @@ describe('an account flipped between money held and owed under the release befor
     const raw = new Map(fake.hashes.get(ctxKey('history:accounts')));
     const found = await ops({ container: ctx.container });
     expect(found.body.accounts).toEqual([
-      expect.objectContaining({ account_id: 'manual_eur', days: {}, refused: { days: ['2026-09-12'], reason: expect.stringContaining("can't be found exactly") } }),
+      expect.objectContaining({ account_id: 'manual_eur', days: {}, first: null, refused: { days: ['2026-09-12'], reason: expect.stringContaining("can't be told exactly") } }),
     ]);
     const repaired = await ops({ container: ctx.container, account_id: 'manual_eur', repair: true });
     expect([repaired.status, repaired.body.days]).toEqual([409, ['2026-09-12']]);
-    expect(repaired.body.error).toBe("The day manual_eur was counted the other way from can't be found exactly: nothing says how it was counted on 2026-09-12.");
+    expect(repaired.body.error).toBe("The days manual_eur was counted the other way can't be told exactly: nothing says how it was counted on 2026-09-12.");
     expect(new Map(fake.hashes.get(ctxKey('history:accounts')))).toEqual(raw);
     expect(await stored('history:accounts:est:flatd', EST[0])).toEqual({ manual_eur: 5000 });
     expect(await signJobStore.ids(ctx)).toEqual([]);
@@ -249,7 +249,7 @@ describe('an account flipped between money held and owed under the release befor
     expect((await signJobStore.get(ctx, 'manual_eur'))!).toMatchObject({ kind: 'repair', from: 'credit', to: 'credit' });
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_eur: -5000 });
     // The dry run says so.
-    expect((await ops({ container: ctx.container })).body.accounts).toEqual([expect.objectContaining({ account_id: 'manual_eur', pending: true })]);
+    expect((await ops({ container: ctx.container })).body.accounts).toEqual([expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 0, error: null, stopped: false } })]);
     // The nightly job finishes it.
     await finishSignJobs(ctx);
     expect(await signJobStore.ids(ctx)).toEqual([]);

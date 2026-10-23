@@ -86,7 +86,7 @@ import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
 import { loggable } from '../log-safe';
 import { isOwedType } from '../balance';
-import { retypeWithHistory, signJobStore } from '../sign-repair';
+import { retypeWithHistory, signJobStore, SignRepairRefused } from '../sign-repair';
 import { ForgetRefused } from '../links';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
@@ -295,61 +295,128 @@ export async function othersOf(ctx: Ctx, connection_id: string, accounts: Connec
   return theirs.map((account) => ({ account, host: connections.get(account.connection_id)?.host ?? null }));
 }
 
-/** Changes what kind of account tracked accounts are. With the sign as the
- *  protocol has it (owed negative), their contribution to net worth stays the
- *  balance SimpleFIN reports, and the kind says whether it is money held or
- *  owed; a card or a loan reported positive waits for confirmSigns. A change
- *  between money held and owed also re-signs the account's past balances
- *  (lib/sign-repair.ts retypeWithHistory), since its recorded values follow
- *  its kind: every earlier day goes on counting as it was recorded. */
+/** Changes what kind of account tracked accounts are (retypeAccountsReport),
+ *  answering how many changed. */
 export async function retypeAccounts(ctx: Ctx, changes: { account_id: string; type: ManualType }[]): Promise<number> {
-  let changed = 0;
-  // Across held and owed: one at a time, each with its history.
+  return (await retypeAccountsReport(ctx, changes)).changed;
+}
+
+/** What changing kinds came to: how many changed, and in words what didn't,
+ *  or did with something still to finish (null when all went through). */
+export type RetypeReport = { changed: number; note: string | null };
+
+/** How long a request's re-signs may take in all, inside the accounts
+ *  route's 60 seconds. */
+const RETYPE_BUDGET_MS = 40_000;
+
+const listed = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+/**
+ * Changes what kind of account tracked accounts are. With the sign as the
+ * protocol has it (owed negative), their contribution to net worth stays the
+ * balance SimpleFIN reports, and the kind says whether it is money held or
+ * owed; a card or a loan reported positive waits for confirmSigns.
+ *
+ * A change between money held and owed also turns the account's past
+ * balances over (lib/sign-repair.ts retypeWithHistory), since its recorded
+ * values follow its kind: one at a time, each read again under the links
+ * lock. One within a side is written in a compare-and-set that checks the
+ * kind stored then, and hands any that crosses now (another change landed
+ * since this read) to the re-sign. Every change is tried, whatever happens
+ * to one before it; the caches and the backfill flag go for what changed,
+ * and the report says, by name, what didn't change, what is still being
+ * turned over, and the days left as they were.
+ */
+export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: string; type: ManualType }[]): Promise<RetypeReport> {
   const current = await connectorAccountsStore.getMany(ctx, changes.map((c) => c.account_id));
+  const nameOf = (id: string) => current.get(id)?.name ?? 'An account';
+  // Within the route's own time (app/api/connectors/accounts): a re-sign past
+  // it stops between days, and the nightly snapshot finishes it.
+  const until = Date.now() + RETYPE_BUDGET_MS;
+  const changed = new Set<string>();
+  const busy: string[] = [];
+  const held: string[] = [];
+  const failed: string[] = [];
+  const turning: string[] = [];
+  const left: string[] = [];
+  const across = async (c: { account_id: string; type: ManualType }) => {
+    try {
+      const r = await retypeWithHistory(ctx, c.account_id, c.type, { until });
+      if (r.changed) changed.add(c.account_id);
+      if (r.job?.pending) turning.push(nameOf(c.account_id));
+      if (r.job?.left.length) left.push(`${r.job.left.length} of ${nameOf(c.account_id)}’s`);
+    } catch (err) {
+      if (err instanceof ForgetRefused) return void busy.push(nameOf(c.account_id));
+      // An earlier change still being turned over, or a forget under way.
+      if (err instanceof SignRepairRefused) return void held.push(nameOf(c.account_id));
+      console.error('Connectors: an account’s kind could not be changed with its history', loggable(err));
+      // What is stored says whether the kind changed: its job, kept, is
+      // finished by the nightly snapshot (lib/snapshot-job.ts).
+      const [now, pending] = await Promise.all([connectorAccountsStore.get(ctx, c.account_id).catch(() => null), signJobStore.has(ctx, c.account_id).catch(() => true)]);
+      if (now?.type === c.type) {
+        changed.add(c.account_id);
+        if (pending) turning.push(nameOf(c.account_id));
+      } else failed.push(nameOf(c.account_id));
+    }
+  };
+
+  // Across held and owed, as read: each with its history.
   const crossing = changes.filter((c) => {
     const a = current.get(c.account_id);
     return !!a && a.type !== c.type && isOwedType(a.type) !== isOwedType(c.type);
   });
-  for (const c of crossing) {
-    try {
-      if (await retypeWithHistory(ctx, c.account_id, c.type)) changed++;
-    } catch (err) {
-      // Another change to accounts holds the lock: nothing changed.
-      if (err instanceof ForgetRefused) throw new ConnectorRefused(err.message, 409);
-      // The kind changed, and its job is kept: finished by the nightly snapshot
-      // (lib/snapshot-job.ts), or by the next change of it.
-      if (!(await signJobStore.has(ctx, c.account_id))) throw err;
-      console.error('Connectors: an account’s past balances could not all be re-signed yet', loggable(err));
-      const name = current.get(c.account_id)!.name;
-      throw new ConnectorRefused(`The kind of ${name} was changed, but not every earlier day of its history could be turned over to match yet: that is finished by Nya’s next daily update, and until then some of those days may count the other way.`, 503);
-    }
-  }
+  for (const c of crossing) await across(c);
   const rest = changes.filter((c) => !crossing.includes(c));
+  const late: { account_id: string; type: ManualType }[] = [];
   for (let i = 0; i < rest.length; i += MANY_AT_ONCE) {
     const chunk = rest.slice(i, i + MANY_AT_ONCE);
-    let here = 0;
+    let here: string[] = [];
+    let crossesNow: typeof chunk = [];
     await connectorAccountsStore.updateMany(
       ctx,
       chunk.map((c) => c.account_id),
-      (current) => {
-        here = 0; // this may run more than once
+      (stored) => {
+        here = []; // this may run more than once
+        crossesNow = [];
         const writes = new Map<string, ConnectorAccount | null>();
         for (const c of chunk) {
-          const a = current.get(c.account_id);
+          const a = stored.get(c.account_id);
           if (!a || a.type === c.type) continue;
+          if (isOwedType(a.type) !== isOwedType(c.type)) {
+            crossesNow.push(c);
+            continue;
+          }
           writes.set(c.account_id, { ...a, type: c.type, subtype: null });
-          here++;
+          here.push(c.account_id);
         }
         return writes;
       }
     );
-    changed += here;
+    for (const id of here) changed.add(id);
+    late.push(...crossesNow);
   }
-  if (changed > 0) {
+  for (const c of late) await across(c);
+
+  if (changed.size > 0) {
     await clearBackfillDone(ctx);
     await clearCaches(ctx);
   }
-  return changed;
+  const notes: string[] = [];
+  if (busy.length + held.length + failed.length > 0 && changed.size > 0) notes.push(`Changed: ${listed([...changed].map(nameOf))}.`);
+  if (busy.length > 0) notes.push(`${listed(busy)} ${busy.length === 1 ? 'wasn’t' : 'weren’t'} changed: another change to your accounts was in progress. Try again in a moment.`);
+  if (held.length > 0) {
+    notes.push(`${listed(held)} ${held.length === 1 ? 'wasn’t' : 'weren’t'} changed: an earlier change to ${held.length === 1 ? 'it is' : 'them is'} still being finished, or ${held.length === 1 ? 'it is' : 'they are'} being forgotten. Try again after Nya’s next daily update.`);
+  }
+  if (failed.length > 0) notes.push(`${listed(failed)} couldn’t be changed. Try again.`);
+  if (turning.length > 0) {
+    notes.push(
+      `${listed(turning)} ${turning.length === 1 ? 'was' : 'were'} changed, but not every earlier day of ${turning.length === 1 ? 'its' : 'their'} history could be turned over to match yet: Nya’s next daily update finishes it, and until then some of those days may count the other way.`
+    );
+  }
+  if (left.length > 0) {
+    notes.push(`Nothing says how ${listed(left)} earlier days were counted (days recorded without a total, say), so they were left as they were, and may count the other way.`);
+  }
+  return { changed: changed.size, note: notes.length > 0 ? notes.join(' ') : null };
 }
 
 /**

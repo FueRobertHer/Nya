@@ -216,9 +216,10 @@ describe('a kind changed between money held and owed, with history', () => {
     console.error = () => {};
     try {
       const r = await call(accountsRoute, 'PUT', { connection_id: connection, retype: [{ account_id: card, type: 'credit' }] });
-      expect([r.status, r.body.error]).toEqual([
-        503,
-        'The kind of Euro card was changed, but not every earlier day of its history could be turned over to match yet: that is finished by Nya’s next daily update, and until then some of those days may count the other way.',
+      expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([
+        200,
+        1,
+        'Euro card was changed, but not every earlier day of its history could be turned over to match yet: Nya’s next daily update finishes it, and until then some of those days may count the other way.',
       ]);
     } finally {
       cut.mockRestore();
@@ -238,11 +239,11 @@ describe('a kind changed between money held and owed, with history', () => {
     expect(await readers([card])).toEqual(before);
   });
 
-  test('while another change to accounts holds the lock, refused and nothing changes', async () => {
+  test('while another change to accounts holds the lock, not changed, said so, and nothing changes', async () => {
     fake.strings.set(ctxKey('account-links:lock'), 'someone-else');
     const r = await call(accountsRoute, 'PUT', { connection_id: connection, retype: [{ account_id: card, type: 'credit' }] });
     fake.strings.delete(ctxKey('account-links:lock'));
-    expect([r.status, r.body.error]).toEqual([409, 'Another change to your accounts is in progress. Try again in a moment.']);
+    expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 0, 'Euro card wasn’t changed: another change to your accounts was in progress. Try again in a moment.']);
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('depository');
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: -300 });
   });
@@ -250,12 +251,12 @@ describe('a kind changed between money held and owed, with history', () => {
   test('two changes to the same kind at once turn its history over once', async () => {
     const { retypeWithHistory } = await import('@/lib/sign-repair');
     // Both read checking before either held the lock; the second finds a card.
-    const [a, b] = await Promise.all([retypeWithHistory(ctx, card, 'credit'), retypeWithHistory(ctx, card, 'credit')].map((p) => p.catch((e: Error) => e.message)));
-    expect([a, b].sort()).toEqual(['Another change to your accounts is in progress. Try again in a moment.', true].sort() as any);
-    expect(await retypeWithHistory(ctx, card, 'credit')).toBe(false);
+    const [a, b] = await Promise.all([retypeWithHistory(ctx, card, 'credit'), retypeWithHistory(ctx, card, 'credit')].map((p) => p.then((r) => r.changed, (e: Error) => e.message)));
+    expect([a, b].map(String).sort()).toEqual(['Another change to your accounts is in progress. Try again in a moment.', 'true']);
+    expect((await retypeWithHistory(ctx, card, 'credit')).changed).toBe(false);
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
     // Within its side, after: a loan, nothing turned over again.
-    expect(await retypeWithHistory(ctx, card, 'loan')).toBe(true);
+    expect(await retypeWithHistory(ctx, card, 'loan')).toEqual({ changed: true, job: null });
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
   });
 

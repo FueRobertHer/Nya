@@ -23,6 +23,7 @@ import { encrypt, decrypt, sealedAway, MalformedCiphertextError, DecryptFailedEr
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
 import { openStored } from './repo';
+import { signJobStore, SignJobPending } from './sign-repair-store';
 
 const HISTORY_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth');
 const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
@@ -1447,6 +1448,8 @@ export async function forgetAccountBalances(
   /** Only today's date, in the layers written today (a second pass). */
   opts: { today?: boolean } = {}
 ): Promise<{ changed: number; unreadableDates: string[] }> {
+  // Never beside a job turning this account's balances over (lib/sign-repair.ts).
+  if (await signJobStore.has(ctx, account_id)) throw new SignJobPending(account_id);
   let changed = 0;
   const unreadable = new Set<string>();
   const hashes = [ACCOUNTS_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)];
@@ -1615,6 +1618,8 @@ export async function foldHiddenAccount(
   tag: string,
   life: { first: string | null; last: string | null } = { first: null, last: null }
 ): Promise<{ folded: number; deleted: number }> {
+  // Never beside a job turning this account's balances over (lib/sign-repair.ts).
+  if (await signJobStore.has(ctx, account_id)) throw new SignJobPending(account_id);
   const progress = FOLD_PROGRESS(ctx, tag);
   const strict = async (blob: string | null | undefined): Promise<Record<string, number> | null | 'unreadable'> => {
     if (!blob) return null;
@@ -1785,16 +1790,8 @@ export type SignLayers = { totals: Record<string, string>; estTotals: Record<str
  *  negate; without (a dry run, which writes nothing), those dates read it
  *  where it is. */
 export async function readSignLayers(ctx: Ctx, opts: { split: boolean }): Promise<SignLayers> {
-  const legacyBlob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
-  if (legacyBlob && opts.split) {
-    const [estTotals0, flatd0] = await Promise.all([
-      redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
-      redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
-    ]);
-    for (const date of Object.keys(estTotals0 ?? {})) {
-      if (!flatd0?.[date]) await redis().eval(HISTORY_SET_IF_ABSENT, [ACCOUNTS_EST_FLAT_BY_DATE(ctx)], [date, legacyBlob]);
-    }
-  }
+  if (opts.split) await splitLegacyFlat(ctx);
+  const legacyBlob = opts.split ? null : await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
   const [totals, estTotals, r, p, e, f, x] = await Promise.all(
     [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ...(['r', 'p', 'e', 'f', 'x'] as const).map((l) => SIGN_LAYER_KEY[l](ctx))].map(
       async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {}
@@ -1802,6 +1799,21 @@ export async function readSignLayers(ctx: Ctx, opts: { split: boolean }): Promis
   );
   if (legacyBlob && !opts.split) for (const date of Object.keys(estTotals)) f[date] ??= legacyBlob;
   return { totals, estTotals, r, p, e, f, x };
+}
+
+/** Copies the legacy flat record to each estimated date still relying on it,
+ *  as a fold does: the same balances, read the same, each date's a value of
+ *  its own to turn over. Only once a re-sign's plan is accepted. */
+export async function splitLegacyFlat(ctx: Ctx): Promise<void> {
+  const legacyBlob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+  if (!legacyBlob) return;
+  const [estTotals, flatd] = await Promise.all([
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
+  ]);
+  for (const date of Object.keys(estTotals ?? {})) {
+    if (!flatd?.[date]) await redis().eval(HISTORY_SET_IF_ABSENT, [ACCOUNTS_EST_FLAT_BY_DATE(ctx)], [date, legacyBlob]);
+  }
 }
 
 /** A stored map or total, decrypted, or null when it can't be read for good
@@ -1816,20 +1828,34 @@ export async function readSignValue(ctx: Ctx, blob: string): Promise<string | nu
 }
 
 /**
- * Negates one account's value in one layer on one date, in one step
- * (HISTORY_FOLD, with no total), only while the stored map is still
- * `expected` and the step isn't marked done under `tag`: 'done', 'already'
- * (an earlier attempt did it), or 'changed' (rewritten since: left as it is).
+ * Turns one account's value over in one layer on one date, only while that
+ * value is still `planned` (whatever else the map holds: a fold of another
+ * account, a re-encryption, rewrite the map and keep it), in one step
+ * (HISTORY_FOLD, with no total, the whole map as read compared and written):
+ * 'done'; 'already' when it holds -planned (turned over before); 'changed'
+ * when it holds anything else, or the map is gone or can't be read (written
+ * since in another sign: left as it is). Read again while another write lands
+ * between the read and the step. Each step's mark under `tag` is its own, so
+ * a value written back since in the old sign can be turned over again.
  */
-export async function negateAccountOn(ctx: Ctx, layer: SignLayer, date: string, account_id: string, expected: string, tag: string): Promise<'done' | 'already' | 'changed'> {
-  const plain = await readSignValue(ctx, expected);
-  if (plain === null) return 'changed';
-  const map = JSON.parse(plain) as Record<string, number>;
-  if (typeof map[account_id] !== 'number') return 'changed';
-  const next = await encrypt(ctx, JSON.stringify({ ...map, [account_id]: map[account_id] === 0 ? 0 : -map[account_id] }));
-  const answer = Number(await redis().eval(HISTORY_FOLD, [SIGN_LAYER_KEY[layer](ctx), FOLD_PROGRESS(ctx, tag)], [date, `${layer}:${date}`, expected, next]));
-  if (answer === 1) evictDecrypted(ctx, expected);
-  return answer === 1 ? 'done' : answer === 2 ? 'already' : 'changed';
+export async function negateAccountOn(ctx: Ctx, layer: SignLayer, date: string, account_id: string, planned: number, tag: string): Promise<'done' | 'already' | 'changed'> {
+  const key = SIGN_LAYER_KEY[layer](ctx);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const blob = await redis().hget<string>(key, date);
+    const plain = blob ? await readSignValue(ctx, blob) : null;
+    if (!blob || plain === null) return 'changed';
+    const map = JSON.parse(plain) as Record<string, number>;
+    const value = map[account_id];
+    if (value === -planned) return 'already';
+    if (value !== planned) return 'changed';
+    const next = await encrypt(ctx, JSON.stringify({ ...map, [account_id]: -planned }));
+    const answer = Number(await redis().eval(HISTORY_FOLD, [key, FOLD_PROGRESS(ctx, tag)], [date, `${layer}:${date}:${crypto.randomUUID()}`, blob, next]));
+    if (answer === 1) {
+      evictDecrypted(ctx, blob);
+      return 'done';
+    }
+  }
+  throw new Error(`history: ${date} kept changing while an account's balance was turned over`);
 }
 
 // Estimated history drawn from imported transactions (#52)

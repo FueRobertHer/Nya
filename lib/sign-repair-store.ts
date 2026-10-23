@@ -5,23 +5,24 @@
 // the storage seam (lib/repo.ts), by account id (a provider's own, or a
 // manual account's random one). Bookkeeping, not in the download; in
 // backups, so a backup taken part way through a job restores it with the
-// values it was planned on, and finishing it there negates only those.
+// values it was planned on, and finishing it there turns over only those
+// still holding them.
 
 import { defineMapStore } from './repo';
 import type { SignLayer } from './history';
 
 export const SIGN_LAYERS: readonly SignLayer[] = ['r', 'p', 'e', 'f', 'x'];
 
-/** What a job negates: each layer's days, each with a digest of the stored
- *  map it was planned on. */
-export type SignPlan = Partial<Record<SignLayer, [string, string][]>>;
+/** What a job turns over: each layer's days, each with the account's value
+ *  there when it was planned, which it negates only while it is still that. */
+export type SignPlan = Partial<Record<SignLayer, [string, number][]>>;
 
-/** One account's re-sign, as stored (see the header). */
+/** One account's re-sign, as stored (see lib/sign-repair.ts). */
 export type SignJob = {
   v: 1;
   kind: 'retype' | 'repair';
   /** The kind it was read as, and is once the job is done (for a repair,
-   *  both its type now). */
+   *  both its type when it was planned). */
   from: string;
   to: string;
   /** When it began: a retype's day is the first its kind applies to. */
@@ -30,10 +31,18 @@ export type SignJob = {
   tag: string;
   /** Planned once its kind is the new one; absent before. */
   plan?: SignPlan;
+  /** The days it left as they were, nothing saying how they were counted. */
+  left?: string[];
+  /** Nights it failed, and the last failure's kind: past MAX_FAILED_NIGHTS
+   *  the nightly job leaves it to the operator, whose dry run names it. */
+  failures?: number;
+  error?: string;
 };
 
+/** How many nights a job may fail before the nightly job stops trying it. */
+export const MAX_FAILED_NIGHTS = 3;
+
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const DIGEST = /^[0-9a-f]{16}$/;
 const isText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 
 function isPlan(v: unknown): v is SignPlan {
@@ -42,7 +51,7 @@ function isPlan(v: unknown): v is SignPlan {
     ([k, list]) =>
       (SIGN_LAYERS as readonly string[]).includes(k) &&
       Array.isArray(list) &&
-      list.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && DAY.test(e[0]) && typeof e[1] === 'string' && DIGEST.test(e[1]))
+      list.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && DAY.test(e[0]) && typeof e[1] === 'number' && Number.isFinite(e[1]) && e[1] !== 0)
   );
 }
 
@@ -52,7 +61,7 @@ export function isSignJob(v: unknown): v is SignJob {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const j = v as Record<string, unknown>;
   return (
-    Object.keys(j).every((k) => ['v', 'kind', 'from', 'to', 'at', 'tag', 'plan'].includes(k)) &&
+    Object.keys(j).every((k) => ['v', 'kind', 'from', 'to', 'at', 'tag', 'plan', 'left', 'failures', 'error'].includes(k)) &&
     j.v === 1 &&
     (j.kind === 'retype' || j.kind === 'repair') &&
     isText(j.from, 40) &&
@@ -60,7 +69,10 @@ export function isSignJob(v: unknown): v is SignJob {
     isText(j.at, 40) &&
     !Number.isNaN(Date.parse(j.at)) &&
     isText(j.tag, 80) &&
-    (j.plan === undefined || isPlan(j.plan))
+    (j.plan === undefined || isPlan(j.plan)) &&
+    (j.left === undefined || (Array.isArray(j.left) && j.left.every((d) => typeof d === 'string' && DAY.test(d)))) &&
+    (j.failures === undefined || (Number.isInteger(j.failures) && (j.failures as number) > 0)) &&
+    (j.error === undefined || isText(j.error, 80))
   );
 }
 
@@ -68,5 +80,18 @@ export function isSignJob(v: unknown): v is SignJob {
 export const signJobStore = defineMapStore<SignJob>('sign-repairs', {
   what: 'balance sign repairs',
   isValid: isSignJob,
-  exportable: false, // which days of an account's history a job negates: bookkeeping
+  exportable: false, // which days of an account's history a job turns over: bookkeeping
 });
+
+/** Thrown by what would fold or forget an account's balances while a job
+ *  turns them over (lib/history.ts): never meant to be reached, since the
+ *  forget and the undo refuse first, with words (lib/links.ts, lib/api-undo.ts). */
+export class SignJobPending extends Error {
+  constructor(readonly account_id: string) {
+    super(`The balances of ${account_id} are being turned over to match its kind.`);
+    this.name = 'SignJobPending';
+  }
+}
+
+/** What the forget and the undo say while one is pending. */
+export const SIGN_JOB_PENDING = 'Its past balances are being turned over to match what it is. Try again once that is done: Nya’s next daily update finishes it.';
