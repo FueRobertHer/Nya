@@ -10,7 +10,17 @@
 
 import { useEffect, useState } from 'react';
 
-type Counts = { split: number; grouped: number };
+type Counts = { split: number; grouped: number; shared?: number };
+
+/** What the confirmation says of a connection's shared transactions and the
+ *  payments that paid something back (lib/shared-expenses/), or null for
+ *  none: they are kept, never dropped, and each can be moved to its
+ *  transaction once the connection is back. */
+export function disconnectSharedText(counts: Counts | null): string | null {
+  const n = counts?.shared ?? 0;
+  if (n === 0) return null;
+  return `${n === 1 ? '1 of its transactions is' : `${n} of its transactions are`} shared, or paid something back, under Shared expenses. What is between you and others stays as it is; once you add the connection back, move ${n === 1 ? 'it' : 'each'} to its transaction there.`;
+}
 
 /** What the confirmation says of a connection's splits and groups, or null
  *  when it has none. `null` counts: they couldn't be read. */
@@ -42,7 +52,9 @@ export default function DisconnectSplitsNote({ itemId }: { itemId: string }) {
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
         if (!live) return;
-        setCounts(body && typeof body.split === 'number' && typeof body.grouped === 'number' ? { split: body.split, grouped: body.grouped } : null);
+        setCounts(
+          body && typeof body.split === 'number' && typeof body.grouped === 'number' ? { split: body.split, grouped: body.grouped, ...(typeof body.shared === 'number' ? { shared: body.shared } : {}) } : null
+        );
       })
       .catch(() => live && setCounts(null));
     return () => {
@@ -51,5 +63,12 @@ export default function DisconnectSplitsNote({ itemId }: { itemId: string }) {
   }, [itemId]);
 
   const text = counts === undefined ? null : disconnectSplitsText(counts);
-  return text ? <p className="panel-note">{text}</p> : null;
+  const shared = counts === undefined ? null : disconnectSharedText(counts);
+  if (!text && !shared) return null;
+  return (
+    <>
+      {text && <p className="panel-note">{text}</p>}
+      {shared && <p className="panel-note">{shared}</p>}
+    </>
+  );
 }

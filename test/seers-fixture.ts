@@ -155,6 +155,15 @@ export async function seedEveryKind(
     updated_at: at,
   } as never);
   await approvalStore.set(ctx, 't_coffee', { version: 1, approved_at: at, amount: 5.5, currency: 'USD', category_id: food.id, name: 'Blue Bottle' } as never);
+  // ---- Shared expenses: someone, a shared transaction, an IOU you owe for
+  // something, a payment that paid something back, a row set aside.
+  const se = await import('@/lib/shared-expenses/store');
+  await se.expenseSettingsStore.set(ctx, { version: 1, counting: 'part', updated_at: at });
+  await se.expensePeopleStore.set(ctx, 'person1', { version: 1, name: 'Alex', venmo: 'alex-s', created_at: at, updated_at: at });
+  await se.expenseSharesStore.set(ctx, 't_rent', { version: 1, part: 'p1', account_id: 'acc_check', amount_was: 1000, currency: 'USD', date: today, what: 'Rent', entries: [{ id: 'entry1', person: 'person1', amount: 500 }], created_at: at, updated_at: at });
+  await se.expenseIousStore.set(ctx, 'iou1', { version: 1, person: 'person1', direction: 'by_you', amount: 25, currency: 'USD', date: today, what: 'Groceries', category_id: food.id, created_at: at, updated_at: at });
+  await se.expensePaymentsStore.set(ctx, 't_venmo', { version: 1, account_id: 'acc_check', row: { amount: -500, currency: 'USD', date: today }, allocations: [{ item: 'entry1', amount: 500 }], confirmed_at: at });
+  await se.expenseDismissedStore.set(ctx, 't_dismissed', { version: 1, date: today, at });
   const { timelineNotesStore } = await import('@/lib/timeline-notes');
   await timelineNotesStore.set(ctx, 'note1', { date: ago(20), text: 'Moved house', kind: 'user', created_at: at });
   const { lifecycleStore } = await import('@/lib/lifecycle');

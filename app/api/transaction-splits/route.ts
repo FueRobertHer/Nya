@@ -10,6 +10,7 @@ import { changePart, checkPartNote, checkParts, removeSplit, saveSplit, SplitErr
 import { groupStore, memberIndex, type TxnGroup } from '@/lib/groups';
 import { findTransactions, importedStoodFor, LookupUnreadableError, splitsAndGroupsOn, type FoundTxn } from '@/lib/txn-lookup';
 import { isSplitOrGroupId } from '@/lib/split-rows';
+import { sharesBlock } from '@/lib/shared-expenses/edits';
 
 // Splitting one transaction into parts (#39, lib/splits.ts), applied on read
 // in the layer every reader shares (lib/split-rows.ts), so nothing cached is
@@ -140,6 +141,10 @@ export async function PUT(req: Request) {
     if (!found) throw new SplitError('That transaction is no longer stored. Reload to see your transactions as they are.', 404);
     const parts = checkParts(body.parts, found);
     await refuseHiding(ctx, found, groups);
+    // A share of the whole, or of a part this split would drop, or a payment
+    // on it (lib/shared-expenses/edits.ts): changed there first.
+    const shared = await sharesBlock(ctx, transaction_id, 'split', parts.map((p) => p.id));
+    if (shared) throw new SplitError(shared, 409);
     const ix = indexTaxonomy(await ensureTaxonomy(ctx));
     for (const p of parts) p.category_id = categoryOf(ix, p.category_id);
     const split = await saveSplit(ctx, transaction_id, found, parts, new Date(), seenOf(body));
@@ -181,6 +186,8 @@ export async function DELETE(req: Request) {
     const body = await bodyOf(req);
     if (body instanceof NextResponse) return body;
     const transaction_id = transactionIdOf(body);
+    const shared = await sharesBlock(ctx, transaction_id, 'unsplit');
+    if (shared) throw new SplitError(shared, 409);
     const removed = await removeSplit(ctx, transaction_id, seenOf(body));
     return NextResponse.json({ transaction_id, removed });
   } catch (err) {

@@ -456,8 +456,8 @@ describe('what a disconnect would take', () => {
       return { status: res.status, body: await res.json() };
     };
     // The coffee is the bank's; the farmers market, a manual row, stays.
-    expect(await asked('?item_id=item_a')).toEqual({ status: 200, body: { split: 1, grouped: 1 } });
-    expect(await asked('?item_id=item_none')).toEqual({ status: 200, body: { split: 0, grouped: 0 } });
+    expect(await asked('?item_id=item_a')).toEqual({ status: 200, body: { split: 1, grouped: 1, shared: 0 } });
+    expect(await asked('?item_id=item_none')).toEqual({ status: 200, body: { split: 0, grouped: 0, shared: 0 } });
     expect((await asked('')).status).toBe(400);
     expect((await asked('?item_id=no%20spaces')).status).toBe(400);
     // Splits that can't be read are never counted as none.

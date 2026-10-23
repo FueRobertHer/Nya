@@ -79,6 +79,7 @@ import { finishDeleting } from './tag-delete';
 import { addTagAs, editTag } from './tag-actions';
 import { readDirectoryStrict } from './links';
 import { StoredDataUnreadableError, StoreRefusedError } from './repo';
+import { expensePaymentsStore, expenseSharesStore } from './shared-expenses/store';
 
 /** What an operation is given, read and checked by its caller. */
 export type ResourceInput = {
@@ -610,6 +611,10 @@ async function deleteTransaction(auth: Authenticated, input: ResourceInput): Pro
   // first, best effort: one made in between goes with the row, as in the app).
   if (await splitStore.has(auth.ctx, id)) fail(409, 'conflict', 'This transaction is split: undo the split in the app first.');
   if (memberIndex(await groupStore.getAll(auth.ctx)).has(id)) fail(409, 'conflict', 'This transaction is in a group: take it out of the group in the app first.');
+  // What someone owes of it, or what it paid back (lib/shared-expenses/), is
+  // kept beside it and changed in the app.
+  if (await expenseSharesStore.has(auth.ctx, id)) fail(409, 'conflict', 'This transaction is shared under Shared expenses: stop sharing it in the app first.');
+  if (await expensePaymentsStore.has(auth.ctx, id)) fail(409, 'conflict', 'This transaction pays something back under Shared expenses: reopen that payment in the app first.');
   const shown = await transactionAnswer(auth.ctx, id, now).catch(() => ({ transaction: null }));
   const said = await txnAnnotationStore.get(auth.ctx, id);
   if (saidVersion(said) !== want.said) stale();
