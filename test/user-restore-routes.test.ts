@@ -61,8 +61,6 @@ beforeEach(async () => {
   forgetEpochs();
   await registerTestContainer(fake);
   process.env.RESTORE_ENABLED = '1';
-  sent.batches = 0;
-  sent.failAfter = Infinity;
 });
 
 /** A book of restored rows, as another account's. */
