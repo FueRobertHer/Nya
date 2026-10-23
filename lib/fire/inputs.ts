@@ -53,10 +53,12 @@
 // ONE CURRENCY. Invested assets are in the currency most of the accounts are
 // in, and the year's spending, income and savings are in the currency most of
 // its counted transactions are in (lib/spending.ts totalsCurrency): the
-// Plan's currency is the accounts' (lib/fire/progress.ts planCurrency), and
-// what the person types in the Plan is in it. Without a home currency, one
-// in another currency counts in none of them (nothing is converted), and the
-// label names how many there were. WITH ONE (lib/fx/), the Plan keeps its
+// Plan's currency is the accounts' (lib/fire/progress.ts planCurrency) until
+// the currency its typed figures are in is recorded (lib/fire/plan-currency.ts),
+// and then that one, which both are in (`own`, `currency`), whatever most
+// accounts or rows are in. Without a home currency, one in another currency
+// counts in none of them (nothing is converted), and the label names how
+// many there were. WITH ONE (lib/fx/), the Plan keeps its
 // currency, as budgets keep theirs (its typed figures are never relabelled),
 // and what is in other currencies is converted into it: each transaction at
 // its own day's rate (lib/fx/totals.ts totalsIn), each currency's accounts

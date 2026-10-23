@@ -53,10 +53,11 @@ export function savingsRate({ flows, workplace }: Pick<FiInputs, 'flows' | 'work
   return (flows.savings + contributions) / income;
 }
 
-/** The currency plan amounts are shown in: the accounts' own, or the
- *  transactions', or the dashboard's. A home currency doesn't change it:
- *  what is in other currencies is converted into it (lib/fire/inputs.ts),
- *  so what the person typed is never relabelled. */
+/** The currency plan amounts are shown in: the Plan's own once recorded
+ *  (the inputs are then all in it, lib/fire/plan-currency.ts), else the
+ *  accounts' own, or the transactions', or the dashboard's. A home currency
+ *  doesn't change it: what is in other currencies is converted into it
+ *  (lib/fire/inputs.ts), so what the person typed is never relabelled. */
 export function planCurrency({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>, fallback: string | null): string | null {
   return assets.currency ?? flows?.currency ?? fallback;
 }

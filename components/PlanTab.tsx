@@ -411,11 +411,13 @@ export default function PlanTab({
   // The Plan's figures by the same function a scenario's come from: with no
   // life events, fiView and enginePlan exactly (lib/fire/plan-figures.ts).
   const baseFigures = planFigures(basePlan, measured) as PlanFigures;
-  // Plan amounts are in the accounts' own currency, or the transactions'.
+  // Plan amounts are in the Plan's own currency, the one its figures were
+  // typed in, once recorded; otherwise the accounts' own, or the
+  // transactions' (lib/fire/plan-currency.ts).
   const displayCurrency = figures.currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
-  // Nothing is converted between currencies in this app: investments in one
-  // and spending in another can't be compared (lib/fire/progress.ts). Within
+  // Without a home currency nothing is converted: investments in one and
+  // spending in another can't be compared (lib/fire/progress.ts). Within
   // either, only amounts in one currency are added up, and the notes beside
   // them name the rest.
   const currencyNote = figures.currencyNote;
