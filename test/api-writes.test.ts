@@ -1037,9 +1037,10 @@ describe('what a write can never do', () => {
   });
 
   test('a manual account crossing between held and owed', async () => {
+    const { OWED_FLIP } = await import('@/lib/manual-account-writes');
     const { account } = await versionOf(`manual-accounts/${WALLET}`);
     const r = await send('PATCH', `manual-accounts/${WALLET}`, { body: { type: 'credit' }, headers: { 'if-match': account.version } });
-    expect([r.status, r.body.error.code, r.body.error.message]).toEqual([409, 'conflict', expect.stringContaining('held and money owed')]);
+    expect([r.status, r.body.error.code, r.body.error.message]).toEqual([409, 'conflict', OWED_FLIP]);
     expect((await getManualAccount(ctx, WALLET))!.type).toBe('depository');
     // Within one side: allowed.
     expect((await send('PATCH', `manual-accounts/${WALLET}`, { body: { type: 'other' }, headers: { 'if-match': account.version } })).status).toBe(200);

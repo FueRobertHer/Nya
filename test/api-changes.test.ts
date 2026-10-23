@@ -19,7 +19,7 @@ const { ctx, daysAgo, seedPerson } = await import('./api-fixture');
 const { createToken, revokeToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { decrypt } = await import('@/lib/crypto');
-const { getManualAccount } = await import('@/lib/manual');
+const { getManualAccount, saveManualAccount } = await import('@/lib/manual');
 const { readTagSet } = await import('@/lib/tags');
 const { ensureTaxonomy, readTaxonomy } = await import('@/lib/category-store');
 const { manualTxnStore, findManualTxn } = await import('@/lib/manual-txns');
@@ -893,7 +893,8 @@ describe('an undo of a balance', () => {
     setSystemTime(new Date(NOW + 1000));
     const up = await send('POST', `manual-accounts/${WALLET}/balance`, { body: { balance: 100 } });
     expect([neg.status, up.status]).toEqual([200, 200]);
-    expect((await app('manual-accounts', 'PATCH', { account_id: WALLET, name: 'Wallet', institution_name: 'Cash', type: 'credit', subtype: null, balance: 100 })).status).toBe(200);
+    // Made a card since, as the release before could (the app refuses it now).
+    await saveManualAccount(ctx, { ...(await getManualAccount(ctx, WALLET))!, type: 'credit' });
     const r = await undo(up.body.change_id);
     expect([r.status, r.body.error.code]).toEqual([409, 'conflict']);
     expect(r.body.error.message).toBe('Credit and loan balances are the amount owed, so they cannot be negative, so it wasn’t undone.');
