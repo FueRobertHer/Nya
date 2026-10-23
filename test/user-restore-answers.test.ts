@@ -31,6 +31,8 @@ const { removeItem } = await import('@/lib/storage');
 const { EXPORTED, downloadText, restoreAll, connectAgain, call, planned } = await import('./restore-run');
 const { NOV, JAN, month, every, shared } = await import('./restore-readers');
 const { countedLines } = await import('@/components/restore-state');
+const linksRoute = await import('@/app/api/account-links/route');
+const { hold } = await import('./restore-run');
 
 const ctx = TEST_CTX;
 
@@ -286,5 +288,46 @@ describe('a download of a copy that answered, brought back again', () => {
     expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual(CLOSED);
     expect(await month(NOV)).toEqual(every(61.2));
     expect(await shared(NOV)).toBe(61.2);
+  });
+});
+
+describe('a later link', () => {
+  const link = (old: string, to: string) => linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'link', old, to }) }));
+  const unlink = (old: string) => linksRoute.DELETE(new Request('http://localhost/api/account-links', { method: 'DELETE', body: JSON.stringify({ old }) }));
+  /** Connected again, its balance fetched once: the directory knows the new
+   *  checking account from today, so it is offered to link by hand. */
+  async function connectedAndSeen() {
+    await connectAgain(fake);
+    const { restoreDirectoryEntries } = await import('@/lib/links');
+    const today = new Date().toISOString().slice(0, 10);
+    await restoreDirectoryEntries(ctx, [
+      ['new_chk', { provider: 'plaid', item_id: 'item_new', institution_id: 'ins_3', institution_name: 'Chase', name: 'Checking', official_name: 'Total Checking', mask: '1111', type: 'depository', subtype: 'checking', persistent_account_id: null, first_seen: today, last_seen: today } as never],
+    ]);
+  }
+
+  test('takes away the end the count wrote, so the new account doesn’t end; unlinked, it gets it back', async () => {
+    await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED });
+    await connectedAndSeen();
+    expect((await link('acc_chk', 'new_chk')).status).toBe(200);
+    expect(await lifecycleStore.get(ctx, 'acc_chk')).toBeNull();
+    // Its rows are the linked account's: November's grocery, once.
+    expect(await month(NOV)).toEqual(every(61.2));
+    // The card, still waiting, holds the totals; the checking account doesn't.
+    expect((await hold()).waiting).toEqual([{ institution_name: 'Chase', last: '2026-01-03' }]);
+
+    expect((await unlink('acc_chk')).status).toBe(200);
+    expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual(CLOSED);
+    // Counted again, and held by the Item until it is answered for.
+    expect(await month(NOV)).toEqual(every(0));
+    expect((await hold()).waiting).toEqual([{ institution_name: 'Chase', last: '2026-01-03' }]);
+  });
+
+  test('an end from elsewhere stays: the file’s, or one set since', async () => {
+    await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED });
+    // Changed since, by the person: Stop following from another day.
+    await markEnded(ctx, 'acc_chk', { state: 'untracked', from: '2026-01-05' }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
+    await connectedAndSeen();
+    expect((await link('acc_chk', 'new_chk')).status).toBe(200);
+    expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual({ state: 'untracked', from: '2026-01-05' });
   });
 });

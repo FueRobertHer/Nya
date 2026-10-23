@@ -25,7 +25,7 @@ import { forgetOverrides } from '../overrides';
 import { forgetSplitsAndGroups } from '../split-gone';
 import { StoredDataUnreadableError } from '../stored-json';
 import { UnreadableEntriesError } from '../repo';
-import { restoredAccountsStore, restoredBookId, restoredId, restoredTxnStore } from './store';
+import { restoredAccountsStore, restoredAnswersStore, restoredBookId, restoredId, restoredTxnStore } from './store';
 import { bookIdsOf } from './restored';
 
 /** The books an account has: from its entry, or, with none that can be read,
@@ -173,6 +173,9 @@ export async function forgetRestoredAccount(ctx: Ctx, account_id: string): Promi
   await forgetOverrides(ctx, rows);
   await forgetSplitsAndGroups(ctx, rows);
   for (let i = 0; i < books.length; i += 500) await restoredTxnStore.remove(ctx, ...books.slice(i, i + 500));
+  // What was answered about it: about nothing, once it is gone. Before its
+  // entry, so a stop part way leaves the entry to run it again by.
+  await restoredAnswersStore.remove(ctx, account_id);
   await restoredAccountsStore.remove(ctx, account_id);
   return true;
 }

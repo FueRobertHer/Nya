@@ -32,6 +32,7 @@ import { getItems } from '@/lib/storage';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { restoredRefusals } from '@/lib/user-restore/forget';
 import { endedAccountsStore } from '@/lib/connectors/store';
+import { afterUnlink, beforeLink } from '@/lib/user-restore/answering';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -227,6 +228,9 @@ async function linkPair(ctx: Ctx, old: string, to: string) {
     old_provider: inputs.directory[old]?.provider ?? PROVIDER,
     to_provider: inputs.directory[to]?.provider ?? PROVIDER,
   };
+  // A restored account counted before this link loses the end its answer
+  // wrote, first (lib/user-restore/answering.ts beforeLink).
+  await beforeLink(ctx, old);
   await linkAccounts(ctx, 
     old,
     to,
@@ -343,6 +347,10 @@ export async function DELETE(req: Request) {
     if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
     return await locked(ctx, async () => {
       await unlinkAccount(ctx, old);
+      // A restored account counted before its link gets back the end its
+      // answer wrote (lib/user-restore/answering.ts afterUnlink). Unlinked
+      // without it, it waits and holds the totals, said: never wrong.
+      await afterUnlink(ctx, old).catch((err) => console.warn('Account links: the end a restored account was counted to could not be written back', err instanceof Error ? err.name : typeof err));
       await clearCaches(ctx);
       await linksChanged(ctx);
       return NextResponse.json({ unlinked: true });

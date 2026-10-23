@@ -42,7 +42,7 @@ import type { Ctx } from '../containers';
 import { getItems, type StoredItem } from '../storage';
 import { addDays } from '../manual-txn-input';
 import { directoryIds, effectiveLinks, getLinks, historySpans, liveAccountIds, withLinksLock } from '../links';
-import { effectiveLifecycle, endOf, isEndDay, isLifecycleNote, lastEndDay, lifecycleOf, lifecycleStore, markEnded, LIFECYCLE_NOTE_MAX, type AccountAbout, type EndedLifecycle } from '../lifecycle';
+import { effectiveLifecycle, endOf, isEndDay, isLifecycleNote, lastEndDay, lifecycleOf, lifecycleStore, markEnded, takeEndAway, LIFECYCLE_NOTE_MAX, type AccountAbout, type EndedLifecycle } from '../lifecycle';
 import { connectorAccountsStore, endedAccountsStore } from '../connectors/store';
 import { clearCaches } from '../cache';
 import { MANY_AT_ONCE } from '../repo';
@@ -351,6 +351,38 @@ export async function answer(ctx: Ctx, req: AnswerRequest, now: number = Date.no
     await clearCaches(ctx);
     return ids;
   });
+}
+
+// ---- A link, and an unlink ----
+
+/**
+ * Before a restored account is linked to a live one: the end its count
+ * answer wrote is taken away (an end follows an account across a link, so it
+ * would end the new account from the same day), while it is still that end.
+ * An end that came from elsewhere (the file, Stop following before the
+ * count, one set since) stays, as the link sheet says. First, so a link that
+ * stops part way leaves an account counted with no end, which holds the
+ * totals until it is answered, never a new account ended. Strict: an answer
+ * that can't be read refuses the link (the route says so), since its end
+ * might be the answer's. Run inside withLinksLock.
+ */
+export async function beforeLink(ctx: Ctx, old: string, now: number = Date.now()): Promise<void> {
+  const ended = (await restoredAnswersStore.get(ctx, old))?.counted?.ended;
+  if (ended) await takeEndAway(ctx, old, ended as EndedLifecycle, now);
+}
+
+/**
+ * After a restored account is unlinked: counted again (its answer stands),
+ * so the end its count answer wrote is written back, unless it has an end
+ * now (Nit 1: without it, it would wait and hold every total). After the
+ * unlink, so one that stops part way leaves the account waiting, said, never
+ * a live account ended. Run inside withLinksLock.
+ */
+export async function afterUnlink(ctx: Ctx, old: string, now: number = Date.now()): Promise<void> {
+  const [answer, a, entry] = await Promise.all([restoredAnswersStore.get(ctx, old), restoredAccountsStore.get(ctx, old), lifecycleStore.get(ctx, old)]);
+  const ended = answer?.counted?.ended;
+  if (!ended || !a || (entry && endOf(entry.lifecycle) !== null)) return;
+  await markEnded(ctx, old, ended as EndedLifecycle, aboutRestored(a), now);
 }
 
 // ---- What the card shows ----
