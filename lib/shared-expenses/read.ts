@@ -72,7 +72,7 @@ async function accountsFor(ctx: Ctx): Promise<NonNullable<ShareInputs['accounts'
 export async function sharedAccounts(ctx: Ctx): Promise<NonNullable<ShareInputs['accounts']>> {
   const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
   const applied = effectiveLinks(links, live);
-  return { live, resolve: (id: string) => resolveId(id, applied) };
+  return { live, resolve: (id: string) => resolveId(id, applied), linkedAt: (id: string) => applied.get(id)?.linked_at ?? null };
 }
 
 /** What can't be read in one store: ids that may be removed once the person

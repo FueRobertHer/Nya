@@ -72,7 +72,9 @@
 // bank sends its last month or so first; it is gone once they do (its words
 // changed) or once all of the history is there and begins after it. The row
 // says where it is kept (`shared_carried_from`, the payment's `kept_under`),
-// so an edit there moves it onto the row. When the links can't be read,
+// so an edit there moves it onto the row. One kept before its account was
+// linked on (Keep it without the bank) is judged by the link like the rest,
+// so it carries, waits or is gone, said; one kept since stays kept. When the links can't be read,
 // nothing carries and nothing is said to be gone or waiting, and a note
 // says so (`accountsUnread`).
 //
@@ -181,7 +183,14 @@ export type ShareInputs = {
   /** The live bank accounts, and each account id as the active links
    *  resolve it (lib/link-core.ts), when they could be read: what a share
    *  carries across a re-link by, and what says it is gone or waits. */
-  accounts?: { live: ReadonlySet<string>; resolve: (account_id: string) => string };
+  accounts?: {
+    live: ReadonlySet<string>;
+    resolve: (account_id: string) => string;
+    /** When an earlier account was linked on to another, or null: a Keep
+     *  said before then was of a bank that was gone, so the link decides
+     *  again. */
+    linkedAt?: (account_id: string) => string | null;
+  };
   /** The links or the live accounts couldn't be read: nothing carries, with
    *  a note. */
   accountsUnread?: boolean;
@@ -591,6 +600,15 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     const d = accountDays.get(now);
     return !d || day > d.last ? 'coming' : 'gone';
   };
+  // Kept though its row is gone, unless that was said before its account
+  // was linked on: then of a bank that was gone ("Keep it without the
+  // bank"), and the link decides again, so a row it carried to that goes
+  // later is said to be gone.
+  const kept = (v: Share | Payment): boolean => {
+    if (!v.kept_gone) return false;
+    const linked = inputs.accounts?.linkedAt?.(v.account_id) ?? null;
+    return linked === null || v.kept_gone >= linked;
+  };
   // Gone, waiting on a link or on its row, or neither (see WHAT DOESN'T APPLY).
   const where = (id: string, account: string, day: string, misses: (typeof missed)['shares']): 'gone' | 'away' | 'coming' | null => {
     if (misses.twins.has(id)) return 'gone';
@@ -605,12 +623,12 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     return inputs.accounts!.resolve(account) === account ? 'away' : null;
   };
   for (const [id, s] of inputs.shares) {
-    if (present.has(id) || s.kept_gone || (inputs.from !== undefined && s.date < inputs.from)) continue;
+    if (present.has(id) || kept(s) || (inputs.from !== undefined && s.date < inputs.from)) continue;
     const w = where(id, s.account_id, s.date, missed.shares);
     if (w) ({ gone, away, coming })[w].shares.push(id);
   }
   for (const [id, p] of inputs.payments) {
-    if (present.has(id) || p.kept_gone || (inputs.from !== undefined && p.row.date < inputs.from)) continue;
+    if (present.has(id) || kept(p) || (inputs.from !== undefined && p.row.date < inputs.from)) continue;
     const w = where(id, p.account_id, p.row.date, missed.payments);
     if (w) ({ gone, away, coming })[w].payments.push(id);
   }

@@ -2347,7 +2347,7 @@ export function shareCarryOf(doc: UserExport): Pick<ShareInputs, 'rowFacts' | 'a
   const live = new Set(doc.accounts.filter((a) => a.connected).map((a) => a.account_id));
   const applied = effectiveLinks(links, live);
   const rowFacts = new Map(doc.transactions.map((t) => [t.transaction_id, { account: t.account_id, ...(t.pending ? {} : { key: contentKey(t.account_id, t) }) }]));
-  return { rowFacts, accounts: { live, resolve: (id: string) => resolveId(id, applied) } };
+  return { rowFacts, accounts: { live, resolve: (id: string) => resolveId(id, applied), linkedAt: (id: string) => applied.get(id)?.linked_at ?? null } };
 }
 
 /**

@@ -388,6 +388,18 @@ describe('across a re-link, and what is gone or waits', () => {
     expect(applyShares([dinner], inputs({ shares: new Map([['n-d', share([{ id: 'e2', person: 'alex', amount: 60 }])]]), rowFacts, accounts: linked })).onto.size).toBe(0);
   });
 
+  test('a Keep said before the link gives way to the link; one said since stays', () => {
+    const changed = new Map([...rowFacts, ['n-d', { account: 'acc-new', key: 'acc-new|other' }]]);
+    const keptAt = (at: string) => new Map([['t-d', { ...shares.get('t-d')!, kept_gone: at }]]);
+    const withTime = { ...linked, linkedAt: (id: string) => (id === 'acc-old' ? '2026-10-15T00:00:00.000Z' : null) };
+    // Kept while its bank was gone, then linked: its row isn't there, so it is said.
+    expect(applyShares([dinner, cashout], inputs({ shares: keptAt('2026-10-12T00:00:00.000Z'), rowFacts: changed, accounts: withTime })).gone.shares).toEqual(['t-d']);
+    // It still carries where it matches.
+    expect(applyShares([dinner, cashout], inputs({ shares: keptAt('2026-10-12T00:00:00.000Z'), rowFacts, accounts: withTime })).rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(60);
+    // Kept after the link: as the person said.
+    expect(applyShares([dinner, cashout], inputs({ shares: keptAt('2026-10-16T00:00:00.000Z'), rowFacts: changed, accounts: withTime })).gone.shares).toEqual([]);
+  });
+
   test('links that can’t be read: nothing carries, nothing is said to be gone or waiting, and a note says why', () => {
     const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accountsUnread: true }));
     expect(r.rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(120);

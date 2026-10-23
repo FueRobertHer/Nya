@@ -326,6 +326,19 @@ describe('a re-link carries what is shared and paid', () => {
     expect(rowOf(await listed(), 'n_d').amount).toBe(70);
   });
 
+  test('kept without the bank, then linked: the link decides again, so one that doesn’t carry is said', async () => {
+    await before();
+    await quietly(() => route('disconnect', 'POST', { item_id: 'item_old' }));
+    expect((await route('shared-expenses/shares', 'PATCH', { action: 'keep', transaction_id: 't_l' })).status).toBe(200);
+    expect((await listed()).shared_expenses.away.shares).toEqual(['t_d']);
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    // The lunch's words changed: gone, never silent; the dinner carried.
+    const l = await listed();
+    expect(l.shared_expenses.gone.shares).toEqual(['t_l']);
+    expect(rowOf(l, 'n_d').amount).toBe(60);
+  });
+
   test('keep: a gone share stays in the balance, no longer said to be gone', async () => {
     await before();
     await quietly(() => route('disconnect', 'POST', { item_id: 'item_old' }));
