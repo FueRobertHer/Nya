@@ -134,12 +134,16 @@
 // and within a similar amount (25%, or 50 cents) otherwise, as a lone bill's
 // amount moves (a utility bill, a price rise). A part of two deposits a date
 // is pay whose amount moves each payday (an average, or the latest of
-// amounts a few cents apart), so its dismissal holds while the amount saved
-// is within that part's own deposits, lowest to highest: the other part's
-// are on the other side of the widest gap between them, so it is never
-// reached. It holds as amounts move and new charges come in, and it never
-// moves to another subscription from the same merchant, nor to another
-// person's pay (dismissedSeries).
+// amounts a few cents apart): its id also says which part it is, the lower
+// or the higher ("@low", "@high"), and its dismissal holds for that part
+// alone while the amount saved is within that part's own deposits, lowest to
+// highest. Both people's pay can rise until one's saved amount is among the
+// other's deposits; the other part is on the other side all the same, so it
+// is never reached (after a raise past its own deposits, the dismissed pay is
+// listed again, and can be dismissed again). A dismissal saved with no side
+// (before parts had one) applies at its amount exactly. It holds as amounts
+// move and new charges come in, and it never moves to another subscription
+// from the same merchant, nor to another person's pay (dismissedSeries).
 //
 // DATES. Transaction dates are the bank's calendar days, so every date here is
 // a calendar day, counted in whole days (UTC arithmetic on the date alone, so a
@@ -246,10 +250,10 @@ export type RecurringSeries = {
    *  or a part of two deposits a date): a dismissal names it by its amount
    *  exactly (dismissedSeries). */
   split?: true;
-  /** A part of two deposits a date: its lowest and highest deposit, within
-   *  which a dismissal saved at its amount still names it as the amount moves
-   *  (see IDENTITY). */
-  range?: { low: number; high: number };
+  /** A part of two deposits a date: which, the lower or the higher, and its
+   *  lowest and highest deposit, within which a dismissal saved at its amount
+   *  with that side still names it as the amount moves (see IDENTITY). */
+  part?: { side: 'low' | 'high'; low: number; high: number };
   /** One per series (see the grouping above). */
   currency: string | null;
   /** The merchant's logo, if any charge in the series carried one. */
@@ -1007,7 +1011,7 @@ export function detectRecurring(given: readonly RecurringRow[]): RecurringSeries
     if (g.posted.length < 2) continue;
     const rows = g.posted.map(toRow).sort((a, b) => a.day - b.day);
     const pending = g.pending.map(toRow);
-    const found: { f: Found; from: From }[] = [];
+    const found: { f: Found; from: From; side?: 'low' | 'high' }[] = [];
     const whole = bestCadence(rows, g.kind, 'whole');
     const series = whole && whole.agreement !== 'varies' ? whole : null;
     if (series) found.push({ f: series, from: 'whole' });
@@ -1023,22 +1027,22 @@ export function detectRecurring(given: readonly RecurringRow[]): RecurringSeries
     // Two deposits a date from one payer, at amounts that vary: each part as
     // pay (see THE RULES).
     if (g.kind === 'income' && found.length === 0 && twoADate(rows))
-      for (const part of splitByAmount(rows)) {
+      for (const [i, part] of splitByAmount(rows).entries()) {
         const f = bestCadence(part, g.kind, 'part');
-        if (f) found.push({ f, from: 'part' });
+        if (f) found.push({ f, from: 'part', side: i === 0 ? 'low' : 'high' });
       }
     // Pay that keeps its schedule at amounts too varied to forecast, listed
     // when nothing else was found.
     if (found.length === 0 && whole) found.push({ f: whole, from: 'whole' });
     // What each series kept is its own (see the header).
     const claimed = new Set<Row>(found.flatMap(({ f }) => f.kept.map((k) => k.row)));
-    const built = found.map(({ f, from }, i) => {
+    const built = found.map(({ f, from, side }, i) => {
       const rivals = found.filter((_, j) => j !== i).map(({ f: o }) => typical(o.kept.slice(o.shift), o.agreement));
-      return { s: toSeries(key, g.kind, f, from, rows, pending, claimed, rivals), f, from };
+      return { s: toSeries(key, g.kind, f, from, rows, pending, claimed, rivals), f, from, side };
     });
-    for (const { s, f, from } of built) {
+    for (const { s, f, from, side } of built) {
       // Never two ids alike: a dismissal must name one series.
-      const base = from === 'whole' ? s.id : `${key}|=${cents(s.amount)}`;
+      const base = from === 'whole' ? s.id : `${key}|=${cents(s.amount)}${side ? `@${side}` : ''}`;
       let id = base;
       for (let n = 2; ids.has(id); n++) id = `${base}#${n}`;
       ids.add(id);
@@ -1046,7 +1050,7 @@ export function detectRecurring(given: readonly RecurringRow[]): RecurringSeries
         ...s,
         id,
         ...(from !== 'whole' ? { split: true as const } : {}),
-        ...(from === 'part' ? { range: { low: Math.min(...f.kept.map((k) => k.row.amount)), high: Math.max(...f.kept.map((k) => k.row.amount)) } } : {}),
+        ...(side ? { part: { side, low: Math.min(...f.kept.map((k) => k.row.amount)), high: Math.max(...f.kept.map((k) => k.row.amount)) } } : {}),
         ...(g.kind === 'bill' && s.accountType !== 'credit' ? paidCard(f.kept, payments) : {}),
       });
     }
@@ -1182,8 +1186,9 @@ export function upcomingBills(
  * says so (see IDENTITY): a dismissal names a group and an amount, and applies
  * to the series of that group at the amount (or the amount it had before a
  * price change), exactly for a series split by amount (or, for a part of two
- * deposits a date, anywhere within its deposits) and within 25% or 50 cents
- * for the rest, nearest first, each series and each dismissal at most once.
+ * deposits a date saved with its side, that part anywhere within its
+ * deposits) and within 25% or 50 cents for the rest, nearest first, each
+ * series and each dismissal at most once.
  * One with no series at its amount waits: iCloud dismissed is never Apple
  * Music or Arcade dismissed, once iCloud is gone.
  */
@@ -1196,14 +1201,20 @@ export function dismissedSeries(series: readonly RecurringSeries[], dismissed: r
   }
   const pairs: { gap: number; id: string; entry: string }[] = [];
   for (const entry of dismissed) {
-    const m = /^(.*)\|(=?)(\d+)(?:#\d+)?$/.exec(entry);
+    const m = /^(.*)\|(=?)(\d+)(?:@(low|high))?(?:#\d+)?$/.exec(entry);
     if (!m) continue;
     const exactly = m[2] === '=';
     const saved = Number(m[3]);
+    const side = m[4];
     for (const s of byGroup.get(m[1]) ?? []) {
       const gap = Math.min(...[s.amount, s.previousAmount ?? Infinity].map((a) => Math.abs(cents(a) - saved)));
-      const within = !!s.range && cents(s.range.low) <= saved && saved <= cents(s.range.high);
-      if (exactly || s.split ? gap === 0 || within : gap <= Math.max(saved * DISMISS_NEAR, DISMISS_FLOOR_CENTS)) pairs.push({ gap, id: s.id, entry });
+      // A part's dismissal: that part only, at its amount or within its own
+      // deposits (see IDENTITY).
+      if (side) {
+        if (s.part?.side === side && (gap === 0 || (cents(s.part.low) <= saved && saved <= cents(s.part.high)))) pairs.push({ gap, id: s.id, entry });
+        continue;
+      }
+      if (exactly || s.split ? gap === 0 : gap <= Math.max(saved * DISMISS_NEAR, DISMISS_FLOOR_CENTS)) pairs.push({ gap, id: s.id, entry });
     }
   }
   pairs.sort((a, b) => a.gap - b.gap);
