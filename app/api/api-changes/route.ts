@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, UnreadableEntriesError, describeUnreadable } from '@/lib/repo';
-import { changeMaker, changeStore, forgetChange, forgetTokenChanges, isChangeId, listChanges, pruneChanges, tokenRef } from '@/lib/api-changes';
+import { changeMaker, changeStore, forgetChange, forgetTokenChanges, isChangeId, listChanges, MakerKeysUnreadable, pruneChanges, settleClaimsOf, tokenRef } from '@/lib/api-changes';
 import { apiTokenStore } from '@/lib/api-token-store';
 import { undoChange } from '@/lib/api-undo';
 import { ApiFailure } from '@/lib/api-spec';
@@ -27,7 +27,9 @@ import { getManualAccountsReport } from '@/lib/manual';
 //   POST    { action: 'forget-token', id }  the same for every change made
 //           by the token that made this one.
 //   DELETE  { id }  removes a change whose stored bytes are damaged, once the
-//           person confirms (only those: one unrecognised is intact data).
+//           person confirms (only those: one unrecognised is intact data),
+//           its key's claim marked made first, so a retry of the key never
+//           makes again what it may have made.
 //
 // An undo made here is recorded as the app's, counts against no token's
 // limits, and works whether or not this copy lets tokens write, so a change
@@ -139,6 +141,24 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'That change reads fine: forget it instead.' }, { status: 409 });
     } catch (err) {
       if (!(err instanceof UnreadableEntriesError) || !err.unreadable.includes(body.id)) throw err;
+    }
+    // What it began can't be told now: its key, sent again, is refused.
+    try {
+      await settleClaimsOf(ctx, body.id);
+    } catch (err) {
+      if (!(err instanceof MakerKeysUnreadable)) throw err;
+      // Its token's keys can't be read: removing the change now could let one
+      // of them make it again. Revoking the token forgets them (revokeToken).
+      console.error('API changes: the keys of a damaged change’s token can’t be read');
+      const label = await apiTokenStore
+        .get(ctx, err.tokenId)
+        .then((t) => t?.label ?? null)
+        .catch(() => null);
+      const named = label ? `the token “${label}”` : 'the token that made it';
+      return NextResponse.json(
+        { error: `The keys of ${named} can’t be read, so this change was left as it is: removing it now could let one of those keys make it again. Revoking ${named} forgets its keys; then remove this change.` },
+        { status: 409 }
+      );
     }
     await changeStore.remove(ctx, body.id);
     return NextResponse.json({ removed: true });

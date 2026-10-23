@@ -27,7 +27,9 @@
 //                    IDEMPOTENCY_HOURS, each as a SHA-256 beside the SHA-256
 //                    of its request, the change it is for, and `made` once
 //                    what it made is there (so a key sent again after the
-//                    person deleted it never makes it again). Small (a few
+//                    person deleted it never makes it again), or once its
+//                    change's record is removed as damaged, when what it
+//                    began can't be told (settleClaimsOf). Small (a few
 //                    hundred claims at most), changed with a compare-and-set
 //                    per token. Bookkeeping: never exported, never backed up.
 //
@@ -57,7 +59,7 @@
 // second create. The app's list names a change it can't read.
 
 import { createHash, randomBytes } from 'node:crypto';
-import { defineMapStore, UnreadableEntriesError } from './repo';
+import { defineMapStore, StoredDataUnreadableError, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { CHANGES_KEEP_DAYS, IDEMPOTENCY_HOURS } from './api-limits';
 import { ApiFailure } from './api-spec';
@@ -316,6 +318,42 @@ export async function markMade(ctx: Ctx, tokenId: string, keyHash: string, chang
     );
   } catch (err) {
     console.error('API changes: a key could not be marked made', err instanceof Error ? err.name : typeof err);
+  }
+}
+
+/** The keys of the token that made a change can't be read (settleClaimsOf):
+ *  `tokenId` is that token's, for the words. */
+export class MakerKeysUnreadable extends Error {
+  constructor(readonly tokenId: string) {
+    super('The keys of the token that made this change can’t be read.');
+    this.name = 'MakerKeysUnreadable';
+  }
+}
+
+/**
+ * Before a change's record is removed as damaged (the app's list, which
+ * can't tell what it began): every key claim naming it is marked made, so
+ * the key sent again is never taken for "the claim alone" and made again
+ * (lib/api-writes.ts keyedCreate). Only the token that made it can have
+ * one, as a claim's change is made with its own token's ref (claimKey,
+ * reclaim), which the id carries (changeMaker); one the app made has none.
+ * Strict for that token alone: its claims that can't be read stop the
+ * removal (MakerKeysUnreadable), since a claim left unmarked could make the
+ * thing again once they read; another token's never do.
+ */
+export async function settleClaimsOf(ctx: Ctx, changeId: string): Promise<void> {
+  const maker = changeMaker(changeId);
+  if (maker === null) return;
+  for (const tokenId of await claimStore.ids(ctx)) {
+    if (tokenRef(tokenId) !== maker) continue;
+    try {
+      await claimStore.update(ctx, tokenId, (cur) =>
+        cur?.claims.some((c) => c.change === changeId) ? { ...cur, claims: cur.claims.map((c) => (c.change === changeId ? { ...c, made: true as const } : c)) } : cur
+      );
+    } catch (err) {
+      if (err instanceof StoredDataUnreadableError) throw new MakerKeysUnreadable(tokenId);
+      throw err;
+    }
   }
 }
 

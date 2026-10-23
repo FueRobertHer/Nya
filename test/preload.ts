@@ -15,13 +15,22 @@
 // off and no files added, and so does each file's load and beforeAll. A test
 // that wants one set does so in its own beforeEach (this file's runs first),
 // or in the test itself.
+//
+// The same holds for a shared test helper's own state: its module is loaded
+// once for the whole run, so what one file leaves in it reaches every file
+// after it that imports it (test/restore-run.ts's `sent`, which one test sets
+// to fail a restore's batches part way). A helper registers how to set its
+// state back with `resetEachTest` (test/shared-reset.ts), and every one is
+// run here, before each test of every file.
 
 import { afterEach, beforeEach } from 'bun:test';
+import { runSharedResets } from './shared-reset';
 
 const RESET = ['MAX_TXN_BLOB_CHARS', 'LUNCHFLOW_ENABLED', 'ATTACHMENTS_QUOTA_MB'];
 
 function reset() {
   for (const name of RESET) delete process.env[name];
+  runSharedResets();
 }
 
 reset();

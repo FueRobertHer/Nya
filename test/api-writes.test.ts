@@ -576,6 +576,60 @@ describe('idempotency keys', () => {
     expect([refused.status, refused.body.error.code]).toEqual([409, 'conflict']);
   });
 
+  test('a change removed in the app as damaged: its key, sent again, never makes it again', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged' } });
+    expect(first.status).toBe(201);
+    // Stopped before its key was marked made, then its record damaged and removed in the app.
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    const removed = await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }));
+    expect(removed.body).toEqual({ removed: true });
+    setSystemTime(new Date(LATER));
+    const again = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged' } });
+    expect([again.status, again.body.error.code, again.body.error.message]).toEqual([
+      409,
+      'conflict',
+      'What this Idempotency-Key began may have been made and removed since, so nothing was made again. Check, and if you still want it, send the request with a new key.',
+    ]);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  test('removing a damaged change settles only its own key: another of its token’s keys, nothing begun under it, is still made', async () => {
+    const other = await claimedAlone('k-other');
+    const first = await send('POST', 'transactions', { body: { ...coffee, name: 'Tea' }, headers: { 'idempotency-key': 'k-damaged-2' } });
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    expect((await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }))).body).toEqual({ removed: true });
+    const claims = (await claimStore.get(ctx, writerId))!.claims;
+    expect(claims.find((c) => c.change === other)?.made).toBeUndefined();
+    setSystemTime(new Date(LATER));
+    const made = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-other' } });
+    expect(made.status).toBe(201);
+  });
+
+  test('a damaged change whose token’s keys can’t be read is left, and the words say what to do', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged-3' } });
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    fake.hashes.get(ctxKey('api-change-keys'))!.set(writerId, 'not a stored value');
+    const refused = await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }));
+    expect([refused.status, refused.body.error]).toEqual([
+      409,
+      'The keys of the token “Importer” can’t be read, so this change was left as it is: removing it now could let one of those keys make it again. Revoking the token “Importer” forgets its keys; then remove this change.',
+    ]);
+    expect(fake.hashes.get(ctxKey('api-changes'))!.get(first.body.change_id)).toBe('not a stored value');
+  });
+
+  test('another token’s keys that can’t be read don’t hold back the removal', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged-4' } });
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    const { info } = await createToken(ctx, 'Sorter', new Date(NOW), null, 'write');
+    fake.hashes.get(ctxKey('api-change-keys'))!.set(info.id, 'not a stored value');
+    expect((await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }))).body).toEqual({ removed: true });
+    expect((await claimStore.get(ctx, writerId))!.claims.find((c) => c.change === first.body.change_id)?.made).toBe(true);
+  });
+
   test('stopped after its row landed, before its key was marked made, then deleted in the app: refused, never made again', async () => {
     const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-crash' } });
     expect(first.status).toBe(201);
@@ -645,17 +699,37 @@ describe('idempotency keys', () => {
   test('two takeovers at once make it once: the claim moves to one of them alone', async () => {
     const first = await claimedAlone('k-7');
     setSystemTime(new Date(LATER));
-    // Each takeover's read of the first's change slowed, as a network round
-    // trip would, so both read before either moves the claim.
+    // Each takeover's read of the first's change held until both have read
+    // the claim and reached it, as a network round trip could, so both read
+    // before either moves the claim, however slow the machine (a fixed delay
+    // let one finish first on a loaded one).
     const changes = await import('@/lib/api-changes');
     const real = changes.getChange;
     let looked = 0;
+    // Let go after 1.5 s if the second never comes, well inside the test's
+    // own 5 s, so a missed barrier fails on `looked`, not as a timeout.
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    let bothThere: () => void = () => {};
+    const both = new Promise<void>((resolve) => {
+      bothThere = resolve;
+      fallback = setTimeout(resolve, 1500);
+    });
     const slow = spyOn(changes, 'getChange').mockImplementation(async (c, id, now) => {
       if (id === first) {
-        looked++;
-        await new Promise((r) => setTimeout(r, 30));
+        if (++looked === 2) {
+          clearTimeout(fallback);
+          bothThere();
+        }
+        await both;
       }
       return real(c, id, now);
+    });
+    // The second request slower to claim its key, as on a loaded machine.
+    const claim = changes.claimKey;
+    let claims = 0;
+    const late = spyOn(changes, 'claimKey').mockImplementation(async (...args) => {
+      if (++claims === 2) await new Promise((r) => setTimeout(r, 60));
+      return claim(...args);
     });
     try {
       const [x, y] = await Promise.all([
@@ -666,7 +740,9 @@ describe('idempotency keys', () => {
       expect([x.status, y.status].sort()).toEqual([201, 409]);
       expect([x, y].find((r) => r.status === 409)!.body.error.code).toBe('in_progress');
     } finally {
+      clearTimeout(fallback);
       slow.mockRestore();
+      late.mockRestore();
     }
     expect(await rows()).toHaveLength(1);
   });
