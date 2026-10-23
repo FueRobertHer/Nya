@@ -20,7 +20,9 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { Masked } from "./HideAmounts";
-import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
+import type { FxTable } from "@/lib/fx/rates";
 import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
@@ -332,6 +334,7 @@ function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) 
 
 export default function MonthBreakdown({
   txns,
+  fx = null,
   notes,
   asideNotes = NO_NOTES,
   loading,
@@ -355,6 +358,9 @@ export default function MonthBreakdown({
   review,
 }: {
   txns: Txn[] | null;
+  /** What the totals convert with, once a home currency is chosen
+   *  (app/api/transactions `fx`); null without one. */
+  fx?: FxTable | null;
   /** What the load couldn't read, or couldn't apply as it says: said under
    *  the list and beside the chart, whose figures it bears on. */
   notes: string[];
@@ -453,12 +459,20 @@ export default function MonthBreakdown({
     [txns, selected],
   );
 
-  // Every total on the tab sums amounts in one currency, the one most of the
-  // transactions are in, the same for every month so the trend compares
-  // like with like; the month's rows in others are named, not added
-  // (lib/spending.ts).
-  const currency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
-  const leftOut = useMemo(() => leftOutText(leftOutByCurrency(monthTxns, currency), currency), [monthTxns, currency]);
+  // Every total on the tab sums amounts in one currency, the same for every
+  // month so the trend compares like with like: the home currency once one
+  // is chosen, each row in another converted at its own day's rate
+  // (lib/fx/totals.ts), else the one most of the transactions are in; what
+  // can't be counted in it is named, not added (lib/spending.ts). The totals
+  // add up `counted`; the list shows the rows as they are.
+  const counted = useMemo(() => totalsIn(txns ?? [], fx), [txns, fx]);
+  const currency = counted.currency;
+  const countedMonth = useMemo(() => counted.rows.filter((t) => t.date.slice(0, 7) === selected), [counted, selected]);
+  const leftOut = useMemo(
+    () => leftOutWhy(leftOutText(leftOutByCurrency(countedMonth, currency), currency), conversionIn(countedMonth, counted.conversion)),
+    [countedMonth, currency, counted]
+  );
+  const convertedNote = useMemo(() => convertedText(conversionIn(countedMonth, counted.conversion)), [countedMonth, counted]);
   // Rows imported into linked accounts from files (#52): the totals say so.
   const importedNote = useMemo(() => importedRowsNote(monthTxns), [monthTxns]);
 
@@ -486,7 +500,7 @@ export default function MonthBreakdown({
     const byCategory: Record<string, number> = {};
     const byCategoryId = new Map<string, number>();
     const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
-    for (const t of monthTxns) {
+    for (const t of countedMonth) {
       if (!countsInTotals(t, currency)) continue;
       if (t.amount < 0) {
         inflow += -t.amount;
@@ -504,7 +518,7 @@ export default function MonthBreakdown({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
     return { moneyIn: inflow, moneyOut: outflow, categories, byCategoryId };
-  }, [monthTxns, currency, taxonomy]);
+  }, [countedMonth, currency, taxonomy]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -512,19 +526,19 @@ export default function MonthBreakdown({
   const channelSplit = useMemo(() => {
     let online = 0;
     let inStore = 0;
-    for (const t of monthTxns) {
+    for (const t of countedMonth) {
       if (t.amount <= 0 || !countsInTotals(t, currency)) continue;
       if (t.payment_channel === "online") online += t.amount;
       else if (t.payment_channel === "in store") inStore += t.amount;
     }
     return { online, inStore };
-  }, [monthTxns, currency]);
+  }, [countedMonth, currency]);
 
   // Top places by spend, from transaction location. Disambiguates same-named
   // merchants and gives a light geo view without a map dependency.
   const topCities = useMemo(() => {
     const byCity: Record<string, number> = {};
-    for (const t of monthTxns) {
+    for (const t of countedMonth) {
       if (t.amount <= 0 || !countsInTotals(t, currency) || !t.city) continue;
       const label = t.region ? `${t.city}, ${t.region}` : t.city;
       byCity[label] = (byCity[label] ?? 0) + t.amount;
@@ -532,7 +546,7 @@ export default function MonthBreakdown({
     return Object.entries(byCity)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-  }, [monthTxns, currency]);
+  }, [countedMonth, currency]);
 
   // Net per month (oldest → newest) for the trend columns. Bar height tracks
   // net magnitude and bar color tracks its sign (green positive, red negative),
@@ -543,14 +557,14 @@ export default function MonthBreakdown({
       [...months].reverse().map((m) => {
         let inflow = 0;
         let outflow = 0;
-        for (const t of txns ?? []) {
+        for (const t of counted.rows) {
           if (t.date.slice(0, 7) !== m || !countsInTotals(t, currency)) continue;
           if (t.amount < 0) inflow += -t.amount;
           else outflow += t.amount;
         }
         return { month: m, net: inflow - outflow };
       }),
-    [txns, months, currency],
+    [counted, months, currency],
   );
 
   // Keep the newest month in view when the row overflows (older months scroll
@@ -566,10 +580,13 @@ export default function MonthBreakdown({
   const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
   // A tapped node's rows, worked out again as the rows change, in place of
   // the month's; the search and the tag filter narrow them the same way.
-  const picked = useMemo(
-    () => (flowPick && taxonomy ? pickedRows(txns ?? [], flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }) : null),
-    [flowPick, txns, taxonomy, currency],
-  );
+  // Picked from the counted rows, as the chart counts them, and listed as
+  // they are.
+  const picked = useMemo(() => {
+    if (!flowPick || !taxonomy) return null;
+    const original = new Map((txns ?? []).map((t) => [t.transaction_id, t]));
+    return pickedRows(counted.rows, flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }).map((t) => original.get(t.transaction_id) ?? t);
+  }, [flowPick, txns, counted, taxonomy, currency]);
   const listed = picked ?? monthTxns;
   // A split transaction is kept whole, every part of it, when any part is
   // (#39): its parts are listed under it, and its split edited from all.
@@ -695,7 +712,7 @@ export default function MonthBreakdown({
           tapping a node lists its transactions below. */}
       {taxonomy && (
         <CashFlowSankey
-          txns={txns}
+          txns={counted.rows}
           taxonomy={taxonomy}
           currency={currency}
           incomplete={incomplete}
@@ -754,7 +771,7 @@ export default function MonthBreakdown({
             <div className="inst-name">Income vs spend</div>
             <div className="inst-total">{monthLabel(selected)}</div>
           </div>
-          <MonthFlowChart txns={monthTxns} month={selected} currency={currency} />
+          <MonthFlowChart txns={countedMonth} month={selected} currency={currency} />
         </div>
       )}
 
@@ -789,6 +806,7 @@ export default function MonthBreakdown({
           .
           {unknownCount > 0 &&
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
+          {convertedNote && ` ${convertedNote}`}
           {leftOut && ` ${leftOut}`}
           {namedWithout && ` ${namedWithout}`}
           {importedNote && ` ${importedNote}`}
@@ -834,7 +852,7 @@ export default function MonthBreakdown({
         </div>
       )}
 
-      <SpendByTag txns={monthTxns} tags={tags} currency={currency} />
+      <SpendByTag txns={countedMonth} tags={tags} currency={currency} />
 
       {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
         <div className="card">

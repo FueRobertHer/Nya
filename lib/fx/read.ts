@@ -72,3 +72,27 @@ export async function readLatestRates(): Promise<Pick<FxTable, 'latest' | 'fetch
   const t = tableFromFields(fields, [], null, []);
   return { latest: t.latest, fetch: t.fetch, unusable };
 }
+
+/** A row of flows as readFlowFx reads it: its day and currency. */
+type FlowRow = { date: string; iso_currency_code: string | null; unofficial_currency_code?: string | null };
+
+/**
+ * What the page converts its loaded transactions with (lib/fx/totals.ts):
+ * the table for the rows' currencies, over the days from the oldest of them
+ * to today; null without a home currency, or with settings that can't be
+ * used, so every total is today's. Read after the transactions' cache, on
+ * every load, never cached: a change of home currency or of a rate needs no
+ * cache cleared.
+ */
+export async function readFlowFx(ctx: Ctx, rows: readonly FlowRow[], now: number = Date.now()): Promise<FxTable | null> {
+  const today = new Date(now).toISOString().slice(0, 10);
+  let from = today;
+  const currencies = new Set<string>();
+  for (const r of rows) {
+    const c = r.iso_currency_code || r.unofficial_currency_code;
+    if (c) currencies.add(c);
+    if (r.date < from) from = r.date;
+  }
+  const { fx } = await readFx(ctx, { currencies, from, to: today });
+  return fx.home ? fx : null;
+}

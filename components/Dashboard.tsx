@@ -74,6 +74,8 @@ import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
 import { CORRECTION_KEEPS, institutionNote, rateEffectText } from './currency-text';
+import { asFxTable } from '@/lib/fx/fields';
+import type { FxTable } from '@/lib/fx/rates';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import { totalsCurrency } from '@/lib/spending';
@@ -542,6 +544,9 @@ export default function Dashboard({
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
+  // What the loaded rows' totals convert with, once a home currency is chosen
+  // (app/api/transactions `fx`, lib/fx/totals.ts): null without one.
+  const [txnFx, setTxnFx] = useState<FxTable | null>(null);
   // Your categories (components/categories-state.ts): the lists to choose one
   // from, the group rollups, and what budgets are set on.
   const categories = useCategories();
@@ -835,6 +840,7 @@ export default function Dashboard({
       }
       const data = await res.json();
       setTxns(data.transactions);
+      setTxnFx(asFxTable(data.fx));
       // The categories the rows were filed by, the tags they carry, and the queue.
       acceptCategories(data.categories);
       acceptTags(data.tags);
@@ -2944,6 +2950,7 @@ export default function Dashboard({
             {tab === 'activity' && (
               <MonthBreakdown
                 txns={txns}
+                fx={txnFx}
                 notes={txnNotes}
                 asideNotes={txnAside}
                 loading={txnsLoading}

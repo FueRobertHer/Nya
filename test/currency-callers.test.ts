@@ -33,7 +33,6 @@ const ALLOWED: Record<string, string> = {
   // Flows.
   'components/BudgetsTab.tsx#BudgetsTab:displayCurrency': STEP_2,
   'components/Insights.tsx#Insights:displayCurrency': STEP_2,
-  'components/MonthBreakdown.tsx#MonthBreakdown:currency': STEP_2,
   'components/MonthFlowChart.tsx#MonthFlowChart:currency': STEP_2,
   'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
   'lib/api-read.ts#readRecurring:currency': STEP_2,
