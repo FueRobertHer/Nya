@@ -23,11 +23,11 @@
 // for a row imported from a file (a duplicate the person named, a row the
 // bank's window superseded, a pair the sync kept). The restore writes every
 // record as the file had it, so that pairing is worked out again on every
-// read, in two stages (restoredHeld): first the old copy's file rows
-// against the restored rows, taken as the account's bank rows then (where
-// they began, the old connection's kept pairs read through restoredId),
-// which reproduces the old copy's pairing from the same inputs; each file
-// row a restored row stood for is then read as a duplicate of it
+// read, in two stages (restoredHeld): first the file rows whose review never
+// read the restored rows against them, taken as the account's bank rows then
+// (where they began, the old connection's kept pairs read through
+// restoredId), which reproduces the old copy's pairing from the same inputs;
+// each file row a restored row stood for is then read as a duplicate of it
 // (same_as_row, in memory only). Then, as for any account, the restored
 // rows and the file rows still counted against the new connection's rows
 // (lib/history-import/match.ts settle), the restored rows claiming the new
@@ -37,6 +37,18 @@
 // download never takes a restored row's place. What a file row's twin
 // stands for, it stands for too (standsFor), so what was said about a row
 // carries as it did.
+//
+// WHICH FILE ROWS THE FIRST STAGE PAIRS (pairable). Those whose review never
+// read a restored account's rows: the old copy's imports (made before the
+// restore), and an import made here into an account before the restored one
+// joined it (by the time of the link that did, and of every link on the way:
+// a file imported into the new account, then the restored one linked to it,
+// would otherwise count beside the restored rows for good). Never an import
+// whose review was matched against them, as it says itself
+// (`matched_restored`, lib/history-import/store.ts): what the person
+// answered there (a row of its own beside a restored one) stands, however
+// often the accounts are unlinked and linked again. An import from before
+// that was kept is judged by its time alone.
 //
 // THE TOTALS HOLD (totalsHold). While a restore is still being written or
 // undone, or a restored account is neither linked nor ended (Stop following),
@@ -129,32 +141,81 @@ export function linkedTo(id: string, links: ReadonlyMap<string, Pick<Link, 'to'>
 
 /** What the first stage reads (see PAIRED ON READ) for one live account:
  *  its restored rows, and of the old copy's, the kept pairs (by the file
- *  row's id, the restored row's id), where its bank's rows began, and which
- *  imports it had made. */
+ *  row's id, the restored row's id), where its bank's rows began, and from
+ *  when each id a file could be imported into had each restored account's
+ *  rows (joinedAt). */
 export type RestoredForAccount = {
   rows: HeldTxn[];
   twins: Map<string, string>;
   bankFrom: string | null;
-  /** The file imports the old copy made: made before the earliest of these
-   *  restores, by the summaries' times. Rows imported here since were
-   *  matched against the restored rows in their own review. */
-  before: string;
+  /** For each restored account whose rows these are, joinedAt. */
+  joined: Map<string, Map<string, string>>;
 };
 
-/** Each file row of the old copy's imports a restored row stood for, read
- *  as a duplicate of that restored row (same_as_row), in memory (see the
- *  header): the first stage. Every other row as it is. Pure. */
+/** When each id on a restored account's way to the account it is now
+ *  (through the links that apply) had that restored account's rows: the
+ *  restored account itself from the restore, and each id it was linked on to
+ *  from the later of that and every link up to it. An import into one of
+ *  those ids made since read those rows in its review (readAccountContext
+ *  reads the restored accounts linked to the account it imports into). A link
+ *  the old copy made is older than the restore: the restore's time stands.
+ *  Pure. */
+export function joinedAt(id: string, restoredAt: string, links: ReadonlyMap<string, Pick<Link, 'to' | 'linked_at'>>): Map<string, string> {
+  const out = new Map([[id, restoredAt]]);
+  let at = restoredAt;
+  let current = id;
+  // As resolveId follows them: stops at a repeat, so a cycle ends.
+  for (let i = 0; i < 50; i++) {
+    const link = links.get(current);
+    if (!link || out.has(link.to)) break;
+    if (link.linked_at > at) at = link.linked_at;
+    current = link.to;
+    out.set(current, at);
+  }
+  return out;
+}
+
+/** What the first stage needs to know of each import: when it was made, by
+ *  its summary, and which restored accounts its review was matched against
+ *  (HistoryImportSummary `matched_restored`). */
+export type ImportFacts = { importedAt: ReadonlyMap<string, string>; matched?: ReadonlyMap<string, ReadonlySet<string>> };
+
+/**
+ * Whether the first stage may pair a file row with a restored account's rows
+ * (see WHICH FILE ROWS THE FIRST STAGE PAIRS): not when its import says its
+ * review was matched against them; else only when it was made before the id
+ * it was imported into (the row's `account_id`, its book) had them, or into
+ * an id never on that restored account's way (whose review never had them).
+ * An import whose time can't be read is never paired: what its review read
+ * can't be told. Pure.
+ */
+export function pairable(
+  row: Pick<ImportedTxn, 'import_id' | 'account_id'>,
+  restoredAccount: string,
+  joined: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  facts: ImportFacts
+): boolean {
+  if (facts.matched?.get(row.import_id)?.has(restoredAccount)) return false;
+  const at = facts.importedAt.get(row.import_id);
+  if (at === undefined) return false;
+  const since = joined.get(restoredAccount)?.get(row.account_id);
+  return since === undefined || at < since;
+}
+
+/** Each file row a restored row stood for, of the imports whose review never
+ *  read it (pairable), read as a duplicate of that restored row
+ *  (same_as_row), in memory (see the header): the first stage. Every other
+ *  row as it is. Pure. */
 export function pairedWithRestored(
   fileRows: readonly ImportedTxn[],
   restored: RestoredForAccount,
   order: readonly string[],
-  opts: { covers: ReadonlyMap<string, { from: string; to: string }>; importedAt: ReadonlyMap<string, string> }
+  opts: { covers: ReadonlyMap<string, { from: string; to: string }> } & ImportFacts
 ): ImportedTxn[] {
   if (restored.rows.length === 0 || fileRows.length === 0) return [...fileRows];
-  const old = fileRows.filter((r) => {
-    const at = opts.importedAt.get(r.import_id);
-    return at !== undefined && at < restored.before;
-  });
+  const accounts = [...new Set(restored.rows.map((r) => r.account_id))];
+  const pairableWith = (r: ImportedTxn, account: string) => pairable(r, account, restored.joined, opts);
+  const old = fileRows.filter((r) => accounts.some((a) => pairableWith(r, a)));
   if (old.length === 0) return [...fileRows];
   const banks: BankRow[] = restored.rows.map((r) => ({
     transaction_id: r.id,
@@ -166,7 +227,8 @@ export function pairedWithRestored(
     merchant_name: r.restored?.merchant_name ?? null,
     pending: false,
   }));
-  const first = settle(old, banks, order, { bankFrom: restored.bankFrom, covers: opts.covers, twins: restored.twins });
+  // Each row only with the rows of a restored account its review never read.
+  const first = settle(old, banks, order, { bankFrom: restored.bankFrom, covers: opts.covers, twins: restored.twins, allowed: (r, b) => pairableWith(r, b.account_id) });
   const twin = new Map<string, string>();
   for (const [id, b] of first.superseded) twin.set(id, b.transaction_id);
   for (const [id, st] of first.standing) if ('bank' in st) twin.set(id, st.bank.transaction_id);
@@ -183,7 +245,7 @@ export function heldWithRestored(
   fileRows: readonly ImportedTxn[],
   restored: RestoredForAccount | null | undefined,
   order: readonly string[],
-  opts: { covers: ReadonlyMap<string, { from: string; to: string }>; importedAt: ReadonlyMap<string, string> }
+  opts: { covers: ReadonlyMap<string, { from: string; to: string }> } & ImportFacts
 ): HeldTxn[] {
   if (!restored || restored.rows.length === 0) return [...fileRows];
   return [...restored.rows, ...pairedWithRestored(fileRows, restored, order, opts)];
@@ -193,12 +255,18 @@ export function heldWithRestored(
  *  (heldWithRestored): read once with the account's context
  *  (lib/history-import/read.ts readAccountContext), applied to its books as
  *  they are each time they are read (the commit reads them again). */
-export type RestoredContext = { account: RestoredForAccount; order: string[]; covers: Map<string, { from: string; to: string }>; importedAt: Map<string, string> };
+export type RestoredContext = {
+  account: RestoredForAccount;
+  order: string[];
+  covers: Map<string, { from: string; to: string }>;
+  importedAt: Map<string, string>;
+  matched: Map<string, Set<string>>;
+};
 
 /** An account's file rows, as read now, with the rows a restore brought back,
  *  as its review read them. */
 export function withRestoredRows(fileRows: readonly ImportedTxn[], restored: RestoredContext | null | undefined): HeldTxn[] {
-  return restored ? heldWithRestored(fileRows, restored.account, restored.order, { covers: restored.covers, importedAt: restored.importedAt }) : [...fileRows];
+  return restored ? heldWithRestored(fileRows, restored.account, restored.order, { covers: restored.covers, importedAt: restored.importedAt, matched: restored.matched }) : [...fileRows];
 }
 
 /** The old copy's pairs at one of its connections, read through restoredId:
