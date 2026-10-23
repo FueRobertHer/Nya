@@ -122,7 +122,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { checkContainerKey, ContainerKeyError } from './crypto';
 import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
-import { ownersKey } from './owners';
+import { ownersKey, ownersOf } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
 import { readLifecycleView, lifecycleOf, endedNow, endOf, accountWords } from './lifecycle';
 import { getKeptAccounts, heldAccountIds, heldAccounts } from './kept-accounts';
@@ -308,6 +308,29 @@ async function allConnections(): Promise<Conn[]> {
   }
   // Fields without a record (left by a removal that stopped part way) count for nothing.
   return [...byId.values()].filter((c) => c.meta);
+}
+
+/**
+ * Whether whoever owns this container (lib/owners.ts) shares one of its
+ * accounts on a connection, ended or not (an ended share keeps its accounts,
+ * to be renewed): for the API's undo of an account a token made
+ * (lib/api-undo.ts), which never takes away one the person chose to share.
+ * Strict, unlike the readers above: a share of theirs that can't be read
+ * counts as naming it, and a failure to read throws. Fields without a record
+ * count for nothing, as everywhere here.
+ */
+export async function ownerSharesAccount(ctx: Ctx, accountId: string): Promise<boolean> {
+  const owners = new Set(await ownersOf(ctx.container));
+  if (owners.size === 0) return false;
+  const raw = ((await redis().hgetall<Record<string, unknown>>(connectionsKey())) ?? {}) as Record<string, unknown>;
+  for (const [field, value] of Object.entries(raw)) {
+    const [id, kind, user] = field.split('|');
+    if (kind !== 'share' || !user || !owners.has(user) || !Object.hasOwn(raw, id)) continue;
+    const g = parse<Record<string, unknown>>(value);
+    const levels = g && typeof g === 'object' && !Array.isArray(g) ? (g.expiring ?? g.accounts) : null;
+    if (!levels || typeof levels !== 'object' || Array.isArray(levels) || Object.hasOwn(levels, accountId)) return true;
+  }
+  return false;
 }
 
 async function connectionOf(me: string, id: string): Promise<Conn> {

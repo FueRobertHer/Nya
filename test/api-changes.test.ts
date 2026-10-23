@@ -30,6 +30,8 @@ const { changeStore, claimStore, pruneChanges, tokenRef } = await import('@/lib/
 const { apiWriteCount, apiWriteDays } = await import('@/lib/api-token-store');
 const { snapshotData } = await import('@/lib/snapshot-job');
 const { PENDING_MS } = await import('@/lib/api-writes');
+const { allocationSettingsStore } = await import('@/lib/allocation-settings');
+const { plannedStore } = await import('@/lib/planned-store');
 const txnWrites = await import('@/lib/manual-txn-writes');
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
@@ -525,6 +527,33 @@ describe('undo of an account a token made, taken out only as the token left it',
     await refusedWith(c.change, c.id, 'was split or put in a group since');
   });
 
+  /** A share of the container's owner, to someone they're connected with,
+   *  as stored (lib/sharing.ts). */
+  const shareOf = async (share: unknown) => {
+    const { ownersKey } = await import('@/lib/owners');
+    const { connectionsKey, connectionId } = await import('@/lib/sharing');
+    const id = connectionId('user_me', 'user_sam');
+    await fake.hset(ownersKey(), { user_me: ctx.container });
+    await fake.hset(connectionsKey(), {
+      [id]: JSON.stringify({ users: ['user_me', 'user_sam'], status: 'active', created_at: new Date(NOW).toISOString() }),
+      [`${id}|share|user_me`]: typeof share === 'string' ? share : JSON.stringify(share),
+    });
+  };
+
+  test('nothing the person set elsewhere is named for it: shares of others, series on other accounts, settings for others', async () => {
+    const a = await made();
+    await shareOf({ accounts: { acc_chk: 'balance' }, updated_at: new Date(NOW).toISOString() });
+    const { connectionsKey, connectionId } = await import('@/lib/sharing');
+    // What the other side shares is theirs, whatever ids it names.
+    await fake.hset(connectionsKey(), { [`${connectionId('user_me', 'user_sam')}|share|user_sam`]: JSON.stringify({ accounts: { [a.id]: 'balance' }, updated_at: new Date(NOW).toISOString() }) });
+    // A share left without its connection's record counts for nothing.
+    await fake.hset(connectionsKey(), { ['0'.repeat(32) + '|share|user_me']: JSON.stringify({ accounts: { [a.id]: 'balance' }, updated_at: new Date(NOW).toISOString() }) });
+    await plannedStore.set(ctx, { version: 1, items: [], dismissed: ['bill|Home|Cash jar savings|lunch|USD|1200', 'bill|Elsewhere|Cash jar|lunch|USD|1200', 'no bars here'], threshold: null });
+    await allocationSettingsStore.set(ctx, { v: 1, buckets: [{ account_id: 'acc_chk', bucket: 'taxable' }], funds: [], accounts: [], target: null });
+    expect((await undo(a.change)).status).toBe(200);
+    expect(await getManualAccount(ctx, a.id)).toBeNull();
+  });
+
   test('a row added in another way, or anything naming the account: refused, saying what', async () => {
     const { setGoals } = await import('@/lib/goals');
     const { linkAccounts } = await import('@/lib/links');
@@ -546,6 +575,12 @@ describe('undo of an account a token made, taken out only as the token left it',
         'A rule names the account',
       ],
       ['a note', (id) => timelineNotesStore.set(ctx, 'n1', { date: daysAgo(0, NOW), text: 'Opened the jar', kind: 'user', account_id: id, created_at: new Date(NOW).toISOString() }), 'A note on the timeline is about the account'],
+      ['a tax bucket', (id) => allocationSettingsStore.set(ctx, { v: 1, buckets: [{ account_id: id, bucket: 'roth' }], funds: [], accounts: [], target: null }), 'A tax bucket or split on the Plan tab is set for the account'],
+      ['a split', (id) => allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [], accounts: [{ account_id: id, split: { 'us-stocks': 60, bonds: 40 } }], target: null }), 'A tax bucket or split on the Plan tab is set for the account'],
+      ['a share', (id) => shareOf({ accounts: { [id]: 'balance' }, updated_at: new Date(NOW).toISOString() }), 'The account is shared with someone you’re connected with'],
+      ['a share that ended', (id) => shareOf({ expiring: { [id]: 'exists' }, expires_at: new Date(NOW - 1000).toISOString(), updated_at: new Date(NOW).toISOString() }), 'The account is shared with someone you’re connected with'],
+      ['a share that can’t be read', () => shareOf('{not json'), 'The account is shared with someone you’re connected with'],
+      ['a series marked not recurring', () => plannedStore.set(ctx, { version: 1, items: [], dismissed: ['bill|home|Cash jar|lunch|USD|1200'], threshold: null }), 'A recurring series on the account was marked not recurring'],
     ];
     for (const [what, touch, words] of cases) {
       fake.reset();

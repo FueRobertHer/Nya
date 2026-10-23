@@ -23,9 +23,11 @@
 //                         row on it was made by this token, nothing was said
 //                         about a row but what the token said, no row is split
 //                         or grouped, and the account isn't hidden, marked
-//                         closed, tracked by a goal, linked, named by a rule
-//                         or by a note on the timeline: every check under the
-//                         links lock, just before the first write. Then its
+//                         closed, tracked by a goal, linked, named by a rule,
+//                         a note on the timeline, an allocation setting or a
+//                         recurring series marked not recurring, or shared on
+//                         a connection: every check under the links lock,
+//                         just before the first write. Then its
 //                         rows and the account go (the app's own delete), and
 //                         its balance on every day recorded since, folded out
 //                         of each total as the app's forget of a hidden
@@ -74,6 +76,10 @@ import { readLinks } from './link-core';
 import { lifecycleStore } from './lifecycle';
 import { getGoals } from './goals';
 import { timelineNotesStore } from './timeline-notes';
+import { allocationSettingsStore } from './allocation-settings';
+import { plannedStore } from './planned-store';
+import { ownerSharesAccount } from './sharing';
+import { normalizeInstitutionName } from './manual';
 
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
@@ -202,6 +208,17 @@ async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<
   if (links.has(id) || [...links.values()].some((l) => l.to === id)) refuse(NOT_REMOVED('The account is linked to another'));
   if ((await rulesStore.get(ctx))?.rules.some((r) => r.conditions.some((k) => k.field === 'account' && k.value === id))) refuse(NOT_REMOVED('A rule names the account'));
   if ([...(await timelineNotesStore.getAll(ctx)).values()].some((n) => n.account_id === id)) refuse(NOT_REMOVED('A note on the timeline is about the account'));
+  const allocation = await allocationSettingsStore.get(ctx);
+  if (allocation && [...allocation.buckets, ...allocation.accounts].some((s) => s.account_id === id)) refuse(NOT_REMOVED('A tax bucket or split on the Plan tab is set for the account'));
+  if (await ownerSharesAccount(ctx, id)) refuse(NOT_REMOVED('The account is shared with someone you’re connected with'));
+  // A detected series is named by its kind, then the institution and account
+  // its rows are shown under (lib/recurring.ts groupOf), compared as the
+  // Accounts tab groups institutions: without case.
+  const under = `|${normalizeInstitutionName(cur.institution_name) || 'Manual'}|${cur.name}|`.toLowerCase();
+  const names = (d: string) => d.indexOf('|') > 0 && d.slice(d.indexOf('|')).toLowerCase().startsWith(under);
+  if ((await plannedStore.get(ctx))?.dismissed.some(names)) {
+    refuse(NOT_REMOVED('A recurring series on the account was marked not recurring'));
+  }
 
   // Every row: made by this token, as its last change of it left it, row and
   // what is said beside it, and neither split nor in a group.
