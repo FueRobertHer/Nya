@@ -1181,17 +1181,6 @@ export function upcomingBills(
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
 }
 
-/**
- * Which series the person said aren't recurring, each with the dismissal that
- * says so (see IDENTITY): a dismissal names a group and an amount, and applies
- * to the series of that group at the amount (or the amount it had before a
- * price change), exactly for a series split by amount (or, for a part of two
- * deposits a date saved with its side, that part anywhere within its
- * deposits) and within 25% or 50 cents for the rest, nearest first, each
- * series and each dismissal at most once.
- * One with no series at its amount waits: iCloud dismissed is never Apple
- * Music or Arcade dismissed, once iCloud is gone.
- */
 /** A dismissal as stored: a series' group, then its amount in cents, maybe
  *  exact (=), a part's side (@low, @high) and a count (#n). */
 const DISMISSED = /^(.*)\|(=?)(\d+)(?:@(low|high))?(?:#\d+)?$/;
@@ -1209,6 +1198,17 @@ export function seriesGroupsOfEither(t: RecurringRow): string[] {
   return t.pending ? [] : (['bill', 'income'] as const).map((kind) => groupOf(t, kind));
 }
 
+/**
+ * Which series the person said aren't recurring, each with the dismissal that
+ * says so (see IDENTITY): a dismissal names a group and an amount, and applies
+ * to the series of that group at the amount (or the amount it had before a
+ * price change), exactly for a series split by amount (or, for a part of two
+ * deposits a date saved with its side, that part anywhere within its
+ * deposits) and within 25% or 50 cents for the rest, nearest first, each
+ * series and each dismissal at most once.
+ * One with no series at its amount waits: iCloud dismissed is never Apple
+ * Music or Arcade dismissed, once iCloud is gone.
+ */
 export function dismissedSeries(series: readonly RecurringSeries[], dismissed: readonly string[]): Map<string, string> {
   const byGroup = new Map<string, RecurringSeries[]>();
   for (const s of series) {

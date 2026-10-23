@@ -59,6 +59,7 @@ const netWorthRoute = await import('@/app/api/net-worth/route');
 const backfillRoute = await import('@/app/api/backfill/route');
 const manualRoute = await import('@/app/api/manual-accounts/route');
 const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
+const hiddenRoute = await import('@/app/api/hidden-accounts/route');
 const { readNetWorthAndHistory } = await import('@/lib/api-read');
 const { getHistory, foldHiddenAccount } = await import('@/lib/history');
 const { getHiddenAccounts, markForgetting, setAccountHidden } = await import('@/lib/hidden');
@@ -104,13 +105,19 @@ const DAY = '2026-09-14';
 /**
  * What every reader of net worth says now, to the cent: Home's total, chart
  * and converted chart (app/api/net-worth, which also records today's point),
- * the chart with `hide` hidden, as each hidden entry signs it, the API's net
+ * the chart with `hide` hidden by the app (and the type each entry took), the API's net
  * worth and its history (lib/api-read.ts), a share of net worth with its
  * history (lib/share-views.ts), and the download's history, as stored.
  */
-async function readers(hide: { id: string; type: string }[] = []) {
+async function readers(hide: string[] = []) {
   const h = await home();
-  const hidden = new Map(hide.map((x) => [x.id, { type: x.type, hidden_at: new Date(NOW).toISOString() }]));
+  // Hidden as the app hides them (app/api/hidden-accounts, whose entry takes
+  // the account's type as it is then), read, then shown again.
+  for (const id of hide) expect([id, (await call(hiddenRoute, 'POST', { account_id: id, hidden: true })).status]).toEqual([id, 200]);
+  const hidden = await getHiddenAccounts(ctx);
+  const hidden_types = [...hidden].map(([id, e]) => [id, e.type]).sort();
+  const hidden_chart = hide.length > 0 ? pts(await getHistory(ctx, hidden)) : null;
+  for (const id of hide) expect([id, (await call(hiddenRoute, 'POST', { account_id: id, hidden: false })).status]).toEqual([id, 200]);
   const api = await readNetWorthAndHistory(ctx, { includeEstimated: true, interval: 'day' } as any, { base: 'private' } as any);
   const share = (await projectViews(ctx, { net_worth: { detail: 'history', accounts: false } } as any, NOW))!.views.net_worth as any;
   const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date()) as any;
@@ -119,7 +126,8 @@ async function readers(hide: { id: string; type: string }[] = []) {
     converted_total: h.base.net_worth,
     chart: pts(h.history),
     converted_chart: pts(h.base.history),
-    hidden_chart: hide.length > 0 ? pts(await getHistory(ctx, hidden)) : null,
+    hidden_types,
+    hidden_chart,
     api_total: api.now.base!.net_worth,
     api_history: api.history.points.map((p: any) => [p.date, p.value, p.to_base, p.estimated]),
     share_total: share.total,
@@ -132,13 +140,14 @@ describe('a change between money held and money owed', () => {
   test('is refused in the app and through the API, and every reader reads as before, to the cent', async () => {
     await home();
     await estimate();
-    const before = await readers([{ id: 'manual_eur', type: 'depository' }]);
+    const before = await readers(['manual_eur']);
     // The figures themselves: 5,000 euros at 1.1592 on the 11th and 1.1551 on the 14th.
     expect([before.total, before.converted_total]).toEqual([6000, 6775.5]);
     expect(before.converted_chart.filter(([, , est]) => !est)).toEqual([
       ['2026-09-11', 6796, false],
       ['2026-09-14', 6775.5, false],
     ]);
+    expect(before.hidden_types).toEqual([['manual_eur', 'depository']]);
     expect(before.hidden_chart!.filter(([, , est]) => !est)).toEqual([
       ['2026-09-11', 1000, false],
       ['2026-09-14', 1000, false],
@@ -151,13 +160,13 @@ describe('a change between money held and money owed', () => {
     await expect(saveAccountEdit(ctx, 'manual_eur', { fields: { type: 'loan' } })).rejects.toBeInstanceOf(AccountEditRefused);
     await expect(saveAccountEdit(ctx, 'manual_eur', { fields: { type: 'loan' } })).rejects.toMatchObject({ status: 409, message: OWED_FLIP });
     expect((await getManualAccount(ctx, 'manual_eur'))!.type).toBe('depository');
-    expect(await readers([{ id: 'manual_eur', type: 'depository' }])).toEqual(before);
+    expect(await readers(['manual_eur'])).toEqual(before);
 
     // Within one side, as ever: savings to other, and back.
     expect((await call(manualRoute, 'PATCH', { ...EUR, type: 'other' })).status).toBe(200);
     expect((await call(manualRoute, 'PATCH', { ...EUR, type: 'depository' })).status).toBe(200);
     await estimate();
-    expect(await readers([{ id: 'manual_eur', type: 'depository' }])).toEqual(before);
+    expect(await readers(['manual_eur'])).toEqual(before);
   });
 
   test('a card becomes a loan, and a loan a card, but neither money held', async () => {
@@ -181,7 +190,7 @@ describe('a change between money held and money owed', () => {
     expect(added.status).toBe(200);
     const card = added.body.account.account_id as string;
     await estimate();
-    const owed = await readers([{ id: 'manual_eur', type: 'depository' }]);
+    const owed = await readers(['manual_eur']);
     // Now: 1,000 dollars less 300 euros owed (346.53 dollars at 1.1551).
     expect([owed.total, owed.converted_total, owed.api_total, owed.share_total]).toEqual([700, 653.47, 653.47, 653.47]);
     // Friday counts the savings as it was recorded; today counts it no more.
@@ -220,10 +229,11 @@ describe('a change between money held and money owed', () => {
     const again = await call(manualRoute, 'POST', { name: 'Euro savings', institution_name: 'Sparkasse', type: 'depository', subtype: null, balance: 4000, currency: 'EUR' });
     expect(again.status).toBe(200);
     await estimate();
-    const held = await readers([
-      { id: 'manual_eur', type: 'depository' },
-      { id: card, type: 'credit' },
-    ]);
+    const held = await readers(['manual_eur', card]);
+    expect(held.hidden_types).toEqual([
+      [card, 'credit'],
+      ['manual_eur', 'depository'],
+    ].sort());
     // 1,000 dollars and 4,000 euros (4,620.40 dollars).
     expect([held.total, held.converted_total, held.api_total, held.share_total]).toEqual([5000, 5620.4, 5620.4, 5620.4]);
     expect(held.chart.filter(([, , est]) => !est)).toEqual([

@@ -249,7 +249,10 @@ async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<
   // shown under, the payee and the currency (lib/recurring.ts), so one on
   // another account of the same names is never this one's. Compared without
   // case, as the Activity tab spells an institution as the first of its
-  // accounts does.
+  // accounts does. Read from the rows as stored: a rule that renames a row
+  // changes the payee the detector groups it by, so a dismissal under the
+  // renamed payee isn't seen here and the undo goes ahead. That is harmless,
+  // since every row it would name is this token's and goes with the account.
   const groups = new Set(rows.flatMap((r) => seriesGroupsOfEither(manualRowForDisplay(cur, r))).map((g) => g.toLowerCase()));
   if ((await plannedStore.get(ctx))?.dismissed.some((d) => groups.has(dismissedGroup(d)?.toLowerCase() ?? ''))) {
     refuse(NOT_REMOVED('A recurring series on the account was marked not recurring'));

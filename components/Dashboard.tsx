@@ -93,7 +93,7 @@ import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { formatMoney, dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import AccruedInterestNote from './AccruedInterestNote';
-import OwedFlipNote, { crossesOwed } from './OwedFlipNote';
+import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
@@ -718,6 +718,9 @@ export default function Dashboard({
   // What each drawer shows: the current value, or the last one while it slides out.
   const shownManualDraft = useLast(manualDraft);
   const editingManualShown = useLast(manualDraft ? editingManual : null) ?? false;
+  // Update, with a type across money held and owed from the account's own:
+  // refused, said why, and offered as a close or a hide (components/OwedFlipNote.tsx).
+  const manualCrossing = !!shownManualDraft?.kept && crossesOwed(shownManualDraft.kept.type, shownManualDraft.type);
   const shownDeleteTarget = useLast(manualDeleteTarget);
   // The Hidden card starts collapsed: it exists so hidden accounts are
   // findable, not so they take up room on the balance sheet you decluttered.
@@ -3206,6 +3209,7 @@ export default function Dashboard({
                     });
                   }}
                   disabled={savingManual}
+                  aria-describedby={manualCrossing ? OWED_FLIP_REASON : undefined}
                 >
                   {MANUAL_TYPE_LABELS.map((t) => (
                     <option key={t.value} value={t.value}>
@@ -3265,17 +3269,21 @@ export default function Dashboard({
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'
                 : 'Negative balances are allowed (e.g. an overdrawn account).'}
             </p>
-            {shownManualDraft.kept && crossesOwed(shownManualDraft.kept.type, shownManualDraft.type) && (
-              <OwedFlipNote
-                toOwed={isOwedType(shownManualDraft.type)}
-                disabled={savingManual}
-                onClose={() => {
-                  const a = shownManualDraft.kept!;
-                  setManualDraft(null);
-                  lifecycle.open({ account_id: a.account_id, name: a.name, mask: null, institution: a.institution_name, balance: a.balance, type: a.type, currency: a.currency ?? 'USD', lastKnown: false });
-                }}
-              />
-            )}
+            <OwedFlipNote
+              crossing={manualCrossing}
+              toOwed={isOwedType(shownManualDraft.type)}
+              disabled={savingManual || togglingHidden !== null}
+              onClose={() => {
+                const a = shownManualDraft.kept!;
+                setManualDraft(null);
+                lifecycle.open({ account_id: a.account_id, name: a.name, mask: null, institution: a.institution_name, balance: a.balance, type: a.type, currency: a.currency ?? 'USD', lastKnown: false });
+              }}
+              onHide={() => {
+                const a = shownManualDraft.kept!;
+                setManualDraft(null);
+                void toggleHidden(a.account_id, true);
+              }}
+            />
 
             {editingManualShown && shownManualDraft.account_id && (
               <p className="panel-note manual-id">
@@ -3296,10 +3304,11 @@ export default function Dashboard({
                   !shownManualDraft.institution_name.trim() ||
                   shownManualDraft.balance.trim() === '' ||
                   !Number.isFinite(Number(shownManualDraft.balance)) ||
-                  (!!shownManualDraft.kept && crossesOwed(shownManualDraft.kept.type, shownManualDraft.type)) ||
+                  manualCrossing ||
                   (isOwedType(shownManualDraft.type) && Number(shownManualDraft.balance) < 0)
                 }
                 onClick={submitManualDraft}
+                aria-describedby={manualCrossing ? OWED_FLIP_REASON : undefined}
               >
                 {savingManual ? 'Saving…' : editingManualShown ? 'Save' : 'Add account'}
               </button>
