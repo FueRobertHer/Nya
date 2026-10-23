@@ -74,6 +74,7 @@ describe('a summary over a range', () => {
       counted: 8,
       transfers: 3,
       excluded: 1,
+      shared: 0,
       exclusion_unknown: 1,
       left_out: [{ currency: 'EUR', count: 1 }],
       left_out_text: "1 transaction in EUR isn't in these totals, which are in USD.",

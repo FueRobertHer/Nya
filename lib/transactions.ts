@@ -48,6 +48,7 @@ import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
 import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
+import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from './shared-expenses/rows';
 import { pruneSplitsAndGroups } from './split-gone';
 import type { ReviewSuggestion } from './review-layer';
 import { carryApprovalsToPosted } from './review-store';
@@ -234,6 +235,29 @@ export type Txn = {
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
   group_outside?: GroupOutside;
+
+  // Shared expenses (#49), applied on read after splits and groups
+  // (lib/shared-expenses/rows.ts), absent on every other row. A shared
+  // transaction's own row (or its split part's) says who owes which part
+  // (shared), and, where it counts at your part, the amount it had
+  // (shared_was); a payment's own row what it paid back (settles). Beside
+  // them, the rows that layer adds (shared_part: another person's part, a
+  // paid-back part) and an IOU's row (shared_iou), which no account holds;
+  // an unsplit transaction's rows carry its id (shared_of), so it is counted,
+  // and put back whole (lib/split-rows.ts bankRows: shared_parts), once. What
+  // no longer applies says why (shared_unapplied, settles_unapplied), and a
+  // bank row shared twice through an imported twin says which (shared_twice).
+  shared?: SharedMark;
+  shared_was?: number;
+  shared_of?: string;
+  shared_part?: SharedPart;
+  shared_iou?: SharedIou;
+  shared_parts?: Txn[];
+  shared_carried_from?: string;
+  shared_unapplied?: SharedUnapplied;
+  shared_twice?: string[];
+  settles?: SettlesMark;
+  settles_unapplied?: SettlesUnapplied;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which

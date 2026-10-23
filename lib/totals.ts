@@ -141,6 +141,10 @@ export type Summary = {
   counted: number;
   transfers: number;
   excluded: number;
+  /** Transactions with a part left out as someone else's (a shared expense)
+   *  or as money paid back between you and someone (lib/shared-expenses/
+   *  rows.ts): counted apart from what the person excluded. */
+  shared: number;
   exclusion_unknown: number;
   left_out: LeftOut;
   /** left_out as a sentence, or null when nothing was. */
@@ -165,6 +169,7 @@ export function summarize(
   const counted = transactionCounter();
   const transfers = transactionCounter();
   const excluded = transactionCounter();
+  const shared = transactionCounter();
   const unknown = transactionCounter();
   const transactions = transactionCounter();
   const byCategory = new Map<string, BucketSum>();
@@ -174,7 +179,9 @@ export function summarize(
     ranged.push(t);
     transactions.add(t);
     if (t.excluded === null) unknown.add(t);
-    if (isExcluded(t)) excluded.add(t);
+    // Another person's part, or a part paid back, is left out as excluded
+    // rows are, and counted apart.
+    if (isExcluded(t)) (t.shared_part !== undefined ? shared : excluded).add(t);
     else if (isTransfer(t)) transfers.add(t);
     if (!countsInTotals(t, currency)) continue;
     counted.add(t);
@@ -199,6 +206,7 @@ export function summarize(
     counted: counted.n,
     transfers: transfers.n,
     excluded: excluded.n,
+    shared: shared.n,
     exclusion_unknown: unknown.n,
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency),

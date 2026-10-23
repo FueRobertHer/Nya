@@ -81,19 +81,45 @@ export type Countable = {
    *  (lib/split-rows.ts): it counts there, through its group, so in no total
    *  of what was read. */
   group_outside?: unknown;
+  /** On the rows shared expenses make of an unsplit transaction or a payment
+   *  (lib/shared-expenses/rows.ts): the transaction they are of, counted
+   *  once where transactions are counted, as a split's parts are. */
+  shared_of?: string;
+  /** On a row shared expenses added (another person's part, a paid-back
+   *  part) and an IOU's row: never evidence of what an account holds
+   *  (isHistoryRow), never a vote for the totals' currency. */
+  shared_part?: unknown;
+  shared_iou?: unknown;
 };
+
+/**
+ * Whether a row is evidence of what the person's accounts hold on its day:
+ * every row but those shared expenses add (lib/shared-expenses/rows.ts),
+ * above all an IOU's, which is on no account and dated whatever day the
+ * person typed. Every reader that takes the earliest row, or whether there
+ * are rows at all, as where the history begins or whether transactions come
+ * in (the Plan's history length, the cash flow's late-history note, a
+ * share's first month, noSpending) reads only rows this takes; they still
+ * count in totals. test/history-rows.test.ts finds such readers in the
+ * source and holds each to it.
+ */
+export function isHistoryRow(t: Pick<Countable, 'shared_part' | 'shared_iou'>): boolean {
+  return t.shared_part === undefined && t.shared_iou === undefined;
+}
 
 /**
  * Counts transactions, not rows, as a total's counts do (#39): a split
  * transaction's parts (split_of) are one transaction, and a group's row is
  * as many as it holds. Every other row is one. `add` a row, read `n`.
  */
-export function transactionCounter(): { add: (t: Pick<Countable, 'split_of' | 'group_members'>) => void; readonly n: number } {
+export function transactionCounter(): { add: (t: Pick<Countable, 'split_of' | 'group_members' | 'shared_of'>) => void; readonly n: number } {
   const splits = new Set<string>();
   let rows = 0;
   return {
     add(t) {
-      if (t.split_of !== undefined) splits.add(t.split_of);
+      // A shared transaction's rows are one, as a split's parts are.
+      const of = t.split_of ?? t.shared_of;
+      if (of !== undefined) splits.add(of);
       else rows += t.group_members ? t.group_members.length : 1;
     },
     get n() {
@@ -103,7 +129,7 @@ export function transactionCounter(): { add: (t: Pick<Countable, 'split_of' | 'g
 }
 
 /** How many transactions the rows are (transactionCounter). */
-export function countTransactions(rows: Iterable<Pick<Countable, 'split_of' | 'group_members'>>): number {
+export function countTransactions(rows: Iterable<Pick<Countable, 'split_of' | 'group_members' | 'shared_of'>>): number {
   const c = transactionCounter();
   for (const t of rows) c.add(t);
   return c.n;
@@ -189,9 +215,11 @@ export function currencyOf(t: Pick<Countable, 'iso_currency_code' | 'unofficial_
 }
 
 /** The currency totals over these rows are in: the one most of them are in,
- *  or null when none says (then every row counts, and amounts show in "$"). */
-export function totalsCurrency(txns: readonly Pick<Countable, 'iso_currency_code' | 'unofficial_currency_code'>[]): string | null {
-  return dominantCurrency(txns.map((t) => ({ iso_currency_code: currencyOf(t) })));
+ *  or null when none says (then every row counts, and amounts show in "$").
+ *  The rows shared expenses add don't vote: sharing a few dinners never
+ *  changes which currency a month is counted in. */
+export function totalsCurrency(txns: readonly (Pick<Countable, 'iso_currency_code' | 'unofficial_currency_code'> & Partial<Pick<Countable, 'shared_part' | 'shared_iou'>>)[]): string | null {
+  return dominantCurrency(txns.filter((t) => isHistoryRow(t)).map((t) => ({ iso_currency_code: currencyOf(t) })));
 }
 
 /** Whether a row can be added into a total in `currency`: it is in that
