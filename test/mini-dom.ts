@@ -118,6 +118,13 @@ export class FakeNode {
       (this.listeners.get(type) ?? []).filter((l) => !(l.fn === fn && l.capture === capture))
     );
   }
+  /** What a failing matcher prints for a node: its outline, not the React
+   *  fibers hung on it (a whole graph, a million lines and more). Bun uses it
+   *  for toBe, toBeNull and the like, but not in a toEqual diff: give those
+   *  lengths, or outline() each element first. */
+  [Symbol.for('nodejs.util.inspect.custom')]() {
+    return outline(this);
+  }
   /** Dispatches from this node: capture down from the top, then bubble up. */
   dispatchEvent(e: FakeEvent): boolean {
     e.target = this;
@@ -326,6 +333,20 @@ export function installDom(): { document: FakeDocument; uninstall: () => void } 
       }
     },
   };
+}
+
+/** A node in one short line: an element's tag, its label and the start of
+ *  its text; a text node's text. For a test's messages and failures. */
+export function outline(n: FakeNode): string {
+  const cut = (t: string) => (t.length > 60 ? `${t.slice(0, 60)}...` : t);
+  if (n instanceof FakeElement) {
+    const tag = n.tagName.toLowerCase();
+    const label = n.getAttribute('aria-label');
+    return `<${tag}${label === null ? '' : ` aria-label="${cut(label)}"`}>${cut(n.textContent.trim())}</${tag}>`;
+  }
+  if (n.nodeType === 3) return JSON.stringify(cut(n.textContent));
+  if (n.nodeType === 9) return '#document';
+  return n.nodeType === 0 ? '#window' : `#node(${n.nodeType})`;
 }
 
 /** A click on an element, as a person's. */

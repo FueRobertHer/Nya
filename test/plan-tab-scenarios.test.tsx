@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement } from './mini-dom';
+import { installDom, click, type, outline, FakeElement } from './mini-dom';
 
 // The Plan tab with scenarios, rendered and used as a person would
 // (react-dom/client over test/mini-dom.ts): what is saved where when a
@@ -9,9 +9,18 @@ import { installDom, click, type, FakeElement } from './mini-dom';
 // refused for lasting changes below zero still fixable; and focus back on
 // the scenario's row after "Back to your plan". Every request is answered
 // here, by path; nothing reaches a network.
+//
+// A rendered element never goes into toEqual or another matcher that diffs:
+// Bun's diff walks it, and the React fibers on it, whole (a million lines,
+// and once more memory than the machine had). Elements are counted, or
+// outlined first; toBe and toBeNull print an element's outline.
 
 const dom = installDom();
-afterAll(() => dom.uninstall());
+const realFetch = globalThis.fetch;
+afterAll(() => {
+  globalThis.fetch = realFetch;
+  dom.uninstall();
+});
 
 const React = await import('react');
 const { act } = React;
@@ -206,9 +215,9 @@ describe('what the tab waits for', () => {
     const tab = await render({ institutions, balancesAsOf: '2026-10-23T12:00:00.000Z', txnNotes: ['Chase: needs to be reconnected'] });
     await press(tab.byLabel('Open Retire at 50'));
     expect(tab.text()).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
-    expect(tab.buttons('They’re in USD')).toEqual([]);
+    expect(tab.buttons('They’re in USD').map(outline)).toEqual([]);
     await tab.rerender({ txnNotes: [], txns: null, txnsLoading: true });
-    expect(tab.buttons('They’re in USD')).toEqual([]);
+    expect(tab.buttons('They’re in USD').map(outline)).toEqual([]);
     await tab.rerender({ txnNotes: [], txns: [], txnsLoading: false });
     const confirm = tab.buttons('They’re in USD')[0];
     expect(confirm).toBeDefined();
