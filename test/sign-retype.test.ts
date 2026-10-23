@@ -69,10 +69,17 @@ const history = await import('@/lib/history');
 const { getHiddenAccounts, markForgetting } = await import('@/lib/hidden');
 const { projectViews } = await import('@/lib/share-views');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
-const { signJobStore, finishSignJobs, runSignJob, retypeWithHistory } = await import('@/lib/sign-repair');
+const { signJobStore, finishSignJobs, runSignJob, retypeWithHistory, SETTLE_AFTER_MS } = await import('@/lib/sign-repair');
+const { saveManualAccount } = await import('@/lib/manual');
 const { snapshotData } = await import('@/lib/snapshot-job');
 
 const ctx = TEST_CTX;
+/** Jobs under way, a finished job's settle record aside. */
+const pendingIds = async () => {
+  const out: string[] = [];
+  for (const id of await signJobStore.ids(ctx)) if ((await signJobStore.get(ctx, id))?.kind !== 'settle') out.push(id);
+  return out;
+};
 const FRI = '2026-09-11';
 const DAY = '2026-09-14';
 let simplefin: FakeSimplefin;
@@ -154,7 +161,7 @@ const cutAt = async <T>(n: number, fn: () => Promise<T>): Promise<T> => {
 };
 const toCard = () => call(accountsRoute, 'PUT', { connection_id: connection, retype: [{ account_id: card, type: 'credit' }] });
 const TURNING = 'Euro card was changed, but not every earlier day of its history could be turned over to match yet: Nya’s next daily update finishes it, and until then some of those days may count the other way.';
-const LEFT_ONE = 'Nothing says how one of Euro card’s earlier days was counted (a day recorded without a total, say), so it was left as it was, and may count the other way.';
+const LEFT_ONE = 'Nothing says how one of Euro card’s earlier days was counted (a day recorded without a total), so it was left as it was, and may count the other way.';
 const estDates = async () => Object.keys((await fake.hgetall<Record<string, string>>(ctxKey('history:net-worth:est'))) ?? {}).sort();
 
 beforeEach(async () => {
@@ -201,7 +208,7 @@ describe('a kind changed between money held and owed, with history', () => {
     await retype('credit');
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('credit');
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect(await readers([card])).toEqual(before);
     await estimate(); // rebuilt, as a change of kind asks
     expect(await readers([card])).toEqual(before);
@@ -266,7 +273,7 @@ describe('a kind changed between money held and owed, with history', () => {
     } finally {
       console.error = error;
     }
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
     expect(await readers([card])).toEqual(before);
   });
@@ -296,7 +303,7 @@ describe('a kind changed between money held and owed, with history', () => {
     const raw = new Map(fake.hashes.get(ctxKey('history:accounts')));
     await retype('investment');
     expect(new Map(fake.hashes.get(ctxKey('history:accounts')))).toEqual(raw);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
   });
 });
 
@@ -308,7 +315,7 @@ describe('a retype’s re-sign, day by day', () => {
     // A forget of another account rewrites every map that names it.
     await foldHiddenAccount(ctx, 'chk', 'depository', 'tag-other');
     await quiet(() => finishSignJobs(ctx));
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     for (const d of [FRI, DAY]) expect([d, (await stored('history:accounts', d))[card]]).toEqual([d, 300]);
     for (const d of await estDates()) expect([d, (await stored('history:accounts:est:flatd', d))[card]]).toEqual([d, 300]);
     // 300 euros owed at 1.1592, the checking account folded out.
@@ -320,7 +327,7 @@ describe('a retype’s re-sign, day by day', () => {
     // Recorded since, as a card owing 350.
     await put('history:accounts', { [DAY]: { chk: 1000, [card]: 350 } });
     await quiet(() => finishSignJobs(ctx));
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect((await stored('history:accounts', DAY))[card]).toBe(350);
     expect((await stored('history:accounts', FRI))[card]).toBe(300);
   });
@@ -335,7 +342,7 @@ describe('a retype’s re-sign, day by day', () => {
     await quiet(() => finishSignJobs(ctx), said);
     expect(said).toEqual([`Balance signs: The repair under way for ${card} was planned for it as money owed, and it is money held now, so it was dropped and nothing more was turned over.`]);
     expect(historyNow()).toEqual(raw);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect((await getHiddenAccounts(ctx)).get(card)!.type).toBe('depository');
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('depository');
   });
@@ -353,7 +360,7 @@ describe('a retype’s re-sign, day by day', () => {
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('investment');
     expect((await getHiddenAccounts(ctx)).get(card)!.type).toBe('depository');
     expect(historyNow()).toEqual(raw);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
   });
 
   test('back to the kind of an older era: that era’s days are kept, and a day between the eras is left and said', async () => {
@@ -362,12 +369,19 @@ describe('a retype’s re-sign, day by day', () => {
     await put('history:accounts', { '2026-09-08': { chk: 1000, [card]: 300 } });
     await put('history:net-worth', { '2026-09-08': '700' });
     await put('history:accounts:partial', { '2026-09-09': { [card]: 300 } });
+    // And earlier, measured without a total between two recorded days.
+    await put('history:accounts', { '2026-09-06': { chk: 1000, [card]: 300 } });
+    await put('history:net-worth', { '2026-09-06': '700' });
+    await put('history:accounts:partial', { '2026-09-07': { [card]: 300 } });
     // Then checking under the release before, no re-sign: Friday and today as set up (-300).
     await connectorAccountsStore.update(ctx, card, (a) => (a ? { ...a, type: 'depository', subtype: null } : a));
     const r = await toCard();
     expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 1, LEFT_ONE]);
     expect((await stored('history:accounts', '2026-09-08'))[card]).toBe(300);
     expect(await stored('history:accounts:partial', '2026-09-09')).toEqual({ [card]: 300 });
+    // Between two days of that era, it is taken as they are, and kept.
+    expect(await stored('history:accounts:partial', '2026-09-07')).toEqual({ [card]: 300 });
+    expect((await stored('history:accounts', '2026-09-06'))[card]).toBe(300);
     for (const d of [FRI, DAY]) expect([d, (await stored('history:accounts', d))[card]]).toEqual([d, 300]);
   });
 
@@ -434,7 +448,7 @@ describe('a retype’s re-sign, day by day', () => {
     expect(await signJobStore.get(ctx, card)).toMatchObject({ kind: 'retype', from: 'depository', to: 'credit' });
     expect((await signJobStore.get(ctx, card))!.plan).toBeUndefined();
     await quiet(() => snapshotData(ctx, []));
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect(await readers([card])).toEqual(before);
   });
 
@@ -452,7 +466,7 @@ describe('a retype’s re-sign, day by day', () => {
       failing.mockRestore();
     }
     expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 0, 'Euro card couldn’t be changed. Try again.']);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     await quiet(() => finishSignJobs(ctx));
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('depository');
     expect((await stored('history:accounts', FRI))[card]).toBe(-300);
@@ -467,7 +481,7 @@ describe('a retype’s re-sign, day by day', () => {
       0,
       'Euro card wasn’t changed: an earlier change to it is still being finished, or it is being forgotten. Try again after Nya’s next daily update.',
     ]);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('depository');
   });
 
@@ -490,5 +504,93 @@ describe('a retype’s re-sign, day by day', () => {
     expect(await fake.get(ctxKey('history:backfill-done'))).toBeNull();
     expect((await connectorAccountsStore.get(ctx, savings))!.type).toBe('investment');
     expect((await connectorAccountsStore.get(ctx, card))!.type).toBe('depository');
+  });
+});
+
+describe('a retype, beside what else the day holds', () => {
+  test('a held 500 and an owed 500 beside it, which cancel out: its days are still turned over', async () => {
+    const old = new Date(NOW - 30 * 86_400_000).toISOString();
+    await saveManualAccount(ctx, { account_id: 'manual_h', name: 'Lent', institution_name: 'Me', type: 'other', subtype: null, balance: 500, currency: 'USD', updated_at: old });
+    await saveManualAccount(ctx, { account_id: 'manual_o', name: 'Owed', institution_name: 'Me', type: 'loan', subtype: null, balance: 500, currency: 'USD', updated_at: old });
+    await put('history:accounts', { [FRI]: { chk: 1000, [card]: -300, manual_h: 500, manual_o: 500 } });
+    await home();
+    const before = await readers([card]);
+    const r = await toCard();
+    expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 1, null]);
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300, manual_h: 500, manual_o: 500 });
+    const after = await readers([card]);
+    expect(after.hidden_chart.filter(([, , e]) => !e)).toEqual([
+      [FRI, 1000, false],
+      [DAY, 1000, false],
+    ]);
+    expect(after.converted_chart.find(([d]) => d === FRI)).toEqual([FRI, 652.24, false]);
+    expect(after).toEqual(before);
+  });
+
+  test('a day another account explains as well is left, and the sheet says why', async () => {
+    // Savings of 300 that were there on Friday, as they are now.
+    await saveManualAccount(ctx, { account_id: 'manual_x', name: 'Jar', institution_name: 'Me', type: 'depository', subtype: null, balance: 300, currency: 'USD', updated_at: new Date(NOW - 30 * 86_400_000).toISOString() });
+    await put('history:accounts', { [FRI]: { chk: 1000, [card]: -300, manual_x: 300 } });
+    await put('history:net-worth', { [FRI]: '1000' });
+    await home();
+    const r = await toCard();
+    expect([r.status, r.body.retype_note]).toEqual([
+      200,
+      'Nothing says how one of Euro card’s earlier days was counted (a day whose total more than one set of your accounts could explain), so it was left as it was, and may count the other way.',
+    ]);
+    expect((await stored('history:accounts', FRI))[card]).toBe(-300);
+    // Its own day, recorded just before, by its balance.
+    expect((await stored('history:accounts', DAY))[card]).toBe(300);
+  });
+
+  test('a day without a total after the last one turned over, nothing recorded since: turned over, the kind was the old one until the change', async () => {
+    fake.hashes.get(ctxKey('history:net-worth'))!.delete(DAY);
+    fake.hashes.get(ctxKey('history:accounts'))!.delete(DAY);
+    // Yesterday a bank failed: measured without a total.
+    await put('history:accounts:partial', { '2026-09-13': { chk: 1000, [card]: -300 } });
+    const r = await toCard();
+    expect([r.status, r.body.retype_note]).toEqual([200, null]);
+    expect(await stored('history:accounts:partial', '2026-09-13')).toEqual({ chk: 1000, [card]: 300 });
+  });
+
+  test('a recording that read the old kind, landing after its day was turned over, is put right once none can land', async () => {
+    const real = history.negateAccountOn;
+    const late = await encrypt(ctx, JSON.stringify({ chk: 1000, [card]: -300 }));
+    const racing = spyOn(history, 'negateAccountOn').mockImplementation(async (...args: any[]) => {
+      const out = await (real as any)(...args);
+      // A dashboard load that read checking before the change writes today now.
+      if (args[1] === 'r' && args[2] === DAY && !racing.mock.calls.slice(0, -1).some((c: any[]) => c[1] === 'r' && c[2] === DAY)) await fake.hset(ctxKey('history:accounts'), { [DAY]: late });
+      return out;
+    });
+    let r: { status: number; body: any };
+    try {
+      r = await toCard();
+    } finally {
+      racing.mockRestore();
+    }
+    expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 1, null]);
+    expect(await pendingIds()).toEqual([]);
+    expect((await stored('history:accounts', DAY))[card]).toBe(-300);
+    expect(await signJobStore.get(ctx, card)).toMatchObject({ kind: 'settle', from: 'depository', to: 'credit' });
+    // Nothing is being turned over, and the download doesn't say so.
+    expect(((await collectUserData({ ctx, userId: null })).notes ?? []).some((n: string) => n.includes('being turned over'))).toBe(false);
+    // Too soon, while a recording could still land: kept.
+    await quiet(() => finishSignJobs(ctx, { nightly: true }));
+    expect(await signJobStore.get(ctx, card)).toMatchObject({ kind: 'settle' });
+    // Past it, the day is decided again by its total, and turned over.
+    setSystemTime(new Date(NOW + SETTLE_AFTER_MS));
+    await quiet(() => finishSignJobs(ctx, { nightly: true }));
+    expect(await stored('history:accounts', DAY)).toEqual({ chk: 1000, [card]: 300 });
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
+    expect(await signJobStore.ids(ctx)).toEqual([]);
+  });
+
+  test('a settle record never turns over a day its total says is counted as now', async () => {
+    await retype('credit');
+    const raw = historyNow();
+    setSystemTime(new Date(NOW + SETTLE_AFTER_MS));
+    await finishSignJobs(ctx, { nightly: true });
+    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(historyNow()).toEqual(raw);
   });
 });

@@ -47,7 +47,7 @@ import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKe
 import { forgetImportedHistory } from './history-import/commit';
 import { forgetRestoredAccount, restoredForgetRefusal } from './user-restore/forget';
 import type { Unlisted } from './earlier-names';
-import { signJobStore, SIGN_JOB_PENDING } from './sign-repair-store';
+import { pendingJob, pendingWords } from './sign-repair-store';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -780,7 +780,8 @@ export async function forgetEarlierAccount(
   if (inputs.unreadableLinks.size > 0) throw new ForgetRefused('A saved link can\'t be read. Remove it first.');
   // Never beside a job turning its balances over (lib/sign-repair.ts): a
   // fold would read them half in each sign.
-  if (await signJobStore.has(ctx, id)) throw new ForgetRefused(SIGN_JOB_PENDING);
+  const pending = await pendingJob(ctx, id);
+  if (pending) throw new ForgetRefused(pendingWords(pending));
   const storedItems = new Set(items.map((i) => i.item_id));
   const found =
     forgettableAccounts(inputs, new Set(hidden.keys()), storedItems).find((e) => e.id === id) ??

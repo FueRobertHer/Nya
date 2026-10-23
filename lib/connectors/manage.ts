@@ -86,7 +86,8 @@ import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
 import { loggable } from '../log-safe';
 import { isOwedType } from '../balance';
-import { retypeWithHistory, signJobStore, SignRepairRefused } from '../sign-repair';
+import { leftWhy, MAX_WEIGHED, retypeWithHistory, SignRepairRefused, type Why } from '../sign-repair';
+import { pendingJob, WHYS } from '../sign-repair-store';
 import { ForgetRefused } from '../links';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
@@ -309,6 +310,16 @@ export type RetypeReport = { changed: number; note: string | null };
  *  route's 60 seconds. */
 const RETYPE_BUDGET_MS = 40_000;
 
+/** Why a day was left, as the sheet says it after "a day" or "2 days". */
+const LEFT_WHY: Record<Why, string> = {
+  'no-total': 'recorded without a total',
+  ambiguous: 'whose total more than one set of your accounts could explain',
+  untyped: 'with an account on it whose kind Nya no longer knows',
+  'too-many': `with more than ${MAX_WEIGHED} accounts holding a balance`,
+  unexplained: 'whose total no change of kind explains',
+  unreadable: 'part of which can’t be read',
+};
+
 const listed = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
 /**
@@ -338,13 +349,13 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
   const held: string[] = [];
   const failed: string[] = [];
   const turning: string[] = [];
-  const left: [string, number][] = [];
+  const left: [string, readonly [string, Why][]][] = [];
   const across = async (c: { account_id: string; type: ManualType }) => {
     try {
       const r = await retypeWithHistory(ctx, c.account_id, c.type, { until });
       if (r.changed) changed.add(c.account_id);
       if (r.job?.pending) turning.push(nameOf(c.account_id));
-      if (r.job?.left.length) left.push([nameOf(c.account_id), r.job.left.length]);
+      if (r.job?.left.length) left.push([nameOf(c.account_id), r.job.left]);
     } catch (err) {
       if (err instanceof ForgetRefused) return void busy.push(nameOf(c.account_id));
       // An earlier change still being turned over, or a forget under way.
@@ -352,9 +363,10 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
       console.error('Connectors: an account’s kind could not be changed with its history', loggable(err));
       // What is stored says whether the kind changed: its job, kept, is
       // finished by the nightly snapshot (lib/snapshot-job.ts).
-      const [now, pending] = await Promise.all([connectorAccountsStore.get(ctx, c.account_id).catch(() => null), signJobStore.has(ctx, c.account_id).catch(() => true)]);
+      const [now, pending] = await Promise.all([connectorAccountsStore.get(ctx, c.account_id).catch(() => null), pendingJob(ctx, c.account_id).then((j) => !!j, () => true)]);
       if (now?.type === c.type) {
         changed.add(c.account_id);
+        // A job this request began: no night has failed on it yet.
         if (pending) turning.push(nameOf(c.account_id));
       } else failed.push(nameOf(c.account_id));
     }
@@ -413,11 +425,12 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
       `${listed(turning)} ${turning.length === 1 ? 'was' : 'were'} changed, but not every earlier day of ${turning.length === 1 ? 'its' : 'their'} history could be turned over to match yet: Nya’s next daily update finishes it, and until then some of those days may count the other way.`
     );
   }
-  if (left.length > 0) {
-    const one = left.length === 1 && left[0][1] === 1;
-    const days = listed(left.map(([name, n]) => `${n === 1 ? 'one' : n} of ${name}’s`));
+  for (const [name, days] of left) {
+    const one = days.length === 1;
+    const by = leftWhy(days);
+    const why = listed(WHYS.filter((w) => by[w]).map((w) => `${by[w] === 1 ? 'a day' : `${by[w]} days`} ${LEFT_WHY[w]}`));
     notes.push(
-      `Nothing says how ${days} earlier days ${one ? 'was' : 'were'} counted (${one ? 'a day' : 'days'} recorded without a total, say), so ${one ? 'it was' : 'they were'} left as ${one ? 'it was' : 'they were'}, and may count the other way.`
+      `Nothing says how ${one ? 'one' : days.length} of ${name}’s earlier days ${one ? 'was' : 'were'} counted (${why}), so ${one ? 'it was' : 'they were'} left as ${one ? 'it was' : 'they were'}, and may count the other way.`
     );
   }
   return { changed: changed.size, note: notes.length > 0 ? notes.join(' ') : null };

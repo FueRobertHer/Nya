@@ -23,7 +23,7 @@ import { encrypt, decrypt, sealedAway, MalformedCiphertextError, DecryptFailedEr
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
 import { openStored } from './repo';
-import { signJobStore, SignJobPending } from './sign-repair-store';
+import { pendingJob, SignJobPending } from './sign-repair-store';
 
 const HISTORY_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth');
 const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
@@ -1449,7 +1449,7 @@ export async function forgetAccountBalances(
   opts: { today?: boolean } = {}
 ): Promise<{ changed: number; unreadableDates: string[] }> {
   // Never beside a job turning this account's balances over (lib/sign-repair.ts).
-  if (await signJobStore.has(ctx, account_id)) throw new SignJobPending(account_id);
+  if (await pendingJob(ctx, account_id)) throw new SignJobPending(account_id);
   let changed = 0;
   const unreadable = new Set<string>();
   const hashes = [ACCOUNTS_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)];
@@ -1619,7 +1619,7 @@ export async function foldHiddenAccount(
   life: { first: string | null; last: string | null } = { first: null, last: null }
 ): Promise<{ folded: number; deleted: number }> {
   // Never beside a job turning this account's balances over (lib/sign-repair.ts).
-  if (await signJobStore.has(ctx, account_id)) throw new SignJobPending(account_id);
+  if (await pendingJob(ctx, account_id)) throw new SignJobPending(account_id);
   const progress = FOLD_PROGRESS(ctx, tag);
   const strict = async (blob: string | null | undefined): Promise<Record<string, number> | null | 'unreadable'> => {
     if (!blob) return null;
@@ -1816,6 +1816,21 @@ export async function splitLegacyFlat(ctx: Ctx): Promise<void> {
   }
 }
 
+/** One day of one layer as stored, encrypted: the account map, the total it
+ *  is decided by (the recorded one for r, the estimated one for e and f, none
+ *  for the partial and walked-past layers), and for an estimated day the
+ *  other estimated map beside it. */
+export async function readSignDay(ctx: Ctx, layer: SignLayer, date: string): Promise<{ map: string | null; total: string | null; other: string | null }> {
+  const totalKey = layer === 'r' ? HISTORY_HASH(ctx) : layer === 'e' || layer === 'f' ? ESTIMATED_HASH(ctx) : null;
+  const otherKey = layer === 'e' ? SIGN_LAYER_KEY.f(ctx) : layer === 'f' ? SIGN_LAYER_KEY.e(ctx) : null;
+  const [map, total, other] = await Promise.all([
+    redis().hget<string>(SIGN_LAYER_KEY[layer](ctx), date),
+    totalKey ? redis().hget<string>(totalKey, date) : null,
+    otherKey ? redis().hget<string>(otherKey, date) : null,
+  ]);
+  return { map: map ?? null, total: total ?? null, other: other ?? null };
+}
+
 /** A stored map or total, decrypted, or null when it can't be read for good
  *  (damaged: nothing can be decided from it). A failure that may pass throws. */
 export async function readSignValue(ctx: Ctx, blob: string): Promise<string | null> {
@@ -1837,8 +1852,19 @@ export async function readSignValue(ctx: Ctx, blob: string): Promise<string | nu
  * since in another sign: left as it is). Read again while another write lands
  * between the read and the step. Each step's mark under `tag` is its own, so
  * a value written back since in the old sign can be turned over again.
+ * `still`, given the map as read, says whether the day is still one to turn
+ * over (lib/sign-repair.ts decides it again from its total): when not, it is
+ * 'changed' too.
  */
-export async function negateAccountOn(ctx: Ctx, layer: SignLayer, date: string, account_id: string, planned: number, tag: string): Promise<'done' | 'already' | 'changed'> {
+export async function negateAccountOn(
+  ctx: Ctx,
+  layer: SignLayer,
+  date: string,
+  account_id: string,
+  planned: number,
+  tag: string,
+  still?: (map: Record<string, number>) => Promise<boolean>
+): Promise<'done' | 'already' | 'changed'> {
   const key = SIGN_LAYER_KEY[layer](ctx);
   for (let attempt = 0; attempt < 4; attempt++) {
     const blob = await redis().hget<string>(key, date);
@@ -1848,6 +1874,7 @@ export async function negateAccountOn(ctx: Ctx, layer: SignLayer, date: string, 
     const value = map[account_id];
     if (value === -planned) return 'already';
     if (value !== planned) return 'changed';
+    if (still && !(await still(map))) return 'changed';
     const next = await encrypt(ctx, JSON.stringify({ ...map, [account_id]: -planned }));
     const answer = Number(await redis().eval(HISTORY_FOLD, [key, FOLD_PROGRESS(ctx, tag)], [date, `${layer}:${date}:${crypto.randomUUID()}`, blob, next]));
     if (answer === 1) {

@@ -54,9 +54,17 @@ const { projectViews } = await import('@/lib/share-views');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
 const { signJobStore, finishSignJobs, runSignJob } = await import('@/lib/sign-repair');
 const { forgetEarlierAccount } = await import('@/lib/links');
-const { SIGN_JOB_PENDING } = await import('@/lib/sign-repair-store');
+const { SIGN_JOB_PENDING, SIGN_JOB_STOPPED } = await import('@/lib/sign-repair-store');
+const { snapshotData, SIGN_BUDGET_MS } = await import('@/lib/snapshot-job');
+const signRepair = await import('@/lib/sign-repair');
 
 const ctx = TEST_CTX;
+/** Jobs under way, a finished job's settle record aside. */
+const pendingIds = async () => {
+  const out: string[] = [];
+  for (const id of await signJobStore.ids(ctx)) if ((await signJobStore.get(ctx, id))?.kind !== 'settle') out.push(id);
+  return out;
+};
 const NOW = Date.parse('2026-09-14T17:00:00Z');
 const FRI = '2026-09-11';
 const DAY = '2026-09-14';
@@ -179,7 +187,7 @@ describe('an account flipped between money held and owed under the release befor
     expect([repaired.status, repaired.body.negated]).toEqual([200, 4]);
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_eur: -5000 });
     expect(await stored('history:accounts:est:flatd', EST[0])).toEqual({ manual_eur: -5000 });
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
 
     const after = await readers(['manual_eur']);
     // Every total as recorded: Home's chart and the download are as they were.
@@ -224,7 +232,7 @@ describe('an account flipped between money held and owed under the release befor
     expect(repaired.body.error).toBe("The days manual_eur was counted the other way can't be told exactly: nothing says how it was counted on 2026-09-12.");
     expect(new Map(fake.hashes.get(ctxKey('history:accounts')))).toEqual(raw);
     expect(await stored('history:accounts:est:flatd', EST[0])).toEqual({ manual_eur: 5000 });
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
   });
 
   test('a day measured without a total inside a run of days counted the other way is turned over with them', async () => {
@@ -279,7 +287,7 @@ describe('an account flipped between money held and owed under the release befor
     expect((await ops({ container: ctx.container })).body.accounts).toEqual([expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 0, error: null, stopped: false } })]);
     // The nightly job finishes it.
     await finishSignJobs(ctx);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_eur: -5000 });
     for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: -5000 }]);
     expect((await readers()).converted_chart.find(([d]) => d === FRI)).toEqual([FRI, 6796, false]);
@@ -348,7 +356,7 @@ describe('a repair under way', () => {
     expect(await runSignJob(ctx, 'manual_eur', Date.now() - 1)).toEqual({ negated: 0, left: [], pending: true });
     expect(await signJobStore.has(ctx, 'manual_eur')).toBe(true);
     expect(await runSignJob(ctx, 'manual_eur')).toEqual({ negated: 3, left: [] });
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: -5000 }]);
   });
 
@@ -361,13 +369,25 @@ describe('a repair under way', () => {
       throw new TypeError('the function was stopped');
     });
     try {
-      for (let night = 1; night <= 4; night++) await quiet(() => finishSignJobs(ctx));
+      // A download failing to finish it counts no night.
+      await quiet(() => finishSignJobs(ctx));
+      expect(await signJobStore.get(ctx, 'manual_eur')).not.toHaveProperty('failures');
+      const nightly = spyOn(signRepair, 'finishSignJobs');
+      try {
+        for (let night = 1; night <= 4; night++) await quiet(() => snapshotData(ctx, []));
+        // Within its own budget, off the snapshot's start budget.
+        expect(nightly).toHaveBeenCalledWith(ctx, { budgetMs: SIGN_BUDGET_MS, nightly: true });
+      } finally {
+        nightly.mockRestore();
+      }
     } finally {
       failing.mockRestore();
     }
-    // Three nights tried, the fourth not.
-    expect(tried).toBe(3);
+    // Three nights tried, the fourth not (the download's try aside).
+    expect(tried).toBe(4);
     expect(await signJobStore.get(ctx, 'manual_eur')).toMatchObject({ failures: 3, error: 'TypeError' });
+    // A forget meanwhile says who finishes it now.
+    await expect(forgetEarlierAccount(ctx, 'manual_eur')).rejects.toThrow(SIGN_JOB_STOPPED);
     expect((await ops({ container: ctx.container })).body.accounts).toEqual([
       expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 3, error: 'TypeError', stopped: true } }),
     ]);
@@ -378,7 +398,7 @@ describe('a repair under way', () => {
     // The operator finishes it.
     expect(real).toBe(history.negateAccountOn);
     expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).body.negated).toBe(3);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect((await readers()).converted_chart.find(([d]) => d === FRI)).toEqual([FRI, 6796, false]);
   });
 
@@ -394,7 +414,7 @@ describe('a repair under way', () => {
       'The repair under way for manual_eur was planned for it as money owed, and it is money held now, so it was dropped and nothing more was turned over.',
     ]);
     expect(historyNow()).toEqual(raw);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
   });
 
   test('its account isn’t forgotten, and an account being forgotten isn’t repaired', async () => {
@@ -414,7 +434,44 @@ describe('a repair under way', () => {
     // Without a job before it, none is written.
     await signJobStore.remove(ctx, 'manual_eur');
     expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).status).toBe(409);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
     expect(historyNow()).toEqual(raw);
+  });
+});
+
+describe('a repair cut off, then the history rewritten', () => {
+  test('the estimate rebuilt under its kind now: those days are left as rebuilt, in the right sign', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    // Rebuilt meanwhile (a backfill after anything cleared its flag): the
+    // savings, a card now, held flat at 5,000 owed; each total 1,000 - 5,000.
+    for (const d of EST) {
+      await put('history:net-worth:est', { [d]: '-4000' });
+      await put('history:accounts:est', { [d]: { chk: 1000 } });
+      await put('history:accounts:est:flatd', { [d]: { manual_eur: 5000 } });
+    }
+    const rebuilt = await readers(['manual_eur']);
+    await quiet(() => finishSignJobs(ctx, { nightly: true }));
+    expect(await pendingIds()).toEqual([]);
+    for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: 5000 }]);
+    const after = await readers(['manual_eur']);
+    // Hidden, each estimated day is the checking account alone.
+    expect(after.hidden_chart.filter(([d]) => EST.includes(d))).toEqual(EST.map((d) => [d, 1000, true]));
+    expect(after.converted_chart).toEqual(rebuilt.converted_chart);
+    // Friday, turned over before the cut, stays so.
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_eur: -5000 });
+  });
+
+  test('rebuilt beside a balance that cancels it out: still left as rebuilt', async () => {
+    await saveManualAccount(ctx, { account_id: 'manual_jar', name: 'Jar', institution_name: 'Home', type: 'depository', subtype: null, balance: 5000, currency: 'EUR', updated_at: new Date(NOW).toISOString() });
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    // Rebuilt with a jar of 5,000 held beside it: the card owing 5,000 and the
+    // jar could both have been counted the other way, or neither.
+    for (const d of EST) {
+      await put('history:net-worth:est', { [d]: '1000' });
+      await put('history:accounts:est', { [d]: { chk: 1000 } });
+      await put('history:accounts:est:flatd', { [d]: { manual_eur: 5000, manual_jar: 5000 } });
+    }
+    await quiet(() => finishSignJobs(ctx, { nightly: true }));
+    for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: 5000, manual_jar: 5000 }]);
   });
 });

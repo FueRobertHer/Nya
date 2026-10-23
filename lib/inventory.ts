@@ -406,7 +406,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
   'sign-repairs': {
     group: 'machinery',
     name: 'An account’s past balances being turned over',
-    about: 'While an account’s kind changes between money held and money owed, which days of its balance history are turned over so each goes on counting as it was recorded. Gone once that is done.',
+    about: 'While an account’s kind changes between money held and money owed, which days of its balance history are turned over so each goes on counting as it was recorded, with the account’s balance on each of those days (encrypted, as everything here is), and the days left as they were, with why. Once that is done, a short record of when it finished, for a last look at that day and the day before; gone after it.',
     unit: ACCOUNT,
     kept: 'The app’s own records about your data',
     plain: 'Each account’s id, as a field name.',

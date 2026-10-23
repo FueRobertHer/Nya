@@ -45,8 +45,15 @@ const opsRoute = await import('@/app/api/ops/sign-repair/route');
 const { explanations, signJobStore } = await import('@/lib/sign-repair');
 
 const ctx = TEST_CTX;
+/** Jobs under way, a finished job's settle record aside. */
+const pendingIds = async () => {
+  const out: string[] = [];
+  for (const id of await signJobStore.ids(ctx)) if ((await signJobStore.get(ctx, id))?.kind !== 'settle') out.push(id);
+  return out;
+};
 const NOW = Date.parse('2026-09-14T17:00:00Z');
 const FRI = '2026-09-11';
+const DAY = '2026-09-14';
 
 const put = async (key: string, entries: Record<string, unknown>) => {
   for (const [field, value] of Object.entries(entries)) await fake.hset(ctxKey(key), { [field]: await encrypt(ctx, typeof value === 'string' ? value : JSON.stringify(value)) });
@@ -88,14 +95,16 @@ describe('explanations of a day’s gap', () => {
       ['b', 400000],
       ['c', 500000],
     ] as const;
-    // Twice 5,000: A and B together, or C alone.
-    expect(explanations(v, 1000000)).toEqual({ count: 2, only: null, involved: new Set(['a', 'b', 'c']) });
-    expect(explanations(v, 200000)).toEqual({ count: 1, only: new Set(['a']), involved: new Set(['a']) });
-    expect(explanations(v, 0)).toEqual({ count: 1, only: new Set(), involved: new Set() });
-    expect(explanations(v, 3)).toEqual({ count: 0, only: null, involved: new Set() });
-    expect(explanations(v, 2)).toEqual({ count: 0, only: null, involved: new Set() });
+    // Twice 5,000: A and B together, or C alone; none is in both.
+    expect(explanations(v, 1000000)).toEqual({ count: 2, surely: new Set(), involved: new Set(['a', 'b', 'c']) });
+    expect(explanations(v, 200000)).toEqual({ count: 1, surely: new Set(['a']), involved: new Set(['a']) });
+    expect(explanations(v, 0)).toEqual({ count: 1, surely: new Set(), involved: new Set() });
+    expect(explanations(v, 3)).toEqual({ count: 0, surely: new Set(), involved: new Set() });
+    expect(explanations(v, 2)).toEqual({ count: 0, surely: new Set(), involved: new Set() });
     // Equal values: either explains it.
-    expect(explanations([['x', 30000], ['y', 30000]], 60000).count).toBe(2);
+    expect(explanations([['x', 30000], ['y', 30000]], 60000)).toEqual({ count: 2, surely: new Set(), involved: new Set(['x', 'y']) });
+    // A held 500 beside an owed 500: the card alone, or with both; the card is in each.
+    expect(explanations([['card', 30000], ['h', 50000], ['o', -50000]], 60000)).toEqual({ count: 2, surely: new Set(['card']), involved: new Set(['card', 'h', 'o']) });
   });
 });
 
@@ -119,14 +128,14 @@ describe('a day counted the other way for more than one account', () => {
       expect([id, r.status, r.body.error, r.body.days]).toEqual([id, 409, reason(id), [FRI]]);
     }
     expect(history()).toEqual(raw);
-    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(await pendingIds()).toEqual([]);
   });
 
   test('two flipped together, nothing else adding up the same: both found, and both repaired', async () => {
-    await manual('manual_a', 'depository', 1000);
+    await manual('manual_a', 'depository', 1500);
     await manual('manual_b', 'depository', 4000);
-    await put('history:accounts', { [FRI]: { chk: 1000, manual_a: 1000, manual_b: 4000 } });
-    await put('history:net-worth', { [FRI]: '-4000' });
+    await put('history:accounts', { [FRI]: { chk: 1000, manual_a: 1500, manual_b: 4000 } });
+    await put('history:net-worth', { [FRI]: '-4500' });
     await home();
     expect((await dry()).map((f) => [f.account_id, f.days, f.refused])).toEqual([
       ['manual_a', { r: 1 }, undefined],
@@ -134,8 +143,35 @@ describe('a day counted the other way for more than one account', () => {
     ]);
     expect((await repair('manual_a')).body.negated).toBe(1);
     expect((await repair('manual_b')).body.negated).toBe(1);
-    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_a: -1000, manual_b: -4000 });
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_a: -1500, manual_b: -4000 });
     expect(await dry()).toEqual([]);
+  });
+
+  test('in every explanation of the day: counted the other way, while the two that cancel out are refused', async () => {
+    // Savings flipped to a card; a held 500 and an owed 500 beside it, as they always were.
+    await manual('manual_card', 'credit', 300);
+    await manual('manual_h', 'other', 500);
+    await manual('manual_o', 'loan', 500);
+    await put('history:accounts', { [FRI]: { chk: 1000, manual_card: 300, manual_h: 500, manual_o: 500 } });
+    await put('history:net-worth', { [FRI]: '1300' });
+    await home();
+    expect((await dry()).map((f) => [f.account_id, f.days, f.refused?.days])).toEqual([
+      ['manual_card', { r: 1 }, undefined],
+      ['manual_h', {}, [FRI, DAY]],
+      ['manual_o', {}, [FRI, DAY]],
+    ]);
+    expect((await repair('manual_card')).body.negated).toBe(1);
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, manual_card: -300, manual_h: 500, manual_o: 500 });
+    expect((await repair('manual_h')).status).toBe(409);
+  });
+
+  test('a Plaid account with the same value explains the day as well: refused, never proof', async () => {
+    // A manual account that was a card; the bank could have changed the checking account's kind as well.
+    await manual('manual_s', 'depository', 1000);
+    await put('history:accounts', { [FRI]: { chk: 1000, manual_s: 1000 } });
+    await put('history:net-worth', { [FRI]: '0' });
+    await home();
+    expect((await dry()).map((f) => [f.account_id, f.refused?.days])).toEqual([['manual_s', [FRI]]]);
   });
 
   test('two with equal values, either of which explains the day: both refused', async () => {
@@ -163,9 +199,9 @@ describe('a day nothing decides', () => {
     await put('history:net-worth', { [FRI]: '6000' });
     await home(); // today, as it is now: the checking account's type known
     const raw = history();
-    expect(await dry()).toEqual([{ account_id: 'manual_card', source: 'manual', type: 'credit', days: {}, first: null, last: null, undetermined: { count: 1, days: [FRI] } }]);
+    expect(await dry()).toEqual([{ account_id: 'manual_card', source: 'manual', type: 'credit', days: {}, first: null, last: null, undetermined: { count: 1, days: [FRI], why: { untyped: 1 } } }]);
     const r = await repair('manual_card');
-    expect([r.status, r.body.negated, r.body.undetermined]).toEqual([200, 0, { count: 1, days: [FRI] }]);
+    expect([r.status, r.body.negated, r.body.undetermined]).toEqual([200, 0, { count: 1, days: [FRI], why: { untyped: 1 } }]);
     expect(history()).toEqual(raw);
   });
 
@@ -194,7 +230,7 @@ describe('a day nothing decides', () => {
     // Measured without a total: the only day there is.
     await manual('manual_s', 'credit', 5000);
     await put('history:accounts:partial', { [FRI]: { manual_s: 5000 } });
-    expect(await dry()).toEqual([{ account_id: 'manual_s', source: 'manual', type: 'credit', days: {}, first: null, last: null, undetermined: { count: 1, days: [FRI] } }]);
+    expect(await dry()).toEqual([{ account_id: 'manual_s', source: 'manual', type: 'credit', days: {}, first: null, last: null, undetermined: { count: 1, days: [FRI], why: { 'no-total': 1 } } }]);
   });
 
   test('a day before the first one decided as counted now is reported, never taken as so', async () => {
@@ -204,7 +240,7 @@ describe('a day nothing decides', () => {
     await put('history:accounts', { [FRI]: { chk: 1000, manual_s: 5000 } });
     await put('history:net-worth', { [FRI]: '6000' });
     await home();
-    expect(await dry()).toEqual([{ account_id: 'manual_s', source: 'manual', type: 'depository', days: {}, first: null, last: null, undetermined: { count: 1, days: ['2026-09-09'] } }]);
+    expect(await dry()).toEqual([{ account_id: 'manual_s', source: 'manual', type: 'depository', days: {}, first: null, last: null, undetermined: { count: 1, days: ['2026-09-09'], why: { 'no-total': 1 } } }]);
     // Between two days counted as now, it is taken as they are.
     await put('history:accounts', { '2026-09-08': { chk: 1000, manual_s: 5000 } });
     await put('history:net-worth', { '2026-09-08': '6000' });

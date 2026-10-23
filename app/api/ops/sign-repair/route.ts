@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { opsGuard, notPost } from '@/lib/ops';
 import { getContainer, isContainerId, type Ctx } from '@/lib/containers';
 import { checkContainerKey } from '@/lib/crypto';
-import { findSignFlips, repairSignFlip, SignRepairRefused } from '@/lib/sign-repair';
+import { findSignFlips, repairSignFlip, SignRepairRefused, undetermined } from '@/lib/sign-repair';
 import { ForgetRefused } from '@/lib/links';
 import { storeFailure } from '@/lib/store-failure';
 
@@ -77,7 +77,7 @@ export async function POST(req: Request) {
       container,
       account_id: b.account_id,
       negated: done.negated,
-      ...(done.left.length > 0 ? { undetermined: { count: done.left.length, days: done.left.slice(0, 10) } } : {}),
+      ...(done.left.length > 0 ? { undetermined: undetermined(done.left) } : {}),
       ...(done.pending ? { pending: true } : {}),
       ...(done.abandoned ? { abandoned: done.abandoned } : {}),
     });

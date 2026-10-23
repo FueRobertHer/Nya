@@ -88,6 +88,11 @@ export const REGISTRY_RETRY_MS = 1000;
  *  on taking on more (lib/access-log.ts pruneAccessLog): what is left waits
  *  for the next night. It comes off START_BUDGET_MS, below. */
 export const PRUNE_BUDGET_MS = 3_000;
+/** How long the nightly finishing of balance sign jobs (lib/sign-repair.ts
+ *  finishSignJobs) may take in each container's run, a job past it carried on
+ *  the next night (or by the download, or the operator). It comes off
+ *  START_BUDGET_MS too. */
+export const SIGN_BUDGET_MS = 5_000;
 /**
  * No container is started later than this after the request began. The route
  * may run 300 s (maxDuration), and one container's run can take two Plaid
@@ -98,13 +103,13 @@ export const PRUNE_BUDGET_MS = 3_000;
  * snapshot, the day's positions for holdings history (a few round trips per
  * container, beside the snapshot) and the connections' records. Each run
  * begins with the nightly pass over the records of showings, which may take
- * PRUNE_BUDGET_MS, so that comes off the 180 s: the last container still ends
- * by when it would without the pass, and the margin before MAIL_DEADLINE_MS
- * is what it was. One not started is deferred to the catch-up run. The emails
+ * PRUNE_BUDGET_MS, and finishes any balance sign jobs within SIGN_BUDGET_MS,
+ * so both come off the 180 s: the last container still ends by when it would
+ * without them, and the margin before MAIL_DEADLINE_MS is what it was. One not started is deferred to the catch-up run. The emails
  * about connections are not in it: they go once every container has run,
  * within MAIL_DEADLINE_MS.
  */
-export const START_BUDGET_MS = 180_000 - PRUNE_BUDGET_MS;
+export const START_BUDGET_MS = 180_000 - PRUNE_BUDGET_MS - SIGN_BUDGET_MS;
 /**
  * The emails about connections (lib/connection-notices.ts) are all over by
  * this long after the request began. Each one is started only if finding whom
@@ -329,8 +334,9 @@ export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = n
   await catchUpRebuilds(ctx, Date.now());
   // An account's past re-signed when its kind changed between money held
   // and owed (lib/sign-repair.ts), finished here if it was cut off, before
-  // today's point is recorded. Never throws.
-  await finishSignJobs(ctx);
+  // today's point is recorded, within SIGN_BUDGET_MS (off the start budget).
+  // A failure counts one of its nights. Never throws.
+  await finishSignJobs(ctx, { budgetMs: SIGN_BUDGET_MS, nightly: true });
   // The daily fetch from the connectors the person brought (SimpleFIN,
   // lib/connectors/sync.ts), beside Plaid's: a few requests within a deadline
   // shorter than Plaid's worst case. It never throws; its accounts are read
