@@ -41,6 +41,8 @@ const ALLOWED: Record<string, string> = {
   'lib/budget-month.ts#monthFromActivity:currency': STEP_2,
   'lib/fire/inputs.ts#trailingFlows:currency': STEP_2,
   'lib/report/build.ts#buildReport:currency': STEP_2,
+  'lib/report/runway.ts#buildRunwayInputs:currency': 'Until step 2: the runway in its cash accounts’ main currency, as the cash forecast it starts from; it names the cash, transactions and payments left out.',
+  'lib/report/year-over-year.ts#yoyCurrency:within': `${STEP_2} Both years in one, the rest named.`,
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
   'lib/weekly-summary/gather.ts#gatherWeekly:spending': STEP_2,
   'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
