@@ -21,12 +21,21 @@
 //     already be a detected bill, and what will be paid (the minimum, the
 //     statement, something between) is the person's to decide.
 // Figures are added in whole minor units of the currency (cents, yen).
+//
+// WITH A HOME CURRENCY (lib/fx/), what is in another currency than the day's
+// figures counts in them converted, each entry still listed in its own
+// currency with what it counts as (`figure`): a posted row at its own day's
+// rate (lib/fx/totals.ts totalsIn), an expected amount at the newest rates,
+// as the forecast counts it. One with no rate is listed, not added, as
+// before.
 
 import { addDays, expectedDates, type Cadence, type RecurringSeries } from './recurring';
 import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { currencyOf, inCurrency, isExcluded } from './spending';
 import { bankRows } from './split-rows';
 import { minorScale } from './forecast';
+import { totalsIn } from './fx/totals';
+import { convert, type FxTable } from './fx/rates';
 
 /** What the calendar reads of a transaction (the Activity tab's Txn). */
 export type CalendarTxn = {
@@ -90,6 +99,9 @@ export type CalendarEntry = {
    *  `amount` (money in positive, as `amount`). */
   parts?: number;
   counted?: number;
+  /** In another currency, with a home currency: what the day's figure counts
+   *  of it, converted into the figure's currency (money in positive). */
+  figure?: number;
   /** Posted, in a group counted on a day before what was read: the group's
    *  name and day (listed, never in the figure). */
   group?: { name: string; date: string };
@@ -155,9 +167,22 @@ export function calendarMonth(opts: {
   dues?: readonly DuePayment[];
   /** The currency the day's figures are in (the totals', or the forecast's). */
   currency: string | null;
+  /** With a home currency, what converts an entry in another currency into
+   *  the figures' (see the header). */
+  fx?: FxTable | null;
 }): CalendarMonth {
   const { month, today, currency } = opts;
   const scale = minorScale(currency);
+  // The rows as the figures count them, by id: converted where they can be.
+  const counting = currency !== null && opts.fx?.home ? totalsIn(opts.txns, opts.fx, { into: { currency } }).rows : null;
+  const asCounted = counting ? new Map(bankRows(counting, { groups: 'keep' }).map((t) => [t.transaction_id, t])) : null;
+  // An amount expected from today: at the newest rates.
+  const rateDay = opts.fx?.latest && opts.fx.latest.date > today ? opts.fx.latest.date : today;
+  const expectedIn = (amount: number, c: string | null): number | null => {
+    if (!opts.fx?.home || currency === null || !c) return null;
+    const r = convert(opts.fx, amount, c, currency, rateDay);
+    return r.ok ? r.amount : null;
+  };
   const all = monthDays(month);
   const first = all[0];
   const last = all[all.length - 1];
@@ -171,9 +196,15 @@ export function calendarMonth(opts: {
     if (!entries.has(t.date)) continue;
     const parts = t.split_parts;
     const excluded = parts ? parts.every((p) => isExcluded(p)) : isExcluded(t);
-    const uncounted = excluded || !inCurrency(t, currency) || !!t.group_outside;
+    // As the figure counts it: converted, with a home currency, when it can be.
+    const c = asCounted?.get(t.transaction_id) ?? t;
+    const converted = c !== t && currencyOf(c) !== currencyOf(t);
+    const uncounted = excluded || !inCurrency(c, currency) || !!t.group_outside;
+    const cParts = c.split_parts;
     // What counts of a split one: all of it, unless a part is left out on its own.
-    const counted = parts && !uncounted ? -parts.filter((p) => !isExcluded(p)).reduce((n, p) => n + Math.round(p.amount * scale), 0) / scale : undefined;
+    const counted = parts && !uncounted && !converted ? -parts.filter((p) => !isExcluded(p)).reduce((n, p) => n + Math.round(p.amount * scale), 0) / scale : undefined;
+    const figure =
+      converted && !uncounted ? (cParts ? -cParts.filter((p) => !isExcluded(p)).reduce((n, p) => n + Math.round(p.amount * scale), 0) / scale : -c.amount || 0) : undefined;
     add({
       kind: 'posted',
       date: t.date,
@@ -187,6 +218,7 @@ export function calendarMonth(opts: {
       ...(parts ? { parts: parts.filter((p) => !p.split_remainder).length } : {}),
       ...(t.group_outside ? { group: { name: t.group_outside.name, date: t.group_outside.date } } : {}),
       ...(counted !== undefined && Math.round(counted * scale) !== Math.round(-t.amount * scale) ? { counted: counted || 0 } : {}),
+      ...(figure !== undefined ? { figure } : {}),
     });
   }
 
@@ -197,6 +229,8 @@ export function calendarMonth(opts: {
     for (const s of opts.series) {
       if (opts.dismissed?.has(s.id)) continue;
       // What the forecast leaves out is listed, with why (see the header).
+      const own = inCurrency({ iso_currency_code: s.currency }, currency);
+      const at = own ? null : expectedIn(s.amount, s.currency);
       const off: CalendarEntry['off'] =
         s.accountType === null
           ? 'unknown-account'
@@ -204,7 +238,7 @@ export function calendarMonth(opts: {
             ? 'not-cash'
             : s.agreement === 'varies'
               ? 'varies'
-              : inCurrency({ iso_currency_code: s.currency }, currency)
+              : own || at !== null
                 ? undefined
                 : 'currency';
       for (const d of expectedDates(s, today, last).dates) {
@@ -222,10 +256,13 @@ export function calendarMonth(opts: {
           ...(s.account ? { account: s.account } : {}),
           accountType: s.accountType,
           ...(off ? { uncounted: true, off } : {}),
+          ...(!off && at !== null ? { figure: s.kind === 'income' ? at : -at } : {}),
         });
       }
     }
-    for (const item of opts.planned)
+    for (const item of opts.planned) {
+      const own = inCurrency({ iso_currency_code: item.currency }, currency);
+      const at = own ? null : expectedIn(item.amount, item.currency);
       for (const date of plannedDates(item, from, last))
         expected.push({
           kind: 'expected',
@@ -236,10 +273,12 @@ export function calendarMonth(opts: {
           ref: item.id,
           source: 'planned',
           cadence: item.cadence,
-          ...(inCurrency({ iso_currency_code: item.currency }, currency) ? {} : { uncounted: true, off: 'currency' as const }),
+          ...(own ? {} : at !== null ? { figure: item.kind === 'income' ? at : -at } : { uncounted: true, off: 'currency' as const }),
         });
-    // On each day, money in first, then out, largest first.
-    expected.sort((a, b) => Number(a.amount! < 0) - Number(b.amount! < 0) || Math.abs(b.amount!) - Math.abs(a.amount!));
+    }
+    // On each day, money in first, then out, largest first (as counted).
+    const size = (e: CalendarEntry) => e.figure ?? e.amount!;
+    expected.sort((a, b) => Number(size(a) < 0) - Number(size(b) < 0) || Math.abs(size(b)) - Math.abs(size(a)));
     for (const e of expected) add(e);
     for (const p of opts.dues ?? []) {
       if (p.date < from || p.date > last) continue;
@@ -262,8 +301,8 @@ export function calendarMonth(opts: {
     let expected: number | null = null;
     for (const e of list) {
       if (e.uncounted || e.amount === null) continue;
-      if (e.kind === 'posted') posted = (posted ?? 0) + Math.round((e.counted ?? e.amount) * scale);
-      else if (e.kind === 'expected') expected = (expected ?? 0) + Math.round(e.amount * scale);
+      if (e.kind === 'posted') posted = (posted ?? 0) + Math.round((e.figure ?? e.counted ?? e.amount) * scale);
+      else if (e.kind === 'expected') expected = (expected ?? 0) + Math.round((e.figure ?? e.amount) * scale);
     }
     days.set(date, { date, entries: list, posted: posted === null ? null : posted / scale, expected: expected === null ? null : expected / scale });
   }

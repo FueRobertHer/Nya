@@ -16,6 +16,7 @@
 
 import { countsInTotals, isTransfer, isExcluded, leftOutByCurrency, leftOutText, transactionCounter, type Countable, type LeftOut } from './spending';
 import { expectedDates, perMonth, type RecurringSeries } from './recurring';
+import { convert, type FxTable, type NoRate } from './fx/rates';
 
 /** What these totals read of a transaction: its category's words, and,
  *  filed into the person's categories (lib/category-store.ts fileRows), the
@@ -213,22 +214,72 @@ export function countsInMonthly(s: RecurringSeries, today: string): boolean {
   return s.agreement !== 'varies' && !s.paysCard && expectedDates(s, today, today).status !== 'ended';
 }
 
+/** What recurringMonthly converted into its currency, with a home currency:
+ *  each currency and how many series in it, those a rate of the person's
+ *  own priced, and each left out for having no rate, with why. */
+export type MonthlyConverted = {
+  into: string;
+  from: { currency: string; count: number }[];
+  own: string[];
+  unrated: { currency: string; why: NoRate; unrated: string }[];
+};
+
 /**
  * What recurring series come to in a month, as the Budgets tab's recurring
  * list adds them (components/RecurringCard.tsx) and the read-only API answers
  * (lib/api-read.ts): those that count (countsInMonthly), each at what it comes
  * to in an average month (perMonth: a weekly 10 is about 43), kept in
- * `currency`. One that says no currency counts in it; those in another are
- * left out, counted by currency, never added. Unrounded, as summed.
+ * `currency`. One that says no currency counts in it. Without a home currency
+ * (`fx`), those in another are left out, counted by currency, never added;
+ * with one, each is converted into `currency` at today's rates (a month to
+ * come has no rate of its own yet), rounded once, and only one with no rate
+ * is left out. Unrounded, as summed.
  */
-export function recurringMonthly(series: readonly RecurringSeries[], today: string, currency: string | null): { total: number; leftOut: LeftOut } {
+export function recurringMonthly(
+  series: readonly RecurringSeries[],
+  today: string,
+  currency: string | null,
+  fx: FxTable | null = null
+): { total: number; leftOut: LeftOut; converted: MonthlyConverted | null } {
   let total = 0;
   const others = new Map<string, number>();
+  const from = new Map<string, number>();
+  const own = new Set<string>();
+  const unrated = new Map<string, MonthlyConverted['unrated'][number]>();
+  const into = fx?.home && currency !== null ? currency : null;
   for (const s of series) {
     if (!countsInMonthly(s, today)) continue;
     const c = s.currency ?? currency;
-    if (c === currency || currency === null) total += perMonth(s);
-    else if (c) others.set(c, (others.get(c) ?? 0) + 1);
+    if (c === currency || currency === null) {
+      total += perMonth(s);
+      continue;
+    }
+    if (!c) continue;
+    if (fx && into !== null) {
+      const r = convert(fx, perMonth(s), c, into, today);
+      if (r.ok) {
+        total += r.amount;
+        from.set(c, (from.get(c) ?? 0) + 1);
+        if (r.from.source === 'own') own.add(c);
+        if (r.to.source === 'own') own.add(into);
+        continue;
+      }
+      if (!unrated.has(c)) unrated.set(c, { currency: c, why: r.why, unrated: r.currency });
+    }
+    others.set(c, (others.get(c) ?? 0) + 1);
   }
-  return { total, leftOut: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count) };
+  const byCount = (a: { currency: string; count: number }, b: { currency: string; count: number }) => b.count - a.count || (a.currency < b.currency ? -1 : 1);
+  return {
+    total,
+    leftOut: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count),
+    converted:
+      into === null
+        ? null
+        : {
+            into,
+            from: [...from].map(([c, count]) => ({ currency: c, count })).sort(byCount),
+            own: [...own].sort(),
+            unrated: [...unrated.values()].sort((a, b) => (a.currency < b.currency ? -1 : 1)),
+          },
+  };
 }

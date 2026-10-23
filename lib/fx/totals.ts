@@ -27,8 +27,13 @@ import { currencyOf, totalsCurrency, transactionCounter, type Countable } from '
 import { convert, isStale, type FxTable, type NoRate } from './rates';
 import { reasonText } from './words';
 
-/** What a row needs to be converted: the rules' fields, its day and amount. */
-export type Convertible = Countable & { date: string; amount: number; account_id?: string | null };
+/** What a row needs to be converted: its currency, how it is counted as a
+ *  transaction (a split's parts, a group's members), its day and amount. */
+export type Convertible = Pick<Countable, 'iso_currency_code' | 'unofficial_currency_code' | 'split_of' | 'group_members'> & {
+  date: string;
+  amount: number;
+  account_id?: string | null;
+};
 
 /** What a converted copy says it was. */
 export type WasIn = { amount: number; currency: string };
@@ -210,7 +215,7 @@ export function convertedText(c: Conversion | null, opts: { noun?: string; budge
  *  leftOutText) with why each had no rate after it, or as it is without a
  *  conversion: "1 transaction in ARS isn't in these totals, which are in
  *  EUR: there is no rate for ARS on those days." */
-export function leftOutWhy(text: string | null, c: Conversion | null): string | null {
+export function leftOutWhy(text: string | null, c: Pick<Conversion, 'into' | 'unrated'> | null): string | null {
   if (text === null || !c || c.unrated.length === 0) return text;
   const why = c.unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into, 'many')).join('; ');
   return `${text.replace(/\.$/, '')}: ${why}.`;

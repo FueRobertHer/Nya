@@ -490,6 +490,7 @@ export default function BudgetsTab({
         incomplete={incomplete}
         stopped={stopped}
         withoutTransactions={withoutTransactions}
+        fx={fx}
       />
 
       <CalendarView
@@ -501,12 +502,14 @@ export default function BudgetsTab({
         institutions={institutions}
         today={today}
         currency={displayCurrency}
+        fx={fx}
       />
 
       <RecurringCard
         series={series}
         today={today}
         currency={displayCurrency}
+        fx={fx}
         dismissed={dismissed}
         status={plannedStatus}
         saveError={plannedSaveError}

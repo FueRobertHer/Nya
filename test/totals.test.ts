@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { spendingByCategory, summarize, tidy, categoryOf, categoryTotals, recurringMonthly, countsInMonthly, type TotalsRow } from '@/lib/totals';
 import { countsInTotals } from '@/lib/spending';
 import { detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
+import { ecbTable } from './fx-fixture';
 
 // Totals over transactions (lib/totals.ts), shared by the Budgets tab and the
 // read-only API: the rules of lib/spending.ts, one currency per total, and
@@ -167,12 +168,26 @@ describe('what recurring series come to in a month, as the Budgets tab and the A
     expect(tidy(total)).toBe(tidy(15.99 + (10 * 365.25) / 12 / 7));
     expect(leftOut).toEqual([{ currency: 'EUR', count: 1 }]);
     // In euros instead: only the radio, and the dollars named.
-    expect(recurringMonthly(series, TODAY, 'EUR')).toEqual({ total: 9.99, leftOut: [{ currency: 'USD', count: 2 }] });
+    expect(recurringMonthly(series, TODAY, 'EUR')).toEqual({ total: 9.99, leftOut: [{ currency: 'USD', count: 2 }], converted: null });
+  });
+
+  test('with a home currency: each in another currency at today’s rates, rounded once; one with no rate named, with why', () => {
+    const fx = ecbTable({ home: 'EUR' });
+    const usd = recurringMonthly(series, TODAY, 'USD', fx);
+    // The radio's 9.99 EUR a month at the newest rate (1 EUR = 1.1551 USD on 14 Sep): 11.54.
+    expect(tidy(usd.total)).toBe(tidy(15.99 + (10 * 365.25) / 12 / 7 + 11.54));
+    expect(usd.leftOut).toEqual([]);
+    expect(usd.converted).toEqual({ into: 'USD', from: [{ currency: 'EUR', count: 1 }], own: [], unrated: [] });
+    // A currency with no rate: still left out, and why.
+    const btc = series.map((s) => (s.name === 'Radio' ? { ...s, currency: 'BTC' } : s));
+    const out = recurringMonthly(btc, TODAY, 'USD', fx);
+    expect(out.leftOut).toEqual([{ currency: 'BTC', count: 1 }]);
+    expect(out.converted?.unrated).toEqual([{ currency: 'BTC', why: 'not-published', unrated: 'BTC' }]);
   });
 
   test('pay that varies too much to forecast is never in it', () => {
     const steady = series.find((s) => s.name === 'Netflix')!;
     expect(countsInMonthly({ ...steady, agreement: 'varies' }, TODAY)).toBe(false);
-    expect(recurringMonthly([{ ...steady, agreement: 'varies' }], TODAY, 'USD')).toEqual({ total: 0, leftOut: [] });
+    expect(recurringMonthly([{ ...steady, agreement: 'varies' }], TODAY, 'USD')).toEqual({ total: 0, leftOut: [], converted: null });
   });
 });

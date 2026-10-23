@@ -219,7 +219,10 @@ export default function ForecastChart({
         <Masked>
           {day
             ? moves.length > 0
-              ? `${moves.map((e) => `${e.name} ${signedMoney(e.amount, currency)}`).join(' · ')}${
+              ? `${moves
+                  // One in another currency: its own amount, and what it counts as here.
+                  .map((e) => (e.own ? `${e.name} ${signedMoney(e.own.amount, e.own.currency)} (${signedMoney(e.amount, currency)})` : `${e.name} ${signedMoney(e.amount, currency)}`))
+                  .join(' · ')}${
                   (altDay ?? day).low < (altDay ?? day).balance && moves.some((e) => e.amount < 0)
                     ? ` · as low as ${formatMoney((altDay ?? day).low, currency)} before the money in`
                     : ''

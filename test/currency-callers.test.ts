@@ -29,7 +29,8 @@ const ALLOWED: Record<string, string> = {
     'The API’s version 1 fields keep their meaning: one total per currency, and the currency the recorded totals are labelled with. base converts (lib/fx/api-base.ts).',
   'lib/fire/inputs.ts#investedAssets:currency':
     'The Plan’s currency, the one most of its accounts are in, which what the person types in the Plan is in: with a home currency the rest converts into it (lib/fx/net-worth.ts balancesIn), never relabelled.',
-  'lib/forecast.ts#cashPosition:currency': 'Until step 2: the cash forecast in its cash accounts’ main currency.',
+  'lib/forecast.ts#cashPosition:currency':
+    'The forecast’s currency, its cash accounts’ main one, which the warning the person typed is in: with a home currency the rest converts into it at the newest rates, never relabelled.',
   'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
   // Flows.
   'components/MonthFlowChart.tsx#MonthFlowChart:currency': STEP_2,

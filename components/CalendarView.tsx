@@ -18,6 +18,7 @@ import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/li
 import { amountsHidden, compactMoney, formatMoney, hiddenMoney, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { Masked } from './HideAmounts';
+import type { FxTable } from '@/lib/fx/rates';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -101,6 +102,7 @@ export default function CalendarView({
   institutions,
   today,
   currency,
+  fx = null,
 }: {
   /** Null while transactions load, or when they couldn't be (`failed`). */
   txns: Txn[] | null;
@@ -116,6 +118,9 @@ export default function CalendarView({
   today: string;
   /** The day figures' currency: the totals'. */
   currency: string | null;
+  /** With a home currency, what converts an entry in another currency into
+   *  the day figures' (lib/calendar.ts). */
+  fx?: FxTable | null;
 }) {
   const thisMonth = today.slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
@@ -123,8 +128,8 @@ export default function CalendarView({
 
   const dues = useMemo(() => duePayments(institutions), [institutions]);
   const view = useMemo(
-    () => calendarMonth({ month, today, txns: txns ?? NO_TXNS, series, planned, dismissed, dues, currency }),
-    [month, today, txns, series, planned, dismissed, dues, currency]
+    () => calendarMonth({ month, today, txns: txns ?? NO_TXNS, series, planned, dismissed, dues, currency, fx }),
+    [month, today, txns, series, planned, dismissed, dues, currency, fx]
   );
   // Days gone by can't say what posted until transactions are in.
   const unknownPast = txns === null;
@@ -153,6 +158,8 @@ export default function CalendarView({
       // One charge, split (#39): what of it the day's figure counts when a part is left out.
       e.parts ? `split into ${e.parts}` : null,
       e.counted !== undefined ? `${signedMoney(e.counted, e.currency ?? currency)} of it in the day's figure` : null,
+      // In another currency, converted (with a home currency).
+      e.figure !== undefined ? `${signedMoney(e.figure, currency)} in the day's figure` : null,
       // Counted through its group, on the group's earlier day (#39).
       e.group
         ? `in the group “${e.group.name}”, counted on ${new Date(`${e.group.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, not in the day's figure`
@@ -300,6 +307,7 @@ export default function CalendarView({
                           {e.source === 'planned' ? 'planned' : e.source === 'income' ? 'income' : 'bill'} · {cadenceText(e.cadence, e.source)}
                           {e.late && e.due ? ` · due ${fmtDay(e.due)}, not in yet` : ''}
                           {offText(e) ? ` · ${offText(e)}` : ''}
+                          {e.figure !== undefined ? <Masked>{` · ${signedMoney(e.figure, currency)} in the day's figure, at today's rates`}</Masked> : ''}
                         </div>
                       </td>
                       <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
