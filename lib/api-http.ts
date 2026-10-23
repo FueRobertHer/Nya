@@ -273,7 +273,8 @@ export async function serveResource(req: Request, spec: ResourceSpec, rawId?: st
   if (admitted instanceof NextResponse) return admitted;
   const headers: Record<string, string> = { ...admitted.limits };
   try {
-    Object.assign(headers, await gate(admitted.auth, spec));
+    const gated = await gate(admitted.auth, spec);
+    Object.assign(headers, gated.headers);
     const id = spec.id ? idFromPath(spec.id, rawId) : undefined;
     const args = spec.method === 'GET' ? argsFromQuery(spec, new URL(req.url).searchParams) : await readBody(req, spec);
     const answer = await runResource(admitted.auth, spec, {
@@ -282,7 +283,7 @@ export async function serveResource(req: Request, spec: ResourceSpec, rawId?: st
       version: spec.versioned ? readIfMatch(req.headers.get('if-match')) : undefined,
       key: req.headers.get('idempotency-key'),
       via: 'api',
-    });
+    }, gated);
     return NextResponse.json(answer.body, { status: answer.status, headers: { ...NO_STORE, ...headers, ...answer.headers } });
   } catch (err) {
     const res = failed(err, spec.name);

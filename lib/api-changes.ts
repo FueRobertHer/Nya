@@ -25,7 +25,9 @@
 //   api-change-keys  a map store keyed by token id: the Idempotency-Keys that
 //                    token's creates were sent with in the last
 //                    IDEMPOTENCY_HOURS, each as a SHA-256 beside the SHA-256
-//                    of its request and the change it made. Small (a few
+//                    of its request, the change it is for, and `made` once
+//                    what it made is there (so a key sent again after the
+//                    person deleted it never makes it again). Small (a few
 //                    hundred claims at most), changed with a compare-and-set
 //                    per token. Bookkeeping: never exported, never backed up.
 //
@@ -117,9 +119,15 @@ export type Change = {
   error?: string;
   /** When the person forgot its copies of what it changed. */
   forgotten_at?: string;
+  /** An undo of it under way (its id), until it is done: one cut off part
+   *  way is taken up again by the next undo asked (lib/api-undo.ts). */
+  undoing?: string;
+  /** For an undo of an account made, the step it had reached (lib/api-undo.ts
+   *  undoAccountMade), while it is under way. */
+  progress?: 'deleting' | 'folding' | 'forgetting';
 };
 
-const KEYS = new Set(['v', 'at', 'via', 'token', 'op', 'target', 'state', 'before', 'after', 'undoes', 'undone_by', 'error', 'forgotten_at']);
+const KEYS = new Set(['v', 'at', 'via', 'token', 'op', 'target', 'state', 'before', 'after', 'undoes', 'undone_by', 'error', 'forgotten_at', 'undoing', 'progress']);
 const ID = /^(\d{8})\.([0-9a-f]{16}|app)\.([0-9a-f]{12})$/;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isInstant = (v: unknown): v is string => typeof v === 'string' && v.length <= 64 && !Number.isNaN(Date.parse(v));
@@ -150,6 +158,8 @@ export function isChange(v: unknown): v is Change {
     isState(v.after) &&
     (v.undoes === undefined || isChangeId(v.undoes)) &&
     (v.undone_by === undefined || isChangeId(v.undone_by)) &&
+    (v.undoing === undefined || isChangeId(v.undoing)) &&
+    (v.progress === undefined || v.progress === 'deleting' || v.progress === 'folding' || v.progress === 'forgetting') &&
     (v.error === undefined || isText(v.error, 60)) &&
     (v.forgotten_at === undefined || isInstant(v.forgotten_at))
   );
@@ -162,7 +172,7 @@ export const changeStore = defineMapStore<Change>('api-changes', {
 });
 
 /** One token's key claims (see the header). */
-export type Claim = { key: string; request: string; change: string; at: string };
+export type Claim = { key: string; request: string; change: string; at: string; made?: true };
 export type Claims = { v: 1; claims: Claim[] };
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -171,11 +181,12 @@ export function isClaims(v: unknown): v is Claims {
   return v.claims.every(
     (c) =>
       isRecord(c) &&
-      Object.keys(c).every((k) => k === 'key' || k === 'request' || k === 'change' || k === 'at') &&
+      Object.keys(c).every((k) => k === 'key' || k === 'request' || k === 'change' || k === 'at' || k === 'made') &&
       HEX64.test(String(c.key)) &&
       HEX64.test(String(c.request)) &&
       isChangeId(c.change) &&
-      isInstant(c.at)
+      isInstant(c.at) &&
+      (c.made === undefined || c.made === true)
   );
 }
 
@@ -276,11 +287,35 @@ export async function claimKey(ctx: Ctx, tokenId: string, key: string, request: 
   return outcome!;
 }
 
-/** Points a claim at another change (a takeover's). */
-export async function reclaim(ctx: Ctx, tokenId: string, keyHash: string, change: string, now: number = Date.now()): Promise<void> {
-  await claimStore.update(ctx, tokenId, (cur) =>
-    cur ? { ...cur, claims: cur.claims.map((c) => (c.key === keyHash ? { ...c, change, at: new Date(now).toISOString() } : c)) } : null
-  );
+/**
+ * Points a claim at another change (a takeover's), only while it still names
+ * `from`, in one compare-and-set: of two takeovers at once, one wins, and the
+ * other is told so (false), never making the thing a second time.
+ */
+export async function reclaim(ctx: Ctx, tokenId: string, keyHash: string, from: string, change: string, now: number = Date.now()): Promise<boolean> {
+  let won = false;
+  await claimStore.update(ctx, tokenId, (cur) => {
+    won = false; // this may run more than once
+    const claim = cur?.claims.find((c) => c.key === keyHash);
+    if (!cur || !claim || claim.change !== from) return cur;
+    won = true;
+    return { ...cur, claims: cur.claims.map((c) => (c.key === keyHash ? { key: c.key, request: c.request, change, at: new Date(now).toISOString() } : c)) };
+  });
+  return won;
+}
+
+/** Notes on a key's claim that what its change made is there. Best effort,
+ *  as settling is: logged, and the answer stands. */
+export async function markMade(ctx: Ctx, tokenId: string, keyHash: string, change: string): Promise<void> {
+  try {
+    await claimStore.update(ctx, tokenId, (cur) =>
+      cur?.claims.some((c) => c.key === keyHash && c.change === change)
+        ? { ...cur, claims: cur.claims.map((c) => (c.key === keyHash && c.change === change ? { ...c, made: true as const } : c)) }
+        : cur
+    );
+  } catch (err) {
+    console.error('API changes: a key could not be marked made', err instanceof Error ? err.name : typeof err);
+  }
 }
 
 /** A token's claims go with it (lib/api-tokens.ts revokeToken). */
@@ -346,11 +381,9 @@ export async function listChanges(
   return { changes: out, next: more && last ? { at: last[1].at, id: last[0] } : null, unreadable, unrecognised };
 }
 
-/** Forgets one change's copies of what it changed (see the header); false
- *  when there is no such change. */
-export async function forgetChange(ctx: Ctx, id: string, now: number = Date.now()): Promise<boolean> {
-  if (!isChangeId(id)) return false;
-  const written = await changeStore.update(ctx, id, (cur) => {
+/** Forgets one entry's copies, alone. */
+async function forgetOne(ctx: Ctx, id: string, now: number): Promise<Change | null> {
+  return changeStore.update(ctx, id, (cur) => {
     if (!cur) return null;
     if (cur.forgotten_at) return cur;
     const next: Change = { ...cur, forgotten_at: new Date(now).toISOString() };
@@ -358,10 +391,24 @@ export async function forgetChange(ctx: Ctx, id: string, now: number = Date.now(
     delete next.after;
     return next;
   });
-  return written !== null;
 }
 
-/** Forgets every change one token made (`maker`: its ref). Answers how many. */
+/** Forgets one change's copies of what it changed (see the header), and the
+ *  copies kept by its undo, or by the change it undid: an undo keeps what it
+ *  took back (all of a created row, say), so forgetting either forgets both.
+ *  False when there is no such change. */
+export async function forgetChange(ctx: Ctx, id: string, now: number = Date.now()): Promise<boolean> {
+  if (!isChangeId(id)) return false;
+  const written = await forgetOne(ctx, id, now);
+  if (!written) return false;
+  for (const linked of [written.undone_by, written.undoes, written.undoing]) {
+    if (linked && kept(linked, now)) await forgetOne(ctx, linked, now);
+  }
+  return true;
+}
+
+/** Forgets every change one token made (`maker`: its ref), and the copies
+ *  their undos keep, whoever made those. Answers how many of the token's. */
 export async function forgetTokenChanges(ctx: Ctx, maker: string, now: number = Date.now()): Promise<number> {
   let n = 0;
   for (const id of await changeIds(ctx, { maker, now })) if (await forgetChange(ctx, id, now)) n++;

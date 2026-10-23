@@ -49,6 +49,13 @@ async function refused(res: NextResponse): Promise<NextResponse> {
   return json(res.status, rpcError(null, -32000, body?.error?.message ?? 'Refused.'), headers);
 }
 
+// A write tool runs the same write as its endpoint, and undo_change can take
+// an account out of past totals under the links lock (sized to it: lib/
+// links.ts LINKS_LOCK_REQUEST_SECONDS); a create's key is taken over only
+// after every route that can run one has stopped (lib/api-writes.ts
+// PENDING_MS).
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
   const origin = req.headers.get('origin');
   if (origin !== null && origin !== ownOrigin(req)) {

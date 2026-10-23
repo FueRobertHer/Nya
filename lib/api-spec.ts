@@ -61,7 +61,9 @@ export type Arg = { description: string; nullable?: true } & (
   | { kind: 'month' }
   | { kind: 'flag' }
   | { kind: 'int'; min: number; max: number }
-  | { kind: 'amount' }
+  /** `max`: the largest it may be either way (a manual account's balance,
+   *  the app's own ceiling). */
+  | { kind: 'amount'; max?: number }
   | { kind: 'text'; max: number }
   | { kind: 'choice'; values: readonly string[] }
   /** Account ids: a comma-separated list in a query, a list (or one) in JSON. */
@@ -114,7 +116,7 @@ export function describeKind(arg: Arg): string {
     case 'int':
       return `a whole number from ${arg.min} to ${arg.max}`;
     case 'amount':
-      return 'an amount, like 25 or -12.5';
+      return arg.max === undefined ? 'an amount, like 25 or -12.5' : `an amount, like 25 or -12.5, of at most ${arg.max.toLocaleString('en-US')} either way`;
     case 'text':
       return `text of 1 to ${arg.max} characters`;
     case 'choice':
@@ -180,7 +182,7 @@ function fromJson(name: string, arg: Arg, v: unknown): Args[string] {
     case 'int':
       return typeof v === 'number' && Number.isInteger(v) && v >= arg.min && v <= arg.max ? v : fail(name, arg);
     case 'amount':
-      return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < MAX_AMOUNT ? v : fail(name, arg);
+      return typeof v === 'number' && Number.isFinite(v) && (arg.max === undefined ? Math.abs(v) < MAX_AMOUNT : Math.abs(v) <= arg.max) ? v : fail(name, arg);
     case 'ids': {
       const ids = typeof v === 'string' ? [v] : v;
       return Array.isArray(ids) && ids.length > 0 && ids.length <= arg.max && ids.every((id) => typeof id === 'string' && ID.test(id)) ? (ids as string[]) : fail(name, arg);
@@ -266,7 +268,7 @@ export function inputSchema(args: Readonly<Record<string, Arg>>, required: reado
         properties[name] = { ...base, type: 'integer', minimum: arg.min, maximum: arg.max };
         break;
       case 'amount':
-        properties[name] = { ...base, type: 'number' };
+        properties[name] = { ...base, type: 'number', ...(arg.max === undefined ? {} : { minimum: -arg.max, maximum: arg.max }) };
         break;
       case 'text':
         properties[name] = { ...base, type: 'string', minLength: 1, maxLength: arg.max };
@@ -651,7 +653,7 @@ const TAG_ID: Arg = { kind: 'id', named: 'a tag’s id', description: 'A tag’s
 /** The app's own limits, as lib/manual.ts, lib/manual-txn-input.ts,
  *  lib/categories.ts and lib/tags.ts set them (test/api-writes.test.ts holds
  *  these to theirs). */
-export const FIELD_LIMITS = { accountName: 60, subtype: 40, payee: 100, note: 500, categoryName: 60, icon: 16, tagName: 40, tagsPerTransaction: 20 } as const;
+export const FIELD_LIMITS = { accountName: 60, subtype: 40, payee: 100, note: 500, categoryName: 60, icon: 16, tagName: 40, tagsPerTransaction: 20, balance: 1e12 } as const;
 /** How many of each the app keeps at most (lib/manual.ts, lib/categories.ts,
  *  lib/tags.ts), for the developer page's room (API_ROOM). */
 export const APP_CAPS = { manualAccounts: 50, categories: 500, groups: 50, tags: 250 } as const;
@@ -699,7 +701,7 @@ export const RESOURCE_SPECS: readonly ResourceSpec[] = [
     args: {
       ...ACCOUNT_FIELDS,
       type: { kind: 'choice', values: MANUAL_TYPE_NAMES, description: 'Money held (depository, investment, other) or owed (credit, loan).' },
-      balance: { kind: 'amount', description: 'Its balance now. What a credit or loan account owes is positive, never below zero.' },
+      balance: { kind: 'amount', max: FIELD_LIMITS.balance, description: 'Its balance now. What a credit or loan account owes is positive, never below zero.' },
       currency: { kind: 'currency', description: 'The currency its balance is in, a three-letter ISO code; US dollars when not given. Set once: change it in the app.' },
     },
     required: ['name', 'institution_name', 'type', 'balance'],
@@ -724,7 +726,7 @@ export const RESOURCE_SPECS: readonly ResourceSpec[] = [
     summary: 'Sets a manual account’s balance as it is today. The same balance again changes nothing.',
     allows: ['balances', 'write'],
     id: MANUAL_ID,
-    args: { balance: { kind: 'amount', description: 'Its balance now. What a credit or loan account owes is positive, never below zero.' } },
+    args: { balance: { kind: 'amount', max: FIELD_LIMITS.balance, description: 'Its balance now. What a credit or loan account owes is positive, never below zero.' } },
     required: ['balance'],
     write: true,
   },

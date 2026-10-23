@@ -132,4 +132,34 @@ describe('making one', () => {
       limit: 1,
     });
   });
+
+  test('refused for whatever the Add form refuses, whoever asks: the balance ceiling, an owed balance below zero, a currency', async () => {
+    const jar = { name: 'Jar', institution_name: 'Home', type: 'depository' as const, subtype: null, balance: 5 };
+    for (const [fields, currency, message] of [
+      [{ ...jar, balance: 9.9e12 }, undefined, 'Invalid balance'],
+      [{ ...jar, type: 'credit' as const, balance: -1 }, undefined, 'Credit and loan balances are the amount owed, so they cannot be negative'],
+      [{ ...jar, name: '  ' }, undefined, 'Name and institution are required'],
+      [jar, 'XYZ', 'The currency is a three-letter ISO code, like USD or EUR'],
+    ] as const) {
+      const err = await createManualAccount(ctx, fields, currency, { id: 'manual_bad' }).catch((e) => e);
+      expect([err instanceof AccountEditRefused, err.message, err.status]).toEqual([true, message, 400]);
+    }
+    expect(await getManualAccount(ctx, 'manual_bad')).toBeNull();
+  });
+
+  test('a balance set with `rebuild` asks it whether to rebuild the estimate, and checks `expect` in the step that sets it', async () => {
+    const { account } = (await call('POST', FORM)).body;
+    await markBackfillDone(ctx);
+    await setAccountBalance(ctx, account.account_id, 130, { rebuild: async () => false });
+    expect(await isBackfillDone(ctx)).toBe(true);
+    await setAccountBalance(ctx, account.account_id, 140, { rebuild: async () => true });
+    expect(await isBackfillDone(ctx)).toBe(false);
+    const refused = await setAccountBalance(ctx, account.account_id, 150, {
+      expect: () => {
+        throw new AccountEditRefused('It changed', 409);
+      },
+    }).catch((e) => e);
+    expect(refused.message).toBe('It changed');
+    expect((await getManualAccount(ctx, account.account_id))!.balance).toBe(140);
+  });
 });

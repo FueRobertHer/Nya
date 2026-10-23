@@ -18,14 +18,23 @@
 //   transaction deleted   added back as it was, same id, with what was said
 //                         about it, while its account is there and the id is
 //                         nowhere
-//   account created       while its details and balance are as made, it isn't
-//                         hidden or marked closed, and every row in its book
-//                         was added by the same token: its rows, the account,
-//                         and its balance on every day recorded since, through
-//                         the app's own delete and the steps the app's forget
-//                         of a hidden account takes (lib/links.ts
-//                         forgetEarlierAccount, which refuses a manual id), so
-//                         past totals read as though it never was
+//   account created       while it and every row on it are exactly as this
+//                         token's changes left them (their versions), every
+//                         row on it was made by this token, nothing was said
+//                         about a row but what the token said, no row is split
+//                         or grouped, and the account isn't hidden, marked
+//                         closed, tracked by a goal, linked, named by a rule
+//                         or by a note on the timeline: every check under the
+//                         links lock, just before the first write. Then its
+//                         rows and the account go (the app's own delete), and
+//                         its balance on every day recorded since, folded out
+//                         of each total as the app's forget of a hidden
+//                         account does (lib/links.ts forgetEarlierAccount
+//                         refuses a manual id, so its steps are taken here), so
+//                         past totals read as though it never was. Each step's
+//                         name is written on the undo before the step, so an
+//                         undo cut off part way is taken up again where it
+//                         stopped by the next undo asked
 //   account changed       its details set back
 //   balance set           set back, if it still holds what was set; a day
 //                         recorded since keeps its point (today's is written
@@ -39,12 +48,12 @@ import type { Ctx } from './containers';
 import type { Authenticated } from './api-tokens';
 import { hintOf } from './api-tokens';
 import { ApiFailure } from './api-spec';
-import { takeDay } from './api-run';
+import { checkDay, countDay } from './api-run';
 import { beginChange, changeIds, changeStore, getChange, newChangeId, settleChange, tokenRef, type Change, type ChangeOp } from './api-changes';
-import { accountVersion, categoryVersion, groupVersion, tagVersion } from './api-versions';
+import { accountVersion, categoryVersion, groupVersion, rowVersion, saidVersion, tagVersion } from './api-versions';
 import type { ResourceAnswer, ResourceInput } from './api-writes';
 import { getManualAccount, type ManualAccount } from './manual';
-import { invalidate, saveAccountEdit, setAccountBalance } from './manual-account-writes';
+import { AccountEditRefused, invalidate, saveAccountEdit, setAccountBalance } from './manual-account-writes';
 import { deleteManualAccount } from './manual-account-delete';
 import { addManualTxn, findManualTxn, manualTxnStore, type ManualTxn } from './manual-txns';
 import { changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
@@ -61,13 +70,17 @@ import { rulesStore } from './rules';
 import { getHiddenAccounts, markForgetting, setAccountHidden } from './hidden';
 import { dropFoldProgress, foldHiddenAccount, forgetAccountBalances } from './history';
 import { ForgetRefused, withLinksLock } from './links';
+import { readLinks } from './link-core';
 import { lifecycleStore } from './lifecycle';
+import { getGoals } from './goals';
+import { timelineNotesStore } from './timeline-notes';
 
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
 };
 const NOT_RECORDED = 'What this change made wasn’t recorded (it was finished when it was sent again), so it can’t be undone here: change it in the app.';
 const CHANGED = (what: string) => `${what} changed since this change was made, so it wasn’t undone. Change it back yourself if you want it as it was.`;
+const NOT_REMOVED = (why: string) => `${why}, so the account wasn’t removed: remove it in the app if you want it gone.`;
 
 /** Whether two stored states are the same, field for field. */
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -77,14 +90,26 @@ type TxnState = { row: ManualTxn; said: TxnAnnotation | null };
 /** What an undo did: the target as it was before the undo and after. */
 type Undone = { before: unknown; after: unknown };
 
+/** The steps of an undo that may be cut off part way, each named on the
+ *  undo before it is taken (Change.progress). */
+type Step = NonNullable<Change['progress']>;
+
+/**
+ * One undo as it runs: whether it takes up one cut off part way (`resume`,
+ * with the step it had reached), and whether it has written anything yet,
+ * in this run or the one cut off (`began`): a refusal before that leaves
+ * nothing to record, one after it is recorded as the failure it is.
+ */
+type Run = { resume: boolean; began: boolean; progress: Step | undefined; step: (s: Step) => Promise<void> };
+
 /** The app's own refusal, in the API's shape. */
 function refusalOf(err: unknown): unknown {
-  if (err instanceof CategoryError || err instanceof TagError) return new ApiFailure(409, 'conflict', err.message);
-  if (err instanceof ForgetRefused) return new ApiFailure(409, 'conflict', err.message);
+  if (err instanceof CategoryError || err instanceof TagError || err instanceof ForgetRefused) return new ApiFailure(409, 'conflict', err.message);
+  if (err instanceof AccountEditRefused) return new ApiFailure(409, 'conflict', `${err.message}, so it wasn’t undone.`);
   return err;
 }
 
-async function undoTransaction(ctx: Ctx, c: Change, now: number): Promise<Undone> {
+async function undoTransaction(ctx: Ctx, c: Change, now: number, run: Run): Promise<Undone> {
   const id = c.target.id;
   const after = c.after as TxnState | null;
   const before = c.before as TxnState | null;
@@ -98,11 +123,16 @@ async function undoTransaction(ctx: Ctx, c: Change, now: number): Promise<Undone
     return { before: { row: found!.row, said }, after: null };
   }
   if (c.op === 'transaction.delete') {
+    // Every check before the first write: the row added back first, then
+    // what was said about it, which must still be absent (or as the delete
+    // left it), or the undo would stop between the two.
     if (found) refuse('A transaction with its id is there again, so it wasn’t added back.');
+    if (said !== null && !same(said, before!.said)) refuse(CHANGED('What was said about it'));
     if (!(await getManualAccount(ctx, before!.row.account_id))) refuse('Its account no longer exists, so it wasn’t added back.');
     const { added } = await addManualTxn(ctx, before!.row);
     if (!added) refuse('A transaction with its id is there again, so it wasn’t added back.');
-    if (before!.said) await restoreAnnotation(ctx, id, before!.said, (cur) => (cur === null ? undefined : refuse(CHANGED('What was said about it'))));
+    run.began = true;
+    if (before!.said && said === null) await restoreAnnotation(ctx, id, before!.said, (cur) => (cur === null ? undefined : refuse(CHANGED('What was said about it'))));
     return { before: null, after: before };
   }
   // Changed: its row, or what is said beside it, whichever the change moved.
@@ -127,22 +157,75 @@ async function undoTransaction(ctx: Ctx, c: Change, now: number): Promise<Undone
   return { before: after, after: { row: found!.row, said: before!.said } };
 }
 
-/** Every row in the account's book was added by this token through the API,
- *  as the record of its changes says. */
-async function rowsAllFrom(ctx: Ctx, accountId: string, maker: string): Promise<boolean> {
-  const book = await manualTxnStore.get(ctx, accountId);
-  if (!book || book.rows.length === 0) return true;
-  const made = new Set<string>();
+/** This token's changes in the window, done and not undone since, oldest
+ *  first: the state they left is what an account it made must still be in. */
+async function standingChanges(ctx: Ctx, maker: string): Promise<Change[]> {
   const ids = await changeIds(ctx, { maker });
+  const out: Change[] = [];
   for (let i = 0; i < ids.length; i += 500) {
     for (const c of (await changeStore.getMany(ctx, ids.slice(i, i + 500))).values()) {
-      if (c.op === 'transaction.create' && c.state === 'done') made.add(c.target.id);
+      if (c.state === 'done' && !c.undone_by && c.op !== 'undo' && !c.forgotten_at) out.push(c);
     }
   }
-  return book.rows.every((r) => made.has(r.id));
+  return out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 }
 
-async function undoAccount(ctx: Ctx, c: Change, now: number): Promise<Undone> {
+/** The last of these changes: those made at the last moment any was (two
+ *  in the same millisecond can't be told apart, so either is last). */
+function lastOf(changes: Change[]): Change[] {
+  const at = changes.at(-1)?.at;
+  return at === undefined ? [] : changes.filter((x) => x.at === at);
+}
+
+/**
+ * Refuses, saying what blocks it, unless the account `c` made, and every row
+ * on it, are exactly as this token's changes left them, and nothing else
+ * names it (see the header). Every read is strict: what can't be read can't
+ * be told apart from something the person did.
+ */
+async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<void> {
+  const id = c.target.id;
+  const mine = await standingChanges(ctx, c.token!.ref);
+  // The account: its details as the token's last create or change of them
+  // left them, and its balance as the last of those or of its balances.
+  const onAccount = mine.filter((x) => x.target.kind === 'manual-account' && x.target.id === id);
+  const details = lastOf(onAccount.filter((x) => x.op === 'manual-account.create' || x.op === 'manual-account.update'));
+  const balances = lastOf(onAccount.filter((x) => x.after !== null && typeof (x.after as { balance?: unknown }).balance === 'number'));
+  if (!details.some((x) => accountVersion(cur) === accountVersion(x.after as ManualAccount))) refuse(CHANGED('The account'));
+  if (!balances.some((x) => Math.round(cur.balance * 100) === Math.round((x.after as { balance: number }).balance * 100))) refuse(CHANGED('The account’s balance'));
+
+  if ((await getHiddenAccounts(ctx)).has(id)) refuse(NOT_REMOVED('The account was hidden since'));
+  if (await lifecycleStore.has(ctx, id)) refuse(NOT_REMOVED('The account was marked closed since'));
+  if ((await getGoals(ctx)).some((g) => g.account_id === id)) refuse(NOT_REMOVED('A goal tracks the account'));
+  const { links, unreadable } = await readLinks(ctx);
+  if (unreadable.size > 0) refuse(NOT_REMOVED('A saved link between accounts can’t be read'));
+  if (links.has(id) || [...links.values()].some((l) => l.to === id)) refuse(NOT_REMOVED('The account is linked to another'));
+  if ((await rulesStore.get(ctx))?.rules.some((r) => r.conditions.some((k) => k.field === 'account' && k.value === id))) refuse(NOT_REMOVED('A rule names the account'));
+  if ([...(await timelineNotesStore.getAll(ctx)).values()].some((n) => n.account_id === id)) refuse(NOT_REMOVED('A note on the timeline is about the account'));
+
+  // Every row: made by this token, as its last change of it left it, row and
+  // what is said beside it, and neither split nor in a group.
+  const rows = (await manualTxnStore.get(ctx, id))?.rows ?? [];
+  if (rows.length === 0) return;
+  const said = await txnAnnotationStore.getMany(
+    ctx,
+    rows.map((r) => r.id)
+  );
+  const grouped = memberIndex(await groupStore.getAll(ctx));
+  for (const row of rows) {
+    const onRow = mine.filter((x) => x.target.kind === 'transaction' && x.target.id === row.id);
+    if (!onRow.some((x) => x.op === 'transaction.create')) refuse(NOT_REMOVED(`A transaction on it (${row.id}) was added since in another way`));
+    const left = lastOf(onRow.filter((x) => x.op === 'transaction.create' || x.op === 'transaction.update')).map((x) => x.after as TxnState | null);
+    const as = (s: TxnState | null) => !!s && rowVersion(row) === rowVersion(s.row) && saidVersion(said.get(row.id) ?? null) === saidVersion(s.said);
+    if (!left.some(as)) {
+      refuse(NOT_REMOVED(`A transaction on it (${row.id}) was changed since in another way, or something was said about it`));
+    }
+    if ((await splitStore.has(ctx, row.id)) || grouped.has(row.id)) refuse(NOT_REMOVED(`A transaction on it (${row.id}) was split or put in a group since`));
+  }
+}
+
+async function undoAccount(ctx: Ctx, c: Change, now: number, run: Run): Promise<Undone> {
+  if (c.op === 'manual-account.create') return undoAccountMade(ctx, c, now, run);
   const id = c.target.id;
   const current = await getManualAccount(ctx, id);
   if (!current) refuse('The account no longer exists.');
@@ -150,58 +233,81 @@ async function undoAccount(ctx: Ctx, c: Change, now: number): Promise<Undone> {
   if (c.op === 'manual-account.balance') {
     const after = c.after as { balance: number };
     const before = c.before as { balance: number };
-    if (Math.round(cur.balance * 100) !== Math.round(after.balance * 100)) refuse(CHANGED('Its balance'));
-    const set = await setAccountBalance(ctx, id, before.balance, { now: new Date(now) });
+    const cents = (n: number) => Math.round(n * 100);
+    // Still what was set, checked in the step that sets it back.
+    const set = await setAccountBalance(ctx, id, before.balance, {
+      now: new Date(now),
+      expect: (acct) => (cents(acct.balance) === cents(after.balance) ? undefined : refuse(CHANGED('Its balance'))),
+    });
+    if (set.kind === 'missing') refuse('The account no longer exists.');
     return { before: { balance: cur.balance, updated_at: cur.updated_at }, after: set.kind === 'set' ? { balance: set.account.balance, updated_at: set.account.updated_at } : null };
   }
   const after = c.after as ManualAccount;
-  if (c.op === 'manual-account.update') {
-    const before = c.before as ManualAccount;
-    if (accountVersion(cur) !== accountVersion(after)) refuse(CHANGED('The account'));
-    const saved = await saveAccountEdit(
-      ctx,
-      id,
-      { fields: { name: before.name, institution_name: before.institution_name, type: before.type, subtype: before.subtype } },
-      { now: new Date(now), check: (now) => (accountVersion(now) === accountVersion(after) ? undefined : refuse(CHANGED('The account'))) }
-    );
-    if (!saved) refuse('The account no longer exists.');
-    return { before: saved!.before, after: saved!.account };
-  }
-  // Made: taken out whole, while nothing but the token that made it touched it.
-  if (accountVersion(cur) !== accountVersion(after) || Math.round(cur.balance * 100) !== Math.round(after.balance * 100)) refuse(CHANGED('The account'));
-  if ((await getHiddenAccounts(ctx)).has(id)) refuse('The account was hidden since, so it wasn’t removed: remove it in the app.');
-  if (await lifecycleStore.has(ctx, id)) refuse('The account was marked closed since, so it wasn’t removed: remove it in the app.');
-  if (!c.token || !(await rowsAllFrom(ctx, id, c.token.ref))) refuse('Transactions were added to the account since in another way, so it wasn’t removed: remove it in the app.');
-  await withLinksLock(ctx, async () => {
-    await deleteManualAccount(ctx, id);
-    await invalidate(ctx, true);
-    await forgetMadeBalances(ctx, id, cur.type, { first: c.at.slice(0, 10), last: new Date(now).toISOString().slice(0, 10) });
-  });
-  await invalidate(ctx, true);
-  return { before: cur, after: null };
+  const before = c.before as ManualAccount;
+  if (accountVersion(cur) !== accountVersion(after)) refuse(CHANGED('The account'));
+  const saved = await saveAccountEdit(
+    ctx,
+    id,
+    { fields: { name: before.name, institution_name: before.institution_name, type: before.type, subtype: before.subtype } },
+    { now: new Date(now), check: (now) => (accountVersion(now) === accountVersion(after) ? undefined : refuse(CHANGED('The account'))) }
+  );
+  if (!saved) refuse('The account no longer exists.');
+  return { before: saved!.before, after: saved!.account };
 }
 
 /**
- * Takes a deleted account's balance out of every day recorded since it was
- * made, totals included: hidden, folded out of each total point by point,
- * then its balances removed from every per-account layer, as the app's
- * forget of a hidden account does (lib/links.ts forgetEarlierAccount, whose
- * listing refuses a manual id, so its steps are taken here). Under the links
- * lock, after the delete, so no recording writes the account again. Stopped
- * part way, the account stays hidden with its progress kept, out of the
- * totals as a hidden account is, and the undo says it may not have been made.
+ * An account this token made, taken out whole (see the header), under the
+ * links lock from its first check to its last write. Its steps, each named on
+ * the undo before it is taken, so the next undo asked takes one cut off part
+ * way up where it stopped:
+ *
+ *   deleting    its rows and the account, through the app's own delete;
+ *   folding     hidden, and its balance folded out of each recorded total,
+ *               point by point (foldHiddenAccount), the fold's progress kept
+ *               under the hidden entry's tag;
+ *   forgetting  shown again, as it no longer exists, and its balances removed
+ *               from every per-account layer.
+ *
+ * Deleted before it is folded, so no recording can write it again into a day
+ * the fold has passed.
  */
-async function forgetMadeBalances(ctx: Ctx, id: string, type: string, life: { first: string; last: string }): Promise<void> {
-  await setAccountHidden(ctx, id, type, true);
-  const entry = (await getHiddenAccounts(ctx)).get(id);
-  if (!entry) throw new Error('The account could not be hidden to take it out of past totals.');
-  const tag = entry.forget_tag ?? crypto.randomUUID();
-  if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
-  await foldHiddenAccount(ctx, id, type, tag, life);
-  await dropFoldProgress(ctx, tag);
-  await setAccountHidden(ctx, id, '', false);
-  await forgetAccountBalances(ctx, id);
-  await forgetAccountBalances(ctx, id, { today: true });
+async function undoAccountMade(ctx: Ctx, c: Change, now: number, run: Run): Promise<Undone> {
+  const id = c.target.id;
+  const life = { first: c.at.slice(0, 10), last: new Date(now).toISOString().slice(0, 10) };
+  return withLinksLock(ctx, async () => {
+    const cur = await getManualAccount(ctx, id);
+    const reached = run.resume ? run.progress : undefined;
+    if (cur) {
+      // There: nothing of it was taken out yet (a resume that hadn't got past
+      // its delete is checked again too, as nothing was written).
+      await checkUntouched(ctx, c, cur);
+      await run.step('deleting');
+      await deleteManualAccount(ctx, id);
+      run.began = true;
+      await invalidate(ctx, true);
+    } else if (!reached) {
+      refuse('The account no longer exists.');
+    } else {
+      run.began = true; // deleted by the undo cut off
+    }
+    const type = cur?.type ?? (c.after as ManualAccount).type;
+    if (reached !== 'forgetting') {
+      await run.step('folding');
+      await setAccountHidden(ctx, id, type, true);
+      const entry = (await getHiddenAccounts(ctx)).get(id);
+      if (!entry) throw new Error('The account could not be hidden to take it out of past totals.');
+      const tag = entry.forget_tag ?? crypto.randomUUID();
+      if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
+      await foldHiddenAccount(ctx, id, type, tag, life);
+      await dropFoldProgress(ctx, tag);
+    }
+    await run.step('forgetting');
+    await setAccountHidden(ctx, id, '', false);
+    await forgetAccountBalances(ctx, id);
+    await forgetAccountBalances(ctx, id, { today: true });
+    await invalidate(ctx, true);
+    return { before: cur ?? c.after, after: null };
+  });
 }
 
 async function undoCategory(ctx: Ctx, c: Change): Promise<Undone> {
@@ -254,13 +360,13 @@ async function undoTag(ctx: Ctx, c: Change): Promise<Undone> {
 }
 
 /** The change, made backwards (see the header). */
-async function reverse(ctx: Ctx, c: Change, now: number): Promise<Undone> {
+async function reverse(ctx: Ctx, c: Change, now: number, run: Run): Promise<Undone> {
   try {
     switch (c.target.kind) {
       case 'transaction':
-        return await undoTransaction(ctx, c, now);
+        return await undoTransaction(ctx, c, now, run);
       case 'manual-account':
-        return await undoAccount(ctx, c, now);
+        return await undoAccount(ctx, c, now, run);
       case 'category':
       case 'group':
         return await undoCategory(ctx, c);
@@ -283,10 +389,26 @@ function cannotUndo(c: Change): string | null {
   return null;
 }
 
+/** Notes on a change that an undo of it is under way, or that none is. */
+async function markUndoing(ctx: Ctx, changeId: string, undo: string | null): Promise<void> {
+  await changeStore.update(ctx, changeId, (cur) => {
+    if (!cur) return null;
+    const next: Change = { ...cur };
+    if (undo) next.undoing = undo;
+    else delete next.undoing;
+    return next;
+  });
+}
+
 /**
  * Undoes one change and records the undo: `who` is the token undoing its own
  * change, or null for the person in the app. Answers the undo's id (the one
  * already made, when asked again). Throws ApiFailure for a refusal.
+ *
+ * Recorded truthfully: an undo refused before it wrote anything is taken
+ * back out; one that stopped after a write (refused or not) is settled
+ * failed, never dropped. An undo of an account made, cut off part way, is
+ * named on the change (`undoing`) and taken up again by the next undo asked.
  */
 export async function undoChange(
   ctx: Ctx,
@@ -299,33 +421,67 @@ export async function undoChange(
   if (c.undone_by) return { change: c, undo: c.undone_by, headers: {} };
   const why = cannotUndo(c);
   if (why) refuse(why);
-  const headers = who ? await takeDay(who.auth, { create: false }, now) : {};
-  const id = newChangeId(now, who ? tokenRef(who.auth.id) : null);
-  const op: ChangeOp = 'undo';
-  await beginChange(ctx, id, {
-    v: 1,
-    at: new Date(now).toISOString(),
-    via: who ? who.via : 'app',
-    token: who ? { ref: tokenRef(who.auth.id), label: who.auth.token.label } : null,
-    op,
-    target: { kind: 'change', id: changeId },
-    state: 'pending',
-    undoes: changeId,
-  });
+  if (who) await checkDay(who.auth, { create: false }, now);
+  const earlier = c.undoing ? await getChange(ctx, c.undoing, now).catch(() => null) : null;
+  const resume = !!earlier && earlier.state !== 'done';
+  const id = resume ? c.undoing! : newChangeId(now, who ? tokenRef(who.auth.id) : null);
+  if (!resume) {
+    const op: ChangeOp = 'undo';
+    await beginChange(ctx, id, {
+      v: 1,
+      at: new Date(now).toISOString(),
+      via: who ? who.via : 'app',
+      token: who ? { ref: tokenRef(who.auth.id), label: who.auth.token.label } : null,
+      op,
+      target: { kind: 'change', id: changeId },
+      state: 'pending',
+      undoes: changeId,
+    });
+    if (c.op === 'manual-account.create') await markUndoing(ctx, changeId, id);
+  }
+  const run: Run = {
+    resume,
+    // Past its delete, an undo cut off had written; before it, nothing.
+    began: resume && (earlier?.progress === 'folding' || earlier?.progress === 'forgetting'),
+    progress: earlier?.progress,
+    step: async (s) => {
+      await changeStore.update(ctx, id, (cur) => (cur ? { ...cur, state: 'pending', progress: s } : null));
+      run.progress = s;
+    },
+  };
   let undone: Undone;
   try {
-    undone = await reverse(ctx, c, now);
+    undone = await reverse(ctx, c, now, run);
   } catch (err) {
-    // Refused (what it changed moved since, or the app's own rules): nothing
-    // was undone, so the undo is taken back out. Anything else may have
-    // stopped part way, and says so.
-    if (err instanceof ApiFailure) await changeStore.remove(ctx, id).catch(() => {});
-    else await settleChange(ctx, id, { state: 'failed', error: 'internal' });
+    if (!run.began && err instanceof ApiFailure) {
+      await changeStore.remove(ctx, id).catch(() => {});
+      if (c.op === 'manual-account.create') await markUndoing(ctx, changeId, null).catch(() => {});
+    } else {
+      await settleChange(ctx, id, { state: 'failed', error: err instanceof ApiFailure ? err.code : 'internal' });
+    }
     throw err;
   }
-  await settleChange(ctx, id, { state: 'done', before: (undone.before as object | null) ?? null, after: (undone.after as object | null) ?? null });
-  await settleChange(ctx, changeId, { undone_by: id });
-  return { change: { ...c, undone_by: id }, undo: id, headers };
+  const headers = who ? await countDay(who.auth, { create: false }, now) : {};
+  await changeStore
+    .update(ctx, id, (cur) => {
+      if (!cur) return null;
+      const next: Change = { ...cur, state: 'done', before: (undone.before as object | null) ?? null, after: (undone.after as object | null) ?? null };
+      delete next.progress;
+      delete next.error;
+      return next;
+    })
+    .catch((err) => console.error('API undo: an undo could not be settled', err instanceof Error ? err.name : typeof err));
+  await changeStore
+    .update(ctx, changeId, (cur) => {
+      if (!cur) return null;
+      const next: Change = { ...cur, undone_by: id };
+      delete next.undoing;
+      return next;
+    })
+    .catch((err) => console.error('API undo: a change could not be marked undone', err instanceof Error ? err.name : typeof err));
+  const changed = { ...c, undone_by: id };
+  delete changed.undoing;
+  return { change: changed, undo: id, headers };
 }
 
 /** The API's and MCP's undo: a token's own change alone. */

@@ -33,6 +33,10 @@ import { getManualAccountsReport } from '@/lib/manual';
 // limits, and works whether or not this copy lets tokens write, so a change
 // made before writing was turned off can still be taken back.
 
+// An undo of an account made folds it out of past totals under the links
+// lock, which is sized to this (lib/links.ts LINKS_LOCK_REQUEST_SECONDS).
+export const maxDuration = 120;
+
 const MAX_BODY_CHARS = 2 * 1024;
 const PAGE = 25;
 

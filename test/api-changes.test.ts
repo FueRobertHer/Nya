@@ -29,6 +29,7 @@ const { recordSnapshot } = await import('@/lib/history');
 const { changeStore, claimStore, pruneChanges, tokenRef } = await import('@/lib/api-changes');
 const { apiWriteCount, apiWriteDays } = await import('@/lib/api-token-store');
 const { snapshotData } = await import('@/lib/snapshot-job');
+const { PENDING_MS } = await import('@/lib/api-writes');
 const txnWrites = await import('@/lib/manual-txn-writes');
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
@@ -324,7 +325,7 @@ describe('undo', () => {
     const made = await send('POST', 'tags', { body: { name: 'Trip' }, headers: { 'idempotency-key': 'k-1' } });
     // As if the first stopped after the tag was made, before it was settled.
     const entry = (await changeStore.get(ctx, made.body.change_id))!;
-    const stopped = { ...entry, state: 'pending' as const, at: new Date(NOW - 120_000).toISOString() };
+    const stopped = { ...entry, state: 'pending' as const, at: new Date(NOW - PENDING_MS - 1000).toISOString() };
     delete (stopped as Partial<typeof entry>).before;
     delete (stopped as Partial<typeof entry>).after;
     await changeStore.set(ctx, made.body.change_id, stopped);
@@ -486,5 +487,209 @@ describe('undo', () => {
     const listed = await app('api-changes', 'GET');
     expect(listed.body.writes).toBe(false);
     expect((await app('api-changes', 'POST', { action: 'undo', id: made.body.change_id })).status).toBe(200);
+  });
+});
+
+describe('undo of an account a token made, taken out only as the token left it', () => {
+  const jar = { name: 'Cash jar', institution_name: 'Home', type: 'depository', subtype: 'cash', balance: 100 };
+  /** An account the writer made, with one row on it the writer added. */
+  const made = async () => {
+    const account = await send('POST', 'manual-accounts', { body: jar });
+    const row = await send('POST', 'transactions', { body: { ...coffee, account_id: account.body.account.id, name: 'Lunch', amount: 12 } });
+    return { change: account.body.change_id as string, id: account.body.account.id as string, row: row.body.transaction.id as string };
+  };
+  const refusedWith = async (change: string, id: string, words: string) => {
+    const r = await quietly(() => undo(change));
+    expect([r.status, r.body.error.code]).toEqual([409, 'conflict']);
+    expect(r.body.error.message).toContain(words);
+    expect(await getManualAccount(ctx, id)).not.toBeNull();
+    // Refused before anything was written: no undo recorded, still undoable.
+    expect((await changeStore.get(ctx, change))!.undone_by).toBeUndefined();
+    expect([...(await changeStore.getAll(ctx)).values()].some((c) => c.op === 'undo')).toBe(false);
+  };
+
+  test('a row the person edited, excluded, or split since: refused, saying so, and the row kept', async () => {
+    const a = await made();
+    expect((await app('manual-transactions', 'PATCH', { id: a.row, account_id: a.id, amount: 15, note: 'with Sam, reimbursable' })).status).toBe(200);
+    await refusedWith(a.change, a.id, `A transaction on it (${a.row}) was changed since in another way`);
+    expect((await findManualTxn(ctx, a.row))!.row.note).toBe('with Sam, reimbursable');
+
+    const b = await made();
+    expect((await app('transaction-annotations', 'PATCH', { transaction_id: b.row, excluded: true })).status).toBe(200);
+    await refusedWith(b.change, b.id, 'or something was said about it');
+
+    const c = await made();
+    const [one, two] = (await readTaxonomy(ctx))!.categories;
+    const parts = [{ amount: 5, category_id: one.id }, { amount: 7, category_id: two.id }];
+    expect((await app('transaction-splits', 'PUT', { transaction_id: c.row, parts })).status).toBe(200);
+    await refusedWith(c.change, c.id, 'was split or put in a group since');
+  });
+
+  test('a row added in another way, or anything naming the account: refused, saying what', async () => {
+    const { setGoals } = await import('@/lib/goals');
+    const { linkAccounts } = await import('@/lib/links');
+    const { rulesStore } = await import('@/lib/rules');
+    const { timelineNotesStore } = await import('@/lib/timeline-notes');
+    const { setAccountHidden } = await import('@/lib/hidden');
+    const cases: [string, (id: string) => Promise<unknown>, string][] = [
+      ['a row added in the app', (id) => app('manual-transactions', 'POST', { ...coffee, account_id: id }), 'was added since in another way'],
+      ['hidden', (id) => setAccountHidden(ctx, id, 'depository', true), 'The account was hidden since'],
+      ['a goal', (id) => setGoals(ctx, [{ id: 'g1', name: 'Rainy day', target: 1000, account_id: id }]), 'A goal tracks the account'],
+      ['a link', (id) => linkAccounts(ctx, 'acc_old', id, {}), 'The account is linked to another'],
+      [
+        'a rule',
+        (id) =>
+          rulesStore.set(ctx, {
+            version: 1,
+            rules: [{ id: '7d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d', enabled: true, priority: 1, conditions: [{ field: 'account', op: 'equals', value: id }], actions: { hide: true }, created_at: new Date(NOW).toISOString(), updated_at: new Date(NOW).toISOString() }],
+          }),
+        'A rule names the account',
+      ],
+      ['a note', (id) => timelineNotesStore.set(ctx, 'n1', { date: daysAgo(0, NOW), text: 'Opened the jar', kind: 'user', account_id: id, created_at: new Date(NOW).toISOString() }), 'A note on the timeline is about the account'],
+    ];
+    for (const [what, touch, words] of cases) {
+      fake.reset();
+      forgetEpochs();
+      await registerTestContainer(fake);
+      await seedPerson(fake);
+      await ensureTaxonomy(ctx);
+      writer = (await createToken(ctx, 'Importer', new Date(NOW), null, 'write')).token;
+      const a = await made();
+      await touch(a.id);
+      expect([what, (await quietly(() => undo(a.change))).body.error?.message?.includes(words)]).toEqual([what, true]);
+      expect(await getManualAccount(ctx, a.id)).not.toBeNull();
+    }
+  });
+
+  test('what the token itself did since is its own: a row it changed, a balance it set, a name it gave', async () => {
+    const a = await made();
+    const v = (await send('GET', `transactions/${a.row}`)).body.transaction.version;
+    expect((await send('PATCH', `transactions/${a.row}`, { body: { amount: 13, note: 'mine' }, headers: { 'if-match': v } })).status).toBe(200);
+    expect((await send('POST', `manual-accounts/${a.id}/balance`, { body: { balance: 87 } })).status).toBe(200);
+    const av = (await send('GET', `manual-accounts/${a.id}`)).body.account.version;
+    expect((await send('PATCH', `manual-accounts/${a.id}`, { body: { name: 'Coins' }, headers: { 'if-match': av } })).status).toBe(200);
+    const r = await undo(a.change);
+    expect(r.status).toBe(200);
+    expect(await getManualAccount(ctx, a.id)).toBeNull();
+    expect(await findManualTxn(ctx, a.row)).toBeNull();
+  });
+
+  test('checked and taken out under the links lock: while another change to accounts holds it, refused and nothing changed', async () => {
+    const a = await made();
+    fake.strings.set(ctxKey('account-links:lock'), 'someone-else');
+    await refusedWith(a.change, a.id, 'Another change to your accounts is in progress');
+    fake.strings.delete(ctxKey('account-links:lock'));
+    expect((await undo(a.change)).status).toBe(200);
+  });
+
+  test('one cut off part way is finished by the next undo asked, under the same id', async () => {
+    const history = await import('@/lib/history');
+    const a = await made();
+    await recordSnapshot(ctx, 1000, { acc_chk: 900, [a.id]: 100 });
+    const day = new Date(NOW).toISOString().slice(0, 10);
+    const cut = spyOn(history, 'foldHiddenAccount').mockRejectedValueOnce(new Error('the function was stopped'));
+    const first = await quietly(() => undo(a.change));
+    cut.mockRestore();
+    expect(first.status).toBe(500);
+    const original = (await changeStore.get(ctx, a.change))!;
+    expect(original.undone_by).toBeUndefined();
+    const pending = (await changeStore.get(ctx, original.undoing!))!;
+    expect([pending.op, pending.state, pending.progress]).toEqual(['undo', 'failed', 'folding']);
+    // Deleted, and hidden with its fold's progress: out of the totals meanwhile.
+    expect(await getManualAccount(ctx, a.id)).toBeNull();
+    expect((await getHiddenAccounts(ctx)).get(a.id)?.forget_tag).toBeString();
+
+    const second = await undo(a.change);
+    expect([second.status, second.body.undo]).toEqual([200, original.undoing]);
+    expect((await getHiddenAccounts(ctx)).has(a.id)).toBe(false);
+    const balances = JSON.parse(await decrypt(ctx, fake.hashes.get(ctxKey('history:accounts'))!.get(day)!)) as Record<string, number>;
+    expect(Object.keys(balances)).not.toContain(a.id);
+    expect(Number(await decrypt(ctx, fake.hashes.get(ctxKey('history:net-worth'))!.get(day)!))).toBe(900);
+    const settled = (await changeStore.get(ctx, a.change))!;
+    expect([settled.undone_by, settled.undoing]).toEqual([original.undoing, undefined]);
+    expect((await changeStore.get(ctx, original.undoing!))!).toMatchObject({ state: 'done' });
+    expect((await changeStore.get(ctx, original.undoing!))!.progress).toBeUndefined();
+  });
+});
+
+describe('recorded as it happened', () => {
+  test('an undo of a delete refused before it wrote anything: what was said about the row since blocks it, first', async () => {
+    const { changeAnnotation } = await import('@/lib/txn-annotations');
+    await changeAnnotation(ctx, MARKET, { excluded: true });
+    const del = await send('DELETE', `transactions/${MARKET}`, { headers: { 'if-match': await versionOf(`transactions/${MARKET}`) } });
+    expect(del.status).toBe(200);
+    // A page left open says something about it after it went.
+    await changeAnnotation(ctx, MARKET, { excluded: false });
+    const r = await app('api-changes', 'POST', { action: 'undo', id: del.body.change_id });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('What was said about it changed since this change was made, so it wasn’t undone. Change it back yourself if you want it as it was.');
+    expect(await findManualTxn(ctx, MARKET)).toBeNull();
+    expect([...(await changeStore.getAll(ctx)).values()].map((c) => c.op)).toEqual(['transaction.delete']);
+  });
+
+  test('an undo refused after it wrote is recorded as failed, never taken out', async () => {
+    const annotations = await import('@/lib/txn-annotations');
+    await annotations.changeAnnotation(ctx, MARKET, { excluded: true });
+    const del = await send('DELETE', `transactions/${MARKET}`, { headers: { 'if-match': await versionOf(`transactions/${MARKET}`) } });
+    const { ApiFailure } = await import('@/lib/api-spec');
+    const racing = spyOn(annotations, 'restoreAnnotation').mockRejectedValueOnce(new ApiFailure(409, 'conflict', 'What was said about it changed.'));
+    const r = await app('api-changes', 'POST', { action: 'undo', id: del.body.change_id });
+    racing.mockRestore();
+    expect(r.status).toBe(409);
+    // The row is back: the undo says it failed part way.
+    expect(await findManualTxn(ctx, MARKET)).not.toBeNull();
+    const undo = [...(await changeStore.getAll(ctx)).values()].find((c) => c.op === 'undo')!;
+    expect([undo.state, undo.error]).toEqual(['failed', 'conflict']);
+  });
+
+  test('a change whose write landed before storage failed is recorded as failed, never taken out', async () => {
+    const writes = await import('@/lib/manual-txn-writes');
+    const { StoredDataUnreadableError } = await import('@/lib/repo');
+    const real = writes.changeManualTransaction;
+    const version = await versionOf(`transactions/${MARKET}`);
+    const after = spyOn(writes, 'changeManualTransaction').mockImplementationOnce(async (...args: Parameters<typeof real>) => {
+      await real(...args);
+      throw new StoredDataUnreadableError('manual accounts');
+    });
+    const r = await quietly(() => send('PATCH', `transactions/${MARKET}`, { body: { amount: 31 }, headers: { 'if-match': version } }));
+    after.mockRestore();
+    expect(r.status).toBe(409);
+    expect((await findManualTxn(ctx, MARKET))!.row.amount).toBe(31);
+    const [line] = [...(await changeStore.getAll(ctx)).values()];
+    expect([line.op, line.state, line.error]).toEqual(['transaction.update', 'failed', 'unreadable']);
+  });
+});
+
+describe('an undo of a balance', () => {
+  test('set back to a balance the type now refuses: a conflict, never a failure', async () => {
+    const neg = await send('POST', `manual-accounts/${WALLET}/balance`, { body: { balance: -50 } });
+    setSystemTime(new Date(NOW + 1000));
+    const up = await send('POST', `manual-accounts/${WALLET}/balance`, { body: { balance: 100 } });
+    expect([neg.status, up.status]).toEqual([200, 200]);
+    expect((await app('manual-accounts', 'PATCH', { account_id: WALLET, name: 'Wallet', institution_name: 'Cash', type: 'credit', subtype: null, balance: 100 })).status).toBe(200);
+    const r = await undo(up.body.change_id);
+    expect([r.status, r.body.error.code]).toEqual([409, 'conflict']);
+    expect(r.body.error.message).toBe('Credit and loan balances are the amount owed, so they cannot be negative, so it wasn’t undone.');
+    expect((await getManualAccount(ctx, WALLET))!.balance).toBe(100);
+    expect([...(await changeStore.getAll(ctx)).values()].some((c) => c.op === 'undo')).toBe(false);
+  });
+});
+
+describe('forgetting takes what the undo kept too', () => {
+  test('a token’s changes forgotten: the undo of one of them keeps nothing of what it changed', async () => {
+    const made = await send('POST', 'transactions', { body: { ...coffee, name: 'Private thing', note: 'secret note' } });
+    expect((await app('api-changes', 'POST', { action: 'undo', id: made.body.change_id })).status).toBe(200);
+    expect((await app('api-changes', 'POST', { action: 'forget-token', id: made.body.change_id })).status).toBe(200);
+    const raw = [...(await changeStore.getAll(ctx)).values()];
+    expect(raw).toHaveLength(2);
+    expect(JSON.stringify(raw)).not.toContain('secret note');
+    expect(raw.every((c) => c.forgotten_at && c.before === undefined && c.after === undefined)).toBe(true);
+  });
+
+  test('forgetting an undo forgets the change it undid, and the other way round', async () => {
+    const made = await send('POST', 'tags', { body: { name: 'Trip' } });
+    const u = await app('api-changes', 'POST', { action: 'undo', id: made.body.change_id });
+    expect((await app('api-changes', 'POST', { action: 'forget', id: u.body.undo })).status).toBe(200);
+    expect((await changeStore.get(ctx, made.body.change_id))!.forgotten_at).toBeString();
   });
 });

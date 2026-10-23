@@ -19,10 +19,12 @@
 //     thing. Ids are minted as the app mints them, and a create taken over
 //     from one that stopped part way never reuses the first's id: the first's
 //     target is looked for everywhere it could be, replayed when it is there,
-//     refused when it was made and removed since, and made again under a new
-//     id when there is no trace of it;
+//     refused when it was made and removed since (its claim says it was made,
+//     or a trace of it is left), and made again under a new id only when
+//     nothing says it ever was; two takeovers at once make it once;
 //   - THE RECORD of each change, written before it is made and settled after
-//     (lib/api-changes.ts), and the day's limits (lib/api-run.ts takeDay);
+//     (lib/api-changes.ts), and the day's limits, checked before a change and
+//     counted once it is made (lib/api-run.ts checkDay, countDay);
 //   - WHAT A WRITE NEVER DOES: change a bank's transaction (Plaid's, a
 //     connector's, one imported from a file), write to an account a connector
 //     feeds, cross a manual account between money held and owed (it changes
@@ -34,7 +36,7 @@ import type { Authenticated } from './api-tokens';
 import { hintOf } from './api-tokens';
 import type { Ctx } from './containers';
 import { ApiFailure, BadRequest, NotFound, type Args, type ResourceSpec } from './api-spec';
-import { takeDay } from './api-run';
+import { checkDay, countDay, passedGate, type Gated } from './api-run';
 import { API_ROOM, IDEMPOTENCY_HOURS } from './api-limits';
 import {
   beginChange,
@@ -42,6 +44,7 @@ import {
   dropChange,
   getChange,
   listChanges,
+  markMade,
   newChangeId,
   reclaim,
   settleChange,
@@ -54,6 +57,7 @@ import {
 import { accountVersion, categoryVersion, groupVersion, rowVersion, saidVersion, tagVersion, txnParts, txnVersion } from './api-versions';
 import { withAccountVersions, withTxnVersions } from './api-versioned';
 import { firstDay, readAccounts, queryTransactions } from './api-read';
+import { apiWriteDays } from './api-token-store';
 import { getManualAccount, getManualAccounts, isManualId, MAX_MANUAL_ACCOUNTS, newManualId, type ManualAccount } from './manual';
 import { isOwedType } from './balance';
 import { connectorAccountsStore } from './connectors/store';
@@ -110,19 +114,32 @@ function appRefusal(err: unknown): ApiFailure | null {
   return null;
 }
 
-/** Whether a failure means nothing was changed: a refusal before or inside
- *  the compare-and-set, or what the seam refused to read or write. */
-const changedNothing = (err: unknown) =>
-  appRefusal(err) !== null || err instanceof BadRequest || err instanceof NotFound || err instanceof StoredDataUnreadableError || err instanceof StoreRefusedError;
+/** Whether a failure means nothing was changed: one of the app's refusals or
+ *  the API's own, each thrown before anything is written or inside the
+ *  compare-and-set that would have written (which then writes nothing). What
+ *  storage throws can come after a write (a read after it), so it never says
+ *  nothing was changed: the change is settled failed, "may not have been
+ *  made". */
+const changedNothing = (err: unknown) => appRefusal(err) !== null || err instanceof BadRequest || err instanceof NotFound;
+
+/** A failure's code for the record. */
+const failureCode = (err: unknown) => (err instanceof StoredDataUnreadableError ? 'unreadable' : err instanceof StoreRefusedError ? 'refused' : 'internal');
 
 // ---- The record of each change ----
 
 type Made = { before: unknown; after: unknown; target?: Change['target'] };
 
+/** A change made: its id, and the day's window it was counted in, as
+ *  headers. */
+type Recorded = { change: string; day: Record<string, string> };
+
 /**
- * Makes one change with its record: written pending, made, settled done with
- * what it changed (best effort), or taken back out when it changed nothing,
- * or settled failed when that can't be told. Answers the change's id.
+ * Makes one change with its record. The day's limits are checked first
+ * (nothing is counted yet); the change is written pending, made, counted
+ * against the day, and settled done with what it changed (best effort). One
+ * refused before anything was written is taken back out, with its key's
+ * claim; anything else is settled failed. A key's claim is marked made once
+ * what it made is there.
  */
 async function recorded(
   auth: Authenticated,
@@ -130,10 +147,18 @@ async function recorded(
   op: ChangeOp,
   target: Change['target'],
   make: () => Promise<Made>,
-  opts: { changeId?: string; keyed?: boolean } = {}
-): Promise<string> {
+  opts: { changeId?: string; keyHash?: string; create?: boolean } = {}
+): Promise<Recorded> {
   const now = input.now ?? Date.now();
+  const create = opts.create === true;
   const id = opts.changeId ?? newChangeId(now, tokenRef(auth.id));
+  try {
+    await checkDay(auth, { create }, now);
+  } catch (err) {
+    // Refused before anything: a key sent with it is free again.
+    if (opts.keyHash) await dropChange(auth.ctx, id, auth.id);
+    throw err;
+  }
   await beginChange(auth.ctx, id, {
     v: 1,
     at: new Date(now).toISOString(),
@@ -147,12 +172,14 @@ async function recorded(
   try {
     made = await make();
   } catch (err) {
-    if (changedNothing(err)) await dropChange(auth.ctx, id, opts.keyed ? auth.id : null);
-    else await settleChange(auth.ctx, id, { state: 'failed', error: 'internal' });
+    if (changedNothing(err)) await dropChange(auth.ctx, id, opts.keyHash ? auth.id : null);
+    else await settleChange(auth.ctx, id, { state: 'failed', error: failureCode(err) });
     throw err;
   }
+  if (opts.keyHash) await markMade(auth.ctx, auth.id, opts.keyHash, id);
+  const day = await countDay(auth, { create }, now);
   await settleChange(auth.ctx, id, { state: 'done', before: made.before ?? null, after: made.after ?? null, ...(made.target ? { target: made.target } : {}) });
-  return id;
+  return { change: id, day };
 }
 
 /** The canonical text of a request's input, for its key's digest: the
@@ -180,7 +207,15 @@ type Create = {
   answer: (id: string) => Promise<Record<string, unknown>>;
 };
 
-const PENDING_MS = 60_000;
+/**
+ * How long a create's first attempt may still be running: past every route
+ * that can run one (the REST writes' maxDuration of 30 seconds, the MCP
+ * server's 120), with room, so a takeover never runs beside a first attempt
+ * that is still making it (test/api-writes.test.ts holds the routes to it).
+ */
+export const PENDING_MS = 150_000;
+
+const REMOVED_SINCE = 'What this Idempotency-Key made has been removed since, so nothing was made again. If you still want it, send the request with a new key.';
 
 /**
  * A create, safe to send again with its Idempotency-Key (see the header):
@@ -189,10 +224,9 @@ const PENDING_MS = 60_000;
  */
 async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: ResourceInput, c: Create): Promise<ResourceAnswer> {
   const now = input.now ?? Date.now();
-  const fresh = async (changeId?: string): Promise<ResourceAnswer> => {
-    const day = await takeDay(auth, { create: true }, now);
+  const fresh = async (changeId?: string, keyHash?: string): Promise<ResourceAnswer> => {
     const id = c.mint();
-    const change = await recorded(
+    const { change, day } = await recorded(
       auth,
       input,
       c.op,
@@ -201,23 +235,16 @@ async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: Resou
         const made = await c.make(id);
         return { before: null, after: made.after, ...(made.account_id ? { target: { kind: c.kind, id, account_id: made.account_id } } : {}) };
       },
-      { changeId, keyed: input.key != null }
+      { changeId, keyHash, create: true }
     );
     return { status: 201, body: { ...(await c.answer(id)), change_id: change }, headers: day };
   };
   if (input.key == null) return fresh();
 
   const request = requestDigest(spec, input.args);
+  const keyHash = sha256(input.key);
   const claim = await claimKey(auth.ctx, auth.id, input.key, request, now);
-  if (claim.kind === 'new') {
-    try {
-      return await fresh(claim.change);
-    } catch (err) {
-      // Refused before anything was made (a limit, say): the key is free.
-      if (err instanceof ApiFailure && err.status === 429) await dropChange(auth.ctx, claim.change, auth.id);
-      throw err;
-    }
-  }
+  if (claim.kind === 'new') return fresh(claim.change, keyHash);
   const found = claim.claim;
   if (found.request !== request) {
     fail(422, 'idempotency_key_reused', `This Idempotency-Key was sent with another request in the last ${IDEMPOTENCY_HOURS} hours: send this one with a key of its own.`);
@@ -242,24 +269,34 @@ async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: Resou
       await settleChange(auth.ctx, found.change, { state: 'done' });
       return { status: 200, body: { ...(await c.answer(change.target.id)), change_id: found.change }, headers: replayed };
     }
-    if (where === 'trace') {
+    // Made, then removed since: its claim says it was made, or a trace of it
+    // is left. Never made again, so a retry can't bring back what the person
+    // deleted.
+    if (where === 'trace' || found.made) {
       await settleChange(auth.ctx, found.change, { state: 'failed', error: 'removed' });
-      fail(409, 'conflict', 'What this Idempotency-Key made has been removed since. Send a new request, with a new key, to make it again.');
+      fail(409, 'conflict', REMOVED_SINCE);
     }
+  } else if (found.made) {
+    fail(409, 'conflict', REMOVED_SINCE);
   }
+  // Nothing says it was ever made: made now, under a new id, by one takeover
+  // alone (the claim is pointed at it only while it still names the first).
   const next = newChangeId(now, tokenRef(auth.id));
-  await reclaim(auth.ctx, auth.id, found.key, next, now);
-  return fresh(next);
+  if (!(await reclaim(auth.ctx, auth.id, found.key, found.change, next, now))) {
+    fail(409, 'in_progress', 'A request with this Idempotency-Key is still being made. Send it again in a moment.', { 'Retry-After': '2' });
+  }
+  return fresh(next, keyHash);
 }
 
 // ---- Reading one resource ----
 
-/** A manual account, as /accounts lists it, with its version. */
+/** A manual account, as /accounts lists it, with its version: one kept by
+ *  hand alone, never a bank's or one SimpleFIN or Lunch Flow feeds. */
 async function accountAnswer(ctx: Ctx, id: string): Promise<Record<string, unknown>> {
   const { accounts } = await readAccounts(ctx, { includeHidden: true, base: true });
   const [account] = await withAccountVersions(
     ctx,
-    accounts.filter((a) => a.id === id)
+    accounts.filter((a) => a.id === id && a.source === 'manual')
   );
   if (!account) throw new NotFound('No manual account has that id.');
   return { account };
@@ -374,10 +411,9 @@ async function updateAccount(auth: Authenticated, input: ResourceInput): Promise
   if (given(a, 'institution_name')) fields.institution_name = str(a, 'institution_name')!.replace(/\s+/g, ' ');
   if (given(a, 'type')) fields.type = str(a, 'type') as AccountFields['type'];
   if (given(a, 'subtype')) fields.subtype = (a.subtype as string | null) ?? null;
-  const day = await takeDay(auth, { create: false }, input.now);
   let before: ManualAccount | null = null;
   let after: ManualAccount | null = null;
-  const change = await recorded(auth, input, 'manual-account.update', { kind: 'manual-account', id: input.id! }, async () => {
+  const { change, day } = await recorded(auth, input, 'manual-account.update', { kind: 'manual-account', id: input.id! }, async () => {
     const saved = await saveAccountEdit(
       auth.ctx,
       input.id!,
@@ -406,10 +442,9 @@ async function setBalance(auth: Authenticated, input: ResourceInput): Promise<Re
   if (isOwedType(account.type) && balance < 0) fail(400, 'invalid_request', 'Credit and loan balances are the amount owed, so they cannot be negative');
   // The same to the cent: nothing is written, recorded or counted.
   if (Math.round(account.balance * 100) === Math.round(balance * 100)) return { status: 200, body: { ...(await accountAnswer(auth.ctx, account.account_id)), changed: false }, headers: {} };
-  const day = await takeDay(auth, { create: false }, input.now);
   let changed = true;
-  const change = await recorded(auth, input, 'manual-account.balance', { kind: 'manual-account', id: account.account_id }, async () => {
-    const set = await setAccountBalance(auth.ctx, account.account_id, balance, { now: new Date(input.now ?? Date.now()) });
+  const done = await recorded(auth, input, 'manual-account.balance', { kind: 'manual-account', id: account.account_id }, async () => {
+    const set = await setAccountBalance(auth.ctx, account.account_id, balance, { now: new Date(input.now ?? Date.now()), rebuild: () => firstPushToday(auth, account.account_id, input.now) });
     if (set.kind === 'missing') fail(404, 'not_found', 'No manual account has that id.');
     if (set.kind === 'same') {
       changed = false;
@@ -421,7 +456,26 @@ async function setBalance(auth: Authenticated, input: ResourceInput): Promise<Re
     if (err instanceof ApiFailure && err.code === 'same') return null;
     throw err;
   });
-  return { status: 200, body: { ...(await accountAnswer(auth.ctx, account.account_id)), changed, ...(change ? { change_id: change } : {}) }, headers: day };
+  return { status: 200, body: { ...(await accountAnswer(auth.ctx, account.account_id)), changed, ...(done ? { change_id: done.change } : {}) }, headers: done?.day ?? {} };
+}
+
+/**
+ * Whether a balance set through the API should have the estimated history
+ * rebuilt: the first time in a day for each account, never on every push.
+ * The estimate holds a manual account flat at its balance across the days
+ * before any was recorded; a script pushing a balance every few minutes would
+ * otherwise have the app open into a full rebuild (Plaid's transactions
+ * pulled again) nearly every time, for a flat term that moves by that day's
+ * change at most. The app's own Update form rebuilds every time, as before.
+ * Counted in api-write-days under the account's id; one that can't be
+ * counted rebuilds.
+ */
+async function firstPushToday(auth: Authenticated, accountId: string, now?: number): Promise<boolean> {
+  try {
+    return (await apiWriteDays.take(auth.ctx, `balance.${accountId}`, now)).count === 1;
+  } catch {
+    return true;
+  }
 }
 
 // ---- Transactions ----
@@ -438,7 +492,7 @@ async function ownRow(ctx: Ctx, id: string | undefined): Promise<{ account_id: s
 }
 
 /** A day a write may give a row: one the API reads back. */
-function checkDay(day: string | undefined, now: number): void {
+function checkDate(day: string | undefined, now: number): void {
   if (day !== undefined && day < firstDay(now)) fail(400, 'invalid_request', `date is from ${firstDay(now)} on: the API reads the last 365 days. Bring older ones in with a file import in the app.`);
 }
 
@@ -454,7 +508,7 @@ async function createTransaction(auth: Authenticated, spec: ResourceSpec, input:
   const a = input.args;
   const now = input.now ?? Date.now();
   const account = await manualAccountFor(auth.ctx, str(a, 'account_id'));
-  checkDay(str(a, 'date'), now);
+  checkDate(str(a, 'date'), now);
   let category: string | null | undefined;
   try {
     category = await categoryWords(auth.ctx, a);
@@ -492,7 +546,7 @@ async function updateTransaction(auth: Authenticated, input: ResourceInput): Pro
   const id = input.id!;
   const rowChange = ROW_FIELDS.some((k) => given(a, k));
   if (rowChange) {
-    checkDay(str(a, 'date'), now);
+    checkDate(str(a, 'date'), now);
     const changes: ManualTxnChanges = {};
     try {
       const category = await categoryWords(auth.ctx, a);
@@ -505,10 +559,9 @@ async function updateTransaction(auth: Authenticated, input: ResourceInput): Pro
     }
     const target = given(a, 'account_id') ? await manualAccountFor(auth.ctx, str(a, 'account_id')) : undefined;
     if (target) changes.account_id = target.account_id;
-    const day = await takeDay(auth, { create: false }, now);
     const said = await txnAnnotationStore.get(auth.ctx, id);
     let before: ManualTxn | null = null;
-    const change = await recorded(auth, input, 'transaction.update', { kind: 'transaction', id, account_id: found.account_id }, async () => {
+    const { change, day } = await recorded(auth, input, 'transaction.update', { kind: 'transaction', id, account_id: found.account_id }, async () => {
       const done = await changeManualTransaction(auth.ctx, id, changes, {
         from: found.account_id,
         target,
@@ -525,10 +578,9 @@ async function updateTransaction(auth: Authenticated, input: ResourceInput): Pro
     });
     return { status: 200, body: { ...(await transactionAnswer(auth.ctx, id, now)), change_id: change }, headers: day };
   }
-  const day = await takeDay(auth, { create: false }, now);
   let before: TxnAnnotation | null = null;
-  const change = await recorded(auth, input, 'transaction.update', { kind: 'transaction', id, account_id: found.account_id }, async () => {
-    const done = await annotateTransaction(
+  const done = await recorded(auth, input, 'transaction.update', { kind: 'transaction', id, account_id: found.account_id }, async () => {
+    const annotated = await annotateTransaction(
       auth.ctx,
       id,
       { excluded: a.excluded as boolean | undefined, add: (a.add_tag_ids as string[] | undefined) ?? [], remove: (a.remove_tag_ids as string[] | undefined) ?? [], account_id: found.account_id },
@@ -540,11 +592,17 @@ async function updateTransaction(auth: Authenticated, input: ResourceInput): Pro
         },
       }
     );
-    if (!done.ok) fail(404, 'not_found', done.message);
-    const record = (done as { record: TxnAnnotation | null }).record;
+    if (!annotated.ok) fail(404, 'not_found', annotated.message);
+    // Nothing to change (a tag to take off that no longer exists): its
+    // version checked all the same, and nothing recorded or counted.
+    if (!(annotated as { changed: boolean }).changed) throw new ApiFailure(200, 'same', 'unchanged');
+    const record = (annotated as { record: TxnAnnotation | null }).record;
     return { before: txnState(found.row, before), after: txnState(found.row, record) };
+  }).catch((err) => {
+    if (err instanceof ApiFailure && err.code === 'same') return null;
+    throw err;
   });
-  return { status: 200, body: { ...(await transactionAnswer(auth.ctx, id, now)), change_id: change }, headers: day };
+  return { status: 200, body: { ...(await transactionAnswer(auth.ctx, id, now)), ...(done ? { change_id: done.change } : {}) }, headers: done?.day ?? {} };
 }
 
 async function deleteTransaction(auth: Authenticated, input: ResourceInput): Promise<ResourceAnswer> {
@@ -559,9 +617,8 @@ async function deleteTransaction(auth: Authenticated, input: ResourceInput): Pro
   const shown = await transactionAnswer(auth.ctx, id, now).catch(() => ({ transaction: null }));
   const said = await txnAnnotationStore.get(auth.ctx, id);
   if (saidVersion(said) !== want.said) stale();
-  const day = await takeDay(auth, { create: false }, now);
   let before: ManualTxn | null = null;
-  const change = await recorded(auth, input, 'transaction.delete', { kind: 'transaction', id, account_id: found.account_id }, async () => {
+  const { change, day } = await recorded(auth, input, 'transaction.delete', { kind: 'transaction', id, account_id: found.account_id }, async () => {
     const deleted = await removeManualTransaction(auth.ctx, id, found.account_id, {
       expect: (row) => {
         if (row.source !== 'manual') fail(403, 'forbidden', BANKS_ROW);
@@ -611,9 +668,8 @@ async function updateCategory(auth: Authenticated, input: ResourceInput): Promis
   const id = input.id!;
   await categoryAnswer(auth.ctx, id); // a 404 before anything is counted
   const want = wanted(input);
-  const day = await takeDay(auth, { create: false }, input.now);
   let before: Category | null = null;
-  const change = await recorded(auth, input, 'category.update', { kind: 'category', id }, async () => {
+  const { change, day } = await recorded(auth, input, 'category.update', { kind: 'category', id }, async () => {
     try {
       const t = await editCategory(
         auth.ctx,
@@ -658,9 +714,8 @@ async function updateGroup(auth: Authenticated, input: ResourceInput): Promise<R
   const id = input.id!;
   await groupAnswer(auth.ctx, id);
   const want = wanted(input);
-  const day = await takeDay(auth, { create: false }, input.now);
   let before: CategoryGroup | null = null;
-  const change = await recorded(auth, input, 'group.update', { kind: 'group', id }, async () => {
+  const { change, day } = await recorded(auth, input, 'group.update', { kind: 'group', id }, async () => {
     try {
       const t = await editGroup(auth.ctx, id, input.args.name, (g) => {
         if (!g) fail(404, 'not_found', 'No category group has that id: list them with categories.');
@@ -718,9 +773,8 @@ async function updateTag(auth: Authenticated, input: ResourceInput): Promise<Res
   await finishDeleting(auth.ctx);
   await tagAnswer(auth.ctx, id);
   const want = wanted(input);
-  const day = await takeDay(auth, { create: false }, input.now);
   let before: Tag | null = null;
-  const change = await recorded(auth, input, 'tag.update', { kind: 'tag', id }, async () => {
+  const { change, day } = await recorded(auth, input, 'tag.update', { kind: 'tag', id }, async () => {
     try {
       const set: TagSet = await editTag(auth.ctx, id, { name: input.args.name, color: input.args.color }, (t) => {
         if (!t) fail(404, 'not_found', 'No tag has that id: list them with tags.');
@@ -809,12 +863,15 @@ function withEtag(answer: ResourceAnswer): ResourceAnswer {
 
 /**
  * Runs one operation on a resource, its input already read strictly against
- * its declared fields, after the gate (lib/api-run.ts). Checks what the
- * declarations say beyond each field (fields a body needs, fields it may not
- * mix, a version, the key's form), then does it. Throws ApiFailure,
- * BadRequest or NotFound for a refusal, and what storage throws.
+ * its declared fields, after the gate (lib/api-run.ts), whose answer it
+ * takes (`gated`, which only the gate makes, for this operation): so nothing
+ * can run one without passing it. Checks what the declarations say beyond
+ * each field (fields a body needs, fields it may not mix, a version, the
+ * key's form), then does it. Throws ApiFailure, BadRequest or NotFound for a
+ * refusal, and what storage throws.
  */
-export async function runResource(auth: Authenticated, spec: ResourceSpec, input: ResourceInput): Promise<ResourceAnswer> {
+export async function runResource(auth: Authenticated, spec: ResourceSpec, input: ResourceInput, gated: Gated): Promise<ResourceAnswer> {
+  if (!passedGate(gated, spec.name)) throw new Error(`API: ${spec.name} was run without passing the gate`);
   const a = input.args;
   for (const name of spec.required ?? []) {
     if (a[name] === undefined || a[name] === null) throw new BadRequest(`${name} is needed.`);

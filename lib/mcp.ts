@@ -54,7 +54,7 @@
 import type { Authenticated } from './api-tokens';
 import { argsFromJson, inputSchema, operation, BadRequest, NotFound, type Args } from './api-ops';
 import { TOOL_SPECS, WRITE_TOOL_SPECS, DATA_NOT_INSTRUCTIONS, ASK_FIRST, PROTOCOL_VERSIONS, ApiFailure, resourceSpec, allowsOf, type ToolSpec, type WriteToolSpec } from './api-spec';
-import { checkAccess, gate, mayRun, writesNeeded } from './api-run';
+import { checkAccess, gate, mayRun, writesNeeded, type Gated } from './api-run';
 import { runResource } from './api-writes';
 import { readIfMatch } from './api-versions';
 import { apiWritesEnabled } from './api-writes-enabled';
@@ -82,7 +82,7 @@ export const INSTRUCTIONS = [
 /** What a token that can make changes is told besides, while this copy lets
  *  tokens write: what it may change, and to ask first (see the header). */
 export const WRITE_INSTRUCTIONS = [
-  'This token can also make changes: add and change the person’s manual accounts and the transactions entered on them, their categories and tags, and set a manual account’s balance. It can never change a bank’s transaction, delete an account, or touch sharing, tokens or settings.',
+  'This token can also make changes: add, change and delete the transactions entered on the person’s manual accounts, add and change their manual accounts, categories and tags, set a manual account’s balance, and undo its own changes (an undo deletes what the change made: an account it made goes with its transactions and its past balances). It can never change a bank’s transaction, delete any other account, category or tag, or touch sharing, tokens or settings.',
   ASK_FIRST,
   'Every change is recorded with what it changed: undo_change reverses one while nothing has changed it since, and the person can see and undo every change in Nya.',
 ].join(' ');
@@ -455,9 +455,10 @@ export function listTools(auth: Pick<Authenticated, 'access'>): { tools: unknown
  *  as its endpoint (lib/api-run.ts, lib/api-writes.ts). */
 async function callWriteTool(auth: Authenticated, tool: WriteTool, raw: unknown): Promise<unknown> {
   const spec = resourceSpec(tool.resource);
+  let gated: Gated;
   try {
     checkAccess(auth, tool);
-    await gate(auth, spec);
+    gated = await gate(auth, spec);
   } catch (err) {
     if (err instanceof ApiFailure) return toolError(err.message);
     throw err;
@@ -482,7 +483,7 @@ async function callWriteTool(auth: Authenticated, tool: WriteTool, raw: unknown)
       version: spec.versioned ? (typeof version === 'string' ? readIfMatch(version) : null) : undefined,
       key: typeof idempotency_key === 'string' ? idempotency_key : null,
       via: 'mcp',
-    });
+    }, gated);
     const result = answer.body;
     return {
       content: [

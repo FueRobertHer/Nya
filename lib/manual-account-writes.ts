@@ -105,7 +105,8 @@ export type Created = { account: ManualAccount; created: boolean } | { limit: nu
 /**
  * Makes one account under `id` (minted by the caller with newManualId, so a
  * create sent again finds its own), refused at `limit` accounts (the Add
- * form's MAX_MANUAL_ACCOUNTS; the API keeps room under it). Written only where
+ * form's MAX_MANUAL_ACCOUNTS; the API keeps room under it), and refused
+ * (AccountEditRefused, 400) for fields the Add form refuses. Written only where
  * nothing is: an account already under the id is answered as it is, never
  * written over. Throws, rather than counting an unreadable hash as empty.
  */
@@ -115,6 +116,11 @@ export async function createManualAccount(
   currency: string | undefined,
   opts: { id: string; now?: Date; limit?: number }
 ): Promise<Created> {
+  // The Add form's own checks, whoever asks (the route has run them already;
+  // the API's are stricter, but never let through what these refuse).
+  const checked = validateAccountFields({ ...fields, ...(currency !== undefined ? { currency } : {}) });
+  if ('error' in checked) throw new AccountEditRefused(checked.error, 400);
+  fields = checked.value;
   const limit = opts.limit ?? MAX_MANUAL_ACCOUNTS;
   const existing = await getManualAccounts(ctx);
   const mine = existing.find((a) => a.account_id === opts.id);
@@ -207,16 +213,25 @@ export type BalanceOutcome =
  * time, in one compare-and-set, every other field as stored. The same to the
  * cent writes nothing ('same'). A balance the type can't take (an amount owed
  * below zero) is refused against the type as read in that same step
- * (AccountEditRefused). Then, as the Update form's balance change does, the
- * backfill flag and the caches go. Nothing here records a history point: the
- * daily snapshot, or the person's next visit, records it with the day's other
- * balances.
+ * (AccountEditRefused). `expect` is a check of the account as read, inside
+ * that step, that may refuse by throwing (an undo's: it still holds what was
+ * set). Then, as the Update form's balance change does, the caches go, and
+ * the backfill flag, unless `rebuild` says not this time (the API's pushes:
+ * lib/api-writes.ts firstPushToday). Nothing here records a history point:
+ * the daily snapshot, or the person's next visit, records it with the day's
+ * other balances.
  */
-export async function setAccountBalance(ctx: Ctx, account_id: string, balance: number, opts: { now?: Date } = {}): Promise<BalanceOutcome> {
+export async function setAccountBalance(
+  ctx: Ctx,
+  account_id: string,
+  balance: number,
+  opts: { now?: Date; expect?: (current: ManualAccount) => void; rebuild?: () => Promise<boolean> } = {}
+): Promise<BalanceOutcome> {
   const at = (opts.now ?? new Date()).toISOString();
   const cents = (n: number) => Math.round(n * 100);
   const { before, written } = await changeManualAccount(ctx, account_id, (current) => {
     if (!current) return null;
+    opts.expect?.(current);
     const wrong = balanceError(current.type, balance);
     if (wrong) throw new AccountEditRefused(wrong, 400);
     if (cents(current.balance) === cents(balance)) return null;
@@ -224,6 +239,6 @@ export async function setAccountBalance(ctx: Ctx, account_id: string, balance: n
   });
   if (!before) return { kind: 'missing' };
   if (!written) return { kind: 'same', account: before };
-  await invalidate(ctx, true);
+  await invalidate(ctx, opts.rebuild ? await opts.rebuild() : true);
   return { kind: 'set', before, account: written };
 }

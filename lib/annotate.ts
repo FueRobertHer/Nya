@@ -8,7 +8,7 @@
 // route's header says why each step is as it is.
 
 import type { Ctx } from './containers';
-import { changeAnnotation, stripTags, type AnnotationChange, type TxnAnnotation } from './txn-annotations';
+import { changeAnnotation, stripTags, txnAnnotationStore, type AnnotationChange, type TxnAnnotation } from './txn-annotations';
 import { ensureTag, liveTagIds, readTagSet, type Tag } from './tags';
 import { finishDeleting } from './tag-delete';
 import { editManualTxn, findManualTxn, isConnectorRow, MANUAL_TXN_PREFIX } from './manual-txns';
@@ -31,7 +31,7 @@ export type AnnotationAsk = {
 /** What annotateTransaction answers: the record as it now reads, or why
  *  nothing was changed. */
 export type Annotated =
-  | { ok: true; excluded: boolean; tags: string[]; untagged: string[]; note: string | null; created_tag: Tag | null; record: TxnAnnotation | null }
+  | { ok: true; excluded: boolean; tags: string[]; untagged: string[]; note: string | null; created_tag: Tag | null; record: TxnAnnotation | null; changed: boolean }
   | { ok: false; status: 404; message: string };
 
 const MOVED = 'That transaction was deleted or moved since this page loaded. Reload to see it.';
@@ -45,7 +45,10 @@ const TAG_GONE = 'That tag no longer exists. Reload to see your tags as they are
  * is taken back off once the record is saved. A note on a row entered by hand
  * or imported into a manual account is the row's own, so it changes the row;
  * any other note is kept beside it. `expect` is a check of the record as it is
- * now, run inside its compare-and-set (lib/txn-annotations.ts changeAnnotation).
+ * now, run inside its compare-and-set (lib/txn-annotations.ts changeAnnotation),
+ * or on the record as read when there turns out to be nothing to change (a
+ * tag to take off that no longer exists), which writes nothing (`changed`
+ * false) and answers the record as it is.
  */
 export async function annotateTransaction(
   ctx: Ctx,
@@ -94,8 +97,13 @@ export async function annotateTransaction(
     ...(off.length > 0 ? { remove: off } : {}),
     ...(ask.note !== undefined && noteBeside ? { note: ask.note } : {}),
   };
-  let saved: TxnAnnotation | null =
-    Object.keys(change).length > 0 ? await changeAnnotation(ctx, transaction_id, { ...change, ...(gone?.size ? { gone } : {}) }, opts.now, opts.expect) : null;
+  const changing = Object.keys(change).length > 0;
+  let saved: TxnAnnotation | null;
+  if (changing) saved = await changeAnnotation(ctx, transaction_id, { ...change, ...(gone?.size ? { gone } : {}) }, opts.now, opts.expect);
+  else {
+    saved = await txnAnnotationStore.get(ctx, transaction_id);
+    opts.expect?.(saved);
+  }
   // A tag deleted while this was saved: taken back off.
   if (saved && add.length > 0) {
     const now = liveTagIds(await readTagSet(ctx));
@@ -110,5 +118,6 @@ export async function annotateTransaction(
     note: rowNote !== undefined ? rowNote : (saved?.note ?? null),
     created_tag: created,
     record: saved,
+    changed: changing || rowNote !== undefined,
   };
 }

@@ -24,7 +24,7 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { decryptJsonText } = await import('@/lib/blob');
 const spec = await import('@/lib/api-spec');
 const limits = await import('@/lib/api-limits');
-const { MANUAL_TYPES, MAX_MANUAL_ACCOUNTS, getManualAccount, saveManualAccount } = await import('@/lib/manual');
+const { MANUAL_TYPES, MAX_MANUAL_ACCOUNTS, MAX_BALANCE, getManualAccount, saveManualAccount } = await import('@/lib/manual');
 const { TAG_COLORS, TAG_NAME_MAX, MAX_TAGS, MAX_TAGS_PER_TRANSACTION, readTagSet } = await import('@/lib/tags');
 const { NAME_MAX, ICON_MAX, MAX_CATEGORIES, MAX_GROUPS } = await import('@/lib/categories');
 const { MAX_PAYEE_CHARS, MAX_NOTE_CHARS } = await import('@/lib/manual-txn-input');
@@ -32,6 +32,7 @@ const { ensureTaxonomy, readTaxonomy } = await import('@/lib/category-store');
 const { manualTxnStore, findManualTxn } = await import('@/lib/manual-txns');
 const { changeAnnotation } = await import('@/lib/txn-annotations');
 const { changeStore, claimStore } = await import('@/lib/api-changes');
+const { PENDING_MS } = await import('@/lib/api-writes');
 const { apiWriteDays } = await import('@/lib/api-token-store');
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
@@ -39,6 +40,7 @@ const WALLET = 'manual_wallet';
 const MARKET = 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d';
 
 let writer = '';
+let writerId = '';
 let reader = '';
 let balancer = '';
 const saved = { ...process.env };
@@ -52,7 +54,7 @@ beforeEach(async () => {
   process.env.API_WRITES_ENABLED = '1';
   await registerTestContainer(fake);
   await seedPerson(fake);
-  writer = (await createToken(ctx, 'Importer', new Date(NOW), null, 'write')).token;
+  ({ token: writer, info: { id: writerId } } = await createToken(ctx, 'Importer', new Date(NOW), null, 'write'));
   reader = (await createToken(ctx, 'Dashboard', new Date(NOW))).token;
   balancer = (await createToken(ctx, 'Home Assistant', new Date(NOW), null, 'balances')).token;
 });
@@ -144,7 +146,7 @@ async function both(viaApp: () => Promise<unknown>, viaApi: () => Promise<unknow
       forgetEpochs();
       await registerTestContainer(fake);
       await seedPerson(fake);
-      writer = (await createToken(ctx, 'Importer', new Date(NOW), null, 'write')).token;
+      ({ token: writer, info: { id: writerId } } = await createToken(ctx, 'Importer', new Date(NOW), null, 'write'));
       // The set of categories stored first: the app's own answers seed it on
       // their first read; the API's never do (lib/category-store.ts).
       await ensureTaxonomy(ctx);
@@ -189,6 +191,7 @@ describe('declared once, for good', () => {
     expect(spec.MANUAL_TYPE_NAMES).toEqual([...MANUAL_TYPES]);
     expect(spec.TAG_COLOR_NAMES).toEqual([...TAG_COLORS]);
     expect(spec.APP_CAPS).toEqual({ manualAccounts: MAX_MANUAL_ACCOUNTS, categories: MAX_CATEGORIES, groups: MAX_GROUPS, tags: MAX_TAGS });
+    expect(spec.FIELD_LIMITS.balance).toBe(MAX_BALANCE);
     expect(spec.FIELD_LIMITS).toMatchObject({ categoryName: NAME_MAX, icon: ICON_MAX, tagName: TAG_NAME_MAX, payee: MAX_PAYEE_CHARS, note: MAX_NOTE_CHARS, tagsPerTransaction: MAX_TAGS_PER_TRANSACTION });
   });
 });
@@ -269,8 +272,46 @@ describe('the gate', () => {
     expect((await getManualAccount(ctx, WALLET))!.balance).toBe(40);
   });
 
+  test('only a change that is made counts: a refused one never costs the token’s day, the person’s or its creates', async () => {
+    const days = async (...ids: string[]) => (await apiWriteDays.peek(ctx, ids, Date.now())).map((w) => w.count);
+    const balancerId = [...(await apiTokenStore.getAll(ctx))].find(([, t]) => t.label === 'Home Assistant')![0];
+    // A token past its own day keeps pushing: each refused, none counted for anyone.
+    for (let i = 0; i < limits.CHANGES_PER_DAY; i++) await apiWriteDays.take(ctx, balancerId, NOW);
+    let t = NOW;
+    for (let i = 0; i < 40; i++) {
+      if (i % limits.WRITES_PER_MINUTE === 0) setSystemTime(new Date((t += 61_000)));
+      const r = await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 100 + i } });
+      expect(r.status).toBe(429);
+    }
+    expect(await days(balancerId, 'person')).toEqual([limits.CHANGES_PER_DAY, 0]);
+    // A stale version, a name already taken, a crossing type: refused, uncounted.
+    const { account } = await versionOf(`manual-accounts/${WALLET}`);
+    expect((await send('PATCH', `manual-accounts/${WALLET}`, { body: { name: 'Purse' }, headers: { 'if-match': '"AAAAAAAAAAAAAAAAAAAAAA"' } })).status).toBe(412);
+    expect((await send('PATCH', `manual-accounts/${WALLET}`, { body: { type: 'credit' }, headers: { 'if-match': `"${account.version}"` } })).status).toBe(409);
+    expect((await send('POST', 'tags', { body: { name: 'Trip' } })).status).toBe(201);
+    expect((await send('POST', 'tags', { body: { name: 'trip' } })).status).toBe(409);
+    expect((await send('POST', 'transactions', { body: { account_id: WALLET, date: '1999-01-01', amount: 1, name: 'Old' } })).status).toBe(400);
+    // Of all of these, the one tag made, alone.
+    expect(await days(writerId, 'person', `${writerId}.creates`)).toEqual([1, 1, 1]);
+    // And the same read: nothing changed counts.
+    expect(await days(balancerId, 'person')).toEqual([limits.CHANGES_PER_DAY, 1]);
+  });
+
+  test('another token keeps its day, whatever one token past its own limit sends', async () => {
+    const balancerId = [...(await apiTokenStore.getAll(ctx))].find(([, t]) => t.label === 'Home Assistant')![0];
+    for (let i = 0; i < limits.CHANGES_PER_DAY; i++) await apiWriteDays.take(ctx, balancerId, NOW);
+    for (let i = 0; i < limits.PERSON_CHANGES_PER_DAY - limits.CHANGES_PER_DAY; i++) await apiWriteDays.take(ctx, 'person', NOW);
+    let t = NOW;
+    for (let i = 0; i < 60; i++) {
+      if (i % limits.WRITES_PER_MINUTE === 0) setSystemTime(new Date((t += 61_000)));
+      await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 100 + i } });
+    }
+    // The person's day has room for the others' changes still.
+    const r = await send('POST', 'tags', { body: { name: 'First of the day' } });
+    expect(r.status).toBe(201);
+  });
+
   test('at most 100 creates a day for a token', async () => {
-    const writerId = [...(await apiTokenStore.getAll(ctx))].find(([, t]) => t.label === 'Importer')![0];
     for (let i = 0; i < limits.CREATES_PER_DAY; i++) await apiWriteDays.take(ctx, `${writerId}.creates`, NOW);
     const r = await send('POST', 'tags', { body: { name: 'One too many' } });
     expect([r.status, r.body.error.message]).toEqual([429, expect.stringContaining('100 new things today')]);
@@ -384,6 +425,39 @@ describe('the same stored result as the app’s own route', () => {
     expect(b).toEqual(a);
   });
 
+  test('a group renamed, a row moved to another account, and a category taken off', async () => {
+    let [a, b] = await both(
+      async () => {
+        const g = (await readTaxonomy(ctx))!.groups[0];
+        expect((await app('categories', 'POST', { action: 'rename-group', id: g.id, name: 'Eating' })).status).toBe(200);
+      },
+      async () => {
+        const g = (await readTaxonomy(ctx))!.groups[0];
+        const { group } = await versionOf(`category-groups/${g.id}`);
+        expect((await send('PATCH', `category-groups/${g.id}`, { body: { name: 'Eating' }, headers: { 'if-match': group.version } })).status).toBe(200);
+      }
+    );
+    expect(b).toEqual(a);
+    const jar = async () => (await saveManualAccount(ctx, { account_id: 'manual_jar', name: 'Jar', institution_name: 'Home', type: 'depository', subtype: 'cash', balance: 10, updated_at: new Date(NOW).toISOString() }), null);
+    [a, b] = await both(
+      async () => expect((await app('manual-transactions', 'PATCH', { id: MARKET, account_id: WALLET, move_to: 'manual_jar' })).status).toBe(200),
+      async () => {
+        const { transaction } = await versionOf(`transactions/${MARKET}`);
+        expect((await send('PATCH', `transactions/${MARKET}`, { body: { account_id: 'manual_jar' }, headers: { 'if-match': transaction.version } })).status).toBe(200);
+      },
+      jar
+    );
+    expect(b).toEqual(a);
+    [a, b] = await both(
+      async () => expect((await app('manual-transactions', 'PATCH', { id: MARKET, account_id: WALLET, category_id: null })).status).toBe(200),
+      async () => {
+        const { transaction } = await versionOf(`transactions/${MARKET}`);
+        expect((await send('PATCH', `transactions/${MARKET}`, { body: { category_id: null }, headers: { 'if-match': transaction.version } })).status).toBe(200);
+      }
+    );
+    expect(b).toEqual(a);
+  });
+
   test('tags, made and changed', async () => {
     let [a, b] = await both(
       async () => expect((await app('tags', 'POST', { action: 'add', name: 'Work', color: 'blue' })).status).toBe(200),
@@ -431,58 +505,137 @@ describe('idempotency keys', () => {
     expect((await send('POST', 'transactions', { body: { ...coffee, date: daysAgo(0, NOW + 25 * 3_600_000) }, headers: { 'idempotency-key': 'k-1' } })).status).toBe(201);
   });
 
-  test('two sent at once with one key make one record', async () => {
+  test('two sent at once with one key make one transaction, whose names aren’t kept apart', async () => {
+    // Each request's steps interleaved: the second claims the key while the
+    // first is still making its row.
     const [x, y] = await Promise.all([
-      send('POST', 'tags', { body: { name: 'Once' }, headers: { 'idempotency-key': 'race' } }),
-      send('POST', 'tags', { body: { name: 'Once' }, headers: { 'idempotency-key': 'race' } }),
+      send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'race' } }),
+      send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'race' } }),
     ]);
-    expect([x.status, y.status].sort()).toEqual(expect.arrayContaining([201]));
-    expect((await readTagSet(ctx))!.tags.filter((t) => t.name === 'Once')).toHaveLength(1);
-    expect([x.status, y.status].every((s) => s === 201 || s === 200 || s === 409)).toBe(true);
+    expect(await rows()).toHaveLength(1);
+    const id = (await rows())[0].id;
+    const made = [x, y].find((r) => r.status === 201)!;
+    const other = [x, y].find((r) => r !== made)!;
+    expect(made.body.transaction.id).toBe(id);
+    expect([`200:${id}`, '409:in_progress']).toContain(`${other.status}:${other.body.error?.code ?? other.body.transaction?.id}`);
   });
 
-  test('one that stopped part way is taken over after a minute: found and replayed, or made again under a new id, never the old one', async () => {
-    // A first attempt that made its tag, then stopped before saying so.
-    const first = await send('POST', 'tags', { body: { name: 'Halfway' }, headers: { 'idempotency-key': 'k-2' } });
-    const changeId = first.body.change_id;
-    await changeStore.update(ctx, changeId, (c) => (c ? { ...c, state: 'pending' } : null));
-    const soon = await send('POST', 'tags', { body: { name: 'Halfway' }, headers: { 'idempotency-key': 'k-2' } });
-    expect([soon.status, soon.body.error.code]).toEqual([409, 'in_progress']);
-    setSystemTime(new Date(NOW + 61_000));
-    const later = await send('POST', 'tags', { body: { name: 'Halfway' }, headers: { 'idempotency-key': 'k-2' } });
-    expect([later.status, later.body.tag.id]).toEqual([200, first.body.tag.id]);
-    expect((await changeStore.get(ctx, changeId))!.state).toBe('done');
-
-    // One that made nothing: made now, under a fresh id.
-    const lost = await send('POST', 'tags', { body: { name: 'Lost' }, headers: { 'idempotency-key': 'k-3' } });
-    const lostChange = (await changeStore.get(ctx, lost.body.change_id))!;
-    await quietly(async () => {
-      const { deleteTag } = await import('@/lib/tag-delete');
-      await deleteTag(ctx, lost.body.tag.id);
+  /** A first attempt that stopped before it was settled, as a function cut
+   *  off: its change left pending (and, `unmade`, before its key was marked
+   *  made too). */
+  const stopped = async (changeId: string, opts: { unmade?: boolean } = {}) => {
+    await changeStore.update(ctx, changeId, (c) => {
+      if (!c) return null;
+      const next = { ...c, state: 'pending' as const };
+      delete (next as Partial<typeof c>).before;
+      delete (next as Partial<typeof c>).after;
+      return next;
     });
-    // Its tag swept away entirely, and the change left pending: no trace.
-    await changeStore.update(ctx, lost.body.change_id, (c) => (c ? { ...c, state: 'pending' } : null));
+    if (opts.unmade) await claimStore.update(ctx, writerId, (cur) => (cur ? { ...cur, claims: cur.claims.map(({ made: _, ...c }) => c) } : null));
+  };
+  const LATER = NOW + PENDING_MS + 1000;
+
+  test('one that stopped part way waits out every route that could still be making it, then is found and replayed', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-2' } });
+    await stopped(first.body.change_id);
+    // Inside the longest a route can run (the MCP server's 120 seconds): still in progress.
     setSystemTime(new Date(NOW + 130_000));
-    const again = await send('POST', 'tags', { body: { name: 'Lost' }, headers: { 'idempotency-key': 'k-3' } });
-    expect(again.status).toBe(201);
-    expect(again.body.tag.id).not.toBe(lostChange.target.id);
+    const soon = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-2' } });
+    expect([soon.status, soon.body.error.code]).toEqual([409, 'in_progress']);
+    setSystemTime(new Date(LATER));
+    const later = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-2' } });
+    expect([later.status, later.body.transaction.id]).toEqual([200, first.body.transaction.id]);
+    expect((await changeStore.get(ctx, first.body.change_id))!.state).toBe('done');
+    expect(await rows()).toHaveLength(1);
   });
 
-  test('made, then removed since: a key sent again says so, and makes nothing', async () => {
-    const made = await send('POST', 'tags', { body: { name: 'Gone' }, headers: { 'idempotency-key': 'k-4' } });
-    const { deleteTag } = await import('@/lib/tag-delete');
-    await deleteTag(ctx, made.body.tag.id);
-    const again = await send('POST', 'tags', { body: { name: 'Gone' }, headers: { 'idempotency-key': 'k-4' } });
-    expect([again.status, again.body]).toEqual([200, { deleted: true, change_id: made.body.change_id }]);
-    expect((await readTagSet(ctx))!.tags.some((t) => t.name === 'Gone')).toBe(false);
-    // A pending first attempt whose tag is being deleted: a trace, refused.
-    const second = await send('POST', 'tags', { body: { name: 'Swept' }, headers: { 'idempotency-key': 'k-5' } });
-    await changeStore.update(ctx, second.body.change_id, (c) => (c ? { ...c, state: 'pending' } : null));
+  test('a retry never brings back what the person deleted: made, then deleted, is refused, whatever the first attempt’s record says', async () => {
+    // Settled, then deleted in the app: answered as deleted.
+    const done = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-3' } });
+    expect((await app('manual-transactions', 'DELETE', { id: done.body.transaction.id, account_id: WALLET })).status).toBe(200);
+    const again = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-3' } });
+    expect([again.status, again.body]).toEqual([200, { deleted: true, change_id: done.body.change_id }]);
+    // Stopped before it was settled, its row deleted in the app since: its
+    // key says it was made, so nothing is made again.
+    const cut = await send('POST', 'transactions', { body: { ...coffee, name: 'Tea' }, headers: { 'idempotency-key': 'k-4' } });
+    await stopped(cut.body.change_id);
+    expect((await app('manual-transactions', 'DELETE', { id: cut.body.transaction.id, account_id: WALLET })).status).toBe(200);
+    setSystemTime(new Date(LATER));
+    const retry = await send('POST', 'transactions', { body: { ...coffee, name: 'Tea' }, headers: { 'idempotency-key': 'k-4' } });
+    expect([retry.status, retry.body.error.code]).toEqual([409, 'conflict']);
+    expect(retry.body.error.message).toBe('What this Idempotency-Key made has been removed since, so nothing was made again. If you still want it, send the request with a new key.');
+    expect((await manualTxnStore.get(ctx, WALLET))!.rows.some((r) => r.name === 'Tea')).toBe(false);
+    expect((await changeStore.get(ctx, cut.body.change_id))!).toMatchObject({ state: 'failed', error: 'removed' });
+    // A tag being deleted is a trace of one made too.
+    const swept = await send('POST', 'tags', { body: { name: 'Swept' }, headers: { 'idempotency-key': 'k-5' } });
+    await stopped(swept.body.change_id, { unmade: true });
     const { changeTagSet, markDeleted } = await import('@/lib/tags');
-    await changeTagSet(ctx, (s) => markDeleted(s, second.body.tag.id));
-    setSystemTime(new Date(NOW + 61_000));
+    await changeTagSet(ctx, (s) => markDeleted(s, swept.body.tag.id));
+    setSystemTime(new Date(LATER + PENDING_MS));
     const refused = await send('POST', 'tags', { body: { name: 'Swept' }, headers: { 'idempotency-key': 'k-5' } });
     expect([refused.status, refused.body.error.code]).toEqual([409, 'conflict']);
+  });
+
+  test('made again, under a new id, only when nothing says the first ever made it', async () => {
+    // The first stopped before it wrote its change: its key claimed alone.
+    const { claimKey } = await import('@/lib/api-changes');
+    const digest = (await import('@/lib/api-changes')).sha256;
+    const spec2 = spec.resourceSpec('transactions.create');
+    const args = { account_id: WALLET, amount: 4.5, date: coffee.date, name: 'Coffee' };
+    const request = digest(JSON.stringify([spec2.name, Object.keys(args).sort().map((k) => [k, (args as Record<string, unknown>)[k]])]));
+    const claim = await claimKey(ctx, writerId, 'k-6', request, NOW);
+    expect(claim.kind).toBe('new');
+    setSystemTime(new Date(LATER));
+    const made = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-6' } });
+    expect(made.status).toBe(201);
+    expect(made.body.change_id).not.toBe((claim as { change: string }).change);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  test('two takeovers at once make it once: the claim moves to one of them alone', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-7' } });
+    const oldId = first.body.transaction.id;
+    // As if it stopped before its row landed: no row, change pending, key not marked made.
+    await manualTxnStore.update(ctx, WALLET, (b) => ({ ...b!, rows: b!.rows.filter((r) => r.id !== oldId) }));
+    await stopped(first.body.change_id, { unmade: true });
+    setSystemTime(new Date(LATER));
+    // Each takeover's look for the first's row slowed, as a network round
+    // trip would, so both look before either moves the claim.
+    const txns = await import('@/lib/manual-txns');
+    const real = txns.findManualTxn;
+    let looked = 0;
+    const slow = spyOn(txns, 'findManualTxn').mockImplementation(async (c, id, from) => {
+      if (id === oldId) {
+        looked++;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      return real(c, id, from);
+    });
+    try {
+      const [x, y] = await Promise.all([
+        send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-7' } }),
+        send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-7' } }),
+      ]);
+      expect(looked).toBe(2);
+      expect([x.status, y.status].sort()).toEqual([201, 409]);
+      expect([x, y].find((r) => r.status === 409)!.body.error.code).toBe('in_progress');
+    } finally {
+      slow.mockRestore();
+    }
+    expect(await rows()).toHaveLength(1);
+    expect((await rows())[0].id).not.toBe(oldId);
+  });
+
+  test('every route that can run a create stops before a takeover would begin', async () => {
+    for (const path of ['app/api/mcp/route.ts', 'app/api/v1/transactions/route.ts', 'app/api/v1/manual-accounts/route.ts', 'app/api/v1/categories/route.ts', 'app/api/v1/category-groups/route.ts', 'app/api/v1/tags/route.ts']) {
+      const source = await Bun.file(new URL(`../${path}`, import.meta.url)).text();
+      const seconds = Number(/export const maxDuration = (\d+);/.exec(source)?.[1]);
+      expect([path, seconds > 0 && seconds * 1000 < PENDING_MS]).toEqual([path, true]);
+    }
+    for (const path of ['app/api/api-changes/route.ts', 'app/api/v1/changes/[id]/undo/route.ts']) {
+      const source = await Bun.file(new URL(`../${path}`, import.meta.url)).text();
+      expect([path, /export const maxDuration = 120;/.test(source)]).toEqual([path, true]);
+    }
   });
 
   test('a refusal before anything was made frees the key', async () => {
@@ -496,6 +649,75 @@ describe('idempotency keys', () => {
 });
 
 describe('versions', () => {
+  test('a change that turns out to change nothing still checks its version, and records and counts nothing', async () => {
+    const tag = (await send('POST', 'tags', { body: { name: 'Gone soon' } })).body.tag.id;
+    await quietly(async () => (await import('@/lib/tag-delete')).deleteTag(ctx, tag));
+    const stale = await send('PATCH', `transactions/${MARKET}`, { body: { remove_tag_ids: [tag] }, headers: { 'if-match': 'AAAAAAAAAAA.AAAAAAAAAAA' } });
+    expect([stale.status, stale.body.error.code]).toEqual([412, 'version_mismatch']);
+    const before = await changeStore.count(ctx);
+    const days = (await apiWriteDays.peek(ctx, [writerId], Date.now()))[0].count;
+    const { transaction } = await versionOf(`transactions/${MARKET}`);
+    const fine = await send('PATCH', `transactions/${MARKET}`, { body: { remove_tag_ids: [tag] }, headers: { 'if-match': transaction.version } });
+    expect([fine.status, fine.body.change_id, fine.body.transaction.version]).toEqual([200, undefined, transaction.version]);
+    expect(await changeStore.count(ctx)).toBe(before);
+    expect((await apiWriteDays.peek(ctx, [writerId], Date.now()))[0].count).toBe(days);
+  });
+
+  test('a version is keyed with a key only the server holds: no token can work one out from a guess', async () => {
+    const { createHash } = await import('node:crypto');
+    const { accountVersion } = await import('@/lib/api-versions');
+    const wallet = (await getManualAccount(ctx, WALLET))!;
+    const unkeyed = createHash('sha256').update(JSON.stringify(['account', wallet.name, wallet.institution_name, wallet.type, wallet.subtype ?? null, wallet.currency ?? 'USD']), 'utf8').digest('base64url').slice(0, 22);
+    const served = (await versionOf(`manual-accounts/${WALLET}`)).account.version;
+    expect(served).toBe(accountVersion(wallet));
+    expect(served).not.toBe(unkeyed);
+    const key = process.env.PLAID_ENCRYPTION_KEY;
+    process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString('base64');
+    try {
+      expect(accountVersion(wallet)).not.toBe(served);
+    } finally {
+      process.env.PLAID_ENCRYPTION_KEY = key;
+    }
+    expect(accountVersion(wallet)).toBe(served);
+  });
+
+  test('one manual account by id: never a bank’s', async () => {
+    const r = await send('GET', 'manual-accounts/acc_chk');
+    expect([r.status, r.body.error.code]).toEqual([404, 'not_found']);
+  });
+
+  test('the runner runs nothing that hasn’t passed the gate', async () => {
+    const { runResource } = await import('@/lib/api-writes');
+    const { authenticate } = await import('@/lib/api-tokens');
+    const auth = (await authenticate(`Bearer ${writer}`))!;
+    expect(auth).not.toBeNull();
+    const forged = { headers: {} } as unknown as Parameters<typeof runResource>[3];
+    await expect(runResource(auth, spec.resourceSpec('tags.create'), { args: { name: 'Sneaky' }, via: 'api' }, forged)).rejects.toThrow('without passing the gate');
+    // Nor one that passed it for another operation.
+    const { gate } = await import('@/lib/api-run');
+    const forRead = await gate(auth, spec.resourceSpec('tags.get'));
+    await expect(runResource(auth, spec.resourceSpec('tags.create'), { args: { name: 'Sneaky' }, via: 'api' }, forRead)).rejects.toThrow('without passing the gate');
+    expect(await readTagSet(ctx)).toBeNull();
+  });
+
+  test('a balance set through the API has the estimate rebuilt the first time in a day for each account, never on every push', async () => {
+    const { markBackfillDone, isBackfillDone } = await import('@/lib/history');
+    await markBackfillDone(ctx);
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 41 } })).status).toBe(200);
+    expect(await isBackfillDone(ctx)).toBe(false);
+    await markBackfillDone(ctx);
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 42 } })).status).toBe(200);
+    expect(await isBackfillDone(ctx)).toBe(true);
+    // The app's own form rebuilds every time, as it always has.
+    expect((await app('manual-accounts', 'PATCH', { account_id: WALLET, name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 43 })).status).toBe(200);
+    expect(await isBackfillDone(ctx)).toBe(false);
+    // The next day, the first push rebuilds again.
+    await markBackfillDone(ctx);
+    setSystemTime(new Date(NOW + 86_400_000 + 1000));
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 44 } })).status).toBe(200);
+    expect(await isBackfillDone(ctx)).toBe(false);
+  });
+
   test('a stale version is refused and nothing is written; none is 428; a weak one never matches', async () => {
     const { transaction } = await versionOf(`transactions/${MARKET}`);
     // The person edits it in the app meanwhile.
@@ -538,6 +760,84 @@ describe('versions', () => {
     const txns = (await send('GET', 'transactions', { token: reader })).body.transactions;
     for (const t of txns) expect([t.id, typeof t.version]).toEqual([t.id, t.source === 'manual' ? 'string' : 'object']);
     expect((await send('GET', 'tags', { token: reader })).body.tags.every((t: any) => typeof t.version === 'string')).toBe(true);
+  });
+});
+
+describe('the app’s own checks, on every create', () => {
+  // Every body the app's own route refuses, the API refuses too, and neither
+  // stores anything: the API may be stricter, never looser.
+  const nothingNew = async () => JSON.stringify(await stored());
+  const both = async (what: string, viaApp: () => Promise<{ status: number }>, viaApi: () => Promise<{ status: number }>) => {
+    const before = await nothingNew();
+    const [a, b] = [await viaApp(), await viaApi()];
+    expect([what, a.status >= 400, b.status >= 400]).toEqual([what, true, true]);
+    expect([what, await nothingNew()]).toEqual([what, before]);
+  };
+
+  test('a manual account: the balance ceiling, an owed balance below zero, a name, a type, a currency', async () => {
+    await ensureTaxonomy(ctx);
+    const good = { name: 'Jar', institution_name: 'Home', type: 'depository', subtype: 'cash', balance: 12.5 };
+    for (const [what, body] of [
+      ['past the balance ceiling', { ...good, balance: 9.9e12 }],
+      ['an owed balance below zero', { ...good, type: 'credit', balance: -5 }],
+      ['no name', { ...good, name: '   ' }],
+      ['no institution', { ...good, institution_name: '' }],
+      ['another type', { ...good, type: 'savings' }],
+      ['a currency no one has', { ...good, currency: 'XYZ' }],
+      ['a balance that is no number', { ...good, balance: 'lots' }],
+    ] as const) {
+      await both(what, () => app('manual-accounts', 'POST', body), () => send('POST', 'manual-accounts', { body }));
+    }
+    // At the ceiling, both take it.
+    expect((await app('manual-accounts', 'POST', { ...good, balance: 1e12 })).status).toBe(200);
+    expect((await send('POST', 'manual-accounts', { body: { ...good, name: 'Jar 2', balance: -1e12 } })).status).toBe(201);
+  });
+
+  test('a transaction: its amount, name, day, currency and note', async () => {
+    await ensureTaxonomy(ctx);
+    const good = { account_id: WALLET, date: daysAgo(0, NOW), amount: 4.5, currency: 'USD', name: 'Coffee' };
+    for (const [what, body] of [
+      ['zero', { ...good, amount: 0 }],
+      ['more decimals than its currency has', { ...good, amount: 4.555 }],
+      ['no name', { ...good, name: ' ' }],
+      ['no such day', { ...good, date: '2026-02-30' }],
+      ['far ahead', { ...good, date: '2030-01-01' }],
+      ['a currency no one has', { ...good, currency: 'XYZ' }],
+      ['a note too long', { ...good, note: 'x'.repeat(501) }],
+      ['no such account', { ...good, account_id: 'manual_nope' }],
+      ['a bank’s account', { ...good, account_id: 'acc_chk' }],
+    ] as const) {
+      await both(what, () => app('manual-transactions', 'POST', body), () => send('POST', 'transactions', { body }));
+    }
+  });
+
+  test('a category, a group and a tag: names, kinds, colors, and one already there', async () => {
+    const t = await ensureTaxonomy(ctx);
+    const group = t.groups[0].id;
+    const taken = t.categories[0].name;
+    for (const [what, viaApp, viaApi] of [
+      ['a category with no name', { action: 'add-category', name: ' ', group }, { name: ' ', group_id: group }],
+      ['a category name too long', { action: 'add-category', name: 'x'.repeat(61), group }, { name: 'x'.repeat(61), group_id: group }],
+      ['a category name taken', { action: 'add-category', name: taken.toUpperCase(), group }, { name: taken.toUpperCase(), group_id: group }],
+      ['a category in no group', { action: 'add-category', name: 'Pets', group: 'nope' }, { name: 'Pets', group_id: 'nope' }],
+    ] as const) {
+      await both(what, () => app('categories', 'POST', viaApp), () => send('POST', 'categories', { body: viaApi }));
+    }
+    for (const [what, viaApp, viaApi] of [
+      ['a group of no kind', { action: 'add-group', name: 'Side', kind: 'savings' }, { name: 'Side', kind: 'savings' }],
+      ['a group name taken', { action: 'add-group', name: t.groups[0].name, kind: 'expense' }, { name: t.groups[0].name, kind: 'expense' }],
+    ] as const) {
+      await both(what, () => app('categories', 'POST', viaApp), () => send('POST', 'category-groups', { body: viaApi }));
+    }
+    expect((await app('tags', 'POST', { action: 'add', name: 'Trip' })).status).toBe(200);
+    for (const [what, viaApp, viaApi] of [
+      ['a tag with no name', { action: 'add', name: '' }, { name: '' }],
+      ['a tag of no color', { action: 'add', name: 'Work', color: 'black' }, { name: 'Work', color: 'black' }],
+      ['a tag name taken', { action: 'add', name: 'trip' }, { name: 'trip' }],
+      ['a tag name too long', { action: 'add', name: 'x'.repeat(41) }, { name: 'x'.repeat(41) }],
+    ] as const) {
+      await both(what, () => app('tags', 'POST', viaApp), () => send('POST', 'tags', { body: viaApi }));
+    }
   });
 });
 

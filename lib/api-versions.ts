@@ -4,10 +4,14 @@
 // one it read (If-Match). A version is worked out from what is stored each
 // time it is asked for, never stored itself: so a change made in the app
 // moves it exactly as one made through the API does, and no stored shape
-// changes. It is a digest (SHA-256, base64url) of the stored fields the API
-// serves and a write depends on, and nothing else, so it confirms nothing a
-// token can't already read (no `created_at`, no `updated_at`, no ids of a
-// file's rows, no category's earlier names):
+// changes. It is a keyed digest (HMAC-SHA-256, base64url) of the stored fields
+// a write depends on, and nothing else (no `created_at`, no `updated_at`, no
+// ids of a file's rows, no category's earlier names). Some of those fields
+// aren't served as stored (the tags a person took off a row, a name a rule
+// shows otherwise), so the digest is keyed with a key only the server holds
+// (derived from PLAID_ENCRYPTION_KEY, for this purpose alone): a token can't
+// work out a version from a guess, and so can't confirm one, offline. A new
+// key moves every version, which only asks a program to read again:
 //
 //   manual account  name, institution_name, type, subtype, currency: its
 //                   details. Not the balance, which a script may push every
@@ -26,14 +30,22 @@
 // never matches, as RFC 9110's strong comparison has it; `*` is refused as no
 // version at all, since a change must say what it was made from.
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { ManualAccount } from './manual';
 import type { ManualTxn } from './manual-txns';
 import type { TxnAnnotation } from './txn-annotations';
 import type { Category, CategoryGroup } from './categories';
 import type { Tag } from './tags';
 
-const digest = (parts: unknown, chars: number) => createHash('sha256').update(JSON.stringify(parts), 'utf8').digest('base64url').slice(0, chars);
+/** The digest's key, derived once for the environment's key it is from. */
+let keyed: { from: string; key: Buffer } | null = null;
+function versionKey(): Buffer {
+  const from = process.env.PLAID_ENCRYPTION_KEY ?? '';
+  if (keyed?.from !== from) keyed = { from, key: createHash('sha256').update(`nya-api-version-key:${from}`, 'utf8').digest() };
+  return keyed.key;
+}
+
+const digest = (parts: unknown, chars: number) => createHmac('sha256', versionKey()).update(JSON.stringify(parts), 'utf8').digest('base64url').slice(0, chars);
 
 export function accountVersion(a: Pick<ManualAccount, 'name' | 'institution_name' | 'type' | 'subtype' | 'currency'>): string {
   return digest(['account', a.name, a.institution_name, a.type, a.subtype ?? null, a.currency ?? 'USD'], 22);
