@@ -33,15 +33,19 @@ function niceTicks(min: number, max: number): number[] {
   return out;
 }
 
+/** Whole days from one calendar day to another. */
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
 export default function RunwayChart({ projection, currency }: { projection: RunwayProjection; currency: string | null }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
   const points = projection.chart;
   const today = points[0].date;
-  const days = (date: string) => Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  const days = (date: string) => daysBetween(today, date);
   const spanDays = Math.max(1, days(points[points.length - 1].date));
 
   const geo = useMemo(() => {
+    const days = (date: string) => daysBetween(points[0].date, date);
     const values = points.flatMap((p) => [p.without, p.with]);
     let lo = Math.min(...values);
     let hi = Math.max(...values);
@@ -58,8 +62,6 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
     const y = (v: number) => PAD_TOP + (1 - (v - bottom) / (top - bottom)) * (H - PAD_TOP - PAD_BOTTOM);
     const path = (key: 'without' | 'with') => points.map((p, k) => `${k === 0 ? 'M' : 'L'}${x(days(p.date)).toFixed(1)},${y(p[key]).toFixed(1)}`).join('');
     return { x, y, ticks: niceTicks(bottom, top), without: path('without'), with: path('with'), showZero };
-    // `days` reads only `today`, which `points` holds.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points, spanDays]);
 
   const { x, y, ticks, showZero } = geo;
