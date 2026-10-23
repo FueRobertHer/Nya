@@ -1,0 +1,176 @@
+{
+  "app/connect/[token]/page.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "app/globals.css": {
+    "rawColors": 47,
+    "smallFonts": 38
+  },
+  "app/layout.tsx": {
+    "rawColors": 15
+  },
+  "app/not-allowed/page.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "components/AccountLifecycle.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/AdminUnusedItems.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/AllocationCard.tsx": {
+    "rawColors": 2,
+    "inlineLayoutStyles": 12
+  },
+  "components/ApiChanges.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/ApiTokens.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/BudgetsTab.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "components/CategoriesCard.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/CategoryManager.tsx": {
+    "inlineLayoutStyles": 9
+  },
+  "components/CategoryTemplates.tsx": {
+    "inlineLayoutStyles": 5
+  },
+  "components/ConfirmPaymentSheet.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/ConnectRedirect.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/Connectors.tsx": {
+    "inlineLayoutStyles": 8
+  },
+  "components/Dashboard.tsx": {
+    "inlineLayoutStyles": 7
+  },
+  "components/DebtPayoff.tsx": {
+    "rawColors": 3,
+    "inlineLayoutStyles": 1
+  },
+  "components/ForecastCard.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/ForecastChart.tsx": {
+    "rawColors": 2
+  },
+  "components/GoalSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/GoalsCard.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "components/GroupSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/HandoffSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/HistoryImportSheet.tsx": {
+    "inlineLayoutStyles": 22
+  },
+  "components/HoldingsRecorded.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/ImportSheet.tsx": {
+    "inlineLayoutStyles": 36
+  },
+  "components/IouSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/ManualTxnSheet.tsx": {
+    "inlineLayoutStyles": 8
+  },
+  "components/MigrationSheet.tsx": {
+    "inlineLayoutStyles": 22
+  },
+  "components/MonthBreakdown.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/MonthFlowChart.tsx": {
+    "rawColors": 2
+  },
+  "components/NetWorthChart.tsx": {
+    "rawColors": 2
+  },
+  "components/OwedFlipNote.tsx": {
+    "inlineLayoutStyles": 4
+  },
+  "components/PersonSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/PlanCurrency.tsx": {
+    "inlineLayoutStyles": 12
+  },
+  "components/PlanEvents.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/PlanFanChart.tsx": {
+    "rawColors": 2
+  },
+  "components/PlanForms.tsx": {
+    "inlineLayoutStyles": 21
+  },
+  "components/PlanGrid.tsx": {
+    "rawColors": 1
+  },
+  "components/PlanScenarios.tsx": {
+    "inlineLayoutStyles": 11
+  },
+  "components/PlanTab.tsx": {
+    "inlineLayoutStyles": 6
+  },
+  "components/PlannedCard.tsx": {
+    "inlineLayoutStyles": 5
+  },
+  "components/RecurringCard.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/ReviewSettingsCard.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/RuleSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/RulesCard.tsx": {
+    "inlineLayoutStyles": 3
+  },
+  "components/RunwayChart.tsx": {
+    "rawColors": 2
+  },
+  "components/ShareCostSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/ShareKinds.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "components/Sharing.tsx": {
+    "inlineLayoutStyles": 8
+  },
+  "components/SharingDates.tsx": {
+    "inlineLayoutStyles": 5
+  },
+  "components/SplitSheet.tsx": {
+    "inlineLayoutStyles": 2
+  },
+  "components/TagsCard.tsx": {
+    "inlineLayoutStyles": 6
+  },
+  "components/TemplateOffer.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "components/TimelineNotes.tsx": {
+    "inlineLayoutStyles": 1
+  },
+  "components/VendorDefaultsCard.tsx": {
+    "inlineLayoutStyles": 1
+  }
+}

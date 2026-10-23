@@ -1,0 +1,898 @@
+<title>Nya Redesign Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a spec sheet. Page chrome is a quiet document; the phones carry Nya's proposed tokens. */
+:root {
+  --pg-bg: #f3f4f7;
+  --pg-fg: #171a22;
+  --pg-muted: #5a6070;
+  --pg-rule: #d9dce4;
+  --pg-panel: #ffffff;
+  --pg-accent: #2456d6;
+  --pg-chip: #e6e9f0;
+  --f-doc: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-label: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --f-app: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pg-bg: #0a0b0f; --pg-fg: #e7e9ee; --pg-muted: #9aa0ad; --pg-rule: #252a35;
+    --pg-panel: #12141a; --pg-accent: #7ea3f5; --pg-chip: #1b1f29; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --pg-bg: #0a0b0f; --pg-fg: #e7e9ee; --pg-muted: #9aa0ad; --pg-rule: #252a35;
+  --pg-panel: #12141a; --pg-accent: #7ea3f5; --pg-chip: #1b1f29; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--pg-bg); color: var(--pg-fg); font-family: var(--f-doc); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+.doc { max-width: 1180px; margin: 0 auto; display: grid; gap: 48px; }
+.doc header.intro { display: grid; gap: 14px; max-width: 760px; }
+.eyebrow { font-family: var(--f-label); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pg-muted); margin: 0; }
+h1.doc-title { font-size: clamp(28px, 5vw, 40px); line-height: 1.1; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { margin: 0; color: var(--pg-muted); max-width: 66ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.controls .lbl { font-family: var(--f-label); font-size: 12px; color: var(--pg-muted); }
+.seg-doc { display: inline-flex; border: 1px solid var(--pg-rule); border-radius: 8px; overflow: hidden; }
+.seg-doc button { font: 500 13px var(--f-doc); padding: 8px 14px; border: 0; background: transparent; color: var(--pg-fg); cursor: pointer; min-height: 36px; }
+.seg-doc button[aria-pressed="true"] { background: var(--pg-fg); color: var(--pg-bg); }
+.seg-doc button:focus-visible, .toc a:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 2px; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.toc a { display: inline-block; font-size: 13px; padding: 6px 10px; border-radius: 6px; background: var(--pg-chip); color: var(--pg-fg); text-decoration: none; }
+section.spec { display: grid; gap: 20px; border-top: 1px solid var(--pg-rule); padding-top: 28px; }
+.spec-head { display: grid; gap: 8px; max-width: 760px; }
+.spec-head h2 { margin: 0; font-size: 24px; letter-spacing: -0.005em; }
+.spec-head p { margin: 0; color: var(--pg-muted); }
+.changes { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--pg-fg); font-size: 14px; }
+.phones { display: flex; flex-wrap: wrap; gap: 28px 24px; align-items: flex-start; }
+figure.shot { margin: 0; display: grid; gap: 10px; width: 320px; max-width: 100%; }
+figure.shot figcaption { font-size: 13px; color: var(--pg-muted); }
+figure.shot figcaption b { color: var(--pg-fg); font-weight: 600; display: block; font-family: var(--f-label); font-size: 12px; letter-spacing: 0.02em; }
+.note-box { background: var(--pg-panel); border: 1px solid var(--pg-rule); border-radius: 10px; padding: 16px 18px; max-width: 760px; font-size: 14px; }
+.note-box p { margin: 0; }
+footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid var(--pg-rule); padding-top: 16px; }
+
+/* ---------- Nya app tokens (copied from docs/design/tokens.css) ---------- */
+.app {
+  --canvas: #0d0f14; --surface: #151821; --elevated: #1c202b;
+  --border-subtle: #232834; --border-strong: #2b3140; --border-input: #707889;
+  --text-1: #eceef2; --text-2: #9499a6; --text-3: #868c9b;
+  --accent: #5b8def; --pos: #34d399; --neg: #f87171; --warn: #fbbf24;
+  --accent-tint: #1d263a; --pos-tint: #192e2f; --neg-tint: #30232b; --warn-tint: #312c21; --caveat-surface: #191d27;
+  --accent-fill: #2563eb; --danger-fill: #dc2626; --on-fill: #ffffff; --glass: rgba(21, 24, 33, 0.88); --scrim: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+.app[data-t="light"] {
+  --canvas: #f6f7f9; --surface: #ffffff; --elevated: #f0f2f6;
+  --border-subtle: #e6e8ef; --border-strong: #d5d9e2; --border-input: #757c8a;
+  --text-1: #11141c; --text-2: #525866; --text-3: #636a77;
+  --accent: #2563eb; --pos: #047857; --neg: #b91c1c; --warn: #92400e;
+  --accent-tint: #eef3fd; --pos-tint: #ebf4f2; --neg-tint: #fceeee; --warn-tint: #fcf4eb; --caveat-surface: #f1f3f8;
+  --accent-fill: #2563eb; --danger-fill: #dc2626; --on-fill: #ffffff; --glass: rgba(255, 255, 255, 0.88); --scrim: rgba(17, 20, 28, 0.4);
+  color-scheme: light;
+}
+
+/* Phone frame */
+.phone { width: 100%; border-radius: 34px; padding: 8px; background: #05060a; box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 12px 28px rgba(0,0,0,0.18); }
+.app.screen { position: relative; height: 660px; border-radius: 27px; overflow: hidden; background: var(--canvas); color: var(--text-1); font-family: var(--f-app); font-size: 15px; line-height: 1.4; }
+.app .scroll { position: absolute; inset: 0 0 58px 0; overflow: hidden; padding: 0 12px; display: flex; flex-direction: column; gap: 10px; }
+.app .topbar { display: flex; align-items: center; gap: 8px; padding: 14px 2px 2px; }
+.app .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; flex: 1; }
+.app .logo { width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #f2c879, #b07a2c); display: inline-block; }
+.app .ibtn { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border-strong); display: grid; place-items: center; color: var(--text-2); background: transparent; position: relative; }
+.app .ibtn svg, .app .row-ico svg, .app .tab svg { width: 18px; height: 18px; }
+.app .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #6d5dfc, #a77bf3); position: relative; }
+.app .dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); border: 2px solid var(--canvas); }
+.app h1.screen-title { font-size: 20px; font-weight: 700; margin: 4px 2px 0; }
+
+/* Components */
+.app .card { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.app .card.flush { padding: 4px 0; gap: 0; }
+.app .card-header { display: flex; align-items: center; gap: 8px; }
+.app .card.flush .card-header { padding: 8px 14px 4px; }
+.app .card-header h2 { font-size: 15px; font-weight: 600; margin: 0; flex: 1; display: flex; align-items: center; gap: 6px; }
+.app .card-header .meta { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.app .money { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.app .muted { color: var(--text-2); }
+.app .t3 { color: var(--text-3); }
+.app .small { font-size: 13px; }
+.app .xs { font-size: 12px; }
+.app .pos { color: var(--pos); }
+.app .neg { color: var(--neg); }
+.app .hero-label { font-size: 13px; color: var(--text-2); }
+.app .hero { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.app .row { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 14px; border-top: 1px solid var(--border-subtle); }
+.app .card.flush .row:first-of-type, .app .card-header + .row { border-top: 0; }
+.app .row .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.app .row .title { font-size: 15px; overflow-wrap: anywhere; }
+.app .row .sub { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.app .row .end { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.app .chev { color: var(--text-3); width: 14px; height: 14px; flex: none; }
+.app .row-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--elevated); color: var(--text-2); font-size: 13px; font-weight: 600; }
+.app .row-ico.crit { background: var(--neg-tint); color: var(--neg); }
+.app .row-ico.warn { background: var(--warn-tint); color: var(--warn); }
+.app .row-ico.info { background: var(--accent-tint); color: var(--accent); }
+.app .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 1px 6px; border-radius: 6px; background: var(--elevated); color: var(--text-2); white-space: nowrap; }
+.app .badge.accent { background: var(--accent-tint); color: var(--accent); }
+.app .badge.warn { background: var(--warn-tint); color: var(--warn); }
+.app .badge.neg { background: var(--neg-tint); color: var(--neg); }
+.app .badge.pos { background: var(--pos-tint); color: var(--pos); }
+.app .notice { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 8px 10px; border-radius: 10px; }
+.app .notice svg { width: 15px; height: 15px; flex: none; margin-top: 2px; }
+.app .notice.crit { background: var(--neg-tint); color: var(--neg); }
+.app .notice.warn { background: var(--warn-tint); color: var(--warn); }
+.app .notice.info { background: var(--caveat-surface); color: var(--text-2); }
+.app .notice .act { margin-left: auto; font-weight: 600; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
+.app .notice ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 2px; }
+.app .btn { font: 600 14px var(--f-app); border-radius: 12px; padding: 9px 14px; min-height: 40px; border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.app .btn.primary { background: var(--accent-fill); color: var(--on-fill); }
+.app .btn.secondary { background: transparent; border-color: var(--border-strong); color: var(--text-1); }
+.app .btn.ghost { background: transparent; color: var(--accent); padding: 9px 6px; }
+.app .btn.danger { background: var(--danger-fill); color: var(--on-fill); }
+.app .btn.sm { font-size: 13px; min-height: 34px; padding: 6px 12px; }
+.app .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.app .seg { display: flex; background: var(--elevated); border-radius: 10px; padding: 3px; gap: 2px; }
+.app .seg span { flex: 1; text-align: center; font-size: 13px; font-weight: 500; padding: 6px 4px; border-radius: 8px; color: var(--text-2); }
+.app .seg span.on { background: var(--surface); color: var(--text-1); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+.app .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.app .chip { font-size: 12px; font-weight: 500; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-2); white-space: nowrap; }
+.app .chip.on { background: var(--accent-tint); border-color: transparent; color: var(--accent); }
+.app .field { border: 1px solid var(--border-input); border-radius: 10px; padding: 8px 10px; font-size: 14px; color: var(--text-3); display: flex; gap: 8px; align-items: center; background: var(--surface); }
+.app .field svg { width: 16px; height: 16px; }
+.app .meter { height: 6px; border-radius: 99px; background: var(--elevated); overflow: hidden; }
+.app .meter i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.app .meter.warn i { background: var(--warn); }
+.app .meter.neg i { background: var(--neg); }
+.app .meter.pos i { background: var(--pos); }
+.app .stat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.app .stat .k { font-size: 12px; color: var(--text-2); }
+.app .stat .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.app .daybar { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); padding: 8px 14px 2px; font-weight: 500; }
+.app .summary-line { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 2px; }
+.app .summary-line b { color: var(--text-1); font-weight: 600; }
+.app .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 999px; }
+.app .pill.crit { background: var(--neg-tint); color: var(--neg); }
+.app .pill.ok { background: var(--pos-tint); color: var(--pos); }
+.app .pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+.app .sticky { position: sticky; top: 0; background: var(--canvas); padding: 10px 0 2px; display: grid; gap: 8px; z-index: 2; }
+.app .monthbar { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+.app .monthbar .arrow { width: 32px; height: 32px; display: grid; place-items: center; color: var(--text-2); }
+.app dl.kv { margin: 0; display: grid; gap: 0; }
+.app dl.kv div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border-subtle); font-size: 14px; }
+.app dl.kv div:first-child { border-top: 0; }
+.app dl.kv dt { color: var(--text-2); }
+.app dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.app .why { font-size: 13px; color: var(--accent); font-weight: 500; }
+.app .bars { display: grid; gap: 8px; }
+.app .bar-row { display: grid; grid-template-columns: 82px 1fr 70px; gap: 8px; align-items: center; font-size: 13px; }
+.app .bar-row .track { height: 8px; border-radius: 99px; background: var(--elevated); overflow: hidden; }
+.app .bar-row .track i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.app .bar-row .v { text-align: right; font-variant-numeric: tabular-nums; }
+.app svg.chart { width: 100%; height: auto; display: block; }
+.app svg.chart .grid { stroke: var(--border-subtle); stroke-width: 1; }
+.app svg.chart .line { stroke: var(--accent); stroke-width: 2; fill: none; }
+.app svg.chart .area { fill: var(--accent-tint); }
+.app svg.chart .tick { fill: var(--text-3); font-size: 10px; font-family: var(--f-app); }
+.app svg.chart .marker { fill: var(--warn); }
+.app svg.chart .low { fill: var(--neg); }
+
+/* Tab bar */
+.app .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 58px; background: var(--glass); border-top: 1px solid var(--border-subtle); display: grid; grid-template-columns: repeat(5, 1fr); backdrop-filter: blur(12px); }
+.app .tab { display: grid; justify-items: center; align-content: center; gap: 2px; font-size: 12px; color: var(--text-3); }
+.app .tab.on { color: var(--accent); }
+
+/* Sheets and menus */
+.app .scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 5; }
+.app .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface); border-radius: 20px 20px 0 0; padding: 8px 14px 16px; display: flex; flex-direction: column; gap: 10px; max-height: 92%; overflow: hidden; border-top: 1px solid var(--border-strong); }
+.app .sheet .handle { width: 36px; height: 4px; border-radius: 99px; background: var(--border-strong); margin: 0 auto 2px; }
+.app .sheet-head { display: flex; align-items: center; gap: 8px; }
+.app .sheet-head h2 { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+.app .sheet .row { padding-left: 0; padding-right: 0; }
+.app .sheet-foot { margin-top: auto; display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+.app .sheet-foot .btn { flex: 1; }
+.app .menu { position: absolute; z-index: 6; right: 22px; top: 186px; width: 230px; background: var(--elevated); border: 1px solid var(--border-strong); border-radius: 14px; padding: 4px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+.app .menu div { min-height: 44px; display: flex; align-items: center; padding: 0 14px; font-size: 14px; border-top: 1px solid var(--border-subtle); }
+.app .menu div:first-child { border-top: 0; }
+.app .menu div.danger { color: var(--neg); }
+.app .section-title { font-size: 12px; font-weight: 500; color: var(--text-2); padding: 4px 2px 0; }
+
+/* "Today" frame: approximates the current look for the comparison only. */
+.old { --o-bg: #0f1115; --o-card: #171a21; --o-text: #e8e9ec; --o-muted: #8b8f98; --o-accent: #5b8def; --o-warn: #e0a83c; --o-down: #ef5b5b; --o-up: #3ecf8e; }
+.old.screen { background: var(--o-bg); color: var(--o-text); }
+.old .ocard { background: var(--o-card); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+.old .olabel { color: var(--o-muted); font-size: 12px; }
+.old .ototal { font-size: 32px; font-weight: 700; }
+.old .odelta { color: var(--o-up); font-size: 12px; }
+.old .onote { color: var(--o-muted); font-size: 11px; }
+.old .owarn { color: var(--o-warn); font-size: 11px; }
+.old .otitle { font-weight: 600; font-size: 14px; }
+.old .orange { display: flex; gap: 4px; }
+.old .orange span { font-size: 10px; padding: 3px 6px; border-radius: 6px; color: var(--o-muted); }
+.old .orange span.on { background: #1e222b; color: var(--o-text); }
+.old .oinsight { font-size: 12px; padding-left: 8px; border-left: 2px solid var(--o-muted); }
+.old .oinsight.w { border-color: var(--o-warn); }
+.old .tabbar { background: rgba(23,26,33,.92); border-top-color: #262a33; }
+.old .tab { font-size: 11px; color: var(--o-muted); }
+.old .tab.on { color: var(--o-accent); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .seg-doc button { transition: background-color 140ms, color 140ms; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5"/></symbol>
+    <symbol id="i-acct" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="2"/><path d="M2.5 10h19"/></symbol>
+    <symbol id="i-act" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+    <symbol id="i-bud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 12V3M12 12l6.4 6.4"/></symbol>
+    <symbol id="i-plan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-ref" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.35-5.65M20 4v4h-4"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  </defs>
+</svg>
+
+<div class="doc">
+  <header class="intro">
+    <p class="eyebrow">Nya · design proposal · docs/design</p>
+    <h1 class="doc-title">Nya, reorganized: one job per screen</h1>
+    <p class="lede">Phone mockups of every surface in the proposed reorganization. Manage mode is gone, settings have their own screen, each tab opens on its main object, and warnings keep their words and severity. Every figure is example data.</p>
+    <div class="controls">
+      <span class="lbl">App theme</span>
+      <div class="seg-doc" role="group" aria-label="App theme in the mockups">
+        <button type="button" id="t-dark" aria-pressed="true" data-t="dark">Dark</button>
+        <button type="button" id="t-light" aria-pressed="false" data-t="light">Light</button>
+      </div>
+    </div>
+    <ul class="toc">
+      <li><a href="#direction">Direction</a></li>
+      <li><a href="#home">Home</a></li>
+      <li><a href="#accounts">Accounts</a></li>
+      <li><a href="#activity">Activity</a></li>
+      <li><a href="#budgets">Budgets</a></li>
+      <li><a href="#plan">Plan</a></li>
+      <li><a href="#settings">Settings</a></li>
+      <li><a href="#status">Status</a></li>
+    </ul>
+  </header>
+
+  <!-- ===================== DIRECTION ===================== -->
+  <section class="spec" id="direction">
+    <div class="spec-head">
+      <p class="eyebrow">Pick one before any build</p>
+      <h2>Direction: today and proposed</h2>
+      <p>Home with the same data. Today: the current look with up to five kinds of note under the total and a separate card per fact. Proposed: one Net worth card, a Needs attention list and a This month card, on the ledger tokens (deeper button blue, hairline rows, tabular money, nothing under 12px).</p>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen old" aria-label="Home today">
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
+            <div class="onote" style="padding:0 2px">4 institutions connected</div>
+            <div class="ocard">
+              <div class="olabel">Net Worth</div>
+              <div class="ototal">$1,275,289.77</div>
+              <div class="odelta">▲ $21,406.12 (1.7%) · past 30 days</div>
+              <div class="onote">Updated Oct 23, 9:14 AM</div>
+              <div class="owarn">Chase needs reconnecting; its balances are from Oct 21</div>
+              <div class="owarn">1 account couldn't be shown, so this total is incomplete</div>
+              <div class="onote">Accrued interest on 1 student loan isn't included</div>
+            </div>
+            <div class="ocard">
+              <div class="otitle">Over time</div>
+              <svg class="chart" viewBox="0 0 300 80"><polyline points="0,62 40,58 80,60 120,46 160,44 200,36 240,30 300,18" fill="none" stroke="#5b8def" stroke-width="2"/></svg>
+              <div class="orange"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
+              <div class="owarn">The nightly backup failed; the last one saved was on Oct 20. Check the backup cron in Vercel.</div>
+            </div>
+            <div class="ocard"><div class="otitle">Notes on the timeline</div><div class="onote">2 notes</div></div>
+            <div class="ocard">
+              <div class="otitle">Insights</div>
+              <div class="oinsight w">Chase: reconnect soon, by Oct 30</div>
+              <div class="oinsight">Amex Platinum: $35.00 due tomorrow</div>
+              <div class="oinsight">Spending is tracking 8% below September's pace</div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>TODAY</b>Notes stack under the total in one color; the backup instruction is for the deployment owner but shows to everyone.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app aria-label="Home proposed">
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"><span class="dot"></span></span></div>
+            <div class="card">
+              <div class="hero-label">Net worth</div>
+              <div class="hero money">$1,275,289.77</div>
+              <div class="small pos">▲ $21,406.12 (1.7%) past 30 days</div>
+              <div class="notice crit"><svg><use href="#i-alert"/></svg><span>Chase needs reconnecting; its balances are from Oct 21. This total is short by 1 account.</span></div>
+              <div class="seg"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
+              <svg class="chart" viewBox="0 0 300 84" aria-hidden="true"><line class="grid" x1="0" y1="20" x2="300" y2="20"/><line class="grid" x1="0" y1="50" x2="300" y2="50"/><path class="area" d="M0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22 300,84 0,84Z"/><polyline class="line" points="0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22"/><circle class="marker" cx="120" cy="50" r="3.5"/><circle class="marker" cx="240" cy="34" r="3.5"/></svg>
+              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="why">Notes (2)</span></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Needs attention</h2><span class="meta">3</span></div>
+              <div class="row"><span class="row-ico crit"><svg><use href="#i-alert"/></svg></span><div class="main"><span class="title">Reconnect Chase</span><span class="sub">Balances are from Oct 21</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico warn"><svg><use href="#i-clock"/></svg></span><div class="main"><span class="title">Amex Platinum due tomorrow</span><span class="sub">Minimum $35.00</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">12</span><div class="main"><span class="title">Transactions to review</span><span class="sub">Since Oct 18</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>This month</h2></div>
+              <div class="row"><div class="main"><span class="title small">Spending is 8% below September's pace</span></div></div>
+              <div class="row"><div class="main"><span class="title small">FI in 11.4 years · 62% there</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>PROPOSED</b>Critical caveats in full and in red on the total, things to do in one list, quiet facts last.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== HOME ===================== -->
+  <section class="spec" id="home">
+    <div class="spec-head">
+      <p class="eyebrow">Job: how am I doing, does anything need me?</p>
+      <h2>Home</h2>
+      <ul class="changes">
+        <li>Total and chart in one card; timeline notes open from the chart (Notes, 2) instead of a card of their own.</li>
+        <li>Needs attention appears only when non-empty, and every item opens where it is fixed.</li>
+        <li>The backup failure is a fact for everyone and an instruction only for the admin.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
+            <div class="card">
+              <div class="hero-label">Net worth</div>
+              <div class="hero money">$1,282,914.40</div>
+              <div class="small pos">▲ $21,406.12 (1.7%) past 30 days</div>
+              <div class="notice info"><svg><use href="#i-info"/></svg><span>Includes 1 account in EUR, converted at ECB rates</span></div>
+              <div class="seg"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
+              <svg class="chart" viewBox="0 0 300 84" aria-hidden="true"><line class="grid" x1="0" y1="20" x2="300" y2="20"/><line class="grid" x1="0" y1="50" x2="300" y2="50"/><path class="area" d="M0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,20 300,84 0,84Z"/><polyline class="line" points="0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,20"/><text class="tick" x="0" y="82">May</text><text class="tick" x="130" y="82">Jul</text><text class="tick" x="262" y="82">Oct</text></svg>
+              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="why">Notes (2)</span></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>This month</h2></div>
+              <div class="row"><div class="main"><span class="title small">Spending is 8% below September's pace</span></div></div>
+              <div class="row"><div class="main"><span class="title small">Netflix, about $15.49, around Oct 26</span></div></div>
+              <div class="row"><div class="main"><span class="title small">Biggest purchase: Costco, $312.08</span></div></div>
+              <div class="row"><div class="main"><span class="title small">FI in 11.4 years · 62% there</span><span class="sub"><span class="badge warn">Spending covers 11 of 12 months</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>ALL WELL</b>Nothing needs you, so there is no Needs attention list at all; an information note stays neutral.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"><span class="dot"></span></span></div>
+            <div class="card flush">
+              <div class="card-header"><h2>Needs attention</h2><span class="meta">5</span></div>
+              <div class="row"><span class="row-ico crit"><svg><use href="#i-alert"/></svg></span><div class="main"><span class="title">Reconnect Chase</span><span class="sub">Balances are from Oct 21</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico warn"><svg><use href="#i-clock"/></svg></span><div class="main"><span class="title">Amex Platinum due tomorrow</span><span class="sub">Minimum $35.00</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico warn">?</span><div class="main"><span class="title">Did Ally Savings close?</span><span class="sub">It stopped reporting 3 days ago</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">12</span><div class="main"><span class="title">Transactions to review</span><span class="sub">Since Oct 18</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">¤</span><div class="main"><span class="title">Choose a home currency</span><span class="sub">Your accounts use USD and EUR</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Admin</h2></div>
+              <div class="row"><span class="row-ico warn"><svg><use href="#i-alert"/></svg></span><div class="main"><span class="title">Nightly backup failed</span><span class="sub">Last saved Oct 20 · check the backup cron in Vercel</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>NEEDS ATTENTION, SCROLLED</b>Critical first, then caution, then information. The admin sees the backup instruction; everyone else sees an amber "The nightly backup failed" line on the Net worth card. Below: "Link Chase's new checking to its earlier history".</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== ACCOUNTS ===================== -->
+  <section class="spec" id="accounts">
+    <div class="spec-head">
+      <p class="eyebrow">Job: what do I have and owe, and is each number current?</p>
+      <h2>Accounts</h2>
+      <ul class="changes">
+        <li>No Manage mode. The first account is on the first screen; connecting lives behind + Add.</li>
+        <li>Grouped by institution (a failure is per institution), with a one-line summary by type.</li>
+        <li>Account actions in the account sheet; connection actions in the institution's ⋯ menu. Reconnect stays a visible button.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit"><i></i>1 needs you</span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Credit <b class="money">-$1,420.18</b></span><span>Investments <b class="money">$1,209,400.00</b></span><span>Other <b class="money">$43,000.00</b></span></div>
+            <div class="card flush">
+              <div class="card-header"><h2>Chase</h2><span class="meta money">$6,794.37</span><span class="ibtn" style="border:0;width:30px;height:30px"><svg><use href="#i-dots"/></svg></span></div>
+              <div style="padding:0 14px 6px"><div class="notice crit"><svg><use href="#i-alert"/></svg><span>Needs reconnecting. Balances from Oct 21; 1 account couldn't be shown, so this total is short.</span></div></div>
+              <div style="padding:0 14px 8px"><span class="btn primary sm">Reconnect</span></div>
+              <div class="row"><div class="main"><span class="title">Total Checking ••4421</span><span class="sub">Checking <span class="badge warn">Last known</span></span></div><div class="end"><span class="money">$8,214.55</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Sapphire Preferred ••9012</span><span class="sub">24.99% APR · min $35 · due Oct 24</span></div><div class="end"><span class="money">-$1,420.18</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Fidelity</h2><span class="meta money">$1,209,400.00</span><span class="ibtn" style="border:0;width:30px;height:30px"><svg><use href="#i-dots"/></svg></span></div>
+              <div class="xs t3" style="padding:0 14px 4px">Synced 2h ago</div>
+              <div class="row"><div class="main"><span class="title">Individual ••1180</span><span class="sub">Brokerage <span class="badge warn">$4,200 uninvested</span></span></div><div class="end"><span class="money">$812,400.00</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Roth IRA ••5520</span><span class="sub">Retirement</span></div><div class="end"><span class="money">$397,000.00</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Alpine Credit Union <span class="badge">via SimpleFIN</span></h2><span class="ibtn" style="border:0;width:30px;height:30px"><svg><use href="#i-dots"/></svg></span></div>
+              <div class="row"><div class="main"><span class="title">Savings ••0071</span><span class="sub">Savings · synced yesterday</span></div><div class="end"><span class="money">$16,095.40</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab on"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>ACCOUNTS</b>The problem sits on the card it concerns, in red, with the action beside it. Below the fold: a manual group, then Hidden (2), Accounts that ended (1), Shared with me.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit"><i></i>1 needs you</span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Credit <b class="money">-$1,420.18</b></span></div>
+            <div class="card flush" style="opacity:.6"><div class="card-header"><h2>Chase</h2><span class="meta money">$6,794.37</span></div><div class="row"><div class="main"><span class="title">Total Checking ••4421</span></div></div></div>
+          </div>
+          <div class="scrim"></div>
+          <div class="sheet">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>Add an account</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div class="row"><span class="row-ico info"><svg><use href="#i-acct"/></svg></span><div class="main"><span class="title">Bank or card</span><span class="sub">Checking, savings, cards and loans at US banks</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info"><svg><use href="#i-plan"/></svg></span><div class="main"><span class="title">Brokerage or retirement</span><span class="sub">401(k)s, IRAs and brokerages</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Your own SimpleFIN</span><span class="sub">Or Redbark · banks Plaid can't reach</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico">L</span><div class="main"><span class="title">Your own Lunch Flow</span><span class="sub">Banks in many countries</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico">✎</span><div class="main"><span class="title">Manual account</span><span class="sub">You type the balance</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico">⇄</span><div class="main"><span class="title">Switching from another app</span><span class="sub">Monarch, YNAB, Lunch Money, Actual, ZeroSum</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <span class="why">Which should I use?</span>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab on"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>ADD ACCOUNT SHEET</b>Every way in, one line each. The coverage explanation (which service reaches which countries) is behind "Which should I use?".</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1></div>
+          </div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>Sapphire Preferred ••9012</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div><div class="hero money" style="font-size:28px">-$1,420.18</div><div class="xs muted">Chase · credit card · synced 2h ago</div></div>
+            <div><div class="meter"><i style="width:28%"></i></div><div class="xs muted" style="margin-top:4px">28% of $5,000 limit</div></div>
+            <svg class="chart" viewBox="0 0 300 60" aria-hidden="true"><path class="area" d="M0,40 50,30 100,44 150,22 200,36 250,18 300,28 300,60 0,60Z"/><polyline class="line" points="0,40 50,30 100,44 150,22 200,36 250,18 300,28"/></svg>
+            <dl class="kv">
+              <div><dt>Purchase APR</dt><dd>24.99%</dd></div>
+              <div><dt>Minimum due Oct 24</dt><dd>$35.00</dd></div>
+              <div><dt>Statement balance</dt><dd>$1,288.40</dd></div>
+              <div><dt>Last payment</dt><dd>$900.00 on Sep 25</dd></div>
+            </dl>
+            <div class="row"><div class="main"><span class="title">Recent transactions</span><span class="sub">Whole Foods, Shell, Amazon and 9 more</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="sheet-foot"><span class="btn secondary">Hide</span><span class="btn secondary">Close…</span><span class="btn secondary"><svg width="16" height="16"><use href="#i-dots"/></svg></span></div>
+          </div>
+        </div></div>
+        <figcaption><b>ACCOUNT SHEET</b>Everything about one account and every action on it. Import history, Repair holdings history and Rename sit in its ⋯; manual accounts add Update balance and Add transaction to the footer and Delete to the ⋯.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Investments <b class="money">$1,209,400.00</b></span></div>
+            <div class="card flush">
+              <div class="card-header"><h2>Fidelity</h2><span class="meta money">$1,209,400.00</span><span class="ibtn" style="border:0;width:30px;height:30px;color:var(--text-1)"><svg><use href="#i-dots"/></svg></span></div>
+              <div class="xs t3" style="padding:0 14px 4px">Synced 2h ago</div>
+              <div class="row"><div class="main"><span class="title">Individual ••1180</span><span class="sub">Brokerage</span></div><div class="end"><span class="money">$812,400.00</span></div></div>
+              <div class="row"><div class="main"><span class="title">Roth IRA ••5520</span><span class="sub">Retirement</span></div><div class="end"><span class="money">$397,000.00</span></div></div>
+            </div>
+            <div class="card flush"><div class="card-header"><h2>Alpine Credit Union</h2></div><div class="row"><div class="main"><span class="title">Savings ••0071</span></div><div class="end"><span class="money">$16,095.40</span></div></div></div>
+          </div>
+          <div class="menu" style="top:150px">
+            <div>Connection details</div>
+            <div>Add or remove accounts</div>
+            <div>Enable payment details</div>
+            <div class="danger">Disconnect…</div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab on"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>INSTITUTION MENU</b>Rare connection actions. Disconnect is last, red, and still asks you to type the name. SimpleFIN and Lunch Flow add Refresh, Choose accounts and Answer here.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== ACTIVITY ===================== -->
+  <section class="spec" id="activity">
+    <div class="spec-head">
+      <p class="eyebrow">Job: what came in and went out, and is each transaction right?</p>
+      <h2>Activity</h2>
+      <ul class="changes">
+        <li>Opens on the list: one In / Out / Net strip, then search, filters and transactions on the first screen.</li>
+        <li>Analysis moves to Spending, with one period control for every chart (the cash-flow ranges are kept).</li>
+        <li>A transaction opens a sheet instead of an 11-control editor inside the row.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"><svg width="18" height="18"><use href="#i-dots"/></svg></span></div>
+              <div class="seg"><span class="on">Transactions</span><span>Spending</span><span>Shared</span></div>
+            </div>
+            <div class="card">
+              <div class="stat"><div><div class="k">In</div><div class="v pos">$6,420</div></div><div><div class="k">Out</div><div class="v">$4,183</div></div><div><div class="k">Net</div><div class="v pos">+$2,237</div></div></div>
+              <div class="xs t3">Transfers and loan payments left out</div>
+            </div>
+            <div class="field"><svg><use href="#i-search"/></svg>Search transactions</div>
+            <div class="chips"><span class="chip on">To review · 12</span><span class="chip">Tags</span><span class="chip">Receipts</span><span class="chip">Over an amount</span></div>
+            <div class="card flush">
+              <div class="daybar"><span>Thu, Oct 22</span><span class="money">-$84.17</span></div>
+              <div class="row"><span class="row-ico">W</span><div class="main"><span class="title">Whole Foods Market</span><span class="sub">Groceries · Chase ••4421</span></div><div class="end"><span class="money">-$62.40</span></div></div>
+              <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Shell</span><span class="sub">Gas <span class="badge">Pending</span></span></div><div class="end"><span class="money">-$21.77</span></div></div>
+              <div class="daybar"><span>Wed, Oct 21</span><span class="money pos">+$3,146.31</span></div>
+              <div class="row"><span class="row-ico">A</span><div class="main"><span class="title">Acme Corp payroll</span><span class="sub">Income · Alpine ••0071</span></div><div class="end"><span class="money pos">+$3,210.00</span></div></div>
+              <div class="row"><span class="row-ico">N</span><div class="main"><span class="title">Netflix</span><span class="sub">Subscriptions <span class="badge accent">Rule</span></span></div><div class="end"><span class="money">-$15.49</span></div></div>
+              <div class="row"><span class="row-ico">A</span><div class="main"><span class="title">Amazon</span><span class="sub"><span class="badge warn">Check category</span> Shopping</span></div><div class="end"><span class="money">-$48.20</span></div></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). Card Mode opens from the To review chip.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"><svg width="18" height="18"><use href="#i-dots"/></svg></span></div>
+              <div class="seg"><span>Transactions</span><span class="on">Spending</span><span>Shared</span></div>
+            </div>
+            <div class="chips"><span class="chip on">This month</span><span class="chip">Last month</span><span class="chip">3 months</span><span class="chip">12 months</span><span class="chip">Year to date</span></div>
+            <div class="card">
+              <div class="card-header"><h2>Where it went</h2><span class="meta money">$4,183</span></div>
+              <svg class="chart" viewBox="0 0 300 120" aria-hidden="true">
+                <rect x="0" y="10" width="10" height="100" rx="3" fill="var(--pos)"/>
+                <path d="M10,10 C120,10 150,8 200,8 L200,48 C150,48 120,52 10,52Z" fill="var(--accent-tint)"/>
+                <path d="M10,52 C120,52 150,56 200,56 L200,80 C150,80 120,78 10,78Z" fill="var(--accent-tint)" opacity=".8"/>
+                <path d="M10,78 C120,78 150,88 200,88 L200,110 C150,110 120,110 10,110Z" fill="var(--pos-tint)"/>
+                <rect x="200" y="8" width="10" height="40" rx="3" fill="var(--accent)"/><rect x="200" y="56" width="10" height="24" rx="3" fill="var(--accent)"/><rect x="200" y="88" width="10" height="22" rx="3" fill="var(--pos)"/>
+                <text class="tick" x="216" y="30">Housing</text><text class="tick" x="216" y="70">Food</text><text class="tick" x="216" y="102">Left over</text><text class="tick" x="16" y="64">Income</text>
+              </svg>
+              <span class="why">Show as a table</span>
+            </div>
+            <div class="card">
+              <div class="card-header"><h2>By group</h2></div>
+              <div class="bars">
+                <div class="bar-row"><span>Housing</span><span class="track"><i style="width:100%"></i></span><span class="v">$1,800</span></div>
+                <div class="bar-row"><span>Food</span><span class="track"><i style="width:69%"></i></span><span class="v">$1,240</span></div>
+                <div class="bar-row"><span>Transport</span><span class="track"><i style="width:23%"></i></span><span class="v">$410</span></div>
+                <div class="bar-row"><span>Shopping</span><span class="track"><i style="width:21%"></i></span><span class="v">$380</span></div>
+              </div>
+            </div>
+            <div class="card flush"><div class="row"><div class="main"><span class="title">Reports</span><span class="sub">Tax year, runway, year over year</span></div><svg class="chev"><use href="#i-chev"/></svg></div></div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>SPENDING</b>One period for every card. Below: net by month, income vs spend, tags, online vs in-store, places. Tapping a flow jumps to Transactions, filtered.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky"><div class="monthbar"><span>October 2026</span></div></div>
+          </div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>Whole Foods Market</h2><span class="ibtn" style="border:0"><svg><use href="#i-dots"/></svg></span></div>
+            <div><div class="hero money" style="font-size:28px">-$62.40</div><div class="xs muted">Thu, Oct 22 · Chase Total Checking ••4421</div></div>
+            <div class="row"><div class="main"><span class="title">Category</span></div><span class="muted small">Groceries</span><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Tags and note</span></div><span class="muted small">Add</span><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Split or group</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Share the cost</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Receipt</span></div><span class="muted small">Attach</span><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Count in budgets and reports</span></div><span class="badge pos">On</span></div>
+            <div class="row"><div class="main"><span class="title">Create a rule from this</span><span class="sub">No rule matched</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <span class="why">Bank details</span>
+          </div>
+        </div></div>
+        <figcaption><b>TRANSACTION SHEET</b>Replaces the inline editor. Rename vendor is in its ⋯; Edit or delete appears for manual transactions.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== BUDGETS ===================== -->
+  <section class="spec" id="budgets">
+    <div class="spec-head">
+      <p class="eyebrow">Job: am I on track, what is coming, what am I saving toward?</p>
+      <h2>Budgets</h2>
+      <ul class="changes">
+        <li>Three segments, each with one time range: Month, Upcoming, Goals.</li>
+        <li>Forecast, calendar, recurring and planned items are one view of the same data.</li>
+        <li>One completeness notice per segment instead of a paragraph per card. Debt payoff moves here, under Goals.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"></span></div>
+              <div class="seg"><span class="on">Month</span><span>Upcoming</span><span>Goals</span></div>
+            </div>
+            <div class="notice warn"><svg><use href="#i-alert"/></svg><span>October may be missing transactions from Chase</span><span class="act">Why?</span></div>
+            <div class="card">
+              <div class="card-header"><h2>Spent</h2><span class="meta money">$3,830 of $4,000</span></div>
+              <div class="meter warn"><i style="width:96%"></i></div>
+            </div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Housing</span><div class="meter"><i style="width:100%"></i></div></div><div class="end small money">$1,800 / $1,800</div></div>
+              <div class="row"><div class="main"><span class="title">Food</span><div class="meter warn"><i style="width:95%"></i></div></div><div class="end small money">$1,240 / $1,300</div></div>
+              <div class="row"><div class="main"><span class="title">Transport</span><div class="meter"><i style="width:68%"></i></div></div><div class="end small money">$410 / $600</div></div>
+              <div class="row"><div class="main"><span class="title">Fun <span class="badge neg">Over</span></span><div class="meter neg"><i style="width:100%"></i></div></div><div class="end small money">$380 / $300</div></div>
+            </div>
+            <div class="btn-row"><span class="btn secondary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add budget</span></div>
+            <div class="card flush"><div class="row"><div class="main"><span class="title">My income is irregular</span></div><span class="muted small">Off</span><svg class="chev"><use href="#i-chev"/></svg></div></div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab on"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>MONTH</b>Tap a budget to edit it in a sheet; the add form no longer sits open under the list.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Next 30 days</span></div>
+              <div class="seg"><span>Month</span><span class="on">Upcoming</span><span>Goals</span></div>
+            </div>
+            <div class="card">
+              <div class="card-header"><h2>Cash forecast</h2><span class="meta">30 · 60 · 90</span></div>
+              <svg class="chart" viewBox="0 0 300 80" aria-hidden="true"><line class="grid" x1="0" y1="60" x2="300" y2="60" stroke-dasharray="4 4"/><polyline class="line" points="0,20 40,24 70,46 100,44 130,30 170,34 200,58 230,40 300,30"/><circle class="low" cx="200" cy="58" r="4"/></svg>
+              <div class="small">Lowest <b class="money">$2,410</b> on Nov 14 <span class="muted">· warns below $2,000</span></div>
+              <span class="why">What if I buy…</span>
+            </div>
+            <div class="seg" style="max-width:180px"><span class="on">List</span><span>Calendar</span></div>
+            <div class="card flush">
+              <div class="daybar"><span>Sat, Oct 24</span></div>
+              <div class="row"><div class="main"><span class="title">Amex Platinum payment</span><span class="sub"><span class="badge warn">Due</span> Minimum</span></div><div class="end money">$35.00</div></div>
+              <div class="daybar"><span>Mon, Oct 26</span></div>
+              <div class="row"><div class="main"><span class="title">Netflix</span><span class="sub">Recurring · monthly</span></div><div class="end money">~$15.49</div></div>
+              <div class="daybar"><span>Sun, Nov 1</span></div>
+              <div class="row"><div class="main"><span class="title">Rent</span><span class="sub">Planned</span></div><div class="end money">$1,800.00</div></div>
+              <div class="row"><div class="main"><span class="title">Acme Corp payroll</span><span class="sub">Recurring income</span></div><div class="end money pos">+$3,210.00</div></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab on"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>UPCOMING</b>Bills, income, planned items and card payments in one dated list, or as a calendar. Recurring and Planned management sit at the foot.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Goals</span></div>
+              <div class="seg"><span>Month</span><span>Upcoming</span><span class="on">Goals</span></div>
+            </div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Emergency fund</span><div class="meter pos"><i style="width:80%"></i></div><span class="sub">On pace for March 2027 · Alpine Savings</span></div><div class="end small money">$12,000 / $15,000</div></div>
+              <div class="row"><div class="main"><span class="title">Japan trip</span><div class="meter"><i style="width:45%"></i></div><span class="sub"><span class="badge warn">Behind</span> 2 months short of May</span></div><div class="end small money">$2,700 / $6,000</div></div>
+            </div>
+            <div class="btn-row"><span class="btn secondary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add goal</span></div>
+            <div class="card flush">
+              <div class="card-header"><h2>Debt payoff</h2></div>
+              <div class="row"><div class="main"><span class="title">Paid off by May 2027</span><span class="sub">Highest rate first · $214 interest</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush"><div class="row"><div class="main"><span class="title">Archived goals</span></div><span class="muted small">3</span><svg class="chev"><use href="#i-chev"/></svg></div></div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab on"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>GOALS</b>Saving toward something and paying something down, side by side. The payoff plan used to be a button on Accounts.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== PLAN ===================== -->
+  <section class="spec" id="plan">
+    <div class="spec-head">
+      <p class="eyebrow">Job: when can I stop working, and how sure is that?</p>
+      <h2>Plan</h2>
+      <ul class="changes">
+        <li>A pinned scenario bar: switch, compare and return to your plan from any segment.</li>
+        <li>Segments: FI and timeline, Stress test, Portfolio. Each input is one line; how it was worked out is behind Why?.</li>
+        <li>About these numbers becomes a disclosure under the stress test.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
+              <div class="seg"><span class="on">FI and timeline</span><span>Stress test</span><span>Portfolio</span></div>
+            </div>
+            <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Savings may be low: September is missing from Chase</span></div>
+            <div class="card">
+              <div class="hero-label">FI number</div>
+              <div class="hero money">$1,950,000</div>
+              <div class="meter pos"><i style="width:62%"></i></div>
+              <div class="stat"><div><div class="k">Years to FI</div><div class="v">11.4</div></div><div><div class="k">Coast FI</div><div class="v pos">Yes</div></div><div><div class="k">Savings rate</div><div class="v">45%</div></div></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>From</h2></div>
+              <div class="row"><div class="main"><span class="title">Annual spending</span><span class="sub">Last 12 months</span></div><div class="end money">$78,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Invested assets</span><span class="sub">3 accounts</span></div><div class="end money">$1,209,400</div></div>
+              <div class="row"><div class="main"><span class="title">Annual savings</span><span class="sub">Estimate <span class="badge warn">1 month missing</span></span></div><div class="end money">$64,000</div></div>
+              <div class="row"><div class="main"><span class="title">Ages</span></div><div class="end">34 to 90</div></div>
+              <div class="row"><div class="main"><span class="title">Assumptions</span></div><div class="end small">4% · 2% tax</div></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>FI AND TIMELINE</b>One notice per segment when an input may be short. Tapping an input opens its edit sheet, where "Why?" explains it. Income, one-offs and (in a scenario) life events follow below.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Scenario: Sabbatical 2029</span><span class="btn ghost sm">Back to plan</span></div>
+              <div class="seg"><span>FI and timeline</span><span class="on">Stress test</span><span>Portfolio</span></div>
+            </div>
+            <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Savings may be low: September is missing from Chase</span></div>
+            <div class="card">
+              <div class="card-header"><h2>Will it last?</h2><span class="meta">History</span></div>
+              <div class="hero money" style="font-size:30px">94%</div>
+              <div class="small muted">of 1871 to 1996 starts lasted 56 years</div>
+              <svg class="chart" viewBox="0 0 300 100" aria-hidden="true"><path d="M0,70 C80,60 160,40 300,10 L300,80 C160,90 80,88 0,78Z" fill="var(--accent-tint)"/><path d="M0,74 C80,66 160,56 300,40" fill="none" stroke="var(--accent)" stroke-width="2"/><line class="grid" x1="0" y1="96" x2="300" y2="96"/></svg>
+              <span class="why">Worst starting years</span>
+            </div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">By withdrawal rate and length</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">About these numbers</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The bar says which plan you are looking at on every segment, so a what-if is never mistaken for the plan.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== SETTINGS ===================== -->
+  <section class="spec" id="settings">
+    <div class="spec-head">
+      <p class="eyebrow">Replaces Manage mode</p>
+      <h2>Settings</h2>
+      <ul class="changes">
+        <li>A full screen from the avatar menu (a gear in password mode), with six sections.</li>
+        <li>Everything Manage appended to Accounts lives here, plus theme, sharing and the account itself.</li>
+        <li>A section that needs you shows why on its row, and the avatar carries a dot.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><span class="brand" style="font-size:17px">Settings</span></div>
+            <div class="card flush">
+              <div class="row"><span class="row-ico">⚙</span><div class="main"><span class="title">Preferences</span><span class="sub">USD · Dark · weekly summary on Mondays</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico">#</span><div class="main"><span class="title">Transactions</span><span class="sub">17 categories · 4 rules · review queue on</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico warn">⇄</span><div class="main"><span class="title">Connections</span><span class="sub"><span class="badge warn">1 reconnected account to link</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Sharing</span><span class="sub">Shared with 1 person</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico">D</span><div class="main"><span class="title">Your data and privacy</span><span class="sub">Download, restore, receipts, API tokens</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico">◎</span><div class="main"><span class="title">Account</span><span class="sub">alex@example.com</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="xs t3" style="text-align:center">Security · Privacy</div>
+          </div>
+        </div></div>
+        <figcaption><b>SETTINGS</b>Six rows instead of thirteen cards under the account list.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><span class="brand" style="font-size:17px">Preferences</span></div>
+            <div class="section-title">Theme</div>
+            <div class="seg"><span>System</span><span class="on">Dark</span><span>Light</span></div>
+            <div class="section-title">Home currency</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">US dollar</span><span class="sub">Net worth and its chart are shown in USD</span></div><span class="btn ghost sm">Change</span></div>
+              <div class="row"><div class="main"><span class="title">EUR rate</span><span class="sub">ECB daily reference rate</span></div><span class="muted small">Auto</span><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="section-title">Weekly summary email</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Send on</span><span class="sub">Arrives around 9 a.m. in New York</span></div><span class="muted small">Monday</span><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Preview this week's</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+        </div></div>
+        <figcaption><b>A SECTION</b>Each section is its own view with a back button; Bring back a download keeps its #bring-back anchor under Your data.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== STATUS ===================== -->
+  <section class="spec" id="status">
+    <div class="spec-head">
+      <p class="eyebrow">Honest, ranked, never softened</p>
+      <h2>Status: one line, then the full words</h2>
+      <p>A caveat sits on the number it qualifies. Critical caveats always show in full. Two or more caution or information caveats become a summary that says how many and what kind, in the color of the worst one, and expands in place to every note in its current wording.</p>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app style="height:auto">
+          <div style="padding:12px;display:grid;gap:10px">
+            <div class="card">
+              <div class="hero-label">Net worth</div>
+              <div class="hero money">$1,275,289.77</div>
+              <div class="notice crit"><svg><use href="#i-alert"/></svg><span>Chase needs reconnecting; its balances are from Oct 21. This total is short by 1 account.</span></div>
+              <div class="notice warn"><svg><use href="#i-clock"/></svg><span>2 more notes: 1 balance from yesterday, accrued interest left out</span><span class="act">Details</span></div>
+            </div>
+            <div class="card">
+              <div class="hero-label">Net worth</div>
+              <div class="hero money">$1,275,289.77</div>
+              <div class="notice crit"><svg><use href="#i-alert"/></svg><span>Chase needs reconnecting; its balances are from Oct 21. This total is short by 1 account.</span></div>
+              <div class="notice warn"><svg><use href="#i-clock"/></svg><div><span>2 more notes</span>
+                <ul>
+                  <li>Ally couldn't refresh; its balances are from yesterday.</li>
+                  <li>Accrued interest on 1 student loan isn't included.</li>
+                </ul></div></div>
+            </div>
+            <div class="card">
+              <div class="hero-label">Net worth</div>
+              <div class="hero money">$1,282,914.40</div>
+              <div class="notice warn"><svg><use href="#i-clock"/></svg><span>Ally couldn't refresh; its balances are from yesterday.</span></div>
+            </div>
+          </div>
+        </div></div>
+        <figcaption><b>COLLAPSED, EXPANDED, CAUTION ONLY</b>Critical stays in full; the rest collapse into a counted summary in the worst remaining color. Never an unlabeled icon.</figcaption>
+      </figure>
+      <div class="note-box">
+        <p><b>The three levels.</b> Critical (red): an institution needs reconnecting, rows couldn't be shown, a total is short. Caution (amber): recovered but dated balances, an account that stopped reporting (held at its last known balance), a connection that ends soon, history paused, a backup or clean-up failed, a month may be missing transactions. Information (neutral): converted currency, imported history, accrued interest left out. Anything that asks you to act is also counted in Home's Needs attention.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer class="doc-foot">Source: docs/design in the Nya repository (information-architecture.md, design-system.md, tokens.css, rollout.md). Example data only; no real accounts.</footer>
+</div>
+
+<script>
+(function () {
+  var buttons = document.querySelectorAll('.seg-doc button');
+  function apply(t) {
+    document.querySelectorAll('[data-app]').forEach(function (el) { el.setAttribute('data-t', t); });
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-t') === t)); });
+    try { localStorage.setItem('nya-mock-theme', t); } catch (e) {}
+  }
+  buttons.forEach(function (b) { b.addEventListener('click', function () { apply(b.getAttribute('data-t')); }); });
+  var saved = null;
+  try { saved = localStorage.getItem('nya-mock-theme'); } catch (e) {}
+  apply(saved === 'light' ? 'light' : 'dark');
+})();
+</script>
