@@ -423,7 +423,8 @@ export default function SecurityPage() {
             written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese,
             French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept,
             seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead
-            of named; a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent
+            of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more
+            letters, as in example.com); a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent
             sign. Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording,
             the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a
             currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.

@@ -33,6 +33,7 @@ import { readTags } from './api-tags';
 import { readRules } from './api-rules';
 import { readApiRunway, readApiYearOverYear } from './api-reports';
 import { RUNWAY_WINDOWS, type RunwayWindow } from './report/runway';
+import { withAccountVersions, withTxnVersions } from './api-versioned';
 import { OPERATION_SPECS, BadRequest, NotFound, type Args, type OperationSpec } from './api-spec';
 
 export { argsFromQuery, argsFromJson, inputSchema, BadRequest, NotFound, type Arg, type Args } from './api-spec';
@@ -116,7 +117,11 @@ function monthOrRange(a: Args): { from: string; to: string } {
 const RUNS: Record<string, Operation['run']> = {
   me: async (auth) => readMe(auth),
 
-  accounts: async (auth, a) => readAccounts(auth.ctx, { includeHidden: flag(a, 'include_hidden'), base: true }),
+  // Each manual account with its version (lib/api-versions.ts), any other's null.
+  accounts: async (auth, a) => {
+    const read = await readAccounts(auth.ctx, { includeHidden: flag(a, 'include_hidden'), base: true });
+    return { ...read, accounts: await withAccountVersions(auth.ctx, read.accounts) };
+  },
 
   'net-worth': async (auth, a) => readNetWorth(auth.ctx, { includeHidden: flag(a, 'include_hidden'), base: true }),
 
@@ -186,7 +191,8 @@ const RUNS: Record<string, Operation['run']> = {
       from,
       to,
       base_currency: page.base_currency,
-      transactions: page.transactions,
+      // Each row typed by the person or a program with its version.
+      transactions: await withTxnVersions(auth.ctx, page.transactions),
       has_more: page.next !== null,
       next_cursor: page.next ? encodeCursor(page.next, print, { from, to }) : null,
       sources: page.sources,

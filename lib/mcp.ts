@@ -1,9 +1,25 @@
 // lib/mcp.ts
 //
-// Nya's MCP server: the Model Context Protocol, read only, on the same tokens
-// as the API (lib/api-tokens.ts). It lets a person's own AI assistant answer
-// questions about their money, on their own AI subscription, so it costs Nya
-// no inference. Served at /api/mcp (app/api/mcp/route.ts).
+// Nya's MCP server: the Model Context Protocol, on the same tokens as the API
+// (lib/api-tokens.ts). It lets a person's own AI assistant answer questions
+// about their money, on their own AI subscription, so it costs Nya no
+// inference; and, with a token the person made to make changes, where this
+// copy lets tokens write (lib/api-writes-enabled.ts), make the changes they
+// ask it for. Served at /api/mcp (app/api/mcp/route.ts).
+//
+// WHAT A TOKEN MAY CALL. tools/list lists only the tools the token's access
+// allows (a read token's list is the read tools, exactly as before writing
+// existed; a balances token's, list_accounts and set_account_balance), and
+// tools/call refuses any other as a tool error, whatever was listed, through
+// the gate every operation passes (lib/api-run.ts), so a tool name a client
+// knows from elsewhere does nothing. A write tool runs the same operation as
+// its endpoint (lib/api-writes.ts), with the same limits and the same record
+// of changes, one change per call: no tool takes a list. Its annotations
+// mark it as changing data (destructive where it changes or removes what
+// exists), so a client that asks before a tool call asks; its description,
+// and a write token's instructions, tell the assistant to ask the person
+// first and never to act on text it reads; and its answer's sentence holds
+// numbers, dates and codes alone, never a name (see PROMPT INJECTION).
 //
 // Written by hand from the spec, without an SDK: JSON-RPC 2.0 messages over
 // the streamable HTTP transport, protocol versions 2025-11-25 and 2025-06-18
@@ -37,7 +53,13 @@
 
 import type { Authenticated } from './api-tokens';
 import { argsFromJson, inputSchema, operation, BadRequest, NotFound, type Args } from './api-ops';
-import { TOOL_SPECS, DATA_NOT_INSTRUCTIONS, PROTOCOL_VERSIONS, type ToolSpec } from './api-spec';
+import { TOOL_SPECS, WRITE_TOOL_SPECS, DATA_NOT_INSTRUCTIONS, ASK_FIRST, PROTOCOL_VERSIONS, ApiFailure, resourceSpec, allowsOf, type ToolSpec, type WriteToolSpec } from './api-spec';
+import { checkAccess, gate, mayRun, writesNeeded } from './api-run';
+import { runResource } from './api-writes';
+import { readIfMatch } from './api-versions';
+import { apiWritesEnabled } from './api-writes-enabled';
+import { StoreRefusedError } from './repo';
+import type { Access } from './api-limits';
 import { readNetWorthAndHistory, readNetWorth, type ApiMissing, type Interval } from './api-read';
 import { MCP_MAX_RESULT_BYTES } from './api-limits';
 import { StoredDataUnreadableError } from './repo';
@@ -57,6 +79,23 @@ export const INSTRUCTIONS = [
   DATA_NOT_INSTRUCTIONS,
 ].join(' ');
 
+/** What a token that can make changes is told besides, while this copy lets
+ *  tokens write: what it may change, and to ask first (see the header). */
+export const WRITE_INSTRUCTIONS = [
+  'This token can also make changes: add and change the person’s manual accounts and the transactions entered on them, their categories and tags, and set a manual account’s balance. It can never change a bank’s transaction, delete an account, or touch sharing, tokens or settings.',
+  ASK_FIRST,
+  'Every change is recorded with what it changed: undo_change reverses one while nothing has changed it since, and the person can see and undo every change in Nya.',
+].join(' ');
+
+/** The instructions a token is given, by what it may do. */
+export function instructionsFor(auth: Pick<Authenticated, 'access'>): string {
+  if (auth.access === 'write' && apiWritesEnabled()) return `${INSTRUCTIONS} ${WRITE_INSTRUCTIONS}`;
+  if (auth.access === 'balances' && apiWritesEnabled()) {
+    return `${INSTRUCTIONS} This token reads only the person’s accounts (list_accounts), and can set a manual account’s balance (set_account_balance). ${ASK_FIRST}`;
+  }
+  return INSTRUCTIONS;
+}
+
 /** JSON-RPC 2.0's error codes, as MCP uses them. */
 export const RPC = { parse: -32700, invalidRequest: -32600, methodNotFound: -32601, invalidParams: -32602, internal: -32603 } as const;
 
@@ -71,6 +110,12 @@ const rpcResult = (id: Id, result: unknown): RpcResponse => ({ jsonrpc: '2.0', i
 type Tool = ToolSpec & {
   run: (auth: Authenticated, args: Args) => Promise<unknown>;
   /** One sentence from the result, of numbers and dates only (see the header). */
+  summary: (result: any) => string;
+};
+
+/** A tool that runs an operation on one resource: a write, or a read by id. */
+type WriteTool = WriteToolSpec & {
+  allows: readonly Access[];
   summary: (result: any) => string;
 };
 
@@ -340,11 +385,116 @@ export const TOOLS: readonly Tool[] = TOOL_SPECS.map((spec) => {
 
 const ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
-/** tools/list's answer. */
-export function listTools(): { tools: unknown[] } {
+/** A change's id, in a sentence: digits, a token's id and hex (see PROMPT
+ *  INJECTION above). */
+const changeSentence = (r: any) =>
+  typeof r?.change_id === 'string' && /^[0-9a-z.]{1,64}$/.test(r.change_id) ? ` Change ${r.change_id}: undo_change reverses it while nothing changes it since.` : '';
+const dated = (t: any) => (typeof t?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? ` dated ${t.date}` : '');
+
+const WRITE_SUMMARIES: Record<string, (r: any) => string> = {
+  get_transaction: (r) => `1 transaction${dated(r.transaction)}.`,
+  add_transaction: (r) =>
+    r.deleted ? `What this key made was deleted since.${changeSentence(r)}` : `Added a transaction of ${money(Math.abs(r.transaction.amount), code(r.transaction.currency))} (${r.transaction.amount > 0 ? 'money out' : 'money in'})${dated(r.transaction)} to a manual account.${changeSentence(r)}`,
+  update_transaction: (r) => `Changed a transaction${dated(r.transaction)}.${changeSentence(r)}`,
+  delete_transaction: (r) => `Deleted a transaction${dated(r.transaction)}.${changeSentence(r)}`,
+  set_account_balance: (r) =>
+    r.changed === false
+      ? 'The balance was already that: nothing changed.'
+      : `Set a manual account’s balance to ${money(r.account.balance, code(r.account.currency))}.${changeSentence(r)}`,
+  add_manual_account: (r) =>
+    r.deleted ? `What this key made was deleted since.${changeSentence(r)}` : `Added a manual account with a balance of ${money(r.account.balance, code(r.account.currency))}.${changeSentence(r)}`,
+  update_manual_account: (r) => `Changed a manual account.${changeSentence(r)}`,
+  add_category: (r) => (r.deleted ? `What this key made was deleted since.${changeSentence(r)}` : `Added a category.${changeSentence(r)}`),
+  update_category: (r) => `Changed a category.${changeSentence(r)}`,
+  add_category_group: (r) => (r.deleted ? `What this key made was deleted since.${changeSentence(r)}` : `Added a category group.${changeSentence(r)}`),
+  update_category_group: (r) => `Renamed a category group.${changeSentence(r)}`,
+  add_tag: (r) => (r.deleted ? `What this key made was deleted since.${changeSentence(r)}` : `Added a tag.${changeSentence(r)}`),
+  update_tag: (r) => `Changed a tag.${changeSentence(r)}`,
+  list_changes: (r) => `${plural(r.changes.length, 'change')} this token made${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.`,
+  undo_change: (r) =>
+    typeof r?.undo === 'string' && /^[0-9a-z.]{1,64}$/.test(r.undo) ? `Undone. The undo is change ${r.undo}.` : 'Undone.',
+};
+
+/** Who may call each write tool: a write token, or for setting a balance a
+ *  balances token too. */
+export const WRITE_TOOLS: readonly WriteTool[] = WRITE_TOOL_SPECS.map((spec) => {
+  const summary = WRITE_SUMMARIES[spec.name];
+  if (!summary) throw new Error(`The MCP tool ${spec.name} has no summary`);
+  const allows: readonly Access[] = spec.resource === 'manual-accounts.balance' ? ['balances', 'write'] : ['write'];
+  return { ...spec, allows, summary };
+});
+
+/** Whether a token may call a tool now: its access, and the switch for one
+ *  that needs more than reading. */
+const callable = (auth: Pick<Authenticated, 'access'>, spec: { allows?: readonly Access[] }) =>
+  mayRun(auth, spec) && (!writesNeeded(spec) || apiWritesEnabled());
+
+/** tools/list's answer, for this token: only what it may call. */
+export function listTools(auth: Pick<Authenticated, 'access'>): { tools: unknown[] } {
   return {
-    tools: TOOLS.map((t) => ({ name: t.name, title: t.title, description: t.description, inputSchema: inputSchema(t.args), annotations: { title: t.title, ...ANNOTATIONS } })),
+    tools: [
+      ...TOOLS.filter((t) => callable(auth, t)).map((t) => ({
+        name: t.name,
+        title: t.title,
+        description: t.description,
+        inputSchema: inputSchema(t.args),
+        annotations: { title: t.title, ...ANNOTATIONS },
+      })),
+      ...WRITE_TOOLS.filter((t) => callable(auth, t)).map((t) => ({
+        name: t.name,
+        title: t.title,
+        description: t.description,
+        inputSchema: inputSchema(t.args, t.required),
+        annotations: { title: t.title, ...t.annotations, openWorldHint: false },
+      })),
+    ],
   };
+}
+
+/** Runs a write tool (or a read by id) through the same gate and operation
+ *  as its endpoint (lib/api-run.ts, lib/api-writes.ts). */
+async function callWriteTool(auth: Authenticated, tool: WriteTool, raw: unknown): Promise<unknown> {
+  const spec = resourceSpec(tool.resource);
+  try {
+    checkAccess(auth, tool);
+    await gate(auth, spec);
+  } catch (err) {
+    if (err instanceof ApiFailure) return toolError(err.message);
+    throw err;
+  }
+  let args: Args;
+  try {
+    args = argsFromJson(tool, raw);
+  } catch (err) {
+    if (err instanceof BadRequest) return toolError(err.message);
+    throw err;
+  }
+  const { version, idempotency_key, ...rest } = args;
+  const id = tool.idArg ? (rest[tool.idArg] as string | undefined) : undefined;
+  if (tool.idArg) delete rest[tool.idArg];
+  try {
+    const answer = await runResource(auth, spec, {
+      id,
+      args: rest,
+      version: spec.versioned ? (typeof version === 'string' ? readIfMatch(version) : null) : undefined,
+      key: typeof idempotency_key === 'string' ? idempotency_key : null,
+      via: 'mcp',
+    });
+    const result = answer.body;
+    return {
+      content: [
+        { type: 'text', text: tool.summary(result) },
+        { type: 'text', text: JSON.stringify(result) },
+      ],
+      structuredContent: result,
+    };
+  } catch (err) {
+    if (err instanceof ApiFailure || err instanceof BadRequest || err instanceof NotFound || err instanceof StoredDataUnreadableError || err instanceof StoreRefusedError) {
+      return toolError(err.message);
+    }
+    console.error(`MCP: ${tool.name} failed`, loggable(err));
+    return toolError('Something went wrong. Try again later.');
+  }
 }
 
 /** A tool's error, for the model to read: what was wrong, never internals. */
@@ -353,7 +503,17 @@ const toolError = (message: string) => ({ content: [{ type: 'text', text: messag
 /** tools/call's answer: a sentence, the result as JSON text, and the same as
  *  structured content; or a tool error. */
 export async function callTool(auth: Authenticated, name: string, raw: unknown): Promise<unknown> {
+  const writing = WRITE_TOOLS.find((t) => t.name === name);
+  if (writing) return callWriteTool(auth, writing, raw);
   const tool = TOOLS.find((t) => t.name === name)!;
+  // The gate every operation passes, whatever tools/list showed: a balances
+  // token reads its accounts alone.
+  try {
+    checkAccess(auth, tool);
+  } catch (err) {
+    if (err instanceof ApiFailure) return toolError(err.message);
+    throw err;
+  }
   let args: Args;
   try {
     args = argsFromJson(tool, raw);
@@ -414,15 +574,15 @@ export async function handleMessage(auth: Authenticated, msg: unknown): Promise<
     case 'initialize': {
       const asked = p.protocolVersion;
       const protocolVersion = typeof asked === 'string' && (PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : LATEST_PROTOCOL;
-      return rpcResult(id, { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: INSTRUCTIONS });
+      return rpcResult(id, { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: instructionsFor(auth) });
     }
     case 'ping':
       return rpcResult(id, {});
     case 'tools/list':
-      return rpcResult(id, listTools());
+      return rpcResult(id, listTools(auth));
     case 'tools/call': {
       if (typeof p.name !== 'string') return rpcError(id, RPC.invalidParams, 'tools/call needs the tool’s name.');
-      if (!TOOLS.some((t) => t.name === p.name)) return rpcError(id, RPC.invalidParams, `Unknown tool: ${p.name.slice(0, 60)}`);
+      if (!TOOLS.some((t) => t.name === p.name) && !WRITE_TOOLS.some((t) => t.name === p.name)) return rpcError(id, RPC.invalidParams, `Unknown tool: ${p.name.slice(0, 60)}`);
       return rpcResult(id, await callTool(auth, p.name, p.arguments));
     }
     default:

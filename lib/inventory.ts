@@ -55,6 +55,7 @@ export const RETENTION_ROWS = [
   'Copies of what the dashboard shows',
   'API tokens',
   'Requests counted for each API token',
+  'Changes made with API tokens',
   'The weekly summary',
   'Your home currency and your own exchange rates',
   'Weekly summaries you asked for now, and uses of a link to turn one off',
@@ -459,6 +460,24 @@ const STORES: Readonly<Record<string, Entry>> = {
     unit: ['token', 'tokens'],
     kept: 'Requests counted for each API token',
     plain: 'Each token’s id and its count, as plain text.',
+  },
+  'api-changes': {
+    group: 'access',
+    name: 'Changes made with your API tokens',
+    about:
+      'Each change a token made through the API or an AI assistant, and each undo of one: when, which token, and what it changed, as it was before and after, so a transaction it deleted is kept with it. Forget one under API tokens to drop those copies.',
+    unit: ['change', 'changes'],
+    kept: 'Changes made with API tokens',
+    seen: ['api'],
+    plain: 'The day each change was made and the id of the token that made it, as field names.',
+  },
+  'api-change-keys': {
+    group: 'access',
+    name: 'Keys your tokens sent with what they made',
+    about: 'A fingerprint of each key a program sent so that making something twice makes it once, with which change it made.',
+    unit: ['token', 'tokens'],
+    kept: 'Requests counted for each API token',
+    plain: 'Each token’s id, as a field name.',
   },
   'api-write-requests': {
     group: 'access',

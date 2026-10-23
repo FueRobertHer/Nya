@@ -231,6 +231,21 @@ export function changeAnnotation(
 }
 
 /**
+ * Puts what is said about one transaction back exactly as it was (`value`;
+ * null: nothing was said), for the undo of a change made through the API
+ * (lib/api-undo.ts), whose record keeps it whole: adding and taking off tags
+ * can't always bring back the tags kept off (`untagged`) as they were. One
+ * compare-and-set: `expect` checks the record as it is now, inside it, and
+ * throws to refuse, so a change made since is never written over.
+ */
+export async function restoreAnnotation(ctx: Ctx, transaction_id: string, value: TxnAnnotation | null, expect: (current: TxnAnnotation | null) => void): Promise<void> {
+  await txnAnnotationStore.update(ctx, transaction_id, (current) => {
+    expect(current);
+    return value;
+  });
+}
+
+/**
  * Excludes one transaction, or includes it again, with whatever else is said
  * about it kept, and returns the record as saved. Either way it is recorded
  * (see the header).

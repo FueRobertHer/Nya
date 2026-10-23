@@ -34,6 +34,7 @@ import { myConnections } from './sharing';
 import { ownedContainer } from './owners';
 import { sendsEmail } from './notice-recipients';
 import { clerkEnabled } from './auth-mode';
+import { apiWritesEnabled } from './api-writes-enabled';
 import { isExcluded, isRefetched } from './export';
 import { backupRetention, databaseBackupDays } from './backup';
 import { masterKeyConfigured } from './crypto';
@@ -182,6 +183,9 @@ function encryptionOf(name: string, heads: Record<string, number>, ownKey: strin
  *  of their own to destroy (app/privacy/page.tsx, keyDeletionText), so an
  *  entry never cites a row the page doesn't have. */
 function rowShown(row: string): boolean {
+  // Only where tokens can make changes does the page say how long they are
+  // kept (lib/api-writes-enabled.ts).
+  if (row === 'Changes made with API tokens') return apiWritesEnabled();
   if (row !== 'A record that a deleted account existed') return true;
   return keyDeletionText({ envelope: masterKeyConfigured(), backups: backupRetention(), databaseDays: databaseBackupDays() }).key.length > 0;
 }

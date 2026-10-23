@@ -126,6 +126,7 @@ import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX, type Access } from './api-limits';
+import { categoryVersion, groupVersion } from './api-versions';
 import { readTagSet, tagNameKey, type TagSet } from './tags';
 import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
@@ -1429,6 +1430,8 @@ export type TransactionQuery = {
   limit: number;
   /** The last row of the page before. */
   after?: PageKey | null;
+  /** Only these transactions, by id (one read by id, lib/api-writes.ts). */
+  ids?: ReadonlySet<string>;
 };
 
 export type ApiTransactionPage = {
@@ -1468,6 +1471,7 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const filedUnder = (t: WithParts<Txn>): Txn[] => [t, ...(t.split_parts ?? []), ...(t.group_id !== undefined && groups.has(t.group_id) ? [groups.get(t.group_id)!] : [])];
   const matching = bankRows(activity.rows)
     .filter((t) => t.date >= q.from && t.date <= q.to)
+    .filter((t) => !q.ids || q.ids.has(t.transaction_id))
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
     .filter((t) => category === undefined || filedUnder(t).some((f) => describe(bucketOf(f)).category.toLowerCase() === category))
     .filter((t) => wanted === undefined || filedUnder(t).some((f) => categoryById(activity.ix, bucketOf(f))?.id === wanted.id))
@@ -1537,6 +1541,10 @@ export type ApiCategory = {
   group: string | null;
   kind: CategoryKind;
   archived: boolean;
+  /** Changes whenever its name, group, icon or archived state does
+   *  (lib/api-versions.ts); null for one the app hasn't stored yet. Added in
+   *  version 1. */
+  version: string | null;
 };
 
 /** A group and every category in it, used or not, in the app's order. */
@@ -1544,7 +1552,9 @@ export type ApiCategoryGroup = {
   id: string | null;
   name: string;
   kind: CategoryKind;
-  categories: { id: string | null; name: string; archived: boolean }[];
+  categories: { id: string | null; name: string; archived: boolean; version: string | null }[];
+  /** As a category's: its name, kind or place changing. Added in version 1. */
+  version: string | null;
 };
 
 /** Budgets as an answer reads them. */
@@ -1605,6 +1615,7 @@ export async function readCategories(
       group: d.group,
       kind,
       archived: !!filed?.archived,
+      version: filed && d.category_id ? categoryVersion(filed) : null,
     };
   });
   return {
@@ -1614,7 +1625,8 @@ export async function readCategories(
       id: shownId(g.id),
       name: g.name,
       kind: g.kind,
-      categories: categoriesIn(ix.taxonomy, g.id).map((c) => ({ id: shownId(c.id), name: c.name, archived: !!c.archived })),
+      categories: categoriesIn(ix.taxonomy, g.id).map((c) => ({ id: shownId(c.id), name: c.name, archived: !!c.archived, version: shownId(c.id) ? categoryVersion(c) : null })),
+      version: shownId(g.id) ? groupVersion(g) : null,
     })),
     sources: activity.sources,
     notes,

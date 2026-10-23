@@ -2168,6 +2168,7 @@ describe('the key inventory', () => {
     // connector's credential and its counts, are left out: a restore must
     // never revive a revoked token or a disconnected bank.
     expect(declaredStores().filter((s) => !s.backedUp).map((s) => s.name).sort()).toEqual([
+      'api-change-keys',
       'api-requests',
       'api-tokens',
       'api-write-days',

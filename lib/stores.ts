@@ -20,6 +20,7 @@
 
 import './access-log';
 import './allocation-settings';
+import './api-changes';
 import './api-token-store';
 import './budget-months-store';
 import './budget-store';

@@ -1228,6 +1228,7 @@ describe('stores built on the storage seam', () => {
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
       'account-lifecycle',
       'allocation-settings',
+      'api-changes',
       'app-imports',
       'budget-months',
       'carried-annotations',
