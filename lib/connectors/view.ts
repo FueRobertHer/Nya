@@ -31,7 +31,7 @@ export type AccountView = {
    *  continue.ts): what it was, and what the first answers found (of the
    *  provider's rows dated up to `until`, how many took over one from the
    *  download, and how many were added). Absent for every other account. */
-  continued?: { from: { connector: ConnectorKind; name: string; institution_name: string }; until: string | null; matched: number; added: number };
+  continued?: { from: { connector: ConnectorKind; name: string; institution_name: string }; until: string | null; matched: number; added: number; undoing: boolean };
 };
 
 /** An account SimpleFIN offers that isn't tracked. Its balance only in the
@@ -92,7 +92,9 @@ export type ConnectionView = {
 export function accountView(a: ConnectorAccount, evidence?: { until: string | null; matched: number; added: number } | null): AccountView {
   const c = a.continued;
   return {
-    ...(c ? { continued: { from: { connector: c.from.connector, name: c.from.name, institution_name: c.from.institution_name }, until: c.until, matched: evidence?.matched ?? 0, added: evidence?.added ?? 0 } } : {}),
+    ...(c
+      ? { continued: { from: { connector: c.from.connector, name: c.from.name, institution_name: c.from.institution_name }, until: c.until, matched: evidence?.matched ?? 0, added: evidence?.added ?? 0, undoing: !!c.undoing } }
+      : {}),
     account_id: a.account_id,
     name: a.name,
     institution_name: a.institution_name,

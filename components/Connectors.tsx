@@ -498,6 +498,9 @@ export function carryNote(carry: { enabled: boolean; waiting: CarryView['waiting
 export function carriedLine(a: AccountView, label: string): { text: string; warn: boolean } | null {
   const c = a.continued;
   if (!c) return null;
+  // An undo begun and stopped part way: nothing is merged into it until it
+  // is run again (lib/connectors/continue.ts UNDO).
+  if (c.undoing) return { text: `Undoing carrying ${a.name} on didn’t finish, so it takes no new transactions from ${label}: undo it again to finish.`, warn: true };
   const what = `${a.name} carries on ${c.from.institution_name} ${c.from.name} from your download`;
   const sent = c.matched + c.added;
   if (c.until && sent > 0 && c.matched === 0) {

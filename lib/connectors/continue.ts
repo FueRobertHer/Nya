@@ -266,12 +266,21 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
   const at = new Date(now).toISOString();
   // First marked as being undone: from then on no sync merges a row into it
   // (mergeRecords reads the entry again inside the book's compare-and-set),
-  // so a sync landing part way through never takes the rows over again.
-  await connectorAccountsStore.update(ctx, account_id, (cur) => (cur && cur.version === 2 && cur.continued ? { ...cur, continued: { ...cur.continued, undoing: cur.continued.undoing ?? at } } : cur));
-  // The rows: taken over ones put back as they were, the new provider's removed.
+  // so a sync landing part way through never takes the rows over again. The
+  // mark keeps the connection it goes back to if its old one is gone, made
+  // once: a second run, or two at once, read the same.
+  const marked = await connectorAccountsStore.update(ctx, account_id, (cur) =>
+    cur && cur.version === 2 && cur.continued ? { ...cur, continued: { ...cur.continued, undoing: cur.continued.undoing ?? { at, home: newConnectionId() } } } : cur
+  );
+  const homeIfGone = marked?.continued?.undoing?.home;
+  if (!homeIfGone) throw new CarryOnRefused('That account wasn’t carried on from your download.', 404);
+  // The rows: taken over ones put back as they were, the new provider's
+  // removed. A book is written even where there was none, so a sync that
+  // read the entry before the mark always meets a change here and reads it
+  // again (mergeRecords).
   let gone: string[] = [];
   await manualTxnStore.update(ctx, account_id, (book) => {
-    if (!book) return book;
+    if (!book) return { version: 1, rows: [] };
     gone = [];
     const rows: ManualTxn[] = [];
     for (const r of book.rows) {
@@ -300,19 +309,11 @@ export async function undoCarryOn(ctx: Ctx, account_id: string, now: number = Da
   // one, offered there again, and on its old connection where that is still
   // there, else on one of its own with no credential.
   const old = await connectionsStore.get(ctx, c.from.connection_id);
-  const home = old ? c.from.connection_id : newConnectionId();
+  const home = old ? c.from.connection_id : homeIfGone;
   if (!old) {
-    await connectionsStore.set(ctx, home, {
-      version: 1,
-      connector: c.from.connector,
-      host: c.from.host ?? '',
-      created_at: at,
-      last_fetch: null,
-      last_answer_at: null,
-      tracked: [],
-      available: [],
-      history: null,
-    });
+    await connectionsStore.update(ctx, home, (cur) =>
+      cur ?? { version: 1, connector: c.from.connector, host: c.from.host ?? '', created_at: at, last_fetch: null, last_answer_at: null, tracked: [], available: [], history: null }
+    );
   }
   const carriedBy = entry.connection_id;
   const offer: AvailableAccount = { remote_id: entry.remote_id, name: entry.name, institution: entry.institution_name, institution_key: entry.institution_key, currency: entry.currency, currency_text: entry.currency };

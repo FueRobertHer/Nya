@@ -176,8 +176,10 @@ export type Continued = {
   by_id: boolean;
   /** Set when an undo of it began: from then on no sync merges a row into
    *  the account (lib/connectors/sync.ts mergeRecords reads the entry again
-   *  inside the book's compare-and-set), so the undo's rows stand. */
-  undoing?: string;
+   *  inside the book's compare-and-set), so the undo's rows stand. `home`:
+   *  the connection it goes back to if its old one is gone, kept so a second
+   *  run, or two at once, make no other. */
+  undoing?: { at: string; home: string };
 };
 
 /** A tracked account. Version 2 is one carried on (`continued`): the release
@@ -335,7 +337,7 @@ function isContinued(v: unknown): v is Continued {
     isTime(v.at) &&
     (v.until === null || isCalendarDay(v.until)) &&
     typeof v.by_id === 'boolean' &&
-    (v.undoing === undefined || isTime(v.undoing))
+    (v.undoing === undefined || (isRecord(v.undoing) && isTime(v.undoing.at) && isText(v.undoing.home, 200)))
   );
 }
 
@@ -399,6 +401,11 @@ export type EndedAccount = {
   left_out?: LeftOut[];
   /** When it was let go. */
   ended_at: string;
+  /** For an account carried on from one a restore brought back
+   *  (ConnectorAccount `continued`), when it was carried on: from then on it
+   *  was this connection's (lib/user-restore/answers.ts holdersSince).
+   *  Absent otherwise. */
+  carried_at?: string;
   /** Kept as a manual account, with its transactions; or removed, with them. */
   kept: boolean;
 };
@@ -420,6 +427,7 @@ function isEndedAccount(v: unknown): v is EndedAccount {
     (v.history_from === null || isCalendarDay(v.history_from)) &&
     (v.left_out === undefined || isLeftOutList(v.left_out)) &&
     isTime(v.ended_at) &&
+    (v.carried_at === undefined || isTime(v.carried_at)) &&
     typeof v.kept === 'boolean'
   );
 }

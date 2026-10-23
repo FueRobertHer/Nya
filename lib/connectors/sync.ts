@@ -248,11 +248,7 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
           // account, takes nothing more from this answer.
           const carried = chunk.filter((p) => p.account.continued).map((p) => p.account.account_id);
           const fresh = carried.length > 0 ? await connectorAccountsStore.getMany(ctx, carried) : new Map<string, ConnectorAccount>();
-          const stale = (a: ConnectorAccount) => {
-            if (!a.continued) return false;
-            const now = fresh.get(a.account_id);
-            return !now || now.version !== 2 || !!now.continued?.undoing || now.connection_id !== a.connection_id || now.remote_id !== a.remote_id;
-          };
+          const stale = (a: ConnectorAccount) => a.continued !== undefined && movedSince(a, fresh.get(a.account_id) ?? null);
           for (const { account, rows } of chunk) {
             if (stale(account)) continue;
             const book = books.get(account.account_id) ?? null;
@@ -406,6 +402,17 @@ function windowExtras(conn: ConnectorConnection, today: string): { offered: stri
  *  not written back. One the answer reported no problem about (`troubled`
  *  lists those it did) was synced cleanly: its `ok_at` is the time of its
  *  balance. */
+/** Whether an account's entry is no longer the one a sync read (`read`) when
+ *  it began: gone, moved to another connection or provider id (carried on,
+ *  or put back by an undo), no longer carried on as it was, or being
+ *  undone (lib/connectors/continue.ts UNDO). What the sync's answer says of
+ *  the account it read is then not this one's: none of it is written. */
+export function movedSince(read: ConnectorAccount, now: ConnectorAccount | null): boolean {
+  if (!now) return true;
+  if (now.connection_id !== read.connection_id || now.remote_id !== read.remote_id || now.version !== read.version) return true;
+  return !!now.continued?.undoing;
+}
+
 async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remote: RemoteAccount }[], at: string, troubled: ReadonlySet<string>): Promise<void> {
   for (let i = 0; i < pairs.length; i += MANY_AT_ONCE) {
     const chunk = pairs.slice(i, i + MANY_AT_ONCE);
@@ -415,8 +422,10 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
       (current) => {
         const writes = new Map<string, ConnectorAccount | null>();
         for (const { account, remote } of chunk) {
-          const now = current.get(account.account_id);
-          if (!now) continue;
+          const now = current.get(account.account_id) ?? null;
+          // Carried on, put back, or being undone since the sync began: its
+          // answer is another account's now.
+          if (!now || movedSince(account, now)) continue;
           writes.set(account.account_id, {
             ...now,
             name: remote.name,
@@ -506,7 +515,7 @@ async function noteLeftOut(
     const now = next(was);
     if (!now || sameWindows(now, was)) continue;
     await connectorAccountsStore.update(ctx, a.account_id, (c) => {
-      if (!c) return c;
+      if (!c || movedSince(a, c)) return c;
       const changed = next(c.left_out);
       if (!changed || sameWindows(changed, c.left_out ?? [])) return c;
       const { left_out: _was, ...rest } = c;

@@ -24,7 +24,8 @@
 //     counted account until it is answered for it: linked, or said not to be
 //     among its accounts (`apart.items`);
 //   - every account tracked through SimpleFIN or Lunch Flow since the
-//     restore, and one let go and kept as a manual account while that
+//     restore (one carried on from an account it brought back, since it was
+//     carried on), and one let go and kept as a manual account while that
 //     manual account is there (letting it go keeps its transactions, so it
 //     goes on holding): answered by saying it isn't this bank
 //     (`apart.accounts`), or by handing the restored account over to one.
@@ -77,10 +78,12 @@ export async function holdersSince(ctx: Ctx, since: string, items: readonly Stor
   const [tracked, ended] = await Promise.all([connectorAccountsStore.getAllReport(ctx), endedAccountsStore.getAllReport(ctx)]);
   const unreadable = tracked.unreadable.length + tracked.unrecognised.length + ended.unreadable.length + ended.unrecognised.length > 0;
   for (const a of tracked.entries.values()) {
-    if (a.created_at < since) continue;
+    // An account carried on from one the restore brought back keeps that
+    // one's first day, but is this connection's from when it was carried on.
+    if ((a.continued?.at ?? a.created_at) < since) continue;
     holders.push({ kind: 'connector', id: a.account_id, institution: a.institution_name, name: a.name, card: a.institution_ref, kept: false, via: a.connector });
   }
-  const kept = [...ended.entries].filter(([id, e]) => e.kept && e.tracked_at >= since && !tracked.entries.has(id));
+  const kept = [...ended.entries].filter(([id, e]) => e.kept && (e.carried_at ?? e.tracked_at) >= since && !tracked.entries.has(id));
   if (kept.length > 0) {
     const manual = new Set(await manualAccountIds(ctx));
     for (const [id, e] of kept) {

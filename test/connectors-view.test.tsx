@@ -158,7 +158,7 @@ describe('choosing accounts', () => {
   });
 
   test('an account carried on says what it carries on and what the first answers found, plainly when none matched, with its undo', () => {
-    const carried = { ...conn().accounts[0], continued: { from: { connector: 'simplefin' as const, name: 'Old Checking', institution_name: 'My Bank' }, until: '2026-10-03', matched: 40, added: 2 } };
+    const carried = { ...conn().accounts[0], continued: { from: { connector: 'simplefin' as const, name: 'Old Checking', institution_name: 'My Bank' }, until: '2026-10-03', matched: 40, added: 2, undoing: false } };
     expect(carriedLine(carried, 'SimpleFIN')).toEqual({ text: 'Checking carries on My Bank Old Checking from your download: 40 of the 42 transactions SimpleFIN sent from before Oct 3, 2026 were in it, and 2 more were added.', warn: false });
     expect(carriedLine({ ...carried, continued: { ...carried.continued, matched: 0, added: 140 } }, 'SimpleFIN')).toEqual({
       text: 'None of the 140 transactions SimpleFIN sent from before Oct 3, 2026 are in your download: if Checking isn’t the same account, undo carrying it on.',
@@ -166,6 +166,11 @@ describe('choosing accounts', () => {
     });
     expect(carriedLine({ ...carried, continued: { ...carried.continued, matched: 0, added: 0 } }, 'SimpleFIN')!.text).toBe('Checking carries on My Bank Old Checking from your download: its transactions are matched to those from your download as SimpleFIN sends them.');
     expect(carriedLine(conn().accounts[0], 'SimpleFIN')).toBeNull();
+    // An undo stopped part way says so, with the way to finish it.
+    expect(carriedLine({ ...carried, continued: { ...carried.continued, undoing: true } }, 'SimpleFIN')).toEqual({
+      text: 'Undoing carrying Checking on didn’t finish, so it takes no new transactions from SimpleFIN: undo it again to finish.',
+      warn: true,
+    });
     const html = renderToStaticMarkup(<ConnectorCardView conn={conn({ accounts: [carried] })} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
     expect(html).toContain('Undo carrying Checking on');
     expect(uncarryWords(carried, 'SimpleFIN')).toContain('My Bank Old Checking goes back as your download brought it, waiting for its connection');

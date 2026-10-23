@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
 
@@ -26,7 +26,7 @@ mock.module('@/lib/plaid', () => ({
 const { setTransportForTests } = await import('@/lib/connectors/http');
 const { connect, trackAccounts } = await import('@/lib/connectors/manage');
 const { syncConnection } = await import('@/lib/connectors/sync');
-const { connectionsStore, connectorAccountsStore, isConnectorAccount } = await import('@/lib/connectors/store');
+const { connectionsStore, connectorAccountsStore, endedAccountsStore, isConnectorAccount, newConnectionId } = await import('@/lib/connectors/store');
 const { waitingRestored, evidenceOf, carryEvidence, undoCarryOn, carryOnView } = await import('@/lib/connectors/continue');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -218,12 +218,103 @@ describe('carried on', () => {
     const carried = await wholeBook(OLD.restored);
     // The undo's first step, then a sync of the new connection before its next.
     const entry = (await connectorAccountsStore.get(ctx, OLD.restored))!;
-    await connectorAccountsStore.set(ctx, OLD.restored, { ...entry, continued: { ...entry.continued!, undoing: new Date().toISOString() } });
-    server.accounts[0].transactions = [...server.accounts[0].transactions, txn('n7', 2, '-3.00', 'ANOTHER')];
+    const marked = { ...entry, continued: { ...entry.continued!, undoing: { at: new Date().toISOString(), home: newConnectionId() } } };
+    await connectorAccountsStore.set(ctx, OLD.restored, marked);
+    server.accounts[0] = { ...server.accounts[0], name: 'Everyday Checking', balance: '777.77', transactions: [...server.accounts[0].transactions, txn('n7', 2, '-3.00', 'ANOTHER')] };
     await syncConnection(ctx, conn, { purpose: 'refresh', now: NOW + 13 * 3_600_000 });
     expect(await wholeBook(OLD.restored)).toEqual(carried);
+    // Nor a name or a balance.
+    expect(await connectorAccountsStore.get(ctx, OLD.restored)).toEqual(marked);
     await undoCarryOn(ctx, OLD.restored);
     expect(await wholeBook(OLD.restored)).toEqual(before);
+  });
+
+  test('a sync whose fetch spans the whole undo writes nothing onto the account put back: no rows, no name, no balance', async () => {
+    const before = await wholeBook(OLD.restored);
+    const conn = await connectNew();
+    await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], NOW);
+    server.accounts[0] = { ...server.accounts[0], name: 'Everyday Checking', balance: '777.77' } as never;
+    // A Refresh of the new connection reads its accounts, then waits on
+    // SimpleFIN while the person undoes carrying on.
+    const real = server.transport();
+    let reached: () => void = () => {};
+    const atFetch = new Promise<void>((r) => (reached = r));
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let armed = true;
+    setTransportForTests({
+      ...real,
+      resolve: async (h: string) => {
+        if (armed) {
+          armed = false;
+          reached();
+          await held;
+        }
+        return real.resolve(h);
+      },
+    });
+    const syncing = syncConnection(ctx, conn, { purpose: 'refresh', now: NOW + 13 * 3_600_000 });
+    await atFetch;
+    await undoCarryOn(ctx, OLD.restored);
+    const undone = (await connectorAccountsStore.get(ctx, OLD.restored))!;
+    release();
+    await syncing;
+    setTransportForTests(real);
+    // The account as the undo put it back: its old name, no balance yet.
+    expect(await connectorAccountsStore.get(ctx, OLD.restored)).toEqual(undone);
+    expect(undone).toMatchObject({ version: 1, remote_id: 'CHK', name: 'Checking', reported_balance: null, fetched_at: null, ok_at: null });
+    expect(await wholeBook(OLD.restored)).toEqual(before);
+  });
+
+  test('an undo stopped part way says so on the card, and run again, or twice at once, makes one connection to go back to', async () => {
+    const conn = await connectNew();
+    await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], NOW);
+    // Its old connection is gone: the undo puts it on one of its own.
+    const [oldId] = [...(await connectionsStore.getAll(ctx)).keys()].filter((id) => id !== conn);
+    await connectionsStore.remove(ctx, oldId);
+    // Stopped after its rows, at the new connection's list.
+    const cut = spyOn(connectionsStore, 'update').mockImplementationOnce(async () => {
+      throw new Error('the function was stopped');
+    });
+    await expect(undoCarryOn(ctx, OLD.restored)).rejects.toThrow('the function was stopped');
+    cut.mockRestore();
+    const { connectionView } = await import('@/lib/connectors/view');
+    const { carriedLine } = await import('@/components/Connectors');
+    const view = connectionView(conn, (await connectionsStore.get(ctx, conn))!, [...(await connectorAccountsStore.getAll(ctx)).values()]);
+    expect(carriedLine(view.accounts[0], 'SimpleFIN')).toEqual({ text: 'Undoing carrying Checking on didn’t finish, so it takes no new transactions from SimpleFIN: undo it again to finish.', warn: true });
+    // Run again, twice at once: one finishes, the other finds nothing to do.
+    const runs = await Promise.allSettled([undoCarryOn(ctx, OLD.restored), undoCarryOn(ctx, OLD.restored)]);
+    expect(runs.some((r) => r.status === 'fulfilled')).toBe(true);
+    const connections = [...(await connectionsStore.getAll(ctx)).keys()];
+    expect(connections).toHaveLength(2);
+    const entry = (await connectorAccountsStore.get(ctx, OLD.restored))!;
+    expect(entry).toMatchObject({ version: 1, remote_id: 'CHK' });
+    expect((await connectionsStore.get(ctx, entry.connection_id))!.tracked).toEqual([{ remote_id: 'CHK', account_id: OLD.restored }]);
+  });
+
+  test('an account with no book yet gets an empty one from the undo, so a sync never lands rows in the gap', async () => {
+    const conn = await connectNew();
+    await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], NOW);
+    await manualTxnStore.remove(ctx, OLD.restored);
+    await undoCarryOn(ctx, OLD.restored);
+    expect(await manualTxnStore.get(ctx, OLD.restored)).toEqual({ version: 1, rows: [] });
+  });
+
+  test('carried on, it is a connection made since: it holds a bank counted before a link, as one tracked as new does, kept as a manual account too', async () => {
+    const { holdersSince } = await import('@/lib/user-restore/answers');
+    const { userRestoreStore } = await import('@/lib/user-restore/store');
+    const since = (await userRestoreStore.get(ctx))!.started_at;
+    expect((await holdersSince(ctx, since, [])).holders).toEqual([]);
+    const conn = await connectNew();
+    // Carried on now, after the restore.
+    await trackAccounts(ctx, conn, [{ remote_id: 'CHK2', type: 'depository', continues: OLD.restored }], Date.now());
+    expect((await holdersSince(ctx, since, [])).holders.map((h) => h.id)).toEqual([OLD.restored]);
+    // Let go and kept as a manual account: it holds still.
+    const { releaseAccounts } = await import('@/lib/connectors/manage');
+    await syncConnection(ctx, conn, { purpose: 'refresh', now: NOW + 13 * 3_600_000 });
+    await releaseAccounts(ctx, [OLD.restored], true);
+    expect((await endedAccountsStore.get(ctx, OLD.restored))!.carried_at).toBeDefined();
+    expect((await holdersSince(ctx, since, [])).holders.map((h) => [h.id, h.kind === 'connector' && h.kept])).toEqual([[OLD.restored, true]]);
   });
 
   test('a carrying on that stopped part way is finished by the same choice made again', async () => {

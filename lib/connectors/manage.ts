@@ -581,6 +581,9 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
             type: a.type,
             currency: a.currency,
             tracked_at: a.created_at,
+            // Carried on from an account a restore brought back: this
+            // connection's from then (lib/user-restore/answers.ts).
+            ...(a.continued ? { carried_at: a.continued.at } : {}),
             history_from: conn?.history?.from ?? null,
             // The days answers had left it out of (lib/connectors/sync.ts).
             ...(a.left_out?.length ? { left_out: a.left_out } : {}),
