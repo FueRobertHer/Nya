@@ -71,9 +71,9 @@ import { newDraft, useRules } from './rules-state';
 import RulesCard from './RulesCard';
 import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
-import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
+import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
-import { CORRECTION_KEEPS, RELABEL_KEEPS, institutionNote, rateEffectText, relabelText, typedToMove } from './currency-text';
+import { CORRECTION_KEEPS, RELABEL_KEEPS, institutionNote, rateEffectText, relabelledText } from './currency-text';
 import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
@@ -706,6 +706,9 @@ export default function Dashboard({
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError] = useState('');
   const [manualDeleteTarget, setManualDeleteTarget] = useState<ManualAccount | null>(null);
+  // Saved with its typed transactions moved too: what moved, shown in the
+  // same drawer until the person closes it (kept while it slides out).
+  const [manualMoved, setManualMoved] = useState<{ text: string; open: boolean } | null>(null);
   // What each drawer shows: the current value, or the last one while it slides out.
   const shownManualDraft = useLast(manualDraft);
   const editingManualShown = useLast(manualDraft ? editingManual : null) ?? false;
@@ -1233,6 +1236,14 @@ export default function Dashboard({
           setManualError(data?.error ?? 'Could not save. Please try again.');
           return false;
         }
+        // What a move of its typed transactions did, said before the drawer
+        // closes (the answer's `relabelled`).
+        const done = await res.json().catch(() => null);
+        const asked = body as { relabel_from?: string; currency?: string };
+        const r = done?.relabelled;
+        if (method === 'PATCH' && asked.relabel_from && asked.currency && typeof r?.moved === 'number' && typeof r?.kept === 'number') {
+          setManualMoved({ text: relabelledText(r, asked.relabel_from, asked.currency), open: true });
+        }
         setManualDraft(null);
         setManualDeleteTarget(null);
         // A forced fetch writes the new balance into today's history point, as the
@@ -1289,6 +1300,7 @@ export default function Dashboard({
   // else the one most accounts are in), for the person to change.
   const startAddManual = useCallback((currency: string) => {
     setManualError('');
+    setManualMoved(null);
     setEditingManual(false);
     // The id is minted server-side on create, so a draft doesn't carry one.
     setManualDraft({
@@ -1313,6 +1325,7 @@ export default function Dashboard({
 
   const startEditManual = useCallback((account: ManualAccount) => {
     setManualError('');
+    setManualMoved(null);
     setEditingManual(true);
     const currency = account.currency ?? 'USD';
     setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency });
@@ -3104,7 +3117,6 @@ export default function Dashboard({
         first={accountCurrencies}
         manual={manualCurrencies}
         onSaved={currencyChanged}
-        typedCount={(id, from, to) => typedToMove(txns, id, from, to)}
       />
 
       {connected && !loading && (
@@ -3132,11 +3144,17 @@ export default function Dashboard({
           (components/Sheet.tsx). Each keeps its last content while it slides
           out, so it doesn't empty mid-animation. */}
       <Sheet
-        open={!!manualDraft}
-        title={shownManualDraft && editingManualShown ? 'Update account' : 'Add a manual account'}
-        onClose={() => !savingManual && setManualDraft(null)}
+        open={!!manualDraft || !!manualMoved?.open}
+        title={manualMoved && !manualDraft ? 'Saved' : shownManualDraft && editingManualShown ? 'Update account' : 'Add a manual account'}
+        onClose={() => {
+          if (savingManual) return;
+          setManualDraft(null);
+          setManualMoved((m) => (m ? { ...m, open: false } : m));
+        }}
       >
-        {shownManualDraft && (
+        {manualMoved && !manualDraft ? (
+          <MovedBody moved={[{ name: '', text: manualMoved.text }]} onClose={() => setManualMoved((m) => (m ? { ...m, open: false } : m))} />
+        ) : shownManualDraft && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
               For institutions Plaid can&apos;t reach. The balance you type counts toward net worth
@@ -3219,19 +3237,18 @@ export default function Dashboard({
                 {shownManualDraft.relabel ? RELABEL_KEEPS : CORRECTION_KEEPS}
               </p>
             )}
-            {shownManualDraft.stored !== null &&
-              shownManualDraft.account_id &&
-              typedToMove(txns, shownManualDraft.account_id, shownManualDraft.stored, shownManualDraft.currency) > 0 && (
-                <label className="quick-add-check">
-                  <input
-                    type="checkbox"
-                    checked={!!shownManualDraft.relabel}
-                    onChange={(e) => setManualDraft({ ...shownManualDraft, relabel: e.target.checked })}
-                    disabled={savingManual}
-                  />
-                  <span>{relabelText(typedToMove(txns, shownManualDraft.account_id, shownManualDraft.stored, shownManualDraft.currency), shownManualDraft.currency)}</span>
-                </label>
-              )}
+            {shownManualDraft.stored !== null && shownManualDraft.account_id && shownManualDraft.currency !== shownManualDraft.stored && (
+              // The server's count of every row the move would take, older
+              // ones too, and that it has no undo.
+              <RelabelOffer
+                account_id={shownManualDraft.account_id}
+                from={shownManualDraft.stored}
+                to={shownManualDraft.currency}
+                checked={!!shownManualDraft.relabel}
+                onChange={(on) => setManualDraft({ ...shownManualDraft, relabel: on })}
+                disabled={savingManual}
+              />
+            )}
             <p className="panel-note">
               {isOwedType(shownManualDraft.type)
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'

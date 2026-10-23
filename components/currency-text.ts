@@ -16,7 +16,6 @@ import { formatMoney, formatRate } from '@/lib/format';
 import type { BalancePart, BalancesIn, HistoryGaps } from '@/lib/fx/net-worth';
 import type { NoRate, OwnRate } from '@/lib/fx/rates';
 import { homeUnrated, reasonText } from '@/lib/fx/words';
-import { inMinorUnits } from '@/lib/manual-txn-input';
 
 /** A day as the notes write it: "Sep 14, 2026" in this locale. */
 export function rateDay(iso: string): string {
@@ -169,29 +168,27 @@ export function institutionNote(b: Pick<BalancesIn, 'currency' | 'left_out'>): s
 export const CORRECTION_KEEPS =
   'The transactions already on it keep the currency they were entered in, so budgets and Activity, which add up one currency, may name them rather than count them.';
 
-/** A row as the page has it, for what a correction would move. */
-type TypedRow = {
-  account_id?: string | null;
-  source?: string | null;
-  iso_currency_code: string | null;
-  amount: number;
-  split_of?: string;
-  group_id?: string;
-};
-
-/** How many of the transactions typed on a manual account would move with
- *  it from `from` into `to` (lib/manual-relabel.ts): entered by hand on it,
- *  in `from`, not split, not in a group, and no more precise than `to`
- *  allows. */
-export function typedToMove(rows: readonly TypedRow[] | null, account_id: string, from: string, to: string): number {
-  if (!rows || from === to) return 0;
-  return rows.filter(
-    (t) => t.account_id === account_id && t.source === 'manual' && t.iso_currency_code === from && t.split_of === undefined && t.group_id === undefined && inMinorUnits(t.amount, to)
-  ).length;
-}
-
-/** The offer to move them, on the person's confirmation. */
+/** The offer to move the transactions typed on a manual account with its
+ *  currency, on the person's confirmation: `n` is the server's count, every
+ *  row the move would take (GET /api/manual-accounts `relabel`). */
 export const relabelText = (n: number, to: string) => `Also move the ${n === 1 ? 'transaction' : `${n} transactions`} you entered on it to ${to}`;
+
+/** Said beside the offer, before it is ticked: a move has no undo, and which
+ *  rows it moved isn't kept (lib/manual-relabel.ts). */
+export const relabelUndoText = (from: string, to: string) =>
+  `There is no undo. Changing it back to ${from} later would offer to move every transaction you entered on it in ${to}, not only these.`;
+
+/** The rows typed in `from` that would stay in it, beside the offer (`more`:
+ *  beside some that would move). */
+export const relabelKeptText = (kept: number, from: string, to: string, more = true) =>
+  `${kept === 1 ? '1' : kept}${more ? ' more' : ''} you entered on it ${kept === 1 ? 'stays' : 'stay'} in ${from}: split, in a group, or more precise than ${to} allows.`;
+
+/** What a move did, once saved (the answer's `relabelled`). */
+export function relabelledText(r: { moved: number; kept: number }, from: string, to: string): string {
+  const moved = r.moved === 0 ? `None of the transactions you entered on it moved to ${to}.` : `${r.moved === 1 ? '1 transaction' : `${r.moved} transactions`} you entered on it moved to ${to}.`;
+  const kept = r.kept === 0 ? '' : ` ${r.kept === 1 ? '1 stays' : `${r.kept} stay`} in ${from}: split, in a group, or more precise than ${to} allows.`;
+  return moved + kept;
+}
 
 /** What moving them does, and what it leaves. */
 export const RELABEL_KEEPS = 'Their numbers stay as you typed them: only the currency they are in changes. Transactions imported from a file, split or in a group keep theirs.';

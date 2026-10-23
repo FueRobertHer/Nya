@@ -23,7 +23,7 @@ import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { deleteManualAccount } from '@/lib/manual-account-delete';
 import { followAccountCurrency } from '@/lib/import/commit';
-import { relabelTypedRows, type RelabelResult } from '@/lib/manual-relabel';
+import { relabelCount, relabelTypedRows, type RelabelResult } from '@/lib/manual-relabel';
 import { StoredDataUnreadableError } from '@/lib/stored-json';
 import { loggable } from '@/lib/log-safe';
 
@@ -55,7 +55,11 @@ import { loggable } from '@/lib/log-safe';
 // the new one. Only when the person confirms it (`relabel_from`, the currency
 // the account was in), the rows they typed on it move into the new one too
 // (lib/manual-relabel.ts: never one imported, split or in a group), in one
-// write of its book, and the answer says how many (`relabelled`).
+// write of its book, and the answer says how many (`relabelled`). What the
+// offer to move them shows is counted here too, before anything is written:
+// GET with `account_id`, `relabel_from` and `currency` answers `relabel`
+// ({ moved, kept }), every row the move would take, older ones too. A move
+// has no undo (lib/manual-relabel.ts).
 
 type DraftInput = {
   name?: unknown;
@@ -146,9 +150,29 @@ async function invalidate(ctx: Ctx, balanceChanged: boolean): Promise<void> {
   await clearCaches(ctx);
 }
 
-export async function GET() {
+/** The count the offer to move an account's typed rows shows (see the
+ *  header): what the move would take now, nothing written. */
+async function relabelCountAnswer(ctx: Ctx, q: URLSearchParams): Promise<NextResponse> {
+  const account_id = String(q.get('account_id') ?? '').slice(0, 80);
+  if (!account_id || !isManualId(account_id)) return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
+  const from = currencyOf(q.get('relabel_from') ?? undefined);
+  const to = currencyOf(q.get('currency') ?? undefined);
+  if ('error' in from || 'error' in to || from.currency === undefined || to.currency === undefined) return NextResponse.json({ error: CURRENCY_ERROR }, { status: 400 });
+  try {
+    return NextResponse.json({ relabel: await relabelCount(ctx, account_id, from.currency, to.currency) });
+  } catch (err) {
+    if (err instanceof StoredDataUnreadableError) return NextResponse.json({ error: RELABEL_COUNT_UNREAD }, { status: 409 });
+    throw err;
+  }
+}
+
+const RELABEL_COUNT_UNREAD = "The transactions on it couldn't be read, so none of them can be moved with it now.";
+
+export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
+    const q = new URL(req.url).searchParams;
+    if (q.has('relabel_from')) return await relabelCountAnswer(ctx, q);
     return NextResponse.json({ accounts: await getManualAccounts(ctx) });
   } catch (err) {
     const unavailable = containerUnavailable(err);

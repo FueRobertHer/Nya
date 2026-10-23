@@ -6,6 +6,14 @@
 // typed amount is never relabelled otherwise: correcting an account changes
 // only its own currency, and its rows keep the one they were entered in.
 //
+// THE COUNT the offer shows is the server's (relabelCount: the same plan,
+// nothing written), so it counts every row the move would take, older ones
+// the page hasn't loaded too.
+//
+// NO UNDO. Which rows a move moved isn't recorded: correcting the account
+// back offers to move every row typed on it in the currency it is in then,
+// not only those, and the offer says so before the person ticks it.
+//
 // WHICH ROWS. Only those entered by hand on the account (source 'manual') in
 // the currency it was in: never one imported from a file (its currency is
 // the file's) or brought by SimpleFIN or Lunch Flow (the bank's), never one
@@ -40,17 +48,35 @@ export function relabelPlan(rows: readonly Pick<ManualTxn, 'id' | 'source' | 'cu
   return { move, kept: typed.length - move.length };
 }
 
+/** The account's rows typed in `from`, and of them the ids split or in a
+ *  group (`held`). Strict, as the move is. */
+async function typedAndHeld(ctx: Ctx, account_id: string, from: string) {
+  const book = await manualTxnStore.get(ctx, account_id);
+  const rows = book?.rows ?? [];
+  const typed = rows.filter((r) => r.source === 'manual' && r.currency === from).map((r) => r.id);
+  if (typed.length === 0) return { rows, typed, held: new Set<string>() };
+  // Split ones and grouped ones keep their currency: theirs is the parts' and
+  // the group's too.
+  const [splits, groups] = await Promise.all([splitStore.getMany(ctx, typed), groupStore.getAll(ctx)]);
+  return { rows, typed, held: new Set<string>([...splits.keys(), ...[...groups.values()].flatMap((g) => g.members)]) };
+}
+
+/** What a move from `from` into `to` would do now, moving nothing: what the
+ *  offer to move them shows (see the header). */
+export async function relabelCount(ctx: Ctx, account_id: string, from: string, to: string): Promise<RelabelResult> {
+  if (from === to) return { moved: 0, kept: 0 };
+  const { rows, typed, held } = await typedAndHeld(ctx, account_id, from);
+  if (typed.length === 0) return { moved: 0, kept: 0 };
+  const plan = relabelPlan(rows, from, to, held);
+  return { moved: plan.move.length, kept: plan.kept };
+}
+
 /** Moves the rows typed on `account_id` in `from` into `to` (see the
  *  header), in one compare-and-set write of its book. */
 export async function relabelTypedRows(ctx: Ctx, account_id: string, from: string, to: string, now: Date = new Date()): Promise<RelabelResult> {
   if (from === to) return { moved: 0, kept: 0 };
-  const book = await manualTxnStore.get(ctx, account_id);
-  const typed = (book?.rows ?? []).filter((r) => r.source === 'manual' && r.currency === from).map((r) => r.id);
+  const { typed, held } = await typedAndHeld(ctx, account_id, from);
   if (typed.length === 0) return { moved: 0, kept: 0 };
-  // Split ones and grouped ones keep their currency: theirs is the parts' and
-  // the group's too.
-  const [splits, groups] = await Promise.all([splitStore.getMany(ctx, typed), groupStore.getAll(ctx)]);
-  const held = new Set<string>([...splits.keys(), ...[...groups.values()].flatMap((g) => g.members)]);
   let result: RelabelResult = { moved: 0, kept: 0 };
   const at = now.toISOString();
   await manualTxnStore.updateMany(ctx, [account_id], (books) => {

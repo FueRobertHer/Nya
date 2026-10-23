@@ -1,12 +1,14 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 // Moving the transactions typed on a manual account into the currency it is
 // corrected to (lib/manual-relabel.ts), only on the person's confirmation:
 // never one imported from a file, split or in a group, nor one more precise
 // than the new currency allows; each number as typed; one write of the
-// account's book. Without the confirmation a correction moves none.
+// account's book. Without the confirmation a correction moves none. The
+// offer's count is the server's, of every row the move would take, and the
+// offer says plainly that a move has no undo.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 mock.module('@/lib/plaid', () => ({
@@ -29,8 +31,8 @@ const { manualTxnStore, newManualTxn } = await import('@/lib/manual-txns');
 const { splitStore } = await import('@/lib/splits');
 const { groupStore } = await import('@/lib/groups');
 const { relabelPlan } = await import('@/lib/manual-relabel');
-const { typedToMove, relabelText } = await import('@/components/currency-text');
-const { CurrencyChoiceBody } = await import('@/components/CurrencyChoiceSheet');
+const { relabelText, relabelledText, relabelUndoText } = await import('@/components/currency-text');
+const { CurrencyChoiceBody, MovedBody, RelabelOffer } = await import('@/components/CurrencyChoiceSheet');
 const route = await import('@/app/api/manual-accounts/route');
 
 const ctx = TEST_CTX;
@@ -127,13 +129,65 @@ describe('a correction', () => {
   });
 });
 
+const count = async (q: string) => {
+  const res = await route.GET(new Request(`http://localhost/api/manual-accounts?${q}`));
+  return { status: res.status, body: (await res.json()) as any };
+};
+
 describe('what the form counts and offers', () => {
-  test('the same rows the move takes', () => {
-    const page = ROWS.map((r) => ({ ...r, iso_currency_code: r.currency, ...(r.id === ids[3] ? { split_of: r.id } : {}), ...(r.id === ids[4] ? { group_id: 'g1' } : {}) }));
-    expect(typedToMove(page, ACCOUNT, 'USD', 'EUR')).toBe(2);
-    expect(typedToMove(page, ACCOUNT, 'USD', 'JPY')).toBe(1);
+  test('the server counts the same rows the move takes, older ones the page hasn’t loaded too, and writes nothing', async () => {
+    // Typed years ago: a page's window of transactions wouldn't have it.
+    const old = { ...row('7', 3, 'USD'), date: '2019-01-05' };
+    await manualTxnStore.set(ctx, ACCOUNT, { version: 1, rows: [...ROWS, old] as any });
+    const before = await currencies();
+    expect(await count(`account_id=${ACCOUNT}&relabel_from=USD&currency=EUR`)).toEqual({ status: 200, body: { relabel: { moved: 3, kept: 2 } } });
+    expect(await count(`account_id=${ACCOUNT}&relabel_from=USD&currency=JPY`)).toEqual({ status: 200, body: { relabel: { moved: 2, kept: 3 } } });
+    expect(await currencies()).toEqual(before);
+    // What it counted is what a move then takes.
+    expect((await patch({ account_id: ACCOUNT, currency: 'EUR', relabel_from: 'USD' })).body.relabelled).toEqual({ moved: 3, kept: 2 });
     expect(relabelPlan(ROWS, 'USD', 'EUR', new Set([ids[3], ids[4]])).move.map((r) => r.id)).toEqual([ids[0], ids[1]]);
     expect(relabelText(2, 'EUR')).toBe('Also move the 2 transactions you entered on it to EUR');
+    // The plain list still answers a GET that asks for no count.
+    expect((await count('')).body.accounts.map((a: any) => a.account_id)).toEqual([ACCOUNT]);
+  });
+
+  test('a count it can’t make is said, never zero; a request that isn’t one is refused', async () => {
+    expect((await count(`account_id=${ACCOUNT}&relabel_from=USD&currency=NOPE`)).status).toBe(400);
+    expect((await count(`account_id=acct_chk&relabel_from=USD&currency=EUR`)).status).toBe(400);
+    await fake.hset(ctxKey('manual-transactions'), { [ACCOUNT]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const r = await count(`account_id=${ACCOUNT}&relabel_from=USD&currency=EUR`);
+    expect(r.status).toBe(409);
+    expect(r.body.error).toContain('couldn\'t be read');
+  });
+
+  test('the offer shows the server’s count, what stays, and plainly that there is no undo', () => {
+    const offer = (count: any) =>
+      renderToStaticMarkup(<RelabelOffer account_id={ACCOUNT} from="USD" to="EUR" checked={false} onChange={() => {}} disabled={false} count={count} />);
+    const ready = offer({ kind: 'ready', moved: 14, kept: 2 });
+    expect(ready).toContain('Also move the 14 transactions you entered on it to EUR');
+    expect(ready).toContain('2 more you entered on it stay in USD: split, in a group, or more precise than EUR allows.');
+    expect(ready).toContain(relabelUndoText('USD', 'EUR'));
+    expect(relabelUndoText('USD', 'EUR')).toBe('There is no undo. Changing it back to USD later would offer to move every transaction you entered on it in EUR, not only these.');
+    expect(offer({ kind: 'counting' })).toContain('Counting the transactions you entered on it in USD');
+    expect(offer({ kind: 'counting' })).not.toContain('checkbox');
+    const unread = offer({ kind: 'error', message: 'The transactions on it couldn’t be counted.' });
+    expect(unread).toContain('couldn’t be counted');
+    expect(unread).not.toContain('checkbox');
+    // None would move: no offer, only what stays.
+    const none = offer({ kind: 'ready', moved: 0, kept: 1 });
+    expect(none).not.toContain('checkbox');
+    expect(none).toContain('1 you entered on it stays in USD');
+    expect(offer({ kind: 'ready', moved: 0, kept: 0 })).toBe('');
+  });
+
+  test('once saved, what moved is said', () => {
+    expect(relabelledText({ moved: 14, kept: 2 }, 'USD', 'EUR')).toBe('14 transactions you entered on it moved to EUR. 2 stay in USD: split, in a group, or more precise than EUR allows.');
+    expect(relabelledText({ moved: 1, kept: 0 }, 'USD', 'EUR')).toBe('1 transaction you entered on it moved to EUR.');
+    expect(relabelledText({ moved: 0, kept: 0 }, 'USD', 'EUR')).toBe('None of the transactions you entered on it moved to EUR.');
+    const two = renderToStaticMarkup(<MovedBody moved={[{ name: 'Abroad', text: 'a' }, { name: 'Wallet', text: 'b' }]} onClose={() => {}} />);
+    expect(two).toContain('Abroad: a');
+    expect(two).toContain('Wallet: b');
+    expect(renderToStaticMarkup(<MovedBody moved={[{ name: 'Abroad', text: 'a' }]} onClose={() => {}} />)).not.toContain('Abroad:');
   });
 
   test('the choice of a home currency offers it beside a corrected account, unticked', () => {
@@ -145,7 +199,7 @@ describe('what the form counts and offers', () => {
         first={['USD']}
         manual={[{ account_id: ACCOUNT, name: 'Abroad', currency: 'USD' }]}
         fixes={{ [ACCOUNT]: 'EUR' }}
-        typedCount={() => 2}
+        counts={{ [ACCOUNT]: { kind: 'ready', moved: 2, kept: 0 } }}
         saving={false}
         error={null}
         onSave={() => {}}
@@ -153,6 +207,7 @@ describe('what the form counts and offers', () => {
       />
     );
     expect(html).toContain('Also move the 2 transactions you entered on it to EUR');
+    expect(html).toContain('There is no undo.');
     expect(html).not.toMatch(/type="checkbox" checked=""/);
   });
 });
