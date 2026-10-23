@@ -139,8 +139,9 @@ const plaidAccount = (name: string, type: string, subtype: string) => ({ name, o
 /**
  * The case test/runway.test.ts works by hand, as stored: July to September
  * 2026, 9,200.00 of spending (rent, groceries, a car repair; one of the
- * groceries on a Citi card) and 6,440.00 of income; a TV excluded, a move to
- * savings, cash taken out, a meal in euros; the mortgage's 800 on each 5th.
+ * groceries on a Citi card) and 6,440.00 of income (pay, and interest); a TV
+ * excluded, a move to savings (both its sides), 200 of cash taken out, a meal
+ * in euros; the mortgage's 800 on each 5th.
  * Cash: checking 6,985.50 less a lunch of 25.50 still pending, savings
  * 5,000 and a wallet of 40 (12,000.00), but not a hidden savings account,
  * the card's 600 owed, an IRA, or 3,000 in euros. Citi last synced on Aug
@@ -173,9 +174,10 @@ async function seed() {
     ...['07-03', '07-10', '08-07', '08-14', '08-28', '09-04', '09-11', '09-25'].map((d) => chk(`2026-${d}`, `groceries-${d}`, 300, { name: 'Grocer', category: 'food and drink' })),
     chk('2026-08-15', 'repair', 2000, { name: 'Midas' }),
     ...['07', '08', '09'].map((m) => chk(`2026-${m}-15`, `pay-${m}`, -2000, { name: 'Employer', category: 'income' })),
-    chk('2026-08-20', 'refund', -440, { name: 'Shop refund' }),
+    chk('2026-08-20', 'interest', -440, { name: 'Interest', category: 'income' }),
     chk('2026-07-20', 'tv', 1200, { name: 'TV store' }),
     chk('2026-08-02', 'to-savings', 1000, { name: 'To savings', category: 'transfer out', transaction_code: 'transfer' }),
+    on('2026-08-02', 'from-checking', 'acc_sav', -1000, { name: 'From checking', category: 'transfer in', transaction_code: 'transfer', account_name: 'Savings' }),
     chk('2026-09-02', 'atm', 200, { name: 'ATM', transaction_code: 'atm' }),
     chk('2026-09-20', 'paris', 90, { name: 'Bistro', iso_currency_code: 'EUR', category: 'food and drink' }),
     ...['04', '05', '06', '07', '08', '09', '10'].map((m) => chk(`2026-${m}-05`, `mortgage-${m}`, 800, { name: 'Home Loans', category: 'loan payments' })),
@@ -232,7 +234,12 @@ describe('the runway from stored data', () => {
     // The spending rule, over July to September.
     const three = r.windows.find((w: any) => w.months === 3);
     expect(three).toMatchObject({ start: '2026-07-01', end: '2026-09-30', days: 92, money_out: 9200, money_in: 6440 });
+    // Nothing to add or take away, but the cash taken out, named: the move to
+    // savings arrived there.
+    expect(three).toMatchObject({ refunds: 0, infrequent: 0, card_payments: [], card_payments_total: 0, transfers_out: 0, cash_out: 200, spending: 9200, income: 6440 });
     expect(three.one_offs).toEqual([{ date: '2026-08-15', name: 'Midas', amount: 2000 }]);
+    expect(three.one_offs_in).toEqual([]);
+    expect([r.has_cash, r.infrequent]).toEqual([true, []]);
     expect(three.left_out).toEqual([{ currency: 'EUR', count: 1 }]);
     // A month that may be short: Citi last synced on Aug 20.
     expect(three.short).toEqual([
@@ -250,7 +257,9 @@ describe('the runway from stored data', () => {
       'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.',
       'Hidden accounts are left out, their balances and their transactions.',
     ]);
-    expect(r.gaps.map((g: any) => [g.kind, g.institution])).toEqual([['stale', 'Citi']]);
+    // Each window's own gaps.
+    expect(r.gaps.map((g: any) => g.months)).toEqual([3, 6, 12]);
+    expect(r.gaps.find((g: any) => g.months === 3).gaps.map((g: any) => [g.kind, g.institution])).toEqual([['stale', 'Citi']]);
     expect(JSON.stringify(r)).not.toContain('HIDDEN-ACCOUNT-ROW');
     // And the days, as worked by hand.
     const p = projectRunway(r, { ...DEFAULT_WHAT_IF, months: 3 });
@@ -266,8 +275,27 @@ describe('the runway from stored data', () => {
       today: '2026-10-22',
       currency: 'USD',
       cash: { start: 12000, balances: 12025.5, pending: 25.5, pending_count: 1, owed_on_cards: 600 },
-      spending: { months: 3, from: '2026-07-01', to: '2026-09-30', days: 92, money_out: 9200, money_in: 6440 },
-      what_if: { spending_lower_by: 0, income_until: null, include_planned: true, leave_out_one_offs: false },
+      spending: {
+        months: 3,
+        from: '2026-07-01',
+        to: '2026-09-30',
+        days: 92,
+        money_out: 9200,
+        money_in: 6440,
+        refunds: 0,
+        infrequent_bills: 0,
+        card_payments: [],
+        card_payments_total: 0,
+        transfers_out: 0,
+        cash_out: 200,
+        spending: 9200,
+        income: 6440,
+        one_offs: [{ date: '2026-08-15', name: 'Midas', amount: 2000 }],
+        one_offs_in: [],
+      },
+      what_if: { spending_lower_by: 0, income_until: null, include_planned: true, leave_out_one_offs: false, count_moved_out: false },
+      payments_outside_spending: [{ name: 'Home Loans', institution: 'Chase', account: 'Checking', amount: 800, cadence: 'monthly', next_date: '2026-11-05' }],
+      bills_less_often_than_monthly: [],
       without_income: { income: 'none', runs_out: '2027-01-24', days: 93, months: 3.06, outcome: 'runs_out' },
       with_income: { income: 'ongoing', runs_out: '2027-06-05', days: 225, months: 7.39, outcome: 'runs_out' },
     });
@@ -276,13 +304,24 @@ describe('the runway from stored data', () => {
       { month: '2026-09', institutions: ['Citi'] },
     ]);
     expect(plain.body.notes).toContain('Citi hasn’t synced since 2026-08-20, so this report may be missing some of its transactions.');
-    expect(plain.body.notes).toContain('Your cards owe $600.00: their charges are in the spending as they are made, but paying them off comes out of this cash.');
+    expect(plain.body.notes).toContain('Your cards owe $600.00: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.');
+    expect(plain.body.notes).toContain('2026-08 and 2026-09 may be missing transactions from Citi, so the spending, and the income, may be low.');
+    expect(plain.body.notes).toContain(
+      'Over these months, $200.00 as cash taken out left your checking and savings. It isn’t in the spending: categorize what was spending as such, or count it in the what-if.'
+    );
+    // For a line that runs out, the lowest is the balance the day it runs out,
+    // never ten years on.
+    expect(plain.body.without_income.lowest).toEqual({ date: '2027-01-24', balance: -100 });
     // The what-ifs worked by hand in test/runway.test.ts.
     const cases: [string, string, string][] = [
       ['months=3&include_planned=false', '2027-01-27', '2027-05-24'],
       ['months=3&income_until=2026-12-31', '2027-01-24', '2027-03-05'],
       ['months=3&spending_lower_by=304.38', '2027-02-03', ''],
       ['months=3&leave_out_one_offs=true', '2027-02-08', ''],
+      // The 200 taken out counted: 9,400.00 over 92 days, so through Jan 22
+      // (day 92) 9,400.00 is taken, and with the 2,700.00 expected the
+      // balance is -100.00; through Jan 21 it is 2.17.
+      ['months=3&count_moved_out=true', '2027-01-22', ''],
     ];
     for (const [query, without, withIncome] of cases) {
       const { body } = await quiet(() => api(apiRunway, 'runway', query));
@@ -290,6 +329,10 @@ describe('the runway from stored data', () => {
       if (withIncome) expect([query, body.with_income.runs_out]).toEqual([query, withIncome]);
     }
     expect((await quiet(() => api(apiRunway, 'runway', 'months=3&include_planned=false'))).body.planned).toEqual([]);
+    const counted = (await quiet(() => api(apiRunway, 'runway', 'months=3&count_moved_out=true'))).body;
+    expect([counted.what_if.count_moved_out, counted.without_income.days]).toEqual([true, 91]);
+    expect(counted.notes).toContain('Over these months, $200.00 as cash taken out left your checking and savings. This what-if counts it as spending.');
+    expect((await quiet(() => tool('get_runway', { months: 3, count_moved_out: true }))).content[0].text).toContain('without income it runs out on 2027-01-22, after 91 days');
     // The MCP tools answer the same, with a summary in words.
     const t = await quiet(() => tool('get_runway', { months: 3 }));
     expect(t.isError).toBeFalsy();
@@ -301,7 +344,7 @@ describe('the runway from stored data', () => {
     expect(y.content[0].text).toContain('the same days a year before.');
     // Six months by default.
     expect((await quiet(() => api(apiRunway, 'runway'))).body.spending).toMatchObject({ months: 6, from: '2026-04-01' });
-    for (const query of ['months=4', 'months=3&months=6', 'spending_lower_by=-5', 'spending_lower_by=lots', 'income_until=2026-02-30', 'include_hidden=true', 'tz=UTC']) {
+    for (const query of ['months=4', 'months=3&months=6', 'spending_lower_by=-5', 'spending_lower_by=lots', 'income_until=2026-02-30', 'count_moved_out=yes', 'include_hidden=true', 'tz=UTC']) {
       const { res, body } = await api(apiRunway, 'runway', query);
       expect([query, res.status, body.error.code]).toEqual([query, 400, 'invalid_request']);
     }
@@ -327,8 +370,41 @@ describe('the runway from stored data', () => {
   test('a person with nothing: no cash, no spending, and it says so rather than a figure', async () => {
     const { res, body } = await quiet(() => get(runwayRoute, '/api/reports/runway', 'tz=UTC'));
     expect(res.status).toBe(200);
-    expect(body.runway).toMatchObject({ start: 0, cash_accounts: [], outside: [], planned: [] });
+    expect(body.runway).toMatchObject({ start: 0, has_cash: false, cash_accounts: [], outside: [], planned: [] });
     expect(body.runway.windows.map((w: any) => w.transactions)).toEqual([0, 0, 0]);
+    expect(body.runway.notes).toContain('No checking, savings or cash on hand is in Nya, so there is no cash to start from.');
+    // The API and MCP: no cash, never "covered".
+    const a = (await quiet(() => api(apiRunway, 'runway'))).body;
+    for (const line of [a.without_income, a.with_income]) expect(line).toMatchObject({ outcome: 'no_cash', runs_out: null, days: null, months: null });
+    expect(a.notes).toContain('No checking, savings or cash on hand is in Nya, so there is no cash to start from.');
+    expect((await quiet(() => tool('get_runway', {}))).content[0].text).toBe('No runway: no checking, savings or cash on hand is in Nya, so there is no cash to start from. See notes.');
+  });
+
+  test('cash with no spending to go by is no runway either, and a health savings account isn’t cash', async () => {
+    await saveManualAccount(ctx, { account_id: 'manual_wallet', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: '2026-10-20T18:00:00.000Z' });
+    await saveManualAccount(ctx, { account_id: 'manual_hsa', name: 'Health', institution_name: 'HSA Bank', type: 'depository', subtype: 'hsa', balance: 3000, updated_at: '2026-10-20T18:00:00.000Z' });
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', 'tz=UTC'))).body.runway;
+    expect(r).toMatchObject({ start: 40, has_cash: true });
+    expect(r.cash_accounts.map((x: any) => x.name)).toEqual(['Wallet']);
+    expect(r.notes).toContain('Health at HSA Bank is a health savings account, for health costs, so it isn’t counted as cash.');
+    const a = (await quiet(() => api(apiRunway, 'runway', 'months=3'))).body;
+    for (const line of [a.without_income, a.with_income]) expect(line).toMatchObject({ outcome: 'no_spending', runs_out: null, days: null, months: null });
+    expect(a.notes[0]).toBe('There are no transactions in these months to go by, so no runway is given: link the accounts you spend from, or add their transactions.');
+    expect((await quiet(() => tool('get_runway', { months: 3 }))).content[0].text).toBe('No runway: there are no transactions from 2026-07-01 to 2026-09-30 to go by. See notes.');
+  });
+
+  test('today is the person’s own day: in New York it is still October when UTC is in November', async () => {
+    await seed();
+    // 22:00 on Oct 31 in New York; Nov 1 in UTC.
+    setSystemTime(new Date('2026-11-01T02:00:00.000Z'));
+    const ny = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    expect(ny.today).toBe('2026-10-31');
+    expect(ny.windows.find((w: any) => w.months === 3)).toMatchObject({ start: '2026-07-01', end: '2026-09-30' });
+    const utc = (await quiet(() => get(runwayRoute, '/api/reports/runway', 'tz=UTC'))).body.runway;
+    expect(utc.today).toBe('2026-11-01');
+    expect(utc.windows.find((w: any) => w.months === 3)).toMatchObject({ start: '2026-08-01', end: '2026-10-31' });
+    // The API's day is UTC's, as every answer of the API.
+    expect((await quiet(() => api(apiRunway, 'runway', 'months=3'))).body).toMatchObject({ today: '2026-11-01', spending: { from: '2026-08-01', to: '2026-10-31' } });
   });
 
   test('planned items that can’t be read leave it without them, and it says so; hidden accounts that can’t be read fail it', async () => {
@@ -407,6 +483,21 @@ describe('year over year from stored data', () => {
     ]);
   });
 
+  test('this year is the person’s own: in Los Angeles it is still 2026 when UTC is in 2027', async () => {
+    await seed();
+    // 19:00 on Dec 31 in Los Angeles; Jan 1 in UTC.
+    setSystemTime(new Date('2027-01-01T03:00:00.000Z'));
+    const la = (await quiet(() => get(yoyRoute, '/api/reports/year-over-year', 'tz=America/Los_Angeles'))).body.report;
+    expect(la.today).toBe('2026-12-31');
+    expect(la.year.this).toMatchObject({ start: '2026-01-01', end: '2026-12-31' });
+    expect(la.year.last).toMatchObject({ start: '2025-01-01', end: '2025-12-31' });
+    const utc = (await quiet(() => get(yoyRoute, '/api/reports/year-over-year', 'tz=UTC'))).body.report;
+    expect(utc.today).toBe('2027-01-01');
+    expect(utc.year.this).toMatchObject({ start: '2027-01-01', end: '2027-01-01' });
+    expect(utc.year.last).toMatchObject({ start: '2026-01-01', end: '2026-01-01' });
+    expect((await quiet(() => api(apiYoy, 'year-over-year'))).body.year.this).toMatchObject({ start: '2027-01-01', end: '2027-01-01' });
+  });
+
   test('every parameter is checked before anything is read', async () => {
     for (const query of ['currency=usd', 'kind=year', 'tz=Nowhere/Land', 'currency=USD&currency=EUR']) {
       const { res } = await get(yoyRoute, '/api/reports/year-over-year', query);
@@ -439,7 +530,10 @@ describe('saved scenarios, on the storage seam', () => {
     expect((await send('DELETE', { id: saved.body.scenario.id })).res.status).toBe(200);
     expect((await get(scenariosRoute, '/api/runway-scenarios')).body.scenarios).toEqual([]);
     // Only what the person saves is stored: never a figure.
-    expect(Object.keys(saved.body.scenario).sort()).toEqual(['currency', 'id', 'income_until', 'leave_out_one_offs', 'lower_by', 'months', 'name', 'planned', 'saved_at', 'v']);
+    expect(Object.keys(saved.body.scenario).sort()).toEqual(['count_moved_out', 'currency', 'id', 'income_until', 'leave_out_one_offs', 'lower_by', 'months', 'name', 'planned', 'saved_at', 'v']);
+    // Money moved out counted, when the person saves it so; left out, false.
+    expect(saved.body.scenario.count_moved_out).toBe(false);
+    expect((await send('POST', { scenario: scenario({ count_moved_out: true }) })).body.scenario.count_moved_out).toBe(true);
   });
 
   test('every field is checked, and anything else refused', async () => {
@@ -456,13 +550,14 @@ describe('saved scenarios, on the storage seam', () => {
       [{ scenario: scenario({ currency: 'usd' }) }, 'three-letter code'],
       [{ scenario: scenario({ income_until: '2026-02-30' }) }, 'Income stops on a date'],
       [{ scenario: scenario({ planned: 'yes' }) }, 'true or false'],
+      [{ scenario: scenario({ count_moved_out: 'yes' }) }, 'count_moved_out are true or false'],
       [{ scenario: { ...scenario(), result: '2027-01-24' } }, 'result isn’t part of a scenario'],
     ];
     for (const [body, words] of refused) {
       const r = await send('POST', body);
       expect([JSON.stringify(body).slice(0, 60), r.res.status, r.body.error]).toEqual([JSON.stringify(body).slice(0, 60), 400, expect.stringContaining(words)]);
     }
-    for (const body of [{}, { id: '../x' }, { id: 'a', also: 1 }]) expect((await send('DELETE', body)).res.status).toBe(400);
+    for (const body of [{}, { id: '../x' }, { id: 'a', also: 1 }, { id: 'a', unreadable: 'yes' }]) expect((await send('DELETE', body)).res.status).toBe(400);
     expect((await get(scenariosRoute, '/api/runway-scenarios')).body.scenarios).toEqual([]);
   });
 
@@ -473,6 +568,21 @@ describe('saved scenarios, on the storage seam', () => {
     expect([r.res.status, r.body.error]).toEqual([409, `At most ${MAX_SCENARIOS} scenarios can be saved: delete one first`]);
   });
 
+  test('saves sent together at the limit never leave more than MAX_SCENARIOS', async () => {
+    for (let i = 0; i < MAX_SCENARIOS - 1; i++) await runwayScenariosStore.set(ctx, `s${i}`, { v: 1, name: `S${i}`, months: 6, lower_by: 0, currency: null, income_until: null, planned: true, leave_out_one_offs: false, saved_at: '2026-10-01T00:00:00.000Z' });
+    const results = await Promise.all([0, 1, 2].map((i) => send('POST', { scenario: scenario({ name: `Together ${i}` }) })));
+    const count = await runwayScenariosStore.count(ctx);
+    expect(count).toBeLessThanOrEqual(MAX_SCENARIOS);
+    const saved = results.filter((r) => r.res.status === 200);
+    expect(results.every((r) => r.res.status === 200 || r.res.status === 409)).toBe(true);
+    // Each save answered as saved is stored; each refused one is not.
+    expect(count).toBe(MAX_SCENARIOS - 1 + saved.length);
+    for (const r of saved) expect(await runwayScenariosStore.get(ctx, r.body.scenario.id)).toMatchObject({ name: r.body.scenario.name });
+    // And room is room again: one more, alone, is saved while there is space.
+    if (count < MAX_SCENARIOS) expect((await send('POST', { scenario: scenario() })).res.status).toBe(200);
+    expect(await runwayScenariosStore.count(ctx)).toBe(MAX_SCENARIOS);
+  });
+
   test('one that can’t be read is named, never dropped, and can be deleted; one a newer version saved is never offered', async () => {
     await runwayScenariosStore.set(ctx, 'good', { v: 1, name: 'Good', months: 3, lower_by: 0, currency: null, income_until: null, planned: false, leave_out_one_offs: true, saved_at: '2026-10-01T00:00:00.000Z' });
     await fake.hset(ctxKey('runway-scenarios'), { broken: 'damaged-bytes-not-ciphertext-at-all', later: await encrypt(TEST_CTX, JSON.stringify({ v: 2, name: 'Later' })) });
@@ -481,8 +591,21 @@ describe('saved scenarios, on the storage seam', () => {
     expect(listed.body.scenarios.map((s: any) => s.id)).toEqual(['good']);
     expect(listed.body.unreadable_ids).toEqual(['broken']);
     expect(listed.body.unrecognised_ids).toEqual(['later']);
-    expect((await send('DELETE', { id: 'broken' })).res.status).toBe(200);
+    // Damaged: deleted only once the person confirmed it.
+    expect((await quiet(() => send('DELETE', { id: 'broken' }))).res.status).toBe(409);
+    expect((await quiet(() => get(scenariosRoute, '/api/runway-scenarios'))).body.unreadable_ids).toEqual(['broken']);
+    expect((await send('DELETE', { id: 'broken', unreadable: true })).res.status).toBe(200);
     expect((await quiet(() => get(scenariosRoute, '/api/runway-scenarios'))).body.unreadable_ids).toEqual([]);
+    // Saved by a newer version: intact data, never deleted from here.
+    for (const body of [{ id: 'later' }, { id: 'later', unreadable: true }]) {
+      const r = await quiet(() => send('DELETE', body));
+      expect([r.res.status, r.body.error]).toEqual([409, 'That scenario was saved by a newer version of Nya, so it can’t be deleted here.']);
+    }
+    expect((await quiet(() => get(scenariosRoute, '/api/runway-scenarios'))).body.unrecognised_ids).toEqual(['later']);
+    expect(await fake.hget(ctxKey('runway-scenarios'), 'later')).not.toBeNull();
+    // A readable one, as ever.
+    expect((await send('DELETE', { id: 'good' })).res.status).toBe(200);
+    expect(await quiet(() => runwayScenariosStore.count(ctx))).toBe(1);
   });
 
   test('each person’s own: another’s are never listed, and deleting by their id leaves them', async () => {
