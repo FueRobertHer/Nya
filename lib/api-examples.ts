@@ -89,6 +89,12 @@ const FLOWS_CONVERTED = (at: string, into = 'base_currency'): FieldDoc[] => [
   [`${at}.left_out[].currency`, 'The currency.'],
   [`${at}.left_out[].transactions`, 'How many transactions in it.'],
   [`${at}.left_out[].why`, '"no_rate" (the ECB doesn’t publish it, or didn’t on those days, and you set no rate of your own), "not_fetched" (Nya doesn’t have the ECB’s rates for those days yet), "quote_has_no_rate" (your own rate for it is in a currency with no rate) or "base_has_no_rate" (the currency it would be converted into has no rate). Version 1 may add reasons.'],
+  [
+    `${at}.assumed`,
+    'Transactions that say no currency, nor is their account’s known (only the oldest stored history has them), or null when there are none. A transaction that says none but whose account’s currency is known is counted in that one.',
+  ],
+  [`${at}.assumed.currency`, 'The currency they are counted as in: the one most transactions are in.'],
+  [`${at}.assumed.transactions`, 'How many.'],
 ];
 const EXAMPLE_FLOWS_CONVERTED = {
   converted: [
@@ -99,6 +105,7 @@ const EXAMPLE_FLOWS_CONVERTED = {
   rates_stale: false,
   own_rates: EXAMPLE_OWN_RATES,
   left_out: [],
+  assumed: null,
 };
 
 const EXAMPLE_SOURCES = [

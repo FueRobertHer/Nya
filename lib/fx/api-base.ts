@@ -227,12 +227,25 @@ export type ApiFlowsConverted = {
   own_rates: ApiOwnRate[];
   /** Transactions left out for having no rate, by currency, with why. */
   left_out: { currency: string; transactions: number; why: ApiNoRate }[];
+  /** Transactions that say no currency, nor is their account's known (only
+   *  the oldest stored history has them): counted as in `currency`, the one
+   *  most transactions are in. Null when there are none. */
+  assumed: { currency: string; transactions: number } | null;
 };
 
 /** A conversion (lib/fx/totals.ts) in the API's words, with what its total
  *  left out (lib/spending.ts leftOutByCurrency). */
 export function flowsConverted(
-  c: { into: string; from: { currency: string; count: number }[]; days: { first: string; last: string } | null; own: string[]; unrated: { currency: string; why: NoRate; unrated: string }[]; stale: boolean },
+  c: {
+    into: string;
+    from: { currency: string; count: number }[];
+    days: { first: string; last: string } | null;
+    own: string[];
+    unrated: { currency: string; why: NoRate; unrated: string }[];
+    stale: boolean;
+    assumed?: number;
+    assumedIn?: string;
+  },
   fx: Pick<FxTable, 'own'>,
   leftOut: readonly { currency: string; count: number }[]
 ): ApiFlowsConverted {
@@ -243,6 +256,7 @@ export function flowsConverted(
     rates_stale: c.stale,
     own_rates: apiOwnRates(fx.own.filter((o) => c.own.includes(o.currency))),
     left_out: leftOut.map((l) => ({ currency: l.currency, transactions: l.count, why: why.get(l.currency) ?? 'no_rate' })),
+    assumed: c.assumed && c.assumedIn ? { currency: c.assumedIn, transactions: c.assumed } : null,
   };
 }
 
@@ -263,5 +277,11 @@ export function flowsNotes(b: ApiFlowsConverted, home: string): string[] {
     notes.push(`${which} in base, which is in ${home}: ${why}`);
   }
   if (b.rates_stale && b.rate_days) notes.push(`The newest exchange rates Nya has are from ${b.rate_days.to}, so base may be out of date`);
+  if (b.assumed) {
+    const one = b.assumed.transactions === 1;
+    notes.push(
+      `${one ? '1 transaction says' : `${b.assumed.transactions} transactions say`} no currency, nor is ${one ? 'its account’s' : 'their accounts’'} known, so ${one ? 'it is' : 'they are'} counted in base as in ${b.assumed.currency}, the currency most are in`
+    );
+  }
   return notes;
 }

@@ -102,6 +102,26 @@ describe('the transactions’ exchange rates', () => {
     expect(t.conversion?.assumed).toBe(0);
   });
 
+  test('one whose account’s currency isn’t known either: counted in the main one, and said, in the page’s note and the API’s base', async () => {
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
+    const { readFlowFx } = await import('@/lib/fx/read');
+    const { convertedText } = await import('@/lib/fx/totals');
+    const { flowsConverted, flowsNotes } = await import('@/lib/fx/api-base');
+    const rows = [
+      { transaction_id: 'a', date: '2026-09-10', amount: 116.16, iso_currency_code: 'USD', transaction_code: null, category: 'groceries', account_id: 'acct_gone' },
+      { transaction_id: 'b', date: '2026-09-10', amount: 11.62, iso_currency_code: 'USD', transaction_code: null, category: 'groceries', account_id: 'acct_gone' },
+      { transaction_id: 'c', date: '2026-09-10', amount: 23.23, iso_currency_code: null, transaction_code: null, category: 'groceries', account_id: 'acct_gone' },
+    ];
+    const t = totalsIn(rows, await readFlowFx(ctx, rows, Date.parse('2026-09-15T12:00:00Z')));
+    expect(t.conversion).toMatchObject({ assumed: 1, assumedIn: 'USD' });
+    expect(t.rows.find((r: any) => r.transaction_id === 'c')).toMatchObject({ currency_assumed: true, converted: { amount: 23.23, currency: 'USD' } });
+    expect(convertedText(t.conversion!)).toContain('1 transaction says no currency, so it is counted in USD, the currency most are in.');
+    const base = flowsConverted(t.conversion!, { own: [] }, []);
+    expect(base.assumed).toEqual({ currency: 'USD', transactions: 1 });
+    expect(flowsNotes(base, 'EUR')).toContain('1 transaction says no currency, nor is its account’s known, so it is counted in base as in USD, the currency most are in');
+    expect(flowsConverted({ ...t.conversion!, assumed: 0, assumedIn: undefined }, { own: [] }, []).assumed).toBeNull();
+  });
+
   test('with the rates of the accounts’ currencies too, which no row is in: the Plan converts into its accounts’ currency', async () => {
     await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
     await saveManualAccount(ctx, { account_id: 'manual_isa', name: 'ISA', institution_name: 'Broker', type: 'investment', subtype: null, balance: 5_000, currency: 'GBP', updated_at: '2026-09-01T00:00:00.000Z' });
