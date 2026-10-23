@@ -35,7 +35,9 @@ import { ownedContainer } from './owners';
 import { sendsEmail } from './notice-recipients';
 import { clerkEnabled } from './auth-mode';
 import { isExcluded, isRefetched } from './export';
-import { backupRetention } from './backup';
+import { backupRetention, databaseBackupDays } from './backup';
+import { masterKeyConfigured } from './crypto';
+import { keyDeletionText } from './deletion-receipt';
 import { containerEntry, families, GROUPS, keptRows, kindOf, outsideEntries, SEERS, type Entry, type Group, type Outside, type Seer } from './inventory';
 
 /** How a kind's values are kept. For an encrypted kind, how many of its
@@ -175,6 +177,15 @@ function encryptionOf(name: string, heads: Record<string, number>, ownKey: strin
   return { kind: 'encrypted', own, shared, unclear: heads['?'] ?? 0, not_ciphertext: heads['-'] ?? 0, unchecked: heads['+'] ?? 0 };
 }
 
+/** Whether the privacy page shows a retention row on this copy of Nya: it
+ *  shows the record a deleted account leaves only where accounts have keys
+ *  of their own to destroy (app/privacy/page.tsx, keyDeletionText), so an
+ *  entry never cites a row the page doesn't have. */
+function rowShown(row: string): boolean {
+  if (row !== 'A record that a deleted account existed') return true;
+  return keyDeletionText({ envelope: masterKeyConfigured(), backups: backupRetention(), databaseDays: databaseBackupDays() }).key.length > 0;
+}
+
 const rowOf = (
   id: string,
   e: Entry,
@@ -191,7 +202,7 @@ const rowOf = (
   unit: e.unit,
   download,
   backed_up: !isExcluded(id) && !isRefetched(id),
-  kept: [...keptRows(e)],
+  kept: keptRows(e).filter(rowShown),
   kept_detail: counterWindow(id),
   seen: seenBy(e.seen),
   plain: e.plain ?? null,

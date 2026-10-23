@@ -129,6 +129,26 @@ describe('the registry', () => {
     expect(renderToStaticMarkup(PrivacyPage())).not.toContain('a copy of all but those of SimpleFIN');
   });
 
+  test('every retention row the list cites is on the privacy page as this copy is set up, whether accounts have keys or not', async () => {
+    for (const [master, blob] of [
+      [true, true],
+      [false, true],
+      [true, false],
+      [false, false],
+    ] as const) {
+      if (master) process.env.MASTER_KEY = Buffer.alloc(32, 9).toString('base64');
+      else delete process.env.MASTER_KEY;
+      if (blob) process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_placeholder';
+      else delete process.env.BLOB_READ_WRITE_TOKEN;
+      const html = renderToStaticMarkup(PrivacyPage());
+      const inv = await readInventory(ctx, { userId: null, now: NOW });
+      const cited = new Set([...rows(inv), ...inv.elsewhere].flatMap((r) => r.kept));
+      for (const title of cited) expect([master, blob, title, html.includes(`<th scope="row">${title}</th>`)]).toEqual([master, blob, title, true]);
+      expect(cited.has('A record that a deleted account existed')).toBe(master);
+      expect(row(inv, 'crypto:').kept.length).toBeGreaterThan(0);
+    }
+  });
+
   test('every count that limits how often is kept for an hour or a day, as the privacy page says of them', () => {
     for (const s of declaredStores()) {
       if (s.kind !== 'counter' && s.kind !== 'counter-map') continue;
@@ -217,19 +237,41 @@ describe('reading it', () => {
     expect(row(inv, 'connector-secrets').download).toEqual({ included: false, text: 'Not in your download: a credential, not your data.' });
   });
 
-  test('whether the nightly backups copy each kind comes from the backup’s own lists', async () => {
-    const { isExcluded } = await import('@/lib/export');
+  test('whether the nightly backups copy each kind is what a backup taken now holds', async () => {
+    const { exportLines } = await import('@/lib/export');
+    const { declaredPublicStores } = await import('@/lib/stores');
+    const { isEnvWide } = await import('@/lib/containers');
     delete process.env.BLOB_READ_WRITE_TOKEN;
     expect((await readInventory(ctx, { userId: null, now: NOW })).backups).toBe('none');
     process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_placeholder';
     process.env.BACKUP_KEEP_DAYS = 'a month';
     expect((await readInventory(ctx, { userId: null, now: NOW })).backups).toBe('invalid');
     delete process.env.BACKUP_KEEP_DAYS;
+
+    // One key of every kind, where it lives (a prefix's with a name after it),
+    // in text no client parses, as the archive needs.
+    const where = new Map<string, string>();
+    for (const name of [...families(), ...declaredStores().map((s) => s.name), ...declaredPublicStores().map((s) => s.name)]) {
+      const key = name.endsWith(':') ? `${name}one` : name;
+      const full = isEnvWide(name) ? testKey(key) : ctxKey(key);
+      if (name !== 'containers') await fake.hset(full, { f: 'stored-text' });
+      where.set(name, full.slice(testKey('').length));
+    }
+    const archived = new Set<string>();
+    for await (const line of exportLines(fake as any, new Date(NOW))) {
+      const record = JSON.parse(line);
+      if (typeof record.key === 'string') archived.add(record.key);
+    }
     const inv = await readInventory(ctx, { userId: null, now: NOW });
     expect(inv.backups).toBe('kept');
-    for (const r of [...rows(inv), ...inv.elsewhere]) expect([r.id, r.backed_up]).toEqual([r.id, !isExcluded(r.id) && r.id !== 'fx:ecb']);
-    expect(['history:net-worth', 'txns:', 'goals'].map((id) => row(inv, id).backed_up)).toEqual([true, true, true]);
-    expect(['api-tokens', 'connector-secrets', 'cache:', 'snapshot:'].map((id) => row(inv, id).backed_up)).toEqual([false, false, false, false]);
+    for (const r of [...rows(inv), ...inv.elsewhere]) {
+      expect([r.id, r.backed_up]).toEqual([r.id, archived.has(where.get(r.id)!)]);
+    }
+    expect(['history:net-worth', 'txns:', 'goals', 'download-count', 'containers', 'crypto:'].map((id) => row(inv, id).backed_up)).toEqual([true, true, true, true, true, true]);
+    expect(['api-tokens', 'api-requests', 'connector-secrets', 'connector-requests', 'cache:', 'snapshot:', 'sessions:'].map((id) => row(inv, id).backed_up)).toEqual([
+      false, false, false, false, false, false, false,
+    ]);
+    expect(['ratelimit:', 'backups:', 'fx:ecb'].map((id) => inv.elsewhere.find((r) => r.id === id)!.backed_up)).toEqual([false, false, false]);
   });
 
   test('under the account’s own key, or one this copy shares, told apart by what each value claims', async () => {

@@ -5986,6 +5986,22 @@ button.review-keys-toggle {
   display: none;
 }
 
+/* The browser's own marker is gone with the flex row, so a chevron says
+   each row opens, turned down while it is open. */
+.inventory-row > summary::after,
+.inventory-none > summary::after {
+  content: "\203A";
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.inventory-row[open] > summary::after,
+.inventory-none[open] > summary::after {
+  transform: rotate(90deg);
+}
+
 .inventory-row > summary {
   display: flex;
   flex-wrap: wrap;
