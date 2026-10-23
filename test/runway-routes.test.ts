@@ -59,6 +59,7 @@ const { firstDay } = await import('@/lib/api-read');
 const { runwayScenariosStore } = await import('@/lib/report/runway-scenario-store');
 const { MAX_SCENARIOS } = await import('@/lib/report/runway-scenarios');
 const { declaredStore } = await import('@/lib/stores');
+const { acrossParts } = await import('@/lib/user-restore/plan');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
 const runwayRoute = await import('@/app/api/reports/runway/route');
 const yoyRoute = await import('@/app/api/reports/year-over-year/route');
@@ -581,6 +582,13 @@ describe('saved scenarios, on the storage seam', () => {
     // And room is room again: one more, alone, is saved while there is space.
     if (count < MAX_SCENARIOS) expect((await send('POST', { scenario: scenario() })).res.status).toBe(200);
     expect(await runwayScenariosStore.count(ctx)).toBe(MAX_SCENARIOS);
+  });
+
+  test('a download holding a few past the limit, from before saves were counted again, is still one a restore takes back', () => {
+    const file = (n: number) =>
+      ({ core: {}, bank: { accounts: new Map() }, books: new Map(), entries: new Map([['runway-scenarios', Array.from({ length: n }, (_, i) => ({ id: `s${i}`, value: {} }))]]) }) as any;
+    expect(acrossParts(file(MAX_SCENARIOS + 2))).toBeNull();
+    expect(acrossParts(file(MAX_SCENARIOS * 2 + 1))).toBe(`runway-scenarios: the file has ${MAX_SCENARIOS * 2 + 1}, and Nya keeps at most ${MAX_SCENARIOS * 2}, so it can’t have come from Nya`);
   });
 
   test('one that can’t be read is named, never dropped, and can be deleted; one a newer version saved is never offered', async () => {

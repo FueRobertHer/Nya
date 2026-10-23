@@ -153,10 +153,15 @@ describe('to the cent, by the Activity tab’s rule', () => {
     expect(y.left_out.this).toEqual([{ currency: 'EUR', count: 1 }]);
     expect(y.left_out.last).toEqual([]);
     expect(y.left_out_text.this).toBe("1 transaction in EUR isn't in these totals, which are in USD.");
+    // Counted as the totals count: the transactions that would count but for
+    // their currency, so never the move to savings, the loan payment, the cash
+    // taken out or the TV excluded, and a split one once.
     expect(y.currencies).toEqual([
-      { currency: 'USD', transactions: 13 },
+      { currency: 'USD', transactions: 9 },
       { currency: 'EUR', transactions: 1 },
     ]);
+    const split = [row('shop-a', '2026-04-02', 30, { split_of: 'shop', category: 'food and drink' }), row('shop-b', '2026-04-02', 20, { split_of: 'shop' })];
+    expect(yoy({ rows: [...ROWS, ...split] }).currencies[0]).toEqual({ currency: 'USD', transactions: 10 });
     expect(yoyCurrency(ROWS, TODAY, 'EUR')).toBe('EUR');
     expect(yoyCurrency(ROWS, TODAY, 'JPY')).toBe('USD');
     expect(yoyCurrency(ROWS, TODAY, null)).toBe('USD');
