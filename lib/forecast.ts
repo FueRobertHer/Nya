@@ -227,8 +227,12 @@ export type CashPosition = {
   currency: string | null;
   /** The included accounts' balances added up, to the minor unit. */
   balances: number;
-  /** The charges still pending on them, taken off where it starts. */
-  pending: { amount: number; count: number };
+  /** The charges still pending on them, taken off where it starts, and
+   *  those left out for their currency, by currency, most first, as the
+   *  accounts are (`leftOut`): in another currency with no home currency,
+   *  or with no rate (named in `conversion`). cashPosition always gives it,
+   *  empty when none is; optional only for a position built by hand. */
+  pending: { amount: number; count: number; leftOut?: LeftOut };
   /** Where it starts: the balances less what is pending. */
   start: number;
   included: CashAccount[];
@@ -301,7 +305,9 @@ export function cashPosition(
   // one of these accounts' (so two accounts of one name at one bank are two),
   // else as a row names its account, by name and institution; and its type
   // when known. In another currency, converted as its account is, with a
-  // home currency.
+  // home currency; a charge that can't be is left out and counted, as an
+  // account is, never dropped without a word.
+  const chargesOut = new Map<string, number>();
   const known = new Set(institutions.flatMap((i) => i.accounts.map((a) => a.account_id)));
   const ids = new Set(included.map((a) => a.account_id));
   const accounts = new Set(included.map((a) => `${a.institution}|${a.name}`));
@@ -318,7 +324,11 @@ export function cashPosition(
       if (inCurrency(t, currency)) return [t];
       const c = currencyOf(t);
       const amount = c && conv.on ? conv.to(t.amount, c, false) : null;
-      return amount === null ? [] : [{ ...t, amount, iso_currency_code: currency, unofficial_currency_code: null }];
+      if (amount === null) {
+        if (c && t.amount > 0) chargesOut.set(c, (chargesOut.get(c) ?? 0) + 1);
+        return [];
+      }
+      return [{ ...t, amount, iso_currency_code: currency, unofficial_currency_code: null }];
     });
   const deposits = onCash.filter((t) => t.amount < 0 && isMoneyMovement(t));
   const paired = new Set<PendingRow>();
@@ -343,10 +353,11 @@ export function cashPosition(
     pending += toMinor(t.amount, scale);
     count++;
   }
+  const chargesLeftOut = [...chargesOut].map(([c, n]) => ({ currency: c, count: n })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
   return {
     currency,
     balances: balances / scale,
-    pending: { amount: pending / scale, count },
+    pending: { amount: pending / scale, count, leftOut: chargesLeftOut },
     start: (balances - pending) / scale,
     included,
     leftOut,
@@ -709,7 +720,12 @@ export function forecastNotes(opts: {
   // when that statement is paid already (a payment on or after its issue
   // date covers it), when a planned expense near the due date is that
   // payment, or when a payment held for a card it can't tell is near what this
-  // one owes: it may be that one.
+  // one owes: it may be that one. Planned items name no account, so only one
+  // whose name names the card (namesCard: the card's name or its bank's) is
+  // taken for a part of its payment, each time it falls near the due date:
+  // when they come to less than it, what they come to is said, and the rest.
+  // Rent or a phone bill due the same week is no part of it, and nothing they
+  // come to ever quiets the note.
   const paid = opts.series?.cardsPaid;
   const close = (a: number, b: number | null | undefined) => b !== null && b !== undefined && b > 0 && Math.abs(a - b) <= b * CARD_NEAR;
   if (opts.until)
@@ -725,14 +741,13 @@ export function forecastNotes(opts: {
         if (owed === 0) continue;
         const figure = owed ?? l.minimum_payment;
         if (paid?.unknown.some((x) => close(x, figure) || close(x, l.minimum_payment))) continue;
-        const planned = (opts.planned ?? []).some(
-          (p) =>
-            p.kind === 'expense' &&
-            inCurrency({ iso_currency_code: p.currency }, position.currency) &&
-            plannedDates(p, addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS), 1).length > 0 &&
-            (close(p.amount, figure) || close(p.amount, l.minimum_payment))
+        const [from, to] = [addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS)];
+        const around = (opts.planned ?? []).filter(
+          (p) => p.kind === 'expense' && inCurrency({ iso_currency_code: p.currency }, position.currency) && plannedDates(p, from, to, 1).length > 0
         );
-        if (planned) continue;
+        if (around.some((p) => close(p.amount, figure) || close(p.amount, l.minimum_payment))) continue;
+        const forCard = around.filter((p) => namesCard(p.name, [a.name, i.institution_name]));
+        const part = Math.round(forCard.reduce((n, p) => n + p.amount * plannedDates(p, from, to).length, 0) * 100) / 100;
         const money = (n: number) => formatMoney(n, a.currency ?? position.currency);
         const amount =
           owed === null
@@ -742,7 +757,11 @@ export function forecastNotes(opts: {
             : since > 0
               ? `, ${money(owed)} left of its statement,`
               : `, statement balance ${money(owed)},`;
-        notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
+        if (part > 0 && figure && part < figure)
+          notes.push(
+            `${a.name}'s payment${amount} is due ${days.day(due)}. The ${money(part)} you planned around then for it may be part of it; the rest, ${money(Math.round((figure - part) * 100) / 100)}, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.`
+          );
+        else notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
       }
 
   // Pay left out, named.
@@ -763,8 +782,11 @@ export function forecastNotes(opts: {
   }
 
   for (const n of position.noBalance) notes.push(`${n.name} at ${n.institution} has no balance to start from, so it isn't in this forecast.`);
-  const accounts = withWhy(leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false }), position.conversion);
+  const accounts = withWhy(leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false }), position.conversion, position.leftOut);
   if (accounts) notes.push(accounts);
+  const charges = position.pending.leftOut ?? [];
+  const pendingLeft = withWhy(leftOutText(charges, position.currency, { noun: 'pending charge', where: 'this forecast', plural: false }), position.conversion, charges);
+  if (pendingLeft) notes.push(pendingLeft);
   const amounts = withWhy(leftOutText(opts.eventsLeftOut, position.currency, { noun: 'expected amount', where: 'this forecast', plural: false }), opts.eventsConversion);
   if (amounts) notes.push(amounts);
   const unplaced = opts.series?.unplaced ?? [];
@@ -775,11 +797,27 @@ export function forecastNotes(opts: {
   return notes;
 }
 
+/** Whether a planned item's name names a card: its account's name or its
+ *  bank's, as whole words, in any case ("Sapphire payment", "chase card";
+ *  never "Sapphires"). */
+export function namesCard(name: string, names: readonly string[]): boolean {
+  return names.some((n) => {
+    const words = n.trim();
+    if (!words) return false;
+    const escaped = words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(name);
+  });
+}
+
 /** A sentence of what was left out for its currency, with why each has no
- *  rate after it when a home currency converts the rest (lib/fx/words.ts). */
-export function withWhy(text: string | null, c: ForecastConversion | null | undefined): string | null {
-  if (text === null || !c || c.unrated.length === 0) return text;
-  return `${text.replace(/\.$/, '')}: ${c.unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
+ *  rate after it when a home currency converts the rest (lib/fx/words.ts).
+ *  `of`: the currencies the sentence names, when `c` converted more than
+ *  them (a cash position's accounts and its pending charges): only theirs
+ *  are said. */
+export function withWhy(text: string | null, c: ForecastConversion | null | undefined, of?: LeftOut): string | null {
+  const unrated = (c?.unrated ?? []).filter((u) => !of || of.some((l) => l.currency === u.currency));
+  if (text === null || !c || unrated.length === 0) return text;
+  return `${text.replace(/\.$/, '')}: ${unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
 }
 
 /** What the forecast converted into its currency, with a home currency, in

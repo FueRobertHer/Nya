@@ -173,7 +173,8 @@ describe('the card, with the months in', () => {
   });
 
   test('a connection that stopped before the months: not "no contributions", and why, as a warning', () => {
-    const stopped = { kind: 'stopped', institution: 'Chase', since: '2026-06-10T12:00:00.000Z' };
+    // Noon on Jun 10 in the machine's time zone, so Jun 10 in any.
+    const stopped = { kind: 'stopped', institution: 'Chase', since: new Date('2026-06-10T12:00:00').toISOString() };
     const t = view([goal('Fund', 'sav', 20_000)], new Map([['sav', { source: 'transactions', months: months.map((month) => ({ month, amount: null, gaps: [stopped] })) }]]));
     expect(t).not.toContain('No contributions');
     expect(t).toContain('What went into Savings lately isn’t known, so neither is its pace');

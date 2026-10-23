@@ -260,13 +260,16 @@ describe('the outlook in words', () => {
   });
 
   test('why the pace may be off, from each month’s gaps', () => {
+    // A last sync is an instant, said as its day where the person is: 3 PM
+    // on Sep 12 in the machine's time zone, so Sep 12 in any.
+    const since = new Date('2026-09-12T15:00:00').toISOString();
     expect(
       gapsText([
-        { kind: 'stopped', institution: 'Chase', since: '2026-09-12T15:00:00.000Z' },
+        { kind: 'stopped', institution: 'Chase', since },
         { kind: 'importing', institution: 'N26' },
         { kind: 'missing', institution: 'Ally' },
         { kind: 'begins', on: '2026-08-14' },
-        { kind: 'stopped', institution: 'Chase', since: '2026-09-12T15:00:00.000Z' },
+        { kind: 'stopped', institution: 'Chase', since },
       ])
     ).toBe(
       'The pace may be off: Chase hasn’t synced since Sep 12; N26 is still importing older transactions; Ally’s transactions couldn’t be loaded; its transactions in Nya begin on Aug 14, 2026, so August 2026 may be short.'
@@ -284,7 +287,8 @@ describe('the outlook in words', () => {
   });
 
   test('a connection that stopped before the months began: not "no history", not "no contributions", and why', () => {
-    const since = '2026-06-10T12:00:00.000Z';
+    // Noon on Jun 10 in the machine's time zone, so Jun 10 in any.
+    const since = new Date('2026-06-10T12:00:00').toISOString();
     const stopped = { kind: 'stopped' as const, institution: 'Chase', since };
     const flows = new Map(FLOWS);
     flows.set('sav', { source: 'transactions', months: ['2026-07', '2026-08', '2026-09'].map((m) => month(m, null, { gaps: [stopped] })) });

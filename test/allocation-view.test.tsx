@@ -584,9 +584,12 @@ describe('the card', () => {
   };
 
   test('says what it covers, as of when, in which currency', () => {
-    const t = text(renderToStaticMarkup(<AllocationCard allocation={state()} plan={plan()} onSavePlan={async () => true} planEditable institutions={institutions} balancesAsOf="2026-10-09T15:04:00Z" />));
+    // When the balances were loaded is said where the person is: 3:04 PM on
+    // Oct 9 in the machine's time zone, so the same words in any.
+    const asOf = new Date('2026-10-09T15:04:00').toISOString();
+    const t = text(renderToStaticMarkup(<AllocationCard allocation={state()} plan={plan()} onSavePlan={async () => true} planEditable institutions={institutions} balancesAsOf={asOf} />));
     expect(t).toContain('Allocation');
-    expect(t).toMatch(/Your investment accounts, as loaded Oct 9, \d+:04 [AP]M, in USD\./);
+    expect(t).toMatch(/Your investment accounts, as loaded Oct 9, 3:04\sPM, in USD\./);
     expect(t).toContain('Set a target');
     expect(t).toContain('Over time');
   });

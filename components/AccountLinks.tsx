@@ -15,13 +15,16 @@
 //   - collapsed, every earlier account, each with Forget: the user decides
 //     what is kept about accounts they no longer have. Each is named as
 //     lib/earlier-names.ts names it, which the restore card's notes use too:
-//     two that would read the same are told apart by the end of each id.
+//     two that would read the same are told apart by the end of each id. One
+//     whose forget would be refused says why instead (`refused`);
+//   - accounts a SimpleFIN or Lunch Flow connection fed that were let go, by
+//     how many, with where they are forgotten: the Reports page.
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
 
@@ -62,12 +65,23 @@ export type AccountLinksPayload = {
   unclaimed: Unclaimed[];
   /** Every earlier account that can be linked by hand, and to what. */
   manual?: Unclaimed[];
-  /** Earlier accounts the user can forget for good. */
-  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean }[];
+  /** Earlier accounts the user can forget for good; `refused`: why one
+   *  can't be forgotten here (what a restore brought back for it is in a
+   *  form this version doesn't know), said in place of Forget; `unchecked`:
+   *  that couldn't be checked just now, so it offers no Forget either. */
+  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean; refused?: string; unchecked?: true }[];
+  /** Whether `earlier` was checked for forgets that would be refused, which
+   *  is asked once the list is opened (?earlier=1): until then no Forget is
+   *  offered. Absent: checked. */
+  earlier_checked?: boolean;
   links: Linked[];
   /** Saved links that can't be read. While one exists and an account is
    *  hidden, the dashboard can't load, so each gets a Remove button. */
   broken?: string[];
+  /** How many accounts a SimpleFIN or Lunch Flow connection fed were let go:
+   *  their names are kept for reports, and forgotten on the Reports page,
+   *  which this points to. */
+  stopped?: number;
 };
 type Payload = AccountLinksPayload;
 
@@ -112,17 +126,21 @@ export default function AccountLinks({
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState<{ old: string; to: string } | null>(null);
   const [picked, setPicked] = useState<Record<string, string>>({});
+  // Whether the Earlier accounts list is open: while it is, each load asks
+  // which of them can be forgotten, which reads what a restore brought back
+  // for each, so nothing reads it while the list is closed.
+  const [checkEarlier, setCheckEarlier] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/account-links');
+      const res = await fetch(checkEarlier ? '/api/account-links?earlier=1' : '/api/account-links');
       if (!res.ok) throw new Error();
       setData(await res.json());
     } catch {
       // Optional feature: a failed load just shows nothing.
       setData(null);
     }
-  }, []);
+  }, [checkEarlier]);
 
   useEffect(() => {
     load();
@@ -187,6 +205,7 @@ export default function AccountLinks({
         setPreview(null);
       }}
       onAct={act}
+      onEarlierOpen={setCheckEarlier}
     />
   );
 }
@@ -203,10 +222,14 @@ export function AccountLinksView({
   onPreview,
   onPick,
   onAct,
+  onEarlierOpen,
   open,
 }: {
   /** Sections to start expanded (for tests and previews). */
   open?: { byHand?: boolean; earlier?: boolean };
+  /** The Earlier accounts list was opened (true) or closed: while it is
+   *  open, ask which can be forgotten. */
+  onEarlierOpen?: (open: boolean) => void;
   data: Payload | null;
   busy: boolean;
   error: string;
@@ -222,6 +245,7 @@ export function AccountLinksView({
   const manual = useMemo(() => data?.manual ?? [], [data]);
   const earlier = useMemo(() => data?.earlier ?? [], [data]);
   const earlierName = useMemo(() => earlierNames(earlier), [earlier]);
+  const checked = data?.earlier_checked !== false;
   const [earlierOpen, setEarlierOpen] = useState(open?.earlier ?? false);
   const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
   const [byHandOld, setByHandOld] = useState('');
@@ -233,7 +257,8 @@ export function AccountLinksView({
       manual.length === 0 &&
       earlier.length === 0 &&
       data.links.length === 0 &&
-      broken.length === 0)
+      broken.length === 0 &&
+      !data.stopped)
   ) {
     return null;
   }
@@ -422,7 +447,14 @@ export function AccountLinksView({
 
       {earlier.length > 0 && (
         <div className="account-link-row">
-          <button className="link-btn" onClick={() => setEarlierOpen(!earlierOpen)} aria-expanded={earlierOpen}>
+          <button
+            className="link-btn"
+            onClick={() => {
+              onEarlierOpen?.(!earlierOpen);
+              setEarlierOpen(!earlierOpen);
+            }}
+            aria-expanded={earlierOpen}
+          >
             {earlierOpen ? 'Hide earlier accounts' : `Earlier accounts (${earlier.length})`}
           </button>
           {earlierOpen && (
@@ -432,6 +464,7 @@ export function AccountLinksView({
                 the categories saved for it and the transactions imported into it from files, for good. Past
                 net-worth totals don&apos;t change.
               </p>
+              {!checked && <p className="chart-note">Checking which of them can be forgotten…</p>}
               {earlier.map((e) => {
                 const name = earlierName.get(e.id) ?? e.label ?? 'Balance history';
                 return (
@@ -440,26 +473,41 @@ export function AccountLinksView({
                       {name}
                       {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
                       {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
+                      {e.refused ? `. ${e.refused}` : ''}
+                      {e.unchecked ? '. Whether it can be forgotten couldn’t be checked just now: try again later.' : ''}
                     </span>
-                    <button
-                      className="link-btn danger-link"
-                      disabled={busy}
-                      onClick={() => {
-                        const sure =
-                          typeof window === 'undefined' ||
-                          window.confirm(
-                            `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
-                          );
-                        if (sure) onAct('POST', { action: 'forget', old: e.id });
-                      }}
-                    >
-                      Forget
-                    </button>
+                    {checked && !e.refused && !e.unchecked && (
+                      <button
+                        className="link-btn danger-link"
+                        disabled={busy}
+                        onClick={() => {
+                          const sure =
+                            typeof window === 'undefined' ||
+                            window.confirm(
+                              `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
+                            );
+                          if (sure) onAct('POST', { action: 'forget', old: e.id });
+                        }}
+                      >
+                        Forget
+                      </button>
+                    )}
                   </div>
                 );
               })}
             </>
           )}
+        </div>
+      )}
+
+      {!!data.stopped && (
+        <div className="account-link-row">
+          <p className="chart-note">
+            {data.stopped === 1
+              ? 'An account SimpleFIN or Lunch Flow kept up to date was let go: Nya keeps its name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.'
+              : `${plainNumber(data.stopped)} accounts SimpleFIN or Lunch Flow kept up to date were let go: Nya keeps each one’s name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.`}{' '}
+            To forget {data.stopped === 1 ? 'it' : 'one'}, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.
+          </p>
         </div>
       )}
 
