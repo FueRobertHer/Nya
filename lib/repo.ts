@@ -391,6 +391,10 @@ export type MapStore<T> = Declared & {
   count(ctx: Ctx): Promise<number>;
   /** Whether there is an entry under the id, readable or not. */
   has(ctx: Ctx, id: string): Promise<boolean>;
+  /** Every id with an entry, readable or not, sorted, without reading any
+   *  value: for a store whose ids say what an entry is (a day, its maker),
+   *  to find the few to read, or the old ones to remove. One request. */
+  ids(ctx: Ctx): Promise<string[]>;
   /** How much it stores (StoreSize), readable or not, without reading any
    *  value. One request (MAP_SIZE). */
   size(ctx: Ctx): Promise<StoreSize>;
@@ -1184,6 +1188,12 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     },
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
+    },
+    async ids(ctx) {
+      // Uncaught: a failure to reach storage is never "no entries".
+      const answer = await redis().hkeys(key(ctx));
+      if (!Array.isArray(answer) || !answer.every((v) => typeof v === 'string')) throw new Error(`repo: unexpected answer listing ${name}`);
+      return [...answer].sort();
     },
     async size(ctx) {
       const answer = await redis().eval(MAP_SIZE, [key(ctx)], []);

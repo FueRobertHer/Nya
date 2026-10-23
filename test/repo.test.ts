@@ -798,6 +798,23 @@ function contract(b: Backend) {
       expect(await notes.size(B)).toEqual({ entries: 0, chars: 0, largest: null });
     });
 
+    test('ids: every id, readable or not, sorted, without reading a value, in one request, and only its own container', async () => {
+      expect(await notes.ids(A)).toEqual([]);
+      await notes.setMany(A, [
+        ['n3', NOTE],
+        ['n1', RENT],
+      ]);
+      await b.raw.hset(notesKey(), 'n2', 'damaged');
+      await b.raw.hset(notesKey(B), 'n9', 'unreadable');
+      const sent = await sentBy(async () => {
+        expect(await notes.ids(A)).toEqual(['n1', 'n2', 'n3']);
+      });
+      expect(sent).toEqual(['hkeys']);
+      expect(await notes.ids(B)).toEqual(['n9']);
+      b.failNext('hkeys');
+      await notBlamed(() => notes.ids(A));
+    });
+
     test("two containers never see each other's entries", async () => {
       await notes.set(A, 'n1', NOTE);
       expect((await notes.getAll(B)).size).toBe(0);
