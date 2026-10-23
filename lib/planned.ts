@@ -11,9 +11,10 @@
 // storage seam): items, dismissals and the low-balance warning are edited by
 // one person, on one screen, a change at a time (lib/whole-list-store.ts).
 //
-// An item's currency is its own, never converted: the forecast counts the
-// items in its currency and names the rest (lib/forecast.ts). Its amount is
-// positive; whether it is money out or in is its kind.
+// An item's currency is its own, never relabelled: the forecast counts the
+// items in its currency, and once a home currency is chosen the rest
+// converted into it at the newest rates, else names them (lib/forecast.ts).
+// Its amount is positive; whether it is money out or in is its kind.
 
 import { isCalendarDay, knownCurrency, amountUnitsError, MAX_AMOUNT } from './manual-txn-input';
 import { monthlyFrom, scheduleDatesBetween, type Schedule } from './recurring';
