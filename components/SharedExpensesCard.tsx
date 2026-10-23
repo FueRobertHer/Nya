@@ -25,7 +25,7 @@ import { proposals, type MatchPerson, type Proposal } from '@/lib/shared-expense
 import { MAX_BATCH, REMOVED_NAME } from '@/lib/shared-expenses/model';
 import type { ShareResult } from '@/lib/shared-expenses/rows';
 import type { Balance } from '@/lib/shared-expenses/balances';
-import { convert, isStale, type FxTable } from '@/lib/fx/rates';
+import { convert, isStale, ownRateOn, type FxTable } from '@/lib/fx/rates';
 import { balanceText, letGoText, reasonsText, whoseText } from './shared-expenses-text';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
 import ShareCostSheet from './ShareCostSheet';
@@ -40,16 +40,19 @@ export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'>;
 /** A person's balances in the home currency, at the newest rates: an
  *  estimate to read, never stored, asked for or matched on; null without a
  *  home currency, a rate, or anything but the home currency to convert. */
-export function aboutInHome(balances: readonly Balance[], fx: FxTable | null | undefined): { amount: number; currency: string; stale: boolean } | null {
+export function aboutInHome(balances: readonly Balance[], fx: FxTable | null | undefined): { amount: number; currency: string; stale: boolean; own: string[] } | null {
   const home = fx?.home;
   if (!fx || !home || !fx.latest || balances.length === 0 || balances.every((b) => b.currency === home)) return null;
+  const day = fx.latest.date;
   let sum = 0;
   for (const b of balances) {
-    const c = convert(fx, b.amount, b.currency, home, fx.latest.date, { tidy: true });
+    const c = convert(fx, b.amount, b.currency, home, day, { tidy: true });
     if (!c.ok) return null;
     sum += c.amount;
   }
-  return { amount: sum, currency: home, stale: isStale(fx, Date.now()) };
+  // The currencies a rate of the person's own prices, said by name.
+  const own = [...new Set(balances.map((b) => b.currency))].filter((c) => c !== home && ownRateOn(fx, c, day) !== null).sort();
+  return { amount: sum, currency: home, stale: isStale(fx, Date.now()), own };
 }
 
 /** How many proposals the card lists at once. */
@@ -293,7 +296,7 @@ export default function SharedExpensesCard({
                     if (!about) return null;
                     return (
                       <span className="type-tag">
-                        <Masked>{`About ${formatMoney(Math.abs(about.amount), about.currency)} ${about.amount >= 0 ? 'owed to you' : 'you owe'} in all, at the latest exchange rates: an estimate`}</Masked>
+                        <Masked>{`About ${formatMoney(Math.abs(about.amount), about.currency)} ${about.amount >= 0 ? 'owed to you' : 'you owe'} in all, at the latest exchange rates${about.own.length > 0 ? ` (your own for ${about.own.join(' and ')})` : ''}: an estimate`}</Masked>
                         {about.stale ? ', and the rates may be out of date' : ''}
                       </span>
                     );
@@ -380,7 +383,7 @@ export default function SharedExpensesCard({
             <div className="card-actions">
               {moves.slice(0, 2).map((m) => (
                 <button key={m.transaction_id} className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'move', transaction_id: s.transaction_id, to: m.transaction_id })}>
-                  Move to {m.name}, {shownDay(m.date)}
+                  Move to {m.name}, {shownDay(m.date)}, {m.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'keep', transaction_id: s.transaction_id }, false)}>
@@ -401,7 +404,7 @@ export default function SharedExpensesCard({
             <div className="card-actions">
               {moves.slice(0, 2).map((m) => (
                 <button key={m.transaction_id} className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'move', transaction_id: p.transaction_id, to: m.transaction_id })}>
-                  Move to {m.name}, {shownDay(m.date)}
+                  Move to {m.name}, {shownDay(m.date)}, {m.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
@@ -414,12 +417,28 @@ export default function SharedExpensesCard({
           </div>
         );
       })}
-      {(facts?.twice.length ?? 0) > 0 && (
-        <p className="stale-note">
-          {facts!.twice.length === 1 ? 'A transaction is' : `${facts!.twice.length} transactions are`} shared twice: once as the bank’s and once as the row imported from a
-          file it stands for. The bank’s counts; stop sharing the other in the file’s account.
-        </p>
-      )}
+      {(facts?.twice ?? []).map((tw) => {
+        const t = byId.get(tw.bank);
+        return (
+          <div key={`twice:${tw.bank}`} className="stale-note">
+            {t ? `${t.name}, ${shownDay(t.date)}` : 'A transaction'} is shared twice: as the bank’s, and as the row imported from a file that it stands for. The bank’s share
+            counts.
+            <div className="card-actions">
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() =>
+                  void (async () => {
+                    for (const id of tw.imported) if (!(await act(SHARED_ROUTES.shares, 'DELETE', { transaction_id: id }))) return;
+                  })()
+                }
+              >
+                Remove the imported row’s share
+              </button>
+            </div>
+          </div>
+        );
+      })}
 
       {error && (
         <div className="error">
@@ -449,7 +468,10 @@ export default function SharedExpensesCard({
               <input type="radio" name="shared-counting" checked={card.counting === 'part'} onChange={() => void act(SHARED_ROUTES.card, 'PUT', { counting: 'part' })} />
               <span>
                 <span className="lifecycle-choice-name">Your part</span>
-                <span className="lifecycle-choice-note">What others owe you of it isn’t your spending, and their paying you back isn’t income.</span>
+                <span className="lifecycle-choice-note">
+                  What others owe you of it isn’t your spending, and their paying you back isn’t income. Your spending stays lower by what others owe you until they pay it or you let
+                  it go.
+                </span>
               </span>
             </label>
             <label className="lifecycle-choice">

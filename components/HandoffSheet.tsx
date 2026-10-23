@@ -12,11 +12,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
-import { formatMoney, hideAmountsIn } from '@/lib/format';
+import { amountsHidden, formatMoney, hideAmountsIn } from '@/lib/format';
 import { toUnits, unitScale } from '@/lib/split-rows';
 import { isHandle, REMOVED_NAME, type Direction, type RequestVia } from '@/lib/shared-expenses/model';
 import { handoffLinks, LINK_CURRENCY, messageText, NOTE_CHARS, noteOf, type MessageLine } from '@/lib/shared-expenses/links';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { useAmountsHidden } from './hide-amounts';
 
 export default function HandoffSheet({ person, currency, shared, onClose }: { person: string | null; currency: string; shared: SharedExpenses; onClose: () => void }) {
   const card = shared.card;
@@ -32,6 +33,10 @@ export default function HandoffSheet({ person, currency, shared, onClose }: { pe
   const [said, setSaid] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  // While amounts are hidden the message on screen shows none; what is
+  // copied or shared has them, and the buttons say so.
+  useAmountsHidden(); // drawn again when amounts are hidden or shown
+  const hidden = amountsHidden();
 
   useEffect(() => {
     if (!person) return;
@@ -148,11 +153,11 @@ export default function HandoffSheet({ person, currency, shared, onClose }: { pe
       </p>
       <div className="button-pair">
         <button className="secondary" onClick={() => void copy()}>
-          Copy the message
+          {hidden ? 'Copy the message, amounts included' : 'Copy the message'}
         </button>
         {canShare && (
           <button className="secondary" onClick={() => void share()}>
-            Share…
+            {hidden ? 'Share it, amounts included…' : 'Share…'}
           </button>
         )}
       </div>

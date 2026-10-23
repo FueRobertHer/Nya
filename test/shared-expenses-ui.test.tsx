@@ -203,7 +203,11 @@ describe('the card', () => {
       { currency: 'USD', amount: 35, open: 2, oldest: null, over: 0 },
       { currency: 'EUR', amount: -10, open: 1, oldest: null, over: 0 },
     ];
-    expect(aboutInHome(balances, fx)).toEqual({ amount: 24, currency: 'USD', stale: false });
+    expect(aboutInHome(balances, fx)).toEqual({ amount: 24, currency: 'USD', stale: false, own: [] });
+    // A rate of the person's own is named.
+    const btc = { currency: 'BTC', amount: 0.001, open: 1, oldest: null, over: 0 };
+    const withOwn: FxTable = { ...fx, own: [{ currency: 'BTC', rate: '60000', quote: 'USD', from: null, set_at: AT }] };
+    expect(aboutInHome([balances[0], btc], withOwn)).toEqual({ amount: 95, currency: 'USD', stale: false, own: ['BTC'] });
     expect(aboutInHome(balances, { ...fx, fetch: null })?.stale).toBe(true);
     // Only the home currency, or no home currency: nothing to say.
     expect(aboutInHome([balances[0]], fx)).toBeNull();
@@ -238,6 +242,13 @@ describe('the card', () => {
     expect(said).toContain('Move to Bistro');
     expect(said).toContain('Keep it');
   });
+
+  test('a transaction shared twice through an imported twin: the bank’s counts, and the other can be removed', () => {
+    const bank = txn({ transaction_id: 't-bank', name: 'Bistro', amount: 120, date: daysAgo(4) });
+    const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf())} txns={[bank]} facts={{ gone: { shares: [], payments: [] }, twice: [{ bank: 't-bank', imported: ['imported-txn:x'] }] }} tags={[]} taxonomy={null} currency="USD" />));
+    expect(said).toContain('is shared twice: as the bank’s, and as the row imported from a file that it stands for. The bank’s share counts.');
+    expect(said).toContain('Remove the imported row’s share');
+  });
 });
 
 describe('the handoff', () => {
@@ -262,10 +273,11 @@ describe('the handoff', () => {
     expect(said).not.toContain('on Venmo');
   });
 
-  test('with amounts hidden, the message on screen shows none (what is copied has them)', () => {
+  test('with amounts hidden, the message on screen shows none, and copying says it has them', () => {
     const html = hidden(() => renderToStaticMarkup(<HandoffSheet person="alex" currency="USD" shared={shared(cardOf())} onClose={() => {}} />));
     expect(text(html)).not.toContain('35.00');
     expect(html).toContain(MASK);
+    expect(text(html)).toContain('Copy the message, amounts included');
   });
 });
 
