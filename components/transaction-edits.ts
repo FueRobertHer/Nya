@@ -125,6 +125,7 @@ export function useTransactionEdits({
   requestBackfill,
   taxonomy = null,
   onTagMade,
+  onAnswer,
 }: {
   txns: Txn[] | null;
   setTxns: Dispatch<SetStateAction<Txn[] | null>>;
@@ -148,6 +149,9 @@ export function useTransactionEdits({
   /** A tag made on a transaction as it was typed, for the list of tags
    *  (components/tags-state.ts). */
   onTagMade?: (tag: Tag) => void;
+  /** Each answer of /api/transactions read quietly, for what else it says
+   *  (shared expenses' `shared_expenses`, components/SharedExpensesCard.tsx). */
+  onAnswer?: (data: Record<string, unknown>) => void;
 }) {
   const [sheet, setSheet] = useState<ManualTxnTarget | null>(null);
   // Why the last change didn't save, shown on the Activity tab until the next
@@ -183,10 +187,11 @@ export function useTransactionEdits({
       setTxnUnread?.(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout?.(noTransactionsView(data));
+      onAnswer?.(data);
     } catch {
       // The list shown is the server's answer to the save; the next load reads it again.
     }
-  }, [setTxns, setTxnNotes, setTxnAside, setTxnUnread, setTxnIncomplete, setTxnWithout]);
+  }, [setTxns, setTxnNotes, setTxnAside, setTxnUnread, setTxnIncomplete, setTxnWithout, onAnswer]);
 
   /** After a save or delete: the row in the list, or out of it, at once, and
    *  when the balance moved too, net worth as after the account's Update form:

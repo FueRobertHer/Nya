@@ -1,0 +1,549 @@
+'use client';
+
+// The Shared expenses card (#49), on the Activity tab: the people the person
+// splits costs with, what each owes or is owed per currency, and what to do
+// about it. Rows that may have paid something back are offered here
+// (lib/shared-expenses/match.ts, worked out in the browser over the rows
+// already loaded), never confirmed on their own; transactions carrying a
+// person's tag that aren't shared yet are offered in one tap; a shared or
+// paying transaction that is gone from the accounts is said, with what can be
+// done about it. Every sheet it opens is mounted here.
+//
+// Nya keeps the list; the money moves in Venmo, Cash App or however the
+// people pay each other. Balances are figures only when everything could be
+// read (app/api/shared-expenses reads strictly).
+
+import { useMemo, useState } from 'react';
+import { Masked } from './HideAmounts';
+import type { Txn } from './MonthBreakdown';
+import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
+import { localDate } from '@/lib/local-date';
+import type { Taxonomy } from '@/lib/categories';
+import type { Tag } from '@/lib/tags';
+import { currencyOf } from '@/lib/spending';
+import { proposals, type MatchPerson, type Proposal } from '@/lib/shared-expenses/match';
+import { MAX_BATCH, REMOVED_NAME } from '@/lib/shared-expenses/model';
+import type { ShareResult } from '@/lib/shared-expenses/rows';
+import type { Balance } from '@/lib/shared-expenses/balances';
+import { convert, isStale, type FxTable } from '@/lib/fx/rates';
+import { balanceText, letGoText, reasonsText, whoseText } from './shared-expenses-text';
+import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import ShareCostSheet from './ShareCostSheet';
+import { ConfirmPaymentSheet, SettleSheet } from './ConfirmPaymentSheet';
+import PersonSheet from './PersonSheet';
+import IouSheet from './IouSheet';
+import HandoffSheet from './HandoffSheet';
+
+/** What the transactions' read says of shared expenses (lib/activity.ts). */
+export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'>;
+
+/** A person's balances in the home currency, at the newest rates: an
+ *  estimate to read, never stored, asked for or matched on; null without a
+ *  home currency, a rate, or anything but the home currency to convert. */
+export function aboutInHome(balances: readonly Balance[], fx: FxTable | null | undefined): { amount: number; currency: string; stale: boolean } | null {
+  const home = fx?.home;
+  if (!fx || !home || !fx.latest || balances.length === 0 || balances.every((b) => b.currency === home)) return null;
+  let sum = 0;
+  for (const b of balances) {
+    const c = convert(fx, b.amount, b.currency, home, fx.latest.date, { tidy: true });
+    if (!c.ok) return null;
+    sum += c.amount;
+  }
+  return { amount: sum, currency: home, stale: isStale(fx, Date.now()) };
+}
+
+/** How many proposals the card lists at once. */
+const PROPOSALS_SHOWN = 5;
+
+const STORE_KEYS: Readonly<Record<string, 'people' | 'shares' | 'ious' | 'payments' | 'dismissed'>> = {
+  'expense-people': 'people',
+  'expense-shares': 'shares',
+  'expense-ious': 'ious',
+  'expense-payments': 'payments',
+  'expense-dismissed': 'dismissed',
+};
+const STORE_WORDS: Readonly<Record<string, [string, string]>> = {
+  'expense-people': ['person', 'people'],
+  'expense-shares': ['shared transaction', 'shared transactions'],
+  'expense-ious': ['IOU', 'IOUs'],
+  'expense-payments': ['payment', 'payments'],
+  'expense-dismissed': ['row set aside', 'rows set aside'],
+};
+
+function shownDay(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** Posted money out carrying a tag, with no share yet, nor anything else
+ *  that says how it counts (a split, a group, a payment). */
+export function taggedNotShared(txns: readonly Txn[], tag: string, shared: ReadonlySet<string>): Txn[] {
+  return txns.filter(
+    (t) =>
+      (t.tags ?? []).includes(tag) &&
+      !t.pending &&
+      t.amount > 0 &&
+      !t.shared &&
+      !t.settles &&
+      !t.shared_part &&
+      !t.shared_iou &&
+      t.split_of === undefined &&
+      !t.group_members &&
+      !t.group_id &&
+      !shared.has(t.transaction_id)
+  );
+}
+
+export default function SharedExpensesCard({
+  shared,
+  txns,
+  facts,
+  tags,
+  taxonomy,
+  currency,
+  fx = null,
+}: {
+  shared: SharedExpenses;
+  txns: Txn[] | null;
+  facts: SharedFacts | null;
+  tags: readonly Tag[];
+  taxonomy: Taxonomy | null;
+  /** The currency a new IOU is in, until changed. */
+  currency: string;
+  /** The exchange rates (app/api/transactions `fx`), for a balance in other
+   *  currencies said about in the home one. */
+  fx?: FxTable | null;
+}) {
+  const { card, failed, open, setOpen, send } = shared;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [own, setOwn] = useState<{ venmo: string; cashtag: string } | null>(null);
+  const today = localDate();
+
+  const names = useMemo(() => new Map((card?.people ?? []).map((p) => [p.id, p.name ?? REMOVED_NAME])), [card]);
+  const nameOf = (id: string) => names.get(id) ?? REMOVED_NAME;
+
+  // Rows that may have paid something back, worked out here (see the header).
+  const offered = useMemo<Proposal[]>(() => {
+    if (!card || !txns || !card.balances) return [];
+    const people: MatchPerson[] = card.people.map((p) => ({
+      id: p.id,
+      name: p.name,
+      ...(p.venmo ? { venmo: p.venmo } : {}),
+      ...(p.cashtag ? { cashtag: p.cashtag } : {}),
+      ...(p.app ? { app: p.app } : {}),
+      requests: p.requests,
+      archived: p.archived,
+    }));
+    const found = proposals(txns, people, card.items, { dismissed: new Set(card.dismissed.map((d) => d.transaction_id)), paying: new Set(card.payments.map((p) => p.transaction_id)) });
+    // One counted as income until confirmed first: it counts beside the
+    // part already out of spending.
+    return [...found.filter((p) => p.counted), ...found.filter((p) => !p.counted)];
+  }, [card, txns]);
+
+  if (!card) {
+    return (
+      <div className="card">
+        <div className="inst-header">
+          <div className="inst-name">Shared expenses</div>
+        </div>
+        {failed ? <p className="error">{failed}</p> : <p className="empty-note">Loading…</p>}
+      </div>
+    );
+  }
+
+  const live = card.people.filter((p) => !p.archived && (!p.removed || ((card.balances?.[p.id] ?? []).length > 0)));
+  const archived = card.people.filter((p) => p.archived);
+  const sharedIds = new Set(card.shares.map((s) => s.transaction_id));
+  const byId = new Map((txns ?? []).map((t) => [t.transaction_id, t]));
+  const unread = Object.entries(card.unread);
+  const removable = unread.filter(([store, u]) => STORE_KEYS[store] && u.unreadable.length > 0);
+
+  async function act(path: string, method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: unknown, moves = true) {
+    setBusy(true);
+    setError('');
+    const sent = await send(path, method, body, { moves });
+    setBusy(false);
+    if (sent.error) setError(sent.error);
+    return !sent.error;
+  }
+
+  // A gone transaction's candidates to move to: the same amount and
+  // currency, within a week, not shared or paying already.
+  const movesFor = (amount: number, cur: string, day: string): Txn[] =>
+    (txns ?? []).filter(
+      (t) =>
+        !t.pending &&
+        !t.shared &&
+        !t.settles &&
+        !t.shared_part &&
+        !t.shared_iou &&
+        t.split_of === undefined &&
+        !t.group_members &&
+        currencyOf(t) === cur &&
+        Math.abs(t.amount - amount) < 1e-9 &&
+        Math.abs(Date.parse(`${t.date}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) <= 7 * 86_400_000
+    );
+
+  const goneShares = (facts?.gone.shares ?? []).map((id) => card.shares.find((s) => s.transaction_id === id)).filter((s) => !!s);
+  const gonePayments = (facts?.gone.payments ?? []).map((id) => card.payments.find((p) => p.transaction_id === id)).filter((p) => !!p);
+
+  return (
+    <div className="card shared-card">
+      <div className="inst-header">
+        <div className="inst-name">Shared expenses</div>
+      </div>
+
+      {card.people.length === 0 && (
+        <p className="panel-note">
+          Keep track of what people owe you and what you owe them. Nya keeps the list; the money moves in Venmo, Cash App or however you pay each other.
+        </p>
+      )}
+      {card.settings_unread && <p className="stale-note">Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.</p>}
+      {unread.length > 0 && (
+        <div className="stale-note">
+          Some of what you keep here couldn’t be read:{' '}
+          {unread
+            .map(([store, u]) => {
+              const n = u.unreadable.length + u.unrecognised.length;
+              const [one, many] = STORE_WORDS[store] ?? ['entry', 'entries'];
+              return `${n} ${n === 1 ? one : many}`;
+            })
+            .join(', ')}
+          . Nothing was changed.{card.balances === null ? ' Balances aren’t shown until everything can be read: one that can’t could be anyone’s.' : ''}
+          {removable.length > 0 && !removing && (
+            <>
+              {' '}
+              <button className="link-btn" onClick={() => setRemoving(true)} disabled={busy}>
+                Remove what is damaged
+              </button>
+            </>
+          )}
+          {removing && (
+            <div className="button-pair">
+              <button
+                className="danger"
+                disabled={busy}
+                onClick={() =>
+                  void (async () => {
+                    for (const [store, u] of removable) await act(SHARED_ROUTES.card, 'POST', { action: 'remove-unreadable', store: STORE_KEYS[store], ids: u.unreadable });
+                    setRemoving(false);
+                  })()
+                }
+              >
+                Remove them for good
+              </button>
+              <button className="secondary" onClick={() => setRemoving(false)} disabled={busy}>
+                Keep them
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {live.length > 0 && (
+        <ul className="shared-people">
+          {live.map((p) => {
+            const balances = card.balances?.[p.id] ?? [];
+            const name = p.name ?? REMOVED_NAME;
+            return (
+              <li key={p.id} className="shared-person">
+                <button className="link-btn shared-person-name" onClick={() => setOpen({ kind: 'person', id: p.id })}>
+                  {name}
+                </button>
+                {card.balances === null ? (
+                  <span className="type-tag">Balance not shown while some of it can’t be read</span>
+                ) : balances.length === 0 ? (
+                  <span className="type-tag">Settled up</span>
+                ) : (
+                  <>
+                  {balances.map((b) => {
+                    const letGo = letGoText(b.amount, b.oldest, today);
+                    return (
+                      <div key={b.currency} className="shared-balance">
+                        <span className={b.amount > 0 ? 'inflow' : undefined}>
+                          <Masked>{balanceText(name, b.amount, (n) => formatMoney(n, b.currency))}</Masked>
+                        </span>
+                        {b.over > 0 && <span className="type-tag"> · something was paid back past what it was</span>}
+                        {letGo && (
+                          <div className="type-tag">
+                            {letGo}{' '}
+                            <button className="link-btn" onClick={() => setOpen({ kind: 'settle', person: p.id, currency: b.currency, letGo: true })}>
+                              Let it go
+                            </button>
+                          </div>
+                        )}
+                        {b.amount !== 0 && !p.removed && (
+                          <div className="card-actions">
+                            <button className="secondary" onClick={() => setOpen({ kind: 'handoff', person: p.id, currency: b.currency })}>
+                              {b.amount > 0 ? 'Ask for it' : 'Pay'}
+                            </button>
+                            <button className="secondary" onClick={() => setOpen({ kind: 'settle', person: p.id, currency: b.currency })}>
+                              Mark settled
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    const about = aboutInHome(balances, fx);
+                    if (!about) return null;
+                    return (
+                      <span className="type-tag">
+                        <Masked>{`About ${formatMoney(Math.abs(about.amount), about.currency)} ${about.amount >= 0 ? 'owed to you' : 'you owe'} in all, at the latest exchange rates: an estimate`}</Masked>
+                        {about.stale ? ', and the rates may be out of date' : ''}
+                      </span>
+                    );
+                  })()}
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {offered.length > 0 && (
+        <>
+          <div className="section-label">Paid back?</div>
+          <ul className="shared-proposals">
+            {offered.slice(0, PROPOSALS_SHOWN).map((pr) => {
+              const t = byId.get(pr.row);
+              if (!t) return null;
+              const who = pr.several ? pr.several.map(nameOf).join(', ') : nameOf(pr.person);
+              const asked = (card.people.find((p) => p.id === pr.person)?.requests.length ?? 0) > 0;
+              return (
+                <li key={`${pr.row}:${pr.person}`} className="shared-proposal">
+                  <div>
+                    {t.name} · {shownDay(t.date)} ·{' '}
+                    <span className={pr.amount < 0 ? 'inflow' : undefined}>
+                      <Masked>{signedMoney(-pr.amount, pr.currency, { always: true })}</Masked>
+                    </span>
+                  </div>
+                  <div className="type-tag">
+                    {pr.tier === 'strong' ? 'Looks like' : pr.tier === 'likely' ? 'Maybe' : 'Could be'} {who} {pr.amount < 0 ? 'paying you back' : 'being paid'}.{' '}
+                    {reasonsText(pr, nameOf(pr.person), asked)}
+                    {pr.also.length > 0 ? `. ${whoseText([nameOf(pr.person), ...pr.also.map(nameOf)])}` : ''}
+                    {pr.counted ? '. Until you confirm it, it counts as money in.' : ''}
+                  </div>
+                  <div className="card-actions">
+                    <button
+                      className="secondary"
+                      onClick={() => setOpen({ kind: 'paid', t, person: pr.person, allocations: pr.preselect ? pr.allocations : [], also: pr.also, fromProposal: true })}
+                    >
+                      Confirm…
+                    </button>
+                    <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'dismiss', transaction_id: pr.row }, false)}>
+                      Not a repayment
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {offered.length > PROPOSALS_SHOWN && <p className="type-tag">And {offered.length - PROPOSALS_SHOWN} more, once these are done.</p>}
+        </>
+      )}
+
+      {txns &&
+        live
+          .filter((p) => p.tag && !p.removed)
+          .map((p) => {
+            const tag = tags.find((x) => x.id === p.tag!.id);
+            if (!tag) return null;
+            const rows = taggedNotShared(txns, tag.id, sharedIds);
+            if (rows.length === 0) return null;
+            const how = p.tag!.how;
+            const name = p.name ?? REMOVED_NAME;
+            return (
+              <div key={`tag:${p.id}`} className="panel-note">
+                {rows.length} {rows.length === 1 ? 'transaction' : 'transactions'} tagged {tag.name} {rows.length === 1 ? 'isn’t' : 'aren’t'} shared yet.{' '}
+                <button
+                  className="link-btn"
+                  disabled={busy}
+                  onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'many', person: p.id, ids: rows.slice(0, MAX_BATCH).map((t) => t.transaction_id), how })}
+                >
+                  Share {rows.length === 1 ? 'it' : 'them'} {how.kind === 'half' ? 'half' : how.kind === 'even' ? `${how.ways} ways` : ''} with {name}
+                </button>
+              </div>
+            );
+          })}
+
+      {goneShares.map((s) => {
+        const moves = movesFor(s.amount_was, s.currency, s.date);
+        return (
+          <div key={`gone:${s.transaction_id}`} className="stale-note">
+            {s.what}, {shownDay(s.date)}: its transaction isn’t in your accounts any more. What is owed of it stays, in the balance, until you say.
+            <div className="card-actions">
+              {moves.slice(0, 2).map((m) => (
+                <button key={m.transaction_id} className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'move', transaction_id: s.transaction_id, to: m.transaction_id })}>
+                  Move to {m.name}, {shownDay(m.date)}
+                </button>
+              ))}
+              <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'keep', transaction_id: s.transaction_id }, false)}>
+                Keep it
+              </button>
+              <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'DELETE', { transaction_id: s.transaction_id })}>
+                Remove it
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      {gonePayments.map((p) => {
+        const moves = movesFor(p.row.amount, p.row.currency, p.row.date);
+        return (
+          <div key={`gone-pay:${p.transaction_id}`} className="stale-note">
+            A payment you confirmed on {shownDay(p.row.date)} isn’t in your accounts any more. What it paid back stays paid, until you say.
+            <div className="card-actions">
+              {moves.slice(0, 2).map((m) => (
+                <button key={m.transaction_id} className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'move', transaction_id: p.transaction_id, to: m.transaction_id })}>
+                  Move to {m.name}, {shownDay(m.date)}
+                </button>
+              ))}
+              <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
+                Keep it
+              </button>
+              <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'DELETE', { transaction_id: p.transaction_id })}>
+                Reopen it
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      {(facts?.twice.length ?? 0) > 0 && (
+        <p className="stale-note">
+          {facts!.twice.length === 1 ? 'A transaction is' : `${facts!.twice.length} transactions are`} shared twice: once as the bank’s and once as the row imported from a
+          file it stands for. The bank’s counts; stop sharing the other in the file’s account.
+        </p>
+      )}
+
+      {error && (
+        <div className="error">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </div>
+      )}
+
+      <div className="card-actions">
+        <button className="secondary" onClick={() => setOpen({ kind: 'person', id: null })}>
+          Add someone
+        </button>
+        {live.length > 0 && (
+          <button className="secondary" onClick={() => setOpen({ kind: 'iou', id: null })}>
+            Add an IOU
+          </button>
+        )}
+        <button className="link-btn" onClick={() => setShowSettings(!showSettings)} aria-expanded={showSettings}>
+          {showSettings ? 'Hide settings' : 'Settings'}
+        </button>
+      </div>
+
+      {showSettings && (
+        <div className="sheet-form">
+          <fieldset className="lifecycle-choices" disabled={busy || card.settings_unread}>
+            <legend className="section-label">In your totals, a shared transaction counts</legend>
+            <label className="lifecycle-choice">
+              <input type="radio" name="shared-counting" checked={card.counting === 'part'} onChange={() => void act(SHARED_ROUTES.card, 'PUT', { counting: 'part' })} />
+              <span>
+                <span className="lifecycle-choice-name">Your part</span>
+                <span className="lifecycle-choice-note">What others owe you of it isn’t your spending, and their paying you back isn’t income.</span>
+              </span>
+            </label>
+            <label className="lifecycle-choice">
+              <input type="radio" name="shared-counting" checked={card.counting === 'bank'} onChange={() => void act(SHARED_ROUTES.card, 'PUT', { counting: 'bank' })} />
+              <span>
+                <span className="lifecycle-choice-name">As your bank shows it</span>
+                <span className="lifecycle-choice-note">The whole amount, and what they pay you back as money in. Balances are kept either way.</span>
+              </span>
+            </label>
+          </fieldset>
+          <label className="field">
+            Your Venmo username, for messages asking to be paid
+            <input
+              className="text-input"
+              value={own?.venmo ?? card.own.venmo ?? ''}
+              maxLength={31}
+              onChange={(e) => setOwn({ venmo: e.target.value, cashtag: own?.cashtag ?? card.own.cashtag ?? '' })}
+              autoComplete="off"
+            />
+          </label>
+          <label className="field">
+            Your Cash App cashtag
+            <input
+              className="text-input"
+              value={own?.cashtag ?? card.own.cashtag ?? ''}
+              maxLength={31}
+              onChange={(e) => setOwn({ venmo: own?.venmo ?? card.own.venmo ?? '', cashtag: e.target.value })}
+              autoComplete="off"
+            />
+          </label>
+          {own && (
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() =>
+                void act(SHARED_ROUTES.card, 'PUT', { own_venmo: own.venmo.trim().replace(/^@/, ''), own_cashtag: own.cashtag.trim().replace(/^\$/, '') }, false).then((ok) => ok && setOwn(null))
+              }
+            >
+              Save
+            </button>
+          )}
+        </div>
+      )}
+
+      {archived.length > 0 && (
+        <div className="recurring-dismissed">
+          <button className="link-btn" onClick={() => setShowArchived(!showArchived)} aria-expanded={showArchived}>
+            {archived.length} archived · {showArchived ? 'Hide' : 'Show'}
+          </button>
+          {showArchived && (
+            <ul className="recurring-dismissed-list">
+              {archived.map((p) => (
+                <li key={p.id}>
+                  <span>{p.name ?? REMOVED_NAME}</span>
+                  <button className="link-btn" onClick={() => setOpen({ kind: 'person', id: p.id })}>
+                    Open
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="chart-note">Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.</div>
+
+      <ShareCostSheet t={open?.kind === 'share' ? open.t : null} shared={shared} onClose={() => setOpen(null)} />
+      <ConfirmPaymentSheet
+        t={open?.kind === 'paid' ? open.t : null}
+        person={open?.kind === 'paid' ? open.person : undefined}
+        preset={open?.kind === 'paid' ? open.allocations : undefined}
+        also={open?.kind === 'paid' ? open.also : undefined}
+        fromProposal={open?.kind === 'paid' ? open.fromProposal : undefined}
+        shared={shared}
+        onClose={() => setOpen(null)}
+      />
+      <SettleSheet
+        person={open?.kind === 'settle' ? open.person : null}
+        currency={open?.kind === 'settle' ? open.currency : currency}
+        letGo={open?.kind === 'settle' ? open.letGo : undefined}
+        shared={shared}
+        onClose={() => setOpen(null)}
+      />
+      <PersonSheet id={open?.kind === 'person' ? open.id : null} open={open?.kind === 'person'} tags={tags} shared={shared} onClose={() => setOpen(null)} />
+      <IouSheet
+        id={open?.kind === 'iou' ? open.id : null}
+        person={open?.kind === 'iou' ? open.person : undefined}
+        open={open?.kind === 'iou'}
+        currency={currency}
+        taxonomy={taxonomy}
+        shared={shared}
+        onClose={() => setOpen(null)}
+      />
+      <HandoffSheet person={open?.kind === 'handoff' ? open.person : null} currency={open?.kind === 'handoff' ? open.currency : currency} shared={shared} onClose={() => setOpen(null)} />
+    </div>
+  );
+}

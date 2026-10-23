@@ -43,6 +43,10 @@ import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
 import { connectorBalanceDay, connectorLabel } from '@/lib/connectors/types';
 import { useTransactionEdits } from './transaction-edits';
+import SharedExpensesCard, { type SharedFacts } from './SharedExpensesCard';
+import { useSharedExpenses } from './shared-expenses-state';
+import type { SharedRowHooks } from './SharedRows';
+import { REMOVED_NAME } from '@/lib/shared-expenses/model';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
 import {
@@ -569,6 +573,13 @@ export default function Dashboard({
   // What only the list says, beside them (the answer's `aside_notes`: tags
   // or the review queue's settings that couldn't be read), never the chart.
   const [txnAside, setTxnAside] = useState<string[]>([]);
+  // What the same answer says of shared expenses (#49): what is gone, and
+  // what is shared twice, for the Shared expenses card.
+  const [sharedFacts, setSharedFacts] = useState<SharedFacts | null>(null);
+  const acceptSharedFacts = useCallback((data: Record<string, unknown>) => {
+    const f = data.shared_expenses as SharedFacts | undefined;
+    setSharedFacts(f && f.gone && Array.isArray(f.twice) ? f : null);
+  }, []);
   // Of those, the ones that say transactions couldn't all be read, which the
   // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
   // that says how a rule, a category, a split or a group applies.
@@ -871,6 +882,7 @@ export default function Dashboard({
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
       setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
+      acceptSharedFacts(data);
       setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
@@ -880,7 +892,7 @@ export default function Dashboard({
     } finally {
       setTxnsLoading(false);
     }
-  }, [acceptCategories, acceptTags, acceptReview]);
+  }, [acceptCategories, acceptTags, acceptReview, acceptSharedFacts]);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
   // makes every API call answer 401; send the dashboard to the login page instead
@@ -1026,7 +1038,27 @@ export default function Dashboard({
     requestBackfill,
     taxonomy: categories.taxonomy,
     onTagMade: tagList.add,
+    onAnswer: acceptSharedFacts,
   });
+  // Shared expenses (#49, components/shared-expenses-state.ts): the card's
+  // read, its sheets, and what a row of the list offers. A change that
+  // moves a total reads the list again quietly.
+  const sharedExpenses = useSharedExpenses({ enabled: tab === 'activity', onTotalsChanged: txnEdits.refresh });
+  const sharedCard = sharedExpenses.card;
+  const openShared = sharedExpenses.setOpen;
+  const sharedRows = useMemo<SharedRowHooks | undefined>(
+    () =>
+      sharedCard
+        ? {
+            names: new Map(sharedCard.people.map((p) => [p.id, p.name ?? REMOVED_NAME])),
+            onShare: (t) => openShared({ kind: 'share', t }),
+            onPaidBack: (t) => openShared({ kind: 'paid', t }),
+            onIou: (id) => openShared({ kind: 'iou', id }),
+            owes: Object.values(sharedCard.balances ?? {}).some((bs) => bs.some((b) => b.amount < 0)),
+          }
+        : undefined,
+    [sharedCard, openShared]
+  );
 
   // File import into a manual account (components/ImportSheet.tsx). After an
   // import or an undo the list is read again, and when the statement's
@@ -3035,10 +3067,24 @@ export default function Dashboard({
                 // so the list is read again quietly after a change.
                 onSplitsChanged={txnEdits.refresh}
                 review={review}
+                shared={sharedRows}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
                 withoutTransactions={txnWithout}
+              />
+            )}
+
+            {/* Shared expenses (#49): who owes what, under the transactions. */}
+            {tab === 'activity' && (
+              <SharedExpensesCard
+                shared={sharedExpenses}
+                txns={txns}
+                facts={sharedFacts}
+                tags={tagList.tags}
+                taxonomy={categories.taxonomy}
+                currency={accountCurrency ?? 'USD'}
+                fx={txnFx}
               />
             )}
 

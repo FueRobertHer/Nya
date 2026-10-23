@@ -51,6 +51,7 @@ import type { ReviewControls } from "./review-state";
 import ReviewBar from "./ReviewBar";
 import ReviewNote from "./ReviewNote";
 import CardMode from "./CardMode";
+import { SharedRowActions, SharedRowLine, type SharedRowHooks } from "./SharedRows";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -373,6 +374,7 @@ export default function MonthBreakdown({
   ruleSentenceOf,
   onSplitsChanged,
   review,
+  shared,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -431,6 +433,9 @@ export default function MonthBreakdown({
   /** The review queue (components/review-state.ts): what needs review, its
    *  filter, Card Mode and approving. Without it, none is shown. */
   review?: ReviewControls;
+  /** Shared expenses (#49, components/SharedRows.tsx): each row's line, and
+   *  sharing or confirming a payment from its detail. Without it, none. */
+  shared?: SharedRowHooks;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
@@ -644,7 +649,8 @@ export default function MonthBreakdown({
     // Listed as the bank has them: a split transaction once, with its parts
     // under it; a group's row with its transactions under it (#39). The day's
     // figure above counts the parts and the nets, as every total does.
-    return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep" }) }));
+    // An IOU's row (#49) is listed too, on its day, though no account has it.
+    return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep", ious: "keep" }) }));
   }, [visible, currency]);
   // Each split transaction whole, every part of it (#39), from all the rows:
   // a pick from the cash flow lists only the parts in its node under it, but
@@ -1008,6 +1014,8 @@ export default function MonthBreakdown({
                     <tr
                       className={`acct-row${i === g.entries.length - 1 && !t.split_parts && !t.group_members ? " last-in-day" : ""}`}
                       onClick={() => {
+                        // An IOU's row is no transaction: it opens the IOU.
+                        if (t.shared_iou) return shared?.onIou(t.shared_iou.item);
                         const opening = recatId !== t.transaction_id;
                         setRecatId(opening ? t.transaction_id : null);
                         if (opening) setRenameDraft(t.name);
@@ -1074,6 +1082,7 @@ export default function MonthBreakdown({
                               </div>
                             )}
                             {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
+                            {shared && <SharedRowLine t={t} hooks={shared} />}
                             {/* A bank row standing for a row imported from
                                 its file, which the bank changed since (#52). */}
                             {t.imported_amount !== undefined && (
@@ -1147,6 +1156,8 @@ export default function MonthBreakdown({
                                 }}
                               />
                             )}
+                            {/* Sharing it, or what it paid back (#49). */}
+                            {shared && <SharedRowActions t={whole(t)} hooks={shared} onDone={() => setRecatId(null)} />}
                             {/* Not a row SimpleFIN brought nor one imported into
                                 a linked account: the bank's or the file's
                                 record, whose category alone is the person's. */}

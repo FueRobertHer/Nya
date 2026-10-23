@@ -79,7 +79,7 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note }, without_transactions] = await Promise.all([
+    const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note, shared_expenses }, without_transactions] = await Promise.all([
       finishActivity(ctx, plaid, hidden, { grow: true }),
       // With what the files imported into each one's accounts cover, for one
       // whose transactions don't come in: a month they cover isn't said to be
@@ -113,6 +113,9 @@ export async function GET(req: Request) {
       categories: taxonomy,
       // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
       tags: tags?.tags ?? [],
+      // Shared expenses (lib/shared-expenses/rows.ts): what this read can
+      // tell is gone, and what is shared twice, for the card to say.
+      shared_expenses: { gone: shared_expenses.gone, twice: shared_expenses.twice },
       // The review queue (lib/review-store.ts): on from a day, or off; what
       // needs review is marked on each row (lib/review-layer.ts).
       review,

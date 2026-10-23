@@ -1170,7 +1170,12 @@ describe('never the server, the API or a download', () => {
 
 describe('every module a page can load writes its amounts through the switch (a scan of the source)', () => {
   const modules = clientModules(ROOT);
-  const sources = modules.filter((m) => m !== 'lib/format.ts').map((m) => ({ path: m, text: readFileSync(join(ROOT, m), 'utf8') }));
+  // Past the formatters by design, each named with why: lib/format.ts is
+  // them; lib/shared-expenses/links.ts writes the amounts a payment app's
+  // link and the message to copy carry to the other person, whatever this
+  // screen hides (the sheet draws the message through hideAmountsIn).
+  const PAST_THE_SWITCH = new Set(['lib/format.ts', 'lib/shared-expenses/links.ts']);
+  const sources = modules.filter((m) => !PAST_THE_SWITCH.has(m)).map((m) => ({ path: m, text: readFileSync(join(ROOT, m), 'utf8') }));
 
   test('it reaches every component and what they import', () => {
     expect(modules).toContain('components/Dashboard.tsx');
