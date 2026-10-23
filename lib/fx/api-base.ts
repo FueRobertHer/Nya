@@ -210,3 +210,58 @@ export function baseNotes(base: ApiBase, home: string): string[] {
 
 /** The note when the settings that say the home currency can't be read. */
 export const SETTINGS_UNREADABLE_NOTE = 'Your currency settings couldn’t be read, so nothing is converted into your home currency';
+
+/** What a total of transactions in base_currency converted (the `base`
+ *  beside /spending, /cash-flow and the recurring bills, and how /budgets
+ *  counts spending in other currencies): each currency and how many
+ *  transactions in it, the first and last day of the ECB's rates used, and
+ *  what was left out for having no rate, with why. Never guessed. */
+export type ApiFlowsConverted = {
+  converted: { currency: string; transactions: number }[];
+  /** The first and last day of the ECB's rates used, or null when none was. */
+  rate_days: { from: string; to: string } | null;
+  /** True when a transaction dated after the newest rates Nya has was
+   *  converted at them, and they are older than they should be. */
+  rates_stale: boolean;
+  /** The person's own rates used, as me.own_rates gives them. */
+  own_rates: ApiOwnRate[];
+  /** Transactions left out for having no rate, by currency, with why. */
+  left_out: { currency: string; transactions: number; why: ApiNoRate }[];
+};
+
+/** A conversion (lib/fx/totals.ts) in the API's words, with what its total
+ *  left out (lib/spending.ts leftOutByCurrency). */
+export function flowsConverted(
+  c: { into: string; from: { currency: string; count: number }[]; days: { first: string; last: string } | null; own: string[]; unrated: { currency: string; why: NoRate; unrated: string }[]; stale: boolean },
+  fx: Pick<FxTable, 'own'>,
+  leftOut: readonly { currency: string; count: number }[]
+): ApiFlowsConverted {
+  const why = new Map(c.unrated.map((u) => [u.currency, apiNoRate(u.currency, u.why, u.unrated, c.into)] as const));
+  return {
+    converted: c.from.map((f) => ({ currency: f.currency, transactions: f.count })),
+    rate_days: c.days ? { from: c.days.first, to: c.days.last } : null,
+    rates_stale: c.stale,
+    own_rates: apiOwnRates(fx.own.filter((o) => c.own.includes(o.currency))),
+    left_out: leftOut.map((l) => ({ currency: l.currency, transactions: l.count, why: why.get(l.currency) ?? 'no_rate' })),
+  };
+}
+
+/** The notes a converted total of transactions adds (flowsConverted): each
+ *  currency left out, and why, and rates older than they should be. */
+export function flowsNotes(b: ApiFlowsConverted, home: string): string[] {
+  const notes: string[] = [];
+  for (const l of b.left_out) {
+    const which = l.transactions === 1 ? `1 transaction in ${l.currency} isn’t` : `${l.transactions} transactions in ${l.currency} aren’t`;
+    const why =
+      l.why === 'base_has_no_rate'
+        ? `the ECB doesn’t publish ${home}; you can set a rate of your own for it in the app`
+        : l.why === 'not_fetched'
+          ? 'Nya doesn’t have the ECB’s rates for those days yet'
+          : l.why === 'quote_has_no_rate'
+            ? `your own rate for ${l.currency} is in a currency the ECB has no rate for`
+            : `there is no rate for ${l.currency} on those days; you can set your own in the app`;
+    notes.push(`${which} in base, which is in ${home}: ${why}`);
+  }
+  if (b.rates_stale && b.rate_days) notes.push(`The newest exchange rates Nya has are from ${b.rate_days.to}, so base may be out of date`);
+  return notes;
+}

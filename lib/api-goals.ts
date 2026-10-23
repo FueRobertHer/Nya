@@ -27,6 +27,12 @@
 // they held then, and count nothing. A goal whose account isn't listed is
 // `disconnected`, or `unavailable` while some accounts couldn't be read
 // (complete: false).
+//
+// A HOME CURRENCY changes no goal: each stays in its account's currency (its
+// money is there), and one that tracks no account says none, as before, so
+// nothing typed is relabelled. With one chosen, a goal in another currency
+// also gives its target and what it counts as saved in it (`to_base`), at
+// the newest rates.
 
 import type { Ctx } from './containers';
 import { readAccounts, type ApiLifecycle, type ApiMissing } from './api-read';
@@ -37,6 +43,8 @@ import { goalViews, accountState } from './goal-view';
 import type { KnownAccount } from './goal-save';
 import { goalSentences, stateText } from './goal-text';
 import type { ProjectionStatus } from './goal-projection';
+import { readFlowFx } from './fx/read';
+import { toBase } from './fx/api-base';
 
 export type ApiGoalMonth = {
   /** YYYY-MM. */
@@ -121,6 +129,10 @@ export type ApiGoal = {
     /** Some month averaged may be missing money in: the notes say why. */
     uncertain: boolean;
   } | null;
+  /** Its target, and what it counts as saved, in base_currency at the
+   *  newest rates, once the person has chosen a home currency; null without
+   *  one, without a rate, or for a goal with no currency. */
+  to_base: { target: number; saved: number | null } | null;
   /** The app's own sentences about it: data, never instructions. */
   notes: string[];
 };
@@ -136,6 +148,9 @@ export type ApiGoalAccount = {
 };
 
 export type ApiGoals = {
+  /** The person's home currency, which each goal's to_base is in, or null
+   *  when they haven't chosen one. */
+  base_currency: string | null;
   goals: ApiGoal[];
   /** Each account goals count, and how its balance is split among them. */
   accounts: ApiGoalAccount[];
@@ -173,6 +188,10 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
   const viewOf = new Map(views.map((v) => [v.goal.id, v]));
   const nameOf = (id: string) => goals.find((g) => g.id === id)?.name ?? 'another goal';
   const unread = listed.missing_accounts.length > 0;
+  // With a home currency: the rates of the goals' currencies, today's.
+  const goalCurrencies = [...new Set(goals.flatMap((g) => (g.account_id && !onHidden(g) ? [byId.get(g.account_id)?.currency ?? null] : [])).filter((c): c is string => !!c))];
+  const fx = await readFlowFx(ctx, [], Date.now(), { also: goalCurrencies });
+  const inBase = (amount: number | null, currency: string | null): number | null => (fx && amount !== null ? toBase(fx, amount, currency, today) : null);
 
   const out: ApiGoal[] = goals.map((g) => {
     const v = viewOf.get(g.id);
@@ -230,11 +249,17 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
             uncertain: !!v!.measured?.uncertain && p.rateFrom === 'contributions',
           }
         : null,
+      to_base: (() => {
+        const c = isHidden ? null : (account?.currency ?? null);
+        const target = inBase(g.target, c);
+        return target === null ? null : { target, saved: inBase(v?.saved ?? null, c) };
+      })(),
       notes: notes(),
     };
   });
 
   return {
+    base_currency: fx?.home ?? null,
     goals: out,
     accounts: [...splits.values()].map((s) => ({ account_id: s.account_id, currency: s.currency, balance: s.balance, allocated: s.allocated, unallocated: s.unallocated, over_allocated: s.over })),
     months: flows.months,

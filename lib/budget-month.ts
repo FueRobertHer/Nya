@@ -82,7 +82,7 @@ import { spendingByCategory, summarize } from './totals';
 import { leftOutByCurrency, transactionCounter, type LeftOut } from './spending';
 import { totalsIn, type Conversion } from './fx/totals';
 import { readFlowFx } from './fx/read';
-import type { FxTable } from './fx/rates';
+import type { FxTable, OwnRate } from './fx/rates';
 import { stoppedConnections } from './month-coverage';
 import { noTransactionsView, quietItemIds, type NoTransactionsView } from './no-transactions';
 import {
@@ -353,6 +353,9 @@ export type BudgetMonthRead = {
   /** What was converted into the budgets' currency; null without a home
    *  currency. */
   conversion: Conversion | null;
+  /** The person's home currency, or null without one, and their own rates. */
+  home: string | null;
+  ownRates: readonly OwnRate[];
   /** What the earlier months the carries and the pool count left out for
    *  being in another currency (spending, and money in too while the pool
    *  counts it): named, never added. Empty when nothing rolls over. */
@@ -520,6 +523,8 @@ export function monthFromActivity(input: {
     monthRows: byMonth.get(month) ?? [],
     counted: rows,
     conversion: conversion.conversion,
+    home: input.fx?.home ?? null,
+    ownRates: input.fx?.own ?? [],
     countedLeftOut: leftOutByCurrency(pool ? counted : counted.filter((t) => t.amount > 0), currency),
     activity,
   };

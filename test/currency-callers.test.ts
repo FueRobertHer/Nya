@@ -35,9 +35,9 @@ const ALLOWED: Record<string, string> = {
   // Flows.
   'components/MonthFlowChart.tsx#MonthFlowChart:currency':
     'Only when the Activity tab gives it no currency: its rows are the ones the tab totals, already converted into the home currency through lib/fx/totals.ts totalsIn, so this is the label of what they are in.',
-  'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
-  'lib/api-read.ts#readRecurring:currency': STEP_2,
-  'lib/api-read.ts#readSpending:currency': STEP_2,
+  'lib/api-cash-flow.ts#readCashFlow:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/fx/totals.ts totalsIn).',
+  'lib/api-read.ts#readRecurring:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/totals.ts recurringMonthly, at today’s rates).',
+  'lib/api-read.ts#readSpending:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/fx/totals.ts totalsIn).',
   'lib/report/build.ts#buildReport:currency':
     'Without a home currency only, as before: the one most rows are in, the rest named. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn.',
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,

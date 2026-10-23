@@ -25,17 +25,26 @@
 // or another app's export):
 // #52, lib/api-read.ts importedNote), rows that come through the same
 // assembly, each only where no bank row stands for it.
+//
+// WITH A HOME CURRENCY, `base` is the same answer over the rows converted
+// into it, each at its own day's rate (lib/fx/totals.ts), as the app's chart
+// draws it, with what was converted and what was left out for having no
+// rate; version 1's own fields keep their meaning (one currency, the rest
+// named).
 
 import type { Ctx } from './containers';
 import { firstDay, importedNote, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
 import { coveredOutOfDays } from './no-transactions';
 import { cashFlow, inPeriod } from './cash-flow';
 import { totalsCurrency, type LeftOut } from './spending';
-import { isProvisionalId, type CategoryKind } from './categories';
+import { isProvisionalId, type CategoryIndex, type CategoryKind } from './categories';
+import type { Txn } from './transactions';
+import { readFlowFx } from './fx/read';
+import { conversionIn, totalsIn } from './fx/totals';
+import { flowsConverted, flowsNotes, type ApiFlowsConverted } from './fx/api-base';
 
-export type ApiCashFlow = {
-  from: string;
-  to: string;
+/** The flows in one currency (readCashFlow). */
+type Flows = {
   currency: string | null;
   money_in: number;
   money_out: number;
@@ -59,6 +68,20 @@ export type ApiCashFlow = {
   exclusion_unknown: number;
   left_out: LeftOut;
   left_out_text: string | null;
+};
+
+/** The same in base_currency (see ApiCashFlow.base). */
+export type ApiCashFlowBase = Omit<Flows, 'currency' | 'left_out' | 'left_out_text'> & ApiFlowsConverted;
+
+export type ApiCashFlow = Flows & {
+  from: string;
+  to: string;
+  /** The person's home currency, or null when they haven't chosen one. */
+  base_currency: string | null;
+  /** With one: the same flows converted into it, each transaction at its own
+   *  day's ECB rate (or the person's own), with what was converted and what
+   *  was left out for having no rate. Null without one. */
+  base: ApiCashFlowBase | null;
   sources: ApiSource[];
   notes: string[];
 };
@@ -83,10 +106,33 @@ export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; c
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
-  const flow = cashFlow(activity.rows, inRange, currency, activity.ix);
+  const fx = await readFlowFx(ctx, activity.rows);
+  let base: ApiCashFlowBase | null = null;
+  if (fx) {
+    const counting = totalsIn(activity.rows, fx);
+    const { currency: _home, left_out, left_out_text: _text, ...flows } = flowsOf(counting.rows, inRange, fx.home, activity.ix);
+    const c = conversionIn(
+      counting.rows.filter((t) => inRange(t.date)),
+      counting.conversion
+    );
+    base = { ...flows, ...flowsConverted(c!, fx, left_out) };
+    notes.push(...flowsNotes(base, fx.home!));
+  }
   return {
     from: opts.from,
     to: opts.to,
+    ...flowsOf(activity.rows, inRange, currency, activity.ix),
+    base_currency: fx?.home ?? null,
+    base,
+    sources: activity.sources,
+    notes,
+  };
+}
+
+/** The flows over rows in one currency, as the chart has them. */
+function flowsOf(rows: readonly Txn[], inRange: (d: string) => boolean, currency: string | null, ix: CategoryIndex): Flows {
+  const flow = cashFlow(rows, inRange, currency, ix);
+  return {
     currency: flow.currency,
     money_in: flow.money_in,
     money_out: flow.money_out,
@@ -110,7 +156,5 @@ export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; c
     exclusion_unknown: flow.exclusion_unknown,
     left_out: flow.left_out,
     left_out_text: flow.left_out_text,
-    sources: activity.sources,
-    notes,
   };
 }

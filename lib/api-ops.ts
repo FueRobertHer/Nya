@@ -183,6 +183,7 @@ const RUNS: Record<string, Operation['run']> = {
     return {
       from,
       to,
+      base_currency: page.base_currency,
       transactions: page.transactions,
       has_more: page.next !== null,
       next_cursor: page.next ? encodeCursor(page.next, print, { from, to }) : null,

@@ -416,7 +416,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'search_transactions',
     'transactions',
     'Search transactions',
-    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own; needs_review one waiting for the person to approve it in the app’s review queue, and reviewed_at when they approved one. Each transaction is listed once, whole: splits holds the parts of one the person split, and transaction_group the group one is in, whose net is what totals count.`,
+    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own; needs_review one waiting for the person to approve it in the app’s review queue, and reviewed_at when they approved one. Each transaction is listed once, whole: splits holds the parts of one the person split, and transaction_group the group one is in, whose net is what totals count. Once the person has chosen a home currency, to_base gives each transaction, and each part, in it (base_currency) at its day’s rate.`,
     'Ask for fewer at a time with limit, and page with cursor.',
     { limit: MCP_DEFAULT_PAGE_SIZE },
     {
@@ -432,28 +432,28 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'spending_by_category',
     'spending',
     'Spending by category',
-    'Money in, money out and spending by category, by category group and by tag for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added. A transaction with two tags counts under each.',
+    'Money in, money out and spending by category, by category group and by tag for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added. A transaction with two tags counts under each. Once the person has chosen a home currency, base gives the same totals converted into it (base_currency), each transaction at its own day’s European Central Bank rate or the person’s own, with what was converted and what was left out for having no rate.',
     NARROW_HIDDEN
   ),
   fromOperation(
     'get_cash_flow',
     'cash-flow',
     'Cash flow',
-    'Where money came from and where it went, for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app’s cash flow chart draws it: money in by payer (the name on the transactions; a refund is money in, marked refund, never less spending), money out by category group and by category, and what was left over or, when more went out than came in, what came from savings or debt. Transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.',
+    'Where money came from and where it went, for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app’s cash flow chart draws it: money in by payer (the name on the transactions; a refund is money in, marked refund, never less spending), money out by category group and by category, and what was left over or, when more went out than came in, what came from savings or debt. Transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added. Once the person has chosen a home currency, base gives the same flows converted into it (base_currency), each transaction at its own day’s rate, with what was converted and what was left out for having no rate.',
     NARROW_HIDDEN
   ),
   fromOperation(
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on. A month still to come has its budgets and nothing carried or pooled into it yet.',
+    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on. A month still to come has its budgets and nothing carried or pooled into it yet. Budgets stay in the currency they are typed in; once the person has chosen a home currency, spending in other currencies counts against them converted into it, each transaction at its own day’s rate, as the Budgets tab counts it, and converted says what was converted and what was left out for having no rate.',
     NARROW_HIDDEN
   ),
   fromOperation(
     'list_recurring_bills',
     'recurring',
     'Recurring bills',
-    'Recurring bills detected from transactions (a merchant charging on a schedule, from weekly to yearly, at a steady or similar amount), with how often each comes, its estimated next date and what the bills come to in a month. Bills the person marked not recurring in the app are left out. Detection and dates are estimates.',
+    'Recurring bills detected from transactions (a merchant charging on a schedule, from weekly to yearly, at a steady or similar amount), with how often each comes, its estimated next date and what the bills come to in a month. Bills the person marked not recurring in the app are left out. Detection and dates are estimates. Once the person has chosen a home currency, each bill’s to_base and base give them in it (base_currency) at today’s rates.',
     NARROW_HIDDEN
   ),
   fromOperation(
@@ -481,7 +481,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_goals',
     'goals',
     'Savings goals',
-    'Savings goals: each one’s target, what it counts as saved of the account it tracks (its allocation, or what the allocations leave, never more than the balance), its monthly target and target date, what went into the account over the last three complete months, and when it is projected to be reached: from that average, or from the monthly target when there is none (rate_from says which), and never a date for a goal nothing went into. Archived goals are listed, marked. Every amount is in the goal’s own account currency; nothing is converted.',
+    'Savings goals: each one’s target, what it counts as saved of the account it tracks (its allocation, or what the allocations leave, never more than the balance), its monthly target and target date, what went into the account over the last three complete months, and when it is projected to be reached: from that average, or from the monthly target when there is none (rate_from says which), and never a date for a goal nothing went into. Archived goals are listed, marked. Every amount is in the goal’s own account currency; once the person has chosen a home currency, to_base also gives its target and what it counts as saved in it (base_currency) at the newest rates.',
     NARROW_HIDDEN
   ),
   fromOperation(
