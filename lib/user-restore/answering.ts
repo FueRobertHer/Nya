@@ -385,6 +385,25 @@ export async function afterUnlink(ctx: Ctx, old: string, now: number = Date.now(
   await markEnded(ctx, old, ended as EndedLifecycle, aboutRestored(a), now);
 }
 
+// ---- What tracking a connector account says ----
+
+/** The banks brought back whose accounts are counted before a link (an
+ *  answer counts one), by name: what tracking an account through a
+ *  connector holds until it is answered for (answers.ts THE HOLD BY
+ *  CONNECTION), which Choose accounts says before it does (the review's Nit
+ *  6). LENIENT, for those words only: what can't be read is none. */
+export async function countedBanks(ctx: Ctx): Promise<string[]> {
+  try {
+    const answers = await restoredAnswersStore.getAllReport(ctx);
+    const ids = [...answers.entries].filter(([, a]) => a.counted).map(([id]) => id);
+    if (ids.length === 0) return [];
+    const accounts = await restoredAccountsStore.getAllReport(ctx);
+    return [...new Set(ids.flatMap((id) => (accounts.entries.has(id) ? [accounts.entries.get(id)!.institution_name] : [])))].sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
 // ---- What the card shows ----
 
 /** A restored account as the card asks about it. `end`: the end that

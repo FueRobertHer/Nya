@@ -11,6 +11,8 @@ import { plainNumber } from '@/lib/format';
 import { ANY_CONNECTOR, CONNECTOR_KINDS, CONNECTOR_WORDS } from '@/lib/connectors/types';
 import type { RecordView } from '@/lib/user-restore/store';
 import type { WaitingAccount } from '@/lib/user-restore/restored';
+import type { AnswersView, AnsweredAccount, AnsweredBank, HolderView } from '@/lib/user-restore/answering';
+import type { AnsweredEnd } from '@/lib/user-restore/store';
 import type { RestoredRows } from '@/lib/user-restore/forget';
 import { idEnds, type Unlisted } from '@/lib/earlier-names';
 
@@ -38,6 +40,10 @@ export type RestoreState = {
   sharing?: SharingNow[];
   /** With the scan: the API tokens made here, which stay (TokensNow). */
   tokens?: TokensNow | null;
+  /** The banks brought back with accounts not linked, what was answered
+   *  about each, and the connections made since (lib/user-restore/
+   *  answering.ts answersView); null when that couldn't be read. */
+  answers?: AnswersView | null;
 };
 
 /** A restored account whose entry can't be read (app/api/user-restore): what
@@ -377,4 +383,73 @@ export function canUndo(record: RecordView, now: number): boolean {
 export const PROTECTED_INTRO = 'age-encryption.org/';
 export function looksProtected(head: Uint8Array): boolean {
   return new TextDecoder().decode(head.slice(0, PROTECTED_INTRO.length)) === PROTECTED_INTRO;
+}
+
+// ---- The answers about the banks brought back ----
+
+/** "Chase", or "Chase Total Checking through SimpleFIN": a connection made
+ *  since the restore, as the card names it. */
+export function holderWords(h: HolderView): string {
+  if (h.kind === 'item') return h.institution;
+  const via = (CONNECTOR_WORDS as Record<string, { label: string } | undefined>)[h.via]?.label ?? h.via;
+  return `${h.institution} ${h.name} through ${via}${h.kept ? ', kept as a manual account' : ''}`;
+}
+
+/** "closed on Oct 7, 2026": an end, in words. */
+export function endWords(e: AnsweredEnd): string {
+  if (e.state === 'untracked') return `not followed from ${calendarDay(e.from)}`;
+  return e.state === 'closed' ? `closed on ${calendarDay(e.on)}` : `no longer yours from ${calendarDay(e.on)}`;
+}
+
+const joinWords = (names: readonly string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/** One account brought back, and where its transactions stand, in words. */
+export function accountLine(a: AnsweredAccount, holders: readonly HolderView[]): string {
+  const name = `${accountWords(a)}${a.hidden ? ' (hidden)' : ''}`;
+  const rows = a.rows ? `, transactions ${calendarDay(a.rows.first)} to ${calendarDay(a.rows.last)}` : '';
+  const named = (id: string) => {
+    const h = holders.find((x) => x.id === id);
+    return h ? holderWords(h) : 'a connection made since';
+  };
+  let state: string;
+  if (a.handed_to) {
+    const by = named(a.handed_to.account_id);
+    state = a.handed_to.cut
+      ? `carried on by ${by}: counted before ${calendarDay(a.handed_to.cut)}, where that account’s own begin`
+      : `carried on by ${by}: counted whole until that account has transactions of its own`;
+  } else if (a.counted && a.held_by === 'unread') state = 'counted, but not while what holds it can’t be read';
+  else if (a.counted && Array.isArray(a.held_by) && a.held_by.length > 0) {
+    const by = a.held_by.map(named);
+    state = `counted once you say whether ${joinWords(by)} ${by.length === 1 ? 'holds' : 'hold'} it`;
+  } else if (a.counted) state = `counted${a.end ? ` up to its end (${endWords(a.end)})` : ''}${a.counted === 'file' ? ', as in your other copy' : ''}`;
+  else if (a.end) state = `${endWords(a.end)}: its transactions aren’t counted`;
+  else state = 'waiting for an answer';
+  return `${name}${rows}: ${state}`;
+}
+
+/** The connections made since the restore that hold a counted account now:
+ *  the questions to ask, in the order they were listed. */
+export function openHolders(view: AnswersView): HolderView[] {
+  const holding = new Set(view.banks.flatMap((b) => b.accounts.flatMap((a) => (Array.isArray(a.held_by) ? a.held_by : []))));
+  return view.holders.filter((h) => holding.has(h.id));
+}
+
+/** The connections a restored account was said not to be at, with the
+ *  accounts it was said of: for "Ask again". */
+export function answeredHolders(view: AnswersView): { holder: HolderView; account_ids: string[] }[] {
+  return view.holders.flatMap((holder) => {
+    const key = holder.kind === 'item' ? 'items' : 'accounts';
+    const account_ids = view.banks.flatMap((b) => b.accounts.filter((a) => a.apart[key].includes(holder.id)).map((a) => a.account_id));
+    return account_ids.length > 0 ? [{ holder, account_ids }] : [];
+  });
+}
+
+/** Every account of every bank brought back that isn't linked. */
+export const allAnswered = (view: AnswersView) => view.banks.flatMap((b) => b.accounts.map((a) => a.account_id));
+
+/** A bank's accounts an answer counts: not counted yet, and those of them
+ *  that need an end (none of their own). */
+export function toCount(bank: AnsweredBank): { ids: string[]; needEnd: AnsweredAccount[] } {
+  const open = bank.accounts.filter((a) => !a.counted);
+  return { ids: open.map((a) => a.account_id), needEnd: open.filter((a) => !a.end) };
 }

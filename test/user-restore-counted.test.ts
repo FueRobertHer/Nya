@@ -252,7 +252,7 @@ describe('held by a connection made since', () => {
 
   test('which connections hold, as a rule', () => {
     const item = { kind: 'item' as const, id: 'item_new', institution: 'Chase', institution_id: 'ins_3' };
-    const sf = { kind: 'connector' as const, id: SF, institution: 'Chase', name: 'Total Checking', card: 'abc', kept: false };
+    const sf = { kind: 'connector' as const, id: SF, institution: 'Chase', name: 'Total Checking', card: 'abc', kept: false, via: 'simplefin' as const };
     const none = { version: 1 as const, counted: { at: AT(), by: 'person' as const, ended: null }, apart: { items: [], accounts: [] }, handed_to: null, set_at: AT() };
     expect(unanswered(none, [item, sf])).toEqual([item, sf]);
     expect(unanswered({ ...none, apart: { items: ['item_new'], accounts: [] } }, [item, sf])).toEqual([sf]);

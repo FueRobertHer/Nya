@@ -121,6 +121,16 @@ describe('choosing accounts', () => {
     expect(html).toMatch(/<select disabled="" aria-label="Track Miles">/);
   });
 
+  test('while banks from a download count before a link, choosing says what tracking one holds', () => {
+    const offers = [{ remote_id: 'A', name: 'Checking', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 1, balance_at: null, elsewhere: null }];
+    const props = { label: 'SimpleFIN', tracked: [], offers, choices: {}, keep: true, busy: false, guessed: false, onChoose: noop, onKeep: noop };
+    expect(renderToStaticMarkup(<ChooseView {...props} />)).not.toContain('banks from your download');
+    const html = renderToStaticMarkup(<ChooseView {...props} counted={['Chase', 'Ally']} />).replace(/&#x27;/g, "'");
+    expect(html).toContain(
+      'An account you track here could be one of the banks from your download (Chase and Ally): until you say whether it is, under Manage, Bring back a download, their transactions from your download aren’t counted.'
+    );
+  });
+
   test('stopping a tracked account asks whether to keep it as a manual account, keeping by default', () => {
     const props = {
       label: 'SimpleFIN',

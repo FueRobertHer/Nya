@@ -43,6 +43,7 @@ import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
+import RestoreAnswers from './RestoreAnswers';
 import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
@@ -333,6 +334,18 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
     onChanged?.();
   };
 
+  /** One answer about the banks brought back (components/RestoreAnswers.tsx),
+   *  then the state read again. */
+  const answerBanks = async (body: Record<string, unknown>) => {
+    setError(null);
+    setPhase({ kind: 'working', what: 'Saving…' });
+    const answer = await ask('POST', '/api/user-restore/answers', body);
+    if (!isHint(answer) && !answer.ok) setError(answer.error);
+    setPhase({ kind: 'idle' });
+    await load(false, true);
+    onChanged?.();
+  };
+
   if (loadError) {
     return (
       <div className="card download-card restore-card">
@@ -489,9 +502,16 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             />
           )}
 
-          {record?.status === 'finished' && banks.length > 0 && (
+          {!unfinished && state.answers && state.answers.banks.length > 0 && (
+            <RestoreAnswers view={state.answers} busy={busy} onAnswer={answerBanks} onStopFollowing={stopFollowing} />
+          )}
+
+          {record?.status === 'finished' && !state.answers && banks.length > 0 && (
             <div className="restore-section">
               <div className="section-label">Waiting for an answer</div>
+              {state.answers === null && (
+                <p className="stale-note">What you answered about these banks can’t be read right now: their transactions aren’t counted meanwhile.</p>
+              )}
               <p className="panel-note">
                 No net worth total is recorded while a bank brought back waits: a total without it would be short for good. For each one, connect it again and link
                 each account to its new one when Nya offers (its transactions then count once), or stop following it.

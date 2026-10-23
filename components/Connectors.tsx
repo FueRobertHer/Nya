@@ -75,6 +75,8 @@ type ListBody = {
   orphaned: { connection_id: string; connector?: ConnectorKind; accounts: AccountView[] }[];
   requests: { left: number; resets_in_seconds: number; limit: number } | null;
   max_connections: number;
+  /** Banks from a download counted before a link (app/api/connectors). */
+  restored_counted?: string[];
 };
 
 /** A request to a connector route: its body, or the error it answered with. */
@@ -307,6 +309,7 @@ export function ChooseView({
   guessed,
   onChoose,
   onKeep,
+  counted = [],
 }: {
   label: string;
   tracked: AccountView[];
@@ -318,6 +321,9 @@ export function ChooseView({
   guessed: boolean;
   onChoose: (id: string, choice: Choice) => void;
   onKeep: (keep: boolean) => void;
+  /** Banks from a download counted before a link: an account tracked here
+   *  holds them until it is answered for (lib/user-restore/answers.ts). */
+  counted?: readonly string[];
 }) {
   const groups = useMemo(() => {
     const by = new Map<string, OfferView[]>();
@@ -377,6 +383,7 @@ export function ChooseView({
               owed or held.
             </p>
           )}
+          {counted.length > 0 && <p className="panel-note">{countedNote(counted)}</p>}
           {groups.map(([institution, list]) => (
             <div className="institution-group" key={institution}>
               <p className="institution-name">{institution}</p>
@@ -421,6 +428,15 @@ export function ChooseView({
       {tracked.length === 0 && offers.length === 0 && <p className="empty-note">{label} listed no accounts. Add some in {label}, then refresh.</p>}
     </>
   );
+}
+
+/** What tracking an account costs while banks from a download count before
+ *  a link (lib/user-restore/answers.ts THE HOLD BY CONNECTION): until you say
+ *  whether it is one of them, their transactions from the download aren't
+ *  counted. Pure. */
+export function countedNote(banks: readonly string[]): string {
+  const names = banks.length === 1 ? banks[0] : `${banks.slice(0, -1).join(', ')} and ${banks[banks.length - 1]}`;
+  return `An account you track here could be one of the banks from your download (${names}): until you say whether it is, under Manage, Bring back a download, their transactions from your download aren’t counted.`;
 }
 
 /**
@@ -597,6 +613,9 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   const [step, setStep] = useState<Step | null>(null);
   const [token, setToken] = useState('');
   const [choices, setChoices] = useState<Record<string, Choice>>({});
+  /** Banks from a download counted before a link (ListBody), for the words
+   *  in Choose accounts. */
+  const [counted, setCounted] = useState<string[]>([]);
   const [signs, setSigns] = useState<Record<string, OwedSign>>({});
   const [keep, setKeep] = useState(true);
   const [confirm, setConfirm] = useState('');
@@ -616,6 +635,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     const res = await send('/api/connectors', 'GET');
     if (!res.ok) return res.error;
     const body = res.data as ListBody;
+    setCounted(body.restored_counted ?? []);
     const conn = body.connections.find((c) => c.connection_id === connection_id) ?? null;
     const left = body.orphaned.find((o) => o.connection_id === connection_id);
     return { conn, orphan: left?.accounts ?? null, orphanOf: left?.connector ?? null };
@@ -701,6 +721,8 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     const where = connector === 'lunchflow' ? 'Lunch Flow' : 'SimpleFIN Bridge';
     if (listed || offers.length === 0) return setStep({ kind: 'done', text: listed ?? `Connected, but ${label} listed no accounts. Add some in ${where}, then choose them here.` });
     setChoices(guesses(offers));
+    // What tracking one holds, read with the list (readOne), best effort.
+    void readOne(res.data.connection_id);
     setStep({ kind: 'choose', connection_id: res.data.connection_id, connector, offers, tracked: [], label: conn?.label ?? label, note: null, guessed: true });
   };
 
@@ -820,6 +842,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             guessed={view.guessed}
             onChoose={(id, c) => setChoices((all) => ({ ...all, [id]: c }))}
             onKeep={setKeep}
+            counted={counted}
           />
           {keep && stoppingUnsure(view, choices).length > 0 && (
             <SignView label={view.label} accounts={stoppingUnsure(view, choices)} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />

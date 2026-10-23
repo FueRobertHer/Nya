@@ -7,6 +7,7 @@ import { confirmSigns, disconnect, keepRefusal, MAX_CONNECTIONS } from '@/lib/co
 import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
+import { countedBanks } from '@/lib/user-restore/answering';
 
 // The connections to SimpleFIN or Lunch Flow the person made
 // (lib/connectors/): GET lists them for the Accounts tab, with their
@@ -33,6 +34,10 @@ export async function GET() {
       orphaned: [...orphaned].map(([connection_id, list]) => ({ connection_id, connector: list[0].connector, accounts: list.map(accountView) })),
       requests: requests ? { ...requests, limit: DAILY_REQUESTS } : null,
       max_connections: MAX_CONNECTIONS,
+      // The banks from a download counted before a link, which an account
+      // tracked here holds until it is answered for (Choose accounts says
+      // so: lib/user-restore/answering.ts countedBanks).
+      restored_counted: await countedBanks(ctx),
     });
   } catch (err) {
     return connectorError(err, 'Failed to load your connections');

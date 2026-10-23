@@ -49,7 +49,7 @@ import type { StoredItem } from '../storage';
 import { addDays } from '../manual-txn-input';
 import { manualAccountIds } from '../manual';
 import { manualTxnStore, type ManualTxn } from '../manual-txns';
-import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type LeftOut } from '../connectors/store';
+import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorKind, type LeftOut } from '../connectors/store';
 import { isConnectorKind } from '../connectors/types';
 import { MATCH_DAYS, pairUp, type Matchable } from '../history-import/match';
 import { restoredAnswersStore, type RestoredAccount, type RestoredAnswer } from './store';
@@ -61,7 +61,7 @@ import type { HeldTxn } from './restored';
  *  how the card names it and, for a connector's, the bank card it is on. */
 export type Holder =
   | { kind: 'item'; id: string; institution: string; institution_id: string | null }
-  | { kind: 'connector'; id: string; institution: string; name: string; card: string; kept: boolean };
+  | { kind: 'connector'; id: string; institution: string; name: string; card: string; kept: boolean; via: ConnectorKind };
 
 /** The connections made since `since` (the restore) that hold counted
  *  accounts (see THE HOLD BY CONNECTION), or `unreadable` when what says so
@@ -73,14 +73,14 @@ export async function holdersSince(ctx: Ctx, since: string, items: readonly Stor
   const unreadable = tracked.unreadable.length + tracked.unrecognised.length + ended.unreadable.length + ended.unrecognised.length > 0;
   for (const a of tracked.entries.values()) {
     if (a.created_at < since) continue;
-    holders.push({ kind: 'connector', id: a.account_id, institution: a.institution_name, name: a.name, card: a.institution_ref, kept: false });
+    holders.push({ kind: 'connector', id: a.account_id, institution: a.institution_name, name: a.name, card: a.institution_ref, kept: false, via: a.connector });
   }
   const kept = [...ended.entries].filter(([id, e]) => e.kept && e.tracked_at >= since && !tracked.entries.has(id));
   if (kept.length > 0) {
     const manual = new Set(await manualAccountIds(ctx));
     for (const [id, e] of kept) {
       if (!manual.has(id)) continue;
-      holders.push({ kind: 'connector', id, institution: e.institution_name, name: e.name, card: `kept:${e.connection_id}:${e.institution_name}`, kept: true });
+      holders.push({ kind: 'connector', id, institution: e.institution_name, name: e.name, card: `kept:${e.connection_id}:${e.institution_name}`, kept: true, via: e.connector });
     }
   }
   return { holders, unreadable };
