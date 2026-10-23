@@ -90,10 +90,15 @@ const forConnections = (req: NextRequest) => req.nextUrl.pathname === '/' && req
 // so a request that asks for HTML gets the policy wherever it goes.
 // `to`, when given, is a path to render in the request's place (a rewrite):
 // an admin page sent where it lives, or to MISSING (ADMIN_PAGES), gets the
-// policy as every page does.
+// policy as every page does. A receipt or document (ATTACHMENT_FILE) is the
+// exception: a navigation to one asks for HTML too, and the page's policy
+// would stop a browser's own viewer, so its route sends a policy of its own
+// (lib/attachment-http.ts fileHeaders), stricter for what it is.
+const ATTACHMENT_FILE = /^\/api\/attachments\/[0-9a-f-]{36}\/(file|thumb)$/;
 function pass(req: NextRequest, to?: string): NextResponse {
   const go = (init?: { request: { headers: Headers } }) => (to ? NextResponse.rewrite(new URL(to, req.url), init) : NextResponse.next(init));
-  const document = !req.nextUrl.pathname.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html');
+  const path = req.nextUrl.pathname;
+  const document = !ATTACHMENT_FILE.test(path) && (!path.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html'));
   if (!document) return go();
   const headers = new Headers(req.headers);
   for (const name of NONCE_CARRIERS) headers.delete(name);

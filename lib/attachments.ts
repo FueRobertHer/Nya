@@ -128,10 +128,16 @@ export const NOT_CONNECTED_MESSAGE = 'Receipts and documents can’t be reached 
 export const NO_OWN_KEY_MESSAGE =
   'Receipts and documents need your account’s own data key, which this copy of Nya hasn’t made for it yet. Ask whoever runs it.';
 
-function mb(bytes: number): string {
+/** A size in words: KB under a megabyte, MB with a decimal under ten, GB
+ *  from a thousand and twenty-four. */
+export function sizeWords(bytes: number): string {
   const n = bytes / (1024 * 1024);
-  return n >= 1024 ? `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB` : `${Math.round(n)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+  if (n >= 10) return `${Math.round(n)} MB`;
+  if (n >= 1) return `${n.toFixed(1).replace(/\.0$/, '')} MB`;
+  return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 }
+const mb = sizeWords;
 
 /** Counts one request of a kind against its hourly limit, or refuses it. */
 export async function countRequest(ctx: Ctx, kind: 'start' | 'part' | 'read', now: number = Date.now()): Promise<void> {
