@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, parsePlan, pctText, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
@@ -42,8 +42,6 @@ function readNumber(text: string, what: string, min: number, max: number, opts: 
   return scale === 1 ? n : Number((n * scale).toFixed(6));
 }
 
-const asText = (v: number | null) => (v === null ? '' : String(v));
-const pctText = (v: number) => String(Number((v * 100).toFixed(4)));
 
 /** Saves `build()` when it checks out, keeping the message otherwise. */
 function useSave({ onSave, onDone, editable }: SaveProps) {
