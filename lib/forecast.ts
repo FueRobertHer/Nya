@@ -822,8 +822,10 @@ const CARD_WORDS = new Set(['card', 'cards', 'credit', 'debit', 'preferred', 're
  *  card's own name. */
 const PAY_WORDS = new Set(['payment', 'payments', 'pay', 'card', 'minimum', 'min', 'autopay', 'visa', 'mastercard', 'amex']);
 /** Of those, the ones that say it is the card before its word too ("Amex
- *  Delta", "Visa Costco"): a payment word before it is the payee's ("Pay
- *  Delta Dental", "Autopay Southwest Gas"), so it counts only after. */
+ *  Delta", "Visa Costco"). A payment word before it counts only when nothing
+ *  but the card's or its bank's words follows ("Pay Sapphire", "Pay Chase
+ *  Sapphire"): followed by another word it pays that payee ("Pay Delta
+ *  Dental", "Autopay Southwest Gas"). */
 const BEFORE_WORDS = new Set(['card', 'minimum', 'min', 'visa', 'mastercard', 'amex']);
 const wordsOf = (s: string): string[] => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
@@ -833,8 +835,9 @@ const wordsOf = (s: string): string[] => s.toLowerCase().match(/[\p{L}\p{N}]+/gu
  * or "preferred", nor its bank's name, and never "Sapphires") beside a word
  * that says it is the card or its payment ("Sapphire payment" for "Chase
  * Sapphire Preferred", "Delta card", "Costco Visa payment"), with only the
- * card's or its bank's own words between them, a payment word only after it
- * ("Pay Delta Dental" pays the dentist); its mask, four digits ("Card
+ * card's or its bank's own words between them, a payment word before it
+ * only with nothing else after ("Pay Sapphire", but "Pay Delta Dental" pays
+ * the dentist); its mask, four digits ("Card
  * 4821"); or its bank's name with a word that says it is a card ("Chase
  * card", "Chase credit card", "Chase Visa"). A card's word alone is often a
  * merchant's or a payee's ("Costco", "Delta Dental", "Southwest Gas",
@@ -847,10 +850,11 @@ export function namesCard(name: string, card: { name: string; mask?: string | nu
   const bank = wordsOf(card.institution);
   const own = new Set(wordsOf(card.name).filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !CARD_WORDS.has(w) && !bank.includes(w)));
   const between = new Set([...wordsOf(card.name), ...bank]);
+  // Nothing but the card's or its bank's words after the card's word.
+  const endsWithIt = (i: number) => tokens.slice(i + 1).every((t) => between.has(t));
   const paidBeside = (i: number, step: 1 | -1) => {
-    const says = step === 1 ? PAY_WORDS : BEFORE_WORDS;
     for (let j = i + step; j >= 0 && j < tokens.length; j += step) {
-      if (says.has(tokens[j])) return true;
+      if (step === 1 ? PAY_WORDS.has(tokens[j]) : BEFORE_WORDS.has(tokens[j]) || (PAY_WORDS.has(tokens[j]) && endsWithIt(i))) return true;
       if (!between.has(tokens[j])) return false;
     }
     return false;

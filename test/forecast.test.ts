@@ -609,16 +609,23 @@ describe('what it says it may be missing', () => {
       ['Sapphire Preferred', 'Chase', 'Sapphires club payment', false],
       ['CREDIT CARD', 'Chase', 'Chase auto loan', false],
       ['CREDIT CARD', 'Chase', 'Credit card', false],
-      // A payment word before the card's word is the payee's.
+      // A payment word before the card's word, with another word after it, is the payee's.
       ['Delta SkyMiles Gold Card', 'American Express', 'Pay Delta Dental', false],
       ['Southwest Rapid Rewards Plus', 'Chase', 'Pay Southwest Gas', false],
       ['Delta SkyMiles Gold Card', 'American Express', 'Autopay Delta Dental', false],
-      ['Sapphire Preferred', 'Chase', 'Pay Sapphire', false],
-      ['Sapphire Preferred', 'Chase', 'Payment Sapphire', false],
+      ['Chase Freedom Unlimited', 'Chase', 'Pay Freedom Mortgage', false],
       // Named as the card, or its payment.
       ['Sapphire Preferred', 'Chase', 'Sapphire payment', true],
       ['Sapphire Preferred', 'Chase', 'Chase Sapphire Preferred minimum', true],
       ['Sapphire Preferred', 'Chase', 'Sapphire pay', true],
+      // A payment word before it, with nothing else after.
+      ['Sapphire Preferred', 'Chase', 'Pay Sapphire', true],
+      ['Sapphire Preferred', 'Chase', 'Autopay Sapphire', true],
+      ['Sapphire Preferred', 'Chase', 'Pay Chase Sapphire', true],
+      ['Sapphire Preferred', 'Chase', 'Payment: Sapphire Preferred', true],
+      // So a bare payee's name the card shares counts too: the gas bill or the membership, as like as not.
+      ['Southwest Rapid Rewards Plus', 'Chase', 'Pay Southwest', true],
+      ['Costco Anywhere Visa Card', 'Citibank', 'Pay Costco', true],
       ['Delta SkyMiles Gold Card', 'American Express', 'Amex Delta', true],
       ['Delta SkyMiles Gold Card', 'American Express', 'Delta card', true],
       ['Costco Anywhere Visa Card', 'Citibank', 'Costco Visa payment', true],

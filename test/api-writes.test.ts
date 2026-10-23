@@ -706,12 +706,21 @@ describe('idempotency keys', () => {
     const changes = await import('@/lib/api-changes');
     const real = changes.getChange;
     let looked = 0;
+    // Let go after 1.5 s if the second never comes, well inside the test's
+    // own 5 s, so a missed barrier fails on `looked`, not as a timeout.
+    let fallback: ReturnType<typeof setTimeout> | undefined;
     let bothThere: () => void = () => {};
-    const both = new Promise<void>((resolve) => (bothThere = resolve));
+    const both = new Promise<void>((resolve) => {
+      bothThere = resolve;
+      fallback = setTimeout(resolve, 1500);
+    });
     const slow = spyOn(changes, 'getChange').mockImplementation(async (c, id, now) => {
       if (id === first) {
-        if (++looked === 2) bothThere();
-        await Promise.race([both, new Promise((r) => setTimeout(r, 5000))]);
+        if (++looked === 2) {
+          clearTimeout(fallback);
+          bothThere();
+        }
+        await both;
       }
       return real(c, id, now);
     });
@@ -731,6 +740,7 @@ describe('idempotency keys', () => {
       expect([x.status, y.status].sort()).toEqual([201, 409]);
       expect([x, y].find((r) => r.status === 409)!.body.error.code).toBe('in_progress');
     } finally {
+      clearTimeout(fallback);
       slow.mockRestore();
       late.mockRestore();
     }
