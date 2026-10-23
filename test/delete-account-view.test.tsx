@@ -1,5 +1,6 @@
 import { describe, expect, test, mock } from 'bun:test';
-mock.module('@clerk/nextjs', () => ({ useClerk: () => ({ signOut: async () => {} }) }));
+import { mockForFile } from './scoped-mock';
+await mockForFile('@clerk/nextjs', () => ({ useClerk: () => ({ signOut: async () => {} }) }));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { DeleteAccountView } = await import('@/components/DeleteAccount');
 

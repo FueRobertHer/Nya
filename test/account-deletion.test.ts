@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
+import { mockForFile } from './scoped-mock';
 import { FakeRedis, storageMock, TEST_CTX, TEST_CONTAINER, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -24,7 +25,7 @@ const deletedUsers: string[] = [];
 // Clerk may be the one loaded, and its shape is not this file's to rely on.
 let deleteUserFails = false;
 let duringDeleteUser: () => Promise<void> = async () => {};
-mock.module('@/lib/clerk-users', () => ({
+await mockForFile('@/lib/clerk-users', () => ({
   deleteClerkUser: async (id: string) => {
     await duringDeleteUser();
     if (deleteUserFails) throw new Error('clerk down');
@@ -40,7 +41,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 // are kept (lib/key-archive.ts). Read back through the store's own URL with
 // node's client, which is served from here too.
 const blobs = new Map<string, { body: string; options: any }>();
-mock.module('@vercel/blob', () => ({
+await mockForFile('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
     if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
     blobs.set(pathname, { body, options });

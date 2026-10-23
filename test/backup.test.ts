@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import * as httpsModule from 'node:https';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
+import { mockForFile } from './scoped-mock';
 
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
@@ -22,7 +23,7 @@ let sdkStreamCancelled = false;
 const urlReads: { url: string; headers: Record<string, string> }[] = [];
 /** The abortSignal each call was last given. */
 const signals: Record<string, AbortSignal | undefined> = {};
-mock.module('@vercel/blob', () => ({
+await mockForFile('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
     signals.put = options.abortSignal;
     if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
@@ -60,10 +61,10 @@ mock.module('@vercel/blob', () => ({
 }));
 
 // node's https client, serving the blobs kept above. Only `get` is replaced:
-// mock.module registers process-wide, so every other export of the real module
-// stays (copied before the mock replaces it), as storageMock keeps every export
-// of lib/storage (test/fake-redis.ts). The connectors' requests
-// (lib/connectors/http.ts) use the real `request`.
+// every other export of the real module stays (copied before the mock
+// replaces it), as storageMock keeps every export of lib/storage
+// (test/fake-redis.ts), so the connectors' requests (lib/connectors/http.ts)
+// use the real `request`. For this file only (test/scoped-mock.ts).
 const realHttps = { ...httpsModule };
 const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
   urlReads.push({ url, headers: options.headers });
@@ -79,7 +80,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
   queueMicrotask(() => cb(res));
   return req;
 };
-mock.module('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
+await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
 const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
