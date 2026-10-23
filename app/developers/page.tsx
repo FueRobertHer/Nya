@@ -359,7 +359,8 @@ export default function DevelopersPage() {
             <li>
               <strong>Never:</strong> deleting an account, a category, a group or a tag, but by undoing the change that made
               it; changing a manual account between
-              money held and money owed (the app does that, and redoes its past balances); budgets, rules, splits, groups of
+              money held and money owed (the app refuses it too: close the account and add a new one of the other kind);
+              budgets, rules, splits, groups of
               transactions, goals, sharing, tokens or settings. Some changes reach further than they look: moving a
               category to a group of another kind changes how its transactions count in budgets and reports, and
               renaming an account’s institution changes which of your rules match its transactions.

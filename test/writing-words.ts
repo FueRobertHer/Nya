@@ -31,6 +31,7 @@ export const WRITING_WORDS: readonly RegExp[] = [
   /write-ratelimit/i,
   /write-day/i,
   /version_(mismatch|required)/i,
+  /\b412\b/,
   /writes_off/i,
   /insufficient_scope/i,
   /saying what it can do/i,

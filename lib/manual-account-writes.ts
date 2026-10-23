@@ -14,12 +14,24 @@
 // included, so a form left open writes over a balance pushed since it opened:
 // what it shows is what it saves.
 //
+// NEVER BETWEEN HELD AND OWED. A type stays on its side of isOwedType for
+// good: depository, investment and other can become one another, and credit
+// a loan, but never across. History keeps each account's past balances
+// unsigned beside totals signed when they were recorded, and every reader
+// that takes an account back out of a total (hiding it, its end, the split
+// by currency, forgetting it) signs them with one type, so a change across
+// would read every earlier point with the opposite sign, and a forget would
+// write that into the totals for good. Nothing records the sign a point was
+// measured with, and the release before would read none, so the change is
+// refused instead (OWED_FLIP), for the app and the API alike, and the person
+// closes the account and adds a new one of the other kind: every earlier
+// point stays as it was recorded.
+//
 // AFTER A WRITE the cached payloads are dropped, and the backfill flag is
 // cleared when the estimated history no longer fits the account: its balance
-// moved, or its type changed (held and owed count with opposite signs, and the
-// estimated layer holds a manual account flat at its signed balance, so a type
-// changed without a rebuild would leave the old sign in every estimated point).
-// The flag goes first, the caches second (see invalidate).
+// moved, or its type changed (within its side, an investment account held
+// flat and a depository one walked, say). The flag goes first, the caches
+// second (see invalidate).
 
 import type { Ctx } from './containers';
 import {
@@ -52,6 +64,14 @@ export function currencyOf(given: unknown): { error: string } | { currency: stri
 }
 
 const OWED_NEGATIVE = 'Credit and loan balances are the amount owed, so they cannot be negative';
+
+/** Why an account can't change between money held and money owed (see the
+ *  header), and what to do instead. */
+export const OWED_FLIP =
+  'Money owed and money held count in opposite directions, so changing an account between them would change how every past balance of it counts. Instead, mark this account closed in the app and add a new one of the other kind: its past stays as it was.';
+
+/** Whether a change of type crosses between money held and money owed. */
+export const crossesOwed = (from: string, to: string) => isOwedType(from) !== isOwedType(to);
 
 /** Why a balance can't stand on an account of this type, or null. */
 export function balanceError(type: ManualType, balance: number): string | null {
@@ -178,6 +198,7 @@ export async function saveAccountEdit(
     if (!current) return null;
     opts.check?.(current);
     const merged = { ...current, ...edit.fields };
+    if (crossesOwed(current.type, merged.type)) throw new AccountEditRefused(OWED_FLIP, 409);
     const wrong = balanceError(merged.type, merged.balance);
     if (wrong) throw new AccountEditRefused(wrong, 400);
     const currency = edit.currency ?? current.currency ?? MANUAL_CURRENCY;

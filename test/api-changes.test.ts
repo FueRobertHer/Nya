@@ -19,7 +19,7 @@ const { ctx, daysAgo, seedPerson } = await import('./api-fixture');
 const { createToken, revokeToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { decrypt } = await import('@/lib/crypto');
-const { getManualAccount } = await import('@/lib/manual');
+const { getManualAccount, saveManualAccount } = await import('@/lib/manual');
 const { readTagSet } = await import('@/lib/tags');
 const { ensureTaxonomy, readTaxonomy } = await import('@/lib/category-store');
 const { manualTxnStore, findManualTxn } = await import('@/lib/manual-txns');
@@ -554,6 +554,22 @@ describe('undo of an account a token made, taken out only as the token left it',
     expect(await getManualAccount(ctx, a.id)).toBeNull();
   });
 
+  test('a series marked not recurring on another account of the same names isn’t this one’s', async () => {
+    // The token makes a Wallet under Cash, beside the person's own, and adds a
+    // coffee to it; the person marked their own Wallet's market not recurring.
+    const twin = await send('POST', 'manual-accounts', { body: { name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 5 } });
+    expect((await send('POST', 'transactions', { body: { ...coffee, account_id: twin.body.account.id } })).status).toBe(201);
+    await plannedStore.set(ctx, { version: 1, items: [], dismissed: ['bill|Cash|Wallet|farmers market|USD|2500'], threshold: null });
+    expect((await undo(twin.body.change_id)).status).toBe(200);
+    expect(await getManualAccount(ctx, twin.body.account.id)).toBeNull();
+    // One naming a payee on it is its own, whatever the case of its institution.
+    const again = await send('POST', 'manual-accounts', { body: { name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 5 } });
+    expect((await send('POST', 'transactions', { body: { ...coffee, account_id: again.body.account.id } })).status).toBe(201);
+    await plannedStore.set(ctx, { version: 1, items: [], dismissed: ['bill|CASH|Wallet|coffee|USD|450'], threshold: null });
+    const refused = await quietly(() => undo(again.body.change_id));
+    expect([refused.status, refused.body.error.message]).toEqual([409, 'A recurring series on the account was marked not recurring, so the account wasn’t removed: remove it in the app if you want it gone.']);
+  });
+
   test('a row added in another way, or anything naming the account: refused, saying what', async () => {
     const { setGoals } = await import('@/lib/goals');
     const { linkAccounts } = await import('@/lib/links');
@@ -659,38 +675,93 @@ describe('undo of an account a token made, taken out only as the token left it',
     return (await changeStore.get(ctx, change))!.undoing!;
   };
 
-  test('one cut off inside its delete, its rows gone: a resume refused meanwhile says so, and the undo is kept to finish later', async () => {
+  /** An undo of `change` cut off inside the app's delete, after its rows
+   *  went and before the account did: the undo's id. */
+  const cutInDelete = async (change: string) => {
     const md = await import('@/lib/manual');
-    const a = await made();
     const cut = spyOn(md, 'removeManualAccount').mockRejectedValueOnce(new Error('the function was stopped'));
     try {
-      expect((await quietly(() => undo(a.change))).status).toBe(500);
+      expect((await quietly(() => undo(change))).status).toBe(500);
     } finally {
       cut.mockRestore();
     }
-    const undoing = (await changeStore.get(ctx, a.change))!.undoing!;
+    return (await changeStore.get(ctx, change))!.undoing!;
+  };
+  /** The day's recorded net worth, as the chart reads it. */
+  const netWorthToday = async () => Number(await decrypt(ctx, fake.hashes.get(ctxKey('history:net-worth'))!.get(new Date(NOW).toISOString().slice(0, 10))!));
+  const CUT = 'An earlier undo of it stopped part way through taking it out, so transactions this token added to it may be gone already; that undo is recorded as stopped, and the change can be undone again once nothing else names the account.';
+
+  /** The person keeps the account a cut-off undo left standing: their own
+   *  row on it, and a resume refused for it. The undo's id and the row's. */
+  const keptByThePerson = async (a: Awaited<ReturnType<typeof made>>) => {
+    const undoing = await cutInDelete(a.change);
     expect((await changeStore.get(ctx, undoing))!).toMatchObject({ op: 'undo', state: 'failed', progress: 'deleting', before: { account_id: a.id, name: 'Cash jar' } });
     expect(await findManualTxn(ctx, a.row)).toBeNull();
     expect(await getManualAccount(ctx, a.id)).not.toBeNull();
-    // The person adds a row to the account, still listed.
     expect((await app('manual-transactions', 'POST', { account_id: a.id, date: daysAgo(0, NOW), amount: 3, currency: 'USD', name: 'Mine' })).status).toBe(200);
     const mine = (await manualTxnStore.get(ctx, a.id))!.rows.find((r) => r.name === 'Mine')!;
-    const second = await quietly(() => undo(a.change));
-    expect([second.status, second.body.error.code, second.body.error.message]).toEqual([
+    const refused = await quietly(() => undo(a.change));
+    expect([refused.status, refused.body.error.code, refused.body.error.message]).toEqual([
       409,
       'conflict',
-      `A transaction on it (${mine.id}) was added since in another way, so the account wasn’t removed: remove it in the app if you want it gone. An earlier undo of it stopped part way through taking it out, so transactions this token added to it may be gone already; that undo is kept, and is finished by the next undo asked once nothing else names the account.`,
+      `A transaction on it (${mine.id}) was added since in another way, so the account wasn’t removed: remove it in the app if you want it gone. ${CUT}`,
     ]);
-    expect((await changeStore.get(ctx, a.change))!.undoing).toBe(undoing);
-    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ state: 'failed', progress: 'deleting', error: 'conflict' });
-    expect(await findManualTxn(ctx, mine.id)).not.toBeNull();
-    // Once the person's row is gone, the next undo finishes it, under the same id.
-    expect((await app('manual-transactions', 'DELETE', { id: mine.id, account_id: a.id })).status).toBe(200);
-    const third = await undo(a.change);
-    expect([third.status, third.body.undo]).toEqual([200, undoing]);
+    return { undoing, mine: mine.id };
+  };
+
+  test('one cut off inside its delete, its rows gone: a resume refused while the person keeps the account ends it, recorded, and the change is undone afresh later', async () => {
+    const a = await made();
+    const { undoing, mine } = await keptByThePerson(a);
+    // Ended: recorded as it stopped, and its name off the change.
+    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ state: 'failed', progress: 'deleting', error: 'standing' });
+    expect((await changeStore.get(ctx, a.change))!.undoing).toBeUndefined();
+    expect(await findManualTxn(ctx, mine)).not.toBeNull();
+    // Once the person's row is gone, an undo asked again is a new one, and finishes.
+    expect((await app('manual-transactions', 'DELETE', { id: mine, account_id: a.id })).status).toBe(200);
+    const again = await undo(a.change);
+    expect(again.status).toBe(200);
+    expect(again.body.undo).not.toBe(undoing);
     expect(await getManualAccount(ctx, a.id)).toBeNull();
-    expect((await changeStore.get(ctx, undoing))!.state).toBe('done');
-    expect((await changeStore.get(ctx, a.change))!.undone_by).toBe(undoing);
+    expect((await changeStore.get(ctx, a.change))!.undone_by).toBe(again.body.undo);
+    expect((await changeStore.get(ctx, undoing))!.state).toBe('failed');
+  });
+
+  test('while the person’s own row is what keeps it, the change can be forgotten', async () => {
+    const a = await made();
+    await keptByThePerson(a);
+    expect((await app('api-changes', 'POST', { action: 'forget', id: a.change })).status).toBe(200);
+    expect((await changeStore.get(ctx, a.change))!.forgotten_at).toBeString();
+    expect(await getManualAccount(ctx, a.id)).not.toBeNull();
+  });
+
+  test('never folds days it didn’t take out: the account deleted in the app after a refused resume, or before any', async () => {
+    // After a resume refused while the person kept it: a later undo finds
+    // the account gone by their hand, and leaves past totals alone.
+    const a = await made();
+    await recordSnapshot(ctx, 1000, { acc_chk: 900, [a.id]: 100 });
+    await keptByThePerson(a);
+    expect((await app('manual-accounts', 'DELETE', { account_id: a.id })).status).toBe(200);
+    const later = await quietly(() => undo(a.change));
+    expect([later.status, later.body.error.message]).toEqual([409, 'The account no longer exists.']);
+    expect(await netWorthToday()).toBe(1000);
+
+    // Cut off inside its delete, then deleted in the app before any resume:
+    // it can't tell who took the account out, so it folds nothing, ends, and
+    // the change can be forgotten.
+    const b = await made();
+    await recordSnapshot(ctx, 1500, { acc_chk: 900, [b.id]: 600 });
+    const undoing = await cutInDelete(b.change);
+    expect((await app('manual-accounts', 'DELETE', { account_id: b.id })).status).toBe(200);
+    const gone = await quietly(() => undo(b.change));
+    expect([gone.status, gone.body.error.code, gone.body.error.message]).toEqual([
+      409,
+      'conflict',
+      'The account is gone, but an earlier undo stopped part way through taking it out and can’t tell whether it was deleted in the app since, so past totals are left as they are, as the app’s own delete leaves them.',
+    ]);
+    expect(await netWorthToday()).toBe(1500);
+    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ state: 'failed', progress: 'deleting', error: 'removed' });
+    expect((await changeStore.get(ctx, b.change))!.undoing).toBeUndefined();
+    expect((await app('api-changes', 'POST', { action: 'forget', id: b.change })).status).toBe(200);
   });
 
   test('two undos at once: one is named on the change and runs, the other is told so, or answered as it once done, and leaves nothing', async () => {
@@ -822,7 +893,8 @@ describe('an undo of a balance', () => {
     setSystemTime(new Date(NOW + 1000));
     const up = await send('POST', `manual-accounts/${WALLET}/balance`, { body: { balance: 100 } });
     expect([neg.status, up.status]).toEqual([200, 200]);
-    expect((await app('manual-accounts', 'PATCH', { account_id: WALLET, name: 'Wallet', institution_name: 'Cash', type: 'credit', subtype: null, balance: 100 })).status).toBe(200);
+    // Made a card since, as the release before could (the app refuses it now).
+    await saveManualAccount(ctx, { ...(await getManualAccount(ctx, WALLET))!, type: 'credit' });
     const r = await undo(up.body.change_id);
     expect([r.status, r.body.error.code]).toEqual([409, 'conflict']);
     expect(r.body.error.message).toBe('Credit and loan balances are the amount owed, so they cannot be negative, so it wasn’t undone.');
