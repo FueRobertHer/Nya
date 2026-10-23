@@ -129,8 +129,10 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
   };
 
   // When every plan worked out ends, if they all end together: at an age,
-  // or, with no age to count from (the age is your plan's, so every plan has
-  // one or none), after a number of years.
+  // or, where one has no age to count from, after a number of years. A plan
+  // can have an age when your plan has none: a scenario that sets a
+  // retirement age starts at it (lib/fire/plan.ts startAge). Plans of both
+  // kinds are compared by how long they run, as plans with no age are.
   const ends = columns.flatMap((c) => {
     if (c.outcome.kind !== 'figures' || !('sim' in c.outcome.figures.engine)) return [];
     const { startAge, sim } = c.outcome.figures.engine;
@@ -140,7 +142,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
   const endsTogether =
     ends.length === 0 ? null
     : !noAge && ends.every((e) => e.age === ends[0].age) ? `at ${ends[0].age}`
-    : ends.every((e) => e.age === null && e.years === ends[0].years) ? `after ${ends[0].years} years`
+    : noAge && ends.every((e) => e.years === ends[0].years) ? `after ${ends[0].years} years`
     : null;
   /** When a plan ends: the age, or after how many years. */
   const endOf = (fig: PlanFigures) => ('sim' in fig.engine ? (fig.engine.startAge !== null ? `at ${fig.engine.startAge + fig.engine.sim.years}` : `after ${fig.engine.sim.years} years`) : '');

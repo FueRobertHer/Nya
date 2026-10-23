@@ -171,6 +171,23 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(m.cells[1].diff).toBe('runs a different number of years, so not compared');
   });
 
+  test('with no age set, a scenario that sets a retirement age and runs as long is compared by length, not said to run another', () => {
+    // The scenario starts at 50 (its retirement age), the plan at no age: both 30 years.
+    const noAge = figs(plan({ age: null, horizon: 30 }));
+    const at50 = figs(plan({ age: null, targetAge: 50, horizon: 30 }));
+    expect('sim' in at50.engine && at50.engine.startAge).toBe(50);
+    const col = (id: string, f: PlanFigures): CompareColumn => ({ id, name: id, isPlan: id === 'plan', outcome: { kind: 'figures', figures: f, result: run(f) } });
+    const r = compareRows([col('plan', noAge), col('Retire at 50', at50)], money, TODAY).rows;
+    const median = r.find((x) => x.key === 'median')!;
+    expect(median.label).toBe('Ending balance after 30 years, median');
+    expect(median.cells[1].value).toMatch(/^\$[\d,]+$/);
+    expect(median.cells[1].diff).not.toContain('different number of years');
+    // Of another length, the reason is the true one.
+    const at50long = figs(plan({ age: null, targetAge: 50, horizon: 35 }));
+    const apart = compareRows([col('plan', noAge), col('Retire at 50', at50long)], money, TODAY).rows.find((x) => x.key === 'median')!;
+    expect(apart.cells[1].diff).toBe('runs a different number of years, so not compared');
+  });
+
   test('no FI date says which kind of shortfall: a cost it can’t pay, or a year that takes out more than there is', () => {
     const house = figs(plan({ age: 40, targetAge: 60 }), [{ id: 'h', kind: 'house', label: 'Our home', atAge: 42, cost: 800_000, yearly: 0, years: null }]);
     expect(house.short?.kind).toBe('cost');

@@ -202,6 +202,44 @@ describe('a recorded currency', () => {
   });
 });
 
+describe('scenarios against the Plan’s currency', () => {
+  const scenario = (id: string, name: string, currency: string) => ({
+    id,
+    version: 1,
+    name,
+    currency,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    savedAt: '2026-10-01T00:00:00.000Z',
+    rev: 'r1',
+    set: { targetAge: 50, spending: 45_000 },
+    income: { leaveOut: [], add: [] },
+    expenses: { leaveOut: [], add: [] },
+    events: [],
+  });
+
+  test('recorded in USD with the accounts all in EUR: one typed in USD is the Plan’s and is worked out; one typed in EUR is not, until the person says', async () => {
+    serve({
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
+      'GET /api/plan-scenarios': [200, { ...EMPTY, scenarios: [scenario('s1', 'In dollars', 'USD'), scenario('s2', 'In euros', 'EUR')] }],
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render({ institutions: broker([EUR()]) });
+    await press(tab.byLabel('Open In dollars'));
+    expect(tab.text()).toContain('Scenario: In dollars');
+    expect(tab.buttons('They’re in USD').length).toBe(0);
+    expect(tab.text()).toContain('Will it last?');
+    // The other is listed with why it isn't worked out.
+    expect(tab.text()).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
+    await press(tab.buttons('Back to your plan').find((b) => b.getAttribute('aria-label') === null));
+    await press(tab.byLabel('Open In euros'));
+    expect(tab.text()).toContain('Scenario: In euros');
+    expect(tab.text()).not.toContain('Will it last?');
+    // Offered at once: the Plan's currency is recorded, so it can't move.
+    expect(tab.buttons('They’re in USD').length).toBe(1);
+    await tab.unmount();
+  });
+});
+
 describe('with amounts hidden', () => {
   test('what the tab says about the currency names currencies, never an amount', async () => {
     setAmountsHidden(true);
