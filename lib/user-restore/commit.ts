@@ -32,6 +32,7 @@ import { restoreHoldingsIndex } from '../holdings-history';
 import { importStore, importSummaryStore, summaryOf, type ImportEntry } from '../import/store';
 import { historyImportStore, historyImportSummaryStore, importedTxnStore, summaryOfEntry, type HistoryImportEntry } from '../history-import/store';
 import { manualTxnStore } from '../manual-txns';
+import { firePlanStore, planCurrencyStore } from '../fire-plan';
 import { clearCaches } from '../cache';
 import { SEAM, MAX_RESTORED_MANUAL_ACCOUNTS } from './parts';
 import { storeOfPart } from './check';
@@ -207,15 +208,36 @@ async function restoredSpans(ctx: Ctx, before: () => Promise<void>): Promise<voi
   }
 }
 
+/** The Plan and the record of the currency its figures were typed in
+ *  (lib/fire-plan.ts) are one setting: the record holds only while its
+ *  amounts are the Plan's, so one kept beside another Plan is right only by
+ *  coincidence. A file with either replaced both, so the one it lacked goes:
+ *  a Plan from before the record was kept then asks its currency, as the
+ *  Plan tab does for any. A file with neither leaves the account's pair. */
+async function planPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Promise<void>): Promise<void> {
+  const plan = parts.has(`store:${firePlanStore.name}`);
+  const currency = parts.has(`store:${planCurrencyStore.name}`);
+  if (plan === currency) return;
+  const absent: { getReport: (c: Ctx) => Promise<{ value: unknown; unreadable: boolean }>; remove: (c: Ctx) => Promise<unknown> } = plan ? planCurrencyStore : firePlanStore;
+  // One in a form this version doesn't know is left as it is: its own
+  // release reads it against the Plan, and asks.
+  const now = await absent.getReport(ctx);
+  if (now.value === null && !now.unreadable) return;
+  await before();
+  await absent.remove(ctx);
+}
+
 /**
  * What the finish works out from what was written (see the header): each
- * restored account's rows, the imports' summaries, and the holdings index.
- * Then the caches go, since net worth and transactions changed. Run again,
- * it writes the same. `before` runs before each write, and may refuse it by
- * throwing (the finish route: its time, and the record looked at again).
+ * restored account's rows, the imports' summaries, and the holdings index;
+ * and, given the restore's record, the Plan's pair (planPair). Then the
+ * caches go, since net worth and transactions changed. Run again, it writes
+ * the same. `before` runs before each write, and may refuse it by throwing
+ * (the finish route: its time, and the record looked at again).
  */
-export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void> } = {}): Promise<void> {
+export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void>; record?: UserRestoreRecord } = {}): Promise<void> {
   const before = opts.before ?? (async () => {});
+  if (opts.record) await planPair(ctx, new Set(opts.record.plan.batches.map((b) => b.part)), before);
   await restoredSpans(ctx, before);
   const [imports, historyImports, manualBooks, importedBooks] = await Promise.all([
     importStore.getAll(ctx),

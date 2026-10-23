@@ -36,6 +36,8 @@ export type RestoreState = {
   scan?: ScanView;
   /** With the scan: whom this account shares with already, and what. */
   sharing?: SharingNow[];
+  /** With the scan: the API tokens made here, which stay (TokensNow). */
+  tokens?: TokensNow | null;
 };
 
 /** A restored account whose entry can't be read (app/api/user-restore): what
@@ -179,7 +181,22 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   out.push('the sign-ins Nya used to reach your banks: connect each bank again');
   if (never.api_tokens > 0) out.push(`${plural(never.api_tokens, 'API token')}: make new ones if you need them`);
   if (never.sharing > 0) out.push(`${plural(never.sharing, 'sharing connection')}: sharing is between two people, so share again from here`);
+  const changes = left['api_changes'] ?? 0;
+  if (changes > 0) out.push(`${plural(changes, 'change')} made with API tokens in your other copy: about that copy, whose tokens don’t come back`);
   return out;
+}
+
+/** The API tokens made here (app/api/user-restore, with the scan): they
+ *  stay through a restore, and read what it brings back. */
+export type TokensNow = { kept: number; writing: number };
+
+/** What the API tokens made here do with what comes back, in words; null
+ *  when there are none. */
+export function tokensLine(tokens: TokensNow | null | undefined): string | null {
+  if (!tokens || tokens.kept === 0) return null;
+  const one = tokens.kept === 1;
+  const change = tokens.writing === 0 ? '' : tokens.writing === tokens.kept ? ', and can change it' : `, and ${plainNumber(tokens.writing)} of them can change it`;
+  return `${plural(tokens.kept, 'API token')} made here ${one ? 'stays' : 'stay'}: ${one ? 'it reads' : 'they read'} what comes back${change}.`;
 }
 
 const ASK = 'or ask whoever runs this copy of Nya.';

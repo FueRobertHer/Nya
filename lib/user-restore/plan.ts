@@ -585,6 +585,11 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
   if (c.bank.pending.size > 0) left_out.pending_transactions = c.bank.pending.size;
   if (c.never.api_tokens > 0) left_out.api_tokens = c.never.api_tokens;
   if (c.never.sharing > 0) left_out.sharing_connections = c.never.sharing;
+  // The other copy's record of what its API tokens changed: about that copy,
+  // whose tokens don't come back (lib/user-restore/parts.ts), counted so the
+  // preview says it.
+  const changes = c.entries.get('api-changes')?.length ?? 0;
+  if (changes > 0) left_out.api_changes = changes;
   return { before, after, left_out };
 }
 

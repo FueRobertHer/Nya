@@ -21,7 +21,8 @@ import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 import { myConnections } from '@/lib/sharing';
 import { restoredRowsOf } from '@/lib/user-restore/forget';
-import type { UnreadableAccount, UnrecognisedAccount } from '@/components/restore-state';
+import { apiTokenStore } from '@/lib/api-token-store';
+import type { TokensNow, UnreadableAccount, UnrecognisedAccount } from '@/components/restore-state';
 
 // Bringing a download back into this account (docs/data-export.md,
 // "Bringing it back"): the record of the restore, and what is done to the
@@ -48,7 +49,9 @@ import type { UnreadableAccount, UnrecognisedAccount } from '@/components/restor
 //                             PREVIEWS_PER_HOUR), and, with Clerk, the people
 //                             this account shares with already (`sharing`),
 //                             who would see what a restore brings back as it
-//                             is shared
+//                             is shared, and the API tokens made here, which
+//                             stay and read it (`tokens`: how many, and how
+//                             many can write)
 //   POST { action: "start", restore_id, plan, source, brought, left_out,
 //          without, history, earlier, password? }
 //                             the record claimed, after a fresh sign-in, and
@@ -167,6 +170,19 @@ async function sharingNow(): Promise<{ label: string; kinds: string[]; accounts:
     .filter((c) => c.kinds.length > 0 || c.accounts > 0);
 }
 
+/** The API tokens made here, which a restore keeps (they read whatever the
+ *  account holds), and how many of them can change it: the preview says so.
+ *  LENIENT, for these words only: one that can't be read is counted as kept,
+ *  and a failure says nothing (null). */
+async function tokensNow(ctx: Ctx): Promise<TokensNow | null> {
+  try {
+    const { entries, unreadable, unrecognised } = await apiTokenStore.getAllReport(ctx);
+    return { kept: entries.size + unreadable.length + unrecognised.length, writing: [...entries.values()].filter((t) => t.access === 'write').length };
+  } catch {
+    return null;
+  }
+}
+
 function tooMany(retryAfterSeconds: number): NextResponse {
   return NextResponse.json(
     { error: `A restore can be started, undone or emptied ${STARTS_PER_DAY} times a day. Try again later.`, retry_after_seconds: retryAfterSeconds },
@@ -246,6 +262,7 @@ export async function GET(req: Request) {
       }
       answer.scan = scanView(await scanAccount(ctx));
       answer.sharing = await sharingNow();
+      answer.tokens = await tokensNow(ctx);
     }
     return NextResponse.json(answer, { headers: NO_STORE });
   } catch (err) {

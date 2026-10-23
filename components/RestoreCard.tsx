@@ -43,7 +43,7 @@ import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
-import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
+import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -136,7 +136,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'What was brought back couldn’t be read.');
       const next = data as RestoreState;
-      setState((was) => (keep && was && !scan ? { ...next, scan: was.scan, sharing: was.sharing } : next));
+      setState((was) => (keep && was && !scan ? { ...next, scan: was.scan, sharing: was.sharing, tokens: was.tokens } : next));
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'What was brought back couldn’t be read.');
@@ -477,6 +477,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             <PreviewView
               loaded={phase.loaded}
               sharing={sharingLines(state.sharing ?? [])}
+              tokens={tokensLine(state.tokens)}
               withoutOk={withoutOk}
               onWithoutOk={setWithoutOk}
               passwordField={passwordField}
@@ -641,6 +642,7 @@ export function RecordSummary({ record }: { record: RecordView }) {
 export function PreviewView({
   loaded,
   sharing = [],
+  tokens = null,
   withoutOk,
   onWithoutOk,
   passwordField,
@@ -652,6 +654,8 @@ export function PreviewView({
 }: {
   loaded: Loaded;
   sharing?: readonly string[];
+  /** The API tokens made here, which stay (tokensLine), or null. */
+  tokens?: string | null;
   withoutOk: boolean;
   onWithoutOk: (ok: boolean) => void;
   passwordField: ReactNode;
@@ -688,6 +692,12 @@ export function PreviewView({
               <li key={l}>{l}</li>
             ))}
           </ul>
+        </>
+      )}
+      {tokens && (
+        <>
+          <div className="section-label">API tokens</div>
+          <p className="panel-note">{tokens}</p>
         </>
       )}
       {p.collected.notes.length > 0 && (

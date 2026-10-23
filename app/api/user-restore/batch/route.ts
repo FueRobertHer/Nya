@@ -214,6 +214,7 @@ async function finish(ctx: Ctx, id: string): Promise<NextResponse> {
   // Held as a batch is (WRITE_BY_MS), before each of its writes, and the
   // record looked at again then: an undo begun since refuses what is left.
   await finishWrites(ctx, {
+    record,
     before: async () => {
       if (Date.now() - began > WRITE_BY_MS) throw new BatchNotWritten('Finishing this restore took too long. Finish it again.', 503);
       const now = await userRestoreStore.get(ctx);
