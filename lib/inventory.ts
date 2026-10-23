@@ -927,7 +927,7 @@ const OUTSIDE: Readonly<Record<string, Outside>> = {
   'crypto:': {
     group: 'access',
     name: 'Your data key',
-    about: 'The key your data is encrypted with, kept locked by the master key, which is never in the database.',
+    about: 'The key your account’s encrypted values are under, kept locked by the master key, which is never in the database.',
     unit: ['key', 'keys'],
     kept: ['A deleted account', 'A record that a deleted account existed'],
     plain: 'Its id, when it was made and when your data was moved to it, beside your account’s random id. The key itself is locked.',

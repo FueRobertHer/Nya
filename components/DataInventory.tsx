@@ -86,10 +86,10 @@ export function encryptionText(r: InventoryRow): string {
 
 /** What the account's data key is, in words. */
 export function keyText(key: Inventory['key']): string {
-  if (key === null) return 'Which key your data is encrypted with couldn’t be read just now.';
-  if (!key.own) return 'Your data is encrypted with keys this copy of Nya shares between accounts: your account doesn’t have a key of its own.';
+  if (key === null) return 'Which key your account’s encrypted values are under couldn’t be read just now.';
+  if (!key.own) return 'Your account’s encrypted values are under keys this copy of Nya shares between accounts: your account doesn’t have a key of its own.';
   const made = key.since ? ` It was made on ${day(key.since)}.` : '';
-  if (key.moved) return `Your account has a data key of its own, and everything of yours that is encrypted has been under it since ${day(key.moved)}.${made}`;
+  if (key.moved) return `Your account has a data key of its own, and every encrypted value of yours has been under it since ${day(key.moved)}.${made}`;
   return `Your account has a data key of its own.${made} What was stored before it may still be under a key this copy of Nya shares until whoever runs it moves it: each kind below says which.`;
 }
 
