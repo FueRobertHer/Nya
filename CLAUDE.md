@@ -18,7 +18,7 @@
 
 Every change that adds or changes UI follows [docs/design/guidelines.md](docs/design/guidelines.md). Read it before starting. In short:
 
-1. **Place it first.** Decide where it goes using the guidelines' "Where it goes": a setting goes to Settings (a self-contained card in the Manage list until Settings exists), an object's actions go in its sheet or ⋯ menu, analysis never goes above the transaction list. No new tabs or modes.
+1. **Place it first.** Decide where it goes using the guidelines' "Where it goes": a setting goes to its Settings section (a self-contained card in `settingsSections`), an object's actions go in its sheet or ⋯ menu, analysis never goes above the transaction list. No new tabs or modes.
 2. **Record the placement.** Add any new component to the feature-to-location table or Building blocks in `docs/design/information-architecture.md`.
 3. **Build with today's pieces.** Use the classes in the guidelines' "Which class to use today" table and the 11 `var(--…)` colors in `app/globals.css`. No color literals, no inline spacing or type in `style={{}}`, nothing under 12px. Space stacked siblings with `.stack`.
 4. **Keep the warnings.** Stale, incomplete and reconnect notices keep their words and severity; critical ones stay on the number in full. `docs/features.md` explains why they exist.

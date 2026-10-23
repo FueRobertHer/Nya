@@ -1,6 +1,6 @@
 'use client';
 
-// Your tags, under Manage on the Accounts tab (#40): how many there are, and
+// Your tags, in Settings, Transactions (#40): how many there are, and
 // a drawer to make one, rename it, give it another color or delete it. Each
 // change is sent on its own (app/api/tags), and the drawer shows the tags as
 // the server answers, so a change made on another device is never shown as

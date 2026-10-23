@@ -8,7 +8,7 @@ import { parseWeeklyChoice } from '@/lib/weekly-summary/settings';
 import { cannotSend, saveSetting, DEMO_REFUSAL } from '@/lib/weekly-summary/send-now';
 
 // The weekly summary's setting (lib/weekly-summary/settings.ts), from the
-// Weekly summary card under Manage on the Accounts tab. Behind the session
+// Weekly summary card in Settings, Preferences. Behind the session
 // gate, for the signed-in person's own container.
 //
 //   GET  { setting, can_send, why_not, demo }: the setting as saved, or null

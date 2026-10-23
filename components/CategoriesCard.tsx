@@ -1,6 +1,6 @@
 'use client';
 
-// Your categories, under Manage on the Accounts tab: how many there are, in
+// Your categories, in Settings, Transactions: how many there are, in
 // how many groups, and the Categories screen (components/CategoryManager.tsx)
 // to rename, regroup, archive, merge or delete them. A change made there shows
 // on the next read of the transactions and the budgets, which the dashboard

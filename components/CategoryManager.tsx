@@ -1,6 +1,6 @@
 'use client';
 
-// The Categories screen (under Manage on the Accounts tab): your categories in
+// The Categories screen (in Settings, Transactions): your categories in
 // their groups (lib/categories.ts), and every change to them, one drawer with
 // a level per thing being changed, built for a phone. Each change is sent on
 // its own (app/api/categories) and the drawer shows the set as the server

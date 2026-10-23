@@ -3,7 +3,7 @@
 // Your rules on the dashboard (lib/rules.ts): the list, loaded once and
 // replaced by the answer to every change (app/api/rules), and the one rule
 // being made or edited in the rule drawer (components/RuleSheet.tsx), opened
-// from the Rules screen under Manage, from "Create a rule from this" on a
+// from the Rules screen in Settings, Transactions, from "Create a rule from this" on a
 // transaction, or from the offer to file every transaction with a name the way
 // one was just filed. Rules apply on the server, on every read: after a change
 // the dashboard reads the transactions again (`onChanged`).

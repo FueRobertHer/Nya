@@ -86,8 +86,8 @@ export function monthGaps(
  *  month", "October"). */
 export function heldNote(names: readonly string[], period = 'this month'): string {
   return names.length === 1
-    ? `Doesn't include ${names[0]}'s transactions from your download: they count once its accounts are linked to the bank connected again (Accounts tab), or once you answer for it (Manage, Bring back a download), so ${period} may be incomplete.`
-    : `Doesn't include the transactions from your download of ${joinNames([...names])}: they count once each bank's accounts are linked to the bank connected again (Accounts tab), or once you answer for it (Manage, Bring back a download), so ${period} may be incomplete.`;
+    ? `Doesn't include ${names[0]}'s transactions from your download: they count once its accounts are linked to the bank connected again (Settings, Connections), or once you answer for it (Settings, Your data and privacy, Bring back a download), so ${period} may be incomplete.`
+    : `Doesn't include the transactions from your download of ${joinNames([...names])}: they count once each bank's accounts are linked to the bank connected again (Settings, Connections), or once you answer for it (Settings, Your data and privacy, Bring back a download), so ${period} may be incomplete.`;
 }
 
 /** "A", "A and B", "A, B and C". */

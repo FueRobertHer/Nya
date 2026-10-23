@@ -93,7 +93,7 @@ export function composeAccessNotice(event: AccessEvent, at: Date, opts: { clerk:
         [
           `A download of Nya data began to be brought back into your Nya account on ${when}: everything in it, in place of what the account had.`,
           "If that was you, there's nothing to do.",
-          `If it wasn't you, undo it now (Manage, Bring back a download, Undo), which empties the account again, then secure it: ${secure}`,
+          `If it wasn't you, undo it now (Settings, Your data and privacy, Bring back a download, Undo), which empties the account again, then secure it: ${secure}`,
           open,
           footer,
         ].join('\n\n') + '\n',
@@ -138,7 +138,7 @@ export function composeAccessNotice(event: AccessEvent, at: Date, opts: { clerk:
       [
         `An API token that ${can} was made on ${when}.`,
         "If that was you, there's nothing to do.",
-        `If it wasn't you, revoke it now: in Nya, open Manage on the Accounts tab, and revoke it under API tokens. A token keeps working after every session ends, so revoking it is what stops it. Someone else has also signed in as you: ${secure}`,
+        `If it wasn't you, revoke it now: in Nya, open Settings, Your data and privacy, and revoke it under API tokens. A token keeps working after every session ends, so revoking it is what stops it. Someone else has also signed in as you: ${secure}`,
         open,
         footer,
       ].join('\n\n') + '\n',

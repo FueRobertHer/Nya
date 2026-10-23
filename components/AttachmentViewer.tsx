@@ -2,7 +2,7 @@
 
 // One receipt or document, full screen (#47): opened from a transaction's
 // sheet (components/AttachmentSection.tsx) or from Receipts and documents
-// under Manage accounts (components/ReceiptsCard.tsx).
+// in Settings, Your data and privacy (components/ReceiptsCard.tsx).
 //
 // A PHOTO is shown from the app's own address (/api/attachments/<id>/file),
 // opened on the server for the signed-in person alone, never cached; it

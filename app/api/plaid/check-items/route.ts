@@ -5,7 +5,7 @@ import { checkItemUsage, unusedDays, type UsageReport } from '@/lib/item-usage';
 
 // Daily check of linked Items that cost money and do nothing (see
 // lib/item-usage.ts), hit by Vercel Cron (vercel.json). It only flags them, for
-// the owner to review in Manage accounts; it removes nothing. Authenticated like
+// the owner to review in Settings, Connections; it removes nothing. Authenticated like
 // the snapshot cron: excluded from the session gate in proxy.ts, and answering
 // 401 unless the request carries `Authorization: Bearer ${CRON_SECRET}`.
 //

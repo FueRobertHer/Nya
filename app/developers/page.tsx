@@ -191,7 +191,7 @@ export default function DevelopersPage() {
 
       <InfoSection title="Tokens">
         <p>
-          On the Accounts tab, tap Manage, then API tokens. Name the token after the program that will use it, confirm it’s
+          Open Settings (the account menu, or the gear), then Your data and privacy, then API tokens. Name the token after the program that will use it, confirm it’s
           you (as for downloading your data), and copy the token: it is shown once, and Nya keeps only a hash of it, so it
           can’t be shown again. You can have up to {MAX_TOKENS}.
         </p>

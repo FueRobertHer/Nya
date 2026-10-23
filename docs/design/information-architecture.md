@@ -182,6 +182,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Dashboard (shell) | Header, five tabs, all sheets | Header, five tabs, Settings screen, sheets |
 | Brand, HideAmounts | Header | Header |
 | ClerkAccount | Avatar menu (Sharing, Manage account, Sign out) | Avatar menu: Settings, Sharing, Sign out |
+| Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections, each a view with a back button |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
 | NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card |

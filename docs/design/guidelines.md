@@ -22,7 +22,7 @@ The target design is in [design-system.md](design-system.md) and [information-ar
 
 Decide this first. Most clutter in Nya came from good features placed in the first spot that was free.
 
-1. **A setting** (it changes how Nya behaves, and nobody looks at it daily) goes in a Settings section: Preferences, Transactions, Connections, Sharing, Your data and privacy, or Account. Until Settings exists (rollout phase 1), build it as one self-contained card component and add it to the Manage list on Accounts, so it moves as a unit. Never put a setting on a working screen.
+1. **A setting** (it changes how Nya behaves, and nobody looks at it daily) goes in a Settings section: Preferences, Transactions, Connections, Sharing, Your data and privacy, or Account. Build it as one self-contained card component and add it to its section in `settingsSections` in `components/Dashboard.tsx`, so it can move as a unit. Never put a setting on a working screen.
 2. **About one object** (an account, a transaction, a goal, a connection, a person) goes in that object's sheet or its ⋯ menu, not as a new card or a new row button on the tab.
 3. **Asks the person to act** is shown on the object it concerns and is also an item in Home's Needs attention.
 4. **Analysis of transactions** goes with Activity's analysis (Spending, after phase 5), never above the transaction list.

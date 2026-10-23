@@ -124,7 +124,7 @@ export function DeleteAccountView({
             {typeof status.database_days === 'number' &&
               status.database_days > 0 &&
               ` The database host also keeps its own backups, of everything, for ${status.database_days} ${status.database_days === 1 ? 'day' : 'days'}.`}{' '}
-            To keep a copy, use Download my data under Manage accounts first. When it’s done you’ll get a receipt of what
+            To keep a copy, use Download my data in Settings, Your data and privacy, first. When it’s done you’ll get a receipt of what
             was deleted and what stays.
           </p>
           <input

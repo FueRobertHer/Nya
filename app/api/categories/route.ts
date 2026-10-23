@@ -7,7 +7,7 @@ import { BudgetError } from '@/lib/budget-set';
 import { changeCategories } from '@/lib/category-actions';
 
 // Your categories and their groups (lib/categories.ts), for the Categories
-// screen under Manage (components/CategoryManager.tsx) and the lists to choose
+// screen in Settings, Transactions (components/CategoryManager.tsx) and the lists to choose
 // a category from.
 //
 // GET answers the set (`categories`), made on the first read (lib/

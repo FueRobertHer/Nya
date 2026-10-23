@@ -711,7 +711,7 @@ describe('the summary’s words', () => {
     expect(composeWeekly(richFacts({ uncategorized_from: 'SimpleFIN' }), opts()).text).toContain('2 transactions from SimpleFIN this week have no category');
     expect(composeWeekly(richFacts({ uncategorized: 1, uncategorized_from: 'Lunch Flow' }), opts()).text).toContain('1 transaction from Lunch Flow this week has no category');
     expect(text).toContain(`Open Nya to see the figures: ${LINK}/`);
-    expect(text).toContain(`Nya sends you this every Monday because you turned on the weekly summary. It never includes balances, amounts or account numbers. To stop these summaries, open ${STOP} or turn them off in Nya, under Manage on the Accounts tab.`);
+    expect(text).toContain(`Nya sends you this every Monday because you turned on the weekly summary. It never includes balances, amounts or account numbers. To stop these summaries, open ${STOP} or turn them off in Nya, under Settings, Preferences.`);
     expect(text).not.toContain('Nothing needs your attention');
     expect(text.endsWith('\n')).toBe(true);
   });
@@ -878,7 +878,7 @@ describe('the summary’s words', () => {
         'You spent about as much this week as in a usual week.',
         'Nothing needs your attention this week.',
         `Open Nya to see the figures: ${LINK}/`,
-        `Nya sends you this every Monday because you turned on the weekly summary. It never includes balances, amounts or account numbers. To stop these summaries, open ${STOP} or turn them off in Nya, under Manage on the Accounts tab.`,
+        `Nya sends you this every Monday because you turned on the weekly summary. It never includes balances, amounts or account numbers. To stop these summaries, open ${STOP} or turn them off in Nya, under Settings, Preferences.`,
       ].join('\n\n') + '\n'
     );
   });
@@ -956,7 +956,7 @@ describe('the summary’s words', () => {
     expect(friday).toContain('It comes every Monday too, because you turned on the weekly summary.');
     expect(friday).not.toContain('every Friday');
     const off = composeWeekly(quietFacts(), opts({ requested: true, schedule: null, unsubscribe: null })).text;
-    expect(off).toContain("You asked Nya to send this now. The weekly summary isn't on, so no other comes unless you turn it on in Nya, under Manage on the Accounts tab. It never includes balances, amounts or account numbers.");
+    expect(off).toContain("You asked Nya to send this now. The weekly summary isn't on, so no other comes unless you turn it on in Nya, under Settings, Preferences. It never includes balances, amounts or account numbers.");
     expect(off).not.toContain('/unsubscribe');
     // Without a link to the app, it says to open it.
     expect(composeWeekly(quietFacts(), opts({ link: null, unsubscribe: null })).text).toContain('Open Nya to see the figures.\n\n');

@@ -127,7 +127,7 @@ describe('choosing accounts', () => {
     expect(renderToStaticMarkup(<ChooseView {...props} />)).not.toContain('banks from your download');
     const html = renderToStaticMarkup(<ChooseView {...props} counted={['Chase', 'Ally']} />).replace(/&#x27;/g, "'");
     expect(html).toContain(
-      'An account you track here could be one of the banks from your download (Chase and Ally): until you say whether it is, under Manage, Bring back a download, their transactions from your download aren’t counted.'
+      'An account you track here could be one of the banks from your download (Chase and Ally): until you say whether it is, in Settings, Your data and privacy, Bring back a download, their transactions from your download aren’t counted.'
     );
   });
 
@@ -326,9 +326,11 @@ describe('in connection health', () => {
     expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
     expect(dashboard).toContain('const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;');
     expect(dashboard).toContain("{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}");
-    for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (', '{inst.manual && !inst.connector && manageMode && (']) {
+    for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (']) {
       expect(dashboard).toContain(gate);
     }
+    // Delete, in the expanded row, is for typed accounts only.
+    expect(dashboard).toMatch(/\{inst\.manual && !inst\.connector && \(\s*<button\s+className="danger-outline"/);
   });
 });
 

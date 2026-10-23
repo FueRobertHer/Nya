@@ -65,15 +65,15 @@ export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat,
  *  connected. */
 export function restoreNotes(hold: RestoreHoldNote, day: DayFormat): string[] {
   const notes: string[] = [];
-  if (hold.unfinished) notes.push("A restore of your download hasn't finished, so no total is recorded until it does: resume it or undo it under Manage");
+  if (hold.unfinished) notes.push("A restore of your download hasn't finished, so no total is recorded until it does: resume it or undo it in Settings, Your data and privacy");
   if (hold.waiting.length === 1) {
     const [w] = hold.waiting;
     notes.push(
-      `${w.institution_name}, brought back from your download${w.last ? ` with transactions to ${day.snapshot(w.last)}` : ''}, isn't connected here and isn't counted in this total · no total is recorded until you connect it again and link its accounts, or stop following them (Manage)`
+      `${w.institution_name}, brought back from your download${w.last ? ` with transactions to ${day.snapshot(w.last)}` : ''}, isn't connected here and isn't counted in this total · no total is recorded until you connect it again and link its accounts, or stop following them (Settings, Your data and privacy, Bring back a download)`
     );
   } else if (hold.waiting.length > 1) {
     notes.push(
-      `${joinNames(hold.waiting.map((w) => w.institution_name))}, brought back from your download, aren't connected here and aren't counted in this total · no total is recorded until you connect each again and link its accounts, or stop following them (Manage)`
+      `${joinNames(hold.waiting.map((w) => w.institution_name))}, brought back from your download, aren't connected here and aren't counted in this total · no total is recorded until you connect each again and link its accounts, or stop following them (Settings, Your data and privacy, Bring back a download)`
     );
   }
   if (hold.unreadable) notes.push("What a restore brought back can't be read just now, so no total is recorded until it can be");

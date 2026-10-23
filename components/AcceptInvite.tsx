@@ -26,7 +26,7 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
     setError(body?.error ?? 'Could not connect. Try again.');
   };
 
-  if (done) return <p>Connected. Choose what you share with them under Manage accounts, Sharing.</p>;
+  if (done) return <p>Connected. Choose what you share with them in Settings, Sharing.</p>;
   return (
     <>
       <p>

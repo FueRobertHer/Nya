@@ -1,6 +1,6 @@
 'use client';
 
-// Your rules, under Manage on the Accounts tab (#36): each in a sentence, in
+// Your rules, in Settings, Transactions (#36): each in a sentence, in
 // the order they run (the first to set a category or a name decides it),
 // with a switch to turn it off (its transactions go back as they were, and
 // the rule is kept), arrows to move it up or down, and Edit, which opens the

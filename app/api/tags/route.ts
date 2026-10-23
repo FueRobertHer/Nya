@@ -5,7 +5,7 @@ import { emptyTagSet, readTagSet, TagError, type TagSet } from '@/lib/tags';
 import { txnAnnotationStore } from '@/lib/txn-annotations';
 import { changeTags } from '@/lib/tag-actions';
 
-// Your tags (lib/tags.ts), for the Tags screen under Manage
+// Your tags (lib/tags.ts), for the Tags screen in Settings, Transactions
 // (components/TagsCard.tsx) and the tag pickers on a transaction.
 //
 // GET answers the tags (`tags`, the stored list, or an empty one) and, for

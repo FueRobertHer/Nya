@@ -25,7 +25,7 @@ import {
   type RuleSet,
 } from '@/lib/rules';
 
-// Your rules (lib/rules.ts), for the Rules screen under Manage
+// Your rules (lib/rules.ts), for the Rules screen in Settings, Transactions
 // (components/RulesCard.tsx) and "Create a rule from this" on a transaction.
 //
 // GET answers the rules in the order they run (`rules`, each category they

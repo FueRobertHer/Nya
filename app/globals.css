@@ -284,13 +284,6 @@ th.num {
   margin-bottom: 4px;
 }
 
-.logout-btn {
-  width: auto;
-  padding: 8px 14px;
-  font-size: 13px;
-  flex-shrink: 0;
-}
-
 .card-actions {
   display: flex;
   flex-wrap: wrap; /* up to three actions on a phone-width card */
@@ -394,25 +387,28 @@ button.danger {
   color: var(--text);
 }
 
-/* Right side of an institution header: balance, plus the small disconnect
-   control that only appears in manage mode. */
+/* Right side of an institution header: balance, plus its Options button. */
 .inst-header-right {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-/* Small, tucked into the header (not a full-width button) so it can't be
-   fat-fingered; the type-to-confirm modal is the real safety net. */
-.disconnect-btn {
+/* An institution's Options (Add or remove accounts, Disconnect), and
+   Disconnect in Settings > Connections: sized to its label in the header,
+   not a full-width button. */
+button.inst-options {
   width: auto;
-  background: transparent;
-  border: 1px solid #3a2a2e;
-  color: var(--down);
-  padding: 5px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* Hide, Close… and Delete at the top of an account's expanded row. */
+.card-actions.acct-actions {
+  margin-top: 0;
+  margin-bottom: 12px;
 }
 
 .text-input {
@@ -489,6 +485,17 @@ button:disabled {
   padding: 8px 10px;
 }
 
+/* The header's icon buttons (hide amounts, refresh, the Settings gear) and
+   Settings' back button as 44px targets, the icon centered in each. */
+.top-actions .icon-btn,
+.settings-bar .icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .icon-btn svg {
   width: 16px;
   height: 16px;
@@ -497,6 +504,68 @@ button:disabled {
 
 .icon-btn svg.spin {
   animation: spin 0.9s linear infinite;
+}
+
+/* Settings (components/Settings.tsx): a back row, then the list of sections
+   or one section's cards as they were under Manage. */
+.settings-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-bar h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.settings-list {
+  list-style: none;
+  padding: 4px 0;
+  margin-top: 0;
+}
+
+.settings-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+button.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 12px 20px;
+  background: transparent;
+  color: var(--text);
+  border-radius: 0;
+  text-align: left;
+  font-weight: 400;
+}
+
+.settings-row svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-row-sub {
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .num.inflow {

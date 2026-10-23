@@ -189,7 +189,7 @@ async function write(ctx: Ctx, req: Request, id: string, indexText: string | nul
   // in use, and an undo would leave the connection running at the provider.
   const [items, secrets] = await Promise.all([getItems(ctx), secretsStore.count(ctx)]);
   if (items.length > 0 || secrets > 0) {
-    return refuse('A bank was connected here while the restore was running. Disconnect it (Manage), then resume the restore, or undo the restore.', 409, { done: record.done, connected: true });
+    return refuse('A bank was connected here while the restore was running. Disconnect it (from its card on the Accounts tab), then resume the restore, or undo the restore.', 409, { done: record.done, connected: true });
   }
 
   const batch = checked(bytes, utcDay(record.source.exported_at));

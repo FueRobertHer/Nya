@@ -15,7 +15,7 @@ import { categoriesFor } from './category-fixture';
 
 // The screens your categories show on (#38): the Budgets tab's group meters
 // and the reconcile line, the Activity tab's top spending by group, the lists
-// to choose a category from, and the Categories screen under Manage.
+// to choose a category from, and the Categories screen in Settings.
 
 const text = (html: string) =>
   html
@@ -219,7 +219,7 @@ describe('the lists to choose a category from', () => {
   });
 });
 
-describe('the Categories screen under Manage', () => {
+describe('the Categories screen in Settings', () => {
   const state = (t: Taxonomy | null, error: string | null = null) => ({ taxonomy: t, error, accept: () => {}, reload: async () => {} });
 
   test('the card says how many, and opens the screen', () => {
@@ -244,9 +244,10 @@ describe('the Categories screen under Manage', () => {
     expect(s.indexOf('Loan payments')).toBeLessThan(s.indexOf('Transport'));
   });
 
-  test('the dashboard mounts it behind Manage, and hands the categories to every view that files by them', () => {
+  test('the dashboard mounts it in Settings, Transactions, and hands the categories to every view that files by them', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
-    expect(dashboard).toContain('{manageMode && (\n                  <CategoriesCard');
+    const section = dashboard.slice(dashboard.indexOf("id: 'transactions',"), dashboard.indexOf("id: 'connections',"));
+    expect(section).toContain('<CategoriesCard');
     for (const view of ['<MonthBreakdown', '<BudgetsTab', '<ManualTxnSheet', '<Insights']) {
       const at = dashboard.indexOf(view);
       expect([view, dashboard.slice(at, dashboard.indexOf('/>', at)).includes('taxonomy={categories.taxonomy}')]).toEqual([view, true]);

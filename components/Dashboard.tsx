@@ -1,6 +1,7 @@
 'use client';
 
-import ClerkAccount from './ClerkAccount';
+import ClerkAccount, { ClerkSignOut, GEAR } from './ClerkAccount';
+import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -701,16 +702,34 @@ export default function Dashboard({
     { paused: budgetsState.saving, history: tab === 'budgets' }
   );
   const goals = goalsState.value;
-  // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
-  // toggled, so they can't be tapped by accident. disconnectTarget drives the
-  // type-to-confirm drawer.
-  const [manageMode, setManageMode] = useState(false);
-  // The Currency card is under Manage on the Accounts tab.
+  // The Settings screen (components/Settings.tsx), in place of the tabs while
+  // it is open: null when closed, else its list or one section.
+  const [settings, setSettings] = useState<SettingsView | null>(null);
+  // What opened it (the avatar's button, or the gear), for focus to go back
+  // to when Settings closes.
+  const settingsOpener = useRef<HTMLElement | null>(null);
+  const openSettings = useCallback(() => {
+    settingsOpener.current = document.querySelector<HTMLElement>('.user-button-slot button') ?? (document.activeElement as HTMLElement | null);
+    window.scrollTo(0, 0);
+    setSettings('list');
+  }, []);
+  const closeSettings = useCallback(() => {
+    setSettings(null);
+    requestAnimationFrame(() => {
+      const opener = settingsOpener.current;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    });
+  }, []);
+  // The Currency card is in Settings > Preferences.
   const openCurrency = useCallback((rateFor: string | null = null) => {
-    setTab('accounts');
-    setManageMode(true);
+    setSettings('preferences');
     setCurrencyFocus({ rateFor });
   }, []);
+  // An institution's rare actions (Add or remove accounts, Disconnect), in a
+  // drawer from its Options button. disconnectTarget drives the
+  // type-to-confirm drawer.
+  const [optionsTarget, setOptionsTarget] = useState<Institution | null>(null);
+  const shownOptionsTarget = useLast(optionsTarget);
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
@@ -1345,11 +1364,15 @@ export default function Dashboard({
     goalsStore.load();
     plannedItemsStore.load();
   }, [loadNetWorth, loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
-  /** The banner's way to the card: the Accounts tab, behind Manage. */
+  /** The banner's way to the card: Settings > Your data and privacy, with
+   *  focus moved to it. */
   const openRestore = useCallback(() => {
-    setTab('accounts');
-    setManageMode(true);
-    requestAnimationFrame(() => document.getElementById('bring-back')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    setSettings('data');
+    requestAnimationFrame(() => {
+      const card = document.getElementById('bring-back');
+      card?.focus({ preventScroll: true });
+      card?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
   }, []);
 
   // `currency`: what a new account's currency starts as (the home currency,
@@ -1701,10 +1724,11 @@ export default function Dashboard({
   // Hidden accounts are dropped here and surface in the Hidden card. An
   // institution is only removed once it has nothing left to show: one whose
   // accounts are ALL hidden goes, but one that simply failed to load keeps its
-  // (empty) account list so its error and Reconnect button still render.
-  const sortedInstitutions = useMemo(
-    () =>
-      [...institutions]
+  // (empty) account list so its error and Reconnect button still render. A
+  // linked one that went is listed in Settings > Connections instead, or its
+  // Disconnect would be unreachable without unhiding every account first.
+  const { sortedInstitutions, allHiddenInstitutions } = useMemo(() => {
+    const shown = [...institutions]
         .sort((a, b) => a.institution_name.localeCompare(b.institution_name))
         .map((inst) => {
           const hiddenIds = new Set(
@@ -1722,24 +1746,18 @@ export default function Dashboard({
               (h) => !h.account_id || !hiddenIds.has(h.account_id)
             ),
           };
-        })
-        .filter(
-          (inst) =>
-            inst.accounts.length > 0 ||
-            inst.holdings.length > 0 ||
-            !!inst.error ||
-            // Keep an entirely-hidden institution visible in manage mode, or
-            // its Disconnect button would be unreachable and the only way to
-            // remove it would be to unhide every account first.
-            (manageMode && !inst.manual)
-        ),
-    [institutions, manageMode]
-  );
+        });
+    const keep = (inst: (typeof shown)[number]) => inst.accounts.length > 0 || inst.holdings.length > 0 || !!inst.error;
+    return {
+      sortedInstitutions: shown.filter(keep),
+      allHiddenInstitutions: shown.filter((inst) => !keep(inst) && !inst.manual),
+    };
+  }, [institutions]);
 
   // Investment accounts carrying enough uninvested cash to be worth a Home-tab
-  // line. Built from `institutions`, not `sortedInstitutions`, which manage mode
-  // also filters: an insight shouldn't come and go with a UI toggle on another
-  // tab. Hidden accounts are dropped, as from every total.
+  // line. Built from `institutions`, not `sortedInstitutions`, so that an
+  // insight follows the accounts themselves rather than what the Accounts tab
+  // lists. Hidden accounts are dropped, as from every total.
   const idleCashAccounts = useMemo(() => {
     const out: IdleCashAccount[] = [];
     for (const inst of institutions) {
@@ -1959,6 +1977,209 @@ export default function Dashboard({
         ? `All ${hiddenAccounts.length} account${hiddenAccounts.length === 1 ? '' : 's'} hidden`
         : `${shownInstitutionCount} institution${shownInstitutionCount === 1 ? '' : 's'} connected`;
 
+  const startDisconnect = (inst: Institution) => {
+    setDisconnectInput('');
+    setEndedOffer(null);
+    setDisconnectTarget(inst);
+  };
+
+  // Settings' sections (docs/design/information-architecture.md#settings):
+  // the cards the Accounts tab's Manage mode used to append, unchanged,
+  // each mounted only while its section is open.
+  const settingsSections: SettingsSection[] = [
+    {
+      id: 'preferences',
+      title: 'Preferences',
+      sub: 'Home currency and rates, weekly summary email',
+      content: (
+        <>
+          {/* The home currency and your own rates (components/CurrencyCard.tsx):
+              applied after the server's cache, so a change shows on the
+              next load of net worth, which it asks for. */}
+          <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={currencyChanged} />
+          {/* The weekly summary email, off until turned on, with what
+              this week's would say (components/WeeklySummaryCard.tsx). */}
+          <WeeklySummaryCard clerk={clerk} />
+        </>
+      ),
+    },
+    {
+      id: 'transactions',
+      title: 'Transactions',
+      sub: 'Categories, tags, rules, merchant defaults, review queue',
+      content: (
+        <>
+          {/* Your categories and their groups (components/CategoriesCard.tsx):
+              a change shows on the next read of the transactions and budgets. */}
+          <CategoriesCard
+            categories={categories}
+            onChanged={() => {
+              loadTransactions();
+              budgetsStore.load();
+            }}
+          />
+          {/* Your tags (components/TagsCard.tsx): applied after the
+              server's cache, so a change shows on the next read. */}
+          <TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} />
+          {/* Your rules (components/RulesCard.tsx): applied on every
+              read, so a change shows when the transactions are read again. */}
+          <RulesCard rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
+          {/* Merchants' default categories, beside the rules
+              (components/VendorDefaultsCard.tsx), and the review queue
+              (components/ReviewSettingsCard.tsx): both applied on read. */}
+          <VendorDefaultsCard taxonomy={categories.taxonomy} onChanged={() => loadTransactions()} />
+          <ReviewSettingsCard review={review} toReview={countToReview(txns ?? [])} />
+        </>
+      ),
+    },
+    {
+      id: 'connections',
+      title: 'Connections',
+      sub:
+        allHiddenInstitutions.length > 0
+          ? `${allHiddenInstitutions.length} with every account hidden, reconnected accounts`
+          : admin
+            ? 'Reconnected accounts, unused connections'
+            : 'Reconnected accounts',
+      content: (
+        <>
+          {/* Before anything is connected there is no Accounts tab to point to. */}
+          {connected && (
+            <p className="panel-note">
+              Each connection&apos;s status and actions are on its card on the Accounts tab. Here are the
+              ones with no card, and accounts that may continue an earlier one.
+            </p>
+          )}
+          {/* A linked institution whose accounts are all hidden has no card
+              on the Accounts tab, so its Options (Add or remove accounts,
+              Disconnect) are here. */}
+          {allHiddenInstitutions.length > 0 && (
+            <div className="card">
+              <div className="inst-header">
+                <div className="inst-name">Every account hidden</div>
+              </div>
+              <p className="panel-note">
+                These still sync, but every account in them is hidden. Unhide one from Hidden on the
+                Accounts tab, add or remove its accounts, or disconnect it.
+              </p>
+              {allHiddenInstitutions.map((inst) => (
+                <div className="inst-header" key={inst.item_id}>
+                  <div className="inst-name">{inst.institution_name}</div>
+                  <button
+                    className="secondary inst-options"
+                    onClick={() => setOptionsTarget(inst)}
+                    aria-label={`Options for ${inst.institution_name}`}
+                  >
+                    Options
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Renders only when there is a reconnected account to link or a
+              link to undo; mounted only here, which also skips its history
+              read until it is wanted. A change reloads live, since links
+              alter hidden accounts and per-account history. */}
+          <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />
+          {/* The admin's list of connections, across every account, that
+              cost money and do nothing. Only ever mounted for the admin (decided
+              on the server in app/page.tsx); the route also refuses
+              anyone else. Removal is confirmed inside it. */}
+          {admin && <AdminUnusedItems onRemoved={() => loadNetWorth(true)} />}
+        </>
+      ),
+    },
+    // Sharing needs Clerk: it is between people, each with their own sign-in.
+    ...(clerk
+      ? [
+          {
+            id: 'sharing' as const,
+            title: 'Sharing',
+            sub: 'Who sees your accounts, and for how long',
+            content: (
+              <div className="card">
+                <p className="panel-note">
+                  Invite someone to follow your accounts, and choose what each person sees and for how long.
+                </p>
+                <div className="card-actions">
+                  <button className="secondary" onClick={() => setSharingOpen(true)}>
+                    Open sharing
+                  </button>
+                </div>
+              </div>
+            ),
+          },
+        ]
+      : []),
+    {
+      id: 'data',
+      title: 'Your data and privacy',
+      sub: filesMode?.connected ? 'Download, bring back a download, receipts, API tokens' : 'Download, bring back a download, API tokens',
+      content: (
+        <>
+          {/* Download my data. It asks for a fresh sign-in itself. The
+              accounts are what an OFX statement can be of: the live ones,
+              and those that ended, which the live list no longer holds,
+              labelled with their end. */}
+          <DownloadMyData
+            clerk={clerk}
+            accounts={downloadAccounts(
+              institutions.flatMap((i) =>
+                i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
+              ),
+              ended
+            )}
+          />
+          {/* Receipts and documents (#47): every file kept, and as ZIP
+              files, beside the download of the rest. */}
+          {filesMode?.connected && <ReceiptsCard clerk={clerk} rows={txns} onChanged={txnEdits.refresh} />}
+          {/* What Nya keeps about you, kind by kind (app/your-data),
+              beside the download; for the admin, also storage
+              across accounts (/admin/storage). */}
+          <InventoryEntry admin={admin} />
+          {/* Bringing a download back, and its undo, beside the download
+              (components/RestoreCard.tsx). The restore banner moves focus
+              here. */}
+          <div id="bring-back" tabIndex={-1}>
+            <RestoreCard clerk={clerk} onChanged={restoreChanged} refreshKey={asOf} />
+          </div>
+          {/* API tokens for the read-only API and the MCP server
+              (components/ApiTokens.tsx). */}
+          <ApiTokens clerk={clerk} />
+        </>
+      ),
+    },
+    {
+      id: 'account',
+      title: 'Account',
+      sub: clerk ? 'Sign out, and where your profile is' : 'Log out, sign out everywhere',
+      content: (
+        <div className="card">
+          {clerk ? (
+            <>
+              <p className="panel-note">
+                Your profile, how you sign in, your devices and deleting your account are in the account
+                menu, under your picture at the top.
+              </p>
+              <div className="card-actions">
+                <ClerkSignOut clearDevice={clearDevice} />
+              </div>
+            </>
+          ) : (
+            <div className="card-actions">
+              <button className="secondary" onClick={logout}>
+                Log out
+              </button>
+              <button className="secondary" onClick={signOutEverywhere}>
+                Sign out everywhere
+              </button>
+            </div>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <>
       <main className="wrap">
@@ -1996,16 +2217,15 @@ export default function Dashboard({
               </button>
             )}
             {clerk ? (
-              <ClerkAccount clearDevice={clearDevice} onOpenSharing={() => setSharingOpen(true)} />
+              <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={() => setSharingOpen(true)} />
             ) : (
-              <>
-                <button className="secondary logout-btn" onClick={logout}>
-                  Log out
-                </button>
-                <button className="secondary logout-btn" onClick={signOutEverywhere} title="Sign out on every device">
-                  Sign out everywhere
-                </button>
-              </>
+              // Password mode has no account menu: Log out and Sign out
+              // everywhere are in Settings > Account.
+              <button className="secondary icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d={GEAR} />
+                </svg>
+              </button>
             )}
           </div>
         </div>
@@ -2014,6 +2234,8 @@ export default function Dashboard({
           <div className="card">
             <div className="spinner" role="status" aria-label="Loading" />
           </div>
+        ) : settings ? (
+          <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
         ) : !connected ? (
           <>
             <div className="card">
@@ -2236,8 +2458,7 @@ export default function Dashboard({
                 <div className="card">
                   <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
                   <CoverageNote />
-                  {/* Equal widths, icon over label, so Manage and Done take
-                      the same space and nothing shifts when it toggles. */}
+                  {/* Equal widths, icon over label. */}
                   <div className="action-row">
                     <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
                       <ActionIcon d="M12 5v14M5 12h14" />
@@ -2256,10 +2477,6 @@ export default function Dashboard({
                         Payoff plan
                       </button>
                     )}
-                    <button className="secondary" onClick={() => setManageMode((m) => !m)} aria-pressed={manageMode}>
-                      <ActionIcon d={manageMode ? 'M20 6 9 17l-5-5' : 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'} />
-                      {manageMode ? 'Done' : 'Manage'}
-                    </button>
                   </div>
                   <SwitchingLink onOpen={() => setMigrationOpen(true)} />
                   {error && <div className="error">{error}</div>}
@@ -2309,20 +2526,6 @@ export default function Dashboard({
                     Disconnect. Nothing when there is none. */}
                 <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
 
-                {/* Behind Manage accounts, like the other account upkeep, so
-                    it doesn't take space in the everyday view; mounting only
-                    then also skips its history read until it is wanted. Within
-                    it, renders only when there is a reconnected account to link
-                    or a link to undo. A change reloads live, since links alter
-                    hidden accounts and per-account history. */}
-                {manageMode && <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />}
-
-                {/* The admin's list of connections, across every account, that
-                    cost money and do nothing. Only ever mounted for the admin (decided
-                    on the server in app/page.tsx); the route also refuses
-                    anyone else. Removal is confirmed inside it. */}
-                {manageMode && admin && <AdminUnusedItems onRemoved={() => loadNetWorth(true)} />}
-
                 {sortedInstitutions.map((inst) => {
                   // One verdict for the row badge, the per-holding chip and the
                   // Holdings header, so they can't disagree about the same money.
@@ -2355,19 +2558,16 @@ export default function Dashboard({
                           <div className="inst-total">
                             <Masked>{fmt(instConverted ? instConverted.total : instTotal, instConverted ? instConverted.currency : instCurrency)}</Masked>
                           </div>
-                          {/* Manual groupings aren't Plaid Items, so there's
-                              nothing to disconnect; they're removed per account. */}
-                          {manageMode && !inst.manual && (
+                          {/* Add or remove accounts and Disconnect. Manual
+                              groupings aren't Plaid Items, so there's nothing
+                              to disconnect; they're removed per account. */}
+                          {!inst.manual && (
                             <button
-                              className="disconnect-btn"
-                              onClick={() => {
-                                setDisconnectInput('');
-                                setEndedOffer(null);
-                                setDisconnectTarget(inst);
-                              }}
-                              aria-label={`Disconnect ${inst.institution_name}`}
+                              className="secondary inst-options"
+                              onClick={() => setOptionsTarget(inst)}
+                              aria-label={`Options for ${inst.institution_name}`}
                             >
-                              Disconnect
+                              Options
                             </button>
                           )}
                         </div>
@@ -2480,7 +2680,7 @@ export default function Dashboard({
                                   </td>
                                   <td className="num">
                                     <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>
-                                    {((inst.manual && !inst.connector) || manageMode) && (
+                                    {inst.manual && !inst.connector && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
                                       <div
@@ -2516,15 +2716,29 @@ export default function Dashboard({
                                             Import
                                           </button>
                                         )}
+                                      </div>
+                                    )}
+                                  </td>
+                                </tr>
+                                {expandedAccounts.has(a.account_id) && (
+                                  <tr>
+                                    <td colSpan={2} className="acct-chart-cell">
+                                      {/* Hide, Close… and Delete, in the
+                                          expanded row rather than the
+                                          clickable one (a manual account's
+                                          Update, Add transaction and Import
+                                          stay on its row until the account
+                                          sheet, rollout phase 3). */}
+                                      <div className="card-actions acct-actions">
                                         {/* Hiding works on any account, linked
                                             or manual: it only stops the account
                                             counting, it doesn't remove it. Not
                                             on a row held for an answer: its
                                             bank isn't returning it, so there is
                                             nothing to hide yet (#50). */}
-                                        {manageMode && !a.held && (
+                                        {!a.held && (
                                           <button
-                                            className="link-btn"
+                                            className="secondary"
                                             disabled={togglingHidden !== null}
                                             onClick={() => toggleHidden(a.account_id, true)}
                                           >
@@ -2534,33 +2748,31 @@ export default function Dashboard({
                                         {/* Closed, no longer theirs, or not
                                             tracked from a day (#50): unlike
                                             Hide, every day before it counts. */}
-                                        {manageMode && (
+                                        <button
+                                          className="secondary"
+                                          disabled={lifecycle.busy}
+                                          aria-label={`${a.name}: closed, no longer yours, or stop following`}
+                                          onClick={() =>
+                                            lifecycle.open({
+                                              account_id: a.account_id,
+                                              name: a.name,
+                                              mask: a.mask,
+                                              institution: inst.institution_name,
+                                              ...(a.question ? { day: a.question.end } : {}),
+                                              // What it shows, so the sheet
+                                              // can say what ending it does.
+                                              balance: a.balance,
+                                              type: a.type,
+                                              currency: a.currency,
+                                              lastKnown: !!a.held,
+                                            })
+                                          }
+                                        >
+                                          Close…
+                                        </button>
+                                        {inst.manual && !inst.connector && (
                                           <button
-                                            className="link-btn"
-                                            disabled={lifecycle.busy}
-                                            aria-label={`${a.name}: closed, no longer yours, or stop following`}
-                                            onClick={() =>
-                                              lifecycle.open({
-                                                account_id: a.account_id,
-                                                name: a.name,
-                                                mask: a.mask,
-                                                institution: inst.institution_name,
-                                                ...(a.question ? { day: a.question.end } : {}),
-                                                // What it shows, so the sheet
-                                                // can say what ending it does.
-                                                balance: a.balance,
-                                                type: a.type,
-                                                currency: a.currency,
-                                                lastKnown: !!a.held,
-                                              })
-                                            }
-                                          >
-                                            Close…
-                                          </button>
-                                        )}
-                                        {inst.manual && !inst.connector && manageMode && (
-                                          <button
-                                            className="link-btn danger-link"
+                                            className="danger-outline"
                                             disabled={savingManual || togglingHidden !== null}
                                             onClick={() => {
                                               setManualError('');
@@ -2578,12 +2790,6 @@ export default function Dashboard({
                                           </button>
                                         )}
                                       </div>
-                                    )}
-                                  </td>
-                                </tr>
-                                {expandedAccounts.has(a.account_id) && (
-                                  <tr>
-                                    <td colSpan={2} className="acct-chart-cell">
                                       <AccountSparkline
                                         accountId={a.account_id}
                                         currency={a.currency}
@@ -2843,7 +3049,7 @@ export default function Dashboard({
                       {(inst.needs_reauth ||
                         canEnableLiabilities(inst) ||
                         unallowedIds.has(inst.item_id) ||
-                        (!inst.manual && (manageMode || inst.new_accounts_available))) && (
+                        (!inst.manual && inst.new_accounts_available)) && (
                         <div className="card-actions">
                           {inst.needs_reauth && (
                             <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
@@ -2871,15 +3077,15 @@ export default function Dashboard({
                           )}
                           {/* Adds accounts to THIS Item rather than connecting
                               the institution again (a second, separately
-                              billed Item). In manage mode, like Disconnect, or
-                              whenever Plaid has found new accounts. */}
-                          {!inst.manual && (manageMode || inst.new_accounts_available) && (
+                              billed Item). Here whenever Plaid has found new
+                              accounts; always under Options. */}
+                          {!inst.manual && inst.new_accounts_available && (
                             <button
                               className="secondary"
                               onClick={() => startManageAccounts(inst.item_id)}
                               disabled={connecting}
                             >
-                              {inst.new_accounts_available && !manageMode ? 'Review accounts' : 'Add or remove accounts'}
+                              Review accounts
                             </button>
                           )}
                         </div>
@@ -2919,9 +3125,8 @@ export default function Dashboard({
                         <p className="empty-note">
                           These accounts still sync, but are left out of net worth, transactions,
                           budgets and insights, on every day, past ones too. Unhiding restores their
-                          history in full. To stop counting one only from a day on, unhide it, then use
-                          Close… on it (under Manage) and choose Stop following: every day before then
-                          still counts.
+                          history in full. To stop counting one only from a day on, unhide it, then open
+                          it, use Close… and choose Stop following: every day before then still counts.
                         </p>
                         <table>
                           <tbody>
@@ -2978,88 +3183,6 @@ export default function Dashboard({
                   }
                   importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
                 />
-
-                {/* Download my data, with the rest of the account upkeep
-                    behind Manage accounts; after the accounts, so it doesn't
-                    push them down. It asks for a fresh sign-in itself. The
-                    accounts are what an OFX statement can be of: the live
-                    ones, and those that ended, which the live list no longer
-                    holds, labelled with their end. */}
-                {manageMode && (
-                  <DownloadMyData
-                    clerk={clerk}
-                    accounts={downloadAccounts(
-                      institutions.flatMap((i) =>
-                        i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
-                      ),
-                      ended
-                    )}
-                  />
-                )}
-
-                {/* Receipts and documents (#47): every file kept, and as ZIP
-                    files, beside the download of the rest. */}
-                {manageMode && filesMode?.connected && <ReceiptsCard clerk={clerk} rows={txns} onChanged={txnEdits.refresh} />}
-
-                {/* What Nya keeps about you, kind by kind (app/your-data),
-                    beside the download; for the admin, also storage
-                    across accounts (/admin/storage). */}
-                {manageMode && <InventoryEntry admin={admin} />}
-
-                {/* Bringing a download back, and its undo, beside the
-                    download (components/RestoreCard.tsx). */}
-                {manageMode && (
-                  <div id="bring-back">
-                    <RestoreCard clerk={clerk} onChanged={restoreChanged} refreshKey={asOf} />
-                  </div>
-                )}
-
-                {/* Reports for an accountant (app/reports), beside the other
-                    ways to take your data out. */}
-                {manageMode && <ReportsEntry />}
-
-                {/* API tokens for the read-only API and the MCP server, with
-                    the rest of the account upkeep (components/ApiTokens.tsx). */}
-                {manageMode && <ApiTokens clerk={clerk} />}
-
-                {/* The weekly summary email, off until turned on, with what
-                    this week's would say (components/WeeklySummaryCard.tsx). */}
-                {manageMode && <WeeklySummaryCard clerk={clerk} />}
-
-                {/* The home currency and your own rates (components/CurrencyCard.tsx):
-                    applied after the server's cache, so a change shows on the
-                    next load of net worth, which it asks for. */}
-                {manageMode && (
-                  <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={currencyChanged} />
-                )}
-
-                {/* Your categories and their groups (components/CategoriesCard.tsx):
-                    a change shows on the next read of the transactions and budgets. */}
-                {manageMode && (
-                  <CategoriesCard
-                    categories={categories}
-                    onChanged={() => {
-                      loadTransactions();
-                      budgetsStore.load();
-                    }}
-                  />
-                )}
-
-                {/* Your tags (components/TagsCard.tsx): applied after the
-                    server's cache, so a change shows on the next read. */}
-                {manageMode && <TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} />}
-
-                {/* Your rules (components/RulesCard.tsx): applied on every
-                    read, so a change shows when the transactions are read again. */}
-                {manageMode && (
-                  <RulesCard rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
-                )}
-
-                {/* Merchants' default categories, beside the rules
-                    (components/VendorDefaultsCard.tsx), and the review queue
-                    (components/ReviewSettingsCard.tsx): both applied on read. */}
-                {manageMode && <VendorDefaultsCard taxonomy={categories.taxonomy} onChanged={() => loadTransactions()} />}
-                {manageMode && <ReviewSettingsCard review={review} toReview={countToReview(txns ?? [])} />}
 
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
@@ -3230,12 +3353,14 @@ export default function Dashboard({
           {(['home', 'accounts', 'activity', 'budgets', 'plan'] as const).map((t) => (
             <button
               key={t}
-              className={tab === t ? 'active' : ''}
-              aria-current={tab === t ? 'page' : undefined}
+              className={tab === t && !settings ? 'active' : ''}
+              aria-current={tab === t && !settings ? 'page' : undefined}
               onClick={() => {
                 // Each tab starts at its top: the page scroll would otherwise
-                // carry over from one tab to the next.
-                if (t !== tab) window.scrollTo(0, 0);
+                // carry over from one tab to the next. A tab also closes
+                // Settings, which shows in place of the tabs.
+                if (t !== tab || settings) window.scrollTo(0, 0);
+                setSettings(null);
                 setTab(t);
               }}
             >
@@ -3501,6 +3626,36 @@ export default function Dashboard({
 
       {lifecycle.sheet}
 
+      {/* An institution's rare actions, from its Options button. Each closes
+          this first, so no drawer opens on top of another. */}
+      <Sheet open={!!optionsTarget} title={shownOptionsTarget?.institution_name ?? 'Options'} onClose={() => setOptionsTarget(null)}>
+        {shownOptionsTarget && (
+          <div className="button-stack">
+            {/* Adds accounts to THIS Item rather than connecting the
+                institution again (a second, separately billed Item). */}
+            <button
+              className="secondary"
+              disabled={connecting}
+              onClick={() => {
+                setOptionsTarget(null);
+                startManageAccounts(shownOptionsTarget.item_id);
+              }}
+            >
+              Add or remove accounts
+            </button>
+            <button
+              className="danger-outline"
+              onClick={() => {
+                setOptionsTarget(null);
+                startDisconnect(shownOptionsTarget);
+              }}
+            >
+              Disconnect…
+            </button>
+          </div>
+        )}
+      </Sheet>
+
       <Sheet
         open={!!disconnectTarget}
         title={
@@ -3533,8 +3688,7 @@ export default function Dashboard({
                 account (#50). Only the person knows which happened. */}
             {endedOffer !== shownDisconnectTarget.item_id && (
               <p className="panel-note">
-                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (Manage, then Close… on
-                the account): it then stops counting from that day, and the chart marks it.
+                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (open the account, then Close…): it then stops counting from that day, and the chart marks it.
               </p>
             )}
             {/* What Plaid itself keeps is beyond a disconnect's reach (the

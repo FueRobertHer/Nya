@@ -60,8 +60,7 @@ export function UnsubscribeView({ token, phase, onTurnOff }: { token: string | n
         <p className="panel-note">Loading…</p>
       ) : token === null || token === '' ? (
         <p className="panel-note">
-          This page needs the link from a weekly summary email. To turn the summary off without one, sign in to Nya and turn it off under Manage on
-          the Accounts tab.
+          This page needs the link from a weekly summary email. To turn the summary off without one, sign in to Nya and turn it off under Settings, Preferences.
         </p>
       ) : (
         <>

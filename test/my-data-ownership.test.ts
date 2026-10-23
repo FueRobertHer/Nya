@@ -828,7 +828,7 @@ describe('the email, on its own', () => {
     const mail = composeAccessNotice({ kind: 'api-token' }, AT, { clerk: false, link: 'https://nya.example' });
     expect(mail.subject).toBe('An API token was made for your Nya data');
     expect(mail.text).toStartWith('An API token that can read your Nya data was made on Saturday, October 10, 2026, at 14:32 UTC.\n\n');
-    expect(mail.text).toContain('revoke it now: in Nya, open Manage on the Accounts tab, and revoke it under API tokens. A token keeps working after every session ends');
+    expect(mail.text).toContain('revoke it now: in Nya, open Settings, Your data and privacy, and revoke it under API tokens. A token keeps working after every session ends');
     expect(mail.text).toContain('Open Nya: https://nya.example/');
   });
 
@@ -836,7 +836,7 @@ describe('the email, on its own', () => {
     const begun = composeAccessNotice({ kind: 'restore' }, AT, { clerk: false, link: 'https://nya.example' });
     expect(begun.subject).toBe('A download is being brought back into your Nya account');
     expect(begun.text).toStartWith('A download of Nya data began to be brought back into your Nya account on Saturday, October 10, 2026, at 14:32 UTC: everything in it, in place of what the account had.\n\n');
-    expect(begun.text).toContain('undo it now (Manage, Bring back a download, Undo), which empties the account again, then secure it: use Sign out everywhere');
+    expect(begun.text).toContain('undo it now (Settings, Your data and privacy, Bring back a download, Undo), which empties the account again, then secure it: use Sign out everywhere');
     const undone = composeAccessNotice({ kind: 'restore-undone' }, AT, { clerk: true, link: null });
     expect(undone.subject).toBe('A restore into your Nya account was undone');
     expect(undone.text).toStartWith('A restore of a download into your Nya account was undone on Saturday, October 10, 2026, at 14:32 UTC: everything in it is gone, but your sign-in and API tokens.');

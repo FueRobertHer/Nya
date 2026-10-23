@@ -241,7 +241,7 @@ export function useReview({
         if (data?.restored !== true) {
           setError(
             data
-              ? 'The merchant’s categorizations weren’t put back: another came since. Its default, if it has one, is under Manage, Defaults.'
+              ? 'The merchant’s categorizations weren’t put back: another came since. Its default, if it has one, is in Settings, Transactions, Defaults.'
               : await refusal(res, 'Could not put the merchant’s categorizations back.')
           );
           ok = false;

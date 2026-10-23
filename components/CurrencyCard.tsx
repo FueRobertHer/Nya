@@ -1,6 +1,6 @@
 'use client';
 
-// The Currency card, under Manage on the Accounts tab (lib/fx/settings.ts):
+// The Currency card, in Settings, Preferences (lib/fx/settings.ts):
 // the home currency (choose, change, or stop converting), the ECB's newest
 // rates' day and whether Nya couldn't fetch newer ones, and the person's own
 // rates (list, add, change, remove), each with the ECB's beside it where the

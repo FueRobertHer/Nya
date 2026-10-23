@@ -8,7 +8,7 @@ import { clearDefault, repairDefaults, restoreVendorEntry, VendorDefaultError, v
 import { isVendorEntry } from '@/lib/vendor-defaults';
 
 // Merchants' default categories (lib/vendor-defaults.ts): the Defaults list
-// under Manage, and a transaction's detail, which say what each default is and
+// in Settings, Transactions, and a transaction's detail, which say what each default is and
 // clear one. A default is set by the person's own categorizations
 // (app/api/recategorize, which records each), never here.
 //

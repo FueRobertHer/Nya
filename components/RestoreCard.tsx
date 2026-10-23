@@ -1,7 +1,7 @@
 'use client';
 
 // Bring back a download (docs/data-export.md, "Bringing it back"), under
-// Manage accounts beside Download my data: a JSON download of another copy
+// Settings, Your data and privacy, beside Download my data: a JSON download of another copy
 // of Nya brought into this account, when it is empty. Offered only where the
 // deployment turned restores on (RESTORE_ENABLED); a restore recorded here is
 // always shown, with its undo.

@@ -539,7 +539,7 @@ export function composeWeekly(f: WeeklyFacts, o: ComposeOptions): ComposedSummar
  *  schedule as saved, never from the day a summary asked for now covers. */
 function footer(o: ComposeOptions): string {
   const never = 'It never includes balances, amounts or account numbers.';
-  const where = 'under Manage on the Accounts tab';
+  const where = 'under Settings, Preferences';
   const stop = o.unsubscribe
     ? `To stop these summaries, open ${o.unsubscribe} or turn them off in Nya, ${where}.`
     : `To stop these summaries, turn them off in Nya, ${where}.`;

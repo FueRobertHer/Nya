@@ -107,7 +107,7 @@ async function isDemo(): Promise<boolean> {
 const scanView = (scan: AccountScan) => ({ ...scan, message: scan.found.length > 0 ? inUseMessage(scan) : null });
 
 /**
- * Each of these accounts as the Earlier accounts list (Manage) shows it, so
+ * Each of these accounts as the Earlier accounts list (Settings, Connections) shows it, so
  * a note that says to forget one names the one it means (forgetting is for
  * good): what the directory calls it, and the name and days the list shows
  * it by, told apart from any that would read the same (lib/earlier-names.ts),
