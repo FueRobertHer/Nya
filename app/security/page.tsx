@@ -48,9 +48,9 @@ const POLICY: Record<CspMode, string> = {
 
 /** What programs with an API token can reach, as this copy lets them. */
 const PROGRAMS_READ =
-  'What the read-only API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins, and they can never change anything. An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
+  'What the read-only API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, and your shared expenses, the one answer that names the people you split costs with, until you revoke the token. Never your sign-in or your bank logins, and they can never change anything. An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
 const PROGRAMS_WRITE =
-  'What the API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins. A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted). An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
+  'What the API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, and your shared expenses, the one answer that names the people you split costs with, until you revoke the token. Never your sign-in or your bank logins, and no token changes your shared expenses. A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted). An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
 
 const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, writes: boolean): [string, string][] => [
   [
@@ -89,7 +89,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, 
   ['Programs you give an API token to', writes ? PROGRAMS_WRITE : PROGRAMS_READ],
   [
     'People you share with',
-    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
+    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. Never the people you split costs with, what anyone owes, or a payment. They can never change anything.',
   ],
   [
     'Your device',
@@ -226,6 +226,11 @@ export default function SecurityPage() {
             renamed, and the names you and the people you share with gave each other.
           </li>
           <li>
+            Nya never sends, receives or holds money, and keeps no payment app’s login, card or account number. Under
+            Shared expenses it keeps the list of what people owe you and what you owe them, encrypted, names and
+            usernames included; the money moves in Venmo, Cash App or however you pay each other.
+          </li>
+          <li>
             Nya is not encrypted end to end. Whoever runs Nya holds the keys, so they can read your data. The encryption
             protects against someone who gets the database or a backup without those keys.
           </li>
@@ -247,8 +252,9 @@ export default function SecurityPage() {
           <li>dates and times: which days have a recorded balance, and when things were saved;</li>
           <li>
             ids: of your accounts, transactions and bank connections (random strings from Plaid, or made by Nya for
-            manual accounts and a SimpleFIN or Lunch Flow connection), of your sign-in account, and of your API tokens
-            (random, and not enough to use one);
+            manual accounts and a SimpleFIN or Lunch Flow connection), of your sign-in account, of your API tokens
+            (random, and not enough to use one), and of the people you split costs with and your IOUs (random, made by
+            Nya: their names, usernames and amounts are encrypted);
           </li>
           <li>the names of the banks you linked, and whether Plaid included transactions when each connection was linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
