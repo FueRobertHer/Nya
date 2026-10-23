@@ -118,6 +118,13 @@ export const DEFAULT_PLAN: FirePlan = {
   planFunding: [],
 };
 
+/** How the Plan's forms (components/PlanForms.tsx) hold a value as text: a
+ *  number as it is, a share as a percent to four places. Exported so that a
+ *  scenario recording a form's save (lib/fire/scenarios.ts) tells a change
+ *  from a value the form only wrote back, at the form's own precision. */
+export const asText = (v: number | null) => (v === null ? '' : String(v));
+export const pctText = (v: number) => String(Number((v * 100).toFixed(4)));
+
 /** A plan with no age runs this long. */
 export const DEFAULT_YEARS = 30;
 /** With an age, a plan runs to this age (within 10 to MAX_YEARS years). */

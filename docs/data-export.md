@@ -131,7 +131,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals, each with its plan: its allocation, monthly target, target date and whether it is archived. |
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-scenarios`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -689,6 +689,21 @@ Each file you imported into a linked account: one entry per import, `id` the imp
 | `records[]` | Every transaction the file held, in file order: `line`, `outcome` (`imported`, `duplicate`, `present`, `repeated`, `skipped` or `unreadable`), `row_id` (the row it became, the one it was found already imported as, or, for one skipped, the one whose bank id it shared), `twin` (the transaction it was shown beside: `kind`, `bank` or `imported`, its `id` (the bank's `transaction_id`, or the earlier file's row), `date`, `name` and `amount`, how many `days` apart, the `confidence`, `high`, `medium` or `low`, `edge` when it was only possibly the same across the edge of the bank's days (`before-bank`), of this file's (`outside-file`) or of the earlier file's (`outside-import`), and what you `chose`, `same` or `new`), `reason` (why it couldn't be read, or was skipped), and `raw`, the record as the file had it, always. |
 
 Undoing the import deletes its entry, and so does forgetting the earlier account. The list of past imports reads a summary of each entry kept beside it (`history-import-summaries`), which isn't in the download; nor is what the estimated history drawn from imports covers (`imported-history-walk`), whose points are in `net_worth_history` and `account_history`.
+
+#### `plan-scenarios`
+
+The [scenarios](features.md#scenarios-and-compare-mode) you saved beside your Plan (`lib/fire/scenarios.ts`), each under a random id: only what each changes from your plan, its name and the currency its amounts are in, never a figure worked out from them, which the Plan tab works out again whenever one is shown. Each `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `name` | Its name, up to 40 characters. |
+| `currency` | The currency its amounts were typed in (your plan's then), or `null` while it holds none. |
+| `createdAt`, `savedAt` | When it was made, and last saved. |
+| `rev` | A random id, new on every save: the version an edit is made to. |
+| `set` | The settings of your [plan](#fire-plan) it sets, each by the plan's own field name, as values: any of `targetAge`, `spending`, `savings`, `assets` (`null` for Nya's measured figure), `withdrawalRate`, `realReturn`, `taxRate`, `rule`, `floor`, `ceiling`, `start`, `startBalance`, `horizon`, `rebalance`, `fee`, and `mix` (`stocksPct` and `bondsPct` together). A setting not listed follows your plan. |
+| `income`, `expenses` | For your plan's other income and one-off expenses: `leaveOut`, the ids of the plan's items it leaves out, and `add`, items in the plan's own shapes. An added item with the id of one it leaves out replaces it. |
+| `events[]` | Its life events: `id`, `kind` (`house`, `child`, `sabbatical`, `part-time` or `spending`), `label`, and the kind's own figures: a home's `atAge`, `cost` from investments, `yearly` change in spending and `years` (`null` for good); a child's `fromAge`, `yearly` and `years`; a sabbatical's `fromAge`, `years` and `savingsLost` a year; part-time work's `fromAge`, `toAge` and `yearly` income after tax; a change in spending's `fromAge`, `yearly` (below zero for less) and `years` (`null` for good). |
 
 #### `planned-items`
 

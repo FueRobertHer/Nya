@@ -39,6 +39,7 @@ import './inventory-limit';
 import './lifecycle';
 import './manual-txns';
 import './migration/store';
+import './plan-scenarios';
 import './planned-store';
 import './rate-limit';
 import './report/runway-scenario-store';
