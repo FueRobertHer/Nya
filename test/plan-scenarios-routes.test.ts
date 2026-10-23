@@ -130,7 +130,7 @@ describe('saved plan scenarios, on the storage seam', () => {
       [{ scenario: draft({ currency: 'usd' }) }, 'three-letter code'],
       [{ scenario: draft({ set: { age: 50 } }) }, 'isn’t a setting a scenario can change'],
       [{ scenario: draft({ set: { withdrawalRate: 0.5 } }) }, 'withdrawalRate must be a number'],
-      [{ scenario: draft({ set: { start: 'custom' } }) }, 'needs set.startBalance'],
+      [{ scenario: draft({ set: { start: 'custom' } }) }, 'starts from a balance you typed needs that balance'],
       [{ scenario: draft({ events: [{ id: 'x', kind: 'windfall', label: 'Gift', atAge: 50, amount: 1 }] }) }, 'not a kind of life event'],
       [{ scenario: draft({ events: [{ id: 'x', kind: 'child', label: 'A child', fromAge: 42, yearly: 0, years: 18 }] }) }, 'extra spending a year'],
       [{ scenario: { ...draft(), result: 0.93 } }, 'result isn’t part of a scenario'],
@@ -144,6 +144,18 @@ describe('saved plan scenarios, on the storage seam', () => {
     }
     for (const body of [{}, { id: '../x' }, { id: 'a', also: 1 }, { id: 'a', unreadable: 'yes' }]) expect((await call('DELETE', body)).res.status).toBe(400);
     expect((await call('GET')).body.scenarios).toEqual([]);
+  });
+
+  test('a name another scenario has, in any case, is refused, on a new one and on an edit', async () => {
+    const first = (await call('POST', { scenario: draft() })).body.scenario;
+    const again = await call('POST', { scenario: draft({ name: ' retire AT 50 ' }) });
+    expect([again.res.status, again.body.error]).toEqual([409, 'Another scenario has that name: choose another, so they can be told apart.']);
+    const other = (await call('POST', { scenario: draft({ name: 'Part time' }) })).body.scenario;
+    const renamed = await call('PUT', { id: other.id, based_on: other.rev, scenario: draft({ name: 'Retire at 50' }) });
+    expect(renamed.res.status).toBe(409);
+    // Its own name, kept on an edit, is no clash.
+    expect((await call('PUT', { id: first.id, based_on: first.rev, scenario: draft({ name: 'RETIRE AT 50' }) })).res.status).toBe(200);
+    expect(await planScenariosStore.count(ctx)).toBe(2);
   });
 
   test('at most MAX_PLAN_SCENARIOS, counting one that can’t be read', async () => {

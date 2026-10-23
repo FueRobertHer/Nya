@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
 import { planScenariosStore } from '@/lib/plan-scenarios';
-import { MAX_PLAN_SCENARIOS, parseScenarioDraft, type PlanScenario } from '@/lib/fire/scenarios';
+import { MAX_PLAN_SCENARIOS, nameTaken, parseScenarioDraft, type PlanScenario } from '@/lib/fire/scenarios';
 import { UnreadableEntriesError } from '@/lib/repo';
 
 // The Plan scenarios the person saved (lib/fire/scenarios.ts), on the
@@ -33,8 +33,9 @@ import { UnreadableEntriesError } from '@/lib/repo';
 //                                    confirmed), and one a newer version saved
 //                                    never (409): it is intact data
 //
-// Every field is checked (parseScenarioDraft) and anything else refused. The
-// server sets createdAt, savedAt and a new random rev on every save.
+// Every field is checked (parseScenarioDraft) and anything else refused, and a
+// name another scenario has (in any case) is refused with 409. The server
+// sets createdAt, savedAt and a new random rev on every save.
 // Scenarios ride on no cached payload, so nothing is cleared. Errors as on
 // the storage seam (lib/store-failure.ts): 503 with no container, 409 for one
 // that can't be read, 413 for one too large, else 500.
@@ -52,6 +53,19 @@ async function bodyOf(req: Request): Promise<Record<string, unknown> | null> {
 }
 
 const NEWER = 'That scenario was saved by a newer version of Nya, so it can’t be changed or deleted here.';
+
+/** Whether another readable scenario has the name already, in any case (the
+ *  page refuses it too, lib/fire/scenarios.ts nameTaken): compare mode tells
+ *  plans apart by name. Entries that can't be read are left out of this
+ *  check, never mistaken for none: the save still goes through the strict
+ *  count and compare-and-set. Two saves of one name sent together can each
+ *  pass; the page then shows both, and either can be renamed. */
+async function nameUsed(ctx: Awaited<ReturnType<typeof dataCtx>>, name: string, exceptId: string | null): Promise<boolean> {
+  const { entries } = await planScenariosStore.getAllReport(ctx);
+  return nameTaken([...entries].map(([id, s]) => ({ id, name: s.name })), name, exceptId);
+}
+
+const taken = () => NextResponse.json({ error: 'Another scenario has that name: choose another, so they can be told apart.' }, { status: 409 });
 
 export async function GET() {
   try {
@@ -78,6 +92,7 @@ export async function POST(req: Request) {
     if ((await planScenariosStore.count(ctx)) >= MAX_PLAN_SCENARIOS) {
       return NextResponse.json({ error: `At most ${MAX_PLAN_SCENARIOS} scenarios can be saved: delete one first` }, { status: 409 });
     }
+    if (await nameUsed(ctx, parsed.ok.name, null)) return taken();
     const at = new Date(now).toISOString();
     const scenario: PlanScenario = { version: 1, ...parsed.ok, createdAt: at, savedAt: at, rev: crypto.randomUUID() };
     const id = crypto.randomUUID();
@@ -119,6 +134,7 @@ export async function PUT(req: Request) {
   const rev = crypto.randomUUID();
   try {
     const ctx = await dataCtx(now);
+    if (await nameUsed(ctx, parsed.ok.name, id)) return taken();
     let written: PlanScenario | null;
     try {
       written = await planScenariosStore.update(ctx, id, (current) => {
