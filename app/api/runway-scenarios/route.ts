@@ -18,7 +18,8 @@ import { UnreadableEntriesError } from '@/lib/repo';
 //                             count is taken again after the write, and the
 //                             new one taken back when saves that met at the
 //                             limit went over it (as an API token is made,
-//                             lib/api-tokens.ts createToken)
+//                             lib/api-tokens.ts createToken), saying to try
+//                             again, since there was room when it was sent
 //   DELETE { id, unreadable? } deletes one; one whose bytes are damaged only
 //                             with `unreadable: true` (the person confirmed),
 //                             and one a newer version saved never (409): it
@@ -70,9 +71,10 @@ export async function POST(req: Request) {
     // Saves sent together each saw room: counted again, a save past the limit
     // takes itself back, so the store never holds more than MAX_SCENARIOS
     // (and a download of it is always one a restore takes back).
+    // There was room when it was sent, so the person may simply try again.
     if ((await runwayScenariosStore.count(ctx)) > MAX_SCENARIOS) {
       await runwayScenariosStore.remove(ctx, id);
-      return full;
+      return NextResponse.json({ error: 'Other scenarios were being saved at the same moment, so this one wasn’t: try again.' }, { status: 409 });
     }
     return NextResponse.json({ scenario: { id, ...parsed.ok } });
   } catch (err) {

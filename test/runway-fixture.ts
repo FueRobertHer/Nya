@@ -46,7 +46,8 @@ export function row(id: string, date: string, amount: number, over: Partial<Txn>
  *   of 2,000 = 9,200.00, so 100.00 a day exactly;
  *   money in that counts: pay 3 x 2,000 + interest of 440 = 6,440.00, so
  *   70.00 a day exactly;
- *   left out: a TV the person excluded, a move to savings, cash taken out,
+ *   left out: a TV the person excluded, a move to savings (both its sides),
+ *   cash taken out,
  *   the mortgage's 800 a month (a loan payment, a transfer to every total),
  *   and a meal in euros.
  * The mortgage is paid from checking on the 5th, from April on: detection
@@ -60,6 +61,7 @@ export const ROWS: Txn[] = [
   row('interest', '2026-08-20', -440, { name: 'Interest', vendor_key: 'interest', category: 'income' }),
   row('tv', '2026-07-20', 1200, { name: 'TV store', vendor_key: 'tv', excluded: true }),
   row('to-savings', '2026-08-02', 1000, { name: 'To savings', category: 'transfer out', transaction_code: 'transfer' }),
+  row('from-checking', '2026-08-02', -1000, { name: 'From checking', vendor_key: 'from-checking', account_name: 'Savings', category: 'transfer in', transaction_code: 'transfer' }),
   row('atm', '2026-09-02', 200, { name: 'ATM', transaction_code: 'atm' }),
   row('paris', '2026-09-20', 90, { name: 'Bistro', iso_currency_code: 'EUR', category: 'food and drink' }),
   ...['04', '05', '06', '07', '08', '09', '10'].map((m) => row(`mortgage-${m}`, `2026-${m}-05`, 800, { name: 'Home Loans', vendor_key: 'homeloans', category: 'loan payments' })),

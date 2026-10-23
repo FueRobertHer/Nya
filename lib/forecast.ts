@@ -120,6 +120,8 @@ export type CashAccount = {
   balance: number;
   /** Typed by hand: a manual account's, never one a connector feeds. */
   manual: boolean;
+  /** Its subtype, when known ("cash" for cash on hand). */
+  subtype?: string;
   updated_at?: string;
 };
 
@@ -185,7 +187,15 @@ export function cashPosition(institutions: readonly ForecastInstitution[], txns:
       continue;
     }
     balances += toMinor(a.balance, scale);
-    included.push({ account_id: a.account_id, name: a.name, institution, balance: a.balance, manual, ...(a.updated_at ? { updated_at: a.updated_at } : {}) });
+    included.push({
+      account_id: a.account_id,
+      name: a.name,
+      institution,
+      balance: a.balance,
+      manual,
+      ...(a.subtype ? { subtype: a.subtype } : {}),
+      ...(a.updated_at ? { updated_at: a.updated_at } : {}),
+    });
   }
   const leftOut = [...others].map(([c, count]) => ({ currency: c, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
 

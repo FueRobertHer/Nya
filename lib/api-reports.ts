@@ -84,6 +84,8 @@ export type ApiRunway = {
     card_payments: CardPayments[];
     card_payments_total: number;
     transfers_out: number;
+    transfers_out_own: number;
+    transfers_out_unsure: number;
     cash_out: number;
     spending: number;
     income: number;
@@ -159,6 +161,8 @@ export async function readApiRunway(
       card_payments: w.card_payments,
       card_payments_total: w.card_payments_total,
       transfers_out: w.transfers_out,
+      transfers_out_own: w.transfers_out_own,
+      transfers_out_unsure: w.transfers_out_unsure,
       cash_out: w.cash_out,
       spending: w.spending,
       income: w.income,

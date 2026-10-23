@@ -32,7 +32,10 @@ const position = (start = START) => ({
   balances: start,
   pending: { amount: 0, count: 0 },
   start,
-  included: [{ account_id: 'chk', name: 'Checking', institution: 'Chase', balance: start, manual: false }],
+  included: [
+    { account_id: 'chk', name: 'Checking', institution: 'Chase', balance: start, manual: false },
+    { account_id: 'sav', name: 'Savings', institution: 'Chase', balance: 0, manual: false },
+  ],
   leftOut: [],
   noBalance: [],
 });
@@ -230,6 +233,8 @@ const win = (over: Partial<WindowSpending> = {}): WindowSpending => ({
   card_payments: [],
   card_payments_total: 0,
   transfers_out: 0,
+  transfers_out_own: 0,
+  transfers_out_unsure: 0,
   cash_out: 0,
   spending: 0,
   income: 0,
@@ -411,6 +416,102 @@ describe('what leaves cash that the Activity tab leaves out', () => {
     const out = projectRunway(b, whatIf({ leave_out_one_offs: true }));
     expect(out.with_income.income_per_month).toBeCloseTo((6440 / 92) * MONTH_DAYS, 2);
     expect(out.without_income.spending_per_month).toBeCloseTo(((8900 - 2000) / 92) * MONTH_DAYS, 2);
+  });
+});
+
+describe('what each payment and move out of cash is matched to', () => {
+  /** Checking and savings at Chase, and savings at Ally, in the cash; a
+   *  Sapphire card in Nya. */
+  const cash = (more: { account_id: string; name: string; institution: string; manual?: boolean; subtype?: string }[] = []) => ({
+    ...position(10000),
+    included: [
+      { account_id: 'chk', name: 'Checking', institution: 'Chase', balance: 10000, manual: false },
+      { account_id: 'sav', name: 'Savings', institution: 'Chase', balance: 0, manual: false },
+      { account_id: 'ally', name: 'Ally Savings', institution: 'Ally', balance: 0, manual: false },
+      ...more.map((a) => ({ balance: 0, manual: false, ...a })),
+    ],
+  });
+  const rent = ['07', '08', '09'].map((m) => row(`rent-${m}`, `2026-${m}-01`, 1000, { name: 'Landlord', vendor_key: 'landlord', category: 'rent and utilities' }));
+  const pay = (id: string, date: string, amount: number, over: Record<string, unknown> = {}) =>
+    row(id, date, amount, { name: 'CHASE CARD AUTOPAY', vendor_key: 'chase-card', category: 'loan payments', subcategory: 'credit card payment', ...over });
+  const receipt = (id: string, date: string, amount: number, over: Record<string, unknown> = {}) =>
+    row(id, date, -amount, { name: 'PAYMENT THANK YOU', vendor_key: 'thanks', account_name: 'Sapphire', account_type: 'credit', category: 'loan payments', ...over });
+  const three = (rows: ReturnType<typeof row>[], today = TODAY, more: Parameters<typeof cash>[0] = [], short: { month: string; institutions: string[] }[] = []) =>
+    buildRunwayInputs({ today, position: cash(more), rows, planned: [], dismissed: [], short }).windows.find((w) => w.months === 3)!;
+
+  test('a card in Nya paid on the window’s last day: its receipt pending, or not in yet, is still that card’s', () => {
+    const paid = [pay('p7', '2026-07-30', 2000), receipt('r7', '2026-07-31', 2000), pay('p8', '2026-08-30', 2000), receipt('r8', '2026-08-31', 2000), pay('p9', '2026-09-30', 2000)];
+    const pending = three([...rent, ...paid, receipt('r9', '2026-10-01', 2000, { pending: true })], '2026-10-02');
+    expect([pending.card_payments, pending.spending]).toEqual([[], 3000]);
+    // Oct 1: the receipt isn't in yet, and its payments have been landing on
+    // Sapphire, so it is on its way.
+    const early = three([...rent, ...paid], '2026-10-01');
+    expect([early.card_payments, early.spending]).toEqual([[], 3000]);
+    // Three weeks on, with Sapphire up to date, it would have arrived: it pays
+    // a card Nya doesn't see.
+    const later = three([...rent, ...paid, row('lunch', '2026-10-20', 12, { name: 'Lunch', account_name: 'Sapphire', account_type: 'credit', category: 'food and drink' })], '2026-10-21');
+    expect(later.card_payments).toEqual([{ name: 'CHASE CARD AUTOPAY', account: 'Checking', amount: 2000, count: 1 }]);
+  });
+
+  test('each receipt is one payment’s: of two autopays of 250, the one with no receipt pays a card Nya doesn’t see', () => {
+    const rows = [...rent];
+    for (const m of ['07', '08', '09']) {
+      rows.push(pay(`a${m}`, `2026-${m}-10`, 250), receipt(`ra${m}`, `2026-${m}-11`, 250));
+      rows.push(pay(`b${m}`, `2026-${m}-12`, 250, { name: 'CITI AUTOPAY', vendor_key: 'citi' }));
+    }
+    const w = three(rows);
+    expect([w.card_payments, w.spending]).toEqual([[{ name: 'CITI AUTOPAY', account: 'Checking', amount: 750, count: 3 }], 3750]);
+    // The nearest in days is the pair, whichever is paid first.
+    const before = rows.map((t) => (t.name === 'CITI AUTOPAY' ? { ...t, date: t.date.replace(/-12$/, '-09') } : t));
+    expect(three(before).card_payments).toEqual([{ name: 'CITI AUTOPAY', account: 'Checking', amount: 750, count: 3 }]);
+  });
+
+  test('a refund on a card in Nya is never a payment’s receipt', () => {
+    const rows = [...rent, ...['07', '08', '09'].map((m) => pay(`b${m}`, `2026-${m}-12`, 120, { name: 'CITI AUTOPAY', vendor_key: 'citi' }))];
+    rows.push(row('return', '2026-08-14', -120, { name: 'AMAZON REFUND', account_name: 'Sapphire', account_type: 'credit', category: 'general merchandise' }));
+    expect(three(rows).card_payments).toEqual([{ name: 'CITI AUTOPAY', account: 'Checking', amount: 360, count: 3 }]);
+  });
+
+  test('a payment in a series that pays a card in Nya is that card’s, its receipt missing a month', () => {
+    const rows = [
+      ...rent,
+      ...['06', '07', '08', '09'].map((m) => pay(`p${m}`, `2026-${m}-28`, 1800)),
+      receipt('r06', '2026-06-29', 1800),
+      receipt('r08', '2026-08-29', 1800),
+      receipt('r09', '2026-09-29', 1800),
+    ];
+    expect(detectRecurring(rows).find((x) => x.name === 'CHASE CARD AUTOPAY')?.paysCardOf).toEqual({ institution: 'Chase', account: 'Sapphire' });
+    expect(three(rows).card_payments).toEqual([]);
+  });
+
+  test('a move to your own savings is one, by ACH over five business days or pending at the month’s start', () => {
+    const out = (id: string, date: string) => row(id, date, 3000, { name: 'TRANSFER TO ALLY', category: 'transfer out', transaction_code: 'transfer' });
+    const arrive = (id: string, date: string, over: Record<string, unknown> = {}) =>
+      row(id, date, -3000, { name: 'FROM CHASE', account_name: 'Ally Savings', institution_name: 'Ally', category: 'transfer in', transaction_code: 'transfer', ...over });
+    // Friday Sep 4 to Friday Sep 11.
+    expect(three([...rent, out('o', '2026-09-04'), arrive('i', '2026-09-11')]).transfers_out).toBe(0);
+    expect(three([...rent, out('o', '2026-09-30'), arrive('i', '2026-10-01', { pending: true })], '2026-10-02').transfers_out).toBe(0);
+    // Not in yet: it may have arrived.
+    expect(three([...rent, out('o', '2026-09-30')], '2026-10-01')).toMatchObject({ transfers_out: 3000, transfers_out_unsure: 3000 });
+    // Each arrival is one move's: two moves of 3,000, one arrival.
+    expect(three([...rent, out('o1', '2026-08-04'), out('o2', '2026-08-05'), arrive('i', '2026-08-06')])).toMatchObject({ transfers_out: 3000, transfers_out_unsure: 0 });
+  });
+
+  test('a move to your health savings account leaves the cash, to an account of yours; one where Nya can’t see may have arrived', () => {
+    const out = (id: string, date: string, amount: number, name: string) => row(id, date, amount, { name, category: 'transfer out', transaction_code: 'transfer' });
+    const hsa = [out('h', '2026-08-03', 500, 'TO HSA'), row('h-in', '2026-08-05', -500, { name: 'Contribution', account_name: 'Health', institution_name: 'HSA Bank', category: 'transfer in', transaction_code: 'transfer' })];
+    expect(three([...rent, ...hsa])).toMatchObject({ transfers_out: 500, transfers_out_own: 500, transfers_out_unsure: 0 });
+    const zelle = out('z', '2026-08-10', 700, 'ZELLE TO J SMITH');
+    expect(three([...rent, zelle])).toMatchObject({ transfers_out: 700, transfers_out_own: 0, transfers_out_unsure: 0 });
+    // A savings account typed by hand with no transactions may hold it; cash
+    // on hand can't.
+    expect(three([...rent, zelle], TODAY, [{ account_id: 'm', name: 'Credit union', institution: 'Manual', manual: true, subtype: 'savings' }])).toMatchObject({ transfers_out: 700, transfers_out_unsure: 700 });
+    expect(three([...rent, zelle], TODAY, [{ account_id: 'w', name: 'Wallet', institution: 'Cash', manual: true, subtype: 'cash' }])).toMatchObject({ transfers_out: 700, transfers_out_unsure: 0 });
+    // So may Ally, whose transactions may be missing that month, and not in
+    // the month it is up to date.
+    const ally = [{ month: '2026-08', institutions: ['Ally'] }];
+    expect(three([...rent, zelle], TODAY, [], ally)).toMatchObject({ transfers_out: 700, transfers_out_unsure: 700 });
+    expect(three([...rent, { ...zelle, date: '2026-07-10' }], TODAY, [], ally)).toMatchObject({ transfers_out: 700, transfers_out_unsure: 0 });
   });
 });
 

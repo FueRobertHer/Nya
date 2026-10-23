@@ -11,8 +11,9 @@
 //     it last reported; hidden ones left out), and what couldn't be read of
 //     them, named. An account that ended is no cash. The cash is the
 //     forecast's (lib/forecast.ts cashPosition), less what is pending on it;
-//   - the Activity tab's rows from the longest window's first day on, from
-//     one report read (readReportInput), as a report counts them (periodRows:
+//   - the Activity tab's rows from MOVE_DAYS before the longest window's
+//     first day on (so a payment or a move on that day finds its other side
+//     posted before it), from one report read (readReportInput), as a report counts them (periodRows:
 //     an ended account's from its end on left out), with the rows before
 //     them that recurring detection needs, so the spending is a report's
 //     totals for the same months and the bills are the ones the dashboard
@@ -41,8 +42,8 @@ import { tidy } from '../totals';
 import { StoredDataUnreadableError } from '../repo';
 import { readReportInput } from './read';
 import { buildReport, periodRows, type Gap } from './build';
-import { buildRunwayInputs, runwayWindow, RUNWAY_WINDOWS, type MonthShort, type RunwayBuilt, type RunwayWindow } from './runway';
-import { dayIn, daysFrom, type Period } from './period';
+import { buildRunwayInputs, MOVE_DAYS, runwayWindow, RUNWAY_WINDOWS, type MonthShort, type RunwayBuilt, type RunwayWindow } from './runway';
+import { addDays, dayIn, daysFrom, type Period } from './period';
 
 /** A cash account the runway starts from, as of when its balance is. */
 export type RunwayCashAccount = { account_id: string; name: string; institution: string; balance: number; manual: boolean; as_of: string | null };
@@ -113,7 +114,7 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
   const now = opts.now ?? Date.now();
   const { today, timeZone } = opts;
   const longest = runwayWindow(today, 12);
-  const period: Period = { kind: 'range', start: longest.start, end: today, through: today, today, time_zone: timeZone };
+  const period: Period = { kind: 'range', start: addDays(longest.start, -MOVE_DAYS), end: today, through: today, today, time_zone: timeZone };
   const [{ input, history }, accounts, planned] = await Promise.all([
     readReportInput(ctx, period, { now }),
     readAccounts(ctx),

@@ -8,6 +8,7 @@
 // as YYYY-MM-DD). Pure and client-safe.
 
 import { formatMoney } from '../format';
+import { tidy } from '../totals';
 import { joinNames } from '../month-coverage';
 import { noSpending, type RunwayProjection, type RunwayWhatIf, type WindowSpending } from './runway';
 import type { RunwayReport } from './runway-read';
@@ -47,21 +48,31 @@ export function runwayCaveats(
       `${c.name}${c.account ? ` from ${c.account}` : ''} looks like a card’s payment, and no card in Nya shows it arriving, so its ${money(c.amount)} over these months counts as spending here: what you charge on that card isn’t in Nya. If the card is in Nya, it is counted twice.`
     );
   }
-  if (hasMovedOut(w)) {
-    const parts = [
-      w.transfers_out > 0 ? `${money(w.transfers_out)} as transfers to accounts outside them (a payment by Zelle or Venmo, a move to an account Nya doesn’t hold)` : null,
-      w.cash_out > 0 ? `${money(w.cash_out)} as cash taken out` : null,
-    ].filter((p): p is string => p !== null);
-    lines.push(
-      `Over these months, ${joinNames(parts)} left your checking and savings. ${
-        projection.what_if.count_moved_out ? 'This what-if counts it as spending.' : 'It isn’t in the spending: categorize what was spending as such, or count it in the what-if.'
-      }`
-    );
-  }
+  if (hasMovedOut(w)) lines.push(movedOutWords(w, money, projection.what_if.count_moved_out));
   lines.push(...runway.notes);
   for (const s of runway.stale_balances) lines.push(`${s.name} at ${s.institution} is a balance you typed, last updated ${f.time(s.updated_at)}.`);
   if (runway.owed_on_cards > 0) lines.push(`Your cards owe ${money(runway.owed_on_cards)}: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.`);
   return lines;
+}
+
+/** What went out of the cash that isn't in the spending, in words: the
+ *  transfers no account in Nya shows arriving, those to the person's own
+ *  accounts that aren't cash here, those that may have arrived where Nya
+ *  can't see, and the cash taken out. */
+export function movedOutWords(w: WindowSpending, money: (n: number) => string, counted: boolean): string {
+  const unseen = Math.max(0, tidy(w.transfers_out - w.transfers_out_own - w.transfers_out_unsure));
+  const parts = [
+    unseen > 0 ? `${money(unseen)} in transfers no account in Nya shows arriving (a payment by Zelle or Venmo, a move to an account Nya doesn’t hold)` : null,
+    w.transfers_out_own > 0 ? `${money(w.transfers_out_own)} in transfers to your accounts in Nya that aren’t counted as cash here (a health savings account, an investment account)` : null,
+    w.transfers_out_unsure > 0
+      ? `${money(w.transfers_out_unsure)} in transfers that may have arrived in your own checking or savings where Nya can’t see them (an account typed by hand with no transactions, a bank whose transactions may be missing, or a transfer whose other side isn’t in yet)`
+      : null,
+    w.cash_out > 0 ? `${money(w.cash_out)} in cash taken out` : null,
+  ].filter((p): p is string => p !== null);
+  const list = parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join('; ')}; and ${parts[parts.length - 1]}`;
+  return `Over these months, money went out of your checking and savings that isn’t in the spending: ${list}. ${
+    counted ? 'This what-if counts all of it as spending.' : 'Categorize what was spending as such, or count it in the what-if.'
+  }`;
 }
 
 /** The what-if in words, for the page and the printout: a one-off or a move

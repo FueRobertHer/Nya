@@ -117,7 +117,14 @@ describe('the runway, drawn', () => {
 
   test('what leaves cash unseen is said: a card Nya doesn’t see, transfers out and cash taken out, and the what-if that counts them', () => {
     const amex = ['07', '08', '09'].map((m) => row(`amex-${m}`, `2026-${m}-12`, 1500, { name: 'AMEX EPAYMENT', category: 'loan payments', subcategory: 'credit card payment' }));
-    const built = buildRunwayInputs({ today: TODAY, position, rows: [...ROWS, ...amex], planned: PLANNED, dismissed: [] });
+    // Rent for a sublet paid by Zelle, and a move to a health savings account
+    // in Nya, which isn't cash here; the move to savings arrived there.
+    const moves = [
+      row('zelle', '2026-09-08', 1000, { name: 'ZELLE TO J SMITH', category: 'transfer out', transaction_code: 'transfer' }),
+      row('to-hsa', '2026-07-17', 250, { name: 'To HSA', category: 'transfer out', transaction_code: 'transfer' }),
+      row('hsa-in', '2026-07-20', -250, { name: 'Contribution', account_name: 'Health', category: 'transfer in', transaction_code: 'transfer' }),
+    ];
+    const built = buildRunwayInputs({ today: TODAY, position, rows: [...ROWS, ...amex, ...moves], planned: PLANNED, dismissed: [] });
     const r = runway({ ...built });
     const t = text(draw(r));
     expect(t).toContain('AMEX EPAYMENT from Checking looks like a card’s payment, and no card in Nya shows it arriving, so its $4,500.00 over these months counts as spending here');
@@ -125,10 +132,12 @@ describe('the runway, drawn', () => {
     expect(t).toContain('AMEX EPAYMENT from Checking: $4,500.00 over 3 payments');
     expect(t).toContain('$13,700.00 over Jul 1, 2026 to Sep 30, 2026');
     expect(t).toContain(
-      'Over these months, $1,000.00 as transfers to accounts outside them (a payment by Zelle or Venmo, a move to an account Nya doesn’t hold) and $200.00 as cash taken out left your checking and savings. It isn’t in the spending'
+      'Over these months, money went out of your checking and savings that isn’t in the spending: $1,000.00 in transfers no account in Nya shows arriving (a payment by Zelle or Venmo, a move to an account Nya doesn’t hold); $250.00 in transfers to your accounts in Nya that aren’t counted as cash here (a health savings account, an investment account); and $200.00 in cash taken out. Categorize what was spending as such, or count it in the what-if.'
     );
+    // Never the move to savings, which arrived.
+    expect(t).not.toContain('$2,000.00 in transfers');
     const counted = text(draw(r, three({ count_moved_out: true })));
-    expect(counted).toContain('This what-if counts it as spending.');
+    expect(counted).toContain('This what-if counts all of it as spending.');
     expect(counted).toContain('transfers out and cash taken out counted');
     expect(counted).toContain('a month in this what-if');
   });

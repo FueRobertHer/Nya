@@ -32,9 +32,11 @@
 //     category, under none, or in a detected series of pay is income;
 //   - CARD PAYMENTS TO CARDS NYA DOESN'T SEE are spending: a payment from cash
 //     with Plaid's card-payment detail that no card in Nya shows arriving
-//     (within CARD_PAYMENT_DAYS, at its amount) pays for charges Nya never
-//     counted. A payment that lands on a card in Nya stays out: that card's
-//     charges are in the spending already;
+//     (within CARD_PAYMENT_DAYS, at its amount, each receipt one payment's)
+//     pays for charges Nya never counted. A payment that lands on a card in
+//     Nya stays out: that card's charges are in the spending already
+//     (movesOut says when one has landed, its receipt pending or not in yet
+//     included);
 //   - BILLS LESS OFTEN THAN MONTHLY (every two months, quarterly, twice a
 //     year, yearly) are taken out of the average and added on their dates
 //     instead, as the forecast adds them: averaged, a yearly bill would weigh
@@ -43,9 +45,11 @@
 // The rest of what the Activity tab leaves out stays out: money moved between
 // the person's cash accounts, what they excluded, and rows in another
 // currency (named). Money that left cash as a transfer to an account outside
-// it (rent by Zelle, a move to an account Nya doesn't hold) and cash taken
-// out are neither spending nor nothing: they are added up and named, and the
-// what-if can count them.
+// it (rent by Zelle, a move to an account Nya doesn't hold, or to one of the
+// person's that isn't cash here, such as a health savings account) and cash
+// taken out are neither spending nor nothing: they are added up and named,
+// with what may have arrived where Nya can't see, and the what-if can count
+// them.
 // A day's spending is the window's spending over its days; a month is an
 // average month, 365.25 / 12 days. ONE-OFFS are said, never hidden: an
 // outflow of at least half the window's average month, at a merchant with
@@ -120,9 +124,13 @@ export const INFREQUENT: ReadonlySet<Cadence> = new Set<Cadence>(['bimonthly', '
  *  neither a one-off, and a row so close to a series' amount is that series'. */
 const SIMILAR_SHARE = 0.25;
 const SIMILAR_FLOOR = 5;
-/** How many days apart the two sides of a move between two cash accounts may
- *  post. */
-const TRANSFER_DAYS = 3;
+/** How many days apart the two sides of a move between two of the person's
+ *  accounts may post: a week, so an ACH that takes five business days, a
+ *  Friday to the next Friday, is still one move. */
+export const TRANSFER_DAYS = 7;
+/** How many days before the longest window the rows are read from, so a
+ *  payment or a move on its first day finds the other side posted before. */
+export const MOVE_DAYS = Math.max(TRANSFER_DAYS, CARD_PAYMENT_DAYS);
 /** The most points the chart is given. */
 const CHART_POINTS = 120;
 
@@ -178,8 +186,14 @@ export type WindowSpending = {
   card_payments: CardPayments[];
   card_payments_total: number;
   /** What left cash as transfers to accounts outside it, and as cash taken
-   *  out: named, and counted only when the what-if says. */
+   *  out: named, and counted only when the what-if says. Of the transfers,
+   *  what arrived on the person's accounts in Nya that aren't cash here (a
+   *  health savings account, an investment account), and what Nya can't see
+   *  arrive where it may have (a manual account with no transactions, a bank
+   *  whose transactions may be missing that month). */
   transfers_out: number;
+  transfers_out_own: number;
+  transfers_out_unsure: number;
   cash_out: number;
   /** What the runway takes as spending, and as income, over the window:
    *  money_out less refunds and infrequent bills, plus the card payments
@@ -212,19 +226,146 @@ export function inSeries(t: RecurringRow, s: RecurringSeries): boolean {
   return similar(a, s.amount) || (s.previousAmount !== undefined && similar(a, s.previousAmount));
 }
 
-/** Money in filed under a spending category (a refund, a return): one whose
- *  category, filed or by its words, is of the spending kind, never one under
- *  no category or the uncategorized one, which may be pay. */
-function filedAsSpending(t: RunwayRow): boolean {
+/** The kind of the category a row is filed under, by the category or its
+ *  words; null under no category or the uncategorized one, which may be
+ *  anything. */
+function filedKind(t: RunwayRow): string | null {
   const words = t.category;
-  if (!words || words === 'other') return false;
-  return (t.category_kind ?? legacyKind(words)) === 'expense';
+  if (!words || words === 'other') return null;
+  return t.category_kind ?? legacyKind(words);
 }
+
+/** Money in filed under a spending category (a refund, a return). */
+const filedAsSpending = (t: RunwayRow) => filedKind(t) === 'expense';
+
+/** A cash account as the window reads it: its name and institution, as a row
+ *  names its account, whether it is typed by hand, and its subtype. */
+export type WindowCash = { name: string; institution: string; manual: boolean; subtype?: string | null };
 
 /** The detected series a window reads beside its rows: the bills less often
  *  than monthly it takes out of the average, and every series whose rows are
- *  never a one-off. */
-export type WindowSeries = { infrequent?: readonly RecurringSeries[]; series?: readonly RecurringSeries[] };
+ *  never a one-off. And the cash the runway counts (CashPosition.included):
+ *  only money that leaves it leaves cash; with none given, every checking,
+ *  savings or cash account is cash. */
+export type WindowSeries = { infrequent?: readonly RecurringSeries[]; series?: readonly RecurringSeries[]; cash?: readonly WindowCash[] };
+
+/** What became of a payment or a move out of cash (see movesOut). */
+type MoveFate = 'card' | 'unseen_card' | 'cash' | 'own' | 'unsure' | 'out' | 'atm';
+
+const accountKey = (t: { institution_name: string; account_name?: string | null }) => `${t.institution_name}|${t.account_name ?? ''}`;
+
+/**
+ * What became of each payment and move out of cash that the Activity tab
+ * leaves out, read over every row (the days around a window too, so each
+ * fate is the same in every window):
+ *   - a payment with Plaid's card-payment detail lands on a card in Nya
+ *     ('card') when its receipt is seen within CARD_PAYMENT_DAYS at its
+ *     amount; or, its receipt not seen, when it is in a detected series that
+ *     pays a card in Nya (paysCardOf) whose payments have been seen landing
+ *     there, or when payments like it (its series group) have been and its
+ *     receipt may not be in yet (fewer than CARD_PAYMENT_DAYS before the
+ *     newest row read). Else it pays a card Nya doesn't see ('unseen_card');
+ *   - any other move lands on a card in Nya ('card'), on another of the
+ *     runway's cash accounts ('cash'), or on another account of the person's
+ *     in Nya that isn't cash here, such as a health savings account or an
+ *     investment account ('own'), within TRANSFER_DAYS at its amount. Else it
+ *     may have arrived where Nya can't see ('unsure': its other side may not
+ *     be in yet, or there is a cash account typed by hand with no
+ *     transactions, never cash on hand, or a cash account at a bank whose
+ *     transactions may be missing that month, `short`), or it left ('out');
+ *     cash taken out is 'atm'.
+ * Each receipt is the other side of one payment or move at most, pending
+ * ones too, the nearest in days first; never one filed under a spending or
+ * an income category (a refund, pay), which is no move.
+ */
+function movesOut(
+  rows: readonly RunwayRow[],
+  currency: string | null,
+  cash: readonly WindowCash[] | undefined,
+  series: readonly RecurringSeries[],
+  short: readonly MonthShort[]
+): Map<RunwayRow, MoveFate> {
+  const scale = minorScale(currency);
+  const units = (n: number) => Math.round(n * scale);
+  const keys = cash ? new Set(cash.map((a) => `${a.institution}|${a.name}`)) : null;
+  const fromCash = (t: RunwayRow) => (keys ? t.account_type !== 'credit' && keys.has(accountKey(t)) : t.account_type === 'depository');
+  const isCardPayment = (t: RunwayRow) => t.subcategory === CARD_PAYMENT;
+
+  const outs: RunwayRow[] = [];
+  const receipts: { t: RunwayRow; kind: 'card' | 'cash' | 'own' }[] = [];
+  for (const t of rows) {
+    if (isExcluded(t) || !inCurrency(t, currency)) continue;
+    if (t.amount > 0) {
+      if (t.pending || !fromCash(t) || !isTransfer(t) || countsInTotals(t, currency)) continue;
+      if (isCardPayment(t) || isMoneyMovement(t)) outs.push(t);
+    } else if (t.amount < 0) {
+      const kind = filedKind(t);
+      if (kind === 'expense' || kind === 'income') continue;
+      receipts.push({ t, kind: t.account_type === 'credit' ? 'card' : fromCash(t) ? 'cash' : 'own' });
+    }
+  }
+
+  const fate = new Map<RunwayRow, MoveFate>();
+  for (const t of outs) if (!isCardPayment(t) && t.transaction_code === 'atm') fate.set(t, 'atm');
+  // Every possible pairing, nearest in days first; then each payment and
+  // each receipt is taken once.
+  const byAmount = new Map<number, number[]>();
+  receipts.forEach((r, i) => {
+    const list = byAmount.get(units(-r.t.amount)) ?? [];
+    list.push(i);
+    byAmount.set(units(-r.t.amount), list);
+  });
+  const prefer = { card: 0, cash: 1, own: 2 } as const;
+  const pairs: { o: number; r: number; days: number }[] = [];
+  outs.forEach((t, o) => {
+    if (fate.has(t)) return;
+    for (const r of byAmount.get(units(t.amount)) ?? []) {
+      const { t: x, kind } = receipts[r];
+      if (accountKey(x) === accountKey(t)) continue;
+      if (isCardPayment(t) && kind !== 'card') continue;
+      const days = Math.abs(daysFrom(t.date, x.date));
+      if (days <= (kind === 'card' ? CARD_PAYMENT_DAYS : TRANSFER_DAYS)) pairs.push({ o, r, days });
+    }
+  });
+  const order = (a: RunwayRow, b: RunwayRow) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.transaction_id ?? '').localeCompare(b.transaction_id ?? ''));
+  pairs.sort((a, b) => a.days - b.days || prefer[receipts[a.r].kind] - prefer[receipts[b.r].kind] || order(outs[a.o], outs[b.o]) || order(receipts[a.r].t, receipts[b.r].t));
+  const taken = new Set<number>();
+  for (const p of pairs) {
+    const t = outs[p.o];
+    if (fate.has(t) || taken.has(p.r)) continue;
+    taken.add(p.r);
+    fate.set(t, receipts[p.r].kind);
+  }
+
+  // A series that pays a card in Nya, its payments seen landing there; and
+  // the groups whose payments have landed on one.
+  const landed = outs.filter((t) => fate.get(t) === 'card' && isCardPayment(t));
+  const landing = series.filter((x) => x.paysCardOf && landed.some((t) => inSeries(t, x)));
+  const landedGroups = new Set(landed.map((t) => seriesGroupOf(t)).filter((g) => g !== null));
+  const newest = rows.reduce((d, t) => (t.date > d ? t.date : d), '');
+  const notInYet = (t: RunwayRow, days: number) => daysFrom(t.date, newest) < days;
+  // Where a move may have arrived unseen.
+  const blind = (cash ?? []).filter((a) => a.manual && (a.subtype ?? '').toLowerCase() !== 'cash' && !rows.some((t) => accountKey(t) === `${a.institution}|${a.name}`));
+  const shortAt = (a: WindowCash, month: string) => short.some((m) => m.month === month && m.institutions.includes(a.institution));
+  const mayHaveArrived = (t: RunwayRow) => {
+    const months = new Set([t.date.slice(0, 7), addDays(t.date, TRANSFER_DAYS).slice(0, 7)]);
+    const own = accountKey(t);
+    return (
+      notInYet(t, TRANSFER_DAYS) ||
+      blind.some((a) => `${a.institution}|${a.name}` !== own) ||
+      (cash ?? []).some((a) => `${a.institution}|${a.name}` !== own && [...months].some((m) => shortAt(a, m)))
+    );
+  };
+  for (const t of outs) {
+    if (fate.has(t)) continue;
+    if (isCardPayment(t)) {
+      const group = seriesGroupOf(t);
+      const arriving = landing.some((x) => inSeries(t, x)) || (group !== null && landedGroups.has(group) && notInYet(t, CARD_PAYMENT_DAYS));
+      fate.set(t, arriving ? 'card' : 'unseen_card');
+    } else fate.set(t, mayHaveArrived(t) ? 'unsure' : 'out');
+  }
+  return fate;
+}
 
 /**
  * The spending and income over a window, kept in `currency` (see WHAT
@@ -243,35 +384,18 @@ export function windowSpending(
 ): WindowSpending {
   const inSpan = (d: string) => d >= span.start && d <= span.end;
   const s = summarize(rows, inSpan, currency);
-  const scale = minorScale(currency);
-  const units = (n: number) => Math.round(n * scale);
   const infrequent = known.infrequent ?? [];
   const series = known.series ?? [];
   const pay = series.filter((x) => x.kind === 'income');
   const bills = series.filter((x) => x.kind === 'bill');
 
-  // The other sides of payments and moves, by amount: money received on a
-  // card, and money received on a cash account.
-  const received = (type: string) => {
-    const out = new Map<number, RunwayRow[]>();
-    for (const t of rows) {
-      if (t.pending || t.amount >= 0 || isExcluded(t) || t.account_type !== type) continue;
-      const list = out.get(units(-t.amount)) ?? [];
-      list.push(t);
-      out.set(units(-t.amount), list);
-    }
-    return out;
-  };
-  const onCards = received('credit');
-  const onCash = received('depository');
-  const arrives = (t: RunwayRow, sides: Map<number, RunwayRow[]>, days: number, elsewhere = false) =>
-    (sides.get(units(t.amount)) ?? []).some(
-      (x) => Math.abs(daysFrom(t.date, x.date)) <= days && (!elsewhere || `${x.institution_name}|${x.account_name}` !== `${t.institution_name}|${t.account_name}`)
-    );
+  const fates = movesOut(rows, currency, known.cash, series, short);
 
   let refunds = 0;
   let infrequentOut = 0;
   let transfersOut = 0;
+  let transfersOwn = 0;
+  let transfersUnsure = 0;
   let cashOut = 0;
   const cards = new Map<string, CardPayments>();
   // Each merchant's counted outflows and each payer's income, by
@@ -300,22 +424,22 @@ export function windowSpending(
       }
       continue;
     }
-    // What leaves cash that the Activity tab leaves out.
-    if (t.amount <= 0 || t.pending || isExcluded(t) || t.account_type !== 'depository' || !inCurrency(t, currency) || !isTransfer(t)) continue;
-    if (t.subcategory === CARD_PAYMENT) {
-      if (arrives(t, onCards, CARD_PAYMENT_DAYS)) continue;
+    // What leaves cash that the Activity tab leaves out (movesOut). A move to
+    // a card in Nya, or to another cash account, takes nothing out of what is
+    // counted; a loan's payment is a detected bill, or named.
+    const f = fates.get(t);
+    if (f === 'unseen_card') {
       const key = `${t.name}\n${t.account_name ?? ''}`;
       const c = cards.get(key) ?? { name: t.name, account: t.account_name ?? '', amount: 0, count: 0 };
       c.amount += t.amount;
       c.count++;
       cards.set(key, c);
-      continue;
+    } else if (f === 'atm') cashOut += t.amount;
+    else if (f === 'out' || f === 'own' || f === 'unsure') {
+      transfersOut += t.amount;
+      if (f === 'own') transfersOwn += t.amount;
+      if (f === 'unsure') transfersUnsure += t.amount;
     }
-    // A move to a card in Nya, or to another cash account, takes nothing out
-    // of what is counted; a loan's payment is a detected bill, or named.
-    if (!isMoneyMovement(t) || arrives(t, onCards, CARD_PAYMENT_DAYS) || arrives(t, onCash, TRANSFER_DAYS, true)) continue;
-    if (t.transaction_code === 'atm') cashOut += t.amount;
-    else transfersOut += t.amount;
   }
 
   const card_payments = [...cards.values()].map((c) => ({ ...c, amount: tidy(c.amount) })).sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
@@ -351,6 +475,8 @@ export function windowSpending(
     card_payments,
     card_payments_total: tidy(cardTotal),
     transfers_out: tidy(transfersOut),
+    transfers_out_own: tidy(transfersOwn),
+    transfers_out_unsure: tidy(transfersUnsure),
     cash_out: tidy(cashOut),
     spending: tidy(spending),
     income: tidy(income),
@@ -639,7 +765,8 @@ export function buildRunwayInputs(opts: {
   const live = series.filter((s) => !dismissed.has(s.id));
   const outside = paymentsOutsideSpending(series, opts.rows, dismissed);
   const infrequent = infrequentBills(series, opts.rows, dismissed);
-  const windows = RUNWAY_WINDOWS.map((m) => windowSpending(opts.rows, runwayWindow(today, m), currency, opts.short ?? [], { infrequent, series: live }));
+  const cash = position.included.map((a) => ({ name: a.name, institution: a.institution, manual: a.manual, subtype: a.subtype ?? null }));
+  const windows = RUNWAY_WINDOWS.map((m) => windowSpending(opts.rows, runwayWindow(today, m), currency, opts.short ?? [], { infrequent, series: live, cash }));
   const until = addDays(today, HORIZON_DAYS);
   const planned = opts.planned ?? [];
   const fromForecast = forecastEvents({ series: outside, planned, currency, today, until });

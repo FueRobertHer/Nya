@@ -149,7 +149,7 @@ const plaidAccount = (name: string, type: string, subtype: string) => ({ name, o
  * 20, so August and September may be short of its transactions. And last
  * year, for year over year.
  */
-async function seed() {
+async function seed(extra: ReturnType<typeof txn>[] = []) {
   await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'a1') });
   await saveItem(ctx, { item_id: 'item_citi', institution_name: 'Citi', encrypted_access_token: await encrypt(TEST_CTX, 'a2') });
   await saveItem(ctx, { item_id: 'item_vg', institution_name: 'Vanguard', encrypted_access_token: await encrypt(TEST_CTX, 'a3') });
@@ -189,6 +189,7 @@ async function seed() {
     chk('2025-07-15', 'pay-25', -1900, { name: 'Employer', category: 'income' }),
     chk('2025-08-10', 'groceries-25', 280, { name: 'Grocer', category: 'food and drink' }),
     chk('2025-10-30', 'late-25', 99, { name: 'Grocer', category: 'food and drink' }),
+    ...extra,
   ];
   await fake.set(
     ctxKey('txns:item_chase'),
@@ -308,7 +309,7 @@ describe('the runway from stored data', () => {
     expect(plain.body.notes).toContain('Your cards owe $600.00: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.');
     expect(plain.body.notes).toContain('2026-08 and 2026-09 may be missing transactions from Citi, so the spending, and the income, may be low.');
     expect(plain.body.notes).toContain(
-      'Over these months, $200.00 as cash taken out left your checking and savings. It isn’t in the spending: categorize what was spending as such, or count it in the what-if.'
+      'Over these months, money went out of your checking and savings that isn’t in the spending: $200.00 in cash taken out. Categorize what was spending as such, or count it in the what-if.'
     );
     // For a line that runs out, the lowest is the balance the day it runs out,
     // never ten years on.
@@ -332,7 +333,9 @@ describe('the runway from stored data', () => {
     expect((await quiet(() => api(apiRunway, 'runway', 'months=3&include_planned=false'))).body.planned).toEqual([]);
     const counted = (await quiet(() => api(apiRunway, 'runway', 'months=3&count_moved_out=true'))).body;
     expect([counted.what_if.count_moved_out, counted.without_income.days]).toEqual([true, 91]);
-    expect(counted.notes).toContain('Over these months, $200.00 as cash taken out left your checking and savings. This what-if counts it as spending.');
+    expect(counted.notes).toContain(
+      'Over these months, money went out of your checking and savings that isn’t in the spending: $200.00 in cash taken out. This what-if counts all of it as spending.'
+    );
     expect((await quiet(() => tool('get_runway', { months: 3, count_moved_out: true }))).content[0].text).toContain('without income it runs out on 2027-01-22, after 91 days');
     // The MCP tools answer the same, with a summary in words.
     const t = await quiet(() => tool('get_runway', { months: 3 }));
@@ -349,6 +352,31 @@ describe('the runway from stored data', () => {
       const { res, body } = await api(apiRunway, 'runway', query);
       expect([query, res.status, body.error.code]).toEqual([query, 400, 'invalid_request']);
     }
+  });
+
+  test('a refund filed in your categories lowers the spending and isn’t income, while money in stays the Activity tab’s', async () => {
+    await seed([on('2026-09-12', 'refund', 'acc_chk', -150, { name: 'Shop refund' })]);
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    const three = r.windows.find((w: any) => w.months === 3);
+    expect(three).toMatchObject({ money_out: 9200, money_in: 6590, refunds: 150, spending: 9050, income: 6440 });
+    const a = (await quiet(() => api(apiRunway, 'runway', 'months=3'))).body;
+    expect(a.spending).toMatchObject({ money_in: 6590, refunds: 150, spending: 9050, income: 6440 });
+    // /api/v1/spending counts it as money in, as the Activity tab does.
+    expect((await quiet(() => api(apiSpending, 'spending', 'from=2026-07-01&to=2026-09-30&currency=USD'))).body.money_in).toBe(6590);
+  });
+
+  test('a card payment on the longest window’s first day finds its receipt posted the day before', async () => {
+    const card = { primary: 'LOAN_PAYMENTS', detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT', confidence_level: 'VERY_HIGH' };
+    await seed([
+      on('2025-10-01', 'sapphire-pay', 'acc_chk', 900, { name: 'CHASE CREDIT CRD AUTOPAY', category: 'loan payments', personal_finance_category: card }),
+      on('2025-09-30', 'sapphire-in', 'acc_card', -900, { name: 'AUTOMATIC PAYMENT THANK YOU', category: 'loan payments', account_name: 'Sapphire', personal_finance_category: card }),
+      // And one that lands on no card in Nya.
+      on('2026-01-20', 'amex-pay', 'acc_chk', 640, { name: 'AMEX EPAYMENT', category: 'loan payments', personal_finance_category: card }),
+    ]);
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    const twelve = r.windows.find((w: any) => w.months === 12);
+    expect(twelve.start).toBe('2025-10-01');
+    expect(twelve.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 640, count: 1 }]);
   });
 
   test('takes only a time zone: a what-if is never sent, and nothing is written', async () => {
@@ -576,6 +604,8 @@ describe('saved scenarios, on the storage seam', () => {
     expect(count).toBeLessThanOrEqual(MAX_SCENARIOS);
     const saved = results.filter((r) => r.res.status === 200);
     expect(results.every((r) => r.res.status === 200 || r.res.status === 409)).toBe(true);
+    // One taken back had room when it was sent: it says to try again.
+    for (const r of results.filter((x) => x.res.status === 409)) expect(r.body.error).toBe('Other scenarios were being saved at the same moment, so this one wasn’t: try again.');
     // Each save answered as saved is stored; each refused one is not.
     expect(count).toBe(MAX_SCENARIOS - 1 + saved.length);
     for (const r of saved) expect(await runwayScenariosStore.get(ctx, r.body.scenario.id)).toMatchObject({ name: r.body.scenario.name });
