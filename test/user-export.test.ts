@@ -586,8 +586,8 @@ describe('everything stored, decrypted, and nothing else', () => {
     await apiTokenStore.update(ctx, second.info.id, (t) => t && { ...t, last_used_at: '2026-10-01T08:00:00.000Z' });
     const doc = await download();
     expect(doc.api_tokens).toEqual([
-      { label: 'Raycast', created_at: '2026-09-01T10:00:00.000Z', last_used_at: null },
-      { label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z' },
+      { label: 'Raycast', created_at: '2026-09-01T10:00:00.000Z', last_used_at: null, access: 'read' },
+      { label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z', access: 'read' },
     ]);
     const text = JSON.stringify(doc);
     const stored = await apiTokenStore.getAll(ctx);
@@ -609,7 +609,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     await fake.hset(ctxKey('api-tokens'), { [first.info.id]: DAMAGED });
     await fake.hset(ctxKey('api-tokens'), { ['0123456789abcdef']: await encrypt(TEST_CTX, JSON.stringify({ v: 2, label: 'Later' })) });
     const short = await download();
-    expect(short.api_tokens).toEqual([{ label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z' }]);
+    expect(short.api_tokens).toEqual([{ label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z', access: 'read' }]);
     expect(short.problems).toEqual([
       { section: 'api_tokens', problem: 'unreadable', count: 1 },
       { section: 'api_tokens', problem: 'unrecognised', count: 1 },
@@ -1228,6 +1228,7 @@ describe('stores built on the storage seam', () => {
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
       'account-lifecycle',
       'allocation-settings',
+      'api-changes',
       'app-imports',
       'budget-months',
       'carried-annotations',

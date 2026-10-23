@@ -6233,3 +6233,64 @@ button.review-keys-toggle {
 .plan-compare-name {
   font-weight: 600;
 }
+
+/* --- Changes made with your tokens (components/ApiChanges.tsx) --- */
+
+.api-access-choice {
+  min-height: 44px;
+}
+
+.api-access-warning {
+  margin: 4px 0 0;
+}
+
+.api-change-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.api-change {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.api-change:first-child {
+  border-top: none;
+}
+
+.api-change-text {
+  overflow-wrap: anywhere;
+}
+
+.api-change-state,
+.api-change-why {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.api-change-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.api-change-actions button,
+.api-change-more {
+  width: auto;
+  min-height: 44px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.api-change-more {
+  margin-top: 12px;
+}
+
+.api-change-forget-all {
+  display: block;
+  min-height: 44px;
+  margin-top: 8px;
+}

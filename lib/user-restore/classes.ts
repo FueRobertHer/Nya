@@ -91,6 +91,11 @@ export const FAMILY_CLASSES: Readonly<Record<string, KeyClass>> = {
 export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'account-lifecycle': 'data',
   'allocation-settings': 'setting',
+  // The record of changes made with API tokens (lib/api-changes.ts): about
+  // the copy it was kept in, whose tokens aren't brought back, and goes when
+  // the data it describes is emptied.
+  'api-changes': 'machinery',
+  'api-change-keys': 'machinery',
   'api-tokens': 'machinery',
   // The person's record of what they brought over from other apps, and its
   // Undo (lib/migration/store.ts).

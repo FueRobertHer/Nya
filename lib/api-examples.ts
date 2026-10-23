@@ -1,8 +1,8 @@
 // lib/api-examples.ts
 //
 // The developer page's reference (app/developers): for each endpoint of the
-// read-only API, an example request and answer, and every field the answer
-// can hold, described. Data only, no server imports. test/developers.test.tsx
+// API, an example request and answer, and every field the answer can hold,
+// described. Data only, no server imports. test/developers.test.tsx
 // holds it to the code: every field a real answer holds is described here,
 // every field described is in the example, and the example has the shape the
 // endpoint gives, so the page can't drift from what the API sends.
@@ -11,6 +11,10 @@
 
 export type FieldDoc = readonly [path: string, meaning: string];
 export type EndpointDoc = { query: string; example: unknown; fields: readonly FieldDoc[] };
+
+/** How a write's version moves besides its own fields (lib/api-versions.ts:
+ *  keyed with a key derived from PLAID_ENCRYPTION_KEY). */
+const VERSION_MOVES = 'and otherwise only if the server’s encryption key is ever replaced, which moves every version once (a change sent with one read before is then refused with 412: read it again)';
 
 const SOURCES: readonly FieldDoc[] = [
   ['sources', 'Where the transactions come from: one entry per linked institution, and one per bank a SimpleFIN or Lunch Flow connection reaches.'],
@@ -56,6 +60,14 @@ const LEFT_OUT: readonly FieldDoc[] = [
   ['left_out[].count', 'How many transactions in it.'],
   ['left_out_text', 'The same in words, or null when nothing was left out.'],
 ];
+
+/** What me's token.access is, as the developer page says it: writing is
+ *  named only where this copy lets tokens write. */
+export function accessDoc(writes: boolean): string {
+  return writes
+    ? 'What it may do, chosen when it was made and never changed: read; balances (it reads only me and accounts, and can set a manual account’s balance); or write (it reads everything, and can make the changes under Writing). A value you don’t know means no more than its own name says: treat it as read only.'
+    : 'What it may do, chosen when it was made and never changed: read. A value you don’t know means no more than its own name says: treat it as read only.';
+}
 
 /** The person's own rates, as me and net worth's base give them. */
 const OWN_RATES = (path: string, what: string): FieldDoc[] => [
@@ -379,7 +391,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
     query: '',
     example: {
       api_version: '1',
-      token: { label: 'Raycast', hint: 'nya_3f9a0c1e', created_at: '2026-10-01T15:04:05.000Z', last_used_at: '2026-10-09T08:12:00.000Z' },
+      token: { label: 'Raycast', hint: 'nya_3f9a0c1e', created_at: '2026-10-01T15:04:05.000Z', last_used_at: '2026-10-09T08:12:00.000Z', access: 'read' },
       data_since: '2026-01-14T19:20:31.000Z',
       rate_limit: { requests: 100, per_seconds: 60 },
       base_currency: 'USD',
@@ -392,6 +404,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['token.hint', 'Its first characters, as the API tokens card shows them.'],
       ['token.created_at', 'When it was made.'],
       ['token.last_used_at', 'When it was last used before this request, to within a minute, or null if never.'],
+      ['token.access', accessDoc(false)],
       ['data_since', 'When your data in Nya began.'],
       ['rate_limit', 'How many requests the token may make.'],
       ['rate_limit.requests', 'Requests in each window.'],
@@ -426,6 +439,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           as_of_time: '2026-10-09T02:00:00.000Z',
           connection: { last_ok_at: '2026-10-09T02:00:00.000Z', problem: null, ends_at: null },
           to_base: 2076.35,
+          version: null,
         },
         {
           id: 'BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp',
@@ -446,6 +460,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           connection: { last_ok_at: '2026-10-09T13:00:40.000Z', problem: null, ends_at: null },
           lifecycle: null,
           to_base: 1250.5,
+          version: null,
         },
         {
           id: 'lPNjeW1nR6CDn5okmGQ6hEpMo4lLNoSrzqDje',
@@ -466,6 +481,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           connection: { last_ok_at: '2026-10-09T13:00:40.000Z', problem: null, ends_at: null },
           lifecycle: { state: 'closed', date: '2026-09-01', note: 'Paid off and closed', assumed: false },
           to_base: 0,
+          version: null,
         },
         {
           id: 'manual_6b1f3e2a-1c4d-4e5f-8a9b-0c1d2e3f4a5b',
@@ -486,6 +502,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           connection: null,
           lifecycle: null,
           to_base: 412000,
+          version: 'Qm9yZGVyLWNvbGxpZS0xYQ',
         },
       ],
       base_currency: 'USD',
@@ -536,6 +553,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'The balance in base_currency, at the newest ECB rates (or your own); one whose currency isn’t known counts in your main currency. Null without a home currency, a balance or a rate. Each account converts on its own, so these can add up to a cent per currency away from net-worth’s base.net_worth, which converts each currency’s total once.',
       ],
       BASE_CURRENCY('accounts[].to_base'),
+      ['accounts[].version', `For a manual account: A short code that changes whenever its name, institution, type, subtype or currency changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Its balance doesn’t change it. Null for any other account. Added in version 1.`],
       ...MISSING_ACCOUNTS('the list is short of them'),
       NOTES,
     ],
@@ -709,6 +727,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           transaction_group: null,
           needs_review: false,
           reviewed_at: '2026-10-08T18:03:44.000Z',
+          version: null,
         },
         {
           id: 'eQ9dWk2mT7BEp6pkoHRj5FqNp5mMOpTsArEkf',
@@ -769,6 +788,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           transaction_group: null,
           needs_review: true,
           reviewed_at: null,
+          version: null,
         },
         {
           id: 'aR7cVj3oS8DFq7qlpISk6GrOq6nNPqUtBsFlg',
@@ -816,6 +836,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           },
           needs_review: false,
           reviewed_at: null,
+          version: null,
         },
       ],
       has_more: true,
@@ -929,6 +950,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'transactions[].reviewed_at',
         'When you approved it, as it is now; null when you haven’t, or the bank changed its amount since (which puts it back in the queue). An approved transaction stays in the category you approved it under, whatever a rule or a default added later would say.',
       ],
+      [
+        'transactions[].version',
+        `For a transaction entered by hand or through the API on a manual account: A short code that changes whenever it, or whether it is excluded and which tags it carries, changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Null for any other. Added in version 1.`,
+      ],
       ['has_more', 'There are more after this page.'],
       ['next_cursor', 'Pass it as cursor, with the same other parameters, for the next page; null on the last.'],
       ...SOURCES,
@@ -952,6 +977,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           group: 'Food',
           kind: 'expense',
           archived: false,
+          version: 'Zm9vZC1hbmQtZHJpbmstdg',
         },
         {
           name: 'transfer out',
@@ -964,6 +990,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           group: 'Transfers',
           kind: 'transfer',
           archived: false,
+          version: 'dHJhbnNmZXItb3V0LXZlcg',
         },
       ],
       groups: [
@@ -971,16 +998,18 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
           name: 'Food',
           kind: 'expense',
-          categories: [{ id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10', name: 'food and drink', archived: false }],
+          categories: [{ id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10', name: 'food and drink', archived: false, version: 'Zm9vZC1hbmQtZHJpbmstdg' }],
+          version: 'Zm9vZC1ncm91cC12ZXJzaW',
         },
         {
           id: '7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d',
           name: 'Transfers',
           kind: 'transfer',
           categories: [
-            { id: '2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f', name: 'loan payments', archived: false },
-            { id: '0d9a7c5e-3b1f-4d2a-8e6c-5f4b3a2c1d0e', name: 'transfer out', archived: false },
+            { id: '2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f', name: 'loan payments', archived: false, version: 'bG9hbi1wYXltZW50cy12ZQ' },
+            { id: '0d9a7c5e-3b1f-4d2a-8e6c-5f4b3a2c1d0e', name: 'transfer out', archived: false, version: 'dHJhbnNmZXItb3V0LXZlcg' },
           ],
+          version: 'dHJhbnNmZXJzLWdyb3VwLX',
         },
       ],
       sources: EXAMPLE_SOURCES,
@@ -999,6 +1028,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['categories[].group', 'Its group’s name.'],
       ['categories[].kind', 'How its transactions count, by its group: "expense" (spending), "income" or "transfer" (neither).'],
       ['categories[].archived', 'You archived it: hidden from the app’s lists to choose from, still on its transactions.'],
+      ['categories[].version', `A short code that changes whenever its name, group, icon or archived state changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Null as id is. Added in version 1.`],
       ['groups', 'Every group, in your order, with every category in it, used or not.'],
       ['groups[].id', 'The group’s id; null for one the app hasn’t stored yet.'],
       ['groups[].name', 'Its name.'],
@@ -1007,6 +1037,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['groups[].categories[].id', 'The category’s id; null for one the app hasn’t stored yet.'],
       ['groups[].categories[].name', 'Its name.'],
       ['groups[].categories[].archived', 'You archived it.'],
+      ['groups[].categories[].version', 'As categories[].version.'],
+      ['groups[].version', `A short code that changes whenever the group’s name, kind or place changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Null as id is. Added in version 1.`],
       ...SOURCES,
       TXN_NOTES,
     ],
@@ -1017,8 +1049,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
     example: {
       from: '2025-10-09',
       tags: [
-        { id: '0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e', name: 'Work', color: 'blue', transactions: 23, last_date: '2026-10-08' },
-        { id: '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b', name: 'Vacation 2026', color: 'green', transactions: 0, last_date: null },
+        { id: '0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e', name: 'Work', color: 'blue', transactions: 23, last_date: '2026-10-08', version: 'd29yay1ibHVlLXZlcnNpb2' },
+        { id: '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b', name: 'Vacation 2026', color: 'green', transactions: 0, last_date: null, version: 'dmFjYXRpb24tZ3JlZW4tdm' },
       ],
       sources: EXAMPLE_SOURCES,
       notes: [],
@@ -1031,6 +1063,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['tags[].color', 'gray, red, orange, yellow, green, teal, blue, purple or pink. Version 1 may add colors.'],
       ['tags[].transactions', 'How many transactions carry it, put on by you, added by a rule, or carried from an earlier account.'],
       ['tags[].last_date', 'The newest of them, or null for none.'],
+      ['tags[].version', `A short code that changes whenever its name or color changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Added in version 1.`],
       ...SOURCES,
       TXN_NOTES,
     ],
@@ -2148,5 +2181,283 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['missing_accounts[].reason', '"unreadable" or "not_loaded", as for accounts. Version 1 may add reasons.'],
       NOTES,
     ],
+  },
+};
+
+// ---- One resource, and writing (shown only where this copy lets tokens write) ----
+
+/**
+ * The reference for one resource's operations (lib/api-spec.ts
+ * RESOURCE_SPECS): an example body (a write's) or query, the answer, and its
+ * fields. Where an answer holds a resource as a list endpoint lists it,
+ * `like` names that list (each field of `account` is described as the same
+ * field of accounts[] is), and only what the list doesn't have is described
+ * here. test/developers.test.tsx holds these to real answers as it holds the
+ * endpoints'. The developer page shows them only while this copy lets tokens
+ * write (lib/api-writes-enabled.ts).
+ */
+export type ResourceDoc = {
+  body?: Readonly<Record<string, unknown>>;
+  query?: string;
+  example: unknown;
+  fields: readonly FieldDoc[];
+  like?: readonly (readonly [path: string, endpoint: string, as: string])[];
+  /** For a change to something that exists: the version its example read. */
+  ifMatch?: string;
+};
+
+const EX_ACCOUNT_ID = 'manual_4c2b1a09-8f7e-4d6c-9b5a-3e2d1c0b9a87';
+const EX_TXN_ID = 'manual-txn:7d6c5b4a-3f2e-4d1c-8b0a-9f8e7d6c5b4a';
+const EX_CATEGORY_ID = '3a4b5c6d-7e8f-4a9b-8c0d-1e2f3a4b5c6d';
+const EX_GROUP_ID = '8e9f0a1b-2c3d-4e5f-9a6b-7c8d9e0f1a2b';
+const EX_TAG_ID = '6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f';
+const EX_CHANGE = (n: string) => `20261009.3f9a0c1e5b7d2a46.${n}`;
+
+const EX_ACCOUNT = (over: Record<string, unknown> = {}) => ({
+  id: EX_ACCOUNT_ID,
+  source: 'manual',
+  name: 'Coin jar',
+  official_name: null,
+  institution: 'Home',
+  type: 'depository',
+  subtype: 'cash',
+  mask: null,
+  balance: 120,
+  currency: 'USD',
+  credit_limit: null,
+  is_debt: false,
+  hidden: false,
+  as_of: '2026-10-09',
+  as_of_time: '2026-10-09T15:04:05.000Z',
+  connection: null,
+  lifecycle: null,
+  to_base: 120,
+  version: 'Q29pbi1qYXItaG9tZS12MQ',
+  ...over,
+});
+
+const EX_TXN = (over: Record<string, unknown> = {}) => ({
+  id: EX_TXN_ID,
+  date: '2026-10-09',
+  datetime: null,
+  amount: 4.5,
+  currency: 'USD',
+  to_base: 4.5,
+  name: 'Corner café',
+  category: 'food and drink',
+  category_id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10',
+  group_id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
+  group: 'Food',
+  subcategory: null,
+  pending: false,
+  excluded: false,
+  is_transfer: false,
+  account_id: EX_ACCOUNT_ID,
+  account_name: 'Coin jar',
+  institution: 'Home',
+  source: 'manual',
+  hidden: false,
+  note: 'oat milk',
+  counterparty: null,
+  payment_channel: null,
+  city: null,
+  region: null,
+  website: null,
+  tags: [],
+  rule_ids: [],
+  excluded_by_rule: false,
+  splits: null,
+  transaction_group: null,
+  needs_review: false,
+  reviewed_at: null,
+  version: 'Um93LXZlcnM.U2FpZC12ZXI',
+  ...over,
+});
+
+const EX_CATEGORY = (over: Record<string, unknown> = {}) => ({
+  id: EX_CATEGORY_ID,
+  name: 'Pets',
+  icon: '🐶',
+  archived: false,
+  group_id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
+  group: 'Food',
+  kind: 'expense',
+  version: 'UGV0cy1mb29kLXZlcnNpb2',
+  ...over,
+});
+const EX_GROUP = (over: Record<string, unknown> = {}) => ({
+  id: EX_GROUP_ID,
+  name: 'Side work',
+  kind: 'income',
+  categories: [],
+  version: 'U2lkZS13b3JrLXZlcnNpb2',
+  ...over,
+});
+const EX_TAG = (over: Record<string, unknown> = {}) => ({ id: EX_TAG_ID, name: 'Trip', color: 'teal', version: 'VHJpcC10ZWFsLXZlcnNpb2', ...over });
+
+const CHANGE_ID: FieldDoc = ['change_id', 'The change this made, in the record of changes (GET /api/v1/changes): undo it with POST /api/v1/changes/{change_id}/undo.'];
+const LIKE_ACCOUNT = [['account', 'accounts', 'accounts[]']] as const;
+const LIKE_TXN = [['transaction', 'transactions', 'transactions[]']] as const;
+const LIKE_CATEGORY = [['category', 'categories', 'categories[]']] as const;
+const LIKE_GROUP = [['group', 'categories', 'groups[]']] as const;
+const LIKE_TAG = [['tag', 'tags', 'tags[]']] as const;
+const ACCOUNT_FIELD: FieldDoc = ['account', 'The manual account, as accounts lists it, with its version: each field as accounts[] has it.'];
+const TXN_FIELD: FieldDoc = ['transaction', 'The transaction, as transactions lists it, with its version: each field as transactions[] has it.'];
+const CATEGORY_FIELDS: readonly FieldDoc[] = [
+  ['category', 'The category, with its group and its version: each field as categories[] has it, and its icon.'],
+  ['category.icon', 'Its icon, an emoji, or null for none.'],
+];
+const GROUP_FIELD: FieldDoc = ['group', 'The category group, with its categories and its version: each field as groups[] has it.'];
+const TAG_FIELD: FieldDoc = ['tag', 'The tag, with its version: each field as tags[] has it.'];
+
+const CHANGE_FIELDS = (p: string): FieldDoc[] => [
+  [`${p}.id`, 'Its id: when it was made, which token made it, and a random part.'],
+  [`${p}.at`, 'When it was made.'],
+  [`${p}.via`, '"api" (this API) or "mcp" (the MCP server).'],
+  [`${p}.token`, 'The token that made it: this one.'],
+  [`${p}.token.hint`, 'Its first characters, as the API tokens card shows them.'],
+  [`${p}.token.label`, 'Its name, as it was when the change was made.'],
+  [
+    `${p}.op`,
+    'What it did: manual-account.create, manual-account.update, manual-account.balance, transaction.create, transaction.update, transaction.delete, category.create, category.update, group.create, group.update, tag.create, tag.update, or undo. Version 1 may add values, each for a kind of change a new access lets a token make.',
+  ],
+  [`${p}.target`, 'What it changed.'],
+  [`${p}.target.kind`, '"manual-account", "transaction", "category", "group", "tag", or "change" (an undo’s: the change it undid).'],
+  [`${p}.target.id`, 'Its id.'],
+  [`${p}.target.account_id`, 'For a transaction, the account it is on (for one moved, the account it was moved to).'],
+  [`${p}.state`, '"done"; "pending" while it is being made, or when it stopped part way; "failed" when it may not have been made. Only a done change can be undone.'],
+  [`${p}.before`, 'What it changed, before the change, as Nya stores it: its fields are Nya’s own and may differ from the API’s, and may gain fields. Null for what it made, and once the person forgot the change.'],
+  [`${p}.after`, 'The same, after the change. Null for what it deleted, and once the person forgot the change.'],
+  [`${p}.undoes`, 'For an undo, the change it undid; otherwise null.'],
+  [`${p}.undone_by`, 'The undo that undid it, or null.'],
+  [`${p}.forgotten`, 'The person forgot what it changed, under API tokens in the app: before and after are null, and it can’t be undone.'],
+];
+
+const EX_CHANGES = [
+  {
+    id: EX_CHANGE('9c1e5b7d2a46'),
+    at: '2026-10-09T15:06:12.000Z',
+    via: 'mcp',
+    token: { hint: 'nya_3f9a0c1e', label: 'Claude' },
+    op: 'transaction.update',
+    target: { kind: 'transaction', id: EX_TXN_ID, account_id: EX_ACCOUNT_ID },
+    state: 'done',
+    before: { row: { id: EX_TXN_ID, amount: 4.5, note: 'oat milk' }, said: null },
+    after: { row: { id: EX_TXN_ID, amount: 5.25, note: null }, said: null },
+    undoes: null,
+    undone_by: null,
+    forgotten: false,
+  },
+  {
+    id: EX_CHANGE('0d2f6c8e3b57'),
+    at: '2026-10-09T15:05:40.000Z',
+    via: 'mcp',
+    token: { hint: 'nya_3f9a0c1e', label: 'Claude' },
+    op: 'tag.create',
+    target: { kind: 'tag', id: EX_TAG_ID },
+    state: 'done',
+    before: null,
+    after: { tag: { id: EX_TAG_ID, name: 'Trip', color: 'teal' } },
+    undoes: null,
+    undone_by: null,
+    forgotten: false,
+  },
+];
+
+export const RESOURCE_DOCS: Readonly<Record<string, ResourceDoc>> = {
+  'manual-accounts.create': {
+    body: { name: 'Coin jar', institution_name: 'Home', type: 'depository', subtype: 'cash', balance: 120, currency: 'USD' },
+    example: { account: EX_ACCOUNT(), change_id: EX_CHANGE('5b7d2a469c1e') },
+    fields: [ACCOUNT_FIELD, CHANGE_ID],
+    like: LIKE_ACCOUNT,
+  },
+  'manual-accounts.get': { example: { account: EX_ACCOUNT() }, fields: [ACCOUNT_FIELD], like: LIKE_ACCOUNT },
+  'manual-accounts.update': {
+    body: { name: 'Coins', subtype: null },
+    ifMatch: 'Q29pbi1qYXItaG9tZS12MQ',
+    example: { account: EX_ACCOUNT({ name: 'Coins', subtype: null, version: 'Q29pbnMtaG9tZS12ZXJzaW' }), change_id: EX_CHANGE('7d2a469c1e5b') },
+    fields: [ACCOUNT_FIELD, CHANGE_ID],
+    like: LIKE_ACCOUNT,
+  },
+  'manual-accounts.balance': {
+    body: { balance: 130 },
+    example: { account: EX_ACCOUNT({ balance: 130, to_base: 130 }), changed: true, change_id: EX_CHANGE('2a469c1e5b7d') },
+    fields: [
+      ACCOUNT_FIELD,
+      ['changed', 'False when it already was that balance, to the cent: nothing was changed or counted against the day, and there is no change_id.'],
+      CHANGE_ID,
+    ],
+    like: LIKE_ACCOUNT,
+  },
+  'transactions.get': { example: { transaction: EX_TXN() }, fields: [TXN_FIELD], like: LIKE_TXN },
+  'transactions.create': {
+    body: { account_id: EX_ACCOUNT_ID, date: '2026-10-09', amount: 4.5, name: 'Corner café', category_id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10', note: 'oat milk' },
+    example: { transaction: EX_TXN(), change_id: EX_CHANGE('469c1e5b7d2a') },
+    fields: [TXN_FIELD, CHANGE_ID],
+    like: LIKE_TXN,
+  },
+  'transactions.update': {
+    body: { amount: 5.25, note: null },
+    ifMatch: 'Um93LXZlcnM.U2FpZC12ZXI',
+    example: { transaction: EX_TXN({ amount: 5.25, to_base: 5.25, note: null, version: 'TmV3LXJvd3Y.U2FpZC12ZXI' }), change_id: EX_CHANGE('9c1e5b7d2a46') },
+    fields: [TXN_FIELD, CHANGE_ID],
+    like: LIKE_TXN,
+  },
+  'transactions.delete': {
+    ifMatch: 'TmV3LXJvd3Y.U2FpZC12ZXI',
+    example: { deleted: true, transaction: EX_TXN({ amount: 5.25, to_base: 5.25, note: null, version: 'TmV3LXJvd3Y.U2FpZC12ZXI' }), change_id: EX_CHANGE('1e5b7d2a469c') },
+    fields: [['deleted', 'True: it is deleted.'], ['transaction', 'The transaction as it was, as transactions lists it: each field as transactions[] has it.'], CHANGE_ID],
+    like: LIKE_TXN,
+  },
+  'categories.get': { example: { category: EX_CATEGORY() }, fields: CATEGORY_FIELDS, like: LIKE_CATEGORY },
+  'categories.create': {
+    body: { name: 'Pets', group_id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b', icon: '🐶' },
+    example: { category: EX_CATEGORY(), change_id: EX_CHANGE('b7d2a469c1e5') },
+    fields: [...CATEGORY_FIELDS, CHANGE_ID],
+    like: LIKE_CATEGORY,
+  },
+  'categories.update': {
+    body: { name: 'Pets and vet' },
+    ifMatch: 'UGV0cy1mb29kLXZlcnNpb2',
+    example: { category: EX_CATEGORY({ name: 'Pets and vet', version: 'UGV0cy1hbmQtdmV0LXZlcn' }), change_id: EX_CHANGE('e5b7d2a469c1') },
+    fields: [...CATEGORY_FIELDS, CHANGE_ID],
+    like: LIKE_CATEGORY,
+  },
+  'category-groups.get': { example: { group: EX_GROUP() }, fields: [GROUP_FIELD], like: LIKE_GROUP },
+  'category-groups.create': {
+    body: { name: 'Side work', kind: 'income' },
+    example: { group: EX_GROUP(), change_id: EX_CHANGE('c1e5b7d2a469') },
+    fields: [GROUP_FIELD, CHANGE_ID],
+    like: LIKE_GROUP,
+  },
+  'category-groups.update': {
+    body: { name: 'Side jobs' },
+    ifMatch: 'U2lkZS13b3JrLXZlcnNpb2',
+    example: { group: EX_GROUP({ name: 'Side jobs', version: 'U2lkZS1qb2JzLXZlcnNpb2' }), change_id: EX_CHANGE('69c1e5b7d2a4') },
+    fields: [GROUP_FIELD, CHANGE_ID],
+    like: LIKE_GROUP,
+  },
+  'tags.get': { example: { tag: EX_TAG() }, fields: [TAG_FIELD], like: LIKE_TAG },
+  'tags.create': { body: { name: 'Trip', color: 'teal' }, example: { tag: EX_TAG(), change_id: EX_CHANGE('0d2f6c8e3b57') }, fields: [TAG_FIELD, CHANGE_ID], like: LIKE_TAG },
+  'tags.update': {
+    body: { color: 'green' },
+    ifMatch: 'VHJpcC10ZWFsLXZlcnNpb2',
+    example: { tag: EX_TAG({ color: 'green', version: 'VHJpcC1ncmVlbi12ZXJzaW' }), change_id: EX_CHANGE('3b570d2f6c8e') },
+    fields: [TAG_FIELD, CHANGE_ID],
+    like: LIKE_TAG,
+  },
+  'changes.list': {
+    query: 'limit=2',
+    example: { changes: EX_CHANGES, has_more: true, next_cursor: 'WyIyMDI2LTEwLTA5VDE1OjA1OjQwLjAwMFoiXQ' },
+    fields: [
+      ['changes', 'The changes this token made in the last 30 days, newest first: what it made, changed or deleted, and each undo.'],
+      ...CHANGE_FIELDS('changes[]'),
+      ['has_more', 'More changes follow: ask again with cursor set to next_cursor.'],
+      ['next_cursor', 'The cursor for the next page, or null.'],
+    ],
+  },
+  'changes.undo': {
+    example: { change: { ...EX_CHANGES[0], undone_by: EX_CHANGE('a469c1e5b7d2') }, undo: EX_CHANGE('a469c1e5b7d2') },
+    fields: [['change', 'The change undone, as changes lists it, with undone_by.'], ...CHANGE_FIELDS('change'), ['undo', 'The undo’s own id, in the record of changes.']],
   },
 };

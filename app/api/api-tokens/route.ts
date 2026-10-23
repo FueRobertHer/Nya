@@ -9,16 +9,22 @@ import { isDemoUser } from '@/lib/demo';
 import { loggable } from '@/lib/log-safe';
 import { sendAccessNotice } from '@/lib/download-notice';
 import { background } from '@/lib/background';
+import { ACCESS, type Access } from '@/lib/api-limits';
+import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 
 // The API tokens card (components/ApiTokens.tsx): the person's own tokens for
 // the read-only API and the MCP server (lib/api-tokens.ts). Behind the session
 // gate like every other route; the tokens themselves are only ever checked by
 // app/api/v1 and app/api/mcp.
 //
-//   GET     { tokens: [{ id, label, hint, created_at, last_used_at }],
-//             unreadable: [id], unrecognised: [id], limit }
-//   POST    { label, password? }  makes one: { token, info }. The token is in
-//           this answer and nowhere else, ever: only its hash is kept.
+//   GET     { tokens: [{ id, label, hint, created_at, last_used_at, access }],
+//             unreadable: [id], unrecognised: [id], limit, writes }
+//   POST    { label, access?, password? }  makes one: { token, info }. The
+//           token is in this answer and nowhere else, ever: only its hash is
+//           kept. `access` is read (also when absent), balances or write
+//           (lib/api-limits.ts ACCESS), chosen now and never changed; the last
+//           two only while this copy lets tokens write (`writes`,
+//           lib/api-writes-enabled.ts), else 403.
 //   DELETE  { id, unreadable? }   revokes one: { revoked: true }, or 404.
 //
 // Making a token needs a FRESH SIGN-IN (lib/fresh-sign-in.ts, as downloading
@@ -71,7 +77,7 @@ export async function GET() {
   try {
     const ctx = await dataCtx();
     const { tokens, unreadable, unrecognised } = await listTokens(ctx);
-    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS }, { headers: noStore });
+    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes: apiWritesEnabled() }, { headers: noStore });
   } catch (err) {
     return failure(err, 'read');
   }
@@ -86,7 +92,14 @@ export async function POST(req: Request) {
   }
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ error: 'Send { label }.' }, { status: 400 });
-  const { label: rawLabel, password } = body;
+  const { label: rawLabel, password, access: rawAccess } = body;
+  if (rawAccess !== undefined && !(ACCESS as readonly unknown[]).includes(rawAccess)) {
+    return NextResponse.json({ error: `access is one of ${ACCESS.join(', ')}.` }, { status: 400 });
+  }
+  const access = (rawAccess ?? 'read') as Access;
+  if (access !== 'read' && !apiWritesEnabled()) {
+    return NextResponse.json({ error: 'This copy of Nya doesn’t let tokens make changes: make one that reads.' }, { status: 403 });
+  }
   if (typeof rawLabel === 'string' && rawLabel.length > LABEL_FIELD_MAX) return NextResponse.json({ error: 'That name is too long.' }, { status: 400 });
   const label = cleanLabel(rawLabel);
   if (typeof label !== 'string') return NextResponse.json({ error: label.error }, { status: 400 });
@@ -113,10 +126,10 @@ export async function POST(req: Request) {
 
   try {
     const made = new Date();
-    const { token, info } = await createToken(ctx, label, made, signedIn.userId);
+    const { token, info } = await createToken(ctx, label, made, signedIn.userId, access);
     // Never the token itself: it is in this answer alone, and not in the email.
     console.log('API token made');
-    background(sendAccessNotice(ctx, { kind: 'api-token' }, made));
+    background(sendAccessNotice(ctx, { kind: 'api-token', access }, made));
     return NextResponse.json({ token, info }, { headers: noStore });
   } catch (err) {
     if (err instanceof TokenLimitError) return NextResponse.json({ error: err.message }, { status: 409 });

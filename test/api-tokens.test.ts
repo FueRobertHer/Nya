@@ -97,7 +97,7 @@ describe('a token', () => {
     const parts = parseToken(token)!;
     expect(parts).toEqual({ id: info.id, secret: token.slice(21, 64), container: MINE });
     expect(token.endsWith(`_${TEST_CONTAINER}`)).toBe(true);
-    expect(info).toEqual({ id: parts.id, label: 'Raycast', hint: `nya_${parts.id.slice(0, 8)}`, created_at: new Date(NOW).toISOString(), last_used_at: null });
+    expect(info).toEqual({ id: parts.id, label: 'Raycast', hint: `nya_${parts.id.slice(0, 8)}`, created_at: new Date(NOW).toISOString(), last_used_at: null, access: 'read' });
     expect(token.startsWith(info.hint)).toBe(true);
     // Stored under its id, in its container: the hash of the secret, never the secret.
     expect(await apiTokenStore.get(ctx, info.id)).toEqual({ v: 1, label: 'Raycast', hash: sha256(parts.secret), user_id: null, created_at: info.created_at, last_used_at: null });
@@ -549,7 +549,7 @@ describe('the card’s route', () => {
 
     res = await call('GET');
     const listed = await res.json();
-    expect(listed).toEqual({ tokens: [made.info], unreadable: [], unrecognised: [], limit: MAX_TOKENS });
+    expect(listed).toEqual({ tokens: [made.info], unreadable: [], unrecognised: [], limit: MAX_TOKENS, writes: false });
     expect(JSON.stringify(listed)).not.toContain(parseToken(made.token)!.secret);
     expect((await authenticate(bearer(made.token), NOW))?.id).toBe(made.info.id);
   });
@@ -625,5 +625,75 @@ describe('the card’s route', () => {
     } finally {
       console.error = quiet;
     }
+  });
+});
+
+describe('what a token may do', () => {
+  const call = (method: string, body?: unknown) =>
+    route[method as 'POST'](
+      new Request('http://localhost/api/api-tokens', {
+        method,
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+    ) as Promise<Response>;
+
+  test('is chosen when it is made, stored only when it is more than reading, and never changed by using it', async () => {
+    const read = await createToken(ctx, 'Raycast', new Date(NOW));
+    const write = await createToken(ctx, 'Claude', new Date(NOW), null, 'write');
+    const balances = await createToken(ctx, 'Home Assistant', new Date(NOW), null, 'balances');
+    expect([read.info.access, write.info.access, balances.info.access]).toEqual(['read', 'write', 'balances']);
+    // A read token's record is exactly what the release before writes and reads.
+    expect(Object.keys((await apiTokenStore.get(ctx, read.info.id))!).sort()).toEqual(['created_at', 'hash', 'label', 'last_used_at', 'user_id', 'v']);
+    expect((await apiTokenStore.get(ctx, write.info.id))!.access).toBe('write');
+    for (const [made, access] of [
+      [read, 'read'],
+      [write, 'write'],
+      [balances, 'balances'],
+    ] as const) {
+      const auth = (await authenticate(bearer(made.token), NOW))!;
+      expect(auth.access).toBe(access);
+      await noteUse(auth, NOW + LAST_USED_EVERY_MS * 2);
+      expect((await apiTokenStore.get(ctx, made.info.id))!.access).toBe(access === 'read' ? undefined : access);
+    }
+  });
+
+  test('a value this release doesn’t know makes the record unrecognised: it never authenticates', async () => {
+    const made = await createToken(ctx, 'Script', new Date(NOW), null, 'write');
+    const raw = { ...(await apiTokenStore.get(ctx, made.info.id))!, access: 'everything' };
+    await fake.hset(ctxKey('api-tokens'), { [made.info.id]: await encrypt(ctx, JSON.stringify(raw)) });
+    expect(await authenticate(bearer(made.token), NOW)).toBeNull();
+    expect((await listTokens(ctx)).unrecognised).toEqual([made.info.id]);
+  });
+
+  test('the card makes one that reads unless asked, and one that does more only while this copy lets tokens write', async () => {
+    delete process.env.API_WRITES_ENABLED;
+    let res = await call('POST', { label: 'Script', access: 'write', password: 'hunter2' });
+    expect(res.status).toBe(403);
+    expect(await apiTokenStore.count(ctx)).toBe(0);
+    res = await call('POST', { label: 'Script', access: 'admin', password: 'hunter2' });
+    expect(res.status).toBe(400);
+    res = await call('POST', { label: 'Script', password: 'hunter2' });
+    expect((await res.json()).info.access).toBe('read');
+    process.env.API_WRITES_ENABLED = '1';
+    res = await call('POST', { label: 'Balances', access: 'balances', password: 'hunter2' });
+    expect(res.status).toBe(200);
+    expect((await res.json()).info.access).toBe('balances');
+    const listed = await (await route.GET()).json();
+    expect(listed.writes).toBe(true);
+    expect(listed.tokens.map((t: { access: string }) => t.access).sort()).toEqual(['balances', 'read']);
+  });
+
+  test('revoking one deletes its write counts with it', async () => {
+    const made = await createToken(ctx, 'Claude', new Date(NOW), null, 'write');
+    const { apiWriteCount, apiWriteDays } = await import('@/lib/api-token-store');
+    await apiWriteCount.take(ctx, made.info.id, NOW);
+    await apiWriteDays.take(ctx, made.info.id, NOW);
+    await apiWriteDays.take(ctx, `${made.info.id}.creates`, NOW);
+    await apiWriteDays.take(ctx, 'person', NOW);
+    expect(await revokeToken(ctx, made.info.id)).toBe(true);
+    const days = (await fake.hgetall<Record<string, string>>(ctxKey('api-write-days'))) ?? {};
+    expect(Object.keys(days)).toEqual(['person']);
+    expect(await fake.hgetall(ctxKey('api-write-requests'))).toBeNull();
   });
 });

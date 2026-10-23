@@ -110,6 +110,8 @@ describe('the registry', () => {
   test('every retention row an entry names is a row of the privacy page’s table, word for word', () => {
     process.env.MASTER_KEY = Buffer.alloc(32, 9).toString('base64');
     process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_placeholder';
+    // Where tokens can make changes, the page says how long those are kept.
+    process.env.API_WRITES_ENABLED = '1';
     const html = renderToStaticMarkup(PrivacyPage());
     for (const title of RETENTION_ROWS) expect([title, html.includes(`<th scope="row">${title}</th>`)]).toEqual([title, true]);
     const named = new Set([...families(), ...declaredStores().map((s) => s.name), 'fx:ecb'].flatMap((n) => keptRows(containerEntry(n) ?? outsideEntry(n)!)));

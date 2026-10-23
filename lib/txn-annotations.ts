@@ -214,9 +214,35 @@ export function changedRecord(current: TxnAnnotation | null, change: AnnotationC
 }
 
 /** Changes what is said about one transaction, in one compare-and-set (see
- *  changeRecord), and returns the record as saved. */
-export function changeAnnotation(ctx: Ctx, transaction_id: string, change: AnnotationChange, now: Date = new Date()): Promise<TxnAnnotation> {
-  return changeRecord(ctx, transaction_id, (current) => changedRecord(current, change, now));
+ *  changeRecord), and returns the record as saved. `expect`, a caller's own
+ *  check of the record as it is now (the API's version), runs inside that
+ *  compare-and-set and throws to refuse. */
+export function changeAnnotation(
+  ctx: Ctx,
+  transaction_id: string,
+  change: AnnotationChange,
+  now: Date = new Date(),
+  expect?: (current: TxnAnnotation | null) => void
+): Promise<TxnAnnotation> {
+  return changeRecord(ctx, transaction_id, (current) => {
+    expect?.(current);
+    return changedRecord(current, change, now);
+  });
+}
+
+/**
+ * Puts what is said about one transaction back exactly as it was (`value`;
+ * null: nothing was said), for the undo of a change made through the API
+ * (lib/api-undo.ts), whose record keeps it whole: adding and taking off tags
+ * can't always bring back the tags kept off (`untagged`) as they were. One
+ * compare-and-set: `expect` checks the record as it is now, inside it, and
+ * throws to refuse, so a change made since is never written over.
+ */
+export async function restoreAnnotation(ctx: Ctx, transaction_id: string, value: TxnAnnotation | null, expect: (current: TxnAnnotation | null) => void): Promise<void> {
+  await txnAnnotationStore.update(ctx, transaction_id, (current) => {
+    expect(current);
+    return value;
+  });
 }
 
 /**

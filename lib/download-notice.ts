@@ -34,13 +34,14 @@ import { appUrl } from './app-url';
 import { MailError, isEmailAddress, mailConfigured, sendMail, type MailResult } from './mail';
 import { noticeRecipients } from './notice-recipients';
 import type { DownloadFormat } from './download-options';
+import type { Access } from './api-limits';
 
 /** What happened: a download (its format, and whether a passphrase protects
  *  it), a new API token, or, bringing a download back (lib/user-restore/),
  *  a restore begun, a restore undone, or the account emptied. */
 export type AccessEvent =
   | { kind: 'download'; format: DownloadFormat; protected: boolean }
-  | { kind: 'api-token' }
+  | { kind: 'api-token'; access?: Access }
   | { kind: 'restore' }
   | { kind: 'restore-undone' }
   | { kind: 'emptied' };
@@ -122,11 +123,17 @@ export function composeAccessNotice(event: AccessEvent, at: Date, opts: { clerk:
         ].join('\n\n') + '\n',
     };
   }
+  const can =
+    event.kind === 'api-token' && event.access === 'write'
+      ? 'can read your Nya data and make changes to it'
+      : event.kind === 'api-token' && event.access === 'balances'
+        ? 'can see your Nya accounts and update their balances'
+        : 'can read your Nya data';
   return {
     subject: 'An API token was made for your Nya data',
     text:
       [
-        `An API token that can read your Nya data was made on ${when}.`,
+        `An API token that ${can} was made on ${when}.`,
         "If that was you, there's nothing to do.",
         `If it wasn't you, revoke it now: in Nya, open Manage on the Accounts tab, and revoke it under API tokens. A token keeps working after every session ends, so revoking it is what stops it. Someone else has also signed in as you: ${secure}`,
         open,

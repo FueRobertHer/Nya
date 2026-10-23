@@ -66,6 +66,8 @@ export type SeamPart = {
 export const SEAM: Readonly<Record<string, SeamPart>> = {
   'account-lifecycle': { kind: 'map', restore: 'write' },
   'allocation-settings': { kind: 'value', restore: 'write' },
+  // What tokens of the copy it came from changed there: never brought back.
+  'api-changes': { kind: 'map', restore: 'never' },
   'app-imports': { kind: 'map', restore: 'write' },
   'budget-months': { kind: 'value', restore: 'write' },
   'carried-annotations': { kind: 'map', restore: 'write' },

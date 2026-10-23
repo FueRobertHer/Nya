@@ -469,8 +469,8 @@ export const SECTIONS: readonly ExportSection[] = [
   {
     key: 'api_tokens',
     what: 'API tokens',
-    // Each token's name and dates: what the person called it, and when it was
-    // made and last read their data. Never its secret, which Nya doesn't keep,
+    // Each token's name, dates and access: what the person called it, when it
+    // was made and last read their data, and what it may do. Never its secret, which Nya doesn't keep,
     // nor the hash it keeps of it (a credential, so the store itself is not
     // exportable), nor its id, which is part of the token. Read with the
     // seam's report, as every store on it is: a token whose record can't be
@@ -480,7 +480,7 @@ export const SECTIONS: readonly ExportSection[] = [
       const report = await apiTokenStore.getAllReport(ctx);
       return {
         value: [...report.entries.values()]
-          .map((t) => ({ label: t.label, created_at: t.created_at, last_used_at: t.last_used_at }))
+          .map((t) => ({ label: t.label, created_at: t.created_at, last_used_at: t.last_used_at, access: t.access ?? 'read' }))
           .sort((a, b) => byCodePoint(a.created_at, b.created_at) || byCodePoint(a.label, b.label)),
         problems: countedProblems('api_tokens', report),
       };

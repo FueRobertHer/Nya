@@ -31,6 +31,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 const { ctx, OTHER, DAY, daysAgo, seedPerson, seedOther, connectWithoutTransactions } = await import('./api-fixture');
 const { createToken, revokeToken, REQUESTS_PER_MINUTE } = await import('@/lib/api-tokens');
 const { OPERATIONS } = await import('@/lib/api-ops');
+const { RESOURCE_SPECS } = await import('@/lib/api-spec');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { config } = await import('@/proxy');
 
@@ -174,7 +175,7 @@ describe('me', () => {
     expect(body).toEqual({
       api_version: '1',
       // As it stood before this request: never used.
-      token: { label: 'Tests', hint: token.slice(0, 12), created_at: expect.any(String), last_used_at: null },
+      token: { label: 'Tests', hint: token.slice(0, 12), created_at: expect.any(String), last_used_at: null, access: 'read' },
       data_since: '2026-01-01T00:00:00.000Z',
       rate_limit: { requests: REQUESTS_PER_MINUTE, per_seconds: 60 },
       // No home currency chosen: nothing is converted.
@@ -427,7 +428,7 @@ describe('the person’s categories (#38), once the app has stored them', () => 
     expect(categories.categories.find((c: any) => c.id === food.id)).toMatchObject({ name: 'Eating', group: 'Food', group_id: foodGroup.id, kind: 'expense', archived: false, budgeted: true, transfer: false });
     expect(categories.categories.find((c: any) => c.name === 'loan payments')).toMatchObject({ kind: 'transfer', transfer: true });
     expect(categories.groups[0]).toMatchObject({ name: 'Income', kind: 'income' });
-    expect(categories.groups.find((g: any) => g.id === foodGroup.id).categories).toContainEqual({ id: food.id, name: 'Eating', archived: false });
+    expect(categories.groups.find((g: any) => g.id === foodGroup.id).categories).toContainEqual({ id: food.id, name: 'Eating', archived: false, version: expect.any(String) });
 
     const budgets = (await call('budgets')).body;
     expect(budgets.budgets.find((b: any) => b.category_id === food.id)).toMatchObject({ category: 'Eating', group: 'Food', budget: 100 });
@@ -679,9 +680,24 @@ describe('the session gate', () => {
   const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 
   test('skips every API endpoint exactly, and nothing that merely starts like one', () => {
+    // A path with an id in it is an endpoint of its own (RESOURCE_SPECS).
+    const withIds = new Set(RESOURCE_SPECS.filter((r) => r.path.includes('{id}')).map((r) => r.path.split('/')[0]));
     for (const op of OPERATIONS) {
       expect([op.name, gated(`/api/v1/${op.name}`)]).toEqual([op.name, false]);
-      for (const near of [`/api/v1/${op.name}/x`, `/api/v1/${op.name}s`, `/api/v1/${op.name}x`]) expect([near, gated(near)]).toEqual([near, true]);
+      for (const near of [...(withIds.has(op.name) ? [`/api/v1/${op.name}/x/y`] : [`/api/v1/${op.name}/x`]), `/api/v1/${op.name}s`, `/api/v1/${op.name}x`]) {
+        expect([near, gated(near)]).toEqual([near, true]);
+      }
+    }
+    for (const r of RESOURCE_SPECS) {
+      const path = `/api/v1/${r.path.replace('{id}', 'manual-txn:abc.1-2')}`;
+      expect([path, gated(path)]).toEqual([path, false]);
+      for (const near of [`${path}/`, `${path}x/y`, path.replace('manual-txn:abc.1-2', '..'), path.replace('manual-txn:abc.1-2', '..%2Fconnections'), path.replace('manual-txn:abc.1-2', 'a%2Fb')]) {
+        if (near === path) continue;
+        expect([near, gated(near)]).toEqual([near, true]);
+      }
+      // A colon as encodeURIComponent writes it reaches the route too.
+      const encoded = `/api/v1/${r.path.replace('{id}', 'manual-txn%3Aabc')}`;
+      expect([encoded, gated(encoded)]).toEqual([encoded, false]);
     }
     for (const path of ['/api/v1', '/api/v1/', '/api/v1/other', '/api/v2/accounts', '/api/api-tokens']) expect([path, gated(path)]).toEqual([path, true]);
   });

@@ -13,6 +13,7 @@ import type { Ctx } from './containers';
 import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
 import { readTagSet } from './tags';
 import { bankRows } from './split-rows';
+import { tagVersion } from './api-versions';
 
 export type ApiTag = {
   id: string;
@@ -23,6 +24,9 @@ export type ApiTag = {
   /** Transactions carrying it, in the window the API reads. */
   transactions: number;
   last_date: string | null;
+  /** Changes whenever its name or color does (lib/api-versions.ts). Added in
+   *  version 1. */
+  version: string;
 };
 
 export async function readTags(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<{ from: string; tags: ApiTag[]; sources: ApiSource[]; notes: string[] }> {
@@ -46,6 +50,7 @@ export async function readTags(ctx: Ctx, opts: { includeHidden?: boolean } = {})
       name: t.name,
       color: t.color,
       ...(seen.get(t.id) ?? { transactions: 0, last_date: null }),
+      version: tagVersion(t),
     })),
     sources: activity.sources,
     notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],

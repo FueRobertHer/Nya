@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import SecurityPage from '@/app/security/page';
 import PrivacyPage from '@/app/privacy/page';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
+import { writingIn } from './writing-words';
 import nextConfig from '@/next.config.js';
 import { backupRetention, keepDays, MIN_KEPT } from '@/lib/backup';
 import { backupDaysAtMost, buildDeletionReceipt, PLAID_PORTAL, type DeletionCounts } from '@/lib/deletion-receipt';
@@ -596,7 +597,7 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
       'The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count.'
     );
     expect(priv).toContain(
-      'Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign.'
+      'Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com), and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign.'
     );
     expect(priv).not.toContain('a name with a number in it is left out');
     expect(priv).toContain(
@@ -609,7 +610,7 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     const sec = security();
     expect(sec).toContain('If you turn it on, Nya emails you once a week what changed and what needs your attention. It never includes a balance, an amount, a percentage or an account number.');
     expect(sec).toContain(
-      'A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named; a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent sign.'
+      'A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com); a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent sign.'
     );
     expect(sec).toContain(
       'Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording, the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.'
@@ -697,6 +698,70 @@ describe('API tokens, on both pages', () => {
     );
     expect(page).toContain('your API tokens themselves (each one’s name and dates are in)');
     expect(privacyHtml()).toContain('href="/developers"');
+  });
+});
+
+// Writing through a token (API_WRITES_ENABLED, lib/api-writes-enabled.ts):
+// the pages describe it only while this copy lets tokens write, and read
+// exactly as before while it doesn't.
+describe('writing through a token, on both pages, only while this copy lets tokens write', () => {
+  const mailOn = () => {
+    process.env.RESEND_API_KEY = 're_test';
+    process.env.MAIL_FROM = 'Nya <nya@example.com>';
+    process.env.NOTIFY_EMAIL = 'me@example.com';
+    process.env.RESTORE_ENABLED = '1';
+  };
+
+  test('off: nothing of writing on either page', () => {
+    delete process.env.API_WRITES_ENABLED;
+    mailOn();
+    for (const [name, page] of [['security', security()], ['privacy', privacy()]] as const) expect([name, writingIn(page)]).toEqual([name, []]);
+    expect(security()).toContain('A token can read but never change anything');
+    expect(security()).toContain('the read-only API, the MCP server and what you share answer nothing from it.');
+    expect(privacy()).toContain('Not built yet Writing through the API');
+  });
+
+  test('on, the security page: what each kind of token reaches, its limits, versions and the record, and what a restore holds back', () => {
+    process.env.API_WRITES_ENABLED = '1';
+    mailOn();
+    const page = security();
+    expect(page).toContain('Programs you give an API token to What the API and the MCP server serve (the Developers page lists it)');
+    expect(page).toContain(
+      'A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).'
+    );
+    expect(page).not.toContain('and they can never change anything.');
+    expect(page).toContain('lets a program read your data, and, if you choose when you make it, change some of it, through Nya’s API and its MCP server');
+    expect(page).toContain('That choice is kept with it and can never be widened, and a token never gains kinds of changes added to Nya after it was made.');
+    expect(page).toContain('one that can update balances or make changes at most 30 writes a minute and 500 changes a day, with 2,000 changes a day for all your tokens.');
+    expect(page).toContain('Every change to something that already exists, but a balance, names the version it was made from');
+    expect(page).toContain('Every change is recorded for 30 days under API tokens, with what it changed, where most can be undone or forgotten.');
+    expect(page).toContain('the record of changes made with API tokens, and the short-lived copies');
+    expect(page).toContain('for the record of changes made with API tokens: the day each change was made and which token made it (what it changed is encrypted).');
+    expect(page).toContain('for a token that can update balances or make changes, its writes in the current minute and its changes in the current 24 hours, all your tokens’ changes in the current 24 hours, and the manual accounts whose balance a token set in the current 24 hours, by their ids');
+    expect(page).toContain('or an API token is made (saying what it can do)');
+    expect(page).toContain('the API and the MCP server answer nothing from it and change nothing in it');
+    // The words the off page is held to not saying are said here.
+    expect(writingIn(page).length).toBeGreaterThan(3);
+    expect(page).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  test('on, the privacy page: the AI caveat, leaving, the record’s row, and the counts', () => {
+    process.env.API_WRITES_ENABLED = '1';
+    mailOn();
+    const page = privacy();
+    expect(page).toContain('With a token you make to make changes, it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads');
+    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts');
+    expect(page).toContain('Not built yet Writing your bank’s transactions through the API');
+    expect(page).toContain('Changes made with API tokens 30 days, or until you delete your account: each change a token made');
+    // A forgotten change keeps its line: Forget removes what it changed.
+    expect(page).toContain('Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the 30 days.');
+    expect(page).toContain('whether a token set each manual account’s balance in the current 24 hours');
+    expect(page).toContain('A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.');
+    expect(page).toContain('For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours');
+    expect(page).toContain('Each is kept as its name, what it can do, the sign-in account that made it');
+    expect(writingIn(page).length).toBeGreaterThan(3);
+    expect(page).toContain('or an API token is made (saying what it can do)');
+    expect(page).not.toMatch(/[\u2013\u2014]/);
   });
 });
 
