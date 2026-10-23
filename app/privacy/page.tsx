@@ -104,7 +104,9 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
     today: (
       <>
         The <a href="/security">Security page</a> lists everyone who can read your data, what each can read, and what
-        is stored without encryption.
+        is stored without encryption. Your data, under Manage on the Accounts tab, lists each kind of thing Nya keeps
+        about you: how much of it there is, whether it is encrypted and with which key, whether it is in your download,
+        how long it is kept and who else can see it. It shows numbers only, never what is stored.
       </>
     ),
     next: {
@@ -231,6 +233,14 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
   [
     'Copies of what the dashboard shows',
     'Short-lived: used for 15 minutes, or up to 6 hours where Plaid is set up to say when new data arrives, and cleared whenever your data changes. Encrypted.',
+  ],
+  [
+    'The app’s own records about your data',
+    'Locks, notes that a bank’s transactions grew too large to save or failed to save, the daily snapshot’s record of how each recent day went, when each day’s balances were taken and its checks on your connections, summaries and indexes kept beside your data, and how far longer jobs have got: until what they are about goes, or you delete your account. Your data, under Manage, says which of them are plain text.',
+  ],
+  [
+    'Counts that limit how often you can do something',
+    'Downloads of your data, file imports and reads of the list of them, restores and the steps of one, and connecting to SimpleFIN or Lunch Flow and the requests made to them: each counted for its own window, an hour or a day from its first count, and then gone.',
   ],
   [
     'API tokens',
