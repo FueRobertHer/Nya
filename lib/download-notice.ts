@@ -40,7 +40,7 @@ import type { Access } from './api-limits';
  *  it), a new API token, or, bringing a download back (lib/user-restore/),
  *  a restore begun, a restore undone, or the account emptied. */
 export type AccessEvent =
-  | { kind: 'download'; format: DownloadFormat; protected: boolean }
+  | { kind: 'download'; format: DownloadFormat | 'attachments-zip'; protected: boolean }
   | { kind: 'api-token'; access?: Access }
   | { kind: 'restore' }
   | { kind: 'restore-undone' }
@@ -54,11 +54,14 @@ export const NOTICE_RECIPIENTS_TIMEOUT_MS = 3_000;
 /** The longest wait before the one retry. */
 const RETRY_MAX_MS = 2_000;
 
-const FORMAT_WORDS: Record<DownloadFormat, string> = {
+const FORMAT_WORDS: Record<DownloadFormat | 'attachments-zip', string> = {
   json: 'everything, as one JSON file',
   'transactions-csv': 'your transactions, as a CSV file',
   'balances-csv': 'your balance history, as a CSV file',
   ofx: "one account's transactions, as an OFX statement",
+  // A set of ZIP files counts as one download (app/api/attachments/download):
+  // never a file's name, or how many.
+  'attachments-zip': 'your receipts and documents, as ZIP files',
 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

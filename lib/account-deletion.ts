@@ -11,6 +11,11 @@
 //   3. each of its banks is disconnected at Plaid (a failure there is logged
 //      and the rest goes on, as with /api/disconnect; the connection is then
 //      left at Plaid, which ends it only once its token stops being used);
+//  3b. its receipts and documents are deleted from the file store
+//      (lib/attachments.ts deleteContainerFiles): never what stops the
+//      deletion, since once its key is destroyed (6) whatever is left there
+//      can't be read, and the nightly sweep deletes a deleted account's
+//      folder (lib/attachment-sweep.ts); the receipt says which;
 //   4. every key in the container is deleted;
 //   5. the container leaves the registry;
 //   6. its data key is destroyed (lib/crypto.ts destroyContainerKeys): every
@@ -237,6 +242,12 @@ export async function sweepContainerExcept(ctx: Ctx, keep: (key: string) => bool
   const keys = (await keysIn(ctx)).filter((k) => k.startsWith(prefix) && !keep(k.slice(prefix.length)));
   let deleted = 0;
   for (let i = 0; i < keys.length; i += PAGE) deleted += Number(await redis().del(...keys.slice(i, i + PAGE)));
+  // Receipts and documents (lib/attachments.ts): kept, as undo and emptying
+  // keep them (lib/user-restore/classes.ts), each now on no transaction;
+  // where a caller didn't keep their records, their files go with them.
+  const attachments = await import('./attachments');
+  if (keep('attachments')) await attachments.releaseAllAttachments(ctx);
+  else await attachments.deleteContainerFiles(ctx);
   return deleted;
 }
 
@@ -283,6 +294,9 @@ export async function deleteAccount(
   let deletedKeys = 0;
   let connectionsEnded = 0;
   let signInDeleted = false;
+  // Receipts and documents (3b): undefined until the step runs, null when the
+  // file store couldn't be listed.
+  let files: { deleted: number; left: number } | null | undefined;
   let stored = NOTHING_STORED;
   let resumed = false;
   let entryRead: KeyEntryRead | null = null;
@@ -292,6 +306,7 @@ export async function deleteAccount(
     ...stored,
     connections_ended: connectionsEnded,
     sign_in_deleted: signInDeleted,
+    ...(files !== undefined ? { attachments: files } : {}),
   });
 
   if (container && !marked) {
@@ -322,6 +337,8 @@ export async function deleteAccount(
           console.error('Account deletion: a bank could not be disconnected at Plaid', err instanceof Error ? err.name : err);
         }
       }
+      // 3b. Its receipts and documents (see the header): never throws.
+      files = await (await import('./attachments')).deleteContainerFiles(ctx);
       // 4. Everything it stored.
       deletedKeys += await sweep(ctx);
       // 5. The container itself.

@@ -35,6 +35,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import { deleteFile, filesOn } from './attachment-client';
 import { categoryOptions, nameForRules, type Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
@@ -216,6 +217,10 @@ export default function ManualTxnSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Its receipts and documents (#47), asked about when it is deleted: kept,
+  // not on a transaction, unless the person chooses to delete them too.
+  const [files, setFiles] = useState<string[] | null>(null);
+  const [alsoFiles, setAlsoFiles] = useState(false);
   // Saved, but with something to read first (the balance didn't update).
   const [done, setDone] = useState(false);
 
@@ -226,6 +231,8 @@ export default function ManualTxnSheet({
     setShown(target);
     setError('');
     setConfirmDelete(false);
+    setFiles(null);
+    setAlsoFiles(false);
     setDone(false);
     setSaving(false);
     if (target.mode === 'edit') {
@@ -388,6 +395,18 @@ export default function ManualTxnSheet({
     }
   }
 
+  /** Asked to delete: the files on it read first, to offer deleting them. */
+  function askDelete() {
+    setConfirmDelete(true);
+    setFiles(null);
+    setAlsoFiles(false);
+    if (!edit || edit.attached !== true) return;
+    const id = edit.transaction_id;
+    void filesOn([id]).then((out) => {
+      if (!('error' in out)) setFiles(out.files.filter((f) => f.place.on === 'transaction' && f.place.transaction_id === id).map((f) => f.id));
+    });
+  }
+
   async function remove() {
     if (!edit || busy) return;
     setSaving(true);
@@ -396,6 +415,19 @@ export default function ManualTxnSheet({
       const { res, data } = await send('DELETE', { id: edit.transaction_id, account_id: edit.account_id });
       if (res.ok) {
         onSaved({ balanceChanged: false, removed: edit.transaction_id });
+        // Its files after it: one that can't be deleted stays, not on a
+        // transaction, under Receipts and documents.
+        if (alsoFiles && files && files.length > 0) {
+          let left = 0;
+          for (const id of files) if ('error' in (await deleteFile(id))) left++;
+          if (left > 0) {
+            setError(
+              `The transaction is deleted, but ${left === 1 ? 'one of its files' : `${left} of its files`} couldn’t be: ${left === 1 ? 'it is' : 'they are'} under Receipts and documents in Manage accounts, not on a transaction.`
+            );
+            setDone(true);
+            return;
+          }
+        }
         onClose();
         return;
       }
@@ -574,6 +606,15 @@ export default function ManualTxnSheet({
       ) : confirmDelete ? (
         <>
           <p className="panel-note">Delete this transaction? It can&apos;t be brought back.</p>
+          {files && files.length > 0 && (
+            <>
+              <label className="quick-add-check">
+                <input type="checkbox" checked={alsoFiles} onChange={(e) => setAlsoFiles(e.target.checked)} disabled={saving} />
+                <span>{files.length === 1 ? 'Also delete the receipt or document on it' : `Also delete the ${files.length} receipts and documents on it`}</span>
+              </label>
+              {!alsoFiles && <p className="panel-note">Kept, they stay under Receipts and documents in Manage accounts, not on a transaction.</p>}
+            </>
+          )}
           <div className="button-pair" style={{ marginTop: 12 }}>
             <button className="secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
               Keep it
@@ -594,7 +635,7 @@ export default function ManualTxnSheet({
             </button>
           </div>
           {edit && (
-            <button className="danger-outline" style={{ marginTop: 12 }} onClick={() => setConfirmDelete(true)} disabled={saving}>
+            <button className="danger-outline" style={{ marginTop: 12 }} onClick={askDelete} disabled={saving}>
               Delete transaction
             </button>
           )}

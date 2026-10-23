@@ -26,7 +26,7 @@
 // can still tell a whole file from one cut short.
 
 import { randomBytes, scrypt as nodeScrypt } from 'node:crypto';
-import { encryptedSize, passphraseHeader, payloadKey, sealPayload, FILE_KEY_SIZE, NONCE_SIZE, type ScryptFn } from './age/age';
+import { encryptedSize, passphraseHeader, payloadKey, sealPayload, sealPayloadAsync, FILE_KEY_SIZE, NONCE_SIZE, type ScryptFn } from './age/age';
 
 /** node:crypto's scrypt, with room for the memory the setting needs (its
  *  default allowance is 32 MB). */
@@ -68,6 +68,36 @@ export async function protectFile(
       yield header;
       yield nonce;
       yield* sealPayload(key, file.chunks());
+    },
+  };
+}
+
+/** A file whose bytes arrive asynchronously (receipts and documents as a ZIP,
+ *  read from the file store as it streams, app/api/attachments/download). */
+export type PlainFileAsync = { filename: string; chunks: () => AsyncIterable<Uint8Array> };
+
+/** protectFile for such a file: the same format, its size known before the
+ *  first byte in the same way. */
+export async function protectFileAsync(
+  file: PlainFileAsync,
+  plainBytes: number,
+  passphrase: string,
+  opts: { workFactor?: number; random?: (n: number) => Uint8Array } = {}
+): Promise<{ filename: string; contentType: string; bytes: number; chunks: () => AsyncGenerator<Uint8Array> }> {
+  const random = opts.random ?? ((n: number) => new Uint8Array(randomBytes(n)));
+  const fileKey = random(FILE_KEY_SIZE);
+  const salt = random(16);
+  const nonce = random(NONCE_SIZE);
+  const header = await passphraseHeader(fileKey, passphrase, { salt, workFactor: opts.workFactor, scrypt: nativeScrypt });
+  const key = await payloadKey(fileKey, nonce);
+  return {
+    filename: `${file.filename}.age`,
+    contentType: 'application/octet-stream',
+    bytes: encryptedSize(header.length, plainBytes),
+    chunks: async function* () {
+      yield header;
+      yield nonce;
+      yield* sealPayloadAsync(key, file.chunks());
     },
   };
 }

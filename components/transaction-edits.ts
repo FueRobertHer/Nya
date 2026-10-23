@@ -80,11 +80,12 @@ function newestFirst(a: Txn, b: Txn): number {
  * A manual row as the form's save answered it, shown until the list is read
  * again: the answer is the row as stored, without what the read layer puts on
  * it (lib/txn-layers.ts), so that is kept from the row it replaces: its tags,
- * the rules that match it, its exclusion, and a rule's category or name where
- * the save left the row without one of its own.
+ * the rules that match it, its exclusion, whether it has receipts (#47), and
+ * a rule's category or name where the save left the row without one of its
+ * own.
  */
 export function withLayersOf(saved: Txn, prev: Txn): Txn {
-  const row: Txn = { ...saved, excluded: prev.excluded, excluded_by_rule: prev.excluded_by_rule, tags: prev.tags, rule_ids: prev.rule_ids };
+  const row: Txn = { ...saved, excluded: prev.excluded, excluded_by_rule: prev.excluded_by_rule, tags: prev.tags, rule_ids: prev.rule_ids, attached: prev.attached, attached_on: prev.attached_on };
   if (prev.category_by_rule && (saved.category ?? null) === null) {
     Object.assign(row, {
       category: prev.category,
@@ -98,7 +99,7 @@ export function withLayersOf(saved: Txn, prev: Txn): Txn {
     row.name = prev.name;
     row.name_before_rules = prev.name_before_rules;
   }
-  for (const k of ['excluded', 'excluded_by_rule', 'tags', 'rule_ids'] as const) if (row[k] === undefined) delete row[k];
+  for (const k of ['excluded', 'excluded_by_rule', 'tags', 'rule_ids', 'attached', 'attached_on'] as const) if (row[k] === undefined) delete row[k];
   return row;
 }
 

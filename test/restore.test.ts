@@ -254,6 +254,30 @@ describe('restoreArchive', () => {
     expect(await fake.hget<string>(runsKey, '2026-09-25')).toBe('today');
   });
 
+  test("the backups' record goes before anything else, so the receipts' clean-up pauses for the whole restore", async () => {
+    await seed();
+    // Enough keys for several delete batches, the record set among them.
+    for (let i = 0; i < 250; i++) await fake.set(testKey(`cache:filler-${String(i).padStart(3, '0')}`), 'x');
+    await fake.set(testKey('backups:status'), JSON.stringify({ last_ok: '2026-01-01T16:00:00.000Z', last_failed: null, reason: null }));
+    const archive = verifyArchive(await exportText());
+    const deleted: string[][] = [];
+    const del = fake.del.bind(fake);
+    fake.del = (async (...keys: string[]) => {
+      deleted.push(keys);
+      return del(...keys);
+    }) as typeof fake.del;
+    try {
+      await restoreArchive(fake as any, archive, { overwrite: true, backedUp: await targetKeys(fake as any) });
+    } finally {
+      fake.del = del as typeof fake.del;
+    }
+    expect(deleted.length).toBeGreaterThan(1);
+    expect(deleted[0][0]).toBe(testKey('backups:status'));
+    expect(deleted.flat().filter((k) => k === testKey('backups:status'))).toHaveLength(1);
+    // And no archive brings it back: the next nightly backup does.
+    expect(await fake.get(testKey('backups:status'))).toBeNull();
+  });
+
   test("the data move's record is not data either: never exported, never replaced", async () => {
     const recordKey = testKey('c:0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b:move:copied');
     await seed();
