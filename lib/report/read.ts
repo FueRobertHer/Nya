@@ -195,7 +195,7 @@ export type ReportRead = { input: ReportInput; history: OlderTxn[] };
 export async function readReportInput(
   ctx: Ctx,
   period: Period,
-  opts: { currency?: string | null; now?: number; appendixLimit?: number; marked?: boolean } = {}
+  opts: { currency?: string | null; now?: number; appendixLimit?: number; marked?: boolean; fxAccounts?: boolean } = {}
 ): Promise<ReportRead> {
   const now = opts.now ?? Date.now();
   // Each row with its account, and an ended account's later rows kept: left
@@ -387,7 +387,9 @@ export async function readReportInput(
 
   // With a home currency, the rates the rows convert with into the report's
   // currency (lib/fx/read.ts): read once, after the rows, never written.
-  const fx = await readFlowFx(ctx, activity.transactions, now, { also: opts.currency ? [opts.currency] : [] });
+  // `fxAccounts` (the runway): the accounts' currencies too, whose balances
+  // it converts at the newest rates.
+  const fx = await readFlowFx(ctx, activity.transactions, now, { also: opts.currency ? [opts.currency] : [], accounts: opts.fxAccounts });
 
   const input: ReportInput = {
     period,

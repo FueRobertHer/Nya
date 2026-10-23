@@ -291,18 +291,38 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   list_tags: (r) => `${plural(r.tags.length, 'tag')}.${withoutTransactions(r)}`,
   list_rules: (r) => `${plural(r.rules.length, 'rule')}, ${r.rules.filter((x: any) => x.enabled).length} on.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
-  get_runway: (r) =>
-    r.without_income.outcome === 'no_cash'
+  get_runway: (r) => {
+    // As the report page shows it once a home currency is chosen (base): in
+    // the runway's currency, what is in another converted; else version 1's.
+    const b =
+      r.base && code(r.base.currency) && (r.base.spending.converted.length > 0 || r.base.newest_rates.cash_accounts.length > 0 || r.base.newest_rates.expected.length > 0)
+        ? r.base
+        : null;
+    const s = b ?? r;
+    const converted = b
+      ? ` What is in other currencies is counted: transactions ${convertedFlows(b.spending, code(b.currency)!)}, and cash and expected amounts at today’s rates${
+          b.newest_rates.left_out.length > 0 ? ` (${b.newest_rates.left_out.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: no rate)` : ''
+        }.${staleRates(b.spending)}`
+      : '';
+    return s.without_income.outcome === 'no_cash'
       ? 'No runway: no checking, savings or cash on hand is in Nya, so there is no cash to start from. See notes.'
-      : r.without_income.outcome === 'no_spending'
-        ? `No runway: there are no transactions from ${r.spending.from} to ${r.spending.to} to go by. See notes.`
-        : `An estimate, from ${money(r.cash.start, r.currency)} of cash and the spending of ${r.spending.from} to ${r.spending.to}: without income it ${lasts(r.without_income)}; with income it ${lasts(r.with_income)}.${
-            r.spending.months_short.length > 0 ? ' Some of those months may be short of transactions: see notes.' : ''
-          }`,
-  get_year_over_year: (r) =>
-    `${r.year.this.start} to ${r.year.this.end}: money out ${against(r.year.money_out, r.currency)}, money in ${against(r.year.money_in, r.currency)}, the same days a year before.${
-      r.year.this.uncertain || r.year.last.uncertain ? ' Some months may be short of transactions: see notes.' : ''
-    }`,
+      : s.without_income.outcome === 'no_spending'
+        ? `No runway: there are no transactions from ${s.spending.from} to ${s.spending.to} to go by. See notes.`
+        : `An estimate, from ${money(s.cash.start, s.currency)} of cash and the spending of ${s.spending.from} to ${s.spending.to}: without income it ${lasts(s.without_income)}; with income it ${lasts(s.with_income)}.${converted}${
+            s.spending.months_short.length > 0 ? ' Some of those months may be short of transactions: see notes.' : ''
+          }`;
+  },
+  get_year_over_year: (r) => {
+    // In the home currency, converted, once one is chosen and something was
+    // converted into it (base); else version 1's.
+    const home = code(r.base_currency);
+    const b = r.base && home && (r.base.converted ?? []).length > 0 ? r.base : null;
+    const s = b ?? r;
+    const cur = b ? home : r.currency;
+    return `${s.year.this.start} to ${s.year.this.end}: money out ${against(s.year.money_out, cur)}, money in ${against(s.year.money_in, cur)}, the same days a year before${
+      b ? `, ${convertedFlows(b, home!)}` : ''
+    }.${staleRates(b ?? undefined)}${s.year.this.uncertain || s.year.last.uncertain ? ' Some months may be short of transactions: see notes.' : ''}`;
+  },
 };
 
 /** Each declared tool (lib/api-spec.ts) with what it runs: its operation, with

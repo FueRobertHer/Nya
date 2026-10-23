@@ -330,7 +330,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   {
     name: 'runway',
     summary:
-      'How long your cash would last at your recent spending, with your income and without it: the day it would run out, and what it is worked out from. An estimate, under a what-if when asked for one.',
+      'How long your cash would last at your recent spending, with your income and without it: the day it would run out, and what it is worked out from. An estimate, under a what-if when asked for one. In your cash accounts’ currency; once you choose a home currency, base gives the same with what is in other currencies converted into it, as the report page shows it.',
     args: {
       months: { kind: 'int', min: 3, max: 12, description: 'The full calendar months before this one the spending is read over: 3, 6 (the default) or 12.' },
       spending_lower_by: { kind: 'amount', description: 'A what-if: spending lower by this much a month, in the runway’s currency. Zero or more.' },
@@ -345,7 +345,8 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   },
   {
     name: 'year-over-year',
-    summary: 'This year so far against the same days of last year, this month against the same days a year ago, each month against the same month last year, and money in and out by category group and category, with the change in amount and percent.',
+    summary:
+      'This year so far against the same days of last year, this month against the same days a year ago, each month against the same month last year, and money in and out by category group and category, with the change in amount and percent, in one currency; once you choose a home currency, base gives the same in it, converted.',
     args: { currency: { kind: 'currency', description: 'Total in this currency. Defaults to the one most of the two years’ transactions are in.' } },
   },
   {
@@ -511,14 +512,14 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_runway',
     'runway',
     'Runway',
-    'How long the person’s cash (checking, savings and cash on hand, never investments, a health savings account or cards) would last at their recent spending, with their income and without it: the day it would run out (runs_out), the days and months it lasts, and the balance at its lowest; or, with no cash to start from or no spending to go by, outcome no_cash or no_spending and no day. The spending is money out as the app totals it over the last 3, 6 or 12 full months (moves between the person’s accounts and what they excluded left out), less refunds, plus payments to cards Nya doesn’t see; a loan’s payment from cash, bills that come less often than monthly, and the planned expenses and income are added on their days instead. What left cash as transfers out or cash taken out is named, and counted only when asked. An estimate, and a what-if when asked: spending lower by an amount a month, income stopping on a day, planned items or one-offs left out, money moved out counted. Nothing is stored. notes say what it can’t see.',
+    'How long the person’s cash (checking, savings and cash on hand, never investments, a health savings account or cards) would last at their recent spending, with their income and without it: the day it would run out (runs_out), the days and months it lasts, and the balance at its lowest; or, with no cash to start from or no spending to go by, outcome no_cash or no_spending and no day. In the currency of the person’s cash accounts: version 1’s figures count it only, the rest left out and named; once the person has chosen a home currency, base gives the same runway with what is in other currencies converted into it (each transaction at its own day’s rate, cash and expected amounts at the newest), as the report page shows it. The spending is money out as the app totals it over the last 3, 6 or 12 full months (moves between the person’s accounts and what they excluded left out), less refunds, plus payments to cards Nya doesn’t see; a loan’s payment from cash, bills that come less often than monthly, and the planned expenses and income are added on their days instead. What left cash as transfers out or cash taken out is named, and counted only when asked. An estimate, and a what-if when asked: spending lower by an amount a month, income stopping on a day, planned items or one-offs left out, money moved out counted. Nothing is stored. notes say what it can’t see.',
     'The runway is as short as it gets: ask list_recurring_bills or spending_by_category for its parts.'
   ),
   fromOperation(
     'get_year_over_year',
     'year-over-year',
     'Year over year',
-    'This year so far against the same days of last year, this month so far against the same days a year ago, each month against the same month last year, and money in and money out by category group and category, each with this year, last year, the change and the change in percent (null when last year was zero). Counted as the app counts a month: transfers, cash withdrawals, loan payments and what the person excluded left out, one currency (the one most transactions are in unless currency says), the rest counted in left_out, never added. A month that may be short of transactions is uncertain, with the institutions it names.',
+    'This year so far against the same days of last year, this month so far against the same days a year ago, each month against the same month last year, and money in and money out by category group and category, each with this year, last year, the change and the change in percent (null when last year was zero). Counted as the app counts a month: transfers, cash withdrawals, loan payments and what the person excluded left out, one currency (the one most transactions are in unless currency says), the rest counted in left_out, never added. Once the person has chosen a home currency, base gives both years in it (base_currency), each transaction in another converted at its own day’s rate, as the report page shows it. A month that may be short of transactions is uncertain, with the institutions it names.',
     'Ask spending_by_category for a month, or a shorter range, instead.'
   ),
   fromOperation(

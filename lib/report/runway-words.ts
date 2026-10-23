@@ -9,6 +9,8 @@
 
 import { formatMoney } from '../format';
 import { tidy } from '../totals';
+import { convertedText, leftOutWhy } from '../fx/totals';
+import { forecastConvertedText } from '../forecast';
 import { joinNames } from '../month-coverage';
 import { noSpending, type RunwayProjection, type RunwayWhatIf, type WindowSpending } from './runway';
 import type { RunwayReport } from './runway-read';
@@ -42,7 +44,9 @@ export function runwayCaveats(
     lines.push(`${joinNames(w.short.map((m) => f.month(m.month)))} may be missing transactions${names ? ` from ${names}` : ''}, so the spending, and the income, may be low.`);
   }
   lines.push(...gapSentences(runway.gaps.find((g) => g.months === w.months)?.gaps ?? [], f.day));
-  if (w.left_out_text) lines.push(w.left_out_text);
+  // With a home currency, why each left out has no rate.
+  const left = leftOutWhy(w.left_out_text, w.conversion ?? null);
+  if (left) lines.push(left);
   for (const c of w.card_payments) {
     lines.push(
       `${c.name}${c.account ? ` from ${c.account}` : ''} looks like a card’s payment, and no card in Nya shows it arriving, so its ${money(c.amount)} over these months counts as spending here: what you charge on that card isn’t in Nya. If the card is in Nya, it is counted twice.`
@@ -53,6 +57,16 @@ export function runwayCaveats(
   for (const s of runway.stale_balances) lines.push(`${s.name} at ${s.institution} is a balance you typed, last updated ${f.time(s.updated_at)}.`);
   if (runway.owed_on_cards > 0) lines.push(`Your cards owe ${money(runway.owed_on_cards)}: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.`);
   return lines;
+}
+
+/** What the runway converted into its currency, with a home currency, in
+ *  sentences, or null when nothing was: the window's transactions at each
+ *  day's rate, and the cash accounts and expected amounts at today's. Never
+ *  an amount. */
+export function runwayConvertedText(runway: Pick<RunwayReport, 'conversion' | 'position'>, w: Pick<WindowSpending, 'conversion'>): string | null {
+  if (!runway.conversion) return null;
+  const parts = [convertedText(w.conversion ?? null), forecastConvertedText(runway.position.conversion, runway.conversion.expected)].filter((p): p is string => !!p);
+  return parts.length > 0 ? parts.join(' ') : null;
 }
 
 /** What went out of the cash that isn't in the spending, in words: the

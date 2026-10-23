@@ -219,6 +219,66 @@ function withBudgetsBase(fields: FieldDoc[]): FieldDoc[] {
   return [...fields.slice(0, at), ...base, ...fields.slice(at)];
 }
 
+/** The runway's base (lib/api-reports.ts runwayBase): its figures with what
+ *  is in other currencies converted, under `base`, before `notes`. */
+function withRunwayBase(fields: FieldDoc[]): FieldDoc[] {
+  const figure = /^(currency|cash|spending|payments_outside_spending|bills_less_often_than_monthly|planned|without_income|with_income)(\.|\[|$)/;
+  const figures = fields.filter(([path]) => figure.test(path) && !path.startsWith('spending.left_out'));
+  const at = fields.findIndex(([path]) => path === 'notes');
+  const own = (path: string): FieldDoc[] => [
+    [`base.${path}.own`, 'Its amount as written, in its own currency, when that is another than currency (amount is then converted into currency at the newest rates); else null.'],
+    [`base.${path}.own.amount`, 'The amount, positive.'],
+    [`base.${path}.own.currency`, 'Its currency.'],
+  ];
+  const base: FieldDoc[] = [
+    BASE_CURRENCY('nothing here: base stays in the runway’s own currency, your cash accounts’'),
+    [
+      'base',
+      'Null without a home currency. With one, the same runway as the report page shows it: in currency (your cash accounts’, which a what-if is in), what is in another currency converted into it, each transaction at its own day’s European Central Bank rate (or your own) and each cash account, pending charge, payment, bill and planned item at the newest rates; what has no rate is left out and named. Every field above keeps its meaning: nothing in it is converted.',
+    ],
+    ...figures.map(([path]): FieldDoc => [`base.${path}`, `As ${path}, with what is in other currencies converted.`]),
+    ['base.cash.accounts[].own', 'Its balance as it is, when its account is in another currency than currency (balance is then converted at the newest rates); else null.'],
+    ['base.cash.accounts[].own.balance', 'The balance.'],
+    ['base.cash.accounts[].own.currency', 'Its currency.'],
+    ...own('payments_outside_spending[]'),
+    ...own('bills_less_often_than_monthly[]'),
+    ...own('planned[]'),
+    ...FLOWS_CONVERTED('base.spending', 'currency'),
+    ['base.newest_rates', 'What was converted at the newest rates: the cash accounts, and the expected amounts (payments, bills and planned items), by currency.'],
+    ['base.newest_rates.cash_accounts', 'The cash accounts converted, by currency, most first.'],
+    ['base.newest_rates.cash_accounts[].currency', 'The currency.'],
+    ['base.newest_rates.cash_accounts[].accounts', 'How many cash accounts in it.'],
+    ['base.newest_rates.expected', 'The payments, bills and planned items converted, by currency, most first.'],
+    ['base.newest_rates.expected[].currency', 'The currency.'],
+    ['base.newest_rates.expected[].amounts', 'How many of them in it.'],
+    ...OWN_RATES('base.newest_rates.own_rates', 'Your own rates used for them, as me gives them.'),
+    ['base.newest_rates.left_out', 'Each currency a cash account or an expected amount is in that was left out for having no rate, with why: never guessed.'],
+    ['base.newest_rates.left_out[].currency', 'The currency.'],
+    ['base.newest_rates.left_out[].why', 'Why, as base.spending.left_out[].why says it.'],
+  ];
+  return [...fields.slice(0, at), ...base, ...fields.slice(at)];
+}
+
+/** Year over year's base (lib/api-reports.ts readApiYearOverYear): its
+ *  figures in the home currency, what is in another converted, before
+ *  `notes`. */
+function withYoyBase(fields: FieldDoc[]): FieldDoc[] {
+  const figure = /^(year|month|months|groups|empty)(\.|\[|$)/;
+  const figures = fields.filter(([path]) => figure.test(path));
+  const at = fields.findIndex(([path]) => path === 'notes');
+  const base: FieldDoc[] = [
+    BASE_CURRENCY('base'),
+    [
+      'base',
+      'Null without a home currency. With one, the same comparison as the report page shows it, in base_currency: each transaction in another currency converted at its own day’s European Central Bank rate (or your own), so each figure is its transactions converted, to the cent; what has no rate is left out and named. Every field above keeps its meaning: nothing in it is converted.',
+    ],
+    ['base.currency', 'base_currency, which every amount in base is in.'],
+    ...figures.map(([path]): FieldDoc => [`base.${path}`, `As ${path}, with what is in other currencies converted.`]),
+    ...FLOWS_CONVERTED('base'),
+  ];
+  return [...fields.slice(0, at), ...base, ...fields.slice(at)];
+}
+
 /** A line of the runway, with income or without (lib/api-reports.ts). */
 const RUNWAY_LINE = (path: string, what: string): FieldDoc[] => [
   [path, what],
@@ -1731,11 +1791,76 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'Over these months, money went out of your checking and savings that isn’t in the spending: $350.00 in transfers no account in Nya shows arriving (a payment by Zelle or Venmo, a move to an account Nya doesn’t hold); $250.00 in transfers to your accounts in Nya that aren’t counted as cash here (a health savings account, an investment account); and $400.00 in cash taken out. Categorize what was spending as such, or count it in the what-if.',
         'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.',
         'Your cards owe $610.40: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.',
+        'In base, converted into USD at today’s ECB rates, and your own rate for EUR: 1 cash account in EUR and 3 expected amounts in EUR.',
       ],
+      base_currency: 'USD',
+      base: {
+        currency: 'USD',
+        cash: {
+          start: 12514.5,
+          balances: 12540,
+          pending: 25.5,
+          pending_count: 1,
+          accounts: [
+            { name: 'Checking', institution: 'Chase', balance: 7000, as_of: '2026-10-22T08:02:11.000Z', own: null },
+            { name: 'Savings', institution: 'Chase', balance: 5000, as_of: '2026-10-22T08:02:11.000Z', own: null },
+            { name: 'Girokonto', institution: 'Sparkasse', balance: 540, as_of: '2026-10-20', own: { balance: 500, currency: 'EUR' } },
+          ],
+          owed_on_cards: 610.4,
+        },
+        spending: {
+          months: 6,
+          from: '2026-04-01',
+          to: '2026-09-30',
+          days: 183,
+          money_out: 18342.6,
+          money_in: 12810,
+          transactions: 215,
+          refunds: 210,
+          infrequent_bills: 1200,
+          card_payments: [{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 1410, count: 6 }],
+          card_payments_total: 1410,
+          transfers_out: 600,
+          transfers_out_own: 250,
+          transfers_out_unsure: 0,
+          cash_out: 400,
+          spending: 18342.6,
+          income: 12600,
+          one_offs: [{ date: '2026-08-15', name: 'Midas', amount: 2000 }],
+          one_offs_in: [{ date: '2026-05-20', name: 'IRS TREAS 310', amount: 1450 }],
+          months_short: [{ month: '2026-09', institutions: ['Citi'] }],
+          ...EXAMPLE_FLOWS_CONVERTED,
+        },
+        payments_outside_spending: [
+          { name: 'Home Loans', institution: 'Chase', account: 'Checking', amount: 800, cadence: 'monthly', next_date: '2026-11-05', own: null },
+          { name: 'Baufinanzierung', institution: 'Sparkasse', account: 'Girokonto', amount: 432, cadence: 'monthly', next_date: '2026-11-02', own: { amount: 400, currency: 'EUR' } },
+        ],
+        bills_less_often_than_monthly: [
+          { name: 'State Farm', institution: 'Chase', account: 'Checking', amount: 1200, cadence: 'yearly', next_date: '2027-03-15', own: null },
+          { name: 'Rundfunkbeitrag', institution: 'Sparkasse', account: 'Girokonto', amount: 59.62, cadence: 'quarterly', next_date: '2027-01-15', own: { amount: 55.08, currency: 'EUR' } },
+        ],
+        planned: [{ name: 'Car registration', kind: 'expense', amount: 324, cadence: 'once', next_date: '2026-12-01', own: { amount: 300, currency: 'EUR' } }],
+        newest_rates: {
+          cash_accounts: [{ currency: 'EUR', accounts: 1 }],
+          expected: [{ currency: 'EUR', amounts: 3 }],
+          own_rates: [{ currency: 'EUR', rate: 1.08, quote: 'USD', from: null }],
+          left_out: [],
+        },
+        without_income: EXAMPLE_LINE({ spending_per_month: 2800.85, runs_out: '2027-02-07', days: 107, months: 3.52, lowest: { date: '2027-02-07', balance: -61.2 } }),
+        with_income: EXAMPLE_LINE({
+          income: 'ongoing',
+          spending_per_month: 2800.85,
+          income_per_month: 2095.7,
+          runs_out: '2027-06-15',
+          days: 235,
+          months: 7.72,
+          lowest: { date: '2027-06-15', balance: -3.1 },
+        }),
+      },
     },
-    fields: [
+    fields: withRunwayBase([
       ['today', 'Today, YYYY-MM-DD (UTC), from which the runway is worked out.'],
-      ['currency', 'The currency every amount is in: the one most of your cash accounts are in (the forecast’s), or, with none naming one, the one most transactions are in. Cash, transactions and payments in another are left out and named in notes, never converted.'],
+      ['currency', 'The currency every amount is in: the one most of your cash accounts are in (the forecast’s), or, with none naming one, the one most transactions are in. Cash, transactions and payments in another are left out and named in notes, never converted: once you choose a home currency, base gives the runway with them converted into this currency.'],
       ['cash', 'The cash it starts from: checking, savings and cash on hand (bank accounts, and manual accounts of that kind), not hidden and not ended, in currency. Never an investment account, the cash inside one included, and never a card or a loan.'],
       ['cash.start', 'Where it starts: balances less pending. The one figure here that isn’t an estimate.'],
       ['cash.balances', 'The cash accounts’ newest balances added up, as accounts gives them.'],
@@ -1837,7 +1962,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'notes',
         'What it can’t see, in words: no spending to go by, or no cash to start from; months that may be short and why; transactions, cash and payments in another currency; each payment to a card Nya doesn’t see (counted twice if the card is in Nya after all); transfers out and cash taken out; accounts or balances that couldn’t be read; a manual account with no transactions in the last 12 months (what is spent from it isn’t known); a health savings account, which isn’t counted as cash; cash inside investment accounts; planned items that couldn’t be read; hidden accounts; a typed balance not updated for a week; what your cards owe. Empty when there is nothing to say.',
       ],
-    ],
+    ]),
   },
 
   'year-over-year': {
@@ -1886,10 +2011,44 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         "This year: 4 transactions in EUR aren't in these totals, which are in USD.",
         "Last year: 1 transaction in GBP isn't in these totals, which are in USD.",
       ],
+      base_currency: 'USD',
+      base: {
+        currency: 'USD',
+        year: EXAMPLE_COMPARE(EXAMPLE_PERIOD('2026-01-01', '2026-10-22', 52300, 41391.06, 594, ['Citi']), EXAMPLE_PERIOD('2025-01-01', '2025-10-22', 49800, 38744.2, 603)),
+        month: {
+          month: '2026-10',
+          ...EXAMPLE_COMPARE(EXAMPLE_PERIOD('2026-10-01', '2026-10-22', 4200, 2803.4, 41), EXAMPLE_PERIOD('2025-10-01', '2025-10-22', 4000, 2950, 44)),
+        },
+        months: [
+          { month: '2026-01', ...EXAMPLE_COMPARE(EXAMPLE_PERIOD('2026-01-01', '2026-01-31', 5230, 4012.6, 61), EXAMPLE_PERIOD('2025-01-01', '2025-01-31', 4980, 3902.95, 59)) },
+          { month: '2026-10', ...EXAMPLE_COMPARE(EXAMPLE_PERIOD('2026-10-01', '2026-10-22', 4200, 2803.4, 41), EXAMPLE_PERIOD('2025-10-01', '2025-10-22', 4000, 2950, 44)) },
+        ],
+        groups: [
+          {
+            id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
+            name: 'Food',
+            kind: 'expense',
+            money_in: EXAMPLE_CHANGE(40, 0),
+            money_out: EXAMPLE_CHANGE(6999.18, 6182.7),
+            transactions: { this: 316, last: 299 },
+            categories: [
+              {
+                id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10',
+                name: 'food and drink',
+                money_in: EXAMPLE_CHANGE(40, 0),
+                money_out: EXAMPLE_CHANGE(6999.18, 6182.7),
+                transactions: { this: 316, last: 299 },
+              },
+            ],
+          },
+        ],
+        empty: false,
+        ...EXAMPLE_FLOWS_CONVERTED,
+      },
     },
-    fields: [
+    fields: withYoyBase([
       ['today', 'Today, YYYY-MM-DD (UTC): this year runs to it, and last year to the same day.'],
-      ['currency', 'The currency every amount is in, for both years: the one asked for, when either year has a transaction in it, else the one most of the two years’ transactions are in. The rest are counted in left_out, never converted.'],
+      ['currency', 'The currency every amount is in, for both years: the one asked for, when either year has a transaction in it, else the one most of the two years’ transactions are in. The rest are counted in left_out, never converted: once you choose a home currency, base gives both years in it, converted.'],
       ['currencies', 'The currencies the two years’ transactions are in, most first.'],
       ['currencies[].currency', 'The currency.'],
       ['currencies[].transactions', 'How many transactions are in it.'],
@@ -1921,7 +2080,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'notes',
         'What may make these figures short, in words (a bank that hasn’t synced since, one still importing, one removed and the like), what was left out for another currency, hidden accounts, and what isn’t in them (activity inside investment and loan accounts). Empty when there is nothing to say.',
       ],
-    ],
+    ]),
   },
 
   holdings: {

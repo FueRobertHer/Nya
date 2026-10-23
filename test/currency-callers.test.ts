@@ -41,8 +41,10 @@ const ALLOWED: Record<string, string> = {
   'lib/api-read.ts#readSpending:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/fx/totals.ts totalsIn).',
   'lib/report/build.ts#buildReport:currency':
     'Without a home currency only, as before: the one most rows are in, the rest named. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn.',
-  'lib/report/runway.ts#buildRunwayInputs:currency': 'Not converted yet: the runway in its cash accounts’ main currency, as the cash forecast it starts from; it names the cash, transactions and payments left out.',
-  'lib/report/year-over-year.ts#yoyCurrency:within': 'Not converted yet: both years in one currency, the rest named.',
+  'lib/report/runway.ts#buildRunwayInputs:currency':
+    'The runway’s currency, its cash accounts’ main one as the forecast’s (else the one most rows are in), which a what-if is typed in: with a home currency the rest converts into it (lib/fx/totals.ts totalsIn at each row’s day’s rate; cash and expected amounts at the newest rates), never relabelled. The API’s version 1 fields keep it unconverted; base converts.',
+  'lib/report/year-over-year.ts#yoyCurrency:within':
+    'Without a home currency only, as before: both years in the one asked for, else the one most rows are in, the rest named, as the API’s version 1 fields keep it. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn (lib/report/year-over-year-read.ts).',
   'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
 };
 

@@ -23,7 +23,7 @@ import { addDays, isTimeZone } from '@/lib/report/period';
 import { DEFAULT_WHAT_IF, MONTH_DAYS, monthsText, projectRunway, RUNWAY_WINDOWS, windowOf, type RunwayLine, type RunwayProjection, type RunwayWhatIf } from '@/lib/report/runway';
 import type { RunwayReport as Runway } from '@/lib/report/runway-read';
 import { MAX_SCENARIOS, SCENARIO_NAME_MAX, scenarioWhatIf, type RunwayScenario } from '@/lib/report/runway-scenarios';
-import { hasMovedOut, hasOneOffs, runwayCaveats, whatIfWords, type RunwayFormats } from '@/lib/report/runway-words';
+import { hasMovedOut, hasOneOffs, runwayCaveats, runwayConvertedText, whatIfWords, type RunwayFormats } from '@/lib/report/runway-words';
 import { cadenceLabel } from '@/lib/recurring';
 import { plannedCadenceLabel } from '@/lib/planned';
 import { isCurrencyCode, minorDigits, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
@@ -64,6 +64,10 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
   const without = lastsWords(projection.without_income, runway.today);
   const withIncome = lastsWords(projection.with_income, runway.today);
   const caveats = runwayCaveats(runway, projection, FORMATS(runway));
+  // With a home currency: what was converted into the runway's currency.
+  const converted = runwayConvertedText(runway, w);
+  // An amount converted, beside the one it was written in.
+  const ownToo = (own: { amount: number; currency: string } | undefined) => (own ? ` (${formatMoney(own.amount, own.currency)})` : '');
   const cash = runway.position;
   const where = joinNames(runway.cash_accounts.map((a) => `${a.name} at ${a.institution}`));
   const asOf = runway.cash_accounts.find((a) => a.as_of !== null)?.as_of ?? null;
@@ -87,7 +91,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
           <h1>Runway</h1>
           <p className="report-meta">
             An estimate of how long your cash would last at your recent spending, made {reportTime(runway.generated_at, runway.time_zone)}. Amounts in{' '}
-            {runway.currency ?? 'the currency your accounts are in'}. Today’s date is read in {runway.time_zone}.
+            {runway.currency ?? 'the currency your accounts are in'}.{converted ? ` ${converted}` : ''} Today’s date is read in {runway.time_zone}.
           </p>
         </header>
 
@@ -226,7 +230,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
               <ul className="report-list">
                 {[...runway.outside, ...runway.infrequent].map((o, i) => (
                   <li key={i}>
-                    <Masked>{`${o.name} from ${o.account || o.institution}: ${money(o.amount)}, ${cadenceLabel(o.cadence).toLowerCase()}, next around ${o.next ? reportDay(o.next) : 'not known'}`}</Masked>
+                    <Masked>{`${o.name} from ${o.account || o.institution}: ${money(o.amount)}${ownToo(o.own)}, ${cadenceLabel(o.cadence).toLowerCase()}, next around ${o.next ? reportDay(o.next) : 'not known'}`}</Masked>
                   </li>
                 ))}
               </ul>
@@ -246,7 +250,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
               <ul className="report-list">
                 {runway.planned.map((p, i) => (
                   <li key={i}>
-                    <Masked>{`${p.name}: ${p.kind === 'income' ? 'income' : 'an expense'} of ${money(p.amount)}, ${plannedCadenceLabel(p.cadence).toLowerCase()}, next on ${reportDay(p.next)}`}</Masked>
+                    <Masked>{`${p.name}: ${p.kind === 'income' ? 'income' : 'an expense'} of ${money(p.amount)}${ownToo(p.own)}, ${plannedCadenceLabel(p.cadence).toLowerCase()}, next on ${reportDay(p.next)}`}</Masked>
                   </li>
                 ))}
               </ul>

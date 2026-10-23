@@ -112,10 +112,11 @@ export default function DevelopersPage() {
           <li>
             <strong>Converted figures come in fields of their own.</strong> Once you choose a home currency in Nya, it is{' '}
             <code>base_currency</code>, and figures converted into it at the European Central Bank’s reference rates (or your
-            own) are added beside version 1’s, which keep their meaning: <code>base</code> on net worth, spending, cash flow and
-            recurring bills, and <code>to_base</code> on each account, history point, transaction, split part, recurring bill
-            and goal. Budgets’ <code>base</code> stays in the currency the budgets are typed in, with spending in other
-            currencies counted against them converted, as the Budgets tab counts it. Each says what it converted, from which
+            own) are added beside version 1’s, which keep their meaning: <code>base</code> on net worth, spending, cash flow,
+            recurring bills and year over year, and <code>to_base</code> on each account, history point, transaction, split
+            part, recurring bill and goal. Budgets’ <code>base</code> stays in the currency the budgets are typed in, with
+            spending in other currencies counted against them converted, as the Budgets tab counts it, and the runway’s in
+            your cash accounts’ currency, with what is in other currencies converted into it, as the report page shows it. Each says what it converted, from which
             days’ rates, and what it left out for having no rate. Without a home currency, each is <code>null</code>.
           </li>
           <li>

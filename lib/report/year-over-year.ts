@@ -13,8 +13,12 @@
 // countsInTotals): a month here is the Activity tab's month to the cent, and
 // a year's figures are its months added up. Transfers, cash withdrawals and
 // loan payments are never money in or out, what the person excluded is left
-// out, and one currency is kept for both years, the rows in another named,
-// never converted. Categories are the person's own (lib/categories.ts), each
+// out, and one currency is kept for both years. Without a home currency, the
+// rows in another are named, never converted. WITH ONE (lib/fx/), both years
+// are in it (or in the currency asked for), each row in another converted at
+// its own day's rate (lib/fx/totals.ts totalsIn), so every figure is its rows
+// converted, to the cent; a row with no rate is left out and named, with
+// why. Categories are the person's own (lib/categories.ts), each
 // row filed under the category the Activity tab files it under (filedId, so
 // the uncategorized one for a row no category files), named as it is named
 // now and grouped as it is grouped now: a category moved to another group
@@ -37,6 +41,8 @@
 import { categoryById, filedId, groupOf, indexTaxonomy, isProvisionalId, type CategoryKind, type Taxonomy } from '../categories';
 import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
 import { categoryOf, summarize, tidy, type TotalsRow } from '../totals';
+import { conversionIn, leftOutWhy, totalsIn, type Conversion } from '../fx/totals';
+import type { FxTable } from '../fx/rates';
 import { addDays } from './period';
 
 /** A stretch of days, both included. */
@@ -109,6 +115,9 @@ export type YearOverYear = {
   left_out_text: { this: string | null; last: string | null };
   /** No transaction counted in either year. */
   empty: boolean;
+  /** With a home currency: what of both years was converted into
+   *  `currency`, and why what was left out has no rate; null without one. */
+  conversion: Conversion | null;
 };
 
 /** The currency both years are kept in: the one asked for, when either year
@@ -135,9 +144,16 @@ export function buildYearOverYear(opts: {
   currency: string | null;
   today: string;
   short?: ReadonlyMap<string, YoyShort>;
+  /** A home currency's rates: what is in another converts into `currency`. */
+  fx?: FxTable | null;
+  now?: number;
 }): YearOverYear {
-  const { rows, currency, today } = opts;
+  const { currency, today } = opts;
   const spans = yoySpans(today);
+  // The rows as the totals count them: with a home currency, those in
+  // another converted at their day's rate (see THE APP'S RULES).
+  const counting = opts.fx?.home && currency ? totalsIn(opts.rows, opts.fx, { into: { currency }, now: opts.now }) : null;
+  const rows = counting?.rows ?? opts.rows;
   const shortOf = (span: YoySpan): YoyShort => {
     const marks: YoyShort[] = [];
     for (let m = span.start.slice(0, 7); m <= span.end.slice(0, 7); m = addDays(`${m}-01`, 32).slice(0, 7)) marks.push(opts.short?.get(m) ?? NOT_SHORT);
@@ -203,7 +219,8 @@ export function buildYearOverYear(opts: {
   // Transactions each currency holds that would count but for it, as the
   // totals count transactions (a split one once).
   const counters = new Map<string, Counter>();
-  for (const t of [...inSpan(yearSpans.this), ...inSpan(yearSpans.last)]) {
+  const asWritten = (span: YoySpan) => opts.rows.filter((t) => t.date >= span.start && t.date <= span.end);
+  for (const t of [...asWritten(yearSpans.this), ...asWritten(yearSpans.last)]) {
     const c = currencyOf(t);
     if (!c || isExcluded(t) || isTransfer(t) || t.group_outside) continue;
     const counter = counters.get(c) ?? transactionCounter();
@@ -229,7 +246,12 @@ export function buildYearOverYear(opts: {
           .map(([cid, c]) => entry(cid, c.name, c.sums)),
       })),
     left_out: { this: leftThis, last: leftLast },
-    left_out_text: { this: leftOutText(leftThis, currency), last: leftOutText(leftLast, currency) },
+    // With a home currency, why each left out has no rate.
+    left_out_text: {
+      this: leftOutWhy(leftOutText(leftThis, currency), counting ? conversionIn(inSpan(yearSpans.this), counting.conversion) : null),
+      last: leftOutWhy(leftOutText(leftLast, currency), counting ? conversionIn(inSpan(yearSpans.last), counting.conversion) : null),
+    },
     empty: year.this.transactions + year.last.transactions === 0,
+    conversion: counting ? conversionIn([...inSpan(yearSpans.last), ...inSpan(yearSpans.this)], counting.conversion) : null,
   };
 }

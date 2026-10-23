@@ -151,8 +151,10 @@ export type ForecastConversion = {
 };
 
 /** Converts amounts into `into` at the newest rates on `today` (a day to
- *  come has none of its own), counting what it did for the notes. */
-function converter(fx: FxTable | null | undefined, into: string | null, today: string) {
+ *  come has none of its own), counting what it did for the notes. The
+ *  runway converts its bills less often than monthly with it
+ *  (lib/report/runway.ts). */
+export function forecastConverter(fx: FxTable | null | undefined, into: string | null, today: string) {
   const from = new Map<string, number>();
   const own = new Set<string>();
   const unrated = new Map<string, ForecastConversion['unrated'][number]>();
@@ -183,6 +185,22 @@ function converter(fx: FxTable | null | undefined, into: string | null, today: s
         unrated: [...unrated.values()].sort((a, b) => (a.currency < b.currency ? -1 : 1)),
       };
     },
+  };
+}
+
+/** Two conversions into one currency as one (the forecast's expected
+ *  amounts and the runway's bills beside them): counts added, rates and
+ *  what had none joined. Null when neither converted anything. */
+export function joinConversions(a: ForecastConversion | null | undefined, b: ForecastConversion | null | undefined): ForecastConversion | null {
+  if (!a || !b) return a ?? b ?? null;
+  const from = new Map<string, number>();
+  for (const f of [...a.from, ...b.from]) from.set(f.currency, (from.get(f.currency) ?? 0) + f.count);
+  const unrated = new Map([...a.unrated, ...b.unrated].map((u) => [u.currency, u] as const));
+  return {
+    into: a.into,
+    from: [...from].map(([currency, count]) => ({ currency, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1)),
+    own: [...new Set([...a.own, ...b.own])].sort(),
+    unrated: [...unrated.values()].sort((x, y) => (x.currency < y.currency ? -1 : 1)),
   };
 }
 
@@ -245,7 +263,7 @@ export function cashPosition(
   );
   const currency = dominantCurrency(cash.map(({ a }) => ({ iso_currency_code: a.currency })));
   const scale = minorScale(currency);
-  const conv = converter(opts.fx, currency, opts.today ?? new Date().toISOString().slice(0, 10));
+  const conv = forecastConverter(opts.fx, currency, opts.today ?? new Date().toISOString().slice(0, 10));
   const included: CashAccount[] = [];
   const noBalance: CashPosition['noBalance'] = [];
   const others = new Map<string, number>();
@@ -397,7 +415,7 @@ export function forecastEvents(opts: {
   const events: ForecastEvent[] = [];
   const others = new Map<string, number>();
   const leaveOut = (c: string) => others.set(c, (others.get(c) ?? 0) + 1);
-  const conv = converter(opts.fx, currency, today);
+  const conv = forecastConverter(opts.fx, currency, today);
   /** An amount in the forecast's currency: itself, or converted (null with
    *  no rate, or without a home currency, when it is left out). */
   const inForecast = (amount: number, c: string | null): { amount: number; own?: ForecastEvent['own'] } | null => {
@@ -759,7 +777,7 @@ export function forecastNotes(opts: {
 
 /** A sentence of what was left out for its currency, with why each has no
  *  rate after it when a home currency converts the rest (lib/fx/words.ts). */
-function withWhy(text: string | null, c: ForecastConversion | null | undefined): string | null {
+export function withWhy(text: string | null, c: ForecastConversion | null | undefined): string | null {
   if (text === null || !c || c.unrated.length === 0) return text;
   return `${text.replace(/\.$/, '')}: ${c.unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
 }
