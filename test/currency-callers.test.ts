@@ -21,7 +21,7 @@ const ALLOWED: Record<string, string> = {
   // Balances.
   'components/Dashboard.tsx#Dashboard:accountCurrency':
     'Without a home currency, the label of net worth as it always was; with one, the currency an account saying none is counted in, as the server counts it (lib/fx/net-worth-read.ts mainCurrency).',
-  'components/Dashboard.tsx#Dashboard:instCurrency':
+  'components/InstitutionCard.tsx#InstitutionCard:instCurrency':
     'An institution’s total in its accounts’ currency when they share one; converted into the home currency when they don’t and one is chosen (lib/fx/view.ts).',
   'components/ConnectionHealth.tsx#together:main':
     'The share of net worth an institution’s held balances are, in their currency when they share one; converted into the home currency when one is chosen (lib/fx/view.ts).',
