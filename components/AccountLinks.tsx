@@ -28,6 +28,7 @@ import AccountSparkline from './AccountSparkline';
 import { formatMoney, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
+import { ACCOUNT_LINKS_TITLE } from './attention';
 
 type Suggestion = {
   old: string;
@@ -129,9 +130,14 @@ function fmtDay(iso: string | null): string {
 
 export default function AccountLinks({
   onChanged,
+  onLoaded,
   refreshKey,
 }: {
   onChanged: () => void;
+  /** After each load, with the reconnected accounts it suggests linking, by
+   *  name: so Home's row about them drops one declined here, and a jump to
+   *  its title can land once it is drawn. */
+  onLoaded?: (suggested: string[]) => void;
   /** Changes whenever the page's data reloads (its as-of time), so a re-added
    *  institution's suggestion appears without reopening the tab. */
   refreshKey?: string | null;
@@ -151,7 +157,9 @@ export default function AccountLinks({
     try {
       const res = await fetch(checkEarlier ? '/api/account-links?earlier=1' : '/api/account-links');
       if (!res.ok) throw new Error();
-      setData(await res.json());
+      const next: Payload = await res.json();
+      setData(next);
+      onLoaded?.(next.suggestions.map((s) => s.to_label));
     } catch {
       // Optional feature: a failed load just shows nothing.
       setData(null);
@@ -198,7 +206,8 @@ export default function AccountLinks({
         });
       }
       await load();
-      // Dismissing changes no figures; linking and unlinking do.
+      // Dismissing changes no figures (what Home offers follows the load
+      // above); linking and unlinking do.
       if (body.action !== 'dismiss' && body.action !== 'dismiss_all') onChanged();
     } catch {
       setError('Could not reach the server. Try again.');
@@ -296,8 +305,11 @@ export function AccountLinksView({
 
   return (
     <div className="card account-links">
-      <div className="inst-header">
-        <div className="inst-name">Reconnected accounts</div>
+      <div className="card-header">
+        {/* Where Home's row about a suggested link lands (components/attention.ts). */}
+        <h2 id={ACCOUNT_LINKS_TITLE} tabIndex={-1}>
+          Reconnected accounts
+        </h2>
       </div>
 
       {data.suggestions.map((s) => (

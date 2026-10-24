@@ -154,7 +154,7 @@ The only list on Home that asks the person to act (`components/NeedsAttention.ts
 | Accounts a SimpleFIN or Lunch Flow connection stopped sending ("Missing accounts") | Caution, as its card | Its card |
 | An account stopped reporting or sat at zero: did it close? (its card's question) | Caution | Its card |
 | A connection has accounts you haven't added | Information for Plaid's; Caution for a SimpleFIN or Lunch Flow connection with none chosen, as in Settings > Connections | Its card; Settings > Connections |
-| A reconnected account may continue an earlier one: link its history | Information | Not listed yet: rollout phase 4d |
+| A reconnected account may continue an earlier one: link its history ("Chase Checking ••4821 may continue an earlier account" over "Link its history"; "2 reconnected accounts may continue earlier ones"), each pair Settings suggests, until linked or declined there | Information | Settings > Connections, focus on the Reconnected accounts card's title |
 | Transactions waiting for review ("12 transactions to review") | Information | Activity, focus on the review count |
 | A payment overdue ("Amex is overdue" over "Minimum $35.00") | Critical | The account sheet, over Home |
 | A payment due within 7 days ("Amex due tomorrow" over "Minimum $35.00"), every one | Caution | The account sheet, over Home |

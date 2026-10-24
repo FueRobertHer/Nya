@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { attentionItems, type AttentionInput, type Placed } from '@/components/attention';
+import { ACCOUNT_LINKS_TITLE, attentionItems, type AttentionInput, type Placed } from '@/components/attention';
 import { fmtStaleDay, type Institution } from '@/components/accounts-format';
 import { budgetAlerts, paymentAlerts, type PaymentAccount } from '@/components/Insights';
 import { severityOf } from '@/lib/accounts-status';
@@ -189,6 +189,20 @@ describe('the rest', () => {
     expect(rows({ restore: { unfinished: false, waiting: [{ institution_name: 'Chase', last: null }, { institution_name: 'Ally', last: null }], unreadable: false } })[0][1]).toBe(
       "Chase and Ally aren't connected after a restore"
     );
+  });
+
+  test('reconnected accounts Settings suggests linking: named as there, in the IA’s words, going to its card', () => {
+    expect(rows({ linkOffer: [] })).toEqual([]);
+    expect(rows({ linkOffer: ['Chase Checking ••4821'] })).toEqual([['info', 'Chase Checking ••4821 may continue an earlier account', 'Link its history', 'connections']]);
+    expect(rows({ linkOffer: ['Chase Checking ••4821', 'Chase Savings ••1111'] })).toEqual([
+      ['info', '2 reconnected accounts may continue earlier ones', 'Link the history of Chase Checking ••4821 and Chase Savings ••1111', 'connections'],
+    ]);
+    expect(rows({ linkOffer: ['A ••1', 'B ••2', 'C ••3', 'D ••4'] })[0].slice(1, 3)).toEqual([
+      '4 reconnected accounts may continue earlier ones',
+      'Link the history of A ••1, B ••2 and 2 more',
+    ]);
+    // Settings > Connections, on the Reconnected accounts card's title.
+    expect(attentionItems({ ...NOTHING, now, linkOffer: ['A ••1'] })[0].go).toEqual({ to: 'connections', focus: ACCOUNT_LINKS_TITLE });
   });
 
   test('worst first, each level in its order', () => {

@@ -24,13 +24,14 @@ import type { RestoreHoldNote } from './total-notes';
 export type AttentionSeverity = Severity | 'info';
 
 /** Where a row goes: its card on Accounts, Settings > Connections (focused
- *  on the card there, when it has one), an account's sheet over Home, the
+ *  on the connection's card there, when it has one, or the card `focus`
+ *  names), an account's sheet over Home, the
  *  Budgets tab, Activity's review count, Settings > Your data, or the offer
  *  of a home currency. */
 export type Go =
   | { to: 'card'; item_id: string }
   | { to: 'accounts'; focus: string }
-  | { to: 'connections'; item_id?: string }
+  | { to: 'connections'; item_id?: string; focus?: string }
   | { to: 'account'; item_id: string; account_id: string }
   | { to: 'budgets' }
   | { to: 'review' }
@@ -73,8 +74,15 @@ export type AttentionInput = {
   /** What this load couldn't read about the connections: without it, a
    *  connection that needs the person could be missing from the list. */
   unread?: { health: boolean; connectors: boolean };
+  /** The reconnected accounts Settings > Connections suggests linking, by
+   *  name (lib/links.ts linkOfferForDisplay). */
+  linkOffer?: readonly string[];
   now?: Date;
 };
+
+/** The Reconnected accounts card's title in Settings > Connections, where
+ *  the row about them lands (components/AccountLinks.tsx). */
+export const ACCOUNT_LINKS_TITLE = 'account-links-title';
 
 const RANK: Record<AttentionSeverity, number> = { critical: 0, caution: 1, info: 2 };
 
@@ -179,6 +187,23 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
   }
 
   if (input.review > 0) items.push({ key: 'review', severity: 'info', title: `${input.review} transaction${input.review === 1 ? '' : 's'} to review`, go: { to: 'review' } });
+
+  // Reconnected accounts Settings > Connections suggests linking to the
+  // earlier ones they replace, named as it names them, in the IA's words ("A
+  // reconnected account may continue an earlier one: link its history"). It
+  // stays until the person links it or says it is not the same there.
+  const offer = input.linkOffer ?? [];
+  if (offer.length > 0) {
+    const one = offer.length === 1;
+    const names = offer.length <= 2 ? [...offer] : [...offer.slice(0, 2), `${offer.length - 2} more`];
+    items.push({
+      key: 'link-offer',
+      severity: 'info',
+      title: one ? `${offer[0]} may continue an earlier account` : `${offer.length} reconnected accounts may continue earlier ones`,
+      sub: one ? 'Link its history' : `Link the history of ${joinNames(names)}`,
+      go: { to: 'connections', focus: ACCOUNT_LINKS_TITLE },
+    });
+  }
 
   for (const p of input.payments) {
     items.push({ key: p.key, severity: p.severity, title: p.title, sub: sentence(p.sub), go: { to: 'account', item_id: p.item_id, account_id: p.account_id } });

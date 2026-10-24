@@ -82,7 +82,7 @@ In `sandbox` mode, Plaid Link shows fake test institutions. Search for any name 
 
 Sometimes a connection has to be removed and added again (it broke badly, the bank moved platforms, or you are coming back after a while). Plaid then gives every account a new id, so on its own the re-added account would start a new, empty history beside the old one.
 
-Instead, **Settings** (under **Connections**, in **Reconnected accounts**) offers to link each new account to the one it replaces, with the evidence and a chart preview. Nothing is linked until you say so. Once linked:
+Instead, **Settings** (under **Connections**, in **Reconnected accounts**) offers to link each new account to the one it replaces, with the evidence and a chart preview. Home's **Needs attention** says so too ("Chase Checking ••4821 may continue an earlier account") and opens that card, until you link it or say it is not the same. Nothing is linked until you say so. Once linked:
 
 - its **balance history** continues from the old account's, and so does the record of what an investment account held each day;
 - if you had **hidden** the old account, the new one is hidden too (a hidden account stays hidden after you disconnect it, listed as disconnected in the Hidden card, where you can still unhide it);

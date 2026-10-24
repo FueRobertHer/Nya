@@ -15,7 +15,7 @@ import {
 } from '@/lib/history';
 import { signedContribution } from '@/lib/balance';
 import { applyHidden } from '@/lib/hidden';
-import { directoryCurrencies, getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
+import { directoryCurrencies, getEffectiveHidden, linkOfferForDisplay, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
 import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
@@ -142,6 +142,17 @@ function healthFields(institutions: InstitutionResult[], reads: HealthReads | nu
 }
 
 /**
+ * The reconnected accounts Settings > Connections suggests linking, by name,
+ * for Home's row about them (lib/links.ts linkOfferForDisplay). Applied to the
+ * response and never stored in the cache, for the reason health isn't: a link
+ * or a decline would stay offered for the cache's TTL. Absent when there are
+ * none.
+ */
+function linkOfferField(names: string[]) {
+  return names.length > 0 ? { link_offer: names } : {};
+}
+
+/**
  * Starts a promise now, to be awaited later, without risking an unhandled
  * rejection in between.
  *
@@ -180,12 +191,16 @@ export async function GET(req: Request) {
       // convert the chart from: load afresh once, which caches one.
       if (cached && (!known.settings.home || cached.history_split)) {
         const { history_split, ...shown } = cached;
+        // Never throws: a failed read is none. A live load reads it below,
+        // once a reconnected account is in the directory.
+        const linkOfferPromise = linkOfferForDisplay(ctx);
         return NextResponse.json({
           ...shown,
           // A cached payload holds only institutions that answered, when it was made.
           ...healthFields(withNewAccounts(cached.institutions, await newAccountsPromise), await healthPromise, cached.as_of),
           ...(await stalePromise),
           ...(await baseFields(ctx, cached.institutions, history_split, known)),
+          ...linkOfferField(await linkOfferPromise),
           from_cache: true,
         });
       }
@@ -297,6 +312,7 @@ export async function GET(req: Request) {
     const lifecycle = await lifecyclePromise;
     await directoryWrite;
     await syncWrite;
+    const linkOfferPromise = linkOfferForDisplay(ctx); // never throws
 
     // An account missing from a healthy answer is HELD at its last known
     // balance, with its question, and a zero for weeks is asked about
@@ -401,6 +417,7 @@ export async function GET(req: Request) {
       ...healthFields(withNewAccounts(payload.institutions, await newAccountsPromise), await healthPromise, answeredAt),
       ...(await stalePromise),
       ...(await baseFields(ctx, payload.institutions, history_split, await settingsPromise)),
+      ...linkOfferField(await linkOfferPromise),
       from_cache: false,
     });
   } catch (err: any) {
