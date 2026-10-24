@@ -353,7 +353,6 @@ export default function Dashboard({
   // The account whose sheet is open (components/AccountSheet.tsx), by id, so
   // it shows the account as the latest load has it.
   const [accountOpen, setAccountOpen] = useState<{ item_id: string; account_id: string } | null>(null);
-  const shownAccountOpen = useLast(accountOpen);
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   // Budgets and goals are each saved as one whole list, so their loading and
   // saving go through lib/whole-list-store.ts, which never lets an unloaded or
@@ -1474,14 +1473,20 @@ export default function Dashboard({
     };
   }, [institutions]);
 
-  // The open account as this load has it. Gone from the tab (hidden, or no
-  // longer reported), its sheet has nothing to show and closes.
+  // The open account as this load has it.
   const openedAccount = useMemo(() => {
-    if (!shownAccountOpen) return null;
-    const inst = sortedInstitutions.find((i) => i.item_id === shownAccountOpen.item_id);
-    const account = inst?.accounts.find((a) => a.account_id === shownAccountOpen.account_id);
+    if (!accountOpen) return null;
+    const inst = sortedInstitutions.find((i) => i.item_id === accountOpen.item_id);
+    const account = inst?.accounts.find((a) => a.account_id === accountOpen.account_id);
     return inst && account ? { inst, account } : null;
-  }, [shownAccountOpen, sortedInstitutions]);
+  }, [accountOpen, sortedInstitutions]);
+  // Gone from the tab while its sheet is open (hidden, or no longer
+  // reported): the sheet closes, and stays closed if the account comes back.
+  useEffect(() => {
+    if (accountOpen && !openedAccount) setAccountOpen(null);
+  }, [accountOpen, openedAccount]);
+  // What the closing sheet keeps showing while it slides out.
+  const shownAccount = useLast(openedAccount);
 
   // Investment accounts carrying enough uninvested cash to be worth a Home-tab
   // line. Built from `institutions`, not `sortedInstitutions`, so that an
@@ -2744,9 +2749,9 @@ export default function Dashboard({
         }}
       />
       <AccountSheet
-        open={!!accountOpen && !!openedAccount}
-        account={openedAccount?.account ?? null}
-        inst={openedAccount?.inst ?? null}
+        open={!!openedAccount}
+        account={shownAccount?.account ?? null}
+        inst={shownAccount?.inst ?? null}
         shownCurrency={shownCurrency}
         saving={savingManual}
         hiding={togglingHidden !== null}

@@ -53,7 +53,9 @@ export function menuPlacement(
 ): { up: boolean; left: number | null } {
   const up = button.bottom + menu.height > screen.height - margin && button.top > menu.height + margin;
   const aligned = button.right - menu.width;
-  const kept = Math.min(Math.max(aligned, margin), screen.width - margin - menu.width);
+  // Past the right edge it moves left; past the left edge (a screen narrower
+  // than the menu too), it starts at the margin.
+  const kept = Math.max(margin, Math.min(aligned, screen.width - margin - menu.width));
   return { up, left: kept === aligned ? null : kept - button.left };
 }
 
@@ -121,7 +123,9 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
   };
 
   return (
-    <div className="menu-anchor" ref={wrap}>
+    // While it is open the keys are read from the button too, so Escape
+    // closes it there (where focus stays when every item is disabled).
+    <div className="menu-anchor" ref={wrap} onKeyDown={open ? onKeyDown : undefined}>
       <button
         ref={trigger}
         type="button"
@@ -153,7 +157,6 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
           className={`menu${place.up ? ' up' : ''}`}
           // Moved in from the screen's edge (menuPlacement): its position only.
           style={place.left === null ? undefined : { left: place.left, right: 'auto' }}
-          onKeyDown={onKeyDown}
         >
           {shown.map((item, i) => (
             <button

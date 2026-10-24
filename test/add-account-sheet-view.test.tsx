@@ -104,6 +104,20 @@ describe('the Add account sheet', () => {
     act(() => root.unmount());
   });
 
+  test('a Plaid start that fails still closes the sheet, so the failure said on the tab can be seen', async () => {
+    const events: string[] = [];
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    act(() => root.render(<AddAccountSheet {...props({ onClose: () => events.push('close'), onConnect: () => Promise.reject(new Error('offline')) })} />));
+    const [row] = (host as unknown as FakeElement).findAll((e) => e.getAttribute('class') === 'list-row' && e.textContent.includes('Connect a bank or card'));
+    await act(async () => {
+      click(row);
+    });
+    expect(events).toEqual(['close']);
+    act(() => root.unmount());
+  });
+
   test('every other row closes this sheet before opening its own', () => {
     const host = dom.document.createElement('div');
     dom.document.body.appendChild(host);

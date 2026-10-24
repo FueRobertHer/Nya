@@ -63,10 +63,18 @@ export default function AddAccountSheet({
       disabled: connecting,
       onSelect: () => {
         setStarting(option.kind);
-        Promise.resolve(onConnect(option.kind)).finally(() => {
+        // Settled either way, Link is open or its failure is said on the tab.
+        const done = () => {
           setStarting(null);
           onClose();
-        });
+        };
+        let started: unknown;
+        try {
+          started = onConnect(option.kind);
+        } catch (err) {
+          started = Promise.reject(err);
+        }
+        Promise.resolve(started).then(done, done);
       },
     })),
     ...(onConnectSimpleFin

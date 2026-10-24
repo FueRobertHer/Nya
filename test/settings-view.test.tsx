@@ -108,6 +108,10 @@ describe('the dashboard', () => {
     for (const word of ['Hide', 'Close…', 'Update balance', 'Add transaction']) expect(footer).toContain(word);
     expect(sheet).toContain("...(typed ? [{ label: 'Delete…', danger: true,");
     expect(dashboard).toContain('onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}');
+    // An account gone while its sheet is open closes it for good, so it never
+    // opens again by itself when the account comes back (Unhide).
+    expect(dashboard).toContain('if (accountOpen && !openedAccount) setAccountOpen(null);');
+    expect(dashboard).toContain('const shownAccount = useLast(openedAccount);');
   });
 
   test('a linked institution has Options, holding Add or remove accounts and Disconnect', () => {

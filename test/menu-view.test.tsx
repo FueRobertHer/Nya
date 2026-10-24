@@ -70,6 +70,22 @@ describe('the ⋯ menu', () => {
     expect(menuPlacement({ top: 740, bottom: 784, left: 169, right: 213 }, menu, phone)).toEqual({ up: true, left: 8 - 169 });
     // Never past the right edge either.
     expect(menuPlacement({ top: 100, bottom: 144, left: 300, right: 344 }, menu, phone)).toEqual({ up: false, left: 320 - 8 - 220 - 300 });
+    // A screen narrower than the menu: it starts at the left margin.
+    expect(menuPlacement({ top: 100, bottom: 144, left: 150, right: 194 }, menu, { width: 200, height: 800 })).toEqual({ up: false, left: 8 - 150 });
+  });
+
+  test('with every item disabled, focus stays on its button, and Escape there still closes only the menu', () => {
+    const { host, unmount } = mount(<Menu label="More for Cash" items={[{ label: 'Delete…', onSelect: () => {}, danger: true, disabled: true }]} />);
+    const [trigger] = find(host, (e) => e.getAttribute('aria-haspopup') === 'menu');
+    act(() => click(trigger));
+    act(() => trigger.focus());
+    let sheetHeard = 0;
+    (dom.document.defaultView as unknown as { addEventListener: (t: string, f: () => void) => void }).addEventListener('keydown', () => sheetHeard++);
+    const esc = key(trigger, 'Escape');
+    expect(esc.propagationStopped).toBe(true);
+    expect(sheetHeard).toBe(0);
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    unmount();
   });
 
   test('closed, it is one labelled button that says it opens a menu', () => {
