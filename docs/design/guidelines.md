@@ -87,7 +87,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Information notice | `.notice.info` | `.info-notice` |
 | Done, saved | `.notice.done` | `.status-note` |
 | Badge (not clickable) | `.badge`, toned `.accent`, `.pos`, `.neg` or `.warn` | `.pill` |
-| Chip (clickable, a filter or a tag) | `.chip`; toned `.neg` or `.warn` for a status that jumps to what it counts | `.tag-chip` |
+| Chip (clickable, a filter or a tag) | `.chip`; toned `.neg` or `.warn` for a status that jumps to what it counts; a row of filters in `.chip-row`; one that chooses among options is `ChipSelect` (`.chip-select`) | `.tag-chip`, a filter `<select>` in a `.text-input` |
 | Range or view switch | `.segmented` | `.chart-ranges` with `.chart-range` |
 | Money that lines up | `.money` | `font-variant-numeric` in a feature rule |
 | A meter | `.meter-track` with `.meter-fill` | |

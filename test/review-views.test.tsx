@@ -406,17 +406,19 @@ describe('Card Mode’s cards', () => {
 });
 
 describe('the Activity tab', () => {
-  test('the bar counts transactions, offers Card Mode and the filter, and approving what is listed; nothing while the queue is off', () => {
+  test('the bar counts transactions, offers Card Mode and approving what is listed; nothing while the queue is off', () => {
     const rows = [txn('t1', { needs_review: true }), txn('t2', { needs_review: true }), txn('t3')];
     const html = renderToStaticMarkup(<ReviewBar review={controls()} all={rows} listed={rows.slice(0, 1)} filtering={false} onFilter={() => {}} onReview={() => {}} />);
     expect(text(html)).toContain('2 to review');
     expect(text(html)).toContain('Review one at a time');
-    expect(html).toContain('aria-pressed="false"');
+    // Its filter is the list's To review chip (test/activity-filters-view.test.tsx).
+    expect(html).not.toContain('aria-pressed');
     expect(text(html)).toContain('Approve the 1 listed');
     expect(renderToStaticMarkup(<ReviewBar review={controls(false)} all={rows} listed={rows} filtering={false} onFilter={() => {}} onReview={() => {}} />)).toBe('');
     expect(toReviewWords(0)).toBe('Nothing to review');
     // Where focus comes back when Card Mode closes with nothing left (its way in disabled).
-    expect(html).toMatch(/<span class="review-count"[^>]*tabindex="-1"[^>]*data-review-return=""/);
+    // A heading, where Home's jump lands too.
+    expect(html).toMatch(/<h3 class="review-count"[^>]*tabindex="-1"[^>]*data-review-return=""[^>]*id="review-count"/);
   });
 
   test('approvals near the most kept: the Review queue card offers to make room, before approving is refused', () => {

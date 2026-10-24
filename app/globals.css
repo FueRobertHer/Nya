@@ -701,7 +701,7 @@ button:active:not(:disabled):not([class*="cl-"]) {
   inset: min(0px, calc((100% - var(--tap)) / 2)) -1px;
 }
 
-.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"]) {
+.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on]) {
   border-color: transparent;
   background: var(--accent-tint);
   color: var(--accent);
@@ -727,6 +727,45 @@ button:active:not(:disabled):not([class*="cl-"]) {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+}
+
+/* A row of filter chips. The rows are 12px apart when they wrap, so each
+   chip's 44px hit area stops where the next row's starts. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+
+/* A chip that chooses one of a few options (components/ChipSelect.tsx): the
+   native select, unseen, takes the whole 44px hit area in place of the
+   chip's own, so a tap anywhere on it opens the picker. "On" while a choice
+   is made (data-on, above). */
+.chip-select::after {
+  content: none;
+}
+
+/* Sized outright: a form control laid out absolutely may keep its own
+   size (its widest option) rather than stretch between its insets. */
+.chip-select > select {
+  position: absolute;
+  top: min(0px, calc((100% - var(--tap)) / 2));
+  left: -1px;
+  width: calc(100% + 2px);
+  height: max(100%, var(--tap));
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chip-select:has(> select:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
 }
 
 /* Notice: the one way to say something is wrong or worth knowing
@@ -4804,12 +4843,6 @@ button.tag-suggestion {
   resize: vertical;
 }
 
-.tag-filter {
-  margin: 0 0 4px;
-  font-size: 14px;
-  padding: 10px 12px;
-}
-
 /* The color choice on the Tags screen: one round swatch per color. */
 .tag-colors {
   display: flex;
@@ -5872,35 +5905,28 @@ button.cash-flow-show {
    components/ReviewNote.tsx, components/CardMode.tsx), merchants' default
    categories (components/VendorDefaultsCard.tsx) --- */
 
-/* The Activity tab's bar, under the filters: count, Card Mode, the filter. */
+/* The Activity tab's bar, under the filters: the count as a heading, Card
+   Mode, approving what is listed. Its filter is the To review chip. */
 .review-bar {
-  margin: 4px 0 8px;
+  margin-bottom: var(--sp-3);
 }
 
 .review-bar-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--sp-2);
 }
 
-.review-bar-row button {
-  width: auto;
-  flex: 0 1 auto;
-  padding: 8px 12px;
-  font-size: 13px;
-}
-
-.review-bar-row button[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
+.review-bar-row + .review-bar-row {
+  margin-top: var(--sp-2);
 }
 
 .review-count {
   flex: 1 0 auto;
-  color: var(--muted);
-  font-size: 13px;
+  margin: 0;
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
 }
 
 /* The shortcuts, for a keyboard: shown only where there is a pointer. */
@@ -6947,18 +6973,11 @@ button.review-keys-toggle {
   vertical-align: -2px;
 }
 
-.receipt-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 4px;
-}
-
-.receipt-filter .text-input {
-  flex: 1 1 160px;
+/* The amount a transaction without a receipt is over, after the chips. */
+.receipt-over {
+  flex: 1 1 120px;
   min-width: 0;
-  font-size: 14px;
-  padding: 10px 12px;
+  margin: 0;
 }
 
 .attach-section {

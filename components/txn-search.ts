@@ -1,7 +1,7 @@
 // What the Activity tab's search and its filter by tag keep of a month's
 // rows (#40): a row whose merchant, category, account, institution, note or
 // tag names hold the text typed, in any case, among those carrying the tag
-// chosen, and, with the Needs review filter on, among those that need review
+// chosen, and, with the To review chip on, among those that need review
 // (lib/review-layer.ts needsReview: a part of a transaction that does, a
 // group's row holding one). A part of a split transaction is found by its
 // transaction's note too, and a group's row by its transactions' names and

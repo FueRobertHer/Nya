@@ -232,6 +232,16 @@ export class FakeElement extends FakeNode {
   get localName() {
     return this.tagName.toLowerCase();
   }
+  /** A field's type: its attribute, else a browser's default ("text" for an
+   *  input, "submit" for a button). React reads it to tell a text field's
+   *  typing from a click. */
+  get type(): string {
+    if (this.tagName === 'SELECT') return this.hasAttribute('multiple') ? 'select-multiple' : 'select-one';
+    return this.getAttribute('type') ?? (this.tagName === 'INPUT' ? 'text' : this.tagName === 'BUTTON' ? 'submit' : '');
+  }
+  set type(v: string) {
+    this.setAttribute('type', v);
+  }
   setAttribute(k: string, v: string) {
     this.attributes.set(k, String(v));
     if (k === 'disabled') this.disabled = true;
