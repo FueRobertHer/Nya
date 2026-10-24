@@ -38,7 +38,7 @@ function Caution({ children }: { children: ReactNode }) {
   return (
     <div className="notice caution">
       {ALERT}
-      <p>{children}</p>
+      <div>{children}</div>
     </div>
   );
 }
