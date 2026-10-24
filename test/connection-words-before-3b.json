@@ -1,0 +1,689 @@
+{
+  "plaid ok": {
+    "card": [],
+    "health": [
+      "Working",
+      "Last synced Sep 12"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid ok, unread": {
+    "card": [],
+    "health": [
+      "Working",
+      "Some of what Nya keeps about this connection couldn't be read, so a warning from Plaid may be missing here.",
+      "Last synced Sep 12"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid consent_ending": {
+    "card": [
+      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.",
+      "Reconnect soon · Oct 15"
+    ],
+    "health": [
+      "Reconnect soon",
+      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing: it takes a minute.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid disconnect_pending": {
+    "card": [
+      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.",
+      "Reconnect soon · Oct 15"
+    ],
+    "health": [
+      "Reconnect soon",
+      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing: it takes a minute.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid login": {
+    "card": [
+      "This account needs to be reconnected · balances as of Oct 1"
+    ],
+    "health": [
+      "Needs reconnecting",
+      "Chase needs you to sign in again. Reconnect: it takes a minute.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On your side: your sign-in at Chase · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid access": {
+    "card": [
+      "This account needs to be reconnected · balances as of Oct 1"
+    ],
+    "health": [
+      "Needs reconnecting",
+      "Chase isn't sharing everything Nya needs. Reconnect and allow access to your accounts.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On your side: your sign-in at Chase · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid locked": {
+    "card": [
+      "This account needs to be reconnected · balances as of Oct 1"
+    ],
+    "health": [
+      "Needs reconnecting",
+      "Chase has locked this sign-in. Unlock it with Chase, then reconnect.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On your side: your sign-in at Chase · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid bank_action": {
+    "card": [
+      "This account needs to be reconnected · balances as of Oct 1"
+    ],
+    "health": [
+      "Needs reconnecting",
+      "Chase needs something done on its own website first, such as a new password or terms to accept. Then reconnect.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On your side: your sign-in at Chase · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid institution_down, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Chase isn't answering. Nothing to do: it usually recovers on its own.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid institution_down, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Not updating",
+      "Chase isn't answering. Nothing to do: it usually recovers on its own.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid provider, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Plaid, which Nya reaches Chase through, is having trouble. Nothing to do: it usually recovers on its own.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid provider, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Not updating",
+      "Plaid, which Nya reaches Chase through, is having trouble. Nothing to do: it usually recovers on its own.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid unreachable, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Nya couldn't get an answer. Nothing to do: it usually recovers on its own.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid unreachable, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Not updating",
+      "Nya couldn't get an answer. Nothing to do: it usually recovers on its own.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid credentials, recovered": {
+    "card": [
+      "Could not decrypt stored credentials · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Nya can't read the sign-in it keeps for Chase. Nothing for you to do: whoever runs Nya restores its encryption keys, and the connection then works as before.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid credentials, nothing recovered": {
+    "card": [
+      "Could not decrypt stored credentials"
+    ],
+    "health": [
+      "Not updating",
+      "Nya can't read the sign-in it keeps for Chase. Nothing for you to do: whoever runs Nya restores its encryption keys, and the connection then works as before.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid token, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Plaid doesn't accept the access Nya keeps for Chase, which usually means Nya's own Plaid settings changed. Nothing for you to do: whoever runs Nya puts them back, and the connection then works as before.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid token, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Not updating",
+      "Plaid doesn't accept the access Nya keeps for Chase, which usually means Nya's own Plaid settings changed. Nothing for you to do: whoever runs Nya puts them back, and the connection then works as before.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid setup, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Plaid refused Nya's own settings, so it can't reach Chase just now. Nothing for you to do: whoever runs Nya puts them right, and the connection then works as before.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid setup, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Not updating",
+      "Plaid refused Nya's own settings, so it can't reach Chase just now. Nothing for you to do: whoever runs Nya puts them right, and the connection then works as before.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid unknown, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Not updating",
+      "Chase couldn't be updated (Plaid: SOME_PLAID_CODE). This usually clears on its own.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid unknown, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Not updating",
+      "Chase couldn't be updated (Plaid: SOME_PLAID_CODE). This usually clears on its own.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid revoked, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Needs connecting again",
+      "Access to Chase was withdrawn, so this connection can't be repaired. Remove it, then connect Chase again: link its new accounts to the old ones and their history carries over.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid revoked, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Needs connecting again",
+      "Access to Chase was withdrawn, so this connection can't be repaired. Remove it, then connect Chase again: link its new accounts to the old ones and their history carries over.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid gone, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Needs connecting again",
+      "Plaid no longer has this connection, so it can't be repaired. Remove it, then connect Chase again: link its new accounts to the old ones and their history carries over.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid gone, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Needs connecting again",
+      "Plaid no longer has this connection, so it can't be repaired. Remove it, then connect Chase again: link its new accounts to the old ones and their history carries over.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid unsupported, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "Can't be repaired",
+      "Plaid can no longer reach Chase, so reconnecting won't help. Remove the connection; its history is kept, and its accounts can be tracked by hand.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid unsupported, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "Can't be repaired",
+      "Plaid can no longer reach Chase, so reconnecting won't help. Remove the connection; its history is kept, and its accounts can be tracked by hand.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid no_accounts, recovered": {
+    "card": [
+      "Could not fetch balances · balances as of Oct 1"
+    ],
+    "health": [
+      "No open accounts",
+      "Chase reports no open accounts. If you closed them, remove the connection: their history is kept.",
+      "Shown at last known balances from Oct 1, not measured now: Checking ••4421, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid no_accounts, nothing recovered": {
+    "card": [
+      "Could not fetch balances"
+    ],
+    "health": [
+      "No open accounts",
+      "Chase reports no open accounts. If you closed them, remove the connection: their history is kept.",
+      "Not counted in net worth: Checking ••4421.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "plaid vanished": {
+    "card": [
+      "1 account this institution used to report isn't in its latest response · it is held at its last known balance until you say whether it closed, and history is paused until then"
+    ],
+    "health": [
+      "Missing accounts",
+      "1 account Chase used to report isn't in its latest answer. Until you say whether it closed, it is counted at its last known balance and no total is saved. If nobody answers, Nya assumes it closed after three days, and you can say otherwise. Removed it on purpose? Check with Add or remove accounts.",
+      "Shown at last known balances from Sep 12, not measured now: Savings ••0071, together $1,200.00 of net worth.",
+      "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": []
+  },
+  "connector ok": {
+    "card": [],
+    "health": [
+      "Working",
+      "Last synced Oct 9"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector waiting": {
+    "card": [
+      "Waiting for SimpleFIN's answer"
+    ],
+    "health": [
+      "Waiting for SimpleFIN",
+      "Waiting for SimpleFIN's answer about My Bank: Nya asks at its next daily update, or when you Refresh. Until then its balances are shown as last known, and no day's total is saved.",
+      "Not counted in net worth.",
+      "Last synced Oct 9 · On SimpleFIN's side"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · no answer yet · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector reported": {
+    "card": [
+      "SimpleFIN reports: Connection to My Bank may need attention · balances as of Oct 8"
+    ],
+    "health": [
+      "Needs attention at SimpleFIN",
+      "SimpleFIN reports: “Connection to My Bank may need attention”. This is between SimpleFIN and My Bank: fix it in SimpleFIN (often by signing in to My Bank there again), then refresh here. Until then its balances are shown as last known, and no day's total is saved.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On SimpleFIN's side"
+    ],
+    "connectorWarnings": [
+      "SimpleFIN reports: “Connection to My Bank may need attention” (Checking)",
+      "New transactions for Checking couldn’t be saved; Nya tries again at its next update."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector missing": {
+    "card": [
+      "Not every account was in SimpleFIN's latest answer · balances as of Oct 8"
+    ],
+    "health": [
+      "Missing accounts",
+      "Savings isn't in SimpleFIN's latest answer. If you removed it at SimpleFIN, stop tracking it here with Choose accounts. If it closed, say so with Close… on it, from the Accounts tab. Until then its balances are shown as last known, and no day's total is saved.",
+      "0 accounts not in the total.",
+      "Last synced Oct 9 · On SimpleFIN's side"
+    ],
+    "connectorWarnings": [
+      "Not in SimpleFIN’s latest answer: Savings."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector sign": {
+    "card": [
+      "SimpleFIN reports a card or loan as money held: say which way it goes"
+    ],
+    "health": [
+      "Needs your answer",
+      "SimpleFIN reports Checking (+$1,500.25) as money held. For a card or a loan that is unusual: some servers report what you owe that way. Say which it is, once: until you do, it isn’t counted, and no day's total is saved.",
+      "0 accounts not in the total.",
+      "Last synced Oct 9 · On your side: your SimpleFIN account"
+    ],
+    "connectorWarnings": [
+      "SimpleFIN reports Checking (+$1,500.25) as money held. Say which way it goes: until you do, it isn’t counted."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector old_balance": {
+    "card": [
+      "SimpleFIN's latest balance is from Sep 20 · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating at SimpleFIN",
+      "The latest balance SimpleFIN has from My Bank is from Sep 20: its link to My Bank has stopped updating. Fix it in SimpleFIN (often by signing in to My Bank there again), then refresh here. Until then its balances are shown as last known, and no day's total is saved.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On SimpleFIN's side"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector stale": {
+    "card": [
+      "No answer from SimpleFIN in over a day · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "Nya hasn't had an answer from SimpleFIN in over a day: its daily update didn't run. Nothing for you to do; Refresh asks now.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On Nya's side"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector unreadable": {
+    "card": [
+      "What Nya keeps about this SimpleFIN connection couldn't be read · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "What Nya keeps about your SimpleFIN accounts couldn't be read, so they aren't counted. Nothing for you to do: whoever runs Nya needs to look at it.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On Nya's side"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector gone": {
+    "card": [
+      "Its SimpleFIN connection is gone · balances as of Oct 8"
+    ],
+    "health": [
+      "Disconnected",
+      "This account's SimpleFIN connection is gone. Disconnect it to keep its history as a manual account, or remove it.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On Nya's side"
+    ],
+    "connectorWarnings": [],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector refused": {
+    "card": [
+      "SimpleFIN needs connecting again · balances as of Oct 8"
+    ],
+    "health": [
+      "Needs connecting again",
+      "SimpleFIN no longer accepts Nya's access: it was removed or reset at SimpleFIN, or the subscription ended. Connect again with a new Setup Token: your accounts and their history stay. “The server said no.”",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On your side: your SimpleFIN account"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector payment": {
+    "card": [
+      "SimpleFIN says your subscription needs paying · balances as of Oct 8"
+    ],
+    "health": [
+      "Payment due at SimpleFIN",
+      "SimpleFIN says your subscription needs paying. Renew it at SimpleFIN; Nya picks up again at its next update. Until then its balances are shown as last known, and no day's total is saved.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On your side: your SimpleFIN account"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector limited": {
+    "card": [
+      "Couldn't refresh from SimpleFIN · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "SimpleFIN says Nya asked too often. Nothing for you to do: Nya asks again at its next update.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On Nya's side"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector rejected": {
+    "card": [
+      "Couldn't refresh from SimpleFIN · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "SimpleFIN refused how Nya asked: “The server said no.” Nothing for you to do: whoever runs Nya needs to look at it.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On Nya's side"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector down": {
+    "card": [
+      "Couldn't refresh from SimpleFIN · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "“The server said no.” Nothing to do: this usually clears on its own, and Nya asks again at its next update.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On SimpleFIN's side"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector answer": {
+    "card": [
+      "Couldn't refresh from SimpleFIN · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "SimpleFIN's answer couldn't be read. Nothing to do yet: Nya asks again at its next update.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On SimpleFIN's side"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector blocked": {
+    "card": [
+      "Couldn't refresh from SimpleFIN · balances as of Oct 8"
+    ],
+    "health": [
+      "Not updating",
+      "“The server said no.” If you didn't expect this, connect again with a new Setup Token.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · Whose side: not known"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  },
+  "connector credentials": {
+    "card": [
+      "SimpleFIN needs connecting again · balances as of Oct 8"
+    ],
+    "health": [
+      "Needs connecting again",
+      "Nya can't use the access SimpleFIN gave it. Connect again with a new Setup Token: your accounts and their history stay.",
+      "Shown at last known balances from Oct 8, not measured now: Checking ••4421, together $1,500.25 of net worth.",
+      "Last synced Oct 9 · On Nya's side"
+    ],
+    "connectorWarnings": [
+      "The server said no."
+    ],
+    "connectorNotes": [
+      "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
+      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+    ]
+  }
+}
