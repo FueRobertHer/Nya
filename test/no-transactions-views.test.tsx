@@ -582,7 +582,9 @@ describe('the "Allow transactions" action', () => {
     };
     expect([...unallowedItemIds(view)]).toEqual(['item_fid']);
     expect(dashboard).toContain('const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);');
-    expect(dashboard).toMatch(
+    expect(dashboard).toContain('unallowedIds={unallowedIds}');
+    const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
+    expect(card).toMatch(
       /\{unallowedIds\.has\(inst\.item_id\) && \(\s*<button\s+className="secondary"\s+onClick=\{\(\) => startAllowTransactions\(inst\.item_id\)\}\s+disabled=\{connecting\}[^>]*>\s*Allow transactions\s*<\/button>/
     );
   });

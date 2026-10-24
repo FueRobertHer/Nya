@@ -1,7 +1,7 @@
 // lib/investments.ts
 //
 // Reads /investments/transactions/get and turns it into two things:
-//   1. an activity list for the expanded investment account row, and
+//   1. an activity list in an investment account's sheet, and
 //   2. `valueDelta`, the signed change a transaction makes to an account's
 //      TOTAL value, which is what lets the net-worth backfill walk brokerage
 //      balances backward instead of holding them flat at today's number.

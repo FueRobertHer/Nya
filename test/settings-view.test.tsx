@@ -93,20 +93,30 @@ describe('the dashboard', () => {
     expect(dashboard).toContain(') : settings ? (\n          <SettingsScreen');
   });
 
-  test('an account row holds no button that Manage used to add; its expanded row does', () => {
-    const row = dashboard.slice(dashboard.indexOf('className="acct-row"'), dashboard.indexOf('{expandedAccounts.has(a.account_id) && ('));
-    expect(row).not.toContain('Hide');
-    expect(row).not.toContain('Close…');
-    expect(row).not.toContain('Delete');
-    const expanded = dashboard.slice(dashboard.indexOf('{expandedAccounts.has(a.account_id) && ('), dashboard.indexOf('<AccountSparkline'));
-    expect(expanded).toContain('<div className="card-actions acct-actions">');
-    expect(expanded).toContain("{togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}");
-    expect(expanded).toContain('Close…');
-    expect(expanded).toContain('Delete');
+  // The institution's card and its rows (components/InstitutionCard.tsx).
+  const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
+
+  // Rendered: test/institution-card-view.test.tsx ("each row is one button
+  // that opens the account, with nothing inside it to press") and
+  // test/account-sheet-view.test.tsx (Hide, Close… and Delete per kind).
+  test('an account row holds no button that Manage used to add; the account sheet it opens does', () => {
+    const rows = card.slice(card.indexOf('<ul className="list-rows">'), card.indexOf('</ul>'));
+    expect(rows).toContain('<button className="list-row" onClick={() => onOpenAccount(a.account_id)}>');
+    for (const word of ['Hide', 'Close…', 'Delete']) expect(rows).not.toContain(word);
+    const sheet = readFileSync(join(import.meta.dir, '..', 'components', 'AccountSheet.tsx'), 'utf8');
+    const footer = sheet.slice(sheet.indexOf('const footer = ('), sheet.indexOf('return (\n    <Sheet'));
+    for (const word of ['Hide', 'Close…', 'Update balance', 'Add transaction']) expect(footer).toContain(word);
+    expect(sheet).toContain("...(typed ? [{ label: 'Delete…', danger: true,");
+    expect(dashboard).toContain('onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}');
+    // An account gone while its sheet is open closes it for good, so it never
+    // opens again by itself when the account comes back (Unhide).
+    expect(dashboard).toContain('if (accountOpen && !openedAccount) setAccountOpen(null);');
+    expect(dashboard).toContain('const shownAccount = useLast(openedAccount);');
   });
 
   test('a linked institution has Options, holding Add or remove accounts and Disconnect', () => {
-    expect(dashboard).toContain('onClick={() => setOptionsTarget(inst)}');
+    expect(card).toContain('onClick={() => setOptionsTarget(inst)}');
+    expect(dashboard).toContain('setOptionsTarget={setOptionsTarget}');
     // An institution whose accounts are all hidden has no card, so Settings > Connections offers the same Options.
     expect(section('connections')).toContain('onClick={() => setOptionsTarget(inst)}');
     const sheet = dashboard.slice(dashboard.indexOf('<Sheet open={!!optionsTarget}'), dashboard.indexOf('<Sheet\n        open={!!disconnectTarget}'));
