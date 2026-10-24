@@ -61,7 +61,7 @@ export default function AccountsStatus({
       <button
         type="button"
         className="chip neg"
-        aria-label={`${critical} connection${critical === 1 ? ' has a problem' : 's have problems'}${also}: go to the first`}
+        aria-label={`${critical} problem${critical === 1 ? '' : 's'}${also}: go to the first connection`}
         onClick={onGo}
       >
         {`${critical} problem${critical === 1 ? '' : 's'}`}
@@ -71,7 +71,7 @@ export default function AccountsStatus({
   }
   if (caution > 0) {
     return (
-      <button type="button" className="chip warn" aria-label={`${caution} connection${caution === 1 ? '' : 's'} to check: go to the first`} onClick={onGo}>
+      <button type="button" className="chip warn" aria-label={`${caution} to check: go to the first connection`} onClick={onGo}>
         {`${caution} to check`}
         {CHEVRON}
       </button>

@@ -71,9 +71,10 @@ describe('the line', () => {
 describe('what it can’t count', () => {
   test('a kind missing an account is marked, and the institution named in red', () => {
     const html = render([institution({ accounts: [account(), account({ type: 'credit', balance: null, held: { as_of: null } })] })]);
-    expect(html).toContain('Credit <span class="money">$0.00</span><span class="badge neg">Incomplete</span>');
+    expect(html).toContain('role="list"');
+    expect(html).toContain('Credit <span class="money">--</span><span class="badge neg">Incomplete</span>');
     expect(html).toContain('<div class="notice critical">');
-    expect(html).toContain('These totals leave out accounts at Chase; its card says which.');
+    expect(html).toContain('These totals leave out accounts at Chase; its card says more.');
   });
 
   test('of a kind it can’t tell: any total may be short, every institution named', () => {
@@ -82,7 +83,7 @@ describe('what it can’t count', () => {
       institution({ institution_name: 'Ally', item_id: 'a', error: 'Down', accounts: [] }),
     ]);
     expect(html).not.toContain('Incomplete');
-    expect(html).toContain('These totals leave out accounts at Chase and Ally, and any of them may be short; their cards say which.');
+    expect(html).toContain('These totals leave out accounts at Chase and Ally, and any total may be short; their cards say more.');
   });
 
   test('last known balances: one amber line naming the institutions', () => {

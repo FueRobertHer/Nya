@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { groupOf, summarize } from '@/components/account-groups';
 import { signedBalance, type Account, type Institution } from '@/components/accounts-format';
 import type { PageFx } from '@/lib/fx/view';
+import type { ConnectionHealth } from '@/lib/connection-state';
+import type { ConnectorIssue } from '@/lib/connectors/types';
 
 // The Accounts tab's line by type (rollout phase 3c): the accounts on the
 // cards, by kind, and what it can't count, told from the accounts themselves.
@@ -27,6 +29,16 @@ const institution = (over: Partial<Institution> = {}): Institution => ({
   error: null,
   needs_reauth: false,
   ...over,
+});
+
+/** A SimpleFIN connection's health with this issue (lib/connectors/health.ts). */
+const connector = (issue: ConnectorIssue): ConnectionHealth => ({
+  state: issue === 'waiting' ? 'partial' : 'needs_reauth',
+  cause: 'connector',
+  side: 'you',
+  action: 'none',
+  last_ok_at: null,
+  detail: { connector: 'simplefin', label: 'SimpleFIN', host: null, connection_id: 'conn_1', issue, messages: [], accounts: [] },
 });
 
 const NOW = Date.parse('2026-10-23T12:00:00Z');
@@ -118,9 +130,10 @@ describe('what it can’t count', () => {
       'USD',
       NOW
     );
+    // No loan is on screen to add: the kind has no figure, only its mark.
     expect(s.groups.map((g) => [g.key, g.total, g.incomplete])).toEqual([
       ['cash', 100, false],
-      ['loans', 0, true],
+      ['loans', null, true],
     ]);
     expect(s.short).toEqual({ institutions: ['Chase'], untyped: false });
     expect(s.dated).toEqual(['Chase']);
@@ -142,15 +155,47 @@ describe('what it can’t count', () => {
     expect(s.short).toEqual({ institutions: ['Chase'], untyped: true });
   });
 
-  test('a connector’s account with no balance (waiting for its sign) marks its kind', () => {
+  test('a connector’s account with no balance (waiting for its sign) marks its kind, as its red card does', () => {
     const s = summarize(
-      [institution({ manual: true, connector: 'simplefin', accounts: [account(), account({ type: 'credit', balance: null })] })],
+      [institution({ manual: true, connector: 'simplefin', health: connector('sign'), accounts: [account(), account({ type: 'credit', balance: null })] })],
+      null,
+      'USD',
+      NOW
+    );
+    expect(s.groups.find((g) => g.key === 'credit')).toMatchObject({ total: null, incomplete: true });
+    expect(s.short?.institutions).toEqual(['Chase']);
+  });
+
+  test('a new connection waiting for its first answer was never in the total: amber, as its card, not red', () => {
+    const s = summarize(
+      [
+        institution({
+          manual: true,
+          connector: 'simplefin',
+          error: 'Waiting for SimpleFIN’s answer',
+          health: connector('waiting'),
+          accounts: [account({ balance: null }), account({ type: 'credit', balance: null })],
+        }),
+        institution({ institution_name: 'Ally', item_id: 'a', accounts: [account(), account({ type: 'credit', balance: 5 })] }),
+      ],
+      null,
+      'USD',
+      NOW
+    );
+    expect(s.groups.every((g) => !g.incomplete)).toBe(true);
+    expect(s.short).toBeNull();
+    expect(s.dated).toEqual(['Chase']);
+  });
+
+  test('a count with no names is said even when a held account names one kind', () => {
+    const s = summarize(
+      [institution({ error: 'Down', stale_as_of: '2026-10-21', stale_missing: 2, accounts: [account({ stale: true }), account({ type: 'credit', balance: null, held: { as_of: null } })] })],
       null,
       'USD',
       NOW
     );
     expect(s.groups.find((g) => g.key === 'credit')?.incomplete).toBe(true);
-    expect(s.short?.institutions).toEqual(['Chase']);
+    expect(s.short).toEqual({ institutions: ['Chase'], untyped: true });
   });
 
   test('a healthy account with no balance is counted as nothing, as its card shows it', () => {
@@ -204,9 +249,9 @@ describe('currencies', () => {
       'USD',
       NOW
     );
-    expect(s.groups.map((g) => [g.key, g.total, g.currency])).toEqual([
-      ['cash', null, null],
-      ['credit', -40, 'EUR'],
+    expect(s.groups.map((g) => [g.key, g.total, g.mixed, g.currency])).toEqual([
+      ['cash', null, true, null],
+      ['credit', -40, false, 'EUR'],
     ]);
     expect(s.currencyNote).toBe('Mixed currencies; totals aren’t converted.');
   });

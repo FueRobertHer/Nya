@@ -28,11 +28,12 @@ export default function AccountsSummary({
   if (s.groups.length < 2) return null;
   return (
     <div className="accounts-summary stack tight">
-      <ul className="accounts-summary-line" aria-label="Totals by kind">
+      {/* The role keeps a list styled without bullets read as one. */}
+      <ul className="accounts-summary-line" role="list" aria-label="Totals by kind">
         {s.groups.map((g) => (
           <li key={g.key}>
             {g.label}{' '}
-            <span className="money">{g.total == null ? 'Mixed' : <Masked>{fmt(g.total, g.currency)}</Masked>}</span>
+            <span className="money">{g.mixed ? 'Mixed' : <Masked>{fmt(g.total, g.currency)}</Masked>}</span>
             {g.incomplete && <span className="badge neg">Incomplete</span>}
           </li>
         ))}
@@ -42,9 +43,9 @@ export default function AccountsSummary({
         <div className="notice critical">
           {ALERT}
           <p>
-            {`These totals leave out accounts at ${joinNames(s.short.institutions)}${s.short.untyped ? ', and any of them may be short' : ''}; ${
+            {`These totals leave out accounts at ${joinNames(s.short.institutions)}${s.short.untyped ? ', and any total may be short' : ''}; ${
               s.short.institutions.length === 1 ? 'its card says' : 'their cards say'
-            } which.`}
+            } more.`}
           </p>
         </div>
       )}

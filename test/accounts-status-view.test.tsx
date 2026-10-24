@@ -24,25 +24,26 @@ describe('the count', () => {
 });
 
 describe('what it says', () => {
+  // Each label starts with the words on screen, so "click 1 problem" works by voice.
   test('any problem: red, its count, a button, with the cautions in its label', () => {
     const html = render([
       { key: 'a', severity: 'critical' },
       { key: 'b', severity: 'caution' },
       { key: 'c', severity: 'caution' },
     ]);
-    expect(html).toContain('<button type="button" class="chip neg" aria-label="1 connection has a problem, 2 to check: go to the first">1 problem<svg');
+    expect(html).toContain('<button type="button" class="chip neg" aria-label="1 problem, 2 to check: go to the first connection">1 problem<svg');
   });
 
   test('several problems', () => {
     expect(render([
       { key: 'a', severity: 'critical' },
       { key: 'b', severity: 'critical' },
-    ])).toContain('aria-label="2 connections have problems: go to the first">2 problems<svg');
+    ])).toContain('aria-label="2 problems: go to the first connection">2 problems<svg');
   });
 
   test('only cautions: amber, to check', () => {
     expect(render([{ key: 'a', severity: 'caution' }, { key: 'b', severity: null }])).toContain(
-      '<button type="button" class="chip warn" aria-label="1 connection to check: go to the first">1 to check<svg'
+      '<button type="button" class="chip warn" aria-label="1 to check: go to the first connection">1 to check<svg'
     );
   });
 

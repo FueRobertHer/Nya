@@ -68,7 +68,7 @@ Moves off Home: the timeline notes card (into a sheet from the chart), the backu
 
 **Opens on:**
 
-- A compact header row: **+ Add account** and a status pill counting connections (red "1 problem", amber "2 to check", or green "All synced"), which moves focus to the first affected card, worst first. Red and amber are buttons; "All synced" is a badge, shown only when every connection was read in this load.
+- A compact header row: **+ Add account** and a status pill counting connections (red "1 problem", amber "2 to check", or green "All synced"), which moves focus to the first affected card, worst first (or opens Settings > Connections when that connection has no card). Red and amber are buttons; "All synced" is a badge. The pill shows only once every connection was read in this load, never from this device's snapshot or a load that failed.
 - One summary line by type: Cash, Credit, Investments, Loans, Other, with subtotals (shown when the accounts fall in two or more). A group missing an account of its kind is marked Incomplete, and what the line can't count is said under it: a red notice naming the institutions whose accounts are left out, an amber one naming those whose figures are only last known.
 - **Institution cards**, grouped by institution as today. Header: name, source badge (Manual, via SimpleFIN, via Lunch Flow), subtotal, ⋯. A one-line "Synced 2h ago" (or the caveat, in its severity color). Rows: name and mask, one subtitle line (type, or the payment line on a card or loan, or a cash chip on a brokerage), balance, chevron.
 - Problems stay on the card they concern: the reconnect notice and **Reconnect** button, Review accounts, account questions ("Did this close?"), missing-rows and stale-balance notices.
