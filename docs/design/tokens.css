@@ -1,9 +1,10 @@
 /*
  * Nya design tokens: reference file for the UI reorganization.
  *
- * Not imported by the app yet. Rollout phase 2 (docs/design/rollout.md) moves
- * these into app/globals.css. Contrast ratios are listed in
- * docs/design/design-system.md and are checked by the script described there.
+ * Rollout phase 2 copied the scales, the dark theme and the aliases into
+ * app/globals.css; the light theme waits here for phase 7. Contrast ratios are
+ * listed in docs/design/design-system.md and checked, with the copies kept
+ * equal, by test/design-guard.test.ts.
  *
  * Theme selection: follows the system. Dark when the system is dark or states
  * no preference, light when it is light. A choice in Settings sets
@@ -18,7 +19,7 @@
   --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
   --fs-2: 13px; /* secondary lines, notices, helper text */
   --fs-3: 15px; /* body, list rows, buttons */
-  --fs-4: 17px; /* card titles, sheet titles */
+  --fs-4: 17px; /* sheet titles, settings section titles */
   --fs-5: 20px; /* screen titles, summary figures */
   --fs-6: 24px; /* large figures in a stat strip */
   --fs-hero: clamp(32px, 9vw, 40px); /* the one hero number per screen */
@@ -168,7 +169,7 @@
 
 /* ---------- Aliases for today's names ----------
  * Let globals.css move to the new tokens a component at a time. Each alias
- * goes once nothing reads it (rollout.md, phase 2).
+ * goes once nothing reads it (rollout.md).
  */
 :root {
   --bg: var(--canvas);

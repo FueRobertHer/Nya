@@ -1,13 +1,13 @@
 # Nya design
 
-A plan to make Nya easier to use: less on each screen, everything in one obvious place, and one look across the app. Docs and mockups only; no app code has changed.
+A plan to make Nya easier to use: less on each screen, everything in one obvious place, and one look across the app. Phases 1 and 2 of the [rollout](rollout.md) are built; the rest is planned here.
 
 | Document | What it covers |
 |---|---|
-| [Guidelines](guidelines.md) | **Start here when building UI.** Where a new feature goes, which classes and colors to use today, the honesty rules, and the checklist each pull request is reviewed against. `test/design-guard.test.ts` enforces the checkable parts. |
+| [Guidelines](guidelines.md) | **Start here when building UI.** Where a new feature goes, which classes and colors to use, the honesty rules, and the checklist each pull request is reviewed against. `test/design-guard.test.ts` enforces the checkable parts. |
 | [Information architecture](information-architecture.md) | What each tab is for, what moves where, the Settings screen, the end of Manage mode, Needs attention, deep links, and a table placing every component. |
 | [Design system](design-system.md) | The visual direction, color in light and dark with contrast ratios, type, spacing, components and the classes each replaces, status and honesty rules, copy, accessibility. |
-| [Tokens](tokens.css) | The proposed design tokens as CSS, with aliases for today's names. Not imported by the app. |
+| [Tokens](tokens.css) | The design tokens as CSS, with aliases for today's names. The scales and dark theme are copied into `app/globals.css`; the light theme waits for phase 7. |
 | [Rollout](rollout.md) | Seven pull-request-sized phases, effort and risks for each. |
 | [Mockups](mockups/index.html) | Phone screens of every surface, in dark and light, and the two visual directions side by side. |
 

@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phase 1 is built (`components/Settings.tsx`); the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`) and 2 (the tokens and primitives in `app/globals.css`) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -19,7 +19,7 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 - Add the Settings screen and its six sections ([information-architecture.md](information-architecture.md#settings)); move the 13 Manage cards, AccountLinks and AdminUnusedItems into them as they are (no restyling yet). Preferences holds currency and the weekly summary; its theme row arrives in phase 7. Reports already has a home on Activity, so it simply leaves Manage.
 - Avatar menu: Settings first. Password mode: a gear instead of "Log out" and "Sign out everywhere" in the header.
 - Hide, Close... and Delete move into the account's existing expanded area (its own table row, so no button sits inside the clickable row); phase 3 replaces this with the account sheet.
-- "Add or remove accounts" and Disconnect move to an institution "Options" button that opens an action list in the existing `Sheet.tsx` (the menu popover comes with the phase 2 primitives).
+- "Add or remove accounts" and Disconnect move to an institution "Options" button that opens an action list in the existing `Sheet.tsx` (the menu popover comes in phase 3).
 - All-hidden institutions listed in Settings > Connections with Disconnect.
 - Rewire `openCurrency`, `openRestore`, `#bring-back`; update the Hidden card's wording. `?view=connections` keeps working unchanged, since Connection health stays on Accounts until phase 3.
 - The Payoff plan button stays on Accounts until phase 6.
@@ -38,6 +38,17 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 - Global: focus ring, reduced motion, nothing under 12px, tabular money.
 - Migrate the shell and Settings to the primitives; delete replaced classes as each last user goes.
 - Optional, once stable: split `globals.css` into layers (tokens, base, primitives, features, print).
+
+**Built:** the scales and the dark theme at the top of `app/globals.css`, with the aliases; `lib/theme.ts` for Clerk and `themeColor`; the guard test holds it, the web manifest and the app's copy of the tokens to `tokens.css`, and checks contrast on the app's own dark tokens. The app's bare buttons fill with `--accent-fill` and danger with `--danger-fill`, so their white labels pass AA. Clerk's own primary button keeps `--accent` (white on it is 3.23:1), since Clerk uses one color for its buttons and its links and `--accent-fill` as link text would fail (3.43:1); that waits for Clerk's own styling to be split, or a darker label. One `:focus-visible` ring in `--focus` and one reduced-motion rule for everything. The primitives as CSS: `.money`, `.card-header`, `.list-rows` and `.list-row`, `.btn` (secondary, ghost, danger, block) and `.btn-row`, `.segmented`, `.badge`, `.chip`, `.notice` (critical, caution, info, done), `.helper`. The header's icon buttons are 44px with 20px icons; the tab bar is on `--glass` with 12px labels; the Settings list is `.list-rows` of `.list-row`, and the `.settings-row` and `.settings-list` classes are gone.
+
+**Kept narrow, and where each piece went:**
+
+- `button { width: 100% }` stays. `.btn` sets its own width, so nothing changes for a button until it takes the class; the global rule flips once no bare `<button>` relies on it, with the `.btn-block` audit then.
+- The other 37 declarations under 12px (calendar figures, chart ticks, the plan grid, Sankey labels, tags) move to `--fs-1` with their screen's phase, where each can be checked at 320px: charts in 4 and 5, the calendar and the plan grid in 6. The guard baseline holds them meanwhile.
+- The menu popover, the "Why?" disclosure and the sheet's sticky footer arrive in phase 3 with their first users (the institution ⋯ menu, the coverage disclosure, the account sheet), not as unused code.
+- The cards inside the Settings sections keep their classes; each moves to the primitives when it is next changed.
+- The 27 `tabular-nums` declarations in feature rules stay until their rules move to `.money`.
+- The tag colors stay as they are until phase 7 gives them light values.
 
 **Risks:** the global `button { width: 100% }` change touches every button; land it with the `.btn-block` audit in the same PR. Print reports and hide amounts (`data-amounts="hidden"`) must be checked on every changed component. Check widths 320, 375, 390 and 1280px.
 
@@ -88,7 +99,7 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 
 ## The contrast check
 
-A small Node script reads `tokens.css` and checks 80 pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1), and fails if the light theme's two copies (system setting and explicit choice) drift apart. Add it to the repository with phase 2 and run it with the tests.
+`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1): dark from `app/globals.css`, light from `tokens.css` until phase 7 moves it into the app. It also fails if the light theme's two copies (system setting and explicit choice) drift apart, or if the app's dark theme, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
 
 ## Done means
 
