@@ -1,7 +1,9 @@
 'use client';
 
-// The FI card on Home: the Plan's FI number, years to FI and the trailing
-// year's savings rate, small, with a way to the Plan tab.
+// The FI line on Home, the last row of This month (rollout phase 4c): years
+// to FI and how far along, then the Plan's FI number and the trailing year's
+// savings rate, opening the Plan tab; every note the FI card said sits under
+// it, gathered into one line when there are two or more.
 //
 // THE PLAN'S OWN FIGURES. It reads the saved plan (/api/fire-plan), repairs
 // it as the Plan tab does (lib/fire/plan.ts repairPlan), measures from the
@@ -42,6 +44,7 @@ import type { NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
+import TotalCaveats, { type Caveat } from './TotalCaveats';
 
 export type FiProgressProps = {
   txns: Txn[] | null;
@@ -137,8 +140,8 @@ export function ready(s: { plan: 'loading' | 'failed' | 'loaded'; txns: Txn[] | 
   return !s.contributionsPending;
 }
 
-/** The card itself, from figures already worked out. Null when there is no
- *  FI number to show. */
+/** The row itself, from figures already worked out: an <li> for This month's
+ *  list. Null when there is no FI number and nothing to say why. */
 export function FiProgressView({
   figures,
   unconfirmed = null,
@@ -173,23 +176,17 @@ export function FiProgressView({
   const accountsGap = view.assets.source === 'unmeasured' ? assetsGap(inputs.assets, inputs.rates) : null;
   const waitsFor = view.yearsToFi === null ? notMeasuredWhat(view) : null;
   const notWorkedOut = waitsFor ? `Years to FI aren’t worked out: ${waitsFor} measured (above), and a figure that isn’t measured is never counted as zero.` : null;
+  // Every note the card said, in its words and its level (amber where it says
+  // a figure may be off or isn't measured, neutral where it explains): under
+  // the row, gathered into one line that opens in place when there are two
+  // or more (components/TotalCaveats.tsx). Built in a list, one at a time.
+  const notes: Caveat[] = [];
   if (view.fiNumber === null) {
     if (!flowsGap) return null;
-    return (
-      <div className="card fi-card">
-        <div className="inst-header">
-          <div className="inst-name">Financial independence</div>
-          <button className="plan-edit" onClick={onOpenPlan}>
-            {saved ? 'Your plan' : 'Set up your plan'}
-          </button>
-        </div>
-        <div className="as-of stale">{gapText(flowsGap)}</div>
-        {accountsGap && (
-          <div className="as-of stale">{gapText(accountsGap)}</div>
-        )}
-        {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
-      </div>
-    );
+    notes.push({ key: 'flows-gap', severity: 'caution', summary: 'spending not measured', body: gapText(flowsGap) });
+    if (accountsGap) notes.push({ key: 'accounts-gap', severity: 'caution', summary: 'invested assets not measured', body: gapText(accountsGap) });
+    if (unconfirmed) notes.push({ key: 'unconfirmed', severity: 'caution', summary: 'the plan’s currency not confirmed', body: unconfirmed });
+    return <FiRow what="FI isn’t worked out" onOpenPlan={onOpenPlan} notes={notes} />;
   }
   const money = (n: number) => wholeMoney(n, currency);
   // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
@@ -206,80 +203,103 @@ export function FiProgressView({
     (x): x is string => !!x
   );
   const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${plan.taxRate > 0 ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and a ${pct(plan.realReturn)} real return`;
-  return (
-    <div className="card fi-card">
-      <div className="inst-header">
-        <div className="inst-name">Financial independence</div>
-        <button className="plan-edit" onClick={onOpenPlan}>
-          {saved ? 'Your plan' : 'Set up your plan'}
-        </button>
-      </div>
-      <div className="fi-lead">
-        <span className="fi-lead-value">
-          <Masked>{money(view.fiNumber)}</Masked>
-        </span>
-        <span className="plan-stat-label">FI number</span>
-      </div>
-      <div className="fi-stats">
-        <div className="plan-stat">
-          <span className="plan-stat-value">{yearsToFiText(view.yearsToFi)}</span>
-          <span className="plan-stat-label">to FI</span>
-        </div>
-        {savingsRate !== null && (
-          <div className="plan-stat">
-            <span className="plan-stat-value">{savingsRateText(savingsRate)}</span>
-            <span className="plan-stat-label">savings rate, {inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}</span>
-          </div>
-        )}
-      </div>
-      {view.progress !== null && (
-        <>
-          <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>
-            <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
-          </div>
-          <div className="as-of">
-            <Masked>{money(view.assets.value ?? 0)}</Masked> invested · {progressText(view.progress)} of the way
-          </div>
-        </>
-      )}
-      <p className="panel-note">
+  notes.push({
+    key: 'estimates',
+    severity: 'info',
+    summary: saved ? 'how these are estimated' : 'from the Plan’s defaults',
+    body: (
+      <>
         Estimates, {saved ? `from your plan: ${rates}` : `from the Plan's default assumptions: ${rates}. Set your own on the Plan tab`}.
         {typed.length ? ` Using the ${typed.join(' and ')} you typed there.` : ''} The savings rate is income minus spending as a share of income
         {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}
         {view.savings.source === 'typed' && savingsRate !== null ? ', from your transactions, not the savings you typed' : ''}.
-      </p>
-      {!workplaceAdded && view.savings.source === 'measured' && <p className="panel-note">{PAYROLL_NOTE}</p>}
-      {/* What the year's figures leave out, in the Plan's own words: the
-          savings rate is always from the year's transactions, so these are
-          said whenever there are any. */}
-      {inputs.flows && leftOut.excluded && (
-        <p className="panel-note">
-          <Masked>{leftOut.excluded}</Masked>
-        </p>
-      )}
-      {/* Transactions entered by hand only: the connections that bring in
-          none are named, as the Plan names them beside its figures. */}
-      {inputs.flows && inputs.coverage.named && <p className="panel-note">{inputs.coverage.named}</p>}
-      {inputs.flows && !flowsGap && leftOut.otherCurrencies && (
-        <div className="as-of stale">
-          <Masked>{leftOut.otherCurrencies}</Masked>
+      </>
+    ),
+  });
+  if (!workplaceAdded && view.savings.source === 'measured') notes.push({ key: 'payroll', severity: 'info', summary: 'pay before it reaches a bank', body: PAYROLL_NOTE });
+  // What the year's figures leave out, in the Plan's own words: the savings
+  // rate is always from the year's transactions, so these are said whenever
+  // there are any.
+  if (inputs.flows && leftOut.excluded) notes.push({ key: 'excluded', severity: 'info', summary: 'excluded transactions', body: <Masked>{leftOut.excluded}</Masked> });
+  // Transactions entered by hand only: the connections that bring in none
+  // are named, as the Plan names them beside its figures.
+  if (inputs.flows && inputs.coverage.named) notes.push({ key: 'named', severity: 'info', summary: 'connections with no transactions', body: inputs.coverage.named });
+  if (inputs.flows && !flowsGap && leftOut.otherCurrencies)
+    notes.push({ key: 'other-currencies', severity: 'caution', summary: 'other currencies left out', body: <Masked>{leftOut.otherCurrencies}</Masked> });
+  if (view.assets.source === 'measured' && otherAccounts) notes.push({ key: 'other-accounts', severity: 'caution', summary: 'other currencies left out', body: otherAccounts });
+  if (spendingShort)
+    notes.push({
+      key: 'short',
+      severity: 'caution',
+      summary: 'spending may be low',
+      body: `May be low: spending is missing ${missing}${rateShort ? ', so the savings rate may be off too' : ''}. The Plan tab says which.`,
+    });
+  else if (rateShort) notes.push({ key: 'short', severity: 'caution', summary: 'savings rate may be off', body: `The savings rate may be off: it is missing ${missing}. The Plan tab says which.` });
+  if (assetsShort) notes.push({ key: 'assets-short', severity: 'caution', summary: 'invested assets may be low', body: "Invested assets may be low: some couldn't be counted. The Plan tab says which." });
+  if (currencyNote) notes.push({ key: 'currency', severity: 'caution', summary: 'investments and spending in two currencies', body: currencyNote });
+  if (flowsGap) notes.push({ key: 'flows-gap', severity: 'caution', summary: 'spending not measured', body: gapText(flowsGap) });
+  if (yearText) notes.push({ key: 'year', severity: 'caution', summary: 'savings not measured', body: yearText });
+  if (accountsGap) notes.push({ key: 'accounts-gap', severity: 'caution', summary: 'invested assets not measured', body: gapText(accountsGap) });
+  if (notWorkedOut) notes.push({ key: 'not-worked-out', severity: 'caution', summary: 'years to FI not worked out', body: notWorkedOut });
+  if (unconfirmed) notes.push({ key: 'unconfirmed', severity: 'caution', summary: 'the plan’s currency not confirmed', body: unconfirmed });
+  if (convertedNote) notes.push({ key: 'converted', severity: 'info', summary: 'converted into the Plan’s currency', body: convertedNote });
+  if (repaired)
+    notes.push({
+      key: 'repaired',
+      severity: 'caution',
+      summary: 'saved values replaced',
+      body: "Your saved plan has values this version of Nya can't use, so these use the defaults for them. The Plan tab says which.",
+    });
+
+  // The row: how far, then the figures the notes speak of (the FI number,
+  // what is invested, the savings rate).
+  const years = view.yearsToFi;
+  const there = view.progress !== null ? progressText(view.progress) : null;
+  const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
+  let title: string;
+  let withNumber = true;
+  if (years === 0) title = 'You’re at FI';
+  else if (years === Infinity) title = `FI not reached at this savings rate${there ? ` · ${there} there` : ''}`;
+  else if (years !== null) title = `FI in ${yearsToFiText(years)}${there ? ` · ${there} there` : ''}`;
+  else if (there) title = `${there} of the way to FI`;
+  else {
+    title = `FI number ${money(view.fiNumber)}`;
+    withNumber = false;
+  }
+  const invested = there !== null ? `${money(view.assets.value ?? 0)} invested` : null;
+  const sub = [withNumber ? `FI number ${money(view.fiNumber)}` : null, invested, rate].filter((s): s is string => !!s).join(' · ');
+  return <FiRow what={title} detail={sub || undefined} onOpenPlan={onOpenPlan} notes={notes} />;
+}
+
+const CHEVRON = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+
+/** The FI line in This month: the row opens the Plan tab; its notes sit
+ *  under it, outside the button (a <details> can't be inside one). */
+function FiRow({ what, detail, onOpenPlan, notes }: { what: string; detail?: string; onOpenPlan: () => void; notes: readonly Caveat[] }) {
+  return (
+    <li>
+      <button type="button" className="list-row" onClick={onOpenPlan}>
+        <span className="list-row-text">
+          <span className="list-row-title">
+            <Masked>{what}</Masked>
+          </span>
+          {detail && (
+            <span className="list-row-sub">
+              <Masked>{detail}</Masked>
+            </span>
+          )}
+        </span>
+        {CHEVRON}
+      </button>
+      {notes.length > 0 && (
+        <div className="row-notes">
+          <TotalCaveats items={notes} />
         </div>
       )}
-      {view.assets.source === 'measured' && otherAccounts && <div className="as-of stale">{otherAccounts}</div>}
-      {spendingShort ? (
-        <div className="as-of stale">{`May be low: spending is missing ${missing}${rateShort ? ', so the savings rate may be off too' : ''}. The Plan tab says which.`}</div>
-      ) : (
-        rateShort && <div className="as-of stale">{`The savings rate may be off: it is missing ${missing}. The Plan tab says which.`}</div>
-      )}
-      {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
-      {currencyNote && <div className="as-of stale">{currencyNote}</div>}
-      {flowsGap && <div className="as-of stale">{gapText(flowsGap)}</div>}
-      {yearText && <div className="as-of stale">{yearText}</div>}
-      {accountsGap && <div className="as-of stale">{gapText(accountsGap)}</div>}
-      {notWorkedOut && <div className="as-of stale">{notWorkedOut}</div>}
-      {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
-      {convertedNote && <div className="as-of">{convertedNote}</div>}
-      {repaired && <div className="as-of stale">Your saved plan has values this version of Nya can&apos;t use, so these use the defaults for them. The Plan tab says which.</div>}
-    </div>
+    </li>
   );
 }
