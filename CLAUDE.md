@@ -7,11 +7,23 @@
 - `bun test` runs the whole suite; `bun test test/<name>.test.ts` runs one file.
 - `bun run typecheck` runs `tsc --noEmit`.
 - Run both before calling a change done.
+- CI (`.github/workflows/ci.yml`, Ubuntu with a real Redis) runs the same pair and is the reference. On a Windows checkout about 47 tests also fail on a clean `main` (source scans and byte-exact fixtures that see CRLF, age and zip vectors, a spawn of `bun.exe`). Before blaming a change, run the suite on `main` and compare the failing sets.
+
+## Branches and worktrees
+
+- Build each pull request in its own worktree beside this checkout, so the checkout's own uncommitted files stay out of it: `git worktree add -b <branch> ../Nya-<name> origin/main`, then `bun install` there.
+- Once the PR merges, remove the worktree (`git worktree remove ../Nya-<name>`) and delete its branch (`git branch -d <branch>`).
+
+## Line endings
+
+- Files keep the endings they were committed with: most are LF, about 140 are CRLF, and `app/globals.css` is mixed (CRLF, then LF for its last `.stack` block). `git ls-files --eol` shows each file's.
+- `core.autocrlf` is on, so an editor or script can quietly rewrite a whole file's endings. After a scripted rewrite, check that `git diff --stat` counts only the lines you meant to change.
 
 ## Checking UI
 
 - The dev server (`bun run dev`) reads `.env.development.local`, which points at the real Upstash Redis and Clerk, with the deployment's own password. Don't sign in or write through it.
 - Prove UI behavior with view tests instead (`test/*-view.test.tsx`, with `test/fake-redis.ts` for storage).
+- To check layout (320px fit, 44px targets, hover, focus), serve a static page that links `app/globals.css` and holds the markup in question, from a throwaway server outside the repo, and measure it in the browser.
 - To look at real screens, use the public Preview demo linked in the README. Its sandbox demo accounts need no password, but it trails `main`.
 
 ## UI work
