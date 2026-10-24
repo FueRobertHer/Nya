@@ -42,7 +42,7 @@ import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportShe
 import MigrationSheet, { SwitchingLink } from './MigrationSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
-import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
+import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
 import { useTransactionEdits } from './transaction-edits';
 import SharedExpensesCard, { type SharedFacts } from './SharedExpensesCard';
 import { useSharedExpenses } from './shared-expenses-state';
@@ -1079,6 +1079,9 @@ export default function Dashboard({
     },
     [loadNetWorth, requestBackfill, loadTransactions, txns]
   );
+  // Every SimpleFIN and Lunch Flow connection, read once for the dashboard,
+  // again after each load (`asOf` changes with it).
+  const connectors = useConnectors(asOf);
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
   const askLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
   // Offered only where the deployment turned it on (app/page.tsx).
@@ -2004,7 +2007,7 @@ export default function Dashboard({
               <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan refreshKey={asOf} />
             </div>
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
-            <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
+            <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
             {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
           </>
@@ -2256,7 +2259,7 @@ export default function Dashboard({
                 {/* Each SimpleFIN connection: when it last answered, what it
                     reported in its own words, Refresh, Choose accounts and
                     Disconnect. Nothing when there is none. */}
-                <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
+                <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
 
                 {sortedInstitutions.map((inst) => (
                   <InstitutionCard

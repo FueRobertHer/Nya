@@ -72,6 +72,8 @@ export function guessKind(name: string, balance?: number): Kind {
   return 'depository';
 }
 
+/** What GET /api/connectors sends: every connection, and accounts left from one that is gone. */
+export type ConnectorsList = ListBody;
 type ListBody = {
   connections: ConnectionView[];
   orphaned: { connection_id: string; connector?: ConnectorKind; accounts: AccountView[] }[];
@@ -243,15 +245,14 @@ export function ConnectorCardView({
   );
 }
 
-/** The cards: one per connection, read when the tab shows and after each
- *  change (`refreshKey`). Nothing at all when there is no connection. */
-export function ConnectorCards({ refreshKey, onAsk, onChanged }: { refreshKey: unknown; onAsk: (ask: ConnectorAsk) => void; onChanged: () => void }) {
+/** Every connection, read once for the whole dashboard (its cards, their
+ *  menus and Connection details, Settings > Connections, the empty state),
+ *  when it opens and after each change (`refreshKey`). `error` is why the
+ *  last read failed, said where the connections would be. */
+export function useConnectors(refreshKey: unknown): { data: ListBody | null; error: string; reload: () => Promise<void> } {
   const [data, setData] = useState<ListBody | null>(null);
   const [error, setError] = useState('');
-  const [refreshing, setRefreshing] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Record<string, string>>({});
-
-  const load = useCallback(async () => {
+  const reload = useCallback(async () => {
     const res = await send('/api/connectors', 'GET');
     if (res.ok) {
       setData(res.data);
@@ -259,8 +260,29 @@ export function ConnectorCards({ refreshKey, onAsk, onChanged }: { refreshKey: u
     } else setError(res.error);
   }, []);
   useEffect(() => {
-    load();
-  }, [load, refreshKey]);
+    reload();
+  }, [reload, refreshKey]);
+  return { data, error, reload };
+}
+
+/** The cards of connections that have no institution card (`only`, by
+ *  connection; every one when not given): one per connection, and the
+ *  accounts left from one that is gone. Nothing at all when there is none. */
+export function ConnectorCards({
+  data,
+  error,
+  only,
+  onAsk,
+  onChanged,
+}: {
+  data: ListBody | null;
+  error: string;
+  only?: ReadonlySet<string>;
+  onAsk: (ask: ConnectorAsk) => void;
+  onChanged: () => void;
+}) {
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
 
   const refresh = useCallback(
     async (connection_id: string) => {
@@ -272,17 +294,18 @@ export function ConnectorCards({ refreshKey, onAsk, onChanged }: { refreshKey: u
         ...n,
         [connection_id]: !res.ok ? res.error : f && f.ok ? `Refreshed: ${f.added === 0 ? 'nothing new' : `${f.added} new transaction${f.added === 1 ? '' : 's'}`}.` : '',
       }));
-      await load();
+      // Its change reloads the dashboard, and with it the connections.
       if (res.ok) onChanged();
     },
-    [load, onChanged]
+    [onChanged]
   );
 
   if (error) return <div className="card"><div className="error">Your own sync’s connections couldn’t be loaded: {error}</div></div>;
   if (!data) return null;
+  const shown = (id: string) => !only || only.has(id);
   return (
     <>
-      {data.connections.map((conn) => (
+      {data.connections.filter((c) => shown(c.connection_id)).map((conn) => (
         <ConnectorCardView
           key={conn.connection_id}
           conn={conn}
@@ -293,7 +316,7 @@ export function ConnectorCards({ refreshKey, onAsk, onChanged }: { refreshKey: u
           onRefresh={() => refresh(conn.connection_id)}
         />
       ))}
-      {data.orphaned.map((o) => (
+      {data.orphaned.filter((o) => shown(o.connection_id)).map((o) => (
         <div className="card" key={o.connection_id}>
           <p className="stale-note">
             {o.accounts.map((a) => a.name).join(', ')} {o.accounts.length === 1 ? 'is' : 'are'} left from a connection that is gone. Disconnect to keep{' '}
