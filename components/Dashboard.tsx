@@ -1991,25 +1991,24 @@ export default function Dashboard({
       title: 'Account',
       sub: clerk ? 'Your profile and signing out are in the account menu' : 'Sign out here, or on every device',
       content: (
-        <div className="card">
+        <div className="card stack">
           {clerk ? (
             // Only where things are: Sign out is the account menu's own, so
-            // it is not repeated here.
-            <p className="panel-note">
-              Your profile, how you sign in, your devices, deleting your account and signing out are in the
-              account menu, under your picture at the top.
+            // it is not repeated here. No button to the account window
+            // either: Clerk's openUserProfile() would open it without the
+            // Data & privacy page, which only the menu's window carries.
+            <p className="helper">
+              Tap your picture or initial, at the top right. Manage account there has your profile, how you
+              sign in, your devices and deleting your account; Sign out is beside it.
             </p>
           ) : (
             <>
-              <p className="panel-note">
-                Sign out ends your session on this device. Sign out everywhere ends every session, on every
-                device, this one included.
-              </p>
-              <div className="card-actions">
-                <button className="secondary" onClick={logout}>
+              <p className="helper">Sign out everywhere also signs out every other device.</p>
+              <div className="btn-row">
+                <button className="btn secondary" onClick={logout}>
                   Sign out
                 </button>
-                <button className="secondary" onClick={signOutEverywhere}>
+                <button className="btn secondary" onClick={signOutEverywhere}>
                   Sign out everywhere
                 </button>
               </div>

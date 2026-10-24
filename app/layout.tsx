@@ -75,7 +75,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // proxy.ts made for this request, as the policy requires. That is Clerk's
   // documented way to work under a nonce-based policy.
   return clerkEnabled() ? (
-    <ClerkProvider appearance={CLERK_APPEARANCE} dynamic>
+    // Straight to sign-in after the account menu's Sign out, the only one with
+    // Clerk on, rather than through the home page's redirect.
+    <ClerkProvider appearance={CLERK_APPEARANCE} afterSignOutUrl="/sign-in" dynamic>
       {page}
     </ClerkProvider>
   ) : (

@@ -80,8 +80,13 @@ describe('the dashboard', () => {
     }
     // With Clerk, signing out is the account menu's alone: Settings > Account
     // points to it and repeats no Sign out of its own.
-    expect(section('account')).not.toContain('signOut(');
-    expect(section('account')).toContain('deleting your account and signing out are in the');
+    const account = section('account');
+    const clerkBranch = account.slice(account.indexOf('{clerk ? ('), account.indexOf(') : ('));
+    expect(clerkBranch).not.toContain('<button');
+    expect(clerkBranch).not.toMatch(/SignOut|signOut|logout/);
+    // Password mode's two say how they differ, and both say "Sign out".
+    expect(account).toContain('Sign out everywhere also signs out every other device.');
+    expect(dashboard).not.toContain('Log out');
     // Sharing only where there is Clerk to share between people.
     expect(dashboard).toContain("...(clerk\n      ? [\n          {\n            id: 'sharing' as const,");
   });
