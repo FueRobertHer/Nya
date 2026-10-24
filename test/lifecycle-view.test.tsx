@@ -11,7 +11,7 @@ import {
   questionText,
   type EndedAccount,
 } from '@/components/AccountLifecycle';
-import { TimelineNotesCard } from '@/components/TimelineNotes';
+import { TimelineNotesSheet } from '@/components/TimelineNotes';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import type { Institution } from '@/components/accounts-format';
 import { severityOf } from '@/lib/accounts-status';
@@ -247,13 +247,34 @@ describe('closures that can’t be read', () => {
   });
 });
 
-describe('the notes card', () => {
-  test('collapsed with a count; what couldn’t be read is said', () => {
-    const notes = [{ id: 'n1', date: '2024-03-13', text: 'Bought the house', kind: 'user' as const }];
-    const html = renderToStaticMarkup(<TimelineNotesCard notes={notes} problem="One note couldn’t be read, so it isn’t shown." onChanged={noop} />);
-    expect(text(html)).toContain('Notes on the timeline 1');
-    expect(html).toContain('aria-expanded="false"');
+describe('the chart notes sheet', () => {
+  const notes = [
+    { id: 'n1', date: '2024-03-13', text: 'Bought the house', kind: 'user' as const },
+    { id: 'n2', date: '2024-05-02', text: 'Chase Savings closed', kind: 'auto' as const, account_id: 'a1' },
+  ];
+
+  test('closed: nothing on the page', () => {
+    expect(renderToStaticMarkup(<TimelineNotesSheet open={false} onClose={noop} notes={notes} problem={null} onChanged={noop} />)).toBe('');
+  });
+
+  test('open: every note newest first, Nya’s marked, only the person’s editable, and what couldn’t be read said', () => {
+    const html = renderToStaticMarkup(<TimelineNotesSheet open onClose={noop} notes={notes} problem="One note couldn’t be read, so it isn’t shown." onChanged={noop} />);
+    expect(html).toContain('aria-label="Chart notes"');
     expect(text(html)).toContain('One note couldn’t be read, so it isn’t shown.');
-    expect(html).not.toContain('Bought the house');
+    expect(html).toContain('<div class="notice caution">');
+    const t = text(html);
+    expect(t.indexOf('Chase Savings closed')).toBeLessThan(t.indexOf('Bought the house'));
+    expect(html).toContain('<span class="badge">Added when the account changed</span>');
+    expect(buttons(html).filter((b) => b === 'Edit')).toHaveLength(1);
+    expect(buttons(html)).toContain('Add a note');
+    // The explanation is behind "What are these?", its words kept.
+    expect(html).toContain('<summary>What are these?</summary>');
+    expect(t).toContain('A note marks its day on the chart, so a step in the line says what it was: a house bought, a 401(k) rolled over.');
+  });
+
+  test('no notes yet: said, and one can be added', () => {
+    const html = renderToStaticMarkup(<TimelineNotesSheet open onClose={noop} notes={[]} problem={null} onChanged={noop} />);
+    expect(text(html)).toContain('No notes yet.');
+    expect(buttons(html)).toContain('Add a note');
   });
 });

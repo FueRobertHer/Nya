@@ -15,37 +15,52 @@ import { Masked } from './HideAmounts';
 import { chartGapLines, convertedHeading, convertedText, leftOutLines, staleText, unknownText } from './currency-text';
 import { unusableText } from '@/lib/fx/words';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
+import type { Caveat } from './TotalCaveats';
 
-/** `onOpen`: the Currency card, at the form for a rate for that currency. */
-export function HeroCurrencyNote({ base, main, onOpen }: { base: NetWorthBase; main: string | null; onOpen: (rateFor: string | null) => void }) {
+/** What the hero total says of its conversion, as caveats on it
+ *  (components/TotalCaveats.tsx): that it is converted, neutral; an account
+ *  left out for want of a rate, red, as the total is short; old or unusable
+ *  rates, amber; accounts saying no currency, neutral. `onOpen`: the Currency
+ *  card, at the form for a rate for that currency. */
+export function heroCurrencyCaveats(base: NetWorthBase, main: string | null, onOpen: (rateFor: string | null) => void): Caveat[] {
   const converted = convertedText(base, base.fx.own);
-  const left = leftOutLines(base);
   const own = base.parts.some((p) => p.rate?.source === 'own');
-  return (
-    <>
-      {converted && (
-        <div className="as-of currency-note">
+  const unusable = unusableText(base.rates.unusable ?? []);
+  const out: Caveat[] = [];
+  if (converted)
+    out.push({
+      key: 'converted',
+      severity: 'info',
+      summary: `converted into ${base.currency}`,
+      body: (
+        <>
           {convertedHeading(base.currency, base.rates.day, own)}: <Masked>{converted}</Masked>.
-        </div>
-      )}
-      {left.map((line) => (
-        <div className="as-of stale" key={line.text}>
+        </>
+      ),
+    });
+  for (const line of leftOutLines(base))
+    out.push({
+      key: `left-out:${line.text}`,
+      severity: 'critical',
+      summary: 'a currency left out',
+      body: (
+        <>
           {line.text}
           {line.rateFor && (
             <>
               {' '}
-              <button className="link-btn" onClick={() => onOpen(line.rateFor)}>
+              <button className="btn ghost" onClick={() => onOpen(line.rateFor)}>
                 Set a rate for {line.rateFor}
               </button>
             </>
           )}
-        </div>
-      ))}
-      {base.rates.stale && <div className="as-of stale">{staleText(base.rates.day)}</div>}
-      {unusableText(base.rates.unusable ?? []) && <div className="as-of stale">{unusableText(base.rates.unusable ?? [])}</div>}
-      {base.unknown > 0 && <div className="as-of">{unknownText(base.unknown, main)}</div>}
-    </>
-  );
+        </>
+      ),
+    });
+  if (base.rates.stale) out.push({ key: 'stale-rates', severity: 'caution', summary: 'old exchange rates', body: staleText(base.rates.day) });
+  if (unusable) out.push({ key: 'unusable-rates', severity: 'caution', summary: 'some rates couldn’t be read', body: unusable });
+  if (base.unknown > 0) out.push({ key: 'unknown-currency', severity: 'info', summary: base.unknown === 1 ? 'an account with no currency' : 'accounts with no currency', body: unknownText(base.unknown, main) });
+  return out;
 }
 
 /** Under the chart: the days it couldn't convert, and what it left out. */

@@ -54,7 +54,7 @@ import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionDetails from './ConnectionDetails';
 import { ALERT, ConnectionStatus, connectionSeverity, statusBadge, type ConnectionPlace } from './ConnectionStatus';
 import { Menu } from './Menu';
-import { cardlessSeverity as cardlessSeverityOf, firstToFix, worse, type Severity } from '@/lib/accounts-status';
+import { cardlessSeverity as cardlessSeverityOf, firstToFix, severityOf, worse, type Severity } from '@/lib/accounts-status';
 import {
   useAccountLifecycle,
   AccountQuestions,
@@ -66,8 +66,8 @@ import {
   type LifecycleDamage,
   withEndedAccounts,
 } from './AccountLifecycle';
-import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
-import { totalNotes, type RestoreHoldNote } from './total-notes';
+import { useTimelineNotes, TimelineNotesSheet } from './TimelineNotes';
+import { totalCaveats, type RestoreHoldNote } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import BudgetsTab from './BudgetsTab';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
@@ -81,7 +81,7 @@ import RulesCard from './RulesCard';
 import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
-import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
+import { ChartCurrencyNote, CurrencyOffer, dismissOffer, heroCurrencyCaveats, offerDismissed, offerFor } from './CurrencyNotes';
 import { CORRECTION_KEEPS, RELABEL_KEEPS, rateEffectText, relabelledText } from './currency-text';
 import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
@@ -99,7 +99,9 @@ import { createWholeListStore, initialListState, type ListState } from '@/lib/wh
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
-import AccruedInterestNote from './AccruedInterestNote';
+import { accruedCaveats } from './AccruedInterestNote';
+import NetWorthCard from './NetWorthCard';
+import type { Caveat } from './TotalCaveats';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
@@ -117,7 +119,7 @@ import PlanTabLoader from './PlanTabLoader';
 // loaded the same way, after Home paints.
 import FiProgressLoader from './FiProgressLoader';
 import InstitutionCard, { cardHeadingId, institutionMenu } from './InstitutionCard';
-import { fmt, fmtAsOf, fmtDay, fmtInstantDay, fmtStaleDay, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
+import { fmt, fmtInstantDay, fmtStaleDay, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
 
 
 
@@ -998,6 +1000,8 @@ export default function Dashboard({
 
   // Notes on the timeline (#50), read again with each load.
   const timeline = useTimelineNotes(asOf);
+  // The chart notes sheet, from the Net worth card (components/TimelineNotes.tsx).
+  const [notesOpen, setNotesOpen] = useState(false);
   const reloadTimeline = timeline.reload;
   // Ending, reopening or answering for an account (#50) reloads what it
   // touches: the totals, its transactions from its end, its note.
@@ -1367,18 +1371,6 @@ export default function Dashboard({
     if (goalsStore.get().status === 'error' && !goalsStore.get().saving) goalsStore.load();
   }, [loadNetWorth, loadTransactions, txns, budgetsStore, goalsStore]);
 
-  // What the hero total is missing, named (components/total-notes.ts). Surfaced
-  // on the hero, not just on the cards: the number someone actually reads is
-  // the total. In order: institutions showing recovered balances ("real but a
-  // few days old"); recovered but short some rows; accounts that answered
-  // before and didn't this time, at institutions otherwise fine (history is
-  // paused until that resolves); and institutions that failed and could NOT be
-  // recovered, so the total is short by all of each. Those last are MORE wrong
-  // than the stale ones, so every such case is said, with when it was last seen.
-  const missingNotes = useMemo(
-    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }, restoreHold),
-    [institutions, restoreHold]
-  );
 
   // Connections Plaid says will end on a date, for the Home alert (Insights).
   const reconnectSoon = useMemo(
@@ -2031,6 +2023,43 @@ export default function Dashboard({
     },
   ];
 
+  // What qualifies the Home total, under it (components/TotalCaveats.tsx),
+  // each in its color: what the total is missing, named
+  // (components/total-notes.ts), colored as each institution's card is
+  // (lib/accounts-status.ts); the student loans' accrued interest it leaves
+  // out or couldn't read; and its currency. Built while rendering, not in a
+  // memo, so hide amounts masks the figures in them at once.
+  const homeCaveats: Caveat[] = [
+    ...totalCaveats(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }, restoreHold, severityOf).map((n) => ({
+      key: n.text,
+      severity: n.severity,
+      summary: n.summary,
+      body: n.text,
+    })),
+    ...accruedCaveats(institutions, accountCurrency, base?.fx ?? null),
+    ...(base
+      ? heroCurrencyCaveats(base, accountCurrency, openCurrency)
+      : currencyProblem
+        ? [
+            {
+              key: 'currency-unread',
+              severity: 'caution' as const,
+              summary: 'currency settings unreadable',
+              body: (
+                <>
+                  Your currency settings couldn&apos;t be read, so totals aren&apos;t converted.{' '}
+                  <button className="btn ghost" onClick={() => openCurrency()}>
+                    See Currency
+                  </button>
+                </>
+              ),
+            },
+          ]
+        : mixedAccountCurrency
+          ? [{ key: 'currency-mixed', severity: 'caution' as const, summary: 'currencies not converted', body: "Accounts use multiple currencies; totals aren't converted." }]
+          : []),
+  ];
+
   return (
     <>
       <main className="wrap">
@@ -2131,12 +2160,23 @@ export default function Dashboard({
             <RestoreBanner hold={restoreHold} onOpen={openRestore} />
             {tab === 'home' && (
               <>
-                <div className="card">
-                  <div className="total-label">Net Worth</div>
-                  <div className={`total-value${shownWorth < 0 ? ' negative' : ''}`}>
-                    <Masked>{fmt(shownWorth, shownCurrency)}</Masked>
-                  </div>
-                  {shownDelta && (
+                {/* One card: the total, what qualifies it, the chart and
+                    what qualifies that, the nightly jobs, and the chart
+                    notes in a sheet (rollout phase 4a). */}
+                <NetWorthCard
+                  worth={shownWorth}
+                  currency={shownCurrency}
+                  caveats={homeCaveats}
+                  pausedSince={pausedSince}
+                  notesProblem={timeline.problem}
+                  backupProblem={backupProblem}
+                  filesProblem={filesProblem}
+                  admin={admin}
+                  asOf={asOf}
+                  refreshing={refreshing}
+                  notesCount={timeline.notes.length}
+                  onNotes={() => setNotesOpen(true)}
+                  delta={shownDelta && (
                     <div className={`hero-delta${shownDelta.value >= 0 ? ' up' : ' down'}`}>
                       {shownDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(shownDelta.value), shownCurrency)}</Masked> (
                       {shownDelta.pct.toFixed(1)}%) · past {shownDelta.days} days
@@ -2149,37 +2189,31 @@ export default function Dashboard({
                       )}
                     </div>
                   )}
-                  {/* What the total leaves out in student loans' accrued
-                      interest, or couldn't read of it (lib/accrued-interest.ts). */}
-                  <AccruedInterestNote institutions={institutions} main={accountCurrency} fx={base?.fx ?? null} />
-                  {base ? (
-                    <HeroCurrencyNote base={base} main={accountCurrency} onOpen={openCurrency} />
-                  ) : currencyProblem ? (
-                    <div className="as-of stale">
-                      Your currency settings couldn&apos;t be read, so totals aren&apos;t converted.{' '}
-                      <button className="link-btn" onClick={() => openCurrency()}>
-                        See Currency
-                      </button>
-                    </div>
-                  ) : (
-                    mixedAccountCurrency && (
-                      <div className="as-of">
-                        Accounts use multiple currencies; totals aren&apos;t converted.
-                      </div>
+                  chart={
+                    shownHistory.length >= 2 ? (
+                      <>
+                        <NetWorthChart points={shownHistory} currency={base?.currency} notes={chartNotes} />
+                        {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
+                        {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
+                      </>
+                    ) : base && history.length >= 2 ? (
+                      // A history there is, that couldn't be converted: why.
+                      <ChartCurrencyNote base={base} main={accountCurrency} />
+                    ) : (
+                      <p className="empty-note">
+                        History builds as you use the app: check back tomorrow for your first
+                        trend line.
+                      </p>
                     )
-                  )}
-                  {asOf && (
-                    <div className="as-of">
-                      Updated {fmtAsOf(asOf)}
-                      {refreshing ? ' · refreshing…' : ''}
-                    </div>
-                  )}
-                  {missingNotes.map((note) => (
-                    <div className="as-of stale" key={note}>
-                      {note}
-                    </div>
-                  ))}
-                </div>
+                  }
+                />
+                <TimelineNotesSheet
+                  open={notesOpen}
+                  onClose={() => setNotesOpen(false)}
+                  notes={timeline.notes}
+                  problem={timeline.problem}
+                  onChanged={timeline.reload}
+                />
 
                 {offer && !base && !currencyProblem && !offerHidden && (
                   <CurrencyOffer
@@ -2192,67 +2226,6 @@ export default function Dashboard({
                   />
                 )}
 
-                <div className="card">
-                  <div className="inst-header">
-                    <div className="inst-name">Over time</div>
-                  </div>
-                  {shownHistory.length >= 2 ? (
-                    <>
-                      <NetWorthChart points={shownHistory} currency={base?.currency} notes={chartNotes} />
-                      {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
-                      {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
-                    </>
-                  ) : base && history.length >= 2 ? (
-                    // A history there is, that couldn't be converted: why.
-                    <ChartCurrencyNote base={base} main={accountCurrency} />
-                  ) : (
-                    <p className="empty-note">
-                      History builds as you use the app: check back tomorrow for your first
-                      trend line.
-                    </p>
-                  )}
-                  {backupProblem && (
-                    <div className="stale-note">
-                      {backupProblem.none ? (
-                        'No nightly backup has been recorded yet.'
-                      ) : (
-                        <>
-                          {backupProblem.reason ? 'The nightly backup failed' : 'The nightly backup hasn’t run'}
-                          {backupProblem.last_ok ? `; the last one saved was on ${fmtInstantDay(backupProblem.last_ok)}.` : '; none has been saved yet.'}
-                          {backupProblem.reason ? ` (${backupProblem.reason})` : ''}
-                        </>
-                      )}{' '}
-                      Check the backup cron in Vercel.
-                    </div>
-                  )}
-                  {filesProblem?.paused && (
-                    <div className="stale-note">
-                      The nightly clean-up of receipts and documents is paused until a nightly backup is recorded: it waits while a restore may be running.
-                    </div>
-                  )}
-                  {filesProblem && !filesProblem.paused && (
-                    <div className="stale-note">
-                      {filesProblem.held
-                        ? 'The nightly clean-up of receipts and documents held back: in an account, it found more stored files with no record than it removes at once, so it removed none of them there.'
-                        : filesProblem.reason
-                          ? 'The nightly clean-up of receipts and documents failed'
-                          : 'The nightly clean-up of receipts and documents hasn’t run'}
-                      {filesProblem.held ? '' : filesProblem.last_ok ? `; the last one finished on ${fmtInstantDay(filesProblem.last_ok)}.` : '; none has finished yet.'}
-                      {filesProblem.reason ? ` (${filesProblem.reason})` : ''} {filesProblem.held ? 'Its log in Vercel names the account.' : 'Check the clean-up cron in Vercel.'}
-                    </div>
-                  )}
-                  {pausedSince && (
-                    <div className="stale-note">
-                      No net-worth total has been saved since {fmtDay(pausedSince)}. A day
-                      is only saved when every institution refreshes with all of its accounts, so
-                      it picks up again once they do.
-                    </div>
-                  )}
-                </div>
-
-                {/* What the chart marks (#50): the person's own notes, and
-                    the ones Nya writes when an account ends. */}
-                <TimelineNotesCard notes={timeline.notes} problem={timeline.problem} onChanged={timeline.reload} />
 
                 <Insights
                   txns={txns}

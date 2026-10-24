@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`) and 3 (Accounts, in three pull requests) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests) and 4a (Home's Net worth card) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -11,7 +11,9 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 3a | Accounts: add sheet, account sheet, collapsible sections | 2 to 3 days |
 | 3b | Accounts: each connection's status on its card, institution menu, Connection details | 2 to 3 days |
 | 3c | Accounts: status pill and type summary | 1 day |
-| 4 | Home: net worth card, needs attention, this month | 2 to 3 days |
+| 4a | Home: the Net worth card, timeline notes as a sheet | 1 to 2 days |
+| 4b | Home: Needs attention | 1 to 2 days |
+| 4c | Home: This month | 1 day |
 | 5 | Activity: segments, transaction sheet | 3 to 4 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
 | 7 | Light theme and the theme setting | 1 to 2 days |
@@ -94,12 +96,26 @@ Split in two pull requests, so each leaves the app working and the one that move
 
 ## Phase 4: Home
 
+Split in three pull requests, as phase 3 was: **4a** the Net worth card (its first bullet and the notes sheet), **4b** Needs attention (the action insights, CurrencyOffer and the admin's instructions move into it), **4c** This month (Insights' passive half and one FI line).
+
 - One Net worth card (hero, caveat line, chart, Notes button, History paused badge).
 - Needs attention (the items in the IA doc), each linking to its fix; the backup instruction only for the admin. Until phases 5 and 6 land, an item whose home is a segment (Activity > Transactions, Budgets > Month) opens that tab as it is.
 - This month (passive insights, one FI line).
 - Timeline notes as a sheet.
 
 **Risks:** the caveat summary must state count and kind in words and take the worst severity's color; check with several institutions failing at once.
+
+**Built in 4a:** `components/NetWorthCard.tsx` is Home's one card, where the hero, the Over time card and the notes card were. Under the total, `components/TotalCaveats.tsx` draws what qualifies it: each critical caveat in full, the lesser ones in full when there is one and gathered into one line when there are more (`.notice-summary`). The total's notes come with their color from `totalCaveats` (`components/total-notes.ts`; `totalNotes` keeps their words for the tests), the accrued interest from `accruedCaveats`, the currency from `heroCurrencyCaveats`. Under the chart: history paused and notes that couldn't be read. Then the nightly backup and receipt clean-up, the fact to everyone and the instruction only to the admin. A foot row: Updated, a History paused badge, and Chart notes (N), which opens `TimelineNotesSheet` (the list, then a note's form and the question before deleting one as a second level with a back button).
+
+**Decided in 4a:**
+
+- **Color from the data, as the cards.** A note naming institutions takes the worst of their cards' colors (`lib/accounts-status.ts` severityOf), so a SimpleFIN connection that needs paying is red on Home as on its card, and a new connection waiting for its first answer is amber in both. A note that says the total is short is red whatever: accounts that couldn't be shown, accounts held with no balance, a bank brought back from a download that isn't connected, an account in a currency with no rate. Today all were amber or neutral; none is lowered. Accounts in several currencies with none chosen is raised from neutral to amber: the total adds them as they are, which the person settles by choosing a home currency, and the offer to choose one sits under the card. Not red: no account is missing from it, and every figure on the Accounts tab is right in its own currency. Accrued interest left out stays neutral, as it was.
+- **Three groups, not one.** Only what qualifies the total is gathered under it; what qualifies the chart sits under the chart, and the nightly jobs at the card's foot, so a backup failure never pads the total's summary.
+- **The admin's instructions now, not in 4b.** Moving the backup and clean-up notes onto the hero card made their "Check the cron in Vercel" louder for people who can't act on it, so the instruction shows only with `admin`, inline, until 4b moves it to Needs attention.
+- **Chart notes, not Notes.** The summary line says "3 notes: ...", so the timeline's button is "Chart notes (N)", one word for one thing. "Remove this note" is now Delete, asked before it is done.
+- **The foot row, not the chart's header**, as the mockup draws it: the readout row already holds the info button and six ranges fill the width at 320px.
+
+**Kept narrow in 4a:** the chart itself. Its axis text (`.chart-tick`, `.chart-xlabel`) is SVG text in a scaled viewBox, and the classes are shared by seven charts; its range buttons (`.chart-range`) by five other components and a seven-option set. Both move to `--fs-1` and `.segmented` together in their own chart pass, checked chart by chart, with Activity's charts in phase 5.
 
 ## Phase 5: Activity
 

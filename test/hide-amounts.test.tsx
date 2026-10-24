@@ -41,7 +41,7 @@ import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
 import { readImport, type ImportOptions } from '@/lib/import/read';
 import { bypasses, clientModules, FORMATTERS, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
-import { HeroCurrencyNote } from '@/components/CurrencyNotes';
+import { heroCurrencyCaveats } from '@/components/CurrencyNotes';
 import { balancesIn } from '@/lib/fx/net-worth';
 import { ecbTable } from './fx-fixture';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
@@ -267,7 +267,7 @@ describe('the formatters, with amounts hidden', () => {
     const fx = ecbTable({ home: 'EUR' });
     const b = balancesIn([{ amount: 1000, currency: 'USD' }, { amount: 2000, currency: 'EUR' }], fx, 'EUR', '2026-09-14', 'USD');
     const base = { currency: 'EUR', net_worth: b.total, parts: b.parts, left_out: b.left_out, unknown: 0, history: [], gaps: { unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, delta: null, rates: { day: '2026-09-14', stale: false, own: [], unusable: [] }, fx: { home: 'EUR', latest: fx.latest, own: [] } };
-    const html = renderToStaticMarkup(<HeroCurrencyNote base={base} main="USD" onOpen={() => {}} />);
+    const html = renderToStaticMarkup(<>{heroCurrencyCaveats(base, 'USD', () => {}).map((c) => <div key={c.key}>{c.body}</div>)}</>);
     expect(exposed(html)).toContain('1 USD = 0.86573 EUR');
     expectNoAmounts(html.replace(/1 [A-Z]{3,10} = [\d.,]+ [A-Z]{3,10}/g, ''));
   });
