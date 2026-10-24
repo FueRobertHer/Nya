@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments) and 5b (its filter chips) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips) and 5c (Spending's one period) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -17,8 +17,9 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 4d | Home: reconnected accounts to link, in Needs attention | 1 day |
 | 5a | Activity: pinned month bar, the three segments, the analysis moved to Spending | 1 to 2 days |
 | 5b | Activity: filter chips, the review count as a heading | 1 day |
-| 5c | Activity: one period control on Spending, the charts' pass | 1 to 2 days |
-| 5d | Activity: the Transaction sheet, rule offer inside it | 1 to 2 days |
+| 5c | Activity: one period on Spending | 1 to 2 days |
+| 5d | Activity: its charts drawn at their width, their text at 12px | 1 day |
+| 5e | Activity: the Transaction sheet, rule offer inside it | 1 to 2 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
 | 7 | Light theme and the theme setting | 1 to 2 days |
 
@@ -186,7 +187,7 @@ Needs attention's information row "A reconnected account may continue an earlier
 
 **Risks:** Card Mode and keyboard review must keep working; a cash-flow selection must still filter the list; split and group rows still show under their transaction.
 
-Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 lines, drawn by a dozen test files) holds all of it: **5a** the bar and the segments, **5b** the filter chips, **5c** Spending's one period control, **5d** the Transaction sheet. 5b and 5c were one at first and were split before 5b was built: the chips touch only Transactions' list, while one period for every Spending card changes what each card sums (all but the cash flow sum the bar's month, the cash flow's periods count back from today, a pick keeps its period, the month's notes are by month, and Income vs spend draws one month).
+Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 lines, drawn by a dozen test files) holds all of it: **5a** the bar and the segments, **5b** the filter chips, **5c** Spending's one period, **5d** its charts' text, **5e** the Transaction sheet. 5b and 5c were one at first and were split before 5b was built: the chips touch only Transactions' list, while one period for every Spending card changes what each card sums (all but the cash flow sum the bar's month, the cash flow's periods count back from today, a pick keeps its period, the month's notes are by month, and Income vs spend draws one month).
 
 **Built in 5a:** `components/ActivityBar.tsx` is the tab's pinned bar (`.activity-bar`, sticky under the status bar): **‹ October 2026 ›**, whose arrows step through the months listed (the last 12 with transactions, as Net by month lists them) and stop at either end; the ⋯ with Add a transaction and Import a file while there are transactions and a manual account takes them; and `.segmented` Transactions · Spending · Shared, a WAI-ARIA tablist over one tabpanel. `MonthBreakdown` draws each segment from what it computes today: Transactions has the month's In / Out / Net card (its sentence of what it leaves out and its month notes, in their words and colors) over the list, unchanged; Spending has the cash flow, Net by month, Income vs spend, the same In / Out / Net card, top spending, spending by tag, online vs in-store, where you spent and Reports at its foot; Shared has the Shared expenses card, passed in. The dashboard keeps the segment, so the tab comes back on the last one chosen, and the review jump from Home lands on Transactions. A pick on the cash flow switches to Transactions, where the list shows it and focus goes to the line saying so; choosing a month with the arrows ends a pick, as a column of Net by month does. The Shared sheets (`SharedSheets`) moved out of the card and stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU. A jump's target stops under the bar (`scroll-margin-top`), and a segment chosen while the bar is pinned opens at its top. The month arrows stay focusable at either end (`aria-disabled`), and the month is announced as it changes.
 
@@ -204,7 +205,7 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 
 - **Three time controls on Spending until 5c**: the bar's month, Net by month's columns (which choose it) and the cash flow's own period. 5c gives Spending one period control and the cash flow loses its own; until then, a pick from a longer period lists that period's rows under the bar's month, and the line over them names the period.
 - **The filters as they are**: the tag select, the receipt select and the review bar's filter become chips in 5b, with Card Mode opening from the To review chip. The review count becomes a heading then, since 5b redraws the review bar. (Built in 5b, with Card Mode beside the count instead: see Decided in 5b.)
-- **The charts' axis text and range buttons** (4a's chart pass) go with 5c's period control.
+- **The charts' axis text and range buttons** (4a's chart pass) go with 5c's period control. (5c built the period as chips; the charts' text is 5d: see Kept narrow in 5c.)
 - **Card titles** ("Top spending by group", not the IA's "Spending by group"), and Shared's settings behind a gear: with each card's redraw, not a move.
 - **What a segment switch drops**: a draft in a transaction's note or the shared settings, and the review bar's undo, as leaving the tab does today.
 
@@ -222,7 +223,22 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 - **Over an amount** as a filter of its own (the mockup's fourth chip, in the IA's list): the amount narrows only the transactions without a receipt, as before. A filter by amount for every row is new behavior.
 - **The cash-flow pick stays a line** over the list (`FlowShown`), not a chip: it says the period and a node no longer in the cash flow, and focus lands on it.
 - **The keyboard shortcuts' toggle** keeps its link-like look: Card Mode shares it.
-- **The rows and day bars**: 5d's Transaction sheet redraws them.
+- **The rows and day bars**: 5e's Transaction sheet redraws them.
+
+**Built in 5c:** Spending has one period, which every card there sums. Chips at its top (a labelled radio group: **Month**, **3 months**, **12 months**, **Year to date**; arrows, Home and End) set its length; it ends with the bar's month, so the bar's arrows, and a column of Net by month, move it and keep the length. The cash flow lost its own select (`CashFlowSankey` takes the length and the end month); Income vs spend (`MonthFlowChart`) runs over the period's days, with the year in its labels when the period reaches into another year, "to date" only when it holds today and "through" its last day otherwise; the In / Out / Net card, top spending, spending by tag, online vs in-store and where you spent sum the period, and each card names it ("August to October"). Net by month presses the month the period ends with and marks the others in it. A pick keeps the month its period ended with (`FlowPick.month`), so it is marked, listed and named in that period; choosing a length or a month ends it, as before. Transactions is unchanged: its strip and list are the bar's month. What may be missing from the period is said once: beside the cash flow, or, before the categories load, in the In / Out / Net card (`periodGapNotes`, the cash flow's gap notes, which needs no chart). A period reaching before the 365 days loaded says "the part of this period before then isn't in it" (it said "first days", which a 12-month period ending months ago understated).
+
+**Decided in 5c:**
+
+- **The bar's month ends the period**, rather than periods counted back from today: one period can't count from two places, and the bar is pinned over every segment. So "Last month" is the bar's ‹ with Month, and "This month" is Month; the four lengths are the cash flow's other ranges. By default the end is the bar's month, the latest with transactions, so on the 1st, before the month has any, Spending opens on the month before, as the bar does.
+- **Chips, not a segmented row**, as the mockup draws them: four lengths as long as "Year to date" wrap in a segmented row at 320px. A radio group, so one is chosen and the arrows move it.
+- **The In / Out / Net card stays on Spending, summing the period.** It says what the cash flow's notes don't (other people's parts of shared transactions, the conversion and why a currency had no rate), so the figures are twice on Spending, in the cash flow's row and the card; its notes of what may be missing are said only where the cash flow isn't drawn.
+- **A column of Net by month moves the period's end and keeps its length**, as the bar's arrows do; only the end month is pressed.
+
+**Kept narrow in 5c:**
+
+- **The charts' text** (4a's chart pass): SVG text scales with its viewBox (Income vs spend's 10px ticks draw at 7 to 8.5px on a phone), so 12px means drawing each chart at its own width rather than a class change. Activity's charts (Income vs spend, the cash flow's labels, Net by month's figures) are 5d; the charts on Home, Budgets, Plan and Reports, which share the classes, follow with phase 6.
+- **The figures twice on Spending**, in the cash flow's row and the In / Out / Net card: merging them means the cash flow saying the card's notes.
+- **A row dated after today** counts in the period's totals but isn't drawn in Income vs spend, which stops at today, as it did for this month.
 
 ## Phase 6: Budgets and Plan
 

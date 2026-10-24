@@ -146,7 +146,7 @@ Two to four labelled figures in a row (In, Out, Net). Label `--fs-1` in `--text-
 
 Two to four mutually exclusive views of the same thing (Transactions / Spending / Shared; History / Monte Carlo). A track in `--elevated`, the selected item on `--surface` with `--text-1`, each item 44px tall on touch. `role="tablist"` when it switches views, a radio group when it switches a setting.
 
-A **range control** (1M ... All, the Spending periods) looks the same but is a labelled radio group, and may hold up to six options; more than that become chips. Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
+A **range control** (1M ... All) looks the same but is a labelled radio group, and may hold up to six options; more than that become chips. Spending's period lengths (since phase 5c) are chips in a labelled radio group (`role="radio"`, `aria-checked`, arrows, Home and End), as the mockup draws them: four labels as long as "Year to date" don't fit one segmented row at 320px. Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
 
 ### Badge and chip
 

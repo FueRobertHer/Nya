@@ -406,9 +406,13 @@ export function drawnNodeOf(flow: CashFlow, graph: FlowGraph, id: string): strin
   return null;
 }
 
-/** A node of the chart, or a row of its table, tapped: the period it was in,
+/** A node of the chart, or a row of its table, tapped: the period it was in
+ *  (its length, and the month it ended with: today's month when left out),
  *  its id, and what it was called then. */
-export type FlowPick = { period: PeriodKey; node: string; label: string };
+export type FlowPick = { period: PeriodKey; month?: string; node: string; label: string };
+
+/** The period a pick was made in. */
+export const pickPeriod = (pick: Pick<FlowPick, 'period' | 'month'>, today: string): Period => periodOf(pick.period, pick.month ? `${pick.month}-01` : today);
 
 /**
  * The rows a pick shows in the Activity list: its node's rows in its period,
@@ -417,7 +421,7 @@ export type FlowPick = { period: PeriodKey; node: string; label: string };
  * the person's own (lib/local-date.ts localDate).
  */
 export function pickedRows<T extends FlowRow>(rows: readonly T[], pick: FlowPick, opts: { ix: CategoryIndex; currency: string | null; today: string }): T[] {
-  const flow = cashFlow(rows, inPeriod(periodOf(pick.period, opts.today)), opts.currency, opts.ix);
+  const flow = cashFlow(rows, inPeriod(pickPeriod(pick, opts.today)), opts.currency, opts.ix);
   const ids = new Set(rowIdsOf(flow, flowGraph(flow), pick.node) ?? []);
   return rows.filter((t) => ids.has(t.transaction_id));
 }
@@ -436,6 +440,21 @@ export const PERIODS: readonly { key: PeriodKey; label: string }[] = [
 ];
 
 export const isPeriodKey = (v: unknown): v is PeriodKey => PERIODS.some((p) => p.key === v);
+
+/** The lengths the Activity tab's Spending offers, each ending with the
+ *  month its bar is on (`periodEnding`): that month, it and the two or
+ *  eleven before it, and January of its year to it. "this-month" is that
+ *  month, whichever it is. */
+export const SPANS: readonly { key: PeriodKey; label: string }[] = [
+  { key: 'this-month', label: 'Month' },
+  { key: 'last-3-months', label: '3 months' },
+  { key: 'last-12-months', label: '12 months' },
+  { key: 'year-to-date', label: 'Year to date' },
+];
+
+/** A period of `key`'s length ending with `month` (YYYY-MM) rather than with
+ *  today's month. */
+export const periodEnding = (key: PeriodKey, month: string): Period => periodOf(key, `${month}-01`);
 
 /** A period: whole calendar months, oldest first, and their first and last
  *  days. */
@@ -519,7 +538,7 @@ export const dayText = (day: string): string =>
  */
 export function historyNote(p: Pick<Period, 'from'>, rows: readonly ({ date: string } & Partial<Pick<Countable, 'shared_part' | 'shared_iou'>>)[], now: number = Date.now()): string | null {
   const start = windowStart(now);
-  if (p.from < start) return `The Activity tab loads the last ${WINDOW_DAYS} days of transactions, from ${dayText(start)} on, so this period's first days aren't in it.`;
+  if (p.from < start) return `The Activity tab loads the last ${WINDOW_DAYS} days of transactions, from ${dayText(start)} on, so the part of this period before then isn't in it.`;
   // Where the history begins: never an IOU's row (lib/spending.ts isHistoryRow).
   let earliest: string | null = null;
   for (const t of rows) if (isHistoryRow(t) && (earliest === null || t.date < earliest)) earliest = t.date;
@@ -556,10 +575,43 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * month's totals say it
  * (importedRowsNote). `day` names an instant's local day ("Sep 12").
  */
-export function cashFlowNotes(input: {
-  flow: CashFlow;
+export function cashFlowNotes(input: { flow: CashFlow } & GapInput): { gaps: string[]; counted: string[] } {
+  const { flow } = input;
+  const view = input.view ?? NO_CONNECTIONS_WITHOUT;
+  const whole = wholeOf(input.period, input.today);
+  const gaps = periodGapNotes(input);
+  const inRange = inPeriod(input.period);
+  const inRows = input.rows.filter((t) => inRange(t.date));
+
+  const counted: string[] = [];
+  const byYou = flow.excluded - flow.hidden_by_rule;
+  const hidden = flow.hidden_by_rule;
+  const excluded = [
+    ...(byYou > 0 ? [`${plural(byYou, 'transaction')} you excluded`] : []),
+    ...(hidden > 0 ? [byYou > 0 ? `${hidden} a rule hides` : `${plural(hidden, 'transaction')} a rule hides`] : []),
+  ];
+  counted.push(
+    `Transfers, cash withdrawals and loan payments are left out, as in the month's totals${flow.transfers > 0 ? ` (${flow.transfers} here)` : ''}.` +
+      (excluded.length > 0 ? ` So ${byYou + hidden === 1 ? 'is' : 'are'} ${joinNames(excluded)}.` : '')
+  );
+  if (flow.exclusion_unknown > 0) {
+    const n = flow.exclusion_unknown;
+    counted.push(`Whether you excluded ${plural(n, 'transaction')} couldn't be read, so ${n === 1 ? 'it counts' : 'they count'} here.`);
+  }
+  if (flow.left_out_text) counted.push(flow.left_out_text);
+  if (flow.payers.some((p) => p.refund)) counted.push("A refund counts as money in, as in the month's totals, never as less spending in its category.");
+  const named = withoutNote(view, historyCount(input.rows));
+  if (named) counted.push(named);
+  // Last, as under the month's totals: the period's rows that came from
+  // files, imported into linked accounts, rather than from the bank.
+  const imported = importedRowsNote(inRows, whole);
+  if (imported) counted.push(imported);
+  return { gaps, counted };
+}
+
+/** What the gaps beside a period are worked out from. */
+type GapInput = {
   period: Period;
-  /** Every row loaded, counted or not. */
   rows: readonly FlowRow[];
   /** What the load couldn't read, as the Activity list says it: the
    *  answer's `notes`, never its `aside_notes` (tags, the review queue's
@@ -571,10 +623,18 @@ export function cashFlowNotes(input: {
   today: string;
   now?: number;
   day: (iso: string) => string;
-}): { gaps: string[]; counted: string[] } {
-  const { flow, period, today } = input;
+};
+
+/** The period in words, as its notes say it: the month, or "this period". */
+const wholeOf = (period: Period, today: string): string => (period.months.length === 1 ? monthName(period.months[0], today) : 'this period');
+
+/** What may be missing from a period: cashFlowNotes' `gaps`, worked out
+ *  without the chart, so the In / Out / Net card can say them where the cash
+ *  flow isn't drawn. */
+export function periodGapNotes(input: GapInput): string[] {
+  const { period, today } = input;
   const view = input.view ?? NO_CONNECTIONS_WITHOUT;
-  const whole = period.months.length === 1 ? monthName(period.months[0], today) : 'this period';
+  const whole = wholeOf(period, today);
   /** The months a gap touches, in words: the period's, when it is all of them. */
   const touched = (months: string[]) => (months.length === period.months.length ? whole : monthsText(months, today));
   // Each once, as a sentence.
@@ -630,29 +690,5 @@ export function cashFlowNotes(input: {
   const inRows = input.rows.filter((t) => inRange(t.date));
   const uncategorized = uncategorizedNote(uncategorizedFromConnector(inRows), uncategorizedFrom(inRows));
   if (uncategorized) gaps.push(uncategorized);
-
-  const counted: string[] = [];
-  const byYou = flow.excluded - flow.hidden_by_rule;
-  const hidden = flow.hidden_by_rule;
-  const excluded = [
-    ...(byYou > 0 ? [`${plural(byYou, 'transaction')} you excluded`] : []),
-    ...(hidden > 0 ? [byYou > 0 ? `${hidden} a rule hides` : `${plural(hidden, 'transaction')} a rule hides`] : []),
-  ];
-  counted.push(
-    `Transfers, cash withdrawals and loan payments are left out, as in the month's totals${flow.transfers > 0 ? ` (${flow.transfers} here)` : ''}.` +
-      (excluded.length > 0 ? ` So ${byYou + hidden === 1 ? 'is' : 'are'} ${joinNames(excluded)}.` : '')
-  );
-  if (flow.exclusion_unknown > 0) {
-    const n = flow.exclusion_unknown;
-    counted.push(`Whether you excluded ${plural(n, 'transaction')} couldn't be read, so ${n === 1 ? 'it counts' : 'they count'} here.`);
-  }
-  if (flow.left_out_text) counted.push(flow.left_out_text);
-  if (flow.payers.some((p) => p.refund)) counted.push("A refund counts as money in, as in the month's totals, never as less spending in its category.");
-  const named = withoutNote(view, historyCount(input.rows));
-  if (named) counted.push(named);
-  // Last, as under the month's totals: the period's rows that came from
-  // files, imported into linked accounts, rather than from the bank.
-  const imported = importedRowsNote(inRows, whole);
-  if (imported) counted.push(imported);
-  return { gaps, counted };
+  return gaps;
 }

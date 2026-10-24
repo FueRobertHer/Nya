@@ -34,7 +34,7 @@
 // image to a screen reader: its text alternative is the table under it, every
 // flow with its amount, each row's name a button that does what a tap does.
 
-import { Fragment, useMemo, useState, type Ref } from 'react';
+import { Fragment, useMemo, type Ref } from 'react';
 import { amountSamples, compactMoney, formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
@@ -44,12 +44,11 @@ import {
   drawnNodeOf,
   flowGraph,
   inPeriod,
-  isPeriodKey,
   payerLabel,
   periodCaption,
-  periodOf,
+  periodEnding,
+  pickPeriod,
   MIN_SHARE,
-  PERIODS,
   type CashFlow,
   type FlowNode,
   type FlowPick,
@@ -187,7 +186,7 @@ function hitBoxes(b: SankeyNodeBox, label: Label | null): { x: number; y: number
  *  category's transactions are gone. */
 export function FlowShown({ pick, count, onClear, focusRef }: { pick: FlowPick; count: number; onClear: () => void; focusRef?: Ref<HTMLDivElement> }) {
   const today = localDate();
-  const caption = periodCaption(periodOf(pick.period, today), today);
+  const caption = periodCaption(pickPeriod(pick, today), today);
   return (
     <div className="flow-shown" role="status" ref={focusRef} tabIndex={-1}>
       <span>
@@ -212,9 +211,8 @@ export default function CashFlowSankey({
   notes = NO_NOTES,
   pick = null,
   onPick,
-  period: shown,
-  onPeriod,
-  initialPeriod = 'this-month',
+  period: periodKey = 'this-month',
+  month: shownMonth,
 }: {
   /** Every row the Activity tab has loaded (lib/activity.ts). */
   txns: readonly FlowRow[];
@@ -234,18 +232,15 @@ export default function CashFlowSankey({
    *  (null puts the list back). Without onPick, nothing can be tapped. */
   pick?: FlowPick | null;
   onPick?: (pick: FlowPick | null) => void;
-  /** The period shown, when the caller keeps it, and how to change it: the
-   *  Activity tab keeps it beside the pick, so a reload of the transactions,
-   *  which shows a spinner in this card's place, brings it back with the
-   *  pick. Without it, the card keeps its own, from `initialPeriod`. */
+  /** The period shown: its length, and the month it ends with (today's when
+   *  left out). The Activity tab's Spending chooses them for every card
+   *  there: the bar's month, and the length under it. */
   period?: PeriodKey;
-  onPeriod?: (period: PeriodKey) => void;
-  initialPeriod?: PeriodKey;
+  month?: string;
 }) {
-  const [own, setOwn] = useState<PeriodKey>(initialPeriod);
-  const periodKey = shown ?? own;
   const today = localDate();
-  const period = useMemo(() => periodOf(periodKey, today), [periodKey, today]);
+  const month = shownMonth ?? today.slice(0, 7);
+  const period = useMemo(() => periodEnding(periodKey, month), [periodKey, month]);
   const caption = periodCaption(period, today);
   const ix = useMemo(() => indexTaxonomy(taxonomy), [taxonomy]);
   const flow = useMemo(() => cashFlow(txns, inPeriod(period), currency, ix), [txns, period, currency, ix]);
@@ -256,14 +251,14 @@ export default function CashFlowSankey({
     [flow, period, txns, notes, incomplete, stopped, withoutTransactions, today]
   );
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
-  const picked = pick && pick.period === periodKey ? pick.node : null;
+  const picked = pick && pick.period === periodKey && (pick.month ?? today.slice(0, 7)) === month ? pick.node : null;
   // What the chart marks for it: the node itself, or, for one from the table
   // the chart folds or leaves to its group, the node that holds it.
   const marked = picked ? drawnNodeOf(flow, graph, picked) : null;
 
   const choose = (node: string, label: string) => {
     if (!onPick) return;
-    onPick(picked === node ? null : { period: periodKey, node, label });
+    onPick(picked === node ? null : { period: periodKey, month, node, label });
   };
   const empty = graph.nodes.length === 0;
   const c = flow.currency;
@@ -275,25 +270,6 @@ export default function CashFlowSankey({
         <div className="inst-name">Cash flow</div>
         <div className="inst-total">{caption}</div>
       </div>
-      <select
-        className="text-input cash-flow-period"
-        value={periodKey}
-        onChange={(e) => {
-          if (!isPeriodKey(e.target.value)) return;
-          setOwn(e.target.value);
-          onPeriod?.(e.target.value);
-          // The list showed a node of the period left: it goes back too.
-          if (pick) onPick?.(null);
-        }}
-        aria-label="Period"
-      >
-        {PERIODS.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.label}
-          </option>
-        ))}
-      </select>
-
       {empty ? (
         <p className="empty-note">Nothing came in or went out in {caption}, of what the totals count.</p>
       ) : (

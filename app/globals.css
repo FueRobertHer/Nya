@@ -1668,7 +1668,8 @@ button:disabled:where(:not([class*="cl-"])) {
   background: var(--down);
 }
 
-.trend-col.active .trend-bar {
+/* The month the period ends with, and the others in it (Spending's period). */
+.trend-col:is(.active, .in-period) .trend-bar {
   opacity: 1;
 }
 
@@ -1687,6 +1688,10 @@ button:disabled:where(:not([class*="cl-"])) {
 .trend-col.active .trend-label {
   color: var(--accent);
   font-weight: 600;
+}
+
+.trend-col.in-period .trend-label {
+  color: var(--text-1);
 }
 
 /* --- budgets (Budgets tab) --- */
@@ -5572,10 +5577,6 @@ button.split-small {
    transactions (components/MonthBreakdown.tsx). The app's own colors: money in
    and what is left over in the up hue, spending in the accent, what came from
    savings or debt in the down hue, the middle in the muted gray. --- */
-
-.cash-flow-period {
-  margin-top: 10px;
-}
 
 .cash-flow-summary {
   margin-top: 12px;

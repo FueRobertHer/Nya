@@ -5,12 +5,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import CashFlowSankey, { FlowShown } from '@/components/CashFlowSankey';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
-import { cashFlow, inPeriod, periodCaption, periodOf, pickedRows, type FlowPick } from '@/lib/cash-flow';
+import { cashFlow, inPeriod, periodCaption, periodEnding, periodOf, pickedRows, type FlowPick } from '@/lib/cash-flow';
+import { addMonths } from '@/lib/rollover';
 import { summarize, spendingByCategory } from '@/lib/totals';
 import { filedId, indexTaxonomy } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { localDate, localMonth } from '@/lib/local-date';
-import { addMonths } from '@/lib/rollover';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 import { countTransactions } from '@/lib/spending';
 import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
@@ -229,22 +229,27 @@ describe('the chart', () => {
 });
 
 describe('the period, kept beside the pick', () => {
-  test('a period kept by the caller is the one shown, with the pick it belongs to marked', () => {
+  test('the period given is the one shown, with the pick it belongs to marked, and only in the month it ended with', () => {
     const food = taxonomy.groups.find((g) => g.name === 'Food')!.id;
-    const html = sankey({ period: 'last-3-months', onPeriod: () => {}, pick: { period: 'last-3-months', node: `group:${food}`, label: 'Food' } });
-    expect(html).toContain('<option value="last-3-months" selected="">');
+    const thisMonth = today.slice(0, 7);
+    const html = sankey({ period: 'last-3-months', pick: { period: 'last-3-months', month: thisMonth, node: `group:${food}`, label: 'Food' } });
     expect(text(html)).toContain(periodCaption(periodOf('last-3-months', today), today));
     expect(html).toContain('class="sankey-node out tappable picked"');
-    // The card's own first period gives way to it.
-    expect(sankey({ period: 'last-month', initialPeriod: 'this-month' })).toContain('<option value="last-month" selected="">');
+    // A pick without its month is today's month's, as before months were kept.
+    expect(sankey({ period: 'last-3-months', pick: { period: 'last-3-months', node: `group:${food}`, label: 'Food' } })).toContain('tappable picked');
+    // The same length ending with another month isn't the pick's period.
+    const earlier = addMonths(thisMonth, -1);
+    expect(sankey({ period: 'last-3-months', month: earlier, pick: { period: 'last-3-months', month: thisMonth, node: `group:${food}`, label: 'Food' } })).not.toContain('tappable picked');
+    // No control of its own: Spending's period chips choose it.
+    expect(html).not.toContain('<select');
   });
 
   test('the Activity tab keeps it beside the pick, so a reload, which shows a spinner in the card’s place, brings both back', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
     const mount = source.slice(source.indexOf('<CashFlowSankey'), source.indexOf('/>', source.indexOf('<CashFlowSankey')));
-    expect(mount).toContain('period={flowPeriod}');
-    expect(mount).toContain('onPeriod={setFlowPeriod}');
-    expect(source).toContain('const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");');
+    expect(mount).toContain('period={span}');
+    expect(mount).toContain('month={selected ?? undefined}');
+    expect(source).toContain('const [span, setSpan] = useState<PeriodKey>("this-month");');
   });
 });
 
@@ -266,17 +271,19 @@ describe('what the load couldn’t read, beside the chart', () => {
     expect(render('transactions')).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
   });
 
-  test('where the cash flow isn’t on the screen, the notes go with the month’s figures', () => {
+  test('where the cash flow isn’t on the screen, the notes go with the figures', () => {
     const render = (segment: 'spending' | 'transactions', withCategories: boolean) =>
       renderToStaticMarkup(
         <MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={withCategories ? taxonomy : null} onRecategorize={() => {}} onRename={() => {}} segment={segment} />
       );
     const esc = manual.replace(/'/g, '&#x27;');
-    // In the In / Out / Net card, the one place on these screens that says a
-    // note as a stale-note without the chart's full stop. Spending before the
-    // categories load: no chart to say them.
-    expect(render('spending', false)).toContain(`<div class="stale-note">${esc}</div>`);
-    // Transactions: beside the figures, and still under the list.
+    // Spending before the categories load: no chart to say them, so the In /
+    // Out / Net card says them as the chart would (a sentence each), once.
+    const bare = render('spending', false);
+    expect(bare).toContain(`<div class="stale-note">${esc}.</div>`);
+    expect(bare.split(esc).length - 1).toBe(1);
+    // Transactions: beside the month's figures as a stale-note without the
+    // chart's full stop, and still under the list.
     for (const cats of [true, false]) {
       expect(render('transactions', cats)).toContain(`<div class="stale-note">${esc}</div>`);
       expect(render('transactions', cats)).toContain(`<div class="error">${esc}</div>`);
@@ -305,26 +312,24 @@ describe('what the load couldn’t read, beside the chart', () => {
   });
 });
 
-describe('the period selector', () => {
-  test('offers this month, last month, the last 3 months, the year to date and the last 12 months, and says the months', () => {
-    const t = text(sankey());
-    for (const label of ['This month', 'Last month', 'Last 3 months', 'Year to date', 'Last 12 months']) expect(t).toContain(label);
-    for (const key of ['last-month', 'last-3-months', 'year-to-date', 'last-12-months'] as const) {
-      const html = sankey({ initialPeriod: key });
-      expect(html).toContain(`<option value="${key}" selected="">`);
-      expect(text(html)).toContain(periodCaption(periodOf(key, today), today));
+describe('the period it is given', () => {
+  test('says the months of each length, ending with this month or the month given', () => {
+    for (const key of ['this-month', 'last-3-months', 'year-to-date', 'last-12-months'] as const) {
+      expect(text(sankey({ period: key }))).toContain(periodCaption(periodOf(key, today), today));
+      const earlier = addMonths(today.slice(0, 7), -2);
+      expect(text(sankey({ period: key, month: earlier }))).toContain(periodCaption(periodEnding(key, earlier), today));
     }
   });
 
   test('a longer period adds its months up', () => {
-    const html = sankey({ initialPeriod: 'last-3-months' });
+    const html = sankey({ period: 'last-3-months' });
     const s = summarize(ROWS, inPeriod(periodOf('last-3-months', today)), 'USD');
     expect(s.money_in).toBe(6238.5);
     expect(html).toContain(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`);
   });
 
   test('a period reaching before the earliest transaction says it may be missing what came before', () => {
-    expect(text(sankey({ initialPeriod: 'last-12-months' }))).toContain(`The earliest transaction here is from`);
+    expect(text(sankey({ period: 'last-12-months' }))).toContain(`The earliest transaction here is from`);
   });
 
   test('an empty period says so, with no chart and no table', () => {
@@ -416,7 +421,7 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
     expect(t).toContain('2 of this month’s transactions were imported from files, not sent by the bank.');
     expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from files, not sent by the bank.`);
     // Over a longer period, of the period.
-    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from files, not sent by the bank.');
+    expect(text(sankey({ txns: rows, period: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from files, not sent by the bank.');
     // Without them, nothing.
     expect(text(sankey())).not.toContain('imported from your bank');
   });
