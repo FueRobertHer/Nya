@@ -11,6 +11,7 @@ import type { ReactNode } from 'react';
 import type { Severity } from '@/lib/accounts-status';
 import { joinNames } from '@/lib/month-coverage';
 import { ALERT } from './ConnectionStatus';
+import { Masked } from './HideAmounts';
 
 export type CaveatSeverity = Severity | 'info';
 
@@ -65,7 +66,11 @@ export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {
         <details className="notice-summary">
           <summary className={`notice ${worst}`}>
             {worst === 'info' ? INFO : ALERT}
-            <span>{summaryText(lesser)}</span>
+            <span>
+              {/* Never an amount, but drawn as the notes are, so the switch
+                  would cover one. */}
+              <Masked>{summaryText(lesser)}</Masked>
+            </span>
             {CHEVRON}
           </summary>
           <div className="stack tight">

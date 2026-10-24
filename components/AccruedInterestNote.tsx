@@ -24,8 +24,8 @@ export function accruedCaveats(
   fx: PageFx | null = null
 ): Caveat[] {
   const { leftOut, unread } = accruedLines(homeAccrued(institutions), (amounts) => accruedAmountsText(amounts, fx, main, (n, c) => formatMoney(n, c)));
-  return [
-    ...(leftOut ? [{ key: 'accrued', severity: 'info' as const, summary: 'accrued interest left out', body: <Masked>{leftOut}</Masked> }] : []),
-    ...unread.map((line) => ({ key: `accrued-unread:${line}`, severity: 'caution' as const, summary: 'accrued interest not known', body: <Masked>{line}</Masked> })),
-  ];
+  const out: Caveat[] = [];
+  if (leftOut) out.push({ key: 'accrued', severity: 'info', summary: 'accrued interest left out', body: <Masked>{leftOut}</Masked> });
+  for (const line of unread) out.push({ key: `accrued-unread:${line}`, severity: 'caution', summary: 'accrued interest not known', body: <Masked>{line}</Masked> });
+  return out;
 }
