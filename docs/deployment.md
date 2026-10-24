@@ -76,7 +76,10 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked, and sends the weekly summaries still due. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 16:30 | `/api/fx/fetch` | Fetches the European Central Bank's euro reference rates, published around 16:00 CET each working day, which a person's home currency converts with ([operations.md](operations.md#exchange-rates-and-rolling-back): on a preview or after a restore into an empty database, run it once by hand). |
-| 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
+| 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. It starts no connection after 200 seconds, so it always answers inside its 300; the rest are checked the next day. |
+| 17:30 | `/api/attachments/sweep` | Cleans up receipts and documents ([operations.md](operations.md#receipts-and-documents)). |
+
+When the backup or the clean-up fails, the admin can run it again from Home: the Admin card has **Run again** on the failed job's row (`POST /api/admin/jobs`). It runs exactly as the cron does and records its outcome the same way. While that job's own cron may still be running (from its time until an hour and five minutes later, unless tonight's run has already recorded its outcome) it says when to try again instead.
 
 ## 5. Local development
 

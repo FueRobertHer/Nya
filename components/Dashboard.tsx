@@ -2307,7 +2307,16 @@ export default function Dashboard({
                     fixed (rollout phase 4b); the admin's instructions for
                     the nightly jobs under it. */}
                 {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
-                {admin && <AdminAttention backup={backupProblem} files={filesProblem} />}
+                {admin && (
+                  <AdminAttention
+                    backup={backupProblem}
+                    files={filesProblem}
+                    onChanged={(now) => {
+                      setBackupProblem(now.backup);
+                      setFilesProblem(now.files);
+                    }}
+                  />
+                )}
 
                 <Insights
                   txns={txns}

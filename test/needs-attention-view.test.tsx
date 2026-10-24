@@ -87,10 +87,11 @@ describe('the admin’s card: what to do about the nightly jobs', () => {
     expect(renderToStaticMarkup(<AdminAttention backup={null} files={null} />)).toBe('');
   });
 
-  test('plain rows: the fix is in Vercel, so nothing to tap', () => {
+  test('plain rows, not buttons: the only thing to tap is Run again, beside the words (test/admin-jobs-view.test.tsx)', () => {
     const html = renderToStaticMarkup(<AdminAttention backup={{ last_ok: null, reason: null, none: true }} files={null} />);
-    expect(html).not.toContain('<button');
     expect(html).toContain('<div class="list-row">');
+    expect(html).not.toContain('<button type="button" class="list-row"');
+    expect(html.match(/<button type="button" class="btn secondary">Run again<\/button>/g)).toHaveLength(1);
   });
 });
 

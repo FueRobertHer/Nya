@@ -82,7 +82,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
 };
 await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, cronHoldUntil, CRON_SCHEDULES, CRON_HOLD_MS, recordAttachmentSweep } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
 /** The data archives kept, and the key archives (lib/key-archive.ts). */
@@ -581,5 +581,46 @@ describe('how long a backup outlasts a deletion', () => {
     expect(backupRetention()).toBeNull();
     process.env.BACKUP_KEEP_DAYS = '45';
     expect(backupRetention()).toEqual({ kept: true, keep_days: 45, min_kept: MIN_KEPT, max_days: 46 });
+  });
+});
+
+describe('holding off a run by hand while its cron may be going', () => {
+  const at = (iso: string) => new Date(iso);
+
+  test('the schedules are vercel.json’s', async () => {
+    const { crons } = JSON.parse(await Bun.file(`${import.meta.dir}/../vercel.json`).text()) as { crons: { path: string; schedule: string }[] };
+    for (const { path, hour, minute } of Object.values(CRON_SCHEDULES)) {
+      expect(crons.find((c) => c.path === path)?.schedule).toBe(`${minute} ${hour} * * *`);
+    }
+  });
+
+  test('from its time until its hour and its limit have passed, unless tonight’s run has recorded an outcome', async () => {
+    // Outside the window: never.
+    expect(await cronHoldUntil('backup', at('2026-06-15T15:59:00Z'))).toBeNull();
+    expect(await cronHoldUntil('backup', at('2026-06-15T17:05:00Z'))).toBeNull();
+    // Inside it, with nothing recorded since 16:00: until 17:05.
+    expect(await cronHoldUntil('backup', at('2026-06-15T16:20:00Z'))).toEqual(new Date(Date.parse('2026-06-15T16:00:00Z') + CRON_HOLD_MS));
+    // Yesterday's outcome doesn't count; tonight's, a failure too, ends it.
+    await recordOutcome({ ok: true }, at('2026-06-14T16:03:00Z'));
+    expect(await cronHoldUntil('backup', at('2026-06-15T16:20:00Z'))).not.toBeNull();
+    await recordOutcome({ ok: false, reason: 'timeout' }, at('2026-06-15T16:04:00Z'));
+    expect(await cronHoldUntil('backup', at('2026-06-15T16:20:00Z'))).toBeNull();
+  });
+
+  test('the clean-up goes by its own record, at its own time', async () => {
+    await recordOutcome({ ok: false, reason: 'timeout' }, at('2026-06-15T16:04:00Z'));
+    expect(await cronHoldUntil('files', at('2026-06-15T17:40:00Z'))).toEqual(new Date(Date.parse('2026-06-15T17:30:00Z') + CRON_HOLD_MS));
+    await recordAttachmentSweep({ last_ok: null, last_failed: '2026-06-15T17:31:00.000Z', reason: 'listing', cursor: null, listed_at: null });
+    expect(await cronHoldUntil('files', at('2026-06-15T17:40:00Z'))).toBeNull();
+  });
+
+  test('a record that can’t be read holds nothing back', async () => {
+    const get = fake.get;
+    fake.get = () => Promise.reject(new Error('down'));
+    try {
+      expect(await cronHoldUntil('backup', at('2026-06-15T16:20:00Z'))).toBeNull();
+    } finally {
+      fake.get = get;
+    }
   });
 });

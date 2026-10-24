@@ -609,6 +609,66 @@ export async function recordOutcome(
   }
 }
 
+// ---- A run, from the cron or from the app ----
+//
+// The backup and the receipts sweep each run nightly from a cron, and the
+// admin can start either again from Home's Admin card (app/api/admin/jobs),
+// which holds off while the job's own cron may be running.
+
+/** What a run answers its route: the status and the body, as the cron has
+ *  always answered (500 with the reason on a failure, so the cron shows red in
+ *  Vercel). */
+export type RunAnswer = { status: number; body: Record<string, unknown> };
+
+/**
+ * One nightly backup, as the cron runs it (app/api/backup/route.ts explains
+ * the order): the read-write token checked, the deleted containers swept once
+ * more, the backup, its outcome recorded.
+ */
+export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswer> {
+  const store = await vercelBlobStore();
+  if (!store) {
+    console.error('Backup skipped: no blob store is connected (BLOB_READ_WRITE_TOKEN is not set)');
+    await recordOutcome({ ok: false, reason: 'No blob store is connected.' });
+    return { status: 500, body: { error: 'No blob store is connected (BLOB_READ_WRITE_TOKEN is not set).' } };
+  }
+  // Timed so the headroom under maxDuration shows in the log, step by step as
+  // each finishes: when one fails, the lines before it show where time went.
+  const started = Date.now();
+  const onStep = (step: string, ms: number) => console.log(`Backup ${step} took ${(ms / 1000).toFixed(1)}s`);
+  try {
+    // Loaded here: lib/account-deletion.ts imports this module.
+    const { sweepDestroyedContainers } = await import('./account-deletion');
+    const swept = await sweepDestroyedContainers(now);
+    if (swept.length > 0) console.log(`Swept ${swept.length} deleted container(s) once more before the backup`);
+  } catch (err) {
+    console.error('The sweep of deleted containers failed; it runs again tomorrow', err instanceof Error ? err.name : typeof err);
+  }
+  try {
+    const result = await runBackup(rawRedis(), store, now, { onStep });
+    // Logged before the outcome is recorded, so the line survives even if that
+    // write is what stalls.
+    const seconds = ((Date.now() - started) / 1000).toFixed(1);
+    console.log(
+      'Backup written',
+      result.pathname,
+      `${result.bytes} bytes`,
+      `${result.keys} keys`,
+      `${result.pruned.length} pruned`,
+      `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned${result.key_archive.dropped.length > 0 ? `, ${result.key_archive.dropped.length} that didn't read back deleted` : ''})`,
+      `${result.shared_in.length} container(s) under a shared key`,
+      `${seconds}s`
+    );
+    await recordOutcome({ ok: true });
+    return { status: 200, body: result };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error('Backup failed', reason);
+    await recordOutcome({ ok: false, reason });
+    return { status: 500, body: { error: reason } };
+  }
+}
+
 /** What the dashboard says of backups. `none`: they are kept here, and no
  *  run has been recorded at all (a new deployment's first day, the night
  *  after an operator restore, or a run that never gets as far as recording
@@ -769,4 +829,42 @@ export async function attachmentSweepProblem(now: Date = new Date()): Promise<At
   if (s.held && now.getTime() - Date.parse(s.held.at) < 7 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: true };
   if (s.last_ok && now.getTime() - Date.parse(s.last_ok) > 9 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: false };
   return null;
+}
+
+// ---- Holding off while a job's cron may be running ----
+
+export type NightlyJob = 'backup' | 'files';
+
+/** When each job's cron is scheduled, UTC, as vercel.json says (a test holds
+ *  the two to the same). */
+export const CRON_SCHEDULES: Record<NightlyJob, { path: string; hour: number; minute: number }> = {
+  backup: { path: '/api/backup', hour: 16, minute: 0 },
+  files: { path: '/api/attachments/sweep', hour: 17, minute: 30 },
+};
+
+/** How long after its scheduled time a cron may still be running: Vercel may
+ *  start one at any point in its hour (Hobby), and it runs for up to its
+ *  maxDuration of 300 s. */
+export const CRON_HOLD_MS = 65 * 60_000;
+
+/**
+ * Until when the job's cron may be running, so a run started by hand would
+ * overlap it, or null when it can't be: inside its window (CRON_HOLD_MS from today's scheduled time),
+ * and no outcome recorded since that time (once tonight's run has recorded
+ * one, it has finished). A record that can't be read holds nothing back: the
+ * run itself says what is wrong.
+ */
+export async function cronHoldUntil(job: NightlyJob, now: Date = new Date()): Promise<Date | null> {
+  const { hour, minute } = CRON_SCHEDULES[job];
+  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute);
+  if (now.getTime() < start || now.getTime() >= start + CRON_HOLD_MS) return null;
+  let status: Status | null;
+  try {
+    status = await readStatus();
+  } catch {
+    return null;
+  }
+  const record = job === 'backup' ? status : sweepOf(status);
+  const at = [record?.last_ok, record?.last_failed].map((t) => (t ? Date.parse(t) : NaN));
+  return at.some((t) => t >= start) ? null : new Date(start + CRON_HOLD_MS);
 }

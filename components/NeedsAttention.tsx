@@ -8,7 +8,7 @@
 // about the nightly jobs (design-system.md "Who an instruction is for"):
 // everyone sees the fact on the Net worth card.
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import type { AttentionItem, AttentionSeverity, Go } from './attention';
 import { ALERT } from './ConnectionStatus';
@@ -115,34 +115,91 @@ export default function NeedsAttention({
   );
 }
 
-/** The admin's card: what to do about a nightly job that failed. Plain rows:
- *  the fix is in Vercel. Nothing while the clean-up only waits for a backup. */
-export function AdminAttention({ backup, files }: { backup: BackupProblem | null; files: AttachmentSweepProblem | null }) {
-  const rows: { key: string; title: string; sub: string }[] = [];
-  if (backup) rows.push({ key: 'backup', title: backupWords(backup), sub: 'Check the backup cron in Vercel.' });
-  if (files && !files.paused) rows.push({ key: 'files', title: filesWords(files), sub: files.held ? 'Its log in Vercel names the account.' : 'Check the clean-up cron in Vercel.' });
-  if (rows.length === 0) return null;
+/** What the admin's card is told after a run: what the dashboard now says
+ *  of both jobs (app/api/admin/jobs). */
+export type JobProblems = { backup: BackupProblem | null; files: AttachmentSweepProblem | null };
+
+type Job = 'backup' | 'files';
+
+const RAN: Record<Job, string> = { backup: 'The backup ran and was saved.', files: 'The clean-up ran.' };
+
+/** The admin's card: what to do about a nightly job that failed, and a
+ *  button to run it again now (app/api/admin/jobs), as its cron would. Not
+ *  for a clean-up the breaker held: run again, it holds again. Nothing while
+ *  the clean-up only waits for a backup. */
+export function AdminAttention({ backup, files, onChanged }: { backup: BackupProblem | null; files: AttachmentSweepProblem | null; onChanged?: (now: JobProblems) => void }) {
+  const [running, setRunning] = useState<Job | null>(null);
+  // What the last run said, under its row; or, once a run cleared its row, a
+  // line of its own.
+  const [said, setSaid] = useState<{ job: Job; words: string } | null>(null);
+  const [ran, setRan] = useState<Job | null>(null);
+
+  const run = async (job: Job) => {
+    setRunning(job);
+    setSaid(null);
+    setRan(null);
+    try {
+      const res = await fetch('/api/admin/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job }) });
+      const body = await res.json().catch(() => ({}));
+      if ('backup_problem' in body || 'attachments_problem' in body) onChanged?.({ backup: body.backup_problem ?? null, files: body.attachments_problem ?? null });
+      if (res.ok) setRan(job);
+      else if (res.status === 409 && typeof body.error === 'string') setSaid({ job, words: body.error });
+      else if (res.status === 500 && typeof body.error === 'string') setSaid({ job, words: 'It failed again.' });
+      else setSaid({ job, words: 'Could not run it right now.' });
+    } catch {
+      setSaid({ job, words: 'Could not run it right now.' });
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const rows: { key: Job; title: string; sub: string; rerun: boolean }[] = [];
+  if (backup) rows.push({ key: 'backup', title: backupWords(backup), sub: 'Check the backup cron in Vercel.', rerun: true });
+  if (files && !files.paused) rows.push({ key: 'files', title: filesWords(files), sub: files.held ? 'Its log in Vercel names the account.' : 'Check the clean-up cron in Vercel.', rerun: !files.held });
+  if (rows.length === 0 && !ran) return null;
   return (
     <section className="card needs-attention" aria-labelledby="admin-attention-title">
       <div className="card-header">
         <h2 id="admin-attention-title">Admin</h2>
       </div>
-      <ul className="list-rows">
-        {rows.map((r) => (
-          <li key={r.key}>
-            <div className="list-row">
-              <span className="list-row-icon caution">{ICONS.caution}</span>
-              <span className="list-row-text">
-                <span className="list-row-title">
-                  <span className="visually-hidden">Caution: </span>
-                  {r.title}
+      {rows.length > 0 && (
+        <ul className="list-rows">
+          {rows.map((r) => (
+            <li key={r.key}>
+              <div className="list-row">
+                <span className="list-row-icon caution">{ICONS.caution}</span>
+                <span className="list-row-text">
+                  <span className="list-row-title">
+                    <span className="visually-hidden">Caution: </span>
+                    {r.title}
+                  </span>
+                  <span className="list-row-sub">{r.sub}</span>
+                  {r.rerun && (
+                    <span className="btn-row">
+                      <button type="button" className="btn secondary" disabled={running !== null} onClick={() => run(r.key)}>
+                        {running === r.key ? 'Running…' : 'Run again'}
+                      </button>
+                    </span>
+                  )}
+                  {r.rerun && (
+                    <span className="list-row-sub" role="status">
+                      {running === r.key ? 'This can take up to five minutes.' : said?.job === r.key ? said.words : ''}
+                    </span>
+                  )}
                 </span>
-                <span className="list-row-sub">{r.sub}</span>
-              </span>
-            </div>
-          </li>
-        ))}
-      </ul>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {ran && !rows.some((r) => r.key === ran) && (
+        <div className="needs-attention-notes">
+          <div className="notice done" role="status">
+            {ICONS.info}
+            <div>{RAN[ran]}</div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -43,7 +43,6 @@ const IMPLEMENTATION = ['lib/storage.ts', 'lib/repo.ts'];
  * the seam, containers only, cannot hold. A move, not a new raw store.
  */
 const LEGACY = [
-  'app/api/backup/route.ts',
   'app/api/demo/sign-in/route.ts',
   'app/api/ops/export/route.ts',
   'lib/account-deletion.ts',
