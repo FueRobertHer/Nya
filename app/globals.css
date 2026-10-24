@@ -1,17 +1,117 @@
+/* ---------- Design tokens (docs/design/design-system.md) ----------
+ * Copied from docs/design/tokens.css: the scales and the dark theme. The
+ * light theme stays in that file until rollout phase 7 turns it on.
+ * test/design-guard.test.ts fails if the two copies of the dark theme, or
+ * lib/theme.ts (Clerk and themeColor), drift apart.
+ */
 :root {
-  /* Native controls, scrollbars and form autofill in the dark palette. */
+  /* Type. Nothing on screen goes under --fs-1. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
+  --fs-2: 13px; /* secondary lines, notices, helper text */
+  --fs-3: 15px; /* body, list rows, buttons */
+  --fs-4: 17px; /* sheet titles, settings section titles */
+  --fs-5: 20px; /* screen titles, summary figures */
+  --fs-6: 24px; /* large figures in a stat strip */
+  --fs-hero: clamp(32px, 9vw, 40px); /* the one hero number per screen */
+  --lh-tight: 1.2;
+  --lh-body: 1.45;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Spacing, a 4px grid. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Radii. */
+  --r-xs: 6px; /* chips, badges */
+  --r-sm: 8px; /* inputs, small buttons, segmented items */
+  --r-md: 12px; /* buttons, notices */
+  --r-lg: 16px; /* cards, sheets */
+  --r-pill: 999px;
+
+  /* Sizes. */
+  --tap: 44px; /* minimum touch target */
+  --row-min: 48px; /* minimum list row height */
+  --icon: 20px;
+  --content-max: 760px;
+
+  /* Motion. One reduced-motion rule zeroes these (design-system.md). */
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layers. */
+  --z-header: 20;
+  --z-tabbar: 30;
+  --z-sheet-backdrop: 40;
+  --z-sheet: 50;
+  --z-toast: 60;
+}
+
+:root,
+:root[data-theme="dark"] {
   color-scheme: dark;
-  --border: #2a2f3a;
-  --line: #262a33;
-  --raised: #1e222b;
-  --bg: #0f1115;
-  --card: #171a21;
-  --text: #e8e9ec;
-  --muted: #8b8f98;
-  --accent: #5b8def;
-  --up: #3ecf8e;
-  --warn: #e0a83c;
-  --down: #ef5b5b;
+
+  /* Surfaces */
+  --canvas: #0d0f14;
+  --surface: #151821;
+  --elevated: #1c202b;
+  --glass: rgba(21, 24, 33, 0.88); /* header and tab bar, over a blur */
+
+  /* Lines */
+  --border-subtle: #232834; /* dividers between rows */
+  --border-strong: #2b3140; /* card and sheet edges */
+  --border-input: #707889; /* field outlines: 3:1 on canvas, surface and elevated */
+
+  /* Text */
+  --text-1: #eceef2;
+  --text-2: #9499a6;
+  --text-3: #868c9b;
+
+  /* Meaning, as text or icon color */
+  --accent: #5b8def; /* links, selected states, focus */
+  --pos: #34d399;
+  --neg: #f87171;
+  --warn: #fbbf24;
+
+  /* Meaning, as a background tint (text in the matching color sits on it) */
+  --accent-tint: #1d263a;
+  --pos-tint: #192e2f;
+  --neg-tint: #30232b;
+  --warn-tint: #312c21;
+  --caveat-surface: #191d27; /* neutral information notices */
+
+  /* Fills with white labels */
+  --accent-fill: #2563eb;
+  --danger-fill: #dc2626;
+  --on-fill: #ffffff;
+
+  --focus: #5b8def;
+  --scrim: rgba(0, 0, 0, 0.55);
+}
+
+/* Today's names, so existing rules keep working. Each alias goes once nothing
+ * reads it (docs/design/rollout.md). */
+:root {
+  --bg: var(--canvas);
+  --card: var(--surface);
+  --raised: var(--elevated);
+  --border: var(--border-strong);
+  --line: var(--border-subtle);
+  --text: var(--text-1);
+  --muted: var(--text-2);
+  --up: var(--pos);
+  --down: var(--neg);
+  /* --accent and --warn keep their names. */
 }
 
 * {
@@ -32,8 +132,7 @@ html {
 }
 
 body {
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-ui);
   background: var(--bg);
   color: var(--text);
   min-height: 100dvh;
@@ -92,9 +191,10 @@ h2 {
   color: var(--down);
 }
 
+/* The fill is deeper than --accent so its white label passes AA (4.5:1). */
 button {
-  background: var(--accent);
-  color: white;
+  background: var(--accent-fill);
+  color: var(--on-fill);
   border: none;
   padding: 12px 20px;
   border-radius: 10px;
@@ -135,8 +235,344 @@ button:active:not(:disabled):not([class*="cl-"]) {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* Reduced motion, everywhere: the motion tokens go to zero, and so does every
+   transition and animation written with its own duration. A spinner stops
+   on its first frame; its role="status" and label still say it is loading. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Primitives (docs/design/design-system.md#components) ----------
+   One class per pattern, on the tokens only. Feature rules further down may
+   place them, but never restyle them into a new variant. */
+
+/* Money in a column or that changes in place: digits line up. */
+.money {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A card's title row: an <h2> on the left, a meta value or one action on the right. */
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.card-header > :is(h2, h3) {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+}
+
+/* Rows that share a card, split by hairlines. On a card the rows run edge to
+   edge, clipped to its corners (their focus ring is drawn inside them), and
+   the card keeps its margin below. */
+.list-rows {
+  list-style: none;
+  margin-top: 0;
+  padding: 0;
+}
+
+.list-rows:not(.card) {
+  margin-bottom: 0;
+}
+
+.card.list-rows {
+  padding: 0;
+  overflow: hidden;
+}
+
+.card.list-rows .list-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.list-rows > li + li {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* The whole row is the target: a <button> or a link, never a row with
+   buttons inside it. A title, one subtitle line, then a trailing value or a
+   chevron. */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: var(--row-min);
+  padding: var(--sp-3) var(--sp-5);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-tight);
+  text-align: left;
+  text-decoration: none;
+}
+
+/* :is(button, a) matches the global button hover rule's specificity, so the
+   row is raised rather than dimmed. */
+@media (hover: hover) {
+  :is(button, a).list-row:hover:not(:disabled):not([class*="cl-"]) {
+    background: var(--elevated);
+    opacity: 1;
+  }
+}
+
+.list-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.list-row-title {
+  font-weight: var(--fw-semibold);
+}
+
+.list-row-sub {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+}
+
+.list-row-value {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-row > svg {
+  width: var(--icon);
+  height: var(--icon);
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+/* Buttons. Width is the label's own; .btn-block makes one full width. Primary
+   is the one main action in a card or sheet; danger only confirms, inside a
+   confirm sheet. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  width: auto;
+  min-height: var(--tap);
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: var(--accent-fill);
+  color: var(--on-fill);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  text-decoration: none;
+}
+
+.btn.secondary {
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-1);
+}
+
+.btn.ghost {
+  padding-inline: var(--sp-2);
+  background: transparent;
+  color: var(--accent);
+}
+
+.btn.danger {
+  background: var(--danger-fill);
+  color: var(--on-fill);
+}
+
+.btn.btn-block {
+  width: 100%;
+}
+
+@media (hover: hover) {
+  .btn:is(.secondary, .ghost):hover:not(:disabled) {
+    background: var(--elevated);
+    opacity: 1;
+  }
+}
+
+/* A group of buttons: wraps on a narrow screen, primary last in the markup. */
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* Two to four views of one thing, or a range. The selected item is raised.
+   role="tablist" with aria-selected when it switches views, a radio group
+   with aria-checked when it sets a value. */
+.segmented {
+  display: flex;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-md);
+  background: var(--elevated);
+}
+
+.segmented > button {
+  flex: 1;
+  width: auto;
+  min-height: calc(var(--tap) - 2 * var(--sp-1));
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-medium);
+}
+
+.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {
+  background: var(--surface);
+  color: var(--text-1);
+}
+
+/* Touch screens get the full 44px per item. */
+@media (pointer: coarse) {
+  .segmented > button {
+    min-height: var(--tap);
+  }
+}
+
+/* Badge: a status or source label, not clickable. Chip: clickable, 32px
+   tall inside a 44px hit area. Sentence case, never color alone. */
+.badge,
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+}
+
+.badge {
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--elevated);
+  color: var(--text-2);
+}
+
+.badge.accent {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.badge.pos {
+  background: var(--pos-tint);
+  color: var(--pos);
+}
+
+.badge.neg {
+  background: var(--neg-tint);
+  color: var(--neg);
+}
+
+.badge.warn {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.chip {
+  position: relative;
+  width: auto;
+  min-height: 32px;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-2);
+}
+
+/* The hit area reaches 44px without the chip looking taller: measured from
+   the padding box, so it reaches past the 1px border too. */
+.chip::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--tap)) / 2)) -1px;
+}
+
+.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"]) {
+  border-color: transparent;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* Notice: the one way to say something is wrong or worth knowing
+   (design-system.md#status-and-honesty). Severity sets the color and is never
+   lowered: critical when a number is wrong or short, caution when it is real
+   but dated or needs the person, info when nothing is wrong, done when saved.
+   Every notice has words and an icon, not color alone. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  font-size: var(--fs-2);
+  line-height: var(--lh-body);
+}
+
+.notice > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.notice.critical {
+  background: var(--neg-tint);
+  color: var(--neg);
+}
+
+.notice.caution {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.notice.info {
+  background: var(--caveat-surface);
+  color: var(--text-2);
+}
+
+.notice.done {
+  background: var(--pos-tint);
+  color: var(--pos);
+}
+
+/* Helper text: one line under the thing it explains. */
+.helper {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  line-height: var(--lh-body);
 }
 
 /* Form controls without a class of their own: dark, rounded, and legible.
@@ -157,7 +593,7 @@ button:active:not(:disabled):not([class*="cl-"]) {
 }
 
 :where(input, select, textarea):not([class*="cl-"]):focus {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -300,8 +736,8 @@ th.num {
 
 /* Destructive action (disconnect confirm): red so it reads as irreversible. */
 button.danger {
-  background: var(--down);
-  color: white;
+  background: var(--danger-fill);
+  color: var(--on-fill);
 }
 
 /* Secondary toggle under the "Connect an Account" button on the Accounts tab. */
@@ -480,25 +916,22 @@ button:disabled {
   justify-content: flex-end;
 }
 
+/* Icon button: a 44px square, its 20px icon centered. The header's (hide
+   amounts, refresh, the Settings gear), the report page's hide amounts and
+   Settings' back button. */
 .icon-btn {
-  width: auto;
-  padding: 8px 10px;
-}
-
-/* The header's icon buttons (hide amounts, refresh, the Settings gear) and
-   Settings' back button as 44px targets, the icon centered in each. */
-.top-actions .icon-btn,
-.settings-bar .icon-btn {
-  min-width: 44px;
-  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: auto;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: var(--sp-2);
 }
 
 .icon-btn svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon);
+  height: var(--icon);
   display: block;
 }
 
@@ -507,65 +940,17 @@ button:disabled {
 }
 
 /* Settings (components/Settings.tsx): a back row, then the list of sections
-   or one section's cards as they were under Manage. */
+   (.list-rows of .list-row) or one section's cards as they were under Manage. */
 .settings-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
 }
 
 .settings-bar h2 {
   margin: 0;
-  font-size: 17px;
-}
-
-.settings-list {
-  list-style: none;
-  padding: 4px 0;
-  margin-top: 0;
-}
-
-.settings-list li + li {
-  border-top: 1px solid var(--line);
-}
-
-button.settings-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 44px;
-  padding: 12px 20px;
-  background: transparent;
-  color: var(--text);
-  border-radius: 0;
-  text-align: left;
-  font-weight: 400;
-}
-
-.settings-row svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  color: var(--muted);
-}
-
-.settings-row-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.settings-row-title {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.settings-row-sub {
-  font-size: 13px;
-  color: var(--muted);
+  font-size: var(--fs-4);
 }
 
 .num.inflow {
@@ -613,10 +998,10 @@ button.settings-row {
   right: 0;
   z-index: 10;
   display: flex;
-  background: rgba(23, 26, 33, 0.92);
+  background: var(--glass);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid #262a33;
+  border-top: 1px solid var(--border-subtle);
   padding-bottom: env(safe-area-inset-bottom);
 }
 
@@ -625,14 +1010,15 @@ button.settings-row {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: var(--sp-1);
+  min-height: var(--tap);
   background: none;
   border: none;
   border-radius: 0;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 9px 0 10px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-medium);
+  padding: var(--sp-2) 0;
 }
 
 .tab-bar button.active {
@@ -3803,14 +4189,20 @@ button.import-choice {
     }
   }
 
+  /* The tokens, so today's names (their aliases) follow. [data-theme] matches
+     the theme blocks' specificity, so a chosen theme never prints dark. The
+     meaning colors and tints stay the dark theme's until phase 7 rebuilds
+     print on the light tokens; no printed part uses a notice or badge yet. */
+  :root[data-theme],
   :root {
     color-scheme: light;
-    --text: #000;
-    --muted: #333;
-    --card: #fff;
-    --bg: #fff;
-    --border: #777;
-    --line: #aaa;
+    --text-1: #000;
+    --text-2: #333;
+    --text-3: #333;
+    --surface: #fff;
+    --canvas: #fff;
+    --border-strong: #777;
+    --border-subtle: #aaa;
     --warn: #000;
   }
 

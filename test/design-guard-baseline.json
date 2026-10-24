@@ -3,11 +3,8 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "rawColors": 46,
-    "smallFonts": 38
-  },
-  "app/layout.tsx": {
-    "rawColors": 15
+    "rawColors": 44,
+    "smallFonts": 37
   },
   "app/not-allowed/page.tsx": {
     "inlineLayoutStyles": 1
