@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4a (Home's Net worth card) and 4b (Home's Needs attention) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), and 4a to 4c (Home) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -14,6 +14,7 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 4a | Home: the Net worth card, timeline notes as a sheet | 1 to 2 days |
 | 4b | Home: Needs attention | 1 to 2 days |
 | 4c | Home: This month | 1 day |
+| 4d | Home: reconnected accounts to link, in Needs attention | 1 day |
 | 5 | Activity: segments, transaction sheet | 3 to 4 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
 | 7 | Light theme and the theme setting | 1 to 2 days |
@@ -96,7 +97,7 @@ Split in two pull requests, so each leaves the app working and the one that move
 
 ## Phase 4: Home
 
-Split in three pull requests, as phase 3 was: **4a** the Net worth card (its first bullet and the notes sheet), **4b** Needs attention (the action insights, CurrencyOffer and the admin's instructions move into it), **4c** This month (Insights' passive half and one FI line), and the reconnected accounts to link that 4b left out.
+Split in three pull requests, as phase 3 was: **4a** the Net worth card (its first bullet and the notes sheet), **4b** Needs attention (the action insights, CurrencyOffer and the admin's instructions move into it), **4c** This month (Insights' passive half and one FI line). The reconnected accounts to link, which 4b left out, became 4d.
 
 - One Net worth card (hero, caveat line, chart, Notes button, History paused badge).
 - Needs attention (the items in the IA doc), each linking to its fix; the backup instruction only for the admin. Until phases 5 and 6 land, an item whose home is a segment (Activity > Transactions, Budgets > Month) opens that tab as it is.
@@ -132,9 +133,37 @@ Split in three pull requests, as phase 3 was: **4a** the Net worth card (its fir
 
 **Kept narrow in 4b:**
 
-- **Reconnected accounts to link** (the IA's information row). The dashboard doesn't hold them (`components/AccountLinks.tsx` reads `/api/account-links` in Settings > Connections), and listing them would add a request to every Home load; 4c adds a count to a payload Home already reads.
+- **Reconnected accounts to link** (the IA's information row). The dashboard doesn't hold them (`components/AccountLinks.tsx` reads `/api/account-links` in Settings > Connections), and listing them would add a request to every Home load. They are phase 4d (below).
 - **A low balance** stays in Insights: it has no fix and no "not now", and a small savings account would sit in the list for good. 4c decides it with the rest of Insights.
 - **The focus targets that aren't headings yet:** the review count on Activity and the month title on Budgets become real headings in phases 5 and 6.
+
+**Built in 4c:** Insights draws Home's **This month** card: a `<section class="card this-month">` with an `<h2>`, its insights as plain `div.list-row` rows (nothing to tap, no color of its own: each says what it is in words), what the month may be missing after the pace and the biggest purchase (the block 4b made, now `SpendingNotes` and `.row-notes`), and the FI line last, passed in as `fi` and still loaded after Home paints (`components/FiProgressLoader.tsx`). The FI card became that line (`FiProgressView` returns an `<li>`): a `button.list-row` that opens the Plan tab, its title years and how far ("FI in about 11.4 years · 62% there"; "You're at FI"; "FI not reached at this savings rate"; "36% of the way to FI" when years aren't worked out; the FI number when neither is; "FI isn't worked out" with why when spending isn't measured), the FI number, what is invested and the savings rate under it, and every note the card had under the row through `TotalCaveats` (4a's), in its words and level: amber where a figure may be off or isn't measured, neutral where it explains. A card with no row yet is hidden (`.this-month:not(:has(li))`). The old `.insight*` and `.fi-*` rules are gone.
+
+**Decided in 4c:**
+
+- **The FI line keeps the figures its notes speak of.** The FI number, what is invested and the savings rate stay, under the title, so "May be low: spending is missing ..., so the savings rate may be off too" and the rest keep their words and still point at something on screen. Nothing the card said leaves Home: the estimates and payroll notes, the excluded transactions and what was typed sit in the gathered line, which names the worst kinds first (so an amber line names what made it amber) and, with no plan saved, says the figures are from the Plan's defaults. The meter is gone; the percentage says the same.
+- **No color on This month's rows.** The pace's red and green, the low balance's red and idle cash's amber are gone: amber means something needs the person and red a number that is short (design-system.md), and every row says what it is in words. The mockup draws them plain.
+- **The low balance stays in This month.** It has no fix to go to and no way to set it aside, so in Needs attention a deliberately small account would sit there for good.
+- **The notes go under the FI row, outside its button**, not as a badge on its line as the mockup first drew it: a `<details>` can't sit inside a button.
+
+**From a UX review of Home, in 4c** (an independent review read Home as a person would, checked against the redesign mockups):
+
+- **Rows lead with what to do, as the mockups draw them.** A connection the person must fix at Nya reads "Reconnect Chase" over "Balances as of Oct 21" ("Connect SimpleFIN again" for a whole connector); one with nothing to do there keeps its name and badge. A payment reads "Amex due tomorrow" over "Minimum $35.00". The Admin card reads "Nightly backup failed" over "Last saved Oct 20 · timeout · Check the backup cron in Vercel.", the fact in full staying on the Net worth card.
+- **An empty Needs attention never claims too much.** When Plaid's warnings or the SimpleFIN and Lunch Flow connections couldn't be read on this load, a row says so, in the color of the Accounts tab's notice about it (amber, and red for the connections), and goes to that notice.
+- **This month keeps its own figures.** Its rows are ordered pace, biggest purchase, bills, low balance, idle cash before the cap of six, and low balances are one row ("and 3 more accounts"), so small accounts kept on purpose can't push the month off the card.
+- **Notices say their level.** Each notice and gathered line starts with a visually hidden "Critical:", "Caution:" or "Note:".
+
+**Kept narrow in 4c:**
+
+- **The FI line, as reviewed.** The review asked for "Plan defaults" on the line itself when no plan is saved, a shorter line under it ("$942,000 of $1,520,000 invested"), a row that says why when the plan can't be read, and focus after its jump. The FI part is likely to change, so these wait for that.
+- **From the same review, for later:** Needs attention can sit below the fold at 320px under the chart (a "2 things need you" jump under the delta); caution's clock fits "due soon" but not "over budget" (one caution shape for rows and notices); a low balance smaller than a bill due within the week belongs in Needs attention; the month's missing transactions said once, gathered, rather than twice; tab jumps pushed to history, so back returns to Home.
+
+- **Focus after the FI line's jump.** The Plan tab has no heading to land on until phase 6 gives it one; the line scrolls to its top, as it did.
+- **The month's missing transactions said twice on Home** when a budget row and the pace are both shown: once after each, since each card says what qualifies its own figures.
+
+## Phase 4d: Reconnected accounts to link
+
+Needs attention's information row "A reconnected account may continue an earlier one: link its history", going to Settings > Connections. Working the suggestions out reads and decrypts every account's recorded history (`lib/links.ts` historySpans), too heavy for `/api/net-worth`, even behind its 15-minute cache. So the offered pairs are stored when they change: `recordDirectory` already reads the spans when a reconnect adds directory entries, and the account-links POST works the offer out again after a link or a dismissal. Each pair keeps its expiry (MATCH_WINDOW_DAYS), so one that ages out stops counting, and `/api/net-worth` returns the count from that record alone.
 
 ## Phase 5: Activity
 

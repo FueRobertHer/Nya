@@ -103,7 +103,8 @@ describe('the caveat line', () => {
   test('two or more lesser ones: one line with how many and of what, in the worst color, every one still in the page', () => {
     const html = renderToStaticMarkup(<TotalCaveats items={[c('a', 'info', 'converted into USD'), c('b', 'caution', 'history paused'), c('c', 'info', 'accounts with no currency')]} />);
     expect(html).toContain('<details class="notice-summary"><summary class="notice caution">');
-    expect(text(html)).toContain('3 notes: converted into USD, history paused and accounts with no currency');
+    // The worst kind named first (rollout.md "Decided in 4c"), so an amber line names what made it amber.
+    expect(text(html)).toContain('3 notes: history paused, converted into USD and accounts with no currency');
     for (const s of ['converted into USD', 'history paused', 'accounts with no currency']) expect(text(html)).toContain(`${s}, said in full.`);
     // Each in its own color inside.
     expect(html).toContain('<div class="notice info">');

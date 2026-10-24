@@ -382,6 +382,8 @@ describe('without a home currency, no figure from a part of what it measures', (
     const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
     const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, rows.length) };
     const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(typed, inputs, 'USD'), plan: typed, saved: true, repaired: false, inputs, onOpenPlan: () => {} }));
+    // The FI line (rollout phase 4c): no figure to lead with, so it says so.
+    expect(html).toContain('<span class="list-row-title">FI isn’t worked out</span>');
     expect(html).toContain('Not measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency');
     expect(html).not.toContain('FI number');
   });
@@ -510,11 +512,11 @@ describe('Home’s FI card, rendered, never from a figure not measured (review r
     const html = await home(plan({ age: 40, targetAge: 55 }), accounts, rows, null);
     expect(html).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, EUR (1 account in USD).');
     expect(html).toContain('Years to FI aren’t worked out: your invested assets aren’t measured (above), and a figure that isn’t measured is never counted as zero.');
-    expect(html).not.toMatch(/about [\d.]+ years<\/span><span class="plan-stat-label">to FI/);
+    expect(html).not.toMatch(/FI in about [\d.]+ years?/);
     // Weighed by amount, measured, and worked out.
     const weighed = await home(plan({ age: 40, targetAge: 55 }), accounts, rows, null, ecbTable({ home: null }).latest!.rates);
     expect(weighed).not.toContain('Not measured');
-    expect(weighed).toMatch(/about [\d.]+ years?<\/span><span class="plan-stat-label">to FI/);
+    expect(weighed).toMatch(/FI in about [\d.]+ years?/);
   });
 
   test('spending typed and the year not measured: the savings rate’s absence is said, in the year’s own words', async () => {
@@ -629,10 +631,11 @@ describe('the year weighed on each side, money out apart from money in (review r
     const flows = trailingFlows(mirror, '2026-09-14', { currency: 'USD' })!;
     const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, mirror.length), rates };
     const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(DEFAULT_PLAN, inputs, 'USD'), plan: DEFAULT_PLAN, saved: true, repaired: false, inputs, onOpenPlan: () => {} })).replace(/&#x27;|&#39;/g, "'");
-    expect(html).toContain(`<span class="fi-lead-value">$${Math.round(flows.spending / 0.04).toLocaleString('en-US')}</span><span class="plan-stat-label">FI number</span>`);
+    expect(html).toContain(`<span class="list-row-sub">FI number $${Math.round(flows.spending / 0.04).toLocaleString('en-US')} · `);
     expect(html).toContain('The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year).');
     expect(html).toContain('Years to FI aren’t worked out: your savings aren’t measured (above), and a figure that isn’t measured is never counted as zero.');
-    expect(html).not.toMatch(/years?<\/span><span class="plan-stat-label">to FI/);
+    expect(html).not.toMatch(/FI in /);
+    expect(html).toMatch(/<span class="list-row-title">\d+% of the way to FI<\/span>/);
     expect(html).not.toContain('Not measured: more than a tenth');
   });
 

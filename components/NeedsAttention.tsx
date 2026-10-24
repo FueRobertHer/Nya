@@ -13,7 +13,8 @@ import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import type { AttentionItem, AttentionSeverity, Go } from './attention';
 import { ALERT } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
-import { backupWords, filesWords } from './NetWorthCard';
+import { fmtInstantDay } from './accounts-format';
+import { LevelWord } from './TotalCaveats';
 
 const icon = (d: string) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -54,20 +55,27 @@ function Row({ level, what, detail, onClick }: { level: AttentionSeverity; what:
   );
 }
 
-/** What this month's spending may be missing, after its last row. */
-function Notes({ notes }: { notes: { leftOut: string | null; missing: readonly string[] } }) {
+/** What this month's spending may be missing, after the last row read from
+ *  it (here, and in This month, components/Insights.tsx). */
+export function SpendingNotes({ leftOut, missing }: { leftOut: string | null; missing: readonly string[] }) {
   return (
-    <div className="stack tight needs-attention-notes">
-      {notes.missing.map((n) => (
+    <div className="stack tight row-notes">
+      {missing.map((n) => (
         <div className="notice caution" key={n}>
           {ALERT}
-          <div>{n}</div>
+          <div>
+            <LevelWord level="caution" />
+            {n}
+          </div>
         </div>
       ))}
-      {notes.leftOut && (
+      {leftOut && (
         <div className="notice info">
           {ICONS.info}
-          <div>{notes.leftOut}</div>
+          <div>
+            <LevelWord level="info" />
+            {leftOut}
+          </div>
         </div>
       )}
     </div>
@@ -107,7 +115,7 @@ export default function NeedsAttention({
         {items.map((item, i) => (
           <li key={item.key}>
             <Row level={item.severity} what={item.title} detail={item.sub} onClick={() => onGo(item.go)} />
-            {said && i === last && <Notes notes={notes} />}
+            {said && i === last && <SpendingNotes leftOut={notes.leftOut} missing={notes.missing} />}
           </li>
         ))}
       </ul>
@@ -115,14 +123,35 @@ export default function NeedsAttention({
   );
 }
 
-/** The admin's card: what to do about a nightly job that failed. Each row
- *  goes to the Nightly jobs page (/admin/jobs, components/AdminJobs.tsx),
- *  where the job's last runs are and it can be run again, so Home holds only
- *  the fact. Nothing while the clean-up only waits for a backup. */
+/** The admin's card: what to do about a nightly job that failed, as the
+ *  redesign draws it ("Nightly backup failed" over "Last saved Oct 20 ·
+ *  Check the backup cron in Vercel."); the fact in full is on the Net worth
+ *  card. Each row goes to the Nightly jobs page (/admin/jobs,
+ *  components/AdminJobs.tsx), where the job's last runs are and it can be run
+ *  again, so Home holds no controls for it. Nothing while the clean-up only
+ *  waits for a backup. */
 export function AdminAttention({ backup, files }: { backup: BackupProblem | null; files: AttachmentSweepProblem | null }) {
   const rows: { key: string; title: string; sub: string }[] = [];
-  if (backup) rows.push({ key: 'backup', title: backupWords(backup), sub: 'Check the backup cron in Vercel.' });
-  if (files && !files.paused) rows.push({ key: 'files', title: filesWords(files), sub: files.held ? 'Its log in Vercel names the account.' : 'Check the clean-up cron in Vercel.' });
+  // A reason as the job gave it, without a closing period before the next part.
+  const why = (reason: string | null | undefined) => reason?.replace(/\.$/, '') || null;
+  if (backup) {
+    const when = backup.none ? null : backup.last_ok ? `Last saved ${fmtInstantDay(backup.last_ok)}` : 'None saved yet';
+    rows.push({
+      key: 'backup',
+      title: backup.none ? 'No nightly backup recorded yet' : backup.reason ? 'Nightly backup failed' : 'Nightly backup hasn’t run',
+      sub: [when, why(backup.reason), 'Check the backup cron in Vercel.'].filter(Boolean).join(' · '),
+    });
+  }
+  if (files && !files.paused) {
+    const when = files.held ? null : files.last_ok ? `Last finished ${fmtInstantDay(files.last_ok)}` : 'None finished yet';
+    rows.push({
+      key: 'files',
+      title: files.held ? 'Receipt clean-up held back' : files.reason ? 'Receipt clean-up failed' : 'Receipt clean-up hasn’t run',
+      sub: [when, why(files.reason), files.held ? 'It found more stored files with no record than it removes at once. Its log in Vercel names the account.' : 'Check the clean-up cron in Vercel.']
+        .filter(Boolean)
+        .join(' · '),
+    });
+  }
   if (rows.length === 0) return null;
   return (
     <section className="card needs-attention" aria-labelledby="admin-attention-title">
@@ -136,7 +165,7 @@ export function AdminAttention({ backup, files }: { backup: BackupProblem | null
               <span className="list-row-icon caution">{ICONS.caution}</span>
               <span className="list-row-text">
                 <span className="list-row-title">
-                  <span className="visually-hidden">Caution: </span>
+                  <LevelWord level="caution" />
                   {r.title}
                 </span>
                 <span className="list-row-sub">{r.sub}</span>
