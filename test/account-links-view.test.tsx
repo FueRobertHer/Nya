@@ -86,6 +86,11 @@ describe('AccountLinksView', () => {
     expect(view({ suggestions: [], unclaimed: [], links: [], manual: [{ old: 'A7', old_label: null, first: 'x', last: 'y', last_balance: null, candidates: [{ id: 'A19', label: 'C' }] }] })).toContain('Reconnected accounts');
   });
 
+  test('its title is a heading Home’s row about a suggested link can land on', () => {
+    const html = view({ suggestions: [], unclaimed: [], links: [], manual: [{ old: 'A7', old_label: null, first: 'x', last: 'y', last_balance: null, candidates: [{ id: 'A19', label: 'C' }] }] });
+    expect(html).toContain('<div class="card-header"><h2 id="account-links-title" tabindex="-1">Reconnected accounts</h2></div>');
+  });
+
   test('lists earlier accounts to forget, collapsed, and asks to unhide a hidden one first', () => {
     const html = view({
       suggestions: [],

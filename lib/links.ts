@@ -920,6 +920,33 @@ export async function loadSuggestionInputs(ctx: Ctx, liveIds: Set<string>) {
   return { directory: entries, spans, liveIds, links, dismissed, unreadableLinks: unreadable };
 }
 
+/**
+ * The reconnected accounts Settings > Connections suggests linking (the
+ * suggestions, not the earlier accounts offered by hand), named as it names
+ * them, for Home's row about them. Worked out from the directory alone, so a
+ * Home load never reads the balance history: a suggestion needs both accounts
+ * in the directory, which holds the days the matching compares, and the
+ * history the card also reads is written by the same healthy loads (a restore
+ * brings both back together). For that row only, and it fails closed:
+ * anything that can't be read offers nothing, so a pair already declined is
+ * never offered again because the declines couldn't be read, nor a stored
+ * connection's accounts taken for earlier ones because its record couldn't.
+ */
+export async function linkOfferForDisplay(ctx: Ctx): Promise<string[]> {
+  try {
+    const [liveIds, { entries }, { links, unreadable }, dismissed] = await Promise.all([
+      liveAccountIds(ctx, { strict: true, readOnly: true }),
+      readDirectory(ctx),
+      readLinks(ctx),
+      readDismissedStrict(ctx),
+    ]);
+    const { suggestions } = suggestLinks({ directory: entries, spans: {}, liveIds, links, dismissed: new Set(dismissed.keys()), unreadableLinks: unreadable });
+    return suggestions.map((s) => s.to_label);
+  } catch {
+    return [];
+  }
+}
+
 /** When an earlier id was last seen, by the rule a link records (lastSeenOf),
  *  for a preview of linking it. */
 export async function previewLastSeen(ctx: Ctx, id: string): Promise<string | null> {

@@ -343,6 +343,16 @@ export default function Dashboard({
   // Whether the server could read Plaid's warnings, and whether a notice
   // email's link (?view=connections) asks to go to what needs attention.
   const [healthUnavailable, setHealthUnavailable] = useState(false);
+  // The reconnected accounts Settings > Connections suggests linking, by name.
+  const [linkOffer, setLinkOffer] = useState<string[]>([]);
+  /** What Settings > Connections suggests, as it last loaded: only ever
+   *  narrows the row (it reads more leniently than /api/net-worth, so it
+   *  could suggest one Home rightly leaves out), and wakes a jump waiting
+   *  for its title (the focus effect runs on every render). */
+  const linkOfferLoaded = useCallback((suggested: string[]) => {
+    setLinkOffer((names) => (names.every((n) => suggested.includes(n)) ? names : names.filter((n) => suggested.includes(n))));
+    setFocusTarget((t) => (t ? { ...t } : t));
+  }, []);
   const [healthFocus, setHealthFocus] = useState(false);
   // The Currency card (components/CurrencyCard.tsx), opened from a note on
   // Home, at the form for a rate for the currency the note named, if any.
@@ -568,6 +578,7 @@ export default function Dashboard({
       setBackupProblem(data.backup_problem ?? null);
       setFilesProblem(data.attachments_problem ?? null);
       setHealthUnavailable(!!data.health_unavailable);
+      setLinkOffer(Array.isArray(data.link_offer) ? data.link_offer.filter((n: unknown): n is string => typeof n === 'string') : []);
       setConnected(data.institutions.length > 0);
 
       // First open with a near-empty chart: backfill estimated history from
@@ -1916,8 +1927,11 @@ export default function Dashboard({
           {/* Renders only when there is a reconnected account to link or a
               link to undo; mounted only here, which also skips its history
               read until it is wanted. A change reloads live, since links
-              alter hidden accounts and per-account history. */}
-          <AccountLinks onChanged={() => loadNetWorth(true)} refreshKey={asOf} />
+              alter hidden accounts and per-account history. Each of its
+              loads says what it suggests, which ends Home's row about any it
+              no longer does (a decline changes no figures, so nothing else is
+              reloaded), and draws its title, which a jump may be waiting for. */}
+          <AccountLinks onChanged={() => loadNetWorth(true)} onLoaded={linkOfferLoaded} refreshKey={asOf} />
           {/* The admin's list of connections, across every account, that
               cost money and do nothing. Only ever mounted for the admin (decided
               on the server in app/page.tsx); the route also refuses
@@ -2052,13 +2066,14 @@ export default function Dashboard({
       currency: offer && !base && !currencyProblem && !offerHidden ? offer : null,
       restore: restoreHold,
       unread: { health: healthUnavailable, connectors: !!connectors.error },
+      linkOffer,
       now,
     });
     const notes = budgetRows.alerts.length > 0 ? spendingNotes({ txns, fx: txnFx, withoutTransactions: txnWithout, incomplete: txnIncomplete, stopped: stoppedTxns }, now) : { leftOut: null, missing: [] };
     return { items, notes };
     // `amountsHidden` isn't read inside: it changes what formatMoney writes there.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, healthUnavailable, connectors.error, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
+  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, healthUnavailable, connectors.error, linkOffer, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
 
   // Where a Needs attention row goes, focused once it is on screen: a tab's
   // content can come a render later (the Budgets tab's after its spinner).
@@ -2094,6 +2109,7 @@ export default function Dashboard({
           openConnections();
           // Settings focuses its title; the card there, when it has one.
           if (go.item_id) focus(cardHeadingId(go.item_id), tab, 'connections');
+          else if (go.focus) focus(go.focus, tab, 'connections');
           return;
         case 'account':
           // Over Home: the sheet returns focus to the row that opened it.
