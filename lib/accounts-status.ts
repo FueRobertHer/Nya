@@ -86,6 +86,21 @@ export function severityOf(inst: StatusInstitution, extra = false): Severity | n
   return offAtAll(inst, extra) ? 'caution' : null;
 }
 
+/** A SimpleFIN or Lunch Flow connection with no institution card (nothing
+ *  tracked yet, every account hidden or ended), from its own record, by the
+ *  same two questions: refused access, or accounts left from one that is
+ *  gone, need the person; any other problem in its last answer, or accounts
+ *  offered and none chosen, is a caution. */
+export function cardlessSeverity(
+  conn: { last_fetch: { ok: boolean; kind: string | null; problems: unknown[]; missing: unknown[]; note: string | null } | null; accounts: unknown[]; available: unknown[] } | 'orphaned'
+): Severity | null {
+  if (conn === 'orphaned') return 'critical';
+  const f = conn.last_fetch;
+  if (f && !f.ok && (f.kind === 'refused' || f.kind === 'credentials')) return 'critical';
+  if (f && (!f.ok || f.problems.length > 0 || f.missing.length > 0 || !!f.note)) return 'caution';
+  return conn.accounts.length === 0 && conn.available.length > 0 ? 'caution' : null;
+}
+
 /** The worse of two. */
 export function worse(a: Severity | null, b: Severity | null): Severity | null {
   return a === 'critical' || b === 'critical' ? 'critical' : (a ?? b);

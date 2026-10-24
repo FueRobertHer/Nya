@@ -278,7 +278,7 @@ export default function AccountSheet({
         </div>
         {held && (
           <p>
-            <span className="badge warn">{held}</span>
+            <span className={`badge ${a.balance == null ? 'neg' : 'warn'}`}>{held}</span>
           </p>
         )}
         {liabLine && (

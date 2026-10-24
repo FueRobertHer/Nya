@@ -4,7 +4,7 @@
   },
   "app/globals.css": {
     "rawColors": 44,
-    "smallFonts": 35
+    "smallFonts": 34
   },
   "app/not-allowed/page.tsx": {
     "inlineLayoutStyles": 1

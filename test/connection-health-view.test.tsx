@@ -1,15 +1,22 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ConnectionHealthView, ReconnectSoonNote, affectedText, badgeOf, healthText, sideText, endsText, lastSyncedText, type HealthInstitution } from '@/components/ConnectionHealth';
+import { affectedText, badgeOf, healthText, sideText, endsText, lastSyncedText, type HealthInstitution } from '@/components/ConnectionHealth';
+import { ConnectionStatus, statusBadge } from '@/components/ConnectionStatus';
+import type { Account, Institution } from '@/components/accounts-format';
 import { totalNotes } from '@/components/total-notes';
 import { reconnectAlerts } from '@/components/Insights';
 import { monthGapNotes, monthGaps, stoppedConnections, joinNames } from '@/lib/month-coverage';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
 import { localDate } from '@/lib/local-date';
 
-// What the person sees of connection health (#51): the health view, the
-// "Reconnect soon" note on a card, the Home total's notes, the Home alert,
-// and Activity's months. An instant the views show as a day is noon on that
+// What the person sees of connection health (#51): on each institution's
+// card since rollout phase 3b (components/ConnectionStatus.tsx: what is
+// wrong, whose side, the one action, a connection that ends soon), the Home
+// total's notes, the Home alert, and Activity's months. Every sentence the
+// Connection health card said is held on the cards by
+// test/connection-words.test.tsx. An instant the views show as a day is noon on that
 // day in the machine's time zone (noon), so the day shown is the one written
 // in any zone: no one instant is the same day everywhere (Pacific/Kiritimati
 // is 14 hours ahead of UTC).
@@ -33,13 +40,37 @@ const inst = (name: string, h: ConnectionHealth, over: Partial<HealthInstitution
   ...over,
 });
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&apos;/g, "'").replace(/\s+/g, ' ');
-const view = (rows: (HealthInstitution & { health: ConnectionHealth })[], over: Record<string, unknown> = {}) =>
-  renderToStaticMarkup(
-    <ConnectionHealthView rows={rows} open={true} onToggle={noop} unavailable={false} connecting={false} onReconnect={noop} onRemove={noop} onManageAccounts={noop} now={Date.parse(noon('2026-10-08'))} {...over} />
-  );
+const NOW = Date.parse(noon('2026-10-08'));
+/** Each connection as its card heads and says it: name, badge, then its status. */
+const view = (rows: (HealthInstitution & { health: ConnectionHealth })[]) =>
+  rows
+    .map((row) => {
+      const card = row as unknown as Institution;
+      return (
+        `<h2>${row.institution_name} ${statusBadge(card, NOW) ?? ''}</h2>` +
+        renderToStaticMarkup(
+          <ConnectionStatus
+            inst={card}
+            allRows={row.accounts as unknown as Account[]}
+            place={null}
+            fx={null}
+            connecting={false}
+            unallowed={false}
+            lifecycle={{ busy: false, open: noop, stillOpen: async () => null, confirmEnd: async () => null, reopen: async () => {} }}
+            onReconnect={noop}
+            onRemove={noop}
+            onManageAccounts={noop}
+            onAllowTransactions={noop}
+            onConnector={noop}
+            now={NOW}
+          />
+        )
+      );
+    })
+    .join('');
 const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]).filter((b) => b.trim() !== '');
 
-describe('the connection health view', () => {
+describe('a connection’s status on its card', () => {
   test('every connection, with its state, last good sync, whose side, and the one action for it', () => {
     const rows = [
       inst('Chase', health('login', { side: 'you', code: 'ITEM_LOGIN_REQUIRED' })),
@@ -49,16 +80,14 @@ describe('the connection health view', () => {
     ];
     const html = view(rows);
     const t = text(html);
-    expect(t).toContain('Connection health');
-    expect(t).toContain('3 of 4 need attention');
     expect(t).toContain('Chase Needs reconnecting');
     expect(t).toContain('Chase needs you to sign in again. Reconnect: it takes a minute.');
     expect(t).toContain('Last synced Sep 12 · On your side: your sign-in at Chase · Plaid code ITEM_LOGIN_REQUIRED');
     expect(t).toContain("Access to Amex was withdrawn, so this connection can't be repaired. Remove it, then connect Amex again: link its new accounts to the old ones and their history carries over.");
     expect(t).toContain("Ally isn't answering. Nothing to do: it usually recovers on its own.");
     expect(t).toContain("On Ally's side");
-    expect(t).toContain('Citi Working');
-    expect(t).toContain('Last synced Oct 8');
+    // A working connection carries no badge, only when it last synced.
+    expect(t).toContain('Citi Last synced Oct 8');
     // Reconnect for the sign-in, Remove for the one that can't be repaired,
     // nothing to tap for an outage or a working connection.
     expect(buttons(html)).toEqual(['Reconnect', 'Remove Amex']);
@@ -140,24 +169,21 @@ describe('the connection health view', () => {
     expect(affectedText(mixed)[0]).toBe('Shown at last known balances, not measured now: USD and EUR.');
   });
 
-  test('all working is one quiet line; unreadable health is said, not shown as healthy', () => {
-    const ok = [inst('Citi', health('ok')), inst('Ally', health('ok'))];
-    expect(text(view(ok, { open: false }))).toContain('All 2 working');
-    expect(view(ok, { open: false })).not.toContain('health-row');
-    expect(text(view(ok, { unavailable: true }))).toContain("Plaid's warnings and the last sync times couldn't be read just now");
-    // Closed too: "All 2 working" is exactly where a hidden end would go unseen.
-    expect(text(view(ok, { open: false, unavailable: true }))).toContain("Plaid's warnings and the last sync times couldn't be read just now");
-    expect(text(view(ok, { open: false }))).not.toContain("couldn't be read");
+  test('working connections say only when they last synced; unreadable health is said, never shown as working', () => {
+    const ok = text(view([inst('Citi', health('ok')), inst('Ally', health('ok'))]));
+    expect(ok).toContain('Citi Last synced Sep 12');
+    expect(ok).not.toContain("couldn't be read");
+    // Said for the whole tab, above the cards (components/Dashboard.tsx):
+    // a card can't say what is missing from it.
+    const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
+    expect(dashboard).toContain("Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.");
+    expect(dashboard).toContain("{`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}");
   });
 
-  test('a connection whose records could not be read says a warning may be missing, open or closed', () => {
-    const rows = [inst('Citi', health('ok', { unread: true })), inst('Ally', health('ok'))];
-    const closed = text(view(rows, { open: false }));
-    expect(closed).toContain('All 2 working');
-    expect(closed).toContain("Some of what Nya keeps about one connection couldn't be read, so a warning that one is about to end may be missing here.");
-    const open = text(view(rows));
-    expect(open).toContain("Citi Working Some of what Nya keeps about this connection couldn't be read, so a warning from Plaid may be missing here.");
-    expect(text(view([inst('A', health('ok', { unread: true })), inst('B', health('ok', { unread: true }))], { open: false }))).toContain('about 2 connections');
+  test('a connection whose records could not be read says a warning may be missing, in amber', () => {
+    const html = view([inst('Citi', health('ok', { unread: true }))]);
+    expect(html).toContain('<div class="notice caution">');
+    expect(text(html)).toContain("Some of what Nya keeps about this connection couldn't be read, so a warning from Plaid may be missing here.");
   });
 
   // Blocking finding of the review: Plaid refusing Nya's own access token or
@@ -194,20 +220,23 @@ describe('the connection health view', () => {
   });
 });
 
-describe('the Reconnect soon note on a card', () => {
-  const now = Date.parse(noon('2026-10-08'));
-  test('the badge, the date and a Reconnect button, only while Plaid says it will end', () => {
-    const soon = { item_id: 'item_chase', institution_name: 'Chase', health: health('consent_ending', { ends_at: noon('2026-10-15') }) };
-    const html = renderToStaticMarkup(<ReconnectSoonNote inst={soon} connecting={false} onReconnect={noop} now={now} />);
-    expect(text(html)).toContain('Reconnect soon · Oct 15 Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.');
-    const about = { item_id: 'item_amex', institution_name: 'Amex', health: health('disconnect_pending', { ends_at: noon('2026-10-15'), ends_estimated: true }) };
-    expect(text(renderToStaticMarkup(<ReconnectSoonNote inst={about} connecting={false} onReconnect={noop} now={now} />))).toContain('Reconnect soon · about Oct 15 Plaid says this connection ends around Oct 15.');
+describe('a connection Plaid says will end, on its card', () => {
+  const now = NOW;
+  test('the badge with the date, the sentence, and one Reconnect, only while Plaid says it will end', () => {
+    const soon = inst('Chase', health('consent_ending', { ends_at: noon('2026-10-15') }));
+    const html = view([soon]);
+    expect(text(html)).toContain('Chase Reconnect soon · Oct 15');
+    expect(text(html)).toContain('Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.');
+    const about = inst('Amex', health('disconnect_pending', { ends_at: noon('2026-10-15'), ends_estimated: true }));
+    expect(text(view([about]))).toContain('Amex Reconnect soon · about Oct 15');
+    expect(text(view([about]))).toContain('Plaid says this connection ends around Oct 15.');
     expect(buttons(html)).toEqual(['Reconnect']);
     expect(html).toContain('aria-label="Reconnect Chase"');
-    for (const other of [health('ok'), health('login'), undefined]) {
-      expect(renderToStaticMarkup(<ReconnectSoonNote inst={{ item_id: 'x', institution_name: 'X', health: other }} connecting={false} onReconnect={noop} now={now} />)).toBe('');
-    }
-    expect(renderToStaticMarkup(<ReconnectSoonNote inst={{ ...soon, manual: true }} connecting={false} onReconnect={noop} now={now} />)).toBe('');
+    // Amber: nothing is broken yet.
+    expect(html).toContain('<div class="notice caution">');
+    for (const other of [health('ok'), health('login')]) expect(text(view([inst('X', other)]))).not.toContain('Plaid says this connection ends');
+    // Accounts typed by hand have no connection to end.
+    expect(statusBadge({ ...soon, manual: true } as unknown as Institution, now)).toBeNull();
   });
 
   // Review nit: a consent end already past (on a connection that still
@@ -217,8 +246,9 @@ describe('the Reconnect soon note on a card', () => {
     expect(endsText(past, now)).toBe('Plaid said this connection would end on Oct 5');
     expect(healthText('Chase', past, {}, now)).toBe('Plaid said this connection would end on Oct 5. Reconnect now to keep it syncing: it takes a minute.');
     expect(badgeOf(past, now)).toBe('Reconnect now');
-    const note = text(renderToStaticMarkup(<ReconnectSoonNote inst={{ item_id: 'item_chase', institution_name: 'Chase', health: past }} connecting={false} onReconnect={noop} now={now} />));
-    expect(note).toContain('Reconnect now Plaid said this connection would end on Oct 5. Reconnect now to keep it syncing.');
+    const note = text(view([inst('Chase', past)]));
+    expect(note).toContain('Chase Reconnect now');
+    expect(note).toContain('Plaid said this connection would end on Oct 5. Reconnect now to keep it syncing.');
     expect(note).not.toContain('before then');
   });
 });

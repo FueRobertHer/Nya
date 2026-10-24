@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectButtonsView, LUNCHFLOW_OPTION } from '@/components/ConnectButtons';
 import { ConnectIntro, ConnectorCardView, CredentialField, endsThere, refreshedWords, retryLine, SignView } from '@/components/Connectors';
-import { ConnectionHealthView } from '@/components/ConnectionHealth';
+import InstitutionCard from '@/components/InstitutionCard';
+import type { Institution } from '@/components/accounts-format';
 import { connectorHealth, connectorHealthText } from '@/lib/connectors/health';
 import { connectorBalanceDay, connectorLabel, CONNECTOR_WORDS, ANY_CONNECTOR } from '@/lib/connectors/types';
 import { connectorOffered, lunchFlowEnabled } from '@/lib/connectors/switch';
@@ -182,7 +183,7 @@ describe('its card and its health', () => {
     expect(r).toContain('>Connect again</button>');
   });
 
-  test('a health row is via Lunch Flow, in its words, with an API key to connect again and its site to fix a bank', () => {
+  test('its bank’s card is via Lunch Flow, in its words, with an API key to connect again and its site to fix a bank', () => {
     const row = (issue: Parameters<typeof connectorHealth>[0]['issue'], messages: string[] = []) => ({
       institution_name: 'Monzo',
       item_id: `connector:conn_1:${issue}`,
@@ -193,12 +194,36 @@ describe('its card and its health', () => {
       accounts: [],
       health: connectorHealth({ connector: 'lunchflow', label: 'Lunch Flow', host: 'lunchflow.app', connection_id: 'conn_1', issue, messages, accounts: [] }, null, issue === 'reported' ? 'connector' : undefined),
     });
+    // On the bank's card since rollout phase 3b (it was a Connection health row).
     const render = (rows: ReturnType<typeof row>[]) =>
-      renderToStaticMarkup(
-        <ConnectionHealthView rows={rows} open={true} onToggle={noop} unavailable={false} connecting={false} onReconnect={noop} onRemove={noop} onManageAccounts={noop} onConnector={noop} now={Date.parse('2026-10-09T14:00:00Z')} />
-      );
+      rows
+        .map((r) => {
+          const inst = { ...r, holdings: [], needs_reauth: false } as unknown as Institution;
+          return renderToStaticMarkup(
+            <InstitutionCard
+              inst={inst}
+              institutions={[inst]}
+              base={null}
+              shownCurrency="USD"
+              connecting={false}
+              expandedHoldings={new Set()}
+              unallowedIds={new Set()}
+              lifecycle={{ busy: false, open: noop, stillOpen: async () => null, confirmEnd: async () => null, reopen: async () => {} }}
+              onOpenAccount={noop}
+              toggleHoldings={noop}
+              onDetails={noop}
+              onRemove={noop}
+              onConnector={noop}
+              startReconnect={noop}
+              startAllowTransactions={noop}
+              startEnableLiabilities={noop}
+              startManageAccounts={noop}
+            />
+          );
+        })
+        .join('');
     const reported = render([row('reported', ['The connection to Monzo is disconnected'])]);
-    expect(reported).toContain('Monzo<span class="manual-badge">via Lunch Flow</span>');
+    expect(reported).toContain('Monzo <span class="badge">via Lunch Flow</span>');
     expect(reported).toContain('Lunch Flow reports: “The connection to Monzo is disconnected”');
     expect(reported).toContain('>Open Lunch Flow</a>');
     const refused = render([row('refused')]);

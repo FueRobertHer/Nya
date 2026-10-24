@@ -12,12 +12,16 @@
 //                   loan's positive balance,
 //                   a Refresh, and disconnecting (keeping the accounts as
 //                   manual ones, or removing them). Opened by an "ask" the
-//                   dashboard holds: from the connect buttons, the card
-//                   below, or a connection health row.
-//   ConnectorCards  on the Accounts tab, one card per connection: where it
-//                   reaches, when it last answered, what it reported in its
-//                   own words, how much older history has come, how many of
-//                   the day's requests are left, and its buttons.
+//                   dashboard holds: from the Add account sheet, a bank's
+//                   card and its ⋯, Connection details, or the card below.
+//   ConnectorCards  one card per connection: where it reaches, when it last
+//                   answered, what it reported in its own words, how much
+//                   older history has come, how many of the day's requests
+//                   are left, and its buttons. In Connection details, and
+//                   in Settings > Connections (and the empty state) for a
+//                   connection with no bank card on the Accounts tab. Its
+//                   problems are on its banks' cards (ConnectionStatus).
+//   useConnectors   every connection, read once for the dashboard.
 //
 // Only when the person chooses it: nothing here runs, or asks a service
 // anything, until they open it. The words say what each service is, that the

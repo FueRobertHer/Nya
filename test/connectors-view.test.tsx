@@ -6,7 +6,8 @@ import { ConnectButtonsView, SIMPLEFIN_OPTION } from '@/components/ConnectButton
 import { backIn, carriedLine, carryChoiceWords, carryNote, ChooseView, ConnectIntro, ConnectorCardView, EndedPointer, guessKind, KINDS, nothingToKeep, reportedWords, SignView, uncarryWords } from '@/components/Connectors';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import type { Txn } from '@/lib/transactions';
-import { ConnectionHealthView } from '@/components/ConnectionHealth';
+import InstitutionCard from '@/components/InstitutionCard';
+import type { Institution } from '@/components/accounts-format';
 import { connectorHealth } from '@/lib/connectors/health';
 import type { ConnectionView } from '@/lib/connectors/view';
 
@@ -281,18 +282,43 @@ describe('in connection health', () => {
     accounts: [],
     health: connectorHealth({ connector: 'simplefin', label: 'SimpleFIN', host: 'bridge.example', connection_id: 'conn_1', issue, messages, accounts: [] }, '2026-10-08T13:00:00.000Z', issue === 'reported' ? 'connector' : undefined),
   });
+  // On the bank's card since rollout phase 3b (it was a row of the
+  // Connection health card).
   const render = (rows: ReturnType<typeof row>[]) =>
-    renderToStaticMarkup(
-      <ConnectionHealthView rows={rows} open={true} onToggle={noop} unavailable={false} connecting={false} onReconnect={noop} onRemove={noop} onManageAccounts={noop} onConnector={noop} now={Date.parse('2026-10-09T14:00:00Z')} />
-    );
+    rows
+      .map((r) => {
+        const inst = { ...r, holdings: [], needs_reauth: false } as unknown as Institution;
+        return renderToStaticMarkup(
+          <InstitutionCard
+            inst={inst}
+            institutions={[inst]}
+            base={null}
+            shownCurrency="USD"
+            connecting={false}
+            expandedHoldings={new Set()}
+            unallowedIds={new Set()}
+            lifecycle={{ busy: false, open: noop, stillOpen: async () => null, confirmEnd: async () => null, reopen: async () => {} }}
+            onOpenAccount={noop}
+            toggleHoldings={noop}
+            onDetails={noop}
+            onRemove={noop}
+            onConnector={noop}
+            startReconnect={noop}
+            startAllowTransactions={noop}
+            startEnableLiabilities={noop}
+            startManageAccounts={noop}
+          />
+        );
+      })
+      .join('');
 
-  test('a SimpleFIN row says it is via SimpleFIN, in SimpleFIN’s words, whose side it is, and links to fix it there', () => {
+  test('a SimpleFIN card says it is via SimpleFIN, in SimpleFIN’s words, whose side it is, and links to fix it there', () => {
     const html = render([row('reported', ['Connection to My Bank may need attention'])]);
-    expect(html).toContain('My Bank<span class="manual-badge">via SimpleFIN</span>');
+    expect(html).toContain('My Bank <span class="badge">via SimpleFIN</span>');
     expect(html).toContain('Needs attention at SimpleFIN');
     expect(html).toContain('SimpleFIN reports: “Connection to My Bank may need attention”');
     expect(html).toContain('On SimpleFIN&#x27;s side');
-    expect(html).toContain('<a class="connector-site" href="https://bridge.example/" target="_blank" rel="noreferrer">Open SimpleFIN</a>');
+    expect(html).toContain('<a class="btn secondary" href="https://bridge.example/" target="_blank" rel="noreferrer">Open SimpleFIN</a>');
     expect(html).toContain('>Refresh</button>');
     // Never Plaid's own words.
     expect(html).not.toContain('Plaid');
@@ -314,7 +340,7 @@ describe('in connection health', () => {
     expect(render([row('refused')])).toContain('>Connect again</button>');
     expect(render([row('missing')])).toContain('>Choose accounts</button>');
     const nya = render([row('limited')]);
-    expect(nya).not.toContain('<button class="secondary"');
+    expect(nya).not.toMatch(/class="btn[ "]/);
     expect(nya).toContain('On Nya&#x27;s side');
   });
 
