@@ -87,11 +87,10 @@ describe('the admin’s card: what to do about the nightly jobs', () => {
     expect(renderToStaticMarkup(<AdminAttention backup={null} files={null} />)).toBe('');
   });
 
-  test('plain rows, not buttons: the only thing to tap is Run again, beside the words (test/admin-jobs-view.test.tsx)', () => {
-    const html = renderToStaticMarkup(<AdminAttention backup={{ last_ok: null, reason: null, none: true }} files={null} />);
-    expect(html).toContain('<div class="list-row">');
-    expect(html).not.toContain('<button type="button" class="list-row"');
-    expect(html.match(/<button type="button" class="btn secondary">Run again<\/button>/g)).toHaveLength(1);
+  test('each row goes to the Nightly jobs page, where its runs are and it can be run again: nothing to run on Home', () => {
+    const html = renderToStaticMarkup(<AdminAttention backup={{ last_ok: null, reason: null, none: true }} files={{ last_ok: null, reason: 'listing', held: false }} />);
+    expect(html.match(/<a class="list-row" href="\/admin\/jobs">/g)).toHaveLength(2);
+    expect(html).not.toContain('<button');
   });
 });
 

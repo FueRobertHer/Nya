@@ -161,7 +161,7 @@ The only list on Home that asks the person to act (`components/NeedsAttention.ts
 | A budget over or close: the worst two, then "3 more budgets over or nearly over" | Caution | The Budgets tab, focus on its month |
 | Your accounts use several currencies: choose a home currency ("Show your totals in one currency") | Caution while the total adds them unconverted (as its caveat); Information when only transactions are in several | The offer, in a sheet, with its choices and Not now |
 | A bank a restore brought back isn't connected; what a restore brought back can't be read | Critical; Caution | Settings > Your data |
-| The nightly backup or receipt clean-up failed (admin only): the fact, then where to look | Caution | Not a link: the Admin card under Needs attention, with **Run again** on the row (not for a clean-up the breaker held) |
+| The nightly backup or receipt clean-up failed (admin only): the fact, then where to look | Caution | The Admin card under Needs attention; each row goes to the Nightly jobs page (`/admin/jobs`) |
 
 When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber. An unfinished restore keeps its banner on every tab, Home's too, rather than a row. What a budget row's month may be missing follows the budget rows, in the words Activity and Budgets use. A low balance stays in Insights until phase 4c decides it.
 
@@ -188,7 +188,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
 | NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
-| NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each failed job's row with **Run again** |
+| NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
 | TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place |
 | NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
@@ -238,6 +238,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ReviewSettingsCard | Manage | Settings > Transactions |
 | DeleteAccount, DeletionReceipt, ForgetDevice | Clerk profile window; header (password mode) | Settings > Account |
 | AdminStorage | `/admin-view` | Settings > Account (admin link) and `/admin-view` |
+| AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
 | MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; editor becomes the Transaction sheet |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
 | CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period control |

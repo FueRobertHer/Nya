@@ -79,7 +79,7 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 | 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. It starts no connection after 200 seconds, so it always answers inside its 300; the rest are checked the next day. |
 | 17:30 | `/api/attachments/sweep` | Cleans up receipts and documents ([operations.md](operations.md#receipts-and-documents)). |
 
-When the backup or the clean-up fails, the admin can run it again from Home: the Admin card has **Run again** on the failed job's row (`POST /api/admin/jobs`). It runs exactly as the cron does and records its outcome the same way. While that job's own cron may still be running (from its time until an hour and five minutes later, unless tonight's run has already recorded its outcome) it says when to try again instead.
+The admin has a page for the backup and the clean-up, **Nightly jobs** (`/admin/jobs`, admin only like Storage across accounts: anyone else gets the 404 any missing page gets). It is linked from Settings, Your data and privacy, and from each row of Home's Admin card when one fails. It shows when each job runs, when it last worked and last failed, and why, and **Run now** runs one exactly as its cron does (`POST /api/admin/jobs`), recording its outcome the same way. While that job's own cron may still be running (from its time until an hour and five minutes later, unless tonight's run has already recorded its outcome) it waits, and says until when. A clean-up the breaker held can't be run from there: it would hold again.
 
 ## 5. Local development
 

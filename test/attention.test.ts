@@ -220,8 +220,8 @@ describe('the dashboard', () => {
     const home = dashboard.slice(dashboard.indexOf("{tab === 'home' && ("));
     const at = (s: string) => home.indexOf(s);
     expect(at('<NetWorthCard')).toBeLessThan(at('<NeedsAttention'));
-    expect(at('<NeedsAttention')).toBeLessThan(at('<AdminAttention'));
-    expect(at('<AdminAttention')).toBeLessThan(at('<Insights'));
+    expect(at('<NeedsAttention')).toBeLessThan(at('{admin && <AdminAttention'));
+    expect(at('{admin && <AdminAttention')).toBeLessThan(at('<Insights'));
     // The unfinished restore's banner stays on every tab, Home's too.
     expect(dashboard.indexOf('<RestoreBanner')).toBeLessThan(dashboard.indexOf("{tab === 'home' && ("));
   });

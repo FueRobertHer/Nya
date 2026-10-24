@@ -1,6 +1,6 @@
 // Where Your data (app/your-data) is found from: Settings, Your data and privacy,
-// beside Download my data. For the admin, also the way to Storage across
-// accounts (/admin/storage); the server decides who the admin is
+// beside Download my data. For the admin, also the ways to Storage across
+// accounts (/admin/storage) and Nightly jobs (/admin/jobs); the server decides who the admin is
 // (app/page.tsx), and the page and its route refuse anyone else. Links, not
 // state: each page reads its own.
 
@@ -20,6 +20,11 @@ export default function InventoryEntry({ admin = false }: { admin?: boolean }) {
       {admin && (
         <a className="report-link-button" href="/admin/storage">
           Storage across accounts (admin)
+        </a>
+      )}
+      {admin && (
+        <a className="report-link-button" href="/admin/jobs">
+          Nightly jobs (admin)
         </a>
       )}
     </div>

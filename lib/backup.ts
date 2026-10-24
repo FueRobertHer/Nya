@@ -868,3 +868,61 @@ export async function cronHoldUntil(job: NightlyJob, now: Date = new Date()): Pr
   const at = [record?.last_ok, record?.last_failed].map((t) => (t ? Date.parse(t) : NaN));
   return at.some((t) => t >= start) ? null : new Date(start + CRON_HOLD_MS);
 }
+
+// ---- What the admin's Nightly jobs page shows (app/admin-view/jobs) ----
+
+/** One job as the page shows it: when it runs, its last outcomes, what the
+ *  dashboard says of it (null when nothing), and whether it can be run now:
+ *  `hold_until` while its cron may be running (cronHoldUntil), `runnable`
+ *  false where a run can't help (no blob store; a clean-up the breaker
+ *  held, which would hold again). */
+export type JobView = {
+  job: NightlyJob;
+  hour: number;
+  minute: number;
+  last_ok: string | null;
+  last_failed: string | null;
+  reason: string | null;
+  problem: BackupProblem | AttachmentSweepProblem | null;
+  hold_until: string | null;
+  runnable: boolean;
+};
+
+/** Both jobs, as the page shows them. A record that can't be read shows as
+ *  no outcome yet: the dashboard's notices say the same. */
+export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
+  const status = await readStatus().catch(() => null);
+  const sweep = sweepOf(status);
+  const [backupNow, filesNow, backupHold, filesHold] = await Promise.all([
+    backupNotice(now),
+    attachmentSweepProblem(now),
+    cronHoldUntil('backup', now),
+    cronHoldUntil('files', now),
+  ]);
+  const kept = backupRetention()?.kept === true;
+  const jobs: JobView[] = [
+    {
+      job: 'backup',
+      hour: CRON_SCHEDULES.backup.hour,
+      minute: CRON_SCHEDULES.backup.minute,
+      last_ok: status?.last_ok ?? null,
+      last_failed: status?.last_failed ?? null,
+      reason: status?.last_failed ? status.reason : null,
+      problem: backupNow,
+      hold_until: backupHold?.toISOString() ?? null,
+      runnable: kept,
+    },
+    {
+      job: 'files',
+      hour: CRON_SCHEDULES.files.hour,
+      minute: CRON_SCHEDULES.files.minute,
+      last_ok: sweep?.last_ok ?? null,
+      last_failed: sweep?.last_failed ?? null,
+      reason: sweep?.last_failed ? sweep.reason : null,
+      problem: filesNow,
+      hold_until: filesHold?.toISOString() ?? null,
+      runnable: kept && !filesNow?.held,
+    },
+  ];
+  return jobs;
+}

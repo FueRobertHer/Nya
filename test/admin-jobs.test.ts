@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { NextResponse } from 'next/server';
 import { mockForFile } from './scoped-mock';
 
-// The route the admin's card runs a nightly job again with
-// (app/api/admin/jobs): admin-only, never while the job's own cron may be
-// running, and answering with what the dashboard now says of both jobs. The
+// The route behind the admin's Nightly jobs page (app/api/admin/jobs):
+// admin-only, never running a job while its own cron may be, and answering
+// with both jobs as they stand (lib/backup.ts nightlyJobs). The
 // runs themselves are the crons' (test/backup.test.ts, and the sweep's own
 // tests); here they are stood in for.
 
@@ -12,7 +12,8 @@ let admin = true;
 let holdUntil: Date | null = null;
 const ran: string[] = [];
 let answer = { status: 200, body: {} as Record<string, unknown> };
-const problems = { backup: null as unknown, files: null as unknown };
+/** What lib/backup.ts nightlyJobs reads, stood in for. */
+let jobs: unknown[] = [{ job: 'backup' }, { job: 'files' }];
 
 await mockForFile('@/lib/admin-items', () => ({
   adminCtx: async () => (admin ? { container: 'c1' } : null),
@@ -21,14 +22,13 @@ await mockForFile('@/lib/admin-items', () => ({
 await mockForFile('@/lib/backup', () => ({
   runNightlyBackup: async () => (ran.push('backup'), answer),
   cronHoldUntil: async () => holdUntil,
-  backupNotice: async () => problems.backup,
-  attachmentSweepProblem: async () => problems.files,
+  nightlyJobs: async () => jobs,
 }));
 await mockForFile('@/lib/attachment-sweep', () => ({
   runNightlySweep: async () => (ran.push('files'), answer),
 }));
 
-const { POST } = await import('@/app/api/admin/jobs/route');
+const { GET, POST } = await import('@/app/api/admin/jobs/route');
 const post = (body: unknown) => POST(new Request('http://x/api/admin/jobs', { method: 'POST', body: JSON.stringify(body) }));
 
 beforeEach(() => {
@@ -36,13 +36,13 @@ beforeEach(() => {
   holdUntil = null;
   ran.length = 0;
   answer = { status: 200, body: {} };
-  problems.backup = null;
-  problems.files = null;
+  jobs = [{ job: 'backup' }, { job: 'files' }];
 });
 
-describe('running a nightly job again', () => {
-  test('anyone but the admin gets a 404, and nothing runs', async () => {
+describe('the nightly jobs route', () => {
+  test('anyone but the admin gets a 404, reading or running, and nothing runs', async () => {
     admin = false;
+    expect((await GET()).status).toBe(404);
     expect((await post({ job: 'backup' })).status).toBe(404);
     expect(ran).toEqual([]);
   });
@@ -53,28 +53,33 @@ describe('running a nightly job again', () => {
     expect(ran).toEqual([]);
   });
 
-  test('runs the job asked for, and answers what the dashboard now says of both', async () => {
-    problems.files = { last_ok: null, reason: 'listing', held: false };
+  test('the admin reads both jobs', async () => {
+    const res = await GET();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ jobs });
+    expect(ran).toEqual([]);
+  });
+
+  test('runs the job asked for, and answers both jobs as they now stand', async () => {
     const res = await post({ job: 'backup' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ backup_problem: null, attachments_problem: { last_ok: null, reason: 'listing', held: false } });
+    expect(await res.json()).toEqual({ jobs });
     expect((await post({ job: 'files' })).status).toBe(200);
     expect(ran).toEqual(['backup', 'files']);
   });
 
   test('a run that fails answers 500 with its reason, and the record it left', async () => {
     answer = { status: 500, body: { error: 'The backup’s keys step took longer than 40s' } };
-    problems.backup = { last_ok: null, reason: 'The backup’s keys step took longer than 40s' };
     const res = await post({ job: 'backup' });
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'The backup’s keys step took longer than 40s', backup_problem: problems.backup, attachments_problem: null });
+    expect(await res.json()).toEqual({ error: 'The backup’s keys step took longer than 40s', jobs });
   });
 
   test('while its cron may be running: 409, saying when to try, and nothing runs', async () => {
     holdUntil = new Date(Date.now() + 12 * 60_000 - 1000);
     const res = await post({ job: 'files' });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'Its nightly run may still be going. Try again in 12 minutes.' });
+    expect(await res.json()).toEqual({ error: 'Its nightly run may still be going. Try again in 12 minutes.', jobs });
     expect(ran).toEqual([]);
   });
 });

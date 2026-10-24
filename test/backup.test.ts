@@ -82,7 +82,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
 };
 await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, cronHoldUntil, CRON_SCHEDULES, CRON_HOLD_MS, recordAttachmentSweep } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, cronHoldUntil, CRON_SCHEDULES, CRON_HOLD_MS, recordAttachmentSweep, nightlyJobs } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
 /** The data archives kept, and the key archives (lib/key-archive.ts). */
@@ -622,5 +622,28 @@ describe('holding off a run by hand while its cron may be going', () => {
     } finally {
       fake.get = get;
     }
+  });
+});
+
+describe('what the Nightly jobs page shows', () => {
+  test('each job: its schedule, its last outcomes, what the dashboard says, and whether it can run', async () => {
+    const now = new Date('2026-06-15T19:00:00Z');
+    await recordOutcome({ ok: true }, new Date('2026-06-14T16:02:00Z'));
+    await recordOutcome({ ok: false, reason: 'timeout' }, new Date('2026-06-15T16:04:00Z'));
+    await recordAttachmentSweep({ last_ok: '2026-06-15T17:31:00.000Z', last_failed: null, reason: null, cursor: null, listed_at: null });
+    expect(await nightlyJobs(now)).toEqual([
+      { job: 'backup', hour: 16, minute: 0, last_ok: '2026-06-14T16:02:00.000Z', last_failed: '2026-06-15T16:04:00.000Z', reason: 'timeout', problem: { last_ok: '2026-06-14T16:02:00.000Z', reason: 'timeout' }, hold_until: null, runnable: true },
+      { job: 'files', hour: 17, minute: 30, last_ok: '2026-06-15T17:31:00.000Z', last_failed: null, reason: null, problem: null, hold_until: null, runnable: true },
+    ]);
+  });
+
+  test('while a cron may be going, until when; a held clean-up, or no file store, can’t be run', async () => {
+    await recordAttachmentSweep({ last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null, held: { at: '2026-06-15T17:31:00.000Z', containers: 1 } });
+    const [backup, files] = await nightlyJobs(new Date('2026-06-15T16:20:00Z'));
+    expect(backup.hold_until).toBe('2026-06-15T17:05:00.000Z');
+    expect(backup.runnable).toBe(true);
+    expect(files.runnable).toBe(false);
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect((await nightlyJobs(new Date('2026-06-15T19:00:00Z'))).map((j) => j.runnable)).toEqual([false, false]);
   });
 });

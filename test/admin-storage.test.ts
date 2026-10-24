@@ -34,6 +34,7 @@ const { maxBlobChars } = await import('@/lib/blob');
 const { forgetEpochs } = await import('@/lib/sessions');
 const route = await import('@/app/api/admin/storage/route');
 const { default: AdminStoragePage, generateMetadata } = await import('@/app/admin-view/storage/page');
+const jobsPage = await import('@/app/admin-view/jobs/page');
 const { proxy } = await import('@/proxy');
 const { isAdminSignIn } = await import('@/lib/admin-gate');
 const { isAdmin } = await import('@/lib/admin-items');
@@ -301,9 +302,9 @@ describe('the route', () => {
     };
     clerk.signedIn = 'user_b';
     // Untouched, exactly as a path that does not exist: no route answers it.
-    for (const path of ['/admin/storage', '/admin/storage/x', '/admin', '/no-such-page']) expect([path, await where(path)]).toEqual([path, null]);
+    for (const path of ['/admin/storage', '/admin/storage/x', '/admin/jobs', '/admin', '/no-such-page']) expect([path, await where(path)]).toEqual([path, null]);
     // Where the page lives, asked for directly: a path no route matches.
-    for (const path of ['/admin-view/storage', '/admin-view']) expect([path, await where(path)]).toEqual([path, 'https://nya.test/__nya-no-such-page__']);
+    for (const path of ['/admin-view/storage', '/admin-view/jobs', '/admin-view']) expect([path, await where(path)]).toEqual([path, 'https://nya.test/__nya-no-such-page__']);
     // Other pages are untouched.
     expect(await where('/your-data')).toBeNull();
     expect(await where('/administer')).toBeNull();
@@ -311,6 +312,7 @@ describe('the route', () => {
     expect(await where('/admin/storage')).toBe('https://nya.test/admin-view/storage');
     expect(await where('/admin/storage?x=1')).toBe('https://nya.test/admin-view/storage?x=1');
     expect(await where('/admin-view/storage')).toBeNull();
+    expect(await where('/admin/jobs')).toBe('https://nya.test/admin-view/jobs');
   });
 
   test('the proxy’s gate decides as the admin’s routes do, reading only', async () => {
@@ -347,5 +349,20 @@ describe('the route', () => {
     clerk.signedIn = 'user_a';
     expect(await AdminStoragePage()).toBeTruthy();
     expect((await generateMetadata()).title).toBe('Storage across accounts · Nya');
+  });
+
+  test('the Nightly jobs page is gated the same way', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_a,user_b';
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_b: OTHER.container });
+    for (const who of ['user_b', null]) {
+      clerk.signedIn = who;
+      await expect(jobsPage.default()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+      await expect(jobsPage.generateMetadata()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    }
+    clerk.signedIn = 'user_a';
+    expect(await jobsPage.default()).toBeTruthy();
+    expect((await jobsPage.generateMetadata()).title).toBe('Nightly jobs · Nya');
   });
 });
