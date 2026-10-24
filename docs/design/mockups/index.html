@@ -155,9 +155,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .daybar { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); padding: 8px 14px 2px; font-weight: 500; }
 .app .summary-line { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 2px; }
 .app .summary-line b { color: var(--text-1); font-weight: 600; }
-.app .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 999px; }
+.app .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 4px 12px; min-height: 32px; border: 1px solid currentColor; border-radius: 6px; }
 .app .pill.crit { background: var(--neg-tint); color: var(--neg); }
-.app .pill.ok { background: var(--pos-tint); color: var(--pos); }
+.app .pill.ok { background: var(--pos-tint); color: var(--pos); border-color: transparent; min-height: 0; padding: 4px 8px; }
 .app .pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
 .app .sticky { position: sticky; top: 0; background: var(--canvas); padding: 10px 0 2px; display: grid; gap: 8px; z-index: 2; }
 .app .monthbar { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
@@ -421,7 +421,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
-            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit"><i></i>1 needs you</span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit">1 problem<svg width="14" height="14"><use href="#i-chev"/></svg></span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
             <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Credit <b class="money">-$1,420.18</b></span><span>Investments <b class="money">$1,209,400.00</b></span><span>Other <b class="money">$43,000.00</b></span></div>
             <div class="card flush">
               <div class="card-header"><h2>Chase</h2><span class="meta money">$6,794.37</span><span class="ibtn" style="border:0;width:30px;height:30px"><svg><use href="#i-dots"/></svg></span></div>
@@ -450,7 +450,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
-            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit"><i></i>1 needs you</span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit">1 problem<svg width="14" height="14"><use href="#i-chev"/></svg></span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
             <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Credit <b class="money">-$1,420.18</b></span></div>
             <div class="card flush" style="opacity:.6"><div class="card-header"><h2>Chase</h2><span class="meta money">$6,794.37</span></div><div class="row"><div class="main"><span class="title">Total Checking ••4421</span></div></div></div>
           </div>

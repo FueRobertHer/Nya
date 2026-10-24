@@ -43,7 +43,7 @@ Also:
 - New rules use the token names. Today's names (`--bg`, `--card`, `--raised`, `--border`, `--line`, `--text`, `--muted`, `--up`, `--down`) are aliases kept so older rules keep working; don't add new uses of them.
 - **No color literals** (`#hex`, `rgb()`, `hsl()`) in components or in new CSS rules. Charts pass `var(--…)` strings to `fill` and `stroke`.
 - The app is dark only until rollout phase 7. Code that can't read a CSS variable (Clerk, `themeColor`) imports `lib/theme.ts`.
-- **Meaning, not decoration.** Blue is for actions and the current selection. Green and red are for money in and out and for gain and loss. Amber is only for something that needs the person. Red is for a number that is wrong or short.
+- **Meaning, not decoration.** Blue is for actions and the current selection. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Amber is only for something that needs the person. Red is for a number that is wrong or short.
 - **Never color alone**: a state shown in color also has a word or an icon.
 
 ## Type
@@ -87,7 +87,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Information notice | `.notice.info` | `.info-notice` |
 | Done, saved | `.notice.done` | `.status-note` |
 | Badge (not clickable) | `.badge`, toned `.accent`, `.pos`, `.neg` or `.warn` | `.pill` |
-| Chip (clickable, a filter or a tag) | `.chip` | `.tag-chip` |
+| Chip (clickable, a filter or a tag) | `.chip`; toned `.neg` or `.warn` for a status that jumps to what it counts | `.tag-chip` |
 | Range or view switch | `.segmented` | `.chart-ranges` with `.chart-range` |
 | Money that lines up | `.money` | `font-variant-numeric` in a feature rule |
 | A meter | `.meter-track` with `.meter-fill` | |

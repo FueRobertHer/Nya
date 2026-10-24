@@ -28,6 +28,8 @@ import { CoverageNote, TrustLinks } from './TrustLinks';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
+import AccountsStatus from './AccountsStatus';
+import AccountsSummary from './AccountsSummary';
 import { CollapsibleHeader } from './Collapsible';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
@@ -1506,11 +1508,11 @@ export default function Dashboard({
   const cardless = useMemo(() => {
     const plaid = allHiddenInstitutions.map((inst) => {
       const full = institutions.find((i) => i.item_id === inst.item_id) ?? inst;
-      return { severity: connectionSeverity(full) };
+      return { key: inst.item_id, severity: connectionSeverity(full) };
     });
     const fed = [...cardlessConnectors].map((id) => {
       const conn = connectors.data?.connections.find((c) => c.connection_id === id);
-      return { severity: cardlessSeverityOf(conn ?? 'orphaned') };
+      return { key: id, severity: cardlessSeverityOf(conn ?? 'orphaned') };
     });
     return [...plaid, ...fed];
   }, [allHiddenInstitutions, institutions, cardlessConnectors, connectors.data]);
@@ -1527,16 +1529,18 @@ export default function Dashboard({
     if (target) startDisconnect(target);
   };
 
-  // A notice email links to /?view=connections: once the accounts have come
-  // from the server (not the snapshot this device kept), the first connection
-  // that needs attention, worst first: its card's heading, focused, or
-  // Settings > Connections when it has no card. Nothing needs it: the top of
-  // the Accounts tab.
-  useEffect(() => {
-    if (!healthFocus || loading || (balancesSaved && !balancesFailed)) return;
-    setHealthFocus(false);
-    const cards = sortedInstitutions.map((inst) => ({ item_id: inst.item_id as string | null, severity: connectionSeverity(inst, places.get(inst.item_id) ?? null) }));
-    const target = firstToFix([...cards, ...cardless.map((c) => ({ item_id: null, severity: c.severity }))]);
+  // Each card's one color, keyed by its connection, so the status pill counts
+  // a SimpleFIN or Lunch Flow connection's cards once.
+  const cardStatus = useMemo(
+    () => sortedInstitutions.map((inst) => ({ item_id: inst.item_id, key: inst.connection_id ?? inst.item_id, severity: connectionSeverity(inst, places.get(inst.item_id) ?? null) })),
+    [sortedInstitutions, places]
+  );
+  const statusEntries = useMemo(() => [...cardStatus, ...cardless], [cardStatus, cardless]);
+  // The first connection that needs attention, worst first: its card's
+  // heading, focused, or Settings > Connections when it has no card. From
+  // the status pill and from a notice email's link.
+  const goToFirstToFix = useCallback(() => {
+    const target = firstToFix([...cardStatus, ...cardless.map((c) => ({ item_id: null, severity: c.severity }))]);
     if (!target) return;
     if (target.item_id === null) {
       openConnections();
@@ -1548,7 +1552,15 @@ export default function Dashboard({
       heading?.scrollIntoView({ block: 'start' });
       heading?.focus({ preventScroll: true });
     });
-  }, [healthFocus, loading, balancesSaved, balancesFailed, sortedInstitutions, places, cardless, openConnections]);
+  }, [cardStatus, cardless, openConnections]);
+  // A notice email links to /?view=connections: once the accounts have come
+  // from the server (not the snapshot this device kept), go to the first that
+  // needs attention. Nothing needs it: the top of the Accounts tab.
+  useEffect(() => {
+    if (!healthFocus || loading || (balancesSaved && !balancesFailed)) return;
+    setHealthFocus(false);
+    goToFirstToFix();
+  }, [healthFocus, loading, balancesSaved, balancesFailed, goToFirstToFix]);
 
   // Connection details, from an institution's ⋯ (components/ConnectionDetails.tsx).
   const shownDetailsFor = useLast(detailsFor);
@@ -2296,13 +2308,22 @@ export default function Dashboard({
               <>
                 {/* Connecting, a manual account and switching are in the
                     Add account sheet; sharing is in the avatar menu and
-                    Settings > Sharing. */}
+                    Settings > Sharing. The pill counts from this load only:
+                    never from this device's snapshot or a load that failed. */}
                 <div className="accounts-bar">
+                  <AccountsStatus
+                    entries={statusEntries}
+                    known={!loading && !balancesSaved && !balancesFailed && !!connectors.data && !connectors.error}
+                    healthRead={!healthUnavailable}
+                    syncing={sortedInstitutions.some((i) => !i.manual || !!i.connector) || cardless.length > 0}
+                    onGo={goToFirstToFix}
+                  />
                   <button className="btn" onClick={() => setAddAccountOpen(true)}>
                     <ActionIcon d="M12 5v14M5 12h14" />
                     Add account
                   </button>
                 </div>
+                <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
                 {error && <div className="error">{error}</div>}
                 {lifecycleRepair}
                 {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
