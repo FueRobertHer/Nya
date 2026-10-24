@@ -6,8 +6,8 @@ import type { Caveat } from '@/components/TotalCaveats';
 import { MASK, setAmountsHidden } from '@/lib/format';
 
 // Home's one Net worth card (rollout phase 4a): the total, its caveats, the
-// chart's notes, the nightly jobs (the instruction only for the admin), and
-// the foot row.
+// chart's notes, the nightly jobs (the fact; what to do is the admin's, in
+// Needs attention since 4b), and the foot row.
 
 const noop = () => {};
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&apos;/g, "'").replace(/\s+/g, ' ').trim();
@@ -25,7 +25,6 @@ const render = (over: Partial<Props> = {}) =>
       notesProblem={null}
       backupProblem={null}
       filesProblem={null}
-      admin={false}
       asOf="2026-10-23T09:14:00Z"
       refreshing={false}
       notesCount={0}
@@ -39,7 +38,7 @@ const caveat = (key: string, severity: Caveat['severity'], summary: string): Cav
 describe('the card', () => {
   test('a heading, the total, and the foot row', () => {
     const html = render();
-    expect(html).toContain('<h2 id="net-worth-title" class="total-label">Net worth</h2>');
+    expect(html).toContain('<h2 id="net-worth-title" class="total-label" tabindex="-1">Net worth</h2>');
     expect(html).toContain('$125,000.50');
     expect(text(html)).toContain('Updated');
     expect(html).toContain('>Chart notes</button>');
@@ -83,30 +82,20 @@ describe('the card', () => {
   });
 });
 
-describe('the nightly jobs: the fact to everyone, the instruction only to the admin', () => {
-  const backup = { last_ok: '2026-10-20T03:00:00Z', reason: 'timeout' };
-
-  test('a failed backup', () => {
-    const everyone = text(render({ backupProblem: backup }));
-    expect(everyone).toContain('The nightly backup failed; the last one saved was on Oct 20. (timeout)');
-    expect(everyone).not.toContain('Vercel');
-    expect(text(render({ backupProblem: backup, admin: true }))).toContain('The nightly backup failed; the last one saved was on Oct 20. (timeout) Check the backup cron in Vercel.');
+describe('the nightly jobs: the fact, to everyone, with no instruction on the card', () => {
+  test('a failed backup, and none yet', () => {
+    const failed = text(render({ backupProblem: { last_ok: '2026-10-20T03:00:00Z', reason: 'timeout' } }));
+    expect(failed).toContain('The nightly backup failed; the last one saved was on Oct 20. (timeout)');
+    expect(failed).not.toContain('Vercel');
+    expect(text(render({ backupProblem: { last_ok: null, reason: null, none: true } }))).toContain('No nightly backup has been recorded yet.');
   });
 
-  test('no backup yet', () => {
-    expect(text(render({ backupProblem: { last_ok: null, reason: null, none: true }, admin: true }))).toContain('No nightly backup has been recorded yet. Check the backup cron in Vercel.');
-  });
-
-  test('the receipt clean-up: held back names where to look, only for the admin; paused has no instruction', () => {
-    const held = { last_ok: null, reason: null, held: true };
-    expect(text(render({ filesProblem: held }))).not.toContain('Vercel');
-    expect(text(render({ filesProblem: held, admin: true }))).toContain('so it removed none of them there. Its log in Vercel names the account.');
-    const paused = { last_ok: null, reason: null, held: false, paused: true as const };
-    expect(text(render({ filesProblem: paused, admin: true }))).toBe(
-      text(render({ filesProblem: paused, admin: false }))
-    );
-    expect(text(render({ filesProblem: { last_ok: '2026-10-19T03:00:00Z', reason: 'quota', held: false }, admin: true }))).toContain(
-      'The nightly clean-up of receipts and documents failed; the last one finished on Oct 19. (quota) Check the clean-up cron in Vercel.'
-    );
+  test('the receipt clean-up: failed, held back, paused', () => {
+    const failed = text(render({ filesProblem: { last_ok: '2026-10-19T03:00:00Z', reason: 'quota', held: false } }));
+    expect(failed).toContain('The nightly clean-up of receipts and documents failed; the last one finished on Oct 19. (quota)');
+    const held = text(render({ filesProblem: { last_ok: null, reason: null, held: true } }));
+    expect(held).toContain('so it removed none of them there.');
+    for (const t of [failed, held]) expect(t).not.toContain('Vercel');
+    expect(text(render({ filesProblem: { last_ok: null, reason: null, held: false, paused: true } }))).toContain('is paused until a nightly backup is recorded');
   });
 });

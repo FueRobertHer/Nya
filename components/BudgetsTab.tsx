@@ -367,7 +367,11 @@ export default function BudgetsTab({
       {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
       <div className="card">
         <div className="inst-header">
-          <div className="inst-name">{monthName} budgets</div>
+          {/* Where Home's budget alerts land (components/NeedsAttention.tsx);
+              a real heading in rollout phase 6. */}
+          <div id="budgets-month-title" className="inst-name" tabIndex={-1}>
+            {monthName} budgets
+          </div>
           {hasTotal && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
               <Masked>

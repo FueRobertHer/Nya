@@ -20,6 +20,7 @@ import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsCard from '@/components/BudgetsCard';
 import GoalsCard from '@/components/GoalsCard';
 import Insights from '@/components/Insights';
+import { HomeAttention } from './home-attention';
 import ForecastCard from '@/components/ForecastCard';
 import CalendarView from '@/components/CalendarView';
 import RecurringCard from '@/components/RecurringCard';
@@ -836,12 +837,17 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       ]}
     />
   ),
-  'Home: the insights': () => (
-    <Insights
+  'Home: the insights': () => <Insights txns={ROWS} accounts={[{ name: 'Checking', type: 'depository', subtype: 'checking', balance: 40.5, currency: 'USD' }]} />,
+  // The budget and payment rows: their sentences are built in a function the
+  // source scans can't follow into the row.
+  'Home: needs attention': () => (
+    <HomeAttention
       txns={ROWS}
       budgets={{ categories: { ...budgets.categories }, groups: {} }}
       taxonomy={taxonomy}
-      accounts={[{ name: 'Checking', type: 'depository', subtype: 'checking', balance: 40.5, currency: 'USD' }]}
+      payments={[
+        { item_id: 'i', account_id: 'a', name: 'Amex', type: 'credit', balance: 1820.4, currency: 'USD', liability: { minimum_payment: 35.12, next_due_date: null, is_overdue: true } },
+      ]}
     />
   ),
   'Activity: the month, its totals, top spending and transactions': () => (
@@ -1112,7 +1118,7 @@ describe('the main screens with amounts hidden', () => {
   test('percentages stay: they say no amount', () => {
     const groceries = taxonomy.categories.find((c) => c.name === 'groceries')!.id;
     const { hidden } = both(() => (
-      <Insights txns={[txn({ transaction_id: 'g', amount: 285, category: 'groceries' })]} budgets={{ categories: { [groceries]: { amount: 300 } }, groups: {} }} taxonomy={taxonomy} accounts={[]} />
+      <HomeAttention txns={[txn({ transaction_id: 'g', amount: 285, category: 'groceries' })]} budgets={{ categories: { [groceries]: { amount: 300 } }, groups: {} }} taxonomy={taxonomy} />
     ));
     expect(exposed(hidden)).toContain('Approaching your groceries budget (95%)');
     const chart = both(SCREENS['Home: the net worth chart']).hidden;

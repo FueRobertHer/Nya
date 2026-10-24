@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests) and 4a (Home's Net worth card) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4a (Home's Net worth card) and 4b (Home's Needs attention) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -96,7 +96,7 @@ Split in two pull requests, so each leaves the app working and the one that move
 
 ## Phase 4: Home
 
-Split in three pull requests, as phase 3 was: **4a** the Net worth card (its first bullet and the notes sheet), **4b** Needs attention (the action insights, CurrencyOffer and the admin's instructions move into it), **4c** This month (Insights' passive half and one FI line).
+Split in three pull requests, as phase 3 was: **4a** the Net worth card (its first bullet and the notes sheet), **4b** Needs attention (the action insights, CurrencyOffer and the admin's instructions move into it), **4c** This month (Insights' passive half and one FI line), and the reconnected accounts to link that 4b left out.
 
 - One Net worth card (hero, caveat line, chart, Notes button, History paused badge).
 - Needs attention (the items in the IA doc), each linking to its fix; the backup instruction only for the admin. Until phases 5 and 6 land, an item whose home is a segment (Activity > Transactions, Budgets > Month) opens that tab as it is.
@@ -116,6 +116,25 @@ Split in three pull requests, as phase 3 was: **4a** the Net worth card (its fir
 - **The foot row, not the chart's header**, as the mockup draws it: the readout row already holds the info button and six ranges fill the width at 320px.
 
 **Kept narrow in 4a:** the chart itself. Its axis text (`.chart-tick`, `.chart-xlabel`) is SVG text in a scaled viewBox, and the classes are shared by seven charts; its range buttons (`.chart-range`) by five other components and a seven-option set. Both move to `--fs-1` and `.segmented` together in their own chart pass, checked chart by chart, with Activity's charts in phase 5.
+
+**Built in 4b:** `components/NeedsAttention.tsx` is Home's second card, under the Net worth card, shown only when it has a row. `components/attention.ts` builds the rows from what the Accounts tab and Settings > Connections already show (the cards' colors from `connectionSeverity`, the cardless connections from `cardlessSeverity`), the review count, the payments and budgets (`paymentAlerts` and `budgetAlerts`, moved out of Insights with their words), the offer of a home currency and the restore hold; the list in the IA doc says each one's color, words and place. Rows sort worst first. A row is a `.list-row` button led by `.list-row-icon` (a shape per level, the alert for critical and the clock for caution as the mockup draws a caution, and a word for a screen reader) and goes where it is fixed: a card heading on Accounts or in Settings > Connections, the account sheet over Home, the Budgets tab's month, Activity's review count, Settings > Your data, or the offer in a sheet (`CurrencyOfferSheet`; choosing closes it and opens the sheet that confirms, never one over the other). The focus waits for its target, since the Budgets tab shows a spinner first. The admin's instructions for the nightly jobs moved off the Net worth card into an Admin card under it (`AdminAttention`), as plain rows. Insights keeps idle cash, the bills, the pace, the biggest purchase and the low balance until 4c.
+
+**Decided in 4b:**
+
+- **Each row in its object's color and words.** A connection's row is its card's color, one per connection; a SimpleFIN or Lunch Flow connection failing as a whole says the same on every bank's card, so it is one row. Accounts a connector stopped sending are amber, as the card, not "accounts you haven't added" (which is what a new Plaid account or a connection with none chosen is). An alert's sentence becomes a row as the alert builds it, a title and the line after its colon: "Over your Food budget" over "$320.00 of $300.00". Built apart, so a name holding a colon is never cut.
+- **Over budget is amber, not red text.** Red means a number is wrong or short; an over budget is a true number the person may act on. An overdue payment stays red: it costs money until it is paid. Budgets keep Insights' worst two, with "N more budgets over or nearly over" so none is dropped silently; payments and connections ending soon lose their cap of two, since each has its own place to go.
+- **The currency offer is amber while the total adds currencies unconverted**, as its caveat on the total has been since 4a, and neutral when only transactions are in several. It opens as a sheet, not Settings > Preferences, so its quick choices and Not now keep a home.
+- **Rows go to the card, not to the fix.** Reconnect, Review accounts and an account's question are on its card beside the words that explain them; Home doesn't open Plaid Link itself.
+- **Transactions to review lands on the count, not a filter.** The count is the year's; Activity's Needs review filter lists one month, so forcing it could show "Nothing listed needs review" under a count of 12.
+- **The restore banner stays on every tab, Home's too.** It says what a row can't ("what you see is only part of your data"), so an unfinished restore has no row; a bank a restore brought back that isn't connected (red) and a restore that can't be read (amber) have.
+- **The spending notes go with the figures they qualify.** What the month may be missing follows the budget rows in Needs attention, and stays under the pace and biggest purchase in Insights.
+- **The Admin card, as the mockup draws it**, rather than admin rows in Needs attention: its rows have nothing to tap, and rows that go somewhere and rows that don't would mix.
+
+**Kept narrow in 4b:**
+
+- **Reconnected accounts to link** (the IA's information row). The dashboard doesn't hold them (`components/AccountLinks.tsx` reads `/api/account-links` in Settings > Connections), and listing them would add a request to every Home load; 4c adds a count to a payload Home already reads.
+- **A low balance** stays in Insights: it has no fix and no "not now", and a small savings account would sit in the list for good. 4c decides it with the rest of Insights.
+- **The focus targets that aren't headings yet:** the review count on Activity and the month title on Budgets become real headings in phases 5 and 6.
 
 ## Phase 5: Activity
 

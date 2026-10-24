@@ -14,6 +14,7 @@ import { indexTaxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
 import Insights from '@/components/Insights';
+import { budgetTexts } from './home-attention';
 import MonthFlowChart from '@/components/MonthFlowChart';
 import { trailingFlows } from '@/lib/fire/inputs';
 import { calendarMonth } from '@/lib/calendar';
@@ -247,13 +248,13 @@ describe('the Activity tab’s list', () => {
 describe('what else the dashboard counts from the same rows', () => {
   test('Home’s budget alerts meter the parts: the groceries in a Costco run, not the whole charge as general merchandise', () => {
     const budgets = { categories: { [cat('groceries')]: { amount: 100 }, [cat('general merchandise')]: { amount: 100 } }, groups: {} };
-    const home = (rows: Txn[]) => text(renderToStaticMarkup(<Insights txns={rows} accounts={[]} budgets={budgets} taxonomy={taxonomy} />));
+    const home = (rows: Txn[]) => budgetTexts({ txns: rows, budgets, taxonomy });
     expect(home(raw())).toContain('Over your general merchandise budget');
     const split = home(served());
     expect(split).toContain('Over your groceries budget: $100.01 of $100.00');
     expect(split).not.toContain('general merchandise budget');
     // The biggest purchase is the whole charge, as the bank made it, never its largest part.
-    expect(split).toContain('Biggest purchase this month: Costco, $150.00');
+    expect(text(renderToStaticMarkup(<Insights txns={served()} accounts={[]} />))).toContain('Biggest purchase this month: Costco, $150.00');
   });
 
   test('the Budgets calendar lists a split charge once, whole, and counts its parts; a group as its net', () => {

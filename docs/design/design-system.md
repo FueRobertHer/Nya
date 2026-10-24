@@ -119,6 +119,7 @@ The workhorse. Leading logo or icon (optional), title, one subtitle line, traili
 - A row that opens a detail sheet is a `<button>` (or a link), never a `<tr>` with buttons inside it. Today account rows put Hide, Close..., Delete and Update inside a clickable `<tr>`.
 - At most one subtitle line and one trailing secondary line. Anything more belongs in the detail sheet.
 - Provenance (Updated, Last known, Estimated, Excluded, Rule, Split, Pending) is a chip on the subtitle line.
+- A row that reports a status (Home's Needs attention) leads with `.list-row-icon`, a 32px square in its level's tint holding a shape for each level (an alert, a clock, an info mark), and a word for a screen reader before its title: never color alone.
 
 Replaces `.acct-row`, `.txn-main` with `.txn-text`, `.peer-row`, `.peer-item`, `.cat-manage-row`, `.timeline-note-row`, `.budget-summary`, and the table-based account and transaction lists.
 
@@ -208,19 +209,19 @@ Nya shows its gaps on purpose (see [features.md](../features.md)): a missing row
 
 | Severity | When | Color |
 |---|---|---|
-| Critical | A number is wrong or short: an institution needs reconnecting, rows couldn't be shown, a total is incomplete | Red |
-| Caution | Numbers are real but dated, held or paused: stale but recovered balances, an account that stopped reporting (held at its last known balance until you answer), a connection that ends soon (Reconnect soon), history paused, a backup or clean-up failed, a month may be missing transactions | Amber |
+| Critical | A number is wrong or short: an institution needs reconnecting, rows couldn't be shown, a total is incomplete. Also an overdue payment in Needs attention | Red |
+| Caution | Numbers are real but dated, held or paused: stale but recovered balances, an account that stopped reporting (held at its last known balance until you answer), a connection that ends soon (Reconnect soon), history paused, a backup or clean-up failed, a month may be missing transactions. In Needs attention, also a payment due within a week and a budget over or nearly over | Amber |
 | Information | Nothing is wrong: converted currency, imported history, rates used | Neutral |
 
 **Placement follows three rules.**
 
 1. **On the number.** A caveat sits directly under the figure it qualifies, as an inline notice. **Critical caveats are never collapsed**: each shows in full, naming the institution and what is wrong ("Chase needs reconnecting; its balances are from Oct 21", "This total is short by 1 account"). Caution and information caveats show in full when there is one; two or more become a summary line that states the count and kind in words, in the color of the worst of them ("2 notes: 1 balance from yesterday, accrued interest left out"), and expands in place to every note in its current full wording. Never an unlabeled icon, never only in a sheet.
-2. **Counted on Home.** Anything that needs the person to act (reconnect, answer an account question, approve the review queue, a payment due, a restore hold) is also an item in Home's **Needs attention**, linking to where it is fixed.
+2. **Counted on Home.** Anything that needs the person to act (reconnect, answer an account question, approve the review queue, a payment due, a bank a restore brought back or a restore that can't be read) is also an item in Home's **Needs attention**, linking to where it is fixed. An overdue payment is red there: nothing on screen is wrong, but it costs the person until it is paid.
 3. **Once per tab, not once per card.** On Budgets and Plan, a month or input that may be incomplete gets one notice at the top of the segment and a small badge on each affected card, instead of the same paragraph in every card.
 
 **A connection's problems have one color**, from two questions (`lib/accounts-status.ts`, since rollout phase 3b): is it broken in a way only the person can fix (sign in again, reconnect, connect again, pay or fix it at SimpleFIN or Lunch Flow, say which way a card goes, remove one that can't be repaired)? Is the total missing an account's money (nothing fetched or recovered, accounts not shown, too old, held with no balance)? Either makes it critical, and the card shows the button that fixes it or says what isn't counted. Anything else that is off is a caution, a new connection waiting for its first answer included. The card's notice, its badge, Settings > Connections and the Accounts status all use it, and the words never change with the color.
 
-**Who an instruction is for.** The backup and receipt clean-up notices reach every user (the server sends them ungated), but only the deployment's admin can act on "check the backup cron in Vercel". When one fails, everyone sees it as an amber caution on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); the instruction and its action show only to the admin, in Needs attention. When backups are fine, nothing is shown.
+**Who an instruction is for.** The backup and receipt clean-up notices reach every user (the server sends them ungated), but only the deployment's admin can act on "check the backup cron in Vercel". When one fails, everyone sees it as an amber caution on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); the instruction and its action show only to the admin, in an Admin card under Needs attention. When backups are fine, nothing is shown.
 
 ## Copy
 

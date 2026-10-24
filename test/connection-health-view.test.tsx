@@ -320,11 +320,13 @@ describe('the Home alert a few days before a connection ends', () => {
   const now = new Date('2026-10-08T12:00:00');
   const soon = (days: number, over = {}) => ({ item_id: `i${days}`, institution_name: `Bank ${days}`, ends_at: new Date(2026, 9, 8 + days, 12).toISOString(), ...over });
 
-  test('within three days only, soonest first, two at most', () => {
+  // Every one since rollout phase 4b: each is its own row in Needs attention.
+  test('within three days only, soonest first, every one', () => {
     expect(reconnectAlerts([soon(7), soon(4)], now)).toEqual([]);
     expect(reconnectAlerts([soon(3), soon(1), soon(0)], now).map((a) => a.text)).toEqual([
       'Reconnect Bank 0: Plaid says its connection ends today',
       'Reconnect Bank 1: Plaid says its connection ends tomorrow',
+      'Reconnect Bank 3: Plaid says its connection ends in 3 days',
     ]);
     expect(reconnectAlerts([soon(2)], now)[0].text).toBe('Reconnect Bank 2: Plaid says its connection ends in 2 days');
     // An estimate is said as one.

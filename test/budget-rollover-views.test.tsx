@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import BudgetsCard, { REFUND_NOTE } from '@/components/BudgetsCard';
 import BudgetsTab, { PastMonthPending } from '@/components/BudgetsTab';
-import Insights from '@/components/Insights';
+import { budgetTexts } from './home-attention';
 import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
 import { lacksHistory, monthUrl, UNREADABLE_MONTHS, type BudgetMonthState, type BudgetMonthView } from '@/components/budget-month-state';
 import type { Txn } from '@/components/MonthBreakdown';
@@ -533,7 +533,7 @@ describe('Home’s budget alerts weigh what is available', () => {
       datetime: null,
     }) as Txn;
   const budgets = { categories: { [GROCERIES]: { amount: 300 } }, groups: {} };
-  const alerts = (c: Carries | null) => text(renderToStaticMarkup(<Insights txns={[row(320)]} budgets={budgets} taxonomy={taxonomy} accounts={[]} budgetCarries={c} />));
+  const alerts = (c: Carries | null) => budgetTexts({ txns: [row(320)], budgets, taxonomy, budgetCarries: c });
 
   test('over the budget, but within what rolled over: no alert; deeper in a hole: over', () => {
     expect(alerts(null)).toContain('Over your groceries budget: $320.00 of $300.00');
@@ -546,7 +546,7 @@ describe('Home’s budget alerts weigh what is available', () => {
       'Over your groceries budget: overspending carried over left it $50.00 over before this month, and $320.00 is spent'
     );
     expect(alerts(carries({ [GROCERIES]: { carry: -300 } }))).toContain('Over your groceries budget: overspending carried over left nothing of it this month, and $320.00 is spent');
-    const none = text(renderToStaticMarkup(<Insights txns={[]} budgets={budgets} taxonomy={taxonomy} accounts={[]} budgetCarries={carries({ [GROCERIES]: { carry: -350 } })} />));
+    const none = budgetTexts({ txns: [], budgets, taxonomy, budgetCarries: carries({ [GROCERIES]: { carry: -350 } }) });
     expect(none).toContain('Over your groceries budget: overspending carried over left it $50.00 over before this month');
     expect(none).not.toContain('is spent');
     for (const t of [alerts(carries({ [GROCERIES]: { carry: -350 } })), none]) expect(t).not.toContain('of -$');
@@ -554,8 +554,9 @@ describe('Home’s budget alerts weigh what is available', () => {
 
   test('the dashboard passes this month’s carries, once loaded', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
-    const mount = dashboard.slice(dashboard.indexOf('<Insights'), dashboard.indexOf('/>', dashboard.indexOf('<Insights')));
-    expect(mount).toContain('budgetCarries={budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null}');
+    expect(dashboard).toContain('const budgetCarries = budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null;');
+    const call = dashboard.slice(dashboard.indexOf('budgetAlerts({'), dashboard.indexOf('})', dashboard.indexOf('budgetAlerts({')));
+    expect(call).toContain('budgetCarries');
   });
 
   test('the dashboard loads the month once the transactions have, never during a save, with the history on the Budgets tab', () => {

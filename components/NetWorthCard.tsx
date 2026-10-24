@@ -2,7 +2,8 @@
 //
 // Home's one Net worth card (rollout phase 4a): the total and its change,
 // what qualifies the total right under it (components/TotalCaveats.tsx), the
-// chart with what qualifies the chart under it, what the nightly jobs say,
+// chart with what qualifies the chart under it, what the nightly jobs say
+// (what to do about them is the admin's, in components/NeedsAttention.tsx),
 // and a foot row with when it was updated, History paused, and the chart
 // notes (components/TimelineNotes.tsx), which open in a sheet. It was a hero
 // card, an "Over time" card and a notes card. Every note keeps its words.
@@ -14,17 +15,17 @@ import { ALERT } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import TotalCaveats, { type Caveat } from './TotalCaveats';
 
-/** What a nightly job failing says: the fact to everyone, and what to do
- *  only to the deployment's admin, who alone can (design-system.md "Who an
- *  instruction is for"). */
-function backupWords(p: BackupProblem): string {
+/** What a nightly job failing says, to everyone. What to do is only for the
+ *  deployment's admin, who alone can (design-system.md "Who an instruction
+ *  is for"): it is in their card under Needs attention. */
+export function backupWords(p: BackupProblem): string {
   if (p.none) return 'No nightly backup has been recorded yet.';
   return `${p.reason ? 'The nightly backup failed' : 'The nightly backup hasn’t run'}${
     p.last_ok ? `; the last one saved was on ${fmtInstantDay(p.last_ok)}.` : '; none has been saved yet.'
   }${p.reason ? ` (${p.reason})` : ''}`;
 }
 
-function filesWords(p: AttachmentSweepProblem): string {
+export function filesWords(p: AttachmentSweepProblem): string {
   if (p.paused) return 'The nightly clean-up of receipts and documents is paused until a nightly backup is recorded: it waits while a restore may be running.';
   const what = p.held
     ? 'The nightly clean-up of receipts and documents held back: in an account, it found more stored files with no record than it removes at once, so it removed none of them there.'
@@ -53,7 +54,6 @@ export default function NetWorthCard({
   notesProblem,
   backupProblem,
   filesProblem,
-  admin,
   asOf,
   refreshing,
   notesCount,
@@ -73,8 +73,6 @@ export default function NetWorthCard({
   notesProblem: string | null;
   backupProblem: BackupProblem | null;
   filesProblem: AttachmentSweepProblem | null;
-  /** The deployment's admin: the only one who gets the jobs' instructions. */
-  admin: boolean;
   asOf: string | null;
   refreshing: boolean;
   notesCount: number;
@@ -83,7 +81,8 @@ export default function NetWorthCard({
   return (
     <section className="card stack net-worth-card" aria-labelledby="net-worth-title">
       <div>
-        <h2 id="net-worth-title" className="total-label">
+        {/* Focus lands here when the last Needs attention row goes. */}
+        <h2 id="net-worth-title" className="total-label" tabIndex={-1}>
           Net worth
         </h2>
         <div className={`total-value${worth < 0 ? ' negative' : ''}`}>
@@ -102,18 +101,8 @@ export default function NetWorthCard({
       )}
       {notesProblem && <Caution>{notesProblem}</Caution>}
 
-      {backupProblem && (
-        <Caution>
-          {backupWords(backupProblem)}
-          {admin && ' Check the backup cron in Vercel.'}
-        </Caution>
-      )}
-      {filesProblem && (
-        <Caution>
-          {filesWords(filesProblem)}
-          {admin && !filesProblem.paused && (filesProblem.held ? ' Its log in Vercel names the account.' : ' Check the clean-up cron in Vercel.')}
-        </Caution>
-      )}
+      {backupProblem && <Caution>{backupWords(backupProblem)}</Caution>}
+      {filesProblem && <Caution>{filesWords(filesProblem)}</Caution>}
 
       <div className="net-worth-foot">
         {asOf && (

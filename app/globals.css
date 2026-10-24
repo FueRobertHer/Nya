@@ -433,6 +433,63 @@ button:active:not(:disabled):not([class*="cl-"]) {
   color: var(--text-3);
 }
 
+/* A row's leading icon, for a status (Home's Needs attention): a tinted
+   square whose shape says the level too, never color alone. */
+.list-row-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  background: var(--elevated);
+  color: var(--text-2);
+}
+
+.list-row-icon > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.list-row-icon.critical {
+  background: var(--neg-tint);
+  color: var(--neg);
+}
+
+.list-row-icon.caution {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+/* Rows inside a card with a header: the focus ring drawn inside them, as on
+   a card that is all rows. */
+.card > .list-rows .list-row:focus-visible {
+  outline-offset: -2px;
+}
+
+/* A card header's count, beside its title. */
+.card-header .meta {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Needs attention: the card's rows run to its foot; what a budget row's
+   month may be missing follows that row. */
+.needs-attention {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.needs-attention > .list-rows {
+  margin-bottom: 0;
+}
+
+.needs-attention-notes {
+  padding: 0 var(--sp-5) var(--sp-3);
+}
+
 /* Buttons. Width is the label's own; .btn-block makes one full width. Primary
    is the one main action in a card or sheet; danger only confirms, inside a
    confirm sheet. */
