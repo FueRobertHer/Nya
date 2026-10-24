@@ -33,7 +33,7 @@ describe('a Blob call that stalls', () => {
     // The default reason: Vercel Blob stops only on an AbortError.
     expect((seen[0].reason as Error).name).toBe('AbortError');
     expect(seen[1].aborted).toBe(false);
-    expect(warnings).toEqual(["Vercel Blob didn't answer a listing within 0.02s; sent again on a new request"]);
+    expect(warnings).toEqual(["Vercel Blob didn't finish a listing within 0.02s; sent again on a new request"]);
   });
 
   test('a call that fails is not sent again here (the SDK retries its own failures)', async () => {
@@ -61,6 +61,29 @@ describe('a Blob call that stalls', () => {
     expect(seen.every((s) => s.aborted)).toBe(true);
   });
 
+  test('a caller that gives up after a stall stops it there', async () => {
+    const outer = new AbortController();
+    const seen: AbortSignal[] = [];
+    await expect(
+      retryStalled('a listing', outer.signal, (signal) => {
+        seen.push(signal);
+        // The first attempt runs out, and the caller's own limit with it.
+        signal.addEventListener('abort', () => outer.abort());
+        return stall(signal);
+      }, 20)
+    ).rejects.toThrow("Vercel Blob didn't finish a listing within 0.02s");
+    expect(seen).toHaveLength(1);
+    expect(warnings).toEqual([]);
+  });
+
+  test('a caller already given up sends nothing', async () => {
+    const outer = new AbortController();
+    outer.abort();
+    let calls = 0;
+    await expect(retryStalled('a delete', outer.signal, async () => void calls++)).rejects.toThrow();
+    expect(calls).toBe(0);
+  });
+
   test('each attempt has twice the time of the one before, and they stop at the most allowed', async () => {
     let calls = 0;
     const started = Date.now();
@@ -69,7 +92,7 @@ describe('a Blob call that stalls', () => {
         calls++;
         return stall(signal);
       }, 10)
-    ).rejects.toThrow("Vercel Blob didn't answer a listing within 0.04s");
+    ).rejects.toThrow("Vercel Blob didn't finish a listing within 0.04s");
     expect(calls).toBe(MAX_ATTEMPTS);
     expect(Date.now() - started).toBeGreaterThanOrEqual(10 + 20 + 40 - 5);
   });
