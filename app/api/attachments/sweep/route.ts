@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { secretsMatch } from '@/lib/auth';
-import { runAttachmentSweep } from '@/lib/attachment-sweep';
+import { runNightlySweep } from '@/lib/attachment-sweep';
 
 // The nightly clean-up of receipts and documents (lib/attachment-sweep.ts),
 // hit by Vercel Cron (vercel.json) after the backup and the day's other jobs.
@@ -14,6 +14,10 @@ import { runAttachmentSweep } from '@/lib/attachment-sweep';
 // outcome is recorded too (lib/backup.ts recordAttachmentSweep), so the
 // dashboard says when the sweep has failed, held back, or stopped. Logs carry
 // counts and account ids, never a file's name or anything in it.
+//
+// The run itself is lib/attachment-sweep.ts runNightlySweep, which the admin
+// can also start from the app (app/api/admin/jobs), which holds off while
+// this cron may be running.
 
 export const maxDuration = 300;
 
@@ -22,13 +26,6 @@ export async function GET(req: Request) {
   if (!secret || !(await secretsMatch(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  try {
-    const result = await runAttachmentSweep(new Date());
-    console.log('Receipts sweep', JSON.stringify(result));
-    return NextResponse.json(result);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error('Receipts sweep failed', reason);
-    return NextResponse.json({ error: reason }, { status: 500 });
-  }
+  const { status, body } = await runNightlySweep();
+  return NextResponse.json(body, { status });
 }

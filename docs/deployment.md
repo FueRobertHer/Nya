@@ -76,7 +76,10 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked, and sends the weekly summaries still due. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 16:30 | `/api/fx/fetch` | Fetches the European Central Bank's euro reference rates, published around 16:00 CET each working day, which a person's home currency converts with ([operations.md](operations.md#exchange-rates-and-rolling-back): on a preview or after a restore into an empty database, run it once by hand). |
-| 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
+| 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. It starts no connection after 180 seconds, so it always answers inside its 300; the rest are checked the next day. |
+| 17:30 | `/api/attachments/sweep` | Cleans up receipts and documents ([operations.md](operations.md#receipts-and-documents)). |
+
+The admin has a page for the backup and the clean-up, **Nightly jobs** (`/admin/jobs`, admin only like Storage across accounts: anyone else gets the 404 any missing page gets). It is linked from Settings, Your data and privacy, and from each row of Home's Admin card when one fails. It shows when each job runs, when it last worked and last failed, and why, and **Run now** runs one exactly as its cron does (`POST /api/admin/jobs`), recording its outcome the same way. One run at a time, of either job: it waits while a nightly cron may be running (from five minutes before 16:00 UTC, and before 17:00, until five minutes after that hour ends, since Vercel's Hobby plan may start a cron at any point in its hour; unless that cron has recorded tonight's outcome) and for six minutes after a run started there, and says until when. Demo accounts on Preview can't run them. A clean-up the breaker held can't be run from there: it would hold again.
 
 ## 5. Local development
 

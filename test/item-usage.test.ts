@@ -245,6 +245,20 @@ describe('what it leaves alone', () => {
   });
 });
 
+describe('a run out of time', () => {
+  test('starts no Item past its deadline: those are counted as deferred, left as they were, and checked the next day', async () => {
+    await link('a', 'tok-a', ['a1']);
+    await link('b', 'tok-b', ['b1']);
+    plaid.fail['tok-a'] = 'ITEM_LOGIN_REQUIRED';
+    plaid.fail['tok-b'] = 'ITEM_LOGIN_REQUIRED';
+    expect(await checkItemUsage(ctx, { now: T0, days: 60, until: Date.now() - 1 })).toEqual({ checked: 0, flagged: 0, deferred: 2 });
+    // Nothing was recorded for them, so the period starts at the next check.
+    expect(await checkItemUsage(ctx, { now: T0 + 60 * DAY, days: 60 })).toEqual({ checked: 2, flagged: 0 });
+    expect(await flagged()).toEqual([]);
+    expect(await checkItemUsage(ctx, { now: T0 + 120 * DAY, days: 60, until: Date.now() + 60_000 })).toEqual({ checked: 2, flagged: 2 });
+  });
+});
+
 describe('the webhook', () => {
   test('is registered once per URL on an Item that predates it', async () => {
     await link('old', 'tok', ['a']);

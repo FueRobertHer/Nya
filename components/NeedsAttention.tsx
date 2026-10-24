@@ -126,7 +126,9 @@ export default function NeedsAttention({
 /** The admin's card: what to do about a nightly job that failed, as the
  *  redesign draws it ("Nightly backup failed" over "Last saved Oct 20 ·
  *  Check the backup cron in Vercel."); the fact in full is on the Net worth
- *  card. Plain rows: the fix is in Vercel. Nothing while the clean-up only
+ *  card. Each row goes to the Nightly jobs page (/admin/jobs,
+ *  components/AdminJobs.tsx), where the job's last runs are and it can be run
+ *  again, so Home holds no controls for it. Nothing while the clean-up only
  *  waits for a backup. */
 export function AdminAttention({ backup, files }: { backup: BackupProblem | null; files: AttachmentSweepProblem | null }) {
   const rows: { key: string; title: string; sub: string }[] = [];
@@ -159,7 +161,7 @@ export function AdminAttention({ backup, files }: { backup: BackupProblem | null
       <ul className="list-rows">
         {rows.map((r) => (
           <li key={r.key}>
-            <div className="list-row">
+            <a className="list-row" href="/admin/jobs">
               <span className="list-row-icon caution">{ICONS.caution}</span>
               <span className="list-row-text">
                 <span className="list-row-title">
@@ -168,7 +170,8 @@ export function AdminAttention({ backup, files }: { backup: BackupProblem | null
                 </span>
                 <span className="list-row-sub">{r.sub}</span>
               </span>
-            </div>
+              {CHEVRON}
+            </a>
           </li>
         ))}
       </ul>

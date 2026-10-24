@@ -166,7 +166,9 @@ export async function readFlagged(ctx: Ctx): Promise<FlaggedItem[]> {
   return out;
 }
 
-export type UsageReport = { checked: number; flagged: number };
+/** `deferred`: Items not started because the run's time was up (`until`),
+ *  checked the next day. */
+export type UsageReport = { checked: number; flagged: number; deferred?: number };
 
 /**
  * Checks every linked Item of a container, updates its records and flags.
@@ -175,7 +177,7 @@ export type UsageReport = { checked: number; flagged: number };
  */
 export async function checkItemUsage(
   ctx: Ctx,
-  opts: { now?: number; days?: number; runId?: string; onlyItemId?: string } = {}
+  opts: { now?: number; days?: number; runId?: string; onlyItemId?: string; until?: number } = {}
 ): Promise<UsageReport> {
   const now = opts.now ?? Date.now();
   const days = opts.days ?? unusedDays();
@@ -208,6 +210,13 @@ export async function checkItemUsage(
   const webhook = webhookUrlFor(ctx) ?? null;
 
   for (const item of items) {
+    // No Item started past the run's deadline: one takes up to two Plaid calls
+    // of 45 s each, and must finish before the route's maxDuration.
+    if (opts.until !== undefined && Date.now() >= opts.until) {
+      report.checked--;
+      report.deferred = (report.deferred ?? 0) + 1;
+      continue;
+    }
     const usage = await checkOne(ctx, item, parseUsage(stored[item.item_id], stamp), { now, days, stamp, run, hidden, webhook });
     if (usage.flagged) report.flagged++;
     try {
