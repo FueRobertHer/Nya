@@ -6,7 +6,16 @@ import { balancesNow, needsConverting, type PageFx } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import type { OwnRate } from '@/lib/fx/rates';
 import { chartGapLines, codedMoney, convertedHeading, convertedText, institutionNote, leftOutLines, noRateText, partText, rateEffectText, staleText, unknownText } from '@/components/currency-text';
-import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, offerFor } from '@/components/CurrencyNotes';
+import { ChartCurrencyNote, CurrencyOffer, heroCurrencyCaveats, offerFor } from '@/components/CurrencyNotes';
+
+/** Home's caveats on the total about its currency, each drawn as its body. */
+const HeroCurrencyNote = ({ base, main, onOpen }: { base: NetWorthBase; main: string | null; onOpen: (rateFor: string | null) => void }) => (
+  <>
+    {heroCurrencyCaveats(base, main, onOpen).map((c) => (
+      <div key={c.key}>{c.body}</div>
+    ))}
+  </>
+);
 import { CurrencyChoiceBody, CurrencyOptions, choiceText, manualText } from '@/components/CurrencyChoiceSheet';
 import { CurrencyCardBody, OwnRateForm, draftProblem, ecbBeside, ownRateText, type RateDraft } from '@/components/CurrencyCard';
 import { affectedText, type HealthInstitution } from '@/components/ConnectionHealth';
@@ -234,6 +243,12 @@ describe('Home’s notes', () => {
     const masked = text(hidden(() => renderToStaticMarkup(<HeroCurrencyNote base={b} main="USD" onOpen={noop} />)));
     expect(masked).toContain('1 USD = 0.86573 EUR');
     expect(masked).not.toMatch(/1,000|865\.73/);
+    // Converted is neutral; an account left out shortens the total, so red; old rates amber.
+    expect(heroCurrencyCaveats(b, 'USD', noop).map((c) => [c.severity, c.summary])).toEqual([
+      ['info', 'converted into EUR'],
+      ['critical', 'a currency left out'],
+      ['caution', 'old exchange rates'],
+    ]);
   });
 
   test('a home currency the ECB doesn’t publish: one note naming it, its link the form for its rate', () => {

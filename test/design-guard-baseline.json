@@ -164,9 +164,6 @@
   "components/TemplateOffer.tsx": {
     "inlineLayoutStyles": 1
   },
-  "components/TimelineNotes.tsx": {
-    "inlineLayoutStyles": 1
-  },
   "components/VendorDefaultsCard.tsx": {
     "inlineLayoutStyles": 1
   }

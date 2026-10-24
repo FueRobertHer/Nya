@@ -191,6 +191,30 @@ h2 {
   color: var(--down);
 }
 
+/* Home's Net worth card (components/NetWorthCard.tsx): its title is a real
+   heading, drawn as the label it was. */
+h2.total-label {
+  margin: 0;
+  font-weight: var(--fw-regular);
+}
+
+.net-worth-card .notice {
+  overflow-wrap: anywhere;
+}
+
+/* When it was updated, History paused, and the chart notes, on one row that
+   wraps on a narrow phone. */
+.net-worth-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.net-worth-foot > .btn {
+  margin-left: auto;
+}
+
 /* The fill is deeper than --accent so its white label passes AA (4.5:1). */
 button {
   background: var(--accent-fill);
@@ -628,6 +652,37 @@ button:active:not(:disabled):not([class*="cl-"]) {
 .notice.done {
   background: var(--pos-tint);
   color: var(--pos);
+}
+
+/* Two or more lesser notes on a figure, gathered (components/TotalCaveats.tsx,
+   design-system.md "Status and honesty"): one line saying how many and of
+   what, in the worst one's color, that opens in place to each in full. */
+.notice-summary > summary {
+  align-items: center;
+  min-height: var(--tap);
+  list-style: none;
+  cursor: pointer;
+}
+
+.notice-summary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.notice-summary > summary > span {
+  flex: 1;
+}
+
+.notice-summary > summary > .notice-chevron {
+  margin-top: 0;
+  transition: transform var(--dur-fast) ease;
+}
+
+.notice-summary[open] > summary > .notice-chevron {
+  transform: rotate(180deg);
+}
+
+.notice-summary[open] > .stack {
+  margin-top: var(--sp-2);
 }
 
 /* Helper text: one line under the thing it explains. */
@@ -5080,40 +5135,6 @@ button.tag-suggestion.chosen {
   font-size: 13px;
 }
 
-/* The notes card under the chart. */
-.timeline-note-list {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-
-.timeline-note-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.timeline-note-row > div:first-child {
-  min-width: 0;
-}
-
-.timeline-note-row .manual-row-actions {
-  flex-shrink: 0;
-  margin-top: 0;
-}
-
-.timeline-note-day {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 4px;
-}
-
 /* --- savings goals: the "where you should be" marker, outlooks and the
    archived list (#42, components/GoalsCard.tsx and GoalSheet.tsx) --- */
 
@@ -6376,13 +6397,6 @@ button.review-keys-toggle {
 }
 
 /* --- a home currency (components/CurrencyNotes.tsx, CurrencyCard.tsx) --- */
-
-/* The hero's note of what was converted: a long list of parts wraps on a
-   phone rather than widening the card. */
-.currency-note {
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
 
 .currency-chart-note p {
   margin: 4px 0 0;

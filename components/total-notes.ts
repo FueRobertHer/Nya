@@ -5,9 +5,13 @@
 // last seen Sep 12, and isn't counted in this total". The total is the number
 // people read, so a gap in it is said there, not only on the Accounts tab.
 // Same wording style as before, with the names in. Pure, so the tests hold the
-// words; the dashboard draws each as an amber line under the total.
+// words. Each comes with its color (rollout phase 4a): red when it says the
+// total is short or an institution needs the person, by the same rule as the
+// cards (lib/accounts-status.ts), amber otherwise, and a few words for the
+// summary line that gathers the lesser ones (components/TotalCaveats.tsx).
 
 import { joinNames } from '@/lib/month-coverage';
+import { worse, type Severity } from '@/lib/accounts-status';
 
 /** What the notes read of an institution, as /api/net-worth sends it. */
 export type TotalNoteInstitution = {
@@ -52,11 +56,26 @@ const holdUp = (i: TotalNoteInstitution) =>
  *  restored.ts totalsHold): no total is recorded while it holds. */
 export type RestoreHoldNote = { unfinished: boolean; waiting: { institution_name: string; last: string | null }[]; unreadable: boolean };
 
+/** A note on the total, with its color and a few words for the summary
+ *  line ("last known balances at Chase"): never an amount. */
+export type TotalNote = { text: string; severity: Severity; summary: string };
+
+/** Each institution's one color, as its card has it (lib/accounts-status.ts
+ *  severityOf), so a note never says less than the card. */
+export type SeverityOf<T> = (inst: T) => Severity | null;
+
 /** The notes for the total, in the order they were always shown, then what
  *  a restore holds back (`hold`), said every day while it holds. */
 export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat, hold?: RestoreHoldNote | null): string[] {
-  const notes = institutionNotes(institutions, day);
-  if (hold) notes.push(...restoreNotes(hold, day));
+  return totalCaveats(institutions, day, hold, () => null).map((n) => n.text);
+}
+
+/** The same notes, each with its color: a note naming several institutions
+ *  takes the worst of theirs, and one that says the total is short is red
+ *  whatever they say. */
+export function totalCaveats<T extends TotalNoteInstitution>(institutions: T[], day: DayFormat, hold: RestoreHoldNote | null | undefined, severityOf: SeverityOf<T>): TotalNote[] {
+  const notes = institutionNotes(institutions, day, severityOf);
+  if (hold) notes.push(...restoreCaveats(hold, day));
   return notes;
 }
 
@@ -64,42 +83,70 @@ export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat,
  *  to do. A restored bank's own balances count in no total here: it isn't
  *  connected. */
 export function restoreNotes(hold: RestoreHoldNote, day: DayFormat): string[] {
-  const notes: string[] = [];
-  if (hold.unfinished) notes.push("A restore of your download hasn't finished, so no total is recorded until it does: resume it or undo it in Settings, Your data and privacy");
+  return restoreCaveats(hold, day).map((n) => n.text);
+}
+
+/** A restore that isn't finished, or can't be read, holds the record back:
+ *  amber. A bank it brought back that isn't connected is missing from the
+ *  total: red. */
+function restoreCaveats(hold: RestoreHoldNote, day: DayFormat): TotalNote[] {
+  const notes: TotalNote[] = [];
+  if (hold.unfinished)
+    notes.push({
+      text: "A restore of your download hasn't finished, so no total is recorded until it does: resume it or undo it in Settings, Your data and privacy",
+      severity: 'caution',
+      summary: 'a restore not finished',
+    });
   if (hold.waiting.length === 1) {
     const [w] = hold.waiting;
-    notes.push(
-      `${w.institution_name}, brought back from your download${w.last ? ` with transactions to ${day.snapshot(w.last)}` : ''}, isn't connected here and isn't counted in this total · no total is recorded until you connect it again and link its accounts, or stop following them (Settings, Your data and privacy, Bring back a download)`
-    );
+    notes.push({
+      text: `${w.institution_name}, brought back from your download${w.last ? ` with transactions to ${day.snapshot(w.last)}` : ''}, isn't connected here and isn't counted in this total · no total is recorded until you connect it again and link its accounts, or stop following them (Settings, Your data and privacy, Bring back a download)`,
+      severity: 'critical',
+      summary: `${w.institution_name} not connected after a restore`,
+    });
   } else if (hold.waiting.length > 1) {
-    notes.push(
-      `${joinNames(hold.waiting.map((w) => w.institution_name))}, brought back from your download, aren't connected here and aren't counted in this total · no total is recorded until you connect each again and link its accounts, or stop following them (Settings, Your data and privacy, Bring back a download)`
-    );
+    const names = joinNames(hold.waiting.map((w) => w.institution_name));
+    notes.push({
+      text: `${names}, brought back from your download, aren't connected here and aren't counted in this total · no total is recorded until you connect each again and link its accounts, or stop following them (Settings, Your data and privacy, Bring back a download)`,
+      severity: 'critical',
+      summary: `${names} not connected after a restore`,
+    });
   }
-  if (hold.unreadable) notes.push("What a restore brought back can't be read just now, so no total is recorded until it can be");
+  if (hold.unreadable) notes.push({ text: "What a restore brought back can't be read just now, so no total is recorded until it can be", severity: 'caution', summary: "a restore can't be read" });
   return notes;
 }
 
-function institutionNotes(institutions: TotalNoteInstitution[], day: DayFormat): string[] {
-  const notes: string[] = [];
+function institutionNotes<T extends TotalNoteInstitution>(institutions: T[], day: DayFormat, severityOf: SeverityOf<T>): TotalNote[] {
+  const notes: TotalNote[] = [];
+  // The worst color of these institutions' cards, never below amber: each
+  // note says something is off.
+  const worst = (list: T[]): Severity => list.reduce<Severity | null>((w, i) => worse(w, severityOf(i)), null) ?? 'caution';
 
   // Recovered: shown at last known balances. They share one snapshot, so one date.
   const stale = institutions.filter((i) => i.stale_as_of);
   if (stale.length === 1) {
     const [i] = stale;
-    notes.push(`${i.institution_name} ${holdUp(i)}; its balances are from ${day.snapshot(i.stale_as_of!, i.stale_as_of_at)}`);
+    notes.push({
+      text: `${i.institution_name} ${holdUp(i)}; its balances are from ${day.snapshot(i.stale_as_of!, i.stale_as_of_at)}`,
+      severity: worst(stale),
+      summary: `last known balances at ${i.institution_name}`,
+    });
   } else if (stale.length > 1) {
     const phrases = stale.map((i) => `${i.institution_name} ${holdUp(i)}`);
     const dates = new Set(stale.map((i) => i.stale_as_of));
     const from = dates.size === 1 ? ` from ${day.snapshot(stale[0].stale_as_of!, stale[0].stale_as_of_at)}` : '';
-    notes.push(`${joinNames(phrases)}; showing their last known balances${from}`);
+    notes.push({
+      text: `${joinNames(phrases)}; showing their last known balances${from}`,
+      severity: worst(stale),
+      summary: `last known balances at ${joinNames(stale.map((i) => i.institution_name))}`,
+    });
   }
 
   // Recovered, but short some rows.
   const short = institutions.filter((i) => (i.stale_missing ?? 0) > 0);
   if (short.length > 0) {
     const { n, where } = accountsAt(short, (i) => i.stale_missing ?? 0);
-    notes.push(`${n} ${plural(n, 'account', 'accounts')} at ${where} couldn't be shown, so this total is incomplete`);
+    notes.push({ text: `${n} ${plural(n, 'account', 'accounts')} at ${where} couldn't be shown, so this total is incomplete`, severity: 'critical', summary: `${n} ${plural(n, 'account', 'accounts')} not shown` });
   }
 
   // Answered, without accounts it used to report. Each is held at its last
@@ -121,7 +168,12 @@ function institutionNotes(institutions: TotalNoteInstitution[], day: DayFormat):
           : `; ${plural(n, 'it is', 'they are')} counted at ${plural(n, 'its last known balance', 'their last known balances')} until you say whether ${plural(n, 'it', 'they')} closed`
         : `, so this total is short by ${out === n ? plural(n, 'it', 'them') : `${out} of them`}`;
     const paused = answered ? `until ${plural(n, 'it comes', 'they come')} back, two weeks at most` : 'until you answer';
-    notes.push(`${n} ${plural(n, 'account', 'accounts')} at ${where} stopped reporting${what} · history is paused ${paused}`);
+    notes.push({
+      text: `${n} ${plural(n, 'account', 'accounts')} at ${where} stopped reporting${what} · history is paused ${paused}`,
+      // Short by an account with no balance: red. Held at the last known one: amber.
+      severity: out === 0 ? 'caution' : 'critical',
+      summary: `${n} ${plural(n, 'account', 'accounts')} stopped reporting`,
+    });
   }
 
   // Failed with nothing recovered: the total is short by all of each.
@@ -130,13 +182,19 @@ function institutionNotes(institutions: TotalNoteInstitution[], day: DayFormat):
   if (uncounted.length === 1) {
     const [i] = uncounted;
     const when = seen(i);
-    notes.push(`${i.institution_name} ${i.needs_reauth ? 'needs reconnecting' : "couldn't be reached"}${when ? `, ${when},` : ''} and isn't counted in this total`);
+    // As its card: red, but a new connection waiting for its first answer
+    // was never in the total, and is amber there.
+    notes.push({
+      text: `${i.institution_name} ${i.needs_reauth ? 'needs reconnecting' : "couldn't be reached"}${when ? `, ${when},` : ''} and isn't counted in this total`,
+      severity: worst(uncounted),
+      summary: `${i.institution_name} not counted`,
+    });
   } else if (uncounted.length > 1) {
     const phrases = uncounted.map((i) => {
       const parts = [i.needs_reauth ? 'needs reconnecting' : null, seen(i)].filter(Boolean);
       return parts.length > 0 ? `${i.institution_name} (${parts.join(', ')})` : i.institution_name;
     });
-    notes.push(`${joinNames(phrases)} aren't counted in this total`);
+    notes.push({ text: `${joinNames(phrases)} aren't counted in this total`, severity: worst(uncounted), summary: `${joinNames(uncounted.map((i) => i.institution_name))} not counted` });
   }
   return notes;
 }

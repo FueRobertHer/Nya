@@ -56,7 +56,7 @@ Principles behind the choices: one job per screen; settings live in Settings; on
 
 | Order | Block | Contents |
 |---|---|---|
-| 1 | **Net worth** (one card) | Total and change; one caveat line under the total (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout; a **Notes (N)** button in the chart header that opens the timeline notes sheet; a **History paused** badge on the chart header while history is paused. |
+| 1 | **Net worth** (one card) | Total and change; one caveat line under the total (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout and what qualifies it under it; the nightly jobs' facts (their instructions only for the admin); a foot row with when it was updated, a **History paused** badge while history is paused, and a **Chart notes (N)** button that opens the timeline notes sheet (a foot row, as the mockup draws it: the chart's header has no room at 320px). |
 | 2 | **Needs attention** | Shown only when something does. Each item says what and links to where it is fixed (list [below](#needs-attention)). |
 | 3 | **This month** | The passive insights (spending pace, biggest purchase, upcoming bills, idle cash) and one FI line ("FI in 11.4 years · 62% there"), with its caveats summarized in their severity color (for example an amber "Spending covers 11 of 12 months"), linking to Plan. |
 
@@ -185,10 +185,12 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections, each a view with a back button |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
-| NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card |
+| NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
+| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place |
+| NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
 | CurrencyOffer (CurrencyNotes) | Its own Home card | Needs attention item |
-| TimelineNotes | Its own Home card | Notes sheet from the chart header |
+| TimelineNotes | Its own Home card | Chart notes sheet from the Net worth card's foot row (built in 4a) |
 | Insights | Home card | Split: Needs attention (urgent items), This month (passive) |
 | FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line in This month; caveats stay on Plan |
 | ConnectButtons, CoverageNote | Top of Accounts | Add account sheet; the empty state keeps them |
