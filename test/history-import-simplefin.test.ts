@@ -89,6 +89,6 @@ describe('an account SimpleFIN keeps up to date', () => {
     await saveManualAccount(ctx, { account_id: id, name: 'Cash jar', institution_name: 'Home', type: 'depository', subtype: null, balance: 40, updated_at: new Date(NOW).toISOString() });
     const res = await routes.POST(upload({ action: 'preview', account_id: id }));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('This is a manual account: import a file into it with Import on its row.');
+    expect((await res.json()).error).toBe('This is a manual account: import a file into it with Import a file, in its ⋯ on the Accounts tab.');
   });
 });

@@ -108,6 +108,8 @@ A surface with an optional header: `<h2>` title on the left, a meta value or one
 </section>
 ```
 
+A card that opens and closes (Hidden, Accounts that ended) has a header whose `<h2>` holds one button, the whole title row (`components/Collapsible.tsx`, `.section-toggle`): the title, then a neutral count badge and at most one status badge, then a chevron that turns when it is open. It is 44px tall and says whether it is open (`aria-expanded`).
+
 Replaces `.inst-header`, `.inst-name`, `.inst-total` used as a generic header (43 files), `.institution-name`, `.holdings-title`, `.plan-subhead`, `.plan-scenario-heading`, `.card-mode-header`, and `.report-page` (a copy of `.card`).
 
 ### List row
@@ -174,15 +176,19 @@ Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`
 ### Helper text and disclosure
 
 - **Helper text**: one line, `--fs-2`, `--text-2`, under the thing it explains. Replaces seven muted-note styles that differ only in size (11 to 14px) and margin: `.panel-note`, `.empty-note`, `.as-of`, `.chart-note`, `.lifecycle-note`, `.rename-hint`, `.review-note`.
-- **"Why?" / "How this works" disclosure**: a ghost button that expands an explanation in place. Every paragraph of prose that is on screen by default today (connect options, the download formats, the plan's derivations, About these numbers) moves behind one.
+- **"Why?" / "How this works" disclosure**: a ghost button that expands an explanation in place. Every paragraph of prose that is on screen by default today (connect options, the download formats, the plan's derivations, About these numbers) moves behind one. Built as `components/Why.tsx`: a `<details class="why">` whose `<summary>` looks like a ghost button (44px, `--accent`), the explanation below it in `--fs-2`, `--text-2`. A `<details>` needs no script and is native to the keyboard and screen readers.
 
 ### Sheet
 
-The existing sheet (`Sheet.tsx`, bottom on phones, side panel from 720px) is the one coherent family today and stays. Additions: a sticky footer for its primary and secondary buttons, 44px close and back buttons, and a back button for a sheet that opens a second level (instead of stacking a sheet on a sheet, which loses focus).
+The existing sheet (`Sheet.tsx`, bottom on phones, side panel from 720px) is the one coherent family today and stays. Additions: a footer for its primary and secondary buttons, 44px close and back buttons, and a back button for a sheet that opens a second level (instead of stacking a sheet on a sheet, which loses focus).
+
+The footer is `Sheet`'s `footer` prop, drawn as `.sheet-footer` after the scrolling body (the sheet is a flex column, so it stays in view without `position: sticky`): a hairline above, the buttons wrapping like a `.btn-row`. The close and back buttons are 44px with 20px icons.
 
 ### Menu
 
-New. A small popover for an object's rare actions (the institution ⋯ menu, a transaction's overflow). Items are 44px rows; a destructive item is last, in `--neg`, and opens a confirm sheet.
+A small popover for an object's rare actions (the institution ⋯ menu, a transaction's overflow). Items are 44px rows; a destructive item is last, in `--neg`, and opens a confirm sheet.
+
+Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge (moved in when that would take it past the screen's edge), below it or above it when there is no room below. Its ⋯ is outlined like a secondary button. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
 
 ### Empty state
 

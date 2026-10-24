@@ -15,6 +15,7 @@ export function Sheet({
   title,
   onClose,
   onBack,
+  footer,
   children,
 }: {
   open: boolean;
@@ -22,6 +23,8 @@ export function Sheet({
   onClose: () => void;
   /** Shows a back arrow before the title (a second level inside the drawer). */
   onBack?: () => void;
+  /** Its buttons, kept in view at the foot while the body scrolls. */
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   // Stays mounted while it slides out, and slides in one frame after mounting.
@@ -94,6 +97,7 @@ export function Sheet({
           </button>
         </div>
         <div className="sheet-body">{children}</div>
+        {footer && <div className="sheet-footer">{footer}</div>}
       </div>
     </>
   );

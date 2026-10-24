@@ -34,6 +34,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatMoney } from '@/lib/format';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
+import { CollapsibleHeader } from './Collapsible';
 import { Masked } from './HideAmounts';
 import { cacheKeyFor } from './device-cache';
 import { InferenceNotes, KindsEditor, sameViews, seenText, viewsToSave, type ShareableGoal } from './ShareKinds';
@@ -1037,6 +1038,10 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
  *  (`hadShares`, rememberedShares) is it said alone. */
 export function SharedWithMeView({ data, problem = '', hadShares = false }: { data: SharedPayload | null; problem?: string; hadShares?: boolean }) {
   const [now, setNow] = useState(() => Date.now());
+  // Open to start with: what is shared is read only once it is on screen
+  // (SharedWithMe), and each read counts as a showing, so it is read when
+  // it can be seen, as before. Closing it only folds it away.
+  const [open, setOpen] = useState(true);
   // A share that ends while it is on screen goes at its end, without waiting
   // for the next fetch: from then on the server shows nothing of it.
   const next = Math.min(Infinity, ...(data?.shared ?? []).map((s) => (s.expires_at ? Date.parse(s.expires_at) : Infinity)).filter((t) => t > now));
@@ -1050,21 +1055,26 @@ export function SharedWithMeView({ data, problem = '', hadShares = false }: { da
     return problem && data === null && hadShares ? <p className="stale-note">{`What is shared with you couldn’t be shown just now. ${problem}`}</p> : null;
   }
   return (
-    <>
-      {problem && <p className="stale-note">{`This is what was last shown: it couldn’t be refreshed. ${problem}`}</p>}
-      {shared.map((s) => (
-        <SharedCard
-          key={s.connection}
-          name={s.label}
-          view={s}
-          note={
-            <p className="panel-note">
-              {s.expires_at ? `Shared until ${endLabel(s.expires_at)}. ` : ''}
-              {s.label} sees each time this is shown to you, and so do you, in Sharing.
-            </p>
-          }
-        />
-      ))}
-    </>
+    <section>
+      <CollapsibleHeader title="Shared with me" open={open} onToggle={() => setOpen((v) => !v)} controls="shared-with-me" />
+      {open && (
+        <div id="shared-with-me">
+          {problem && <p className="stale-note">{`This is what was last shown: it couldn’t be refreshed. ${problem}`}</p>}
+          {shared.map((s) => (
+            <SharedCard
+              key={s.connection}
+              name={s.label}
+              view={s}
+              note={
+                <p className="panel-note">
+                  {s.expires_at ? `Shared until ${endLabel(s.expires_at)}. ` : ''}
+                  {s.label} sees each time this is shown to you, and so do you, in Sharing.
+                </p>
+              }
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

@@ -277,7 +277,7 @@ Plugging in:
 
 Limits: a file of 3 MB and 10,000 transactions, sized for Vercel's 4.5 MB limit on a function's request body with the form around it (the route refuses a declared or actual body over 3 MB and 64 KB before reading it as a form); the account book's own ceiling (`MAX_TXN_BLOB_CHARS`); 1,000 characters a field; 32 levels of nesting in an OFX file, so a hostile one can't exhaust the stack; and 200 columns in a CSV file and 50 statements or accounts in an OFX or QIF file, refused before anything is built from them, so no answer (a question's column names and first rows are cut short too, and a preview lists at most 200 problems and 200 conflicts) comes near Vercel's 4.5 MB limit on a response, and the sheet never builds a list that would freeze a phone.
 
-An import into a manual account never writes the history layer (`lib/history.ts`). It adds transactions; a statement's balance is set only when the person ticks the offer, and only from a statement dated today or yesterday, as the account's **Update** form sets one; the estimated history holds manual accounts flat.
+An import into a manual account never writes the history layer (`lib/history.ts`). It adds transactions; a statement's balance is set only when the person ticks the offer, and only from a statement dated today or yesterday, as the account's **Update balance** form sets one; the estimated history holds manual accounts flat.
 
 ### Importing into a linked account
 

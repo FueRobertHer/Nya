@@ -283,6 +283,42 @@ button:active:not(:disabled):not([class*="cl-"]) {
   font-weight: var(--fw-semibold);
 }
 
+/* Nothing follows a header that is all a closed card shows. */
+.card-header:last-child {
+  margin-bottom: 0;
+}
+
+/* A card that opens and closes on its title (components/Collapsible.tsx):
+   the heading holds one button, the whole title row, 44px tall; a count
+   and a status badge follow the title, the chevron is last. */
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+}
+
+.section-chevron {
+  width: var(--icon);
+  height: var(--icon);
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.section-chevron.open {
+  transform: rotate(180deg);
+}
+
 /* Rows that share a card, split by hairlines. On a card the rows run edge to
    edge, clipped to its corners (their focus ring is drawn inside them), and
    the card keeps its margin below. */
@@ -307,6 +343,11 @@ button:active:not(:disabled):not([class*="cl-"]) {
 
 .list-rows > li + li {
   border-top: 1px solid var(--border-subtle);
+}
+
+/* In a sheet or a card, the rows run to its edges. */
+:is(.sheet-body, .card) > .list-rows:not(.card) {
+  margin-inline: calc(-1 * var(--sp-5));
 }
 
 /* The whole row is the target: a <button> or a link, never a row with
@@ -575,6 +616,100 @@ button:active:not(:disabled):not([class*="cl-"]) {
   line-height: var(--lh-body);
 }
 
+/* "Why?": a ghost button that opens the explanation in place
+   (components/Why.tsx), so a second paragraph is never on screen by default. */
+.why > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding-inline: var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--accent);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  list-style: none;
+  cursor: pointer;
+}
+
+.why > summary::-webkit-details-marker {
+  display: none;
+}
+
+.why-body {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  line-height: var(--lh-body);
+}
+
+/* Menu: an object's rare actions (components/Menu.tsx), under its ⋯ button
+   and aligned to its right edge, or above it when there is no room below.
+   Items are 44px rows; a destructive one is last and red. */
+.menu-anchor {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Its ⋯: outlined, as a secondary action, not filled. */
+.menu-anchor > .icon-btn {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-1);
+}
+
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  /* Over the content that follows it; the header and sheets stay above. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: calc(100vw - 2 * var(--sp-4));
+  padding: var(--sp-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--elevated);
+}
+
+.menu.up {
+  top: auto;
+  bottom: 100%;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-regular);
+  text-align: left;
+}
+
+.menu-item.danger {
+  color: var(--neg);
+  background: transparent;
+}
+
+.menu-item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Matches the global button hover rule's specificity: raised, not dimmed. */
+@media (hover: hover) {
+  button.menu-item:hover:not(:disabled):not([class*="cl-"]) {
+    background: var(--surface);
+    opacity: 1;
+  }
+}
+
 /* Form controls without a class of their own: dark, rounded, and legible.
    :where keeps these below any class's styling. */
 :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [class*="cl-"]), select:not([class*="cl-"]), textarea:not([class*="cl-"])) {
@@ -753,21 +888,6 @@ button.danger {
   color: var(--accent);
 }
 
-/* --- hidden accounts ---
-   Dimmed so the Hidden card reads as an archive rather than part of the
-   balance sheet, while staying legible enough to find what you hid. */
-.hidden-section .holdings-title {
-  color: var(--muted);
-}
-
-.hidden-row td {
-  opacity: 0.62;
-}
-
-.hidden-row:hover td {
-  opacity: 1;
-}
-
 /* --- manually-tracked accounts --- */
 
 /* Marks a card as typed-in rather than Plaid-synced, so a stale manual balance
@@ -784,14 +904,6 @@ button.danger {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   vertical-align: middle;
-}
-
-/* When the balance was last typed or pushed. A Plaid balance is implicitly
-   "now"; a manual one needs to say. */
-.manual-updated {
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 2px;
 }
 
 .manual-row-actions {
@@ -839,12 +951,6 @@ button.inst-options {
   padding: 8px 12px;
   font-size: 13px;
   flex-shrink: 0;
-}
-
-/* Hide, Close… and Delete at the top of an account's expanded row. */
-.card-actions.acct-actions {
-  margin-top: 0;
-  margin-bottom: 12px;
 }
 
 .text-input {
@@ -1634,32 +1740,6 @@ button:disabled {
 
 /* --- uninvested cash (Accounts tab) --- */
 
-/* The line under an investment account naming the part of it that is sitting
-   in cash. Muted while the amount looks like ordinary settlement float; amber
-   with a dot once lib/cash.ts calls it material, so the colour is a signal
-   rather than decoration. */
-.cash-tag {
-  color: var(--muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
-}
-
-.cash-tag.idle {
-  color: var(--warn);
-  font-weight: 600;
-}
-
-.cash-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 5px;
-  border-radius: 50%;
-  background: var(--warn);
-  vertical-align: middle;
-}
-
 /* Same signal at a glance on the Holdings header and on each cash row. */
 .cash-chip {
   display: inline-block;
@@ -1745,12 +1825,7 @@ button:disabled {
   background: rgba(91, 141, 239, 0.06);
 }
 
-.acct-chart-cell {
-  padding-top: 12px;
-  padding-bottom: 16px;
-}
-
-/* Investment activity inside an expanded account row. Separated from the
+/* Investment activity inside an account's sheet. Separated from the
    balance chart above it, and its own rows kept tighter than the main
    transaction table since they sit nested two levels deep. */
 .inv-activity {
@@ -1856,6 +1931,34 @@ button:disabled {
   color: var(--accent);
 }
 
+/* The Accounts tab's own row: + Add account, on the right. */
+.accounts-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.accounts-bar .btn > svg {
+  width: var(--icon);
+  height: var(--icon);
+}
+
+/* The top of an account's sheet (components/AccountSheet.tsx): its balance,
+   then where it comes from. */
+.account-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.account-balance {
+  margin: 0;
+  font-size: var(--fs-6);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+}
+
 /* --- drawer (components/Sheet.tsx) --- */
 
 .sheet-backdrop {
@@ -1932,8 +2035,8 @@ button:disabled {
 }
 
 .sheet-icon-btn {
-  width: 36px;
-  height: 36px;
+  width: var(--tap);
+  height: var(--tap);
   padding: 0;
   flex-shrink: 0;
   display: grid;
@@ -1944,8 +2047,8 @@ button:disabled {
 }
 
 .sheet-icon-btn svg {
-  width: 18px;
-  height: 18px;
+  width: var(--icon);
+  height: var(--icon);
 }
 
 .sheet-body {
@@ -1953,6 +2056,19 @@ button:disabled {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 4px 20px 24px;
+}
+
+/* The sheet's buttons, after its scrolling body so they stay in view, and at
+   the foot of a full-height panel however short the body is. */
+.sheet-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5) var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+  margin-top: auto;
 }
 
 /* ...and a panel from the right on wider screens. */
@@ -5281,13 +5397,8 @@ button.pool-toggle {
 }
 
 /* Importing a linked account's history (#52, components/HistoryImportSheet.tsx):
-   the link under the account's chart, the period a file covers, and the note
+   the period a file covers, and the note
    under the net-worth chart saying which stretch comes from imported files. */
-.history-import-link {
-  display: block;
-  margin-top: 10px;
-}
-
 .history-import-period {
   margin-top: 8px;
 }

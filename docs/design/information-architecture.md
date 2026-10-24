@@ -191,12 +191,14 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | TimelineNotes | Its own Home card | Notes sheet from the chart header |
 | Insights | Home card | Split: Needs attention (urgent items), This month (passive) |
 | FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line in This month; caveats stay on Plan |
-| ConnectButtons, CoverageNote | Top of Accounts | Add account sheet |
+| ConnectButtons, CoverageNote | Top of Accounts | Add account sheet; the empty state keeps them |
+| AddAccountSheet | New in phase 3 | + Add account on Accounts: every way in, coverage behind "Which should I use?" |
 | MigrationSheet (Switching link) | Top of Accounts | Add account sheet |
 | ConnectionHealth | Collapsible card on Accounts | Status pill, institution cards, Connection details in ⋯ |
 | Connectors (ConnectorCards, ConnectorSheet) | Separate cards on Accounts | Institution card ⋯ menu; orphans in Settings > Connections |
-| Institution cards (in Dashboard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
+| Institution cards (InstitutionCard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
 | AccountSparkline, HoldingsRecorded, InvestmentActivity, LiabilityDetail | Inline expansion of a row | Account sheet |
+| AccountSheet | New in phase 3 | Tap an account row on Accounts: balance and source, history, holdings, terms; Hide and Close... in its footer, Update balance and Add transaction on typed accounts; Import a file, Import history and Delete in its ⋯ |
 | Manual account sheet, OwedFlipNote | Add manual, Update on a row | Add account sheet, Account sheet > Update balance |
 | ManualTxnSheet, ImportSheet | Manual row buttons; Activity add card | Account sheet; Activity bar ⋯ |
 | HistoryImportSheet | Expanded row; ended accounts | Account sheet; Accounts that ended |
@@ -258,6 +260,9 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
+- Menu: an object's ⋯ menu of rare actions (the account sheet's, the institution card's).
+- Why: the "Why?" disclosure, wherever an explanation goes behind one line.
+- Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 
 ## Vocabulary
 

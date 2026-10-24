@@ -575,12 +575,16 @@ describe('getting to them', () => {
       expect(source(page)).toContain('<CoverageNote />');
       expect(source(page)).toContain('<TrustLinks />');
     }
-    // Both ways to connect (components/ConnectButtons.tsx), on the empty
-    // state and on the Accounts tab, with the statement right after them.
+    // Both ways to connect (components/ConnectButtons.tsx) on the empty
+    // state, with the statement right after them; on the Accounts tab, the
+    // Add account sheet, with it behind "Which should I use?" (rendered in
+    // test/add-account-sheet-view.test.tsx).
     const dashboard = source('components/Dashboard.tsx');
     const entries = dashboard.split('<ConnectButtons ').slice(1);
-    expect(entries.length).toBe(2);
+    expect(entries.length).toBe(1);
     for (const after of entries) expect(after.slice(0, 200)).toMatch(/^[^>]*\/>\s*<CoverageNote \/>/);
+    expect(dashboard).toContain('<AddAccountSheet');
+    expect(source('components/AddAccountSheet.tsx')).toMatch(/<Why label="Which should I use\?">\s*<div className="stack tight">\s*<CoverageNote \/>/);
     expect(dashboard).not.toContain("'Connect an account'");
     expect(dashboard).toContain('<TrustLinks />');
   });

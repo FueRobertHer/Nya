@@ -32,6 +32,7 @@
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
+import { CollapsibleHeader } from './Collapsible';
 import { Masked } from './HideAmounts';
 import { localDate } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
@@ -595,21 +596,17 @@ export function EndedAccounts({
   if (ended.length === 0) return null;
   const assumed = ended.filter((e) => e.assumed).length;
   return (
-    <div className="card hidden-section lifecycle-card">
-      <button className="holdings-toggle" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-        <span className="holdings-title">
-          Accounts that ended
-          <span className="holdings-count">{ended.length}</span>
-        </span>
-        <span className="holdings-summary">
-          {assumed > 0 && <span className="health-attention">{assumed === 1 ? '1 to confirm' : `${assumed} to confirm`}</span>}
-          <svg className={`chevron${expanded ? ' open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </span>
-      </button>
+    <section className="card">
+      <CollapsibleHeader
+        title="Accounts that ended"
+        count={ended.length}
+        status={assumed > 0 && <span className="badge warn">{assumed === 1 ? '1 to confirm' : `${assumed} to confirm`}</span>}
+        open={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+        controls="ended-accounts"
+      />
       {expanded && (
-        <>
+        <div id="ended-accounts">
           <p className="empty-note">
             These stopped counting on the day shown: every day before it still counts, so your chart keeps the step and
             its note. Nothing was deleted, so reopening one puts it back exactly; one its bank no longer returns is held
@@ -680,9 +677,9 @@ export function EndedAccounts({
               );
             })}
           </ul>
-        </>
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 

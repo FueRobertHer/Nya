@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`) and 2 (the tokens and primitives in `app/globals.css`) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`) and 3a (the first half of Accounts) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -8,7 +8,8 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 |---|---|---|
 | 1 | Settings screen; Manage removed | 3 to 4 days |
 | 2 | Tokens and primitives (dark only) | 3 to 4 days |
-| 3 | Accounts: add sheet, institution menu, account sheet | 4 to 5 days |
+| 3a | Accounts: add sheet, account sheet, collapsible sections | 2 to 3 days |
+| 3b | Accounts: status, type summary, institution menu, Connection details | 2 to 3 days |
 | 4 | Home: net worth card, needs attention, this month | 2 to 3 days |
 | 5 | Activity: segments, transaction sheet | 3 to 4 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
@@ -44,8 +45,8 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 **Kept narrow, and where each piece went:**
 
 - `button { width: 100% }` stays. `.btn` sets its own width, so nothing changes for a button until it takes the class; the global rule flips once no bare `<button>` relies on it, with the `.btn-block` audit then.
-- The other 37 declarations under 12px (calendar figures, chart ticks, the plan grid, Sankey labels, tags) move to `--fs-1` with their screen's phase, where each can be checked at 320px: charts in 4 and 5, the calendar and the plan grid in 6. The guard baseline holds them meanwhile.
-- The menu popover, the "Why?" disclosure and the sheet's sticky footer arrive in phase 3 with their first users (the institution ⋯ menu, the coverage disclosure, the account sheet), not as unused code.
+- The other 37 declarations under 12px (calendar figures, chart ticks, the plan grid, Sankey labels, tags) move to `--fs-1` with their screen's phase, where each can be checked at 320px: charts in 4 and 5, the calendar and the plan grid in 6. The guard baseline holds them meanwhile. (35 after phase 3a, which deleted two with the expanded account row.)
+- The menu popover, the "Why?" disclosure and the sheet's footer arrive in phase 3 with their first users (the account sheet's ⋯, the coverage disclosure, the account sheet), not as unused code. Built in 3a.
 - The cards inside the Settings sections keep their classes; each moves to the primitives when it is next changed.
 - The 27 `tabular-nums` declarations in feature rules stay until their rules move to `.money`.
 - The tag colors stay as they are until phase 7 gives them light values.
@@ -54,15 +55,26 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 
 ## Phase 3: Accounts
 
+Split in two pull requests, so each leaves the app working and the one that moves the honesty notices can be reviewed on its own.
+
+**3a**, everything that doesn't move a connection's notices:
+
 - Add account sheet (connect options, manual, switching, coverage disclosure).
-- Status pill and type summary line.
-- Institution cards on the new primitives; ConnectorCards folded into the institution ⋯ menu; Connection details.
 - Account sheet replacing the inline expansion and the row buttons (fixes buttons inside a clickable `<tr>`).
 - Hidden, Accounts that ended and Shared with me as collapsible sections.
+- The Payoff plan button stays (as a row under the + Add account bar, under the type summary once 3b adds it) until phase 6 moves it.
+
+**3b**, the connection's status and actions:
+
+- Status pill and type summary line.
+- Institution cards on the new primitives; ConnectorCards folded into the institution ⋯ menu; Connection details.
 - Rewire `?view=connections` to focus the first affected card (or Settings > Connections when it has no card), since Connection health stops being a card here.
-- The Payoff plan button stays (as a row under the type summary) until phase 6 moves it.
 
 **Risks:** the honesty notices (stale balances, missing rows, unconfirmed missing, too old) must keep their wording and their red or amber; diff the rendered text before and after for each state. SimpleFIN and Lunch Flow flows (Answer, Choose accounts, undo carrying) must keep working from the menu.
+
+**Built in 3a:** the institution card moved to `components/InstitutionCard.tsx`, and `test/institution-card-view.test.tsx` pinned the words and color of every notice on it before anything was restyled; its rows are `.list-row` buttons that open `components/AccountSheet.tsx`, with provenance as badges (a held balance's words unchanged, now amber, as design-system.md makes it a caution; Overdue red, as before). `components/AddAccountSheet.tsx` behind "+ Add account" replaced the connect block at the top of the tab (the empty state keeps its own). The primitives phase 2 left for their first users: `Menu` (the account sheet's ⋯), `Why` (Which should I use?), `Sheet`'s `footer`, and 44px sheet buttons. `CollapsibleHeader` for the three sections at the foot. Shared with me starts open, since what is shared is read only once it is on screen and each read counts as a showing in the sharer's record.
+
+**Decided in 3a:** an action in the account sheet closes it and opens that action's own sheet (the lifecycle sheet, Update, Add transaction, Import a file, Import history, Delete), as the dashboard already does elsewhere, instead of a second level with a back button inside the account sheet. Those sheets are separate components with their own state, and making each a level of the account sheet is a refactor beyond this phase. Focus goes back to the account's row when the second sheet closes.
 
 ## Phase 4: Home
 

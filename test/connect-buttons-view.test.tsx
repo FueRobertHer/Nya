@@ -96,8 +96,13 @@ describe('the two ways to connect', () => {
     expect(dashboard).toContain("fetch('/api/create-link-token', {");
     expect(dashboard).toContain('body: JSON.stringify({ kind }),');
     expect(dashboard).toContain('beginConnect(shownRedirect.kind, true);');
-    // Both places it shows take the server's word on the brokerage option.
-    expect(dashboard.match(/<ConnectButtons [^>]*brokerage=\{brokerageLink\} \/>/g)?.length).toBe(2);
+    // Both places it shows take the server's word on the brokerage option:
+    // the empty state, and the Add account sheet on the Accounts tab
+    // (test/add-account-sheet-view.test.tsx renders that one's rows).
+    expect(dashboard.match(/<ConnectButtons [^>]*brokerage=\{brokerageLink\} \/>/g)?.length).toBe(1);
+    const sheet = dashboard.slice(dashboard.indexOf('<AddAccountSheet'), dashboard.indexOf('<MigrationSheet'));
+    expect(sheet).toContain('brokerage={brokerageLink}');
+    expect(sheet).toContain('onConnect={startConnect}');
     const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
     expect(page).toContain('const brokerageLink = brokerageLinkEnabled();');
   });
