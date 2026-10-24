@@ -232,7 +232,10 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 - **The bar's month ends the period**, rather than periods counted back from today: one period can't count from two places, and the bar is pinned over every segment. So "Last month" is the bar's ‹ with Month, and "This month" is Month; the four lengths are the cash flow's other ranges. By default the end is the bar's month, the latest with transactions, so on the 1st, before the month has any, Spending opens on the month before, as the bar does.
 - **Chips, not a segmented row**, as the mockup draws them: four lengths as long as "Year to date" wrap in a segmented row at 320px. A radio group, so one is chosen and the arrows move it.
 - **The In / Out / Net card stays on Spending, summing the period.** It says what the cash flow's notes don't (other people's parts of shared transactions, the conversion and why a currency had no rate), so the figures are twice on Spending, in the cash flow's row and the card; its notes of what may be missing are said only where the cash flow isn't drawn.
-- **A column of Net by month moves the period's end and keeps its length**, as the bar's arrows do; only the end month is pressed.
+- **A column of Net by month moves the period's end and keeps its length**, as the bar's arrows do; only the end month is pressed, and the others in the period say so to a screen reader.
+- **On Spending, what may be missing speaks of the period, in the cash flow's words**: "so October may be incomplete", "so August to October may be missing some of its transactions", a stopped bank to a sentence, the load's notes first as sentences. Before 5c the In / Out / Net card there said the month's ("so this month may be incomplete"). Each keeps its level (a stale notice), and none is dropped; Transactions keeps the month's words.
+- **The In / Out / Net card on Spending is headed "In and out"** with the period, as every card there names it.
+- **A pick keeps the bar on its month**, so a reload that brings a later month doesn't move the period under the list.
 
 **Kept narrow in 5c:**
 

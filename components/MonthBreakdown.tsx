@@ -539,7 +539,11 @@ export default function MonthBreakdown({
   );
   // Spending's period, and its rows: every card there sums them.
   const period = useMemo(() => (selected ? periodEnding(span, selected) : null), [span, selected]);
-  const periodTxns = useMemo(() => (period ? (txns ?? []).filter((t) => inPeriod(period)(t.date)) : []), [txns, period]);
+  const periodTxns = useMemo(() => {
+    if (!period) return [];
+    const within = inPeriod(period);
+    return (txns ?? []).filter((t) => within(t.date));
+  }, [txns, period]);
   const onSpending = segment === "spending";
   const today = localDate();
 
@@ -552,7 +556,11 @@ export default function MonthBreakdown({
   const counted = useMemo(() => totalsIn(txns ?? [], fx), [txns, fx]);
   const currency = counted.currency;
   const countedMonth = useMemo(() => counted.rows.filter((t) => t.date.slice(0, 7) === selected), [counted, selected]);
-  const countedPeriod = useMemo(() => (period ? counted.rows.filter((t) => inPeriod(period)(t.date)) : []), [counted, period]);
+  const countedPeriod = useMemo(() => {
+    if (!period) return [];
+    const within = inPeriod(period);
+    return counted.rows.filter((t) => within(t.date));
+  }, [counted, period]);
   // What the figures shown sum: the bar's month on Transactions, the period
   // on Spending. One segment is drawn at a time, so the sums below are its.
   const scopeTxns = onSpending ? periodTxns : monthTxns;
@@ -881,21 +889,31 @@ export default function MonthBreakdown({
   // flow; where it isn't drawn (categories not loaded), beside the totals,
   // the load's notes first, as the cash flow says them.
   const spendingGaps =
-    onSpending && !taxonomy && period
-      ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) })
+    onSpending && !taxonomy
+      ? period
+        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) })
+        : notes
       : [];
   const caption = period ? periodCaption(period, today) : "";
   // The period's length, from the chips at the top of Spending; a pick from
   // the cash flow ends with it, as with a month chosen.
   const chooseSpan = (k: PeriodKey) => {
+    if (k === span) return;
     setSpan(k);
     setFlowPick(null);
   };
 
-  // The month's In / Out / Net, with what it leaves out and may be missing:
-  // on Transactions over the list, and on Spending among the month's cards.
+  // The In / Out / Net, with what it leaves out and may be missing: the
+  // month's on Transactions over the list, and the period's on Spending among
+  // its cards, naming it as they do.
   const summaryCard = (
     <div className="card">
+      {onSpending && (
+        <div className="inst-header">
+          <div className="inst-name">In and out</div>
+          <div className="inst-total">{caption}</div>
+        </div>
+      )}
       <div className="summary-row">
         <div>
           <div className="total-label">In</div>
@@ -999,6 +1017,9 @@ export default function MonthBreakdown({
                 onPick={(p) => {
                   pickedNow.current = p !== null;
                   setFlowPick(p);
+                  // The bar keeps the month the pick's period ends with, so a
+                  // reload that brings a later month doesn't move it.
+                  if (p && month === null && selected) setMonth(selected);
                   if (p) chooseSegment("transactions");
                 }}
                 period={span}
@@ -1023,7 +1044,7 @@ export default function MonthBreakdown({
                           setFlowPick(null);
                         }}
                         aria-pressed={m === selected}
-                        aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
+                        aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
                       >
                         <span className="trend-val">
                           <Masked>{fmtCompactSigned(net, currency)}</Masked>

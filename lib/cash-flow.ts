@@ -453,7 +453,8 @@ export const SPANS: readonly { key: PeriodKey; label: string }[] = [
 ];
 
 /** A period of `key`'s length ending with `month` (YYYY-MM) rather than with
- *  today's month. */
+ *  today's month: for the lengths in SPANS ("last-month" is the month before
+ *  it, as periodOf counts it). */
 export const periodEnding = (key: PeriodKey, month: string): Period => periodOf(key, `${month}-01`);
 
 /** A period: whole calendar months, oldest first, and their first and last

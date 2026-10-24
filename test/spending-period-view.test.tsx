@@ -68,7 +68,7 @@ const ROWS: Txn[] = [
   row(`${month}-01`, 'ACME CORP', -3100, 'income'),
   row(`${month}-01`, 'Whole Foods', 400, 'groceries'),
   row(`${back(1)}-10`, 'Trader Joes', 200, 'groceries'),
-  row(`${back(2)}-10`, 'Farmers market', 20, 'groceries'),
+  { ...row(`${back(2)}-10`, 'Farmers market', 20, 'groceries'), tags: ['food'] },
   row(`${back(3)}-10`, 'Corner shop', 7, 'groceries'),
 ];
 
@@ -126,14 +126,14 @@ describe('Spending’s period', () => {
   });
 
   test('every card sums the period: a longer one counts the months before', () => {
-    const v = mount();
+    const v = mount({ tags: [{ id: 'food', name: 'Food run', color: 'blue', created_at: '2026-01-01T00:00:00.000Z' }] });
     expect(v.out()).toBe(money(400));
     act(() => click(v.chip('3 months')));
     expect(v.checked()).toEqual(['3 months']);
     expect(v.out()).toBe(money(620));
     // Each card says the period it sums.
     const three = caption('last-3-months');
-    for (const card of ['Income vs spend', 'Top spending', 'Online vs in-store', 'Where you spent']) {
+    for (const card of ['In and out', 'Income vs spend', 'Top spending', 'Online vs in-store', 'Where you spent', 'Spending by tag']) {
       const [header] = v.all((e) => e.getAttribute('class') === 'inst-header' && e.textContent.startsWith(card));
       expect([card, header?.textContent.includes(three)]).toEqual([card, true]);
     }

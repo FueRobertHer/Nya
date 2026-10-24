@@ -64,11 +64,12 @@ export default function MonthFlowChart({
   const currency = useMemo(() => (given !== undefined ? given : totalsCurrency(txns)), [given, txns]);
 
   const today = localDate();
-  const first = givenFrom ?? `${month}-01`;
-  const last = givenTo ?? lastDayOf(month ?? today.slice(0, 7));
+  const whole = month ?? today.slice(0, 7);
+  const first = givenFrom ?? `${whole}-01`;
+  const last = givenTo ?? lastDayOf(whole);
   const geo = useMemo(() => {
     // Don't trail a flat line into the future for a period that holds today.
-    const toDate = first <= today && today < last;
+    const toDate = first <= today && today <= last;
     const end = toDate ? today : last;
 
     // Per-day money in / out, then a running total across the period.
