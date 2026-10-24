@@ -3,20 +3,23 @@
 // color literal, an inline spacing or type patch, or on-screen text under
 // 12px (each file is held to its count in design-guard-baseline.json, a new
 // file to none); every component has a recorded home in the information
-// architecture; the classes the guidelines name exist; and the proposed
-// tokens keep AA contrast in both themes.
+// architecture; the classes the guidelines name exist; and the tokens keep
+// AA contrast in both themes, with every copy of the palette in step.
 
 import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { DARK, FONT_UI } from '@/lib/theme';
 import baselineJson from './design-guard-baseline.json';
 import {
   ROOT,
+  appTheme,
   contrast,
   contrastPairs,
   hasClass,
   measure,
   read,
+  referenceVars,
   sourceFiles,
   themes,
   type Counts,
@@ -76,7 +79,7 @@ describe('design guard: every component has a home', () => {
 });
 
 describe('design guard: the guidelines name real classes', () => {
-  test('every class under "Use today" exists in app/globals.css', () => {
+  test('every class under "Use" exists in app/globals.css', () => {
     const guide = read('docs/design/guidelines.md');
     const table = guide.match(/<!-- design-guard:classes -->([\s\S]*?)<!-- \/design-guard:classes -->/);
     expect(table).not.toBeNull();
@@ -115,10 +118,30 @@ describe('design guard: copy', () => {
   });
 });
 
-describe('design guard: the proposed tokens (docs/design/tokens.css)', () => {
+describe('design guard: the tokens (app/globals.css, and docs/design/tokens.css for light)', () => {
   const t = themes(read('docs/design/tokens.css'));
+  const app = appTheme(read('app/globals.css'));
 
-  for (const [name, theme] of [['dark', t.dark], ['light', t.light]] as const) {
+  test("the app's scales and dark theme are the ones in docs/design/tokens.css", () => {
+    const ref = referenceVars(read('docs/design/tokens.css'));
+    expect(app.scales).toEqual(ref.scales);
+    expect(app.darkVars).toEqual(ref.darkVars);
+  });
+
+  test('lib/theme.ts and the web manifest hold the same values as the tokens', () => {
+    const drift: string[] = [];
+    for (const [k, v] of Object.entries(DARK)) {
+      if (app.darkVars[k] !== v) drift.push(`lib/theme.ts ${k} is ${v}, --${k} is ${app.darkVars[k]}`);
+    }
+    if (FONT_UI !== app.scales['font-ui']) drift.push(`lib/theme.ts FONT_UI is ${FONT_UI}, --font-ui is ${app.scales['font-ui']}`);
+    const manifest = JSON.parse(read('public/manifest.json'));
+    for (const k of ['background_color', 'theme_color']) {
+      if (manifest[k] !== app.dark.canvas) drift.push(`public/manifest.json ${k} is ${manifest[k]}, --canvas is ${app.dark.canvas}`);
+    }
+    expect(drift).toEqual([]);
+  });
+
+  for (const [name, theme] of [['dark', app.dark], ['light', t.light]] as const) {
     test(`every allowed pairing passes AA in ${name}`, () => {
       const failing: string[] = [];
       for (const [fg, bg, min] of contrastPairs()) {

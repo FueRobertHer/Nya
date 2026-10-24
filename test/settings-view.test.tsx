@@ -20,8 +20,8 @@ describe('SettingsScreen', () => {
     expect(html).toContain('>Settings</h2>');
     expect(html).toContain('aria-label="Close Settings"');
     for (const s of sections) {
-      expect(html).toContain(`<span class="settings-row-title">${s.title}</span>`);
-      expect(html).toContain(`<span class="settings-row-sub">${s.sub}</span>`);
+      expect(html).toContain(`<span class="list-row-title">${s.title}</span>`);
+      expect(html).toContain(`<span class="list-row-sub">${s.sub}</span>`);
     }
     // Only the list: no section's cards are mounted.
     expect(html).not.toContain('Currency card');
@@ -34,7 +34,7 @@ describe('SettingsScreen', () => {
     expect(html).toContain('aria-label="Back to Settings"');
     expect(html).toContain('<div id="bring-back">Restore card</div>');
     expect(html).not.toContain('Currency card');
-    expect(html).not.toContain('settings-row');
+    expect(html).not.toContain('list-row');
   });
 
   test('the heading takes focus, so each level is announced', () => {
@@ -45,7 +45,7 @@ describe('SettingsScreen', () => {
   test('a section not offered (Sharing without Clerk) shows the list', () => {
     const html = view('sharing');
     expect(html).toContain('>Settings</h2>');
-    expect(html).toContain('settings-row');
+    expect(html).toContain('list-row');
   });
 });
 

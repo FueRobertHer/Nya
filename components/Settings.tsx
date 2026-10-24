@@ -73,13 +73,13 @@ export function SettingsScreen({
       {section ? (
         <div className="settings-section">{section.content}</div>
       ) : (
-        <ul className="card settings-list">
+        <ul className="card list-rows">
           {sections.map((s) => (
             <li key={s.id}>
-              <button className="settings-row" onClick={() => go(s.id)}>
-                <span className="settings-row-text">
-                  <span className="settings-row-title">{s.title}</span>
-                  <span className="settings-row-sub">{s.sub}</span>
+              <button className="list-row" onClick={() => go(s.id)}>
+                <span className="list-row-text">
+                  <span className="list-row-title">{s.title}</span>
+                  <span className="list-row-sub">{s.sub}</span>
                 </span>
                 {chevron(RIGHT)}
               </button>

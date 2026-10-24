@@ -20,7 +20,7 @@ Every change that adds or changes UI follows [docs/design/guidelines.md](docs/de
 
 1. **Place it first.** Decide where it goes using the guidelines' "Where it goes": a setting goes to its Settings section (a self-contained card in `settingsSections`), an object's actions go in its sheet or ⋯ menu, analysis never goes above the transaction list. No new tabs or modes.
 2. **Record the placement.** Add any new component to the feature-to-location table or Building blocks in `docs/design/information-architecture.md`.
-3. **Build with today's pieces.** Use the classes in the guidelines' "Which class to use today" table and the 11 `var(--…)` colors in `app/globals.css`. No color literals, no inline spacing or type in `style={{}}`, nothing under 12px. Space stacked siblings with `.stack`.
+3. **Build with the primitives.** Use the classes in the guidelines' "Which class to use" table and the token colors (`var(--surface)`, `var(--text-2)`, ...) in `app/globals.css`, not today's aliases (`--card`, `--muted`, ...). No color literals, no inline spacing or type in `style={{}}`, nothing under 12px. Space stacked siblings with `.stack`.
 4. **Keep the warnings.** Stale, incomplete and reconnect notices keep their words and severity; critical ones stay on the number in full. `docs/features.md` explains why they exist.
 5. **Format money.** Write amounts through `lib/format.ts`, so hide amounts masks them.
 6. **Run the guard.** Run `bun test test/design-guard.test.ts` while working. When a count falls, lower that file's number in `test/design-guard-baseline.json` in the same change. Never raise one: fix the code.

@@ -306,7 +306,7 @@ describe('the print styles', () => {
     expect(printRule('.sheet-backdrop')).toContain('display: none !important');
     expect(printRule('body')).toContain('background: #fff');
     const root = printRule(':root');
-    for (const d of ['--text: #000', '--bg: #fff', '--card: #fff', '--warn: #000']) expect(root).toContain(d);
+    for (const d of ['--text-1: #000', '--canvas: #fff', '--surface: #fff', '--warn: #000']) expect(root).toContain(d);
     // No fixed paper size: A4 or Letter, as the print window says.
     expect(printRule('@page')).not.toMatch(/(^|;)\s*size\s*:/);
   });

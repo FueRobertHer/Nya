@@ -3,6 +3,7 @@ import { connection } from 'next/server';
 import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 import { clerkEnabled } from '@/lib/auth-mode';
+import { DARK, FONT_UI } from '@/lib/theme';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
 
 export const metadata: Metadata = {
@@ -17,32 +18,32 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0f1115',
+  themeColor: DARK.canvas,
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
 };
 
 // Clerk's sign-in, menu and account window in the app's own dark palette
-// (the tokens in app/globals.css).
+// (lib/theme.ts, the tokens in app/globals.css).
 const CLERK_APPEARANCE = {
   variables: {
-    colorPrimary: '#5b8def',
-    colorPrimaryForeground: '#ffffff',
-    colorBackground: '#171a21',
-    colorForeground: '#e8e9ec',
-    colorMutedForeground: '#8b8f98',
-    colorMuted: '#1e222b',
-    colorNeutral: '#e8e9ec',
-    colorInput: '#0f1115',
-    colorInputForeground: '#e8e9ec',
-    colorBorder: '#2a2f3a',
-    colorDanger: '#ef5b5b',
-    colorSuccess: '#3ecf8e',
-    colorWarning: '#e0a83c',
-    colorModalBackdrop: 'rgba(0, 0, 0, 0.6)',
+    colorPrimary: DARK.accent,
+    colorPrimaryForeground: DARK['on-fill'],
+    colorBackground: DARK.surface,
+    colorForeground: DARK['text-1'],
+    colorMutedForeground: DARK['text-2'],
+    colorMuted: DARK.elevated,
+    colorNeutral: DARK['text-1'],
+    colorInput: DARK.canvas,
+    colorInputForeground: DARK['text-1'],
+    colorBorder: DARK['border-strong'],
+    colorDanger: DARK.neg,
+    colorSuccess: DARK.pos,
+    colorWarning: DARK.warn,
+    colorModalBackdrop: DARK.scrim,
     borderRadius: '10px',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily: FONT_UI,
   },
 };
 

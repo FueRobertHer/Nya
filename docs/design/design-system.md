@@ -1,6 +1,6 @@
 # Design system
 
-How Nya should look and behave, screen to screen. The tokens are in [tokens.css](tokens.css); where things live is in [information-architecture.md](information-architecture.md); the order of work is in [rollout.md](rollout.md). Nothing here is wired into the app yet.
+How Nya should look and behave, screen to screen. The tokens are in [tokens.css](tokens.css); where things live is in [information-architecture.md](information-architecture.md); the order of work is in [rollout.md](rollout.md). The tokens (dark only) and the primitives are in `app/globals.css` since rollout phase 2; the rest arrives phase by phase.
 
 - [Direction](#direction)
 - [Color](#color)
@@ -26,7 +26,7 @@ The mockups ([mockups/index.html](mockups/index.html)) show the refined current 
 
 ## Color
 
-Defined once in `tokens.css`; Clerk's appearance and `themeColor` in `app/layout.tsx` should read the same values from one shared module rather than restating them by hand, as they do today.
+Defined in `tokens.css` and copied into `app/globals.css`; Clerk's appearance and `themeColor` in `app/layout.tsx` read them from `lib/theme.ts`, and the web manifest restates two of them. The guard test keeps all of these equal to `tokens.css`.
 
 | Role | Token | Dark | Light | Use |
 |---|---|---|---|---|
@@ -45,7 +45,7 @@ Defined once in `tokens.css`; Clerk's appearance and `themeColor` in `app/layout
 | Tints | `--*-tint` | solid, about 12% | solid, about 8% | Notice and chip backgrounds |
 | Buttons | `--accent-fill`, `--danger-fill` | `#2563eb`, `#dc2626` | same | Filled buttons with `--on-fill` white labels |
 
-**Contrast.** Every text token passes WCAG AA (4.5:1) on canvas, surface and elevated in both themes, every meaning color passes on its own tint, white passes on both fills, and field borders pass 3:1 on every surface. 80 pairings are checked by a script that reads `tokens.css` (kept with the rollout; rerun it whenever a token changes). The ones most likely to matter:
+**Contrast.** Every text token passes WCAG AA (4.5:1) on canvas, surface and elevated in both themes, every meaning color passes on its own tint, white passes on both fills, and field borders pass 3:1 on every surface. The pairings are checked by `test/design-guard.test.ts` on every test run. The ones most likely to matter:
 
 | Pair | Dark | Light |
 |---|---|---|
@@ -151,7 +151,7 @@ One family, `--r-xs`, `--fs-1`, weight 500, sentence case.
 
 - **Badge**: a status or source label that isn't clickable (Manual, via SimpleFIN, Pending, Overdue). Tones: neutral, accent, pos, neg, warn, each on its tint.
 - **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area.
-- **Tag colors**: the nine tag colors (`.tag-gray` to `.tag-pink`) stay. Today they are dark-only (a pastel text on an 18 to 20% tint). They become tokens in phase 2 with today's dark values, get light values in phase 7, and join the contrast check then; they are not in `tokens.css` yet.
+- **Tag colors**: the nine tag colors (`.tag-gray` to `.tag-pink`) stay. Today they are dark-only (a pastel text on an 18 to 20% tint). They become tokens in phase 7, which gives them light values, and join the contrast check then; they are not in `tokens.css` yet.
 
 Replaces `.pill`, `.manual-badge`, `.cash-chip`, `.health-badge`, `.tag-chip`, `button.tag-suggestion`, `.card-mode-category`, `.pending-tag`, `.low-conf-tag`, `.over-tag`, `.done-tag`.
 

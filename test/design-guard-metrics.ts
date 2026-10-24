@@ -186,10 +186,39 @@ function tokenBlock(css: string, opener: RegExp): Record<string, string> {
   return vars;
 }
 
+const DARK_BLOCK = /:root,\s*:root\[data-theme="dark"\]\s*\{/;
+const SCALES_BLOCK = /:root\s*\{\s*\/\*\s*Type\./;
+
+/** Every custom property a block declares, as written (rgba and the scales
+ *  too), so a copy of the block can be held to the original. */
+export function declaredVars(css: string, opener: RegExp): Record<string, string> {
+  const start = css.search(opener);
+  if (start < 0) throw new Error(`no block matching ${opener}`);
+  const body = css
+    .slice(css.indexOf('{', start) + 1, css.indexOf('}', start))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const vars: Record<string, string> = {};
+  for (const [, k, v] of body.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) vars[k] = v.trim().replace(/\s+/g, ' ');
+  if (!Object.keys(vars).length) throw new Error(`the block matching ${opener} declares nothing`);
+  return vars;
+}
+
+/** The app's theme in app/globals.css (dark only until rollout phase 7): its
+ *  hex colors for the contrast check, and every token of the scales and the
+ *  dark block for comparing with docs/design/tokens.css. */
+export function appTheme(css: string) {
+  return { dark: tokenBlock(css, DARK_BLOCK), darkVars: declaredVars(css, DARK_BLOCK), scales: declaredVars(css, SCALES_BLOCK) };
+}
+
+/** The same blocks in docs/design/tokens.css. */
+export function referenceVars(css: string) {
+  return { darkVars: declaredVars(css, DARK_BLOCK), scales: declaredVars(css, SCALES_BLOCK) };
+}
+
 /** The two themes' colors, plus the light block the system setting selects (it must match the explicit one). */
 export function themes(css: string) {
   return {
-    dark: tokenBlock(css, /:root,\s*:root\[data-theme="dark"\]\s*\{/),
+    dark: tokenBlock(css, DARK_BLOCK),
     light: tokenBlock(css, /^:root\[data-theme="light"\]\s*\{/m),
     lightBySystem: tokenBlock(css, /:root:not\(\[data-theme="dark"\]\)\s*\{/),
   };
