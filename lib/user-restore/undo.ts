@@ -74,7 +74,7 @@ async function mayEmpty(ctx: Ctx, userId: string | null): Promise<void> {
   const [items, secrets] = await Promise.all([getItems(ctx), secretsStore.getAllReport(ctx)]);
   if (items.length > 0) {
     const names = [...new Set(items.map((i) => i.institution_name))].join(', ');
-    throw new UndoRefused(`Disconnect ${names} first (Options on the Accounts tab, or Settings, Connections where every account is hidden), then try again: emptying the account would leave ${items.length === 1 ? 'that connection' : 'those connections'} running at Plaid.`);
+    throw new UndoRefused(`Disconnect ${names} first (the ⋯ on its card on the Accounts tab, or in Settings, Connections where it has no card), then try again: emptying the account would leave ${items.length === 1 ? 'that connection' : 'those connections'} running at Plaid.`);
   }
   const held = secrets.entries.size + secrets.unreadable.length + secrets.unrecognised.length;
   if (held > 0) {

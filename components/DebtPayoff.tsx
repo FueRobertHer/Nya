@@ -694,7 +694,7 @@ const NO_TERMS_HINT: Record<NonNullable<DebtAccount['noTerms']>, string> = {
   unreachable:
     "This institution couldn't be reached, so Plaid's terms aren't here right now. Type them from a statement, or refresh later.",
   'not-enabled':
-    "Payment details aren't enabled for this institution. Type them here, or tap Enable payment details on its card.",
+    "Payment details aren't enabled for this institution. Type them here, or choose Enable payment details in the ⋯ on its card on the Accounts tab.",
   loading: 'Payment details are still importing from this institution. Type them here, or check back soon.',
   'not-reported': 'Plaid has no terms for this account right now. Type them from a statement.',
 };

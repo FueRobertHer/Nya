@@ -1,7 +1,7 @@
 // lib/connectors/health.ts
 //
 // The health of accounts a connector feeds (lib/connectors/), in the shape the
-// connection health view, the Home notes and Activity's month notes already
+// institution cards, the Home notes and Activity's month notes already
 // read (lib/connection-state.ts ConnectionHealth, cause 'connector'), and its
 // words. Pure, client-safe: the server builds it (lib/connectors/institutions.ts)
 // and the browser words it (components/ConnectionHealth.tsx).

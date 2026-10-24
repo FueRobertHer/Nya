@@ -583,9 +583,15 @@ describe('the "Allow transactions" action', () => {
     expect([...unallowedItemIds(view)]).toEqual(['item_fid']);
     expect(dashboard).toContain('const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);');
     expect(dashboard).toContain('unallowedIds={unallowedIds}');
+    // The card hands its status block (components/ConnectionStatus.tsx)
+    // whether this connection's are unallowed, and the action; the block
+    // draws the button (rendered in test/institution-card-view.test.tsx).
     const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
-    expect(card).toMatch(
-      /\{unallowedIds\.has\(inst\.item_id\) && \(\s*<button\s+className="secondary"\s+onClick=\{\(\) => startAllowTransactions\(inst\.item_id\)\}\s+disabled=\{connecting\}[^>]*>\s*Allow transactions\s*<\/button>/
+    expect(card).toContain('unallowed={unallowedIds.has(inst.item_id)}');
+    expect(card).toContain('onAllowTransactions={startAllowTransactions}');
+    const status = readFileSync(join(import.meta.dir, '..', 'components', 'ConnectionStatus.tsx'), 'utf8');
+    expect(status).toMatch(
+      /if \(unallowed\) \{\s*add\(\s*'allow',\s*<button className="btn secondary" onClick=\{\(\) => onAllowTransactions\(inst\.item_id\)\} disabled=\{connecting\}[^>]*>\s*Allow transactions\s*<\/button>/
     );
   });
 

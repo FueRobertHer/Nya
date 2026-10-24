@@ -208,7 +208,7 @@ export function accruedLines(view: HomeAccrued, amountsText: (amounts: HomeAccru
     const loans = loansPhrase(n);
     const it = n === 1 ? 'it' : 'them';
     if (why === 'not-enabled') {
-      unread.push(`Payment details aren’t enabled for ${where}, so the accrued interest on ${loans} there isn’t known. To see it, tap Enable payment details on ${at.length === 1 ? 'its card' : 'their cards'} on the Accounts tab.`);
+      unread.push(`Payment details aren’t enabled for ${where}, so the accrued interest on ${loans} there isn’t known. To see it, choose Enable payment details in the ⋯ on ${at.length === 1 ? 'its card' : 'their cards'} on the Accounts tab.`);
     } else if (why === 'loading') {
       unread.push(`Payment details are still importing from ${where}, so the accrued interest on ${loans} there isn’t known yet.`);
     } else if (why === 'unreachable') {

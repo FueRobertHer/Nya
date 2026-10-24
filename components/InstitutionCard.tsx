@@ -1,15 +1,19 @@
 'use client';
 
-// One institution's card on the Accounts tab: its header and subtotal, its
-// account rows, and the notices about its connection. Each row is one button
-// that opens the account's sheet (components/AccountSheet.tsx), where its
-// details and actions are: nothing inside a row is another control.
+// One institution's card on the Accounts tab: its header (name, where its
+// balances come from, what is wrong, its subtotal and its ⋯), its account
+// rows, and its connection's status (components/ConnectionStatus.tsx), which
+// the Connection health card and the SimpleFIN and Lunch Flow cards used to
+// show apart. Each row is one button that opens the account's sheet
+// (components/AccountSheet.tsx): nothing inside a row is another control.
 
-import { ReconnectSoonNote } from './ConnectionHealth';
-import { AccountQuestions, type useAccountLifecycle } from './AccountLifecycle';
+import { type useAccountLifecycle } from './AccountLifecycle';
 import { Masked } from './HideAmounts';
+import { Menu, type MenuItem } from './Menu';
 import { institutionNote } from './currency-text';
 import { HoldingsTable } from './AccountSheet';
+import { ConnectionStatus, connectionSeverity, statusBadge, type ConnectionPlace } from './ConnectionStatus';
+import type { ConnectorAsk } from './Connectors';
 import { connectorLabel } from '@/lib/connectors/types';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
@@ -20,7 +24,6 @@ import {
   balanceDay,
   canEnableLiabilities,
   fmt,
-  fmtStaleDay,
   heldLine,
   liabilitySummary,
   signedBalance,
@@ -33,6 +36,9 @@ export const CHEVRON = (
   </svg>
 );
 
+/** The id of an institution's card heading, which a jump to it focuses. */
+export const cardHeadingId = (item_id: string) => `inst-${item_id}`;
+
 export type InstitutionCardProps = {
   inst: Institution;
   /** Every institution as loaded, hidden accounts included, for the questions about them. */
@@ -43,15 +49,58 @@ export type InstitutionCardProps = {
   expandedHoldings: Set<string>;
   unallowedIds: Set<string>;
   lifecycle: Pick<ReturnType<typeof useAccountLifecycle>, 'busy' | 'open' | 'stillOpen' | 'confirmEnd' | 'reopen'>;
+  /** A connector card's connection, and whether this card is its first. */
+  place?: ConnectionPlace | null;
+  /** Whether the day's requests to the connector are spent. */
+  requestsLeft?: number | null;
   /** Opens the account's sheet. */
   onOpenAccount: (account_id: string) => void;
   toggleHoldings: (item_id: string) => void;
-  setOptionsTarget: (inst: Institution) => void;
+  /** Opens Connection details. */
+  onDetails: (inst: Institution) => void;
+  /** Disconnecting a Plaid connection (the typed-name sheet). */
+  onRemove: (item_id: string) => void;
+  onConnector: (ask: ConnectorAsk) => void;
   startReconnect: (item_id: string) => void;
   startAllowTransactions: (item_id: string) => void;
   startEnableLiabilities: (item_id: string) => void;
   startManageAccounts: (item_id: string) => void;
 };
+
+/** An institution's ⋯: its rare actions, Disconnect last. None on accounts
+ *  typed by hand (each is removed in its own sheet) or on the card that
+ *  says SimpleFIN's and Lunch Flow's accounts couldn't be read. */
+export function institutionMenu(
+  inst: Institution,
+  place: ConnectionPlace | null,
+  requestsLeft: number | null,
+  on: Pick<InstitutionCardProps, 'onDetails' | 'onRemove' | 'onConnector' | 'startManageAccounts' | 'startEnableLiabilities'>
+): MenuItem[] {
+  const details = { label: 'Connection details', onSelect: () => on.onDetails(inst) };
+  if (!inst.manual) {
+    const h = inst.health;
+    // Already a button on the card when Plaid found accounts or misses some.
+    const managed = !!inst.new_accounts_available || (h?.action === 'resolve' && h.cause !== 'no_accounts');
+    return [
+      ...(h ? [details] : []),
+      ...(managed ? [] : [{ label: 'Add or remove accounts', onSelect: () => on.startManageAccounts(inst.item_id) }]),
+      ...(canEnableLiabilities(inst) ? [{ label: 'Enable payment details', onSelect: () => on.startEnableLiabilities(inst.item_id) }] : []),
+      { label: 'Disconnect…', danger: true, onSelect: () => on.onRemove(inst.item_id) },
+    ];
+  }
+  const conn = place?.conn;
+  if (!inst.connector || !inst.connection_id || !conn) return [];
+  const id = inst.connection_id;
+  const issue = inst.health?.detail?.issue;
+  // A connection that is gone can only be disconnected, which its card offers.
+  if (issue === 'gone') return [details];
+  return [
+    details,
+    { label: `Refresh ${conn.label}`, disabled: requestsLeft === 0, onSelect: () => on.onConnector({ kind: 'refresh', connection_id: id }) },
+    ...(issue === 'missing' ? [] : [{ label: 'Choose accounts', onSelect: () => on.onConnector({ kind: 'accounts', connection_id: id }) }]),
+    { label: `Disconnect ${conn.label}…`, danger: true, onSelect: () => on.onConnector({ kind: 'disconnect', connection_id: id }) },
+  ];
+}
 
 export default function InstitutionCard({
   inst,
@@ -62,9 +111,13 @@ export default function InstitutionCard({
   expandedHoldings,
   unallowedIds,
   lifecycle,
+  place = null,
+  requestsLeft = null,
   onOpenAccount,
   toggleHoldings,
-  setOptionsTarget,
+  onDetails,
+  onRemove,
+  onConnector,
   startReconnect,
   startAllowTransactions,
   startEnableLiabilities,
@@ -86,35 +139,23 @@ export default function InstitutionCard({
   // the newest rates, as the hero is (lib/fx/view.ts).
   const instRows = inst.accounts.map((a) => ({ amount: signedBalance(a), currency: a.currency }));
   const instConverted = instMixed && base && needsConverting(instRows, base.fx, instCurrency) ? balancesNow(instRows, base.fx, instCurrency) : null;
-  // Every row, hidden ones too, for the questions about them
-  // (#50), and whether each one held was answered Still open.
+  // Every row, hidden ones too, for the questions about them (#50).
   const allRows = institutions.find((i) => i.item_id === inst.item_id)?.accounts ?? inst.accounts;
-  const heldRows = allRows.filter((a) => a.held);
-  const heldStillOpen = heldRows.length > 0 && heldRows.every((a) => a.question?.still_open);
+  const severity = connectionSeverity(inst, place);
+  const badge = statusBadge(inst);
+  const menu = institutionMenu(inst, place, requestsLeft, { onDetails, onRemove, onConnector, startManageAccounts, startEnableLiabilities });
   return (
-    <div className="card" key={inst.item_id}>
-      <div className="inst-header">
-        <div className="inst-name">
+    <section className="card stack">
+      <div className="card-header">
+        <h2 id={cardHeadingId(inst.item_id)} tabIndex={-1}>
           {inst.institution_name}
-          {inst.manual && <span className="manual-badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span>}
-        </div>
-        <div className="inst-header-right">
-          <div className="inst-total">
-            <Masked>{fmt(instConverted ? instConverted.total : instTotal, instConverted ? instConverted.currency : instCurrency)}</Masked>
-          </div>
-          {/* Add or remove accounts and Disconnect. Manual
-              groupings aren't Plaid Items, so there's nothing
-              to disconnect; they're removed per account. */}
-          {!inst.manual && (
-            <button
-              className="secondary inst-options"
-              onClick={() => setOptionsTarget(inst)}
-              aria-label={`Options for ${inst.institution_name}`}
-            >
-              Options
-            </button>
-          )}
-        </div>
+          {inst.manual && <> <span className="badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span></>}
+          {badge && severity && <> <span className={`badge ${severity === 'critical' ? 'neg' : 'warn'}`}>{badge}</span></>}
+        </h2>
+        <span className="money">
+          <Masked>{fmt(instConverted ? instConverted.total : instTotal, instConverted ? instConverted.currency : instCurrency)}</Masked>
+        </span>
+        {menu.length > 0 && <Menu label={`Options for ${inst.institution_name}`} items={menu} />}
       </div>
 
       {instMixed && (
@@ -122,6 +163,22 @@ export default function InstitutionCard({
           {instConverted ? institutionNote(instConverted) : <>Mixed currencies; total isn&apos;t converted.</>}
         </div>
       )}
+
+      {/* Under the subtotal it qualifies, before the rows. */}
+      <ConnectionStatus
+        inst={inst}
+        allRows={allRows}
+        place={place}
+        fx={base?.fx ?? null}
+        connecting={connecting}
+        unallowed={unallowedIds.has(inst.item_id)}
+        lifecycle={lifecycle}
+        onReconnect={startReconnect}
+        onRemove={onRemove}
+        onManageAccounts={startManageAccounts}
+        onAllowTransactions={startAllowTransactions}
+        onConnector={onConnector}
+      />
 
       {inst.accounts.length > 0 && (
         <ul className="list-rows">
@@ -154,7 +211,8 @@ export default function InstitutionCard({
                         </>
                       )}
                       {liabLine ? <Masked>{liabLine}</Masked> : accountKind(a, inst, shownCurrency)}
-                      {held && <> <span className="badge warn">{held}</span></>}
+                      {/* Amber at its last known balance; red when not counted at all (lib/accounts-status.ts). */}
+                      {held && <> <span className={`badge ${a.balance == null ? 'neg' : 'warn'}`}>{held}</span></>}
                       {day && <> <span className="badge">{day}</span></>}
                       {/* Money in the settlement fund rather than invested;
                           amber only for an amount worth acting on
@@ -213,154 +271,6 @@ export default function InstitutionCard({
           {expandedHoldings.has(inst.item_id) && <HoldingsTable holdings={looseHoldings} flagged={instCash.flaggedAccounts} />}
         </>
       )}
-
-      {/* Plaid's week of notice that this connection will end:
-          the badge, the date and Reconnect, while it still works. */}
-      <ReconnectSoonNote inst={inst} connecting={connecting} onReconnect={startReconnect} />
-
-      {/* Recovering the balances adds a date to the error; it
-          does not replace the error. The distinction matters:
-          "could not fetch balances" usually clears itself,
-          while "needs to be reconnected" never does until you
-          act, and collapsing both into a soft "couldn't
-          refresh" would let a dead connection look healthy for
-          as long as the recovered numbers stay plausible --
-          the same failure this feature exists to prevent, moved
-          from the total to the label. So reauth keeps the red
-          treatment and its own wording, and only a transient
-          failure with real numbers behind it goes amber. */}
-      {inst.error && (
-        <div
-          className={
-            // Amber is for "real numbers, just dated". A card
-            // missing rows isn't that: its subtotal is wrong,
-            // not merely old, so it keeps the red treatment.
-            inst.stale_as_of && !inst.needs_reauth && !inst.stale_missing
-              ? 'stale-note'
-              : 'error'
-          }
-        >
-          {inst.error}
-          {inst.stale_as_of && ` · balances as of ${fmtStaleDay(inst.stale_as_of, inst.stale_as_of_at)}`}
-          {/* The shortfall is disclosed, not hidden: a card
-              drawn short understates debt, which overstates
-              net worth. Why a row is missing is unknowable
-              here (see lib/last-known.ts), so say the count
-              rather than guess at a reason. */}
-          {!!inst.stale_missing &&
-            ` · ${inst.stale_missing} account${
-              inst.stale_missing === 1 ? '' : 's'
-            } couldn't be shown, so this total is incomplete`}
-          {inst.stale_too_old &&
-            ` · last known balances are from ${fmtStaleDay(inst.stale_too_old, inst.stale_too_old_at)}, too old to show`}
-        </div>
-      )}
-
-      {/* Its own block, NOT part of the error above, because
-          there is no error: this institution answered and the
-          balances on the card are fresh. It just answered with
-          fewer accounts than it used to have, so the subtotal
-          is short and nothing is being written to history
-          until that resolves.
-
-          Amber rather than red for the same reason the stale
-          case is: the numbers shown are real. What is wrong is
-          that there are not all of them. */}
-      {!!inst.unconfirmed_missing && !inst.error && (
-        <div className="stale-note">
-          {inst.unconfirmed_missing} account
-          {inst.unconfirmed_missing === 1 ? '' : 's'} this institution used to
-          report {inst.unconfirmed_missing === 1 ? "isn't" : "aren't"} in its latest
-          response · {inst.unconfirmed_missing === 1 ? 'it is' : 'they are'} held at{' '}
-          {inst.unconfirmed_missing === 1 ? 'its' : 'their'} last known balance
-          {/* Answered Still open: held for the account, two weeks at most. */}
-          {heldStillOpen
-            ? ` until ${inst.unconfirmed_missing === 1 ? 'it comes' : 'they come'} back, two weeks from your answer at most, and history is paused until then`
-            : ` until you say whether ${inst.unconfirmed_missing === 1 ? 'it' : 'they'} closed, and history is paused until then`}
-        </div>
-      )}
-
-      {/* The questions about its accounts (#50): missing
-          from its answer, at zero for weeks, or ended and
-          still reported. From every row, a hidden one's too:
-          its absence holds every total all the same. */}
-      <AccountQuestions
-        accounts={[...allRows, ...(inst.ended_reported ?? [])]}
-        institution={inst.institution_name}
-        busy={lifecycle.busy}
-        onOpen={lifecycle.open}
-        onStillOpen={lifecycle.stillOpen}
-        onConfirmEnd={lifecycle.confirmEnd}
-        onReopen={lifecycle.reopen}
-      />
-
-      {/* Tells someone who just tapped Enable why the button
-          vanished without any payment details appearing. */}
-      {inst.liabilities === 'loading' && (
-        <p className="empty-note">
-          Payment details are still importing from this institution.
-        </p>
-      )}
-
-      {inst.new_accounts_available && !inst.manual && (
-        <p className="empty-note">
-          {inst.institution_name} has accounts you haven&apos;t added yet.
-        </p>
-      )}
-
-      {unallowedIds.has(inst.item_id) && (
-        <p className="empty-note">
-          You didn&apos;t allow Nya to see transactions from the bank or card accounts here.
-        </p>
-      )}
-
-      {/* One container, independent actions. Enable must NOT
-          sit inside a needs_reauth gate: a healthy institution
-          is exactly the case it exists for. */}
-      {(inst.needs_reauth ||
-        canEnableLiabilities(inst) ||
-        unallowedIds.has(inst.item_id) ||
-        (!inst.manual && inst.new_accounts_available)) && (
-        <div className="card-actions">
-          {inst.needs_reauth && (
-            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
-              Reconnect
-            </button>
-          )}
-          {unallowedIds.has(inst.item_id) && (
-            <button
-              className="secondary"
-              onClick={() => startAllowTransactions(inst.item_id)}
-              disabled={connecting}
-              aria-label={`Allow transactions from ${inst.institution_name}`}
-            >
-              Allow transactions
-            </button>
-          )}
-          {canEnableLiabilities(inst) && (
-            <button
-              className="secondary"
-              onClick={() => startEnableLiabilities(inst.item_id)}
-              disabled={connecting}
-            >
-              Enable payment details
-            </button>
-          )}
-          {/* Adds accounts to THIS Item rather than connecting
-              the institution again (a second, separately
-              billed Item). Here whenever Plaid has found new
-              accounts; always under Options. */}
-          {!inst.manual && inst.new_accounts_available && (
-            <button
-              className="secondary"
-              onClick={() => startManageAccounts(inst.item_id)}
-              disabled={connecting}
-            >
-              Review accounts
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+    </section>
   );
 }

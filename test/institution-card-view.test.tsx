@@ -56,7 +56,9 @@ const render = (inst: Institution, over: Partial<InstitutionCardProps> = {}) =>
       lifecycle={{ busy: false, open: noop, stillOpen: async () => null, confirmEnd: async () => null, reopen: async () => {} }}
       onOpenAccount={noop}
       toggleHoldings={noop}
-      setOptionsTarget={noop}
+      onDetails={noop}
+      onRemove={noop}
+      onConnector={noop}
       startReconnect={noop}
       startAllowTransactions={noop}
       startEnableLiabilities={noop}
@@ -67,41 +69,47 @@ const render = (inst: Institution, over: Partial<InstitutionCardProps> = {}) =>
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&apos;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 
-/** Each element with one of these classes, as [class, its text], in order.
- *  A held row's line was drawn plain (`manual-updated`) before phase 3, and
- *  is an amber badge since: the same words, at the severity design-system.md
- *  gives an account held at its last known balance. */
-const NOTICE_CLASSES = ['error', 'stale-note', 'empty-note', 'badge warn'];
+/** Each notice line, as [its color, its text], then each toned badge, in
+ *  order. Before phase 3b a notice was a `div.error` (red) or a
+ *  `.stale-note` (amber); since, one `.notice` in the card's one color
+ *  (lib/accounts-status.ts), with the same words. A held row's line was
+ *  drawn plain (`manual-updated`) before phase 3a, and is a badge since:
+ *  amber held at its last known balance, red when not counted at all. */
 function notices(html: string): [string, string][] {
   const found: [string, string][] = [];
-  for (const m of html.matchAll(/<(div|p) class="([^"]+)">([\s\S]*?)<\/\1>/g)) {
-    if (NOTICE_CLASSES.includes(m[2])) found.push([m[2], text(m[3])]);
+  for (const m of html.matchAll(/<div class="notice (critical|caution)">/g)) {
+    const rest = html.slice(m.index! + m[0].length);
+    const stops = ['<details', '<div class="notice', '</div></div>'].map((s) => rest.indexOf(s)).filter((i) => i >= 0);
+    const own = rest.slice(0, Math.min(rest.length, ...stops));
+    for (const p of own.matchAll(/<p>([\s\S]*?)<\/p>/g)) found.push([m[1], text(p[1])]);
   }
   // Badges hold only text.
-  for (const m of html.matchAll(/<span class="(badge[^"]*)">([^<]*)<\/span>/g)) {
-    if (NOTICE_CLASSES.includes(m[1])) found.push([m[1], text(m[2])]);
-  }
+  for (const m of html.matchAll(/<span class="(badge (?:warn|neg))">([^<]*)<\/span>/g)) found.push([m[1], text(m[2])]);
   return found;
 }
+
+/** The plain lines under a card's header: when it last synced, and the
+ *  institution's own lines (`.empty-note` before phase 3b). */
+const helpers = (html: string) => [...html.matchAll(/<p class="helper">([\s\S]*?)<\/p>/g)].map((m) => text(m[1]));
 
 describe('the institution card notices, words and color', () => {
   test('a failed fetch with recovered balances is amber and dated', () => {
     const html = render(institution({ error: 'Could not fetch balances', stale_as_of: '2026-10-01' }));
-    expect(notices(html)).toEqual([['stale-note', 'Could not fetch balances · balances as of Oct 1']]);
+    expect(notices(html)).toEqual([['caution', 'Could not fetch balances · balances as of Oct 1']]);
   });
 
   test('needing reconnecting stays red, with its date, and offers Reconnect by name', () => {
     const html = render(
       institution({ error: 'Chase needs to be reconnected', needs_reauth: true, stale_as_of: '2026-10-01' })
     );
-    expect(notices(html)).toEqual([['error', 'Chase needs to be reconnected · balances as of Oct 1']]);
+    expect(notices(html)).toEqual([['critical', 'Chase needs to be reconnected · balances as of Oct 1']]);
     expect(html).toContain('aria-label="Reconnect Chase"');
   });
 
   test('accounts that could not be shown keep it red: the total is short, not just old', () => {
     const one = render(institution({ error: 'Could not fetch balances', stale_as_of: '2026-10-01', stale_missing: 1 }));
     expect(notices(one)).toEqual([
-      ['error', "Could not fetch balances · balances as of Oct 1 · 1 account couldn't be shown, so this total is incomplete"],
+      ['critical', "Could not fetch balances · balances as of Oct 1 · 1 account couldn't be shown, so this total is incomplete"],
     ]);
     const two = render(institution({ error: 'Could not fetch balances', stale_as_of: '2026-10-01', stale_missing: 2 }));
     expect(notices(two)[0][1]).toContain("· 2 accounts couldn't be shown, so this total is incomplete");
@@ -110,31 +118,31 @@ describe('the institution card notices, words and color', () => {
   test('balances too old to show are said, in red', () => {
     const html = render(institution({ accounts: [], error: 'Could not fetch balances', stale_too_old: '2026-06-01' }));
     expect(notices(html)).toEqual([
-      ['error', 'Could not fetch balances · last known balances are from Jun 1, too old to show'],
+      ['critical', 'Could not fetch balances · last known balances are from Jun 1, too old to show'],
     ]);
   });
 
   test('a plain error with nothing recovered is red', () => {
-    expect(notices(render(institution({ error: 'Could not fetch balances' })))).toEqual([['error', 'Could not fetch balances']]);
+    expect(notices(render(institution({ error: 'Could not fetch balances' })))).toEqual([['critical', 'Could not fetch balances']]);
   });
 
   test('accounts missing from a good answer are amber and say until when they are held', () => {
     const one = render(institution({ unconfirmed_missing: 1 }));
     expect(notices(one)).toEqual([
       [
-        'stale-note',
+        'caution',
         "1 account this institution used to report isn't in its latest response · it is held at its last known balance until you say whether it closed, and history is paused until then",
       ],
     ]);
     const held = account({ account_id: 'acc_gone', name: 'Savings', held: { as_of: '2026-09-12' }, question: { kind: 'missing', end: '2026-09-13', since: '2026-09-12', still_open: true } });
     const two = render(institution({ unconfirmed_missing: 2, accounts: [held] }));
     expect(notices(two)).toContainEqual([
-      'stale-note',
+      'caution',
       "2 accounts this institution used to report aren't in its latest response · they are held at their last known balance until they come back, two weeks from your answer at most, and history is paused until then",
     ]);
     // Never alongside an error: the error says it then.
     expect(notices(render(institution({ unconfirmed_missing: 1, error: 'Could not fetch balances' })))).toEqual([
-      ['error', 'Could not fetch balances'],
+      ['critical', 'Could not fetch balances'],
     ]);
   });
 
@@ -142,7 +150,7 @@ describe('the institution card notices, words and color', () => {
     const dated = render(institution({ accounts: [account({ held: { as_of: '2026-09-12' } })] }));
     expect(notices(dated)).toContainEqual(['badge warn', 'Last known balance, from Sep 12']);
     const none = render(institution({ accounts: [account({ held: { as_of: null }, balance: null })] }));
-    expect(notices(none)).toContainEqual(['badge warn', 'No recent balance, so not counted']);
+    expect(notices(none)).toContainEqual(['badge neg', 'No recent balance, so not counted']);
     expect(text(none)).toContain('--');
   });
 
@@ -165,10 +173,10 @@ describe('the institution card notices, words and color', () => {
 
   test('the institution lines: payment details importing, accounts not added, transactions not allowed', () => {
     const html = render(institution({ liabilities: 'loading', new_accounts_available: true }), { unallowedIds: new Set(['item_chase']) });
-    expect(notices(html)).toEqual([
-      ['empty-note', 'Payment details are still importing from this institution.'],
-      ['empty-note', "Chase has accounts you haven't added yet."],
-      ['empty-note', "You didn't allow Nya to see transactions from the bank or card accounts here."],
+    expect(helpers(html)).toEqual([
+      'Payment details are still importing from this institution.',
+      "Chase has accounts you haven't added yet.",
+      "You didn't allow Nya to see transactions from the bank or card accounts here.",
     ]);
     expect(html).toContain('aria-label="Allow transactions from Chase"');
     expect(text(html)).toContain('Review accounts');

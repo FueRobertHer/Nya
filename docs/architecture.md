@@ -125,7 +125,7 @@ There are two shapes for data. `defineValueStore` holds one encrypted JSON value
 
 Budget rollover and income carryover (`lib/budget-months-store.ts`, #37) are two value stores, `budget-months` and `income-carryover`, kept beside the budget set rather than in it ([below](#budgets-by-month-and-rollover)). Both are in the data download.
 
-The connection health stores (`lib/connection-records.ts`, #51) are map stores, one entry per connection under Plaid's `item_id`, each written from one module: Plaid's warnings that a connection will end, when each connection last answered, and the email bookkeeping of a break. All three are in the data download ([data-export.md](data-export.md#stores-built-on-the-storage-seam)): they are about the person's own connections, shown on their Connection health card, and the notices are the record of the emails Nya sent them.
+The connection health stores (`lib/connection-records.ts`, #51) are map stores, one entry per connection under Plaid's `item_id`, each written from one module: Plaid's warnings that a connection will end, when each connection last answered, and the email bookkeeping of a break. All three are in the data download ([data-export.md](data-export.md#stores-built-on-the-storage-seam)): they are about the person's own connections, shown on their cards on the Accounts tab, and the notices are the record of the emails Nya sent them.
 
 The Plan's scenarios (`lib/plan-scenarios.ts`, [below](#plan-scenarios)) are a map store, one entry per scenario, holding what each changes from the Plan, never a figure.
 

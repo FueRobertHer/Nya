@@ -42,14 +42,17 @@ import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportShe
 import MigrationSheet, { SwitchingLink } from './MigrationSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
-import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
+import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
 import { useTransactionEdits } from './transaction-edits';
 import SharedExpensesCard, { type SharedFacts } from './SharedExpensesCard';
 import { useSharedExpenses } from './shared-expenses-state';
 import type { SharedRowHooks } from './SharedRows';
 import { REMOVED_NAME } from '@/lib/shared-expenses/model';
 import Insights, { type IdleCashAccount } from './Insights';
-import ConnectionHealth from './ConnectionHealth';
+import ConnectionDetails from './ConnectionDetails';
+import { ALERT, ConnectionStatus, connectionSeverity, statusBadge, type ConnectionPlace } from './ConnectionStatus';
+import { Menu } from './Menu';
+import { cardlessSeverity as cardlessSeverityOf, firstToFix, worse, type Severity } from '@/lib/accounts-status';
 import {
   useAccountLifecycle,
   AccountQuestions,
@@ -111,7 +114,7 @@ import PlanTabLoader from './PlanTabLoader';
 // The FI card on Home works its figures out with the Plan's code, so it is
 // loaded the same way, after Home paints.
 import FiProgressLoader from './FiProgressLoader';
-import InstitutionCard from './InstitutionCard';
+import InstitutionCard, { cardHeadingId, institutionMenu } from './InstitutionCard';
 import { fmt, fmtAsOf, fmtDay, fmtInstantDay, fmtStaleDay, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
 
 
@@ -331,11 +334,10 @@ export default function Dashboard({
   const [balancesSaved, setBalancesSaved] = useState(false);
   // The last load of the balances failed (the Plan tab then asks, rather than wait).
   const [balancesFailed, setBalancesFailed] = useState(false);
-  // Connection health (components/ConnectionHealth.tsx): whether the server
-  // could read Plaid's warnings, and whether a notice email's link opened it.
+  // Whether the server could read Plaid's warnings, and whether a notice
+  // email's link (?view=connections) asks to go to what needs attention.
   const [healthUnavailable, setHealthUnavailable] = useState(false);
   const [healthFocus, setHealthFocus] = useState(false);
-  const clearHealthFocus = useCallback(() => setHealthFocus(false), []);
   // The Currency card (components/CurrencyCard.tsx), opened from a note on
   // Home, at the form for a rate for the currency the note named, if any.
   const [currencyFocus, setCurrencyFocus] = useState<{ rateFor: string | null } | null>(null);
@@ -451,11 +453,10 @@ export default function Dashboard({
     setSettings('preferences');
     setCurrencyFocus({ rateFor });
   }, []);
-  // An institution's rare actions (Add or remove accounts, Disconnect), in a
-  // drawer from its Options button. disconnectTarget drives the
-  // type-to-confirm drawer.
-  const [optionsTarget, setOptionsTarget] = useState<Institution | null>(null);
-  const shownOptionsTarget = useLast(optionsTarget);
+  // The institution whose Connection details are open, by id, from its ⋯
+  // (its rare actions are in that menu; disconnectTarget drives the
+  // type-to-confirm drawer).
+  const [detailsFor, setDetailsFor] = useState<string | null>(null);
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
@@ -704,8 +705,9 @@ export default function Dashboard({
     loadNetWorth();
   }, [loadNetWorth]);
 
-  // A notice email links to /?view=connections: open the Accounts tab at the
-  // connection health card, then drop the query, so a reload doesn't jump there.
+  // A notice email links to /?view=connections: open the Accounts tab and go
+  // to what needs attention once the accounts are in (healthFocus, below),
+  // then drop the query, so a reload doesn't jump there.
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('view') !== 'connections') return;
     setTab('accounts');
@@ -1079,6 +1081,9 @@ export default function Dashboard({
     },
     [loadNetWorth, requestBackfill, loadTransactions, txns]
   );
+  // Every SimpleFIN and Lunch Flow connection, read once for the dashboard,
+  // again after each load (`asOf` changes with it).
+  const connectors = useConnectors(asOf);
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
   const askLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
   // Offered only where the deployment turned it on (app/page.tsx).
@@ -1473,6 +1478,81 @@ export default function Dashboard({
     };
   }, [institutions]);
 
+  // A SimpleFIN or Lunch Flow connection's cards: one per bank it reaches,
+  // its lines about all of them on the first (components/ConnectionStatus.tsx).
+  const places = useMemo(() => {
+    const map = new Map<string, ConnectionPlace>();
+    const firsts = new Map<string, string>();
+    for (const inst of sortedInstitutions) {
+      if (!inst.connection_id) continue;
+      const conn = connectors.data?.connections.find((c) => c.connection_id === inst.connection_id) ?? null;
+      const first = firsts.get(inst.connection_id);
+      if (first === undefined) firsts.set(inst.connection_id, inst.institution_name);
+      map.set(inst.item_id, { conn, first: first === undefined, firstName: first ?? null });
+    }
+    return map;
+  }, [sortedInstitutions, connectors.data]);
+
+  // Connections with no card on the Accounts tab, listed in Settings >
+  // Connections: linked ones whose accounts are all hidden or ended, and
+  // SimpleFIN or Lunch Flow ones with nothing chosen yet, every account
+  // hidden or ended, or accounts left from one that is gone.
+  const cardlessConnectors = useMemo(() => {
+    const carded = new Set(sortedInstitutions.map((i) => i.connection_id).filter(Boolean));
+    const ids = [...(connectors.data?.connections ?? []).map((c) => c.connection_id), ...(connectors.data?.orphaned ?? []).map((o) => o.connection_id)];
+    return new Set(ids.filter((id) => !carded.has(id)));
+  }, [sortedInstitutions, connectors.data]);
+  // Each, with its one color (lib/accounts-status.ts), in Settings' order.
+  const cardless = useMemo(() => {
+    const plaid = allHiddenInstitutions.map((inst) => {
+      const full = institutions.find((i) => i.item_id === inst.item_id) ?? inst;
+      return { severity: connectionSeverity(full) };
+    });
+    const fed = [...cardlessConnectors].map((id) => {
+      const conn = connectors.data?.connections.find((c) => c.connection_id === id);
+      return { severity: cardlessSeverityOf(conn ?? 'orphaned') };
+    });
+    return [...plaid, ...fed];
+  }, [allHiddenInstitutions, institutions, cardlessConnectors, connectors.data]);
+  const cardlessCount = cardless.filter((c) => c.severity).length;
+  const cardlessWorst = cardless.reduce<Severity | null>((w, c) => worse(w, c.severity), null);
+  // What couldn't be read about how many connections, hidden ones' too.
+  const unreadConnections = institutions.filter((i) => i.health?.unread).length;
+  const openConnections = useCallback(() => {
+    window.scrollTo(0, 0);
+    setSettings('connections');
+  }, []);
+  const removeConnection = (item_id: string) => {
+    const target = institutions.find((i) => i.item_id === item_id);
+    if (target) startDisconnect(target);
+  };
+
+  // A notice email links to /?view=connections: once the accounts have come
+  // from the server (not the snapshot this device kept), the first connection
+  // that needs attention, worst first: its card's heading, focused, or
+  // Settings > Connections when it has no card. Nothing needs it: the top of
+  // the Accounts tab.
+  useEffect(() => {
+    if (!healthFocus || loading || (balancesSaved && !balancesFailed)) return;
+    setHealthFocus(false);
+    const cards = sortedInstitutions.map((inst) => ({ item_id: inst.item_id as string | null, severity: connectionSeverity(inst, places.get(inst.item_id) ?? null) }));
+    const target = firstToFix([...cards, ...cardless.map((c) => ({ item_id: null, severity: c.severity }))]);
+    if (!target) return;
+    if (target.item_id === null) {
+      openConnections();
+      return;
+    }
+    const id = cardHeadingId(target.item_id);
+    requestAnimationFrame(() => {
+      const heading = document.getElementById(id);
+      heading?.scrollIntoView({ block: 'start' });
+      heading?.focus({ preventScroll: true });
+    });
+  }, [healthFocus, loading, balancesSaved, balancesFailed, sortedInstitutions, places, cardless, openConnections]);
+
+  // Connection details, from an institution's ⋯ (components/ConnectionDetails.tsx).
+  const shownDetailsFor = useLast(detailsFor);
+
   // The open account as this load has it.
   const openedAccount = useMemo(() => {
     if (!accountOpen) return null;
@@ -1770,8 +1850,8 @@ export default function Dashboard({
       id: 'connections',
       title: 'Connections',
       sub:
-        allHiddenInstitutions.length > 0
-          ? `${allHiddenInstitutions.length} with every account hidden, reconnected accounts`
+        cardless.length > 0
+          ? `${cardless.length} with no card on Accounts, reconnected accounts`
           : admin
             ? 'Reconnected accounts, unused connections'
             : 'Reconnected accounts',
@@ -1784,31 +1864,56 @@ export default function Dashboard({
               ones with no card, and accounts that may continue an earlier one.
             </p>
           )}
-          {/* A linked institution whose accounts are all hidden has no card
-              on the Accounts tab, so its Options (Add or remove accounts,
-              Disconnect) are here. */}
-          {allHiddenInstitutions.length > 0 && (
-            <div className="card">
-              <div className="inst-header">
-                <div className="inst-name">Every account hidden</div>
-              </div>
-              <p className="panel-note">
-                These still sync, but every account in them is hidden. Unhide one from Hidden on the
-                Accounts tab, add or remove its accounts, or disconnect it.
-              </p>
-              {allHiddenInstitutions.map((inst) => (
-                <div className="inst-header" key={inst.item_id}>
-                  <div className="inst-name">{inst.institution_name}</div>
-                  <button
-                    className="secondary inst-options"
-                    onClick={() => setOptionsTarget(inst)}
-                    aria-label={`Options for ${inst.institution_name}`}
-                  >
-                    Options
-                  </button>
+          {/* A linked institution whose accounts are all hidden (or all
+              ended) has no card on the Accounts tab, so its status, its
+              questions and its ⋯ (Add or remove accounts, Disconnect) are
+              here. */}
+          {allHiddenInstitutions.map((shown) => {
+            const inst = institutions.find((i) => i.item_id === shown.item_id) ?? shown;
+            const severity = connectionSeverity(inst);
+            const badge = statusBadge(inst);
+            const menu = institutionMenu(inst, null, null, {
+              onDetails: (i) => setDetailsFor(i.item_id),
+              onRemove: removeConnection,
+              onConnector: setConnectorAsk,
+              startManageAccounts,
+              startEnableLiabilities,
+            });
+            return (
+              <section className="card stack" key={inst.item_id}>
+                <div className="card-header">
+                  <h2 id={cardHeadingId(inst.item_id)} tabIndex={-1}>
+                    {inst.institution_name}
+                    {badge && severity && <> <span className={`badge ${severity === 'critical' ? 'neg' : 'warn'}`}>{badge}</span></>}
+                  </h2>
+                  <Menu label={`Options for ${inst.institution_name}`} items={menu} />
                 </div>
-              ))}
-            </div>
+                <p className="helper">
+                  These still sync, but every account in them is hidden. Unhide one from Hidden on the
+                  Accounts tab, add or remove its accounts, or disconnect it.
+                </p>
+                <ConnectionStatus
+                  inst={inst}
+                  allRows={inst.accounts}
+                  place={null}
+                  fx={base?.fx ?? null}
+                  connecting={connecting}
+                  unallowed={unallowedIds.has(inst.item_id)}
+                  lifecycle={lifecycle}
+                  onReconnect={startReconnect}
+                  onRemove={removeConnection}
+                  onManageAccounts={startManageAccounts}
+                  onAllowTransactions={startAllowTransactions}
+                  onConnector={setConnectorAsk}
+                />
+              </section>
+            );
+          })}
+          {/* SimpleFIN and Lunch Flow connections with no card on the
+              Accounts tab: nothing chosen yet, every account hidden or
+              ended, or accounts left from one that is gone. */}
+          {cardlessConnectors.size > 0 && (
+            <ConnectorCards data={connectors.data} error={connectors.error} only={cardlessConnectors} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
           )}
           {/* Renders only when there is a reconnected account to link or a
               link to undo; mounted only here, which also skips its history
@@ -2004,7 +2109,7 @@ export default function Dashboard({
               <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan refreshKey={asOf} />
             </div>
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
-            <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
+            <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
             {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
           </>
@@ -2216,47 +2321,46 @@ export default function Dashboard({
                   </ul>
                 )}
 
-                {/* Every linked institution's health, last good sync and the
-                    action for it, in one place. Open whenever one needs
-                    attention, and from a notice email's link. */}
-                <ConnectionHealth
-                  institutions={institutions}
-                  fx={base?.fx ?? null}
-                  unavailable={healthUnavailable}
-                  connecting={connecting}
-                  focus={healthFocus}
-                  onFocused={clearHealthFocus}
-                  onReconnect={startReconnect}
-                  onManageAccounts={startManageAccounts}
-                  onRemove={(item_id) => {
-                    const target = institutions.find((i) => i.item_id === item_id);
-                    if (!target) return;
-                    setDisconnectInput('');
-                    setEndedOffer(null);
-                    setDisconnectTarget(target);
-                  }}
-                  questions={(h) => {
-                    // The same questions as on the institution's card (#50).
-                    const inst = institutions.find((i) => i.item_id === h.item_id);
-                    return inst ? (
-                      <AccountQuestions
-                        accounts={[...inst.accounts, ...(inst.ended_reported ?? [])]}
-                        institution={inst.institution_name}
-                        busy={lifecycle.busy}
-                        onOpen={lifecycle.open}
-                        onStillOpen={lifecycle.stillOpen}
-                        onConfirmEnd={lifecycle.confirmEnd}
-                        onReopen={lifecycle.reopen}
-                      />
-                    ) : null;
-                  }}
-                  onConnector={setConnectorAsk}
-                />
-
-                {/* Each SimpleFIN connection: when it last answered, what it
-                    reported in its own words, Refresh, Choose accounts and
-                    Disconnect. Nothing when there is none. */}
-                <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
+                {/* What couldn't be read about every connection, said once
+                    for the tab: a card can't say what is missing from it. */}
+                {healthUnavailable ? (
+                  <div className="notice caution">
+                    {ALERT}
+                    <p>Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.</p>
+                  </div>
+                ) : (
+                  unreadConnections > 0 && (
+                    <div className="notice caution">
+                      {ALERT}
+                      <p>{`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}</p>
+                    </div>
+                  )
+                )}
+                {connectors.error && (
+                  <div className="notice critical">
+                    {ALERT}
+                    <p>Your own sync’s connections couldn’t be loaded: {connectors.error}</p>
+                  </div>
+                )}
+                {/* Connections with no card here (every account hidden, or
+                    none chosen yet) that need attention, in Settings. */}
+                {cardlessWorst && (
+                  <div className={`notice ${cardlessWorst}`}>
+                    {ALERT}
+                    <div className="stack tight">
+                      <p>
+                        {cardlessCount === 1
+                          ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
+                          : `${cardlessCount} connections with no card here need attention: their accounts are hidden or not chosen yet.`}
+                      </p>
+                      <div className="btn-row">
+                        <button className="btn secondary" onClick={openConnections}>
+                          Open Settings, Connections
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {sortedInstitutions.map((inst) => (
                   <InstitutionCard
@@ -2269,9 +2373,13 @@ export default function Dashboard({
                     expandedHoldings={expandedHoldings}
                     unallowedIds={unallowedIds}
                     lifecycle={lifecycle}
+                    place={places.get(inst.item_id) ?? null}
+                    requestsLeft={connectors.data?.requests?.left ?? null}
                     onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
                     toggleHoldings={toggleHoldings}
-                    setOptionsTarget={setOptionsTarget}
+                    onDetails={(i) => setDetailsFor(i.item_id)}
+                    onRemove={removeConnection}
+                    onConnector={setConnectorAsk}
                     startReconnect={startReconnect}
                     startAllowTransactions={startAllowTransactions}
                     startEnableLiabilities={startEnableLiabilities}
@@ -2821,35 +2929,17 @@ export default function Dashboard({
 
       {lifecycle.sheet}
 
-      {/* An institution's rare actions, from its Options button. Each closes
-          this first, so no drawer opens on top of another. */}
-      <Sheet open={!!optionsTarget} title={shownOptionsTarget?.institution_name ?? 'Options'} onClose={() => setOptionsTarget(null)}>
-        {shownOptionsTarget && (
-          <div className="button-stack">
-            {/* Adds accounts to THIS Item rather than connecting the
-                institution again (a second, separately billed Item). */}
-            <button
-              className="secondary"
-              disabled={connecting}
-              onClick={() => {
-                setOptionsTarget(null);
-                startManageAccounts(shownOptionsTarget.item_id);
-              }}
-            >
-              Add or remove accounts
-            </button>
-            <button
-              className="danger-outline"
-              onClick={() => {
-                setOptionsTarget(null);
-                startDisconnect(shownOptionsTarget);
-              }}
-            >
-              Disconnect…
-            </button>
-          </div>
-        )}
-      </Sheet>
+      {/* Everything about a connection, from its ⋯. What it asks of the
+          connector closes it first, so no drawer opens on top of another. */}
+      <ConnectionDetails
+        open={!!detailsFor}
+        inst={institutions.find((i) => i.item_id === shownDetailsFor) ?? null}
+        place={(shownDetailsFor && places.get(shownDetailsFor)) || null}
+        requests={connectors.data?.requests ?? null}
+        fx={base?.fx ?? null}
+        onClose={() => setDetailsFor(null)}
+        onConnector={setConnectorAsk}
+      />
 
       <Sheet
         open={!!disconnectTarget}
