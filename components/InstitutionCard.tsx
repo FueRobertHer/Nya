@@ -1,95 +1,37 @@
 'use client';
 
 // One institution's card on the Accounts tab: its header and subtotal, its
-// account rows, and the notices about its connection. Moved from
-// components/Dashboard.tsx so a test can render it (rollout phase 3).
+// account rows, and the notices about its connection. Each row is one button
+// that opens the account's sheet (components/AccountSheet.tsx), where its
+// details and actions are: nothing inside a row is another control.
 
-import { Fragment } from 'react';
-import AccountSparkline from './AccountSparkline';
-import HoldingsRecorded from './HoldingsRecorded';
-import InvestmentActivity from './InvestmentActivity';
 import { ReconnectSoonNote } from './ConnectionHealth';
 import { AccountQuestions, type useAccountLifecycle } from './AccountLifecycle';
 import { Masked } from './HideAmounts';
 import { institutionNote } from './currency-text';
-import type { ImportTarget } from './ImportSheet';
-import type { HistoryImportTarget } from './HistoryImportSheet';
-import { connectorBalanceDay, connectorLabel } from '@/lib/connectors/types';
+import { HoldingsTable } from './AccountSheet';
+import { connectorLabel } from '@/lib/connectors/types';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
-import { dominantCurrency, hiddenFigure } from '@/lib/format';
-import { isInvestmentType, isOwedType } from '@/lib/balance';
-import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
+import { dominantCurrency } from '@/lib/format';
+import { institutionCash } from '@/lib/cash';
 import {
+  accountKind,
+  balanceDay,
   canEnableLiabilities,
   fmt,
-  fmtAsOf,
-  fmtDay,
-  fmtGain,
-  fmtInstantDay,
   fmtStaleDay,
+  heldLine,
   liabilitySummary,
   signedBalance,
-  type AccountLiability,
   type Institution,
-  type ManualAccount,
 } from './accounts-format';
 
-/**
- * The rest of a liability's terms, shown only when the row is expanded (the
- * collapsed row already carries rate, minimum and due date).
- *
- * Follows TxnDetail in MonthBreakdown: push only fields that are present, and
- * render nothing rather than a list of dashes when none are.
- */
-export function LiabilityDetail({
-  liability,
-  currency,
-}: {
-  liability?: AccountLiability;
-  currency: string | null;
-}) {
-  if (!liability) return null;
-  const l = liability;
-  const rows: { label: string; value: string }[] = [];
-
-  if (l.apr != null && l.apr_label) rows.push({ label: l.apr_label, value: `${l.apr.toFixed(2)}%` });
-  if (l.last_statement_balance != null) {
-    rows.push({ label: 'Statement balance', value: fmt(l.last_statement_balance, currency) });
-  }
-  if (l.last_payment_amount != null) {
-    rows.push({
-      label: 'Last payment',
-      value:
-        fmt(l.last_payment_amount, currency) +
-        (l.last_payment_date ? ` on ${fmtDay(l.last_payment_date)}` : ''),
-    });
-  }
-  if (l.outstanding_interest != null) {
-    rows.push({ label: 'Accrued interest', value: fmt(l.outstanding_interest, currency) });
-  }
-  if (l.escrow_balance != null) {
-    rows.push({ label: 'Escrow', value: fmt(l.escrow_balance, currency) });
-  }
-  if (l.expected_payoff_date) {
-    rows.push({ label: 'Expected payoff', value: fmtDay(l.expected_payoff_date) });
-  }
-  if (l.maturity_date) rows.push({ label: 'Matures', value: fmtDay(l.maturity_date) });
-
-  if (rows.length === 0) return null;
-  return (
-    <dl className="txn-detail">
-      {rows.map((r) => (
-        <div className="txn-detail-row" key={r.label}>
-          <dt>{r.label}</dt>
-          <dd>
-            <Masked>{r.value}</Masked>
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
+export const CHEVRON = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
 
 export type InstitutionCardProps = {
   inst: Institution;
@@ -98,22 +40,13 @@ export type InstitutionCardProps = {
   base: NetWorthBase | null;
   shownCurrency: string | null;
   connecting: boolean;
-  savingManual: boolean;
-  togglingHidden: string | null;
-  expandedAccounts: Set<string>;
   expandedHoldings: Set<string>;
   unallowedIds: Set<string>;
   lifecycle: Pick<ReturnType<typeof useAccountLifecycle>, 'busy' | 'open' | 'stillOpen' | 'confirmEnd' | 'reopen'>;
-  txnEdits: { openAdd: (account_id: string) => void };
-  toggleAccount: (account_id: string) => void;
+  /** Opens the account's sheet. */
+  onOpenAccount: (account_id: string) => void;
   toggleHoldings: (item_id: string) => void;
-  toggleHidden: (account_id: string, hidden: boolean) => void;
   setOptionsTarget: (inst: Institution) => void;
-  startEditManual: (account: ManualAccount) => void;
-  setImportTarget: (target: ImportTarget) => void;
-  setHistoryTarget: (target: HistoryImportTarget) => void;
-  setManualError: (message: string) => void;
-  setManualDeleteTarget: (account: ManualAccount) => void;
   startReconnect: (item_id: string) => void;
   startAllowTransactions: (item_id: string) => void;
   startEnableLiabilities: (item_id: string) => void;
@@ -126,22 +59,12 @@ export default function InstitutionCard({
   base,
   shownCurrency,
   connecting,
-  savingManual,
-  togglingHidden,
-  expandedAccounts,
   expandedHoldings,
   unallowedIds,
   lifecycle,
-  txnEdits,
-  toggleAccount,
+  onOpenAccount,
   toggleHoldings,
-  toggleHidden,
   setOptionsTarget,
-  startEditManual,
-  setImportTarget,
-  setHistoryTarget,
-  setManualError,
-  setManualDeleteTarget,
   startReconnect,
   startAllowTransactions,
   startEnableLiabilities,
@@ -152,6 +75,7 @@ export default function InstitutionCard({
   // `inst` is already filtered, so a hidden brokerage takes its
   // cash with it.
   const instCash = institutionCash(inst.accounts, inst.holdings);
+  const looseHoldings = inst.holdings.filter((h) => !h.account_id);
   const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
   const instCurrency = dominantCurrency(
     inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
@@ -200,275 +124,66 @@ export default function InstitutionCard({
       )}
 
       {inst.accounts.length > 0 && (
-        <table>
-          <tbody>
-            {inst.accounts.map((a) => {
-              const util =
-                a.type === 'credit' && a.limit && a.limit > 0 && a.balance != null
-                  ? Math.max(a.balance, 0) / a.limit
-                  : null;
-              const liabLine = liabilitySummary(a);
-              // Undefined on an account that is cash by design:
-              // institutionCash drops those, since 100% cash in a
-              // cash management account is the account working.
-              const cash = instCash.byAccount[a.account_id];
-              return (
-                <Fragment key={a.account_id}>
-                <tr
-                  className="acct-row"
-                  onClick={() => toggleAccount(a.account_id)}
-                  aria-expanded={expandedAccounts.has(a.account_id)}
-                >
-                  <td>
-                    {a.name}
-                    {a.mask && <span className="acct-mask"> ••{a.mask}</span>}
-                    <div className="type-tag">
-                      {a.official_name && a.official_name !== a.name
-                        ? `${a.official_name} · `
-                        : ''}
-                      {a.subtype || a.type}
-                      {/* The currency chosen for a typed
-                          balance, when not the one shown. */}
-                      {inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : ''}
-                    </div>
-                    {/* A Plaid balance is implicitly "now"; a
-                        typed one has to say when it was set. */}
-                    {inst.manual && a.updated_at && (
-                      <div className="manual-updated">
-                        {/* SimpleFIN's balance is as of the day the bank gave it; Lunch Flow gives no day, so its is the day Nya received it. */}
-                        {inst.connector ? connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at)) : `Updated ${fmtAsOf(a.updated_at)}`}
-                      </div>
-                    )}
-                    {/* Missing from its bank's answer, held
-                        until the question below is answered
-                        (#50): said, not passed off as now. */}
-                    {a.held && (
-                      <div className="manual-updated">
-                        {a.held.as_of
-                          ? `Last known balance, from ${fmtDay(a.held.as_of)}`
-                          : 'No recent balance, so not counted'}
-                      </div>
-                    )}
-                    {util != null && (
-                      <div className="util">
-                        <div className={`meter-track${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}>
-                          <div
-                            className={`meter-fill${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}
-                            style={{ width: `${Math.min(util * 100, 100)}%` }}
-                          />
-                        </div>
-                        <span className="util-label">
-                          {Math.round(util * 100)}% of <Masked>{fmt(a.limit, a.currency)}</Masked> limit
-                        </span>
-                      </div>
-                    )}
-                    {liabLine && (
-                      <div
-                        className={`type-tag${a.liability?.is_overdue ? ' over-tag' : ''}`}
-                      >
-                        {a.liability?.is_overdue ? 'Overdue · ' : ''}
-                        <Masked>{liabLine}</Masked>
-                      </div>
-                    )}
-                    {/* Money sitting in the settlement fund
-                        rather than invested. Always shown when
-                        there is any, because a small cash line
-                        is information; the amber treatment is
-                        reserved for an amount worth acting on
-                        (lib/cash.ts), so the colour keeps
-                        meaning something. */}
-                    {cash && cash.cash > 0 && (
-                      <div className={`cash-tag${cash.flagged ? ' idle' : ''}`}>
-                        {cash.flagged && (
-                          <span className="cash-dot" aria-hidden="true" />
-                        )}
-                        <Masked>{fmt(cash.cash, a.currency)}</Masked>
-                        {cash.flagged ? ' uninvested' : ' in cash'}
-                        {/* "of holdings", not "of this
-                            account": the denominator is the
-                            positions Plaid priced, which can
-                            fall short of the balance rendered
-                            in the next column. */}
-                        {/* Says whose share it is: "0.0% of
-                            holdings" alone read as "0%
-                            invested", the opposite of what it
-                            meant. And never 0.0% while there
-                            is cash to show. */}
-                        {cash.total > 0 && ` · cash is ${cashSharePct(cash.share)} of holdings`}
-                      </div>
-                    )}
-                  </td>
-                  <td className="num">
+        <ul className="list-rows">
+          {inst.accounts.map((a) => {
+            const liabLine = liabilitySummary(a);
+            // Undefined on an account that is cash by design:
+            // institutionCash drops those, since 100% cash in a
+            // cash management account is the account working.
+            const cash = instCash.byAccount[a.account_id];
+            // Missing from its bank's answer, held until the question
+            // below is answered (#50): said, not passed off as now.
+            const held = heldLine(a);
+            // A Plaid balance is implicitly "now"; a typed or synced
+            // one says when it was set.
+            const day = held ? null : balanceDay(a, inst);
+            const overdue = !!liabLine && !!a.liability?.is_overdue;
+            return (
+              <li key={a.account_id}>
+                <button className="list-row" onClick={() => onOpenAccount(a.account_id)}>
+                  <span className="list-row-text">
+                    <span className="list-row-title">
+                      {a.name}
+                      {a.mask && <span className="acct-mask"> ••{a.mask}</span>}
+                    </span>
+                    <span className="list-row-sub">
+                      {overdue && (
+                        <>
+                          <span className="badge neg">Overdue</span>
+                          {' · '}
+                        </>
+                      )}
+                      {liabLine ? <Masked>{liabLine}</Masked> : accountKind(a, inst, shownCurrency)}
+                      {held && <> <span className="badge warn">{held}</span></>}
+                      {day && <> <span className="badge">{day}</span></>}
+                      {/* Money in the settlement fund rather than invested;
+                          amber only for an amount worth acting on
+                          (lib/cash.ts). Its share is in the sheet. */}
+                      {cash && cash.cash > 0 && (
+                        <>
+                          {' '}
+                          <span className={`badge${cash.flagged ? ' warn' : ''}`}>
+                            <Masked>{fmt(cash.cash, a.currency)}</Masked>
+                            {cash.flagged ? ' uninvested' : ' in cash'}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                  </span>
+                  <span className="list-row-value">
                     <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>
-                    {inst.manual && !inst.connector && (
-                      // stopPropagation so tapping an action
-                      // doesn't also toggle the history chart.
-                      <div
-                        className="manual-row-actions"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {inst.manual && !inst.connector && (
-                          <button
-                            className="link-btn"
-                            disabled={savingManual || togglingHidden !== null}
-                            onClick={() =>
-                              startEditManual({
-                                account_id: a.account_id,
-                                name: a.name,
-                                institution_name: inst.institution_name,
-                                type: a.type,
-                                subtype: a.subtype,
-                                balance: a.balance ?? 0,
-                                currency: a.currency ?? undefined,
-                              })
-                            }
-                          >
-                            Update
-                          </button>
-                        )}
-                        {inst.manual && !inst.connector && (
-                          <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
-                            Add transaction
-                          </button>
-                        )}
-                        {inst.manual && !inst.connector && !a.hidden && (
-                          <button className="link-btn" onClick={() => setImportTarget({ account_id: a.account_id })}>
-                            Import
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-                {expandedAccounts.has(a.account_id) && (
-                  <tr>
-                    <td colSpan={2} className="acct-chart-cell">
-                      {/* Hide, Close… and Delete, in the
-                          expanded row rather than the
-                          clickable one (a manual account's
-                          Update, Add transaction and Import
-                          stay on its row until the account
-                          sheet, rollout phase 3). */}
-                      <div className="card-actions acct-actions">
-                        {/* Hiding works on any account, linked
-                            or manual: it only stops the account
-                            counting, it doesn't remove it. Not
-                            on a row held for an answer: its
-                            bank isn't returning it, so there is
-                            nothing to hide yet (#50). */}
-                        {!a.held && (
-                          <button
-                            className="secondary"
-                            disabled={togglingHidden !== null}
-                            onClick={() => toggleHidden(a.account_id, true)}
-                          >
-                            {togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}
-                          </button>
-                        )}
-                        {/* Closed, no longer theirs, or not
-                            tracked from a day (#50): unlike
-                            Hide, every day before it counts. */}
-                        <button
-                          className="secondary"
-                          disabled={lifecycle.busy}
-                          aria-label={`${a.name}: closed, no longer yours, or stop following`}
-                          onClick={() =>
-                            lifecycle.open({
-                              account_id: a.account_id,
-                              name: a.name,
-                              mask: a.mask,
-                              institution: inst.institution_name,
-                              ...(a.question ? { day: a.question.end } : {}),
-                              // What it shows, so the sheet
-                              // can say what ending it does.
-                              balance: a.balance,
-                              type: a.type,
-                              currency: a.currency,
-                              lastKnown: !!a.held,
-                            })
-                          }
-                        >
-                          Close…
-                        </button>
-                        {inst.manual && !inst.connector && (
-                          <button
-                            className="danger-outline"
-                            disabled={savingManual || togglingHidden !== null}
-                            onClick={() => {
-                              setManualError('');
-                              setManualDeleteTarget({
-                                account_id: a.account_id,
-                                name: a.name,
-                                institution_name: inst.institution_name,
-                                type: a.type,
-                                subtype: a.subtype,
-                                balance: a.balance ?? 0,
-                              });
-                            }}
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </div>
-                      <AccountSparkline
-                        accountId={a.account_id}
-                        currency={a.currency}
-                        investment={isInvestmentType(a.type)}
-                        owed={isOwedType(a.type)}
-                        itemId={
-                          isInvestmentType(a.type) && !inst.manual
-                            ? inst.item_id
-                            : undefined
-                        }
-                      />
-                      {/* Since when its positions have been
-                          kept (lib/holdings-history.ts). A
-                          manual account has none to keep. */}
-                      {isInvestmentType(a.type) && !inst.manual && (
-                        <HoldingsRecorded accountId={a.account_id} />
-                      )}
-                      <LiabilityDetail liability={a.liability} currency={a.currency} />
-                      {/* Not for manual accounts: they're typed
-                          by hand, and their synthetic
-                          `manual:<name>` item_id doesn't
-                          resolve to a Plaid Item, so the fetch
-                          would 404 into a red error box under a
-                          perfectly healthy row. */}
-                      {isInvestmentType(a.type) && !inst.manual && (
-                        <InvestmentActivity
-                          accountId={a.account_id}
-                          itemId={inst.item_id}
-                        />
-                      )}
-                      {/* Years of a linked account's history
-                          from its bank's own files (#52). */}
-                      {!inst.manual && (
-                        <button
-                          className="link-btn history-import-link"
-                          onClick={() =>
-                            setHistoryTarget({
-                              account_id: a.account_id,
-                              name: a.name,
-                              institution_name: inst.institution_name,
-                              type: a.type,
-                              currency: a.currency ?? null,
-                            })
-                          }
-                        >
-                          Import history from a file
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                  </span>
+                  {CHEVRON}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
-      {inst.holdings.length > 0 && (
+      {/* Positions a payload cached before they named their account
+          can't go in an account's sheet, so they stay here. */}
+      {looseHoldings.length > 0 && (
         <>
           <button
             className="holdings-toggle"
@@ -477,21 +192,10 @@ export default function InstitutionCard({
           >
             <span className="holdings-title">
               Holdings
-              <span className="holdings-count">{inst.holdings.length}</span>
+              <span className="holdings-count">{looseHoldings.length}</span>
             </span>
             <span className="holdings-summary">
-              {/* Says "uninvested", not "cash", because it is
-                  scoped the way the amber is: an account that
-                  is cash by design is left out of this figure,
-                  while its positions still carry their factual
-                  Cash label in the list below. */}
-              {instCash.cash > 0 && (
-                <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
-                  <Masked>{fmt(instCash.cash, instCurrency)}</Masked>{' '}
-                  {instCash.flagged ? 'uninvested' : 'cash'}
-                </span>
-              )}
-              <Masked>{fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0), instCurrency)}</Masked>
+              <Masked>{fmt(looseHoldings.reduce((sum, h) => sum + (h.value ?? 0), 0), instCurrency)}</Masked>
               <svg
                 className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
                 viewBox="0 0 24 24"
@@ -506,60 +210,7 @@ export default function InstitutionCard({
               </svg>
             </span>
           </button>
-          {expandedHoldings.has(inst.item_id) && (
-          <table>
-            <thead>
-              <tr>
-                <th>Security</th>
-                <th className="num">Qty</th>
-                <th className="num">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {inst.holdings.map((h, i) => {
-                const isCash = isCashHolding(h);
-                return (
-                <tr key={i}>
-                  <td>
-                    {h.name}
-                    {/* The chip says WHICH row is cash; the
-                        amber says it's worth doing something
-                        about, and only the owning account can
-                        decide that. */}
-                    {isCash && (
-                      <span
-                        className={`cash-chip${
-                          h.account_id && instCash.flaggedAccounts.has(h.account_id)
-                            ? ' idle'
-                            : ''
-                        }`}
-                      >
-                        Cash
-                      </span>
-                    )}
-                  </td>
-                  <td className="num"><Masked>{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</Masked></td>
-                  <td className="num">
-                    <Masked>{fmt(h.value)}</Masked>
-                    {/* No gain/loss on a cash line: a money
-                        market fund holds its $1 NAV, so the
-                        figure is a permanent "+$0.00 · 0.0%"
-                        that says nothing and reads as a real
-                        measurement of a flat investment. */}
-                    {!isCash && h.value != null && h.cost_basis != null && (
-                      <div
-                        className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
-                      >
-                        <Masked>{fmtGain(h.value, h.cost_basis)}</Masked>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          )}
+          {expandedHoldings.has(inst.item_id) && <HoldingsTable holdings={looseHoldings} flagged={instCash.flaggedAccounts} />}
         </>
       )}
 

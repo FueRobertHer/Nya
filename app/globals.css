@@ -309,8 +309,8 @@ button:active:not(:disabled):not([class*="cl-"]) {
   border-top: 1px solid var(--border-subtle);
 }
 
-/* In a sheet the rows run to its edges, as on a card. */
-.sheet-body .list-rows:not(.card) {
+/* In a sheet or a card, the rows run to its edges. */
+:is(.sheet-body, .card) > .list-rows:not(.card) {
   margin-inline: calc(-1 * var(--sp-5));
 }
 
@@ -876,14 +876,6 @@ button.danger {
   vertical-align: middle;
 }
 
-/* When the balance was last typed or pushed. A Plaid balance is implicitly
-   "now"; a manual one needs to say. */
-.manual-updated {
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 2px;
-}
-
 .manual-row-actions {
   display: flex;
   gap: 10px;
@@ -929,12 +921,6 @@ button.inst-options {
   padding: 8px 12px;
   font-size: 13px;
   flex-shrink: 0;
-}
-
-/* Hide, Close… and Delete at the top of an account's expanded row. */
-.card-actions.acct-actions {
-  margin-top: 0;
-  margin-bottom: 12px;
 }
 
 .text-input {
@@ -1724,32 +1710,6 @@ button:disabled {
 
 /* --- uninvested cash (Accounts tab) --- */
 
-/* The line under an investment account naming the part of it that is sitting
-   in cash. Muted while the amount looks like ordinary settlement float; amber
-   with a dot once lib/cash.ts calls it material, so the colour is a signal
-   rather than decoration. */
-.cash-tag {
-  color: var(--muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
-}
-
-.cash-tag.idle {
-  color: var(--warn);
-  font-weight: 600;
-}
-
-.cash-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 5px;
-  border-radius: 50%;
-  background: var(--warn);
-  vertical-align: middle;
-}
-
 /* Same signal at a glance on the Holdings header and on each cash row. */
 .cash-chip {
   display: inline-block;
@@ -1835,12 +1795,7 @@ button:disabled {
   background: rgba(91, 141, 239, 0.06);
 }
 
-.acct-chart-cell {
-  padding-top: 12px;
-  padding-bottom: 16px;
-}
-
-/* Investment activity inside an expanded account row. Separated from the
+/* Investment activity inside an account's sheet. Separated from the
    balance chart above it, and its own rows kept tighter than the main
    transaction table since they sit nested two levels deep. */
 .inv-activity {
@@ -1957,6 +1912,21 @@ button:disabled {
 .accounts-bar .btn > svg {
   width: var(--icon);
   height: var(--icon);
+}
+
+/* The top of an account's sheet (components/AccountSheet.tsx): its balance,
+   then where it comes from. */
+.account-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.account-balance {
+  margin: 0;
+  font-size: var(--fs-6);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
 }
 
 /* --- drawer (components/Sheet.tsx) --- */
@@ -5395,13 +5365,8 @@ button.pool-toggle {
 }
 
 /* Importing a linked account's history (#52, components/HistoryImportSheet.tsx):
-   the link under the account's chart, the period a file covers, and the note
+   the period a file covers, and the note
    under the net-worth chart saying which stretch comes from imported files. */
-.history-import-link {
-  display: block;
-  margin-top: 10px;
-}
-
 .history-import-period {
   margin-top: 8px;
 }

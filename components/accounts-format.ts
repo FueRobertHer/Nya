@@ -1,8 +1,9 @@
-// The account helpers the Accounts tab and its cards share: the shapes the
-// net worth payload sends, and how their money, days and terms are written.
-// Moved from components/Dashboard.tsx unchanged.
+// The account helpers the Accounts tab, its cards and the account sheet
+// share: the shapes the net worth payload sends, and how their money, days
+// and terms are written.
 
 import type { LinkKind } from '@/lib/item-products';
+import { connectorBalanceDay } from '@/lib/connectors/types';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import type { AccountQuestion } from './AccountLifecycle';
 import { formatMoney, hiddenFigure } from '@/lib/format';
@@ -229,4 +230,29 @@ export function fmtAsOf(iso: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/** What kind of account it is: its bank's own name for it when that differs,
+ *  its type, and the currency chosen for a typed balance when it isn't the
+ *  one shown. */
+export function accountKind(a: Account, inst: Institution, shownCurrency: string | null): string {
+  const official = a.official_name && a.official_name !== a.name ? `${a.official_name} · ` : '';
+  const currency = inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : '';
+  return `${official}${a.subtype || a.type}${currency}`;
+}
+
+/** When a balance that isn't fetched now was set: typed by hand, or as a
+ *  SimpleFIN or Lunch Flow sync gave it. SimpleFIN's is the day the bank gave
+ *  it; Lunch Flow gives no day, so its is the day Nya received it. Null for a
+ *  Plaid balance, which is implicitly now. */
+export function balanceDay(a: Account, inst: Institution): string | null {
+  if (!inst.manual || !a.updated_at) return null;
+  return inst.connector ? connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at)) : `Updated ${fmtAsOf(a.updated_at)}`;
+}
+
+/** An account missing from its bank's answer, held until the question about
+ *  it is answered (#50): its balance is the last known one, or not counted. */
+export function heldLine(a: Account): string | null {
+  if (!a.held) return null;
+  return a.held.as_of ? `Last known balance, from ${fmtDay(a.held.as_of)}` : 'No recent balance, so not counted';
 }

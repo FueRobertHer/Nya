@@ -27,6 +27,7 @@ import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
+import AccountSheet from './AccountSheet';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -348,7 +349,10 @@ export default function Dashboard({
   // The Item update mode is open on, so its success can be recorded
   // (app/api/item-reconnected).
   const reconnectingItemRef = useRef<string | null>(null);
-  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  // The account whose sheet is open (components/AccountSheet.tsx), by id, so
+  // it shows the account as the latest load has it.
+  const [accountOpen, setAccountOpen] = useState<{ item_id: string; account_id: string } | null>(null);
+  const shownAccountOpen = useLast(accountOpen);
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   // Budgets and goals are each saved as one whole list, so their loading and
   // saving go through lib/whole-list-store.ts, which never lets an unloaded or
@@ -1338,15 +1342,6 @@ export default function Dashboard({
     }
   }, [linkToken, ready, open]);
 
-  const toggleAccount = useCallback((account_id: string) => {
-    setExpandedAccounts((prev) => {
-      const next = new Set(prev);
-      if (next.has(account_id)) next.delete(account_id);
-      else next.add(account_id);
-      return next;
-    });
-  }, []);
-
   const toggleHoldings = useCallback((item_id: string) => {
     setExpandedHoldings((prev) => {
       const next = new Set(prev);
@@ -1477,6 +1472,15 @@ export default function Dashboard({
       allHiddenInstitutions: shown.filter((inst) => !keep(inst) && !inst.manual),
     };
   }, [institutions]);
+
+  // The open account as this load has it. Gone from the tab (hidden, or no
+  // longer reported), its sheet has nothing to show and closes.
+  const openedAccount = useMemo(() => {
+    if (!shownAccountOpen) return null;
+    const inst = sortedInstitutions.find((i) => i.item_id === shownAccountOpen.item_id);
+    const account = inst?.accounts.find((a) => a.account_id === shownAccountOpen.account_id);
+    return inst && account ? { inst, account } : null;
+  }, [shownAccountOpen, sortedInstitutions]);
 
   // Investment accounts carrying enough uninvested cash to be worth a Home-tab
   // line. Built from `institutions`, not `sortedInstitutions`, so that an
@@ -2256,22 +2260,12 @@ export default function Dashboard({
                     base={base}
                     shownCurrency={shownCurrency}
                     connecting={connecting}
-                    savingManual={savingManual}
-                    togglingHidden={togglingHidden}
-                    expandedAccounts={expandedAccounts}
                     expandedHoldings={expandedHoldings}
                     unallowedIds={unallowedIds}
                     lifecycle={lifecycle}
-                    txnEdits={txnEdits}
-                    toggleAccount={toggleAccount}
+                    onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
                     toggleHoldings={toggleHoldings}
-                    toggleHidden={toggleHidden}
                     setOptionsTarget={setOptionsTarget}
-                    startEditManual={startEditManual}
-                    setImportTarget={setImportTarget}
-                    setHistoryTarget={setHistoryTarget}
-                    setManualError={setManualError}
-                    setManualDeleteTarget={setManualDeleteTarget}
                     startReconnect={startReconnect}
                     startAllowTransactions={startAllowTransactions}
                     startEnableLiabilities={startEnableLiabilities}
@@ -2767,6 +2761,26 @@ export default function Dashboard({
           // earliest point changed (lib/history-import/extend.ts).
           requestBackfill(() => loadNetWorth());
           void loadNetWorth();
+        }}
+      />
+      <AccountSheet
+        open={!!accountOpen && !!openedAccount}
+        account={openedAccount?.account ?? null}
+        inst={openedAccount?.inst ?? null}
+        shownCurrency={shownCurrency}
+        saving={savingManual}
+        hiding={togglingHidden !== null}
+        lifecycleBusy={lifecycle.busy}
+        onDismiss={() => setAccountOpen(null)}
+        onHide={(account_id) => toggleHidden(account_id, true)}
+        onEnd={lifecycle.open}
+        onUpdate={startEditManual}
+        onAddTransaction={(account_id) => txnEdits.openAdd(account_id)}
+        onImport={(account_id) => setImportTarget({ account_id })}
+        onImportHistory={setHistoryTarget}
+        onDelete={(account) => {
+          setManualError('');
+          setManualDeleteTarget(account);
         }}
       />
       <AddAccountSheet

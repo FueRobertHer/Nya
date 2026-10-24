@@ -328,11 +328,14 @@ describe('in connection health', () => {
     // The institution's card (components/InstitutionCard.tsx).
     const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
     expect(card).toContain("{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}");
-    for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (']) {
-      expect(card).toContain(gate);
+    // Update balance, Add transaction, Import a file and Delete are for typed
+    // accounts only, in the account's sheet: test/account-sheet-view.test.tsx
+    // renders one SimpleFIN feeds and finds none of them.
+    const sheet = readFileSync(join(import.meta.dir, '..', 'components', 'AccountSheet.tsx'), 'utf8');
+    expect(sheet).toContain('const typed = !!inst.manual && !inst.connector;');
+    for (const gate of ["...(typed && !a.hidden ? [{ label: 'Import a file'", "...(typed ? [{ label: 'Delete…', danger: true,", '{typed && (\n        <button className="btn secondary" onClick={act(() => onAddTransaction(a.account_id))}>', '{typed && (\n        <button className="btn" disabled={saving || hiding} onClick={act(() => onUpdate(manual))}>']) {
+      expect(sheet.replace(/\r\n/g, '\n')).toContain(gate);
     }
-    // Delete, in the expanded row, is for typed accounts only.
-    expect(card).toMatch(/\{inst\.manual && !inst\.connector && \(\s*<button\s+className="danger-outline"/);
   });
 });
 

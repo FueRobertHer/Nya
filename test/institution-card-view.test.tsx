@@ -51,22 +51,12 @@ const render = (inst: Institution, over: Partial<InstitutionCardProps> = {}) =>
       base={null}
       shownCurrency="USD"
       connecting={false}
-      savingManual={false}
-      togglingHidden={null}
-      expandedAccounts={new Set()}
       expandedHoldings={new Set()}
       unallowedIds={new Set()}
       lifecycle={{ busy: false, open: noop, stillOpen: async () => null, confirmEnd: async () => null, reopen: async () => {} }}
-      txnEdits={{ openAdd: noop }}
-      toggleAccount={noop}
+      onOpenAccount={noop}
       toggleHoldings={noop}
-      toggleHidden={noop}
       setOptionsTarget={noop}
-      startEditManual={noop}
-      setImportTarget={noop}
-      setHistoryTarget={noop}
-      setManualError={noop}
-      setManualDeleteTarget={noop}
       startReconnect={noop}
       startAllowTransactions={noop}
       startEnableLiabilities={noop}
@@ -77,12 +67,19 @@ const render = (inst: Institution, over: Partial<InstitutionCardProps> = {}) =>
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&apos;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 
-/** Each element with one of these classes, as [class, its text], in order. */
-const NOTICE_CLASSES = ['error', 'stale-note', 'empty-note', 'manual-updated', 'type-tag over-tag'];
+/** Each element with one of these classes, as [class, its text], in order.
+ *  A held row's line was drawn plain (`manual-updated`) before phase 3, and
+ *  is an amber badge since: the same words, at the severity design-system.md
+ *  gives an account held at its last known balance. */
+const NOTICE_CLASSES = ['error', 'stale-note', 'empty-note', 'badge warn'];
 function notices(html: string): [string, string][] {
   const found: [string, string][] = [];
   for (const m of html.matchAll(/<(div|p) class="([^"]+)">([\s\S]*?)<\/\1>/g)) {
     if (NOTICE_CLASSES.includes(m[2])) found.push([m[2], text(m[3])]);
+  }
+  // Badges hold only text.
+  for (const m of html.matchAll(/<span class="(badge[^"]*)">([^<]*)<\/span>/g)) {
+    if (NOTICE_CLASSES.includes(m[1])) found.push([m[1], text(m[2])]);
   }
   return found;
 }
@@ -143,9 +140,9 @@ describe('the institution card notices, words and color', () => {
 
   test('a held row says its balance is the last known one, or that it is not counted', () => {
     const dated = render(institution({ accounts: [account({ held: { as_of: '2026-09-12' } })] }));
-    expect(notices(dated)).toContainEqual(['manual-updated', 'Last known balance, from Sep 12']);
+    expect(notices(dated)).toContainEqual(['badge warn', 'Last known balance, from Sep 12']);
     const none = render(institution({ accounts: [account({ held: { as_of: null }, balance: null })] }));
-    expect(notices(none)).toContainEqual(['manual-updated', 'No recent balance, so not counted']);
+    expect(notices(none)).toContainEqual(['badge warn', 'No recent balance, so not counted']);
     expect(text(none)).toContain('--');
   });
 
@@ -158,7 +155,12 @@ describe('the institution card notices, words and color', () => {
       balance: 1420.18,
       liability: { kind: 'credit', apr: 24.99, apr_label: 'Purchase APR', minimum_payment: 35, next_due_date: '2026-10-24', last_statement_balance: null, last_payment_amount: null, last_payment_date: null, is_overdue: true },
     });
-    expect(notices(render(institution({ accounts: [card] })))).toContainEqual(['type-tag over-tag', 'Overdue · 24.99% APR · min $35.00 · due Oct 24']);
+    // Red before phase 3 (`type-tag over-tag`) and red since: a red badge
+    // with the word, then the same line.
+    const html = render(institution({ accounts: [card] }));
+    expect(html).toContain('<span class="badge neg">Overdue</span>');
+    const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
+    expect(text(sub.slice(0, sub.indexOf('</button>')))).toStartWith('Overdue · 24.99% APR · min $35.00 · due Oct 24');
   });
 
   test('the institution lines: payment details importing, accounts not added, transactions not allowed', () => {
@@ -188,5 +190,56 @@ describe('the institution card notices, words and color', () => {
 
   test('a healthy card says nothing', () => {
     expect(notices(render(institution()))).toEqual([]);
+  });
+});
+
+describe('the account rows', () => {
+  const manual = (over: Partial<Institution> = {}) =>
+    institution({
+      institution_name: 'Wallet',
+      item_id: 'manual:wallet',
+      manual: true,
+      accounts: [account({ account_id: 'acc_cash', name: 'Cash', mask: null, currency: 'EUR', updated_at: '2026-10-08T15:05:00.000Z' })],
+      ...over,
+    });
+
+  test('each row is one button that opens the account, with nothing inside it to press', () => {
+    const opened: string[] = [];
+    const inst = institution({ accounts: [account(), account({ account_id: 'acc_savings', name: 'Savings', mask: '0071' })] });
+    const html = render(inst, { onOpenAccount: (id) => opened.push(id) });
+    const rows = html.split('<button class="list-row"').slice(1);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.slice(0, row.indexOf('</button>'))).not.toContain('<button');
+    // No Hide, Close… or Delete on the card: they are in the account's sheet.
+    for (const word of ['Hide', 'Close…', 'Delete', 'Update', 'Add transaction', 'Import']) expect(text(html)).not.toContain(word);
+    expect(text(rows[0].slice(rows[0].indexOf('>') + 1))).toStartWith('Total Checking ••4421 checking $1,200.00');
+  });
+
+  test('a typed balance says when it was set, and its currency when not the one shown', () => {
+    const html = render(manual());
+    const row = text(html.slice(html.indexOf('<button class="list-row"')));
+    expect(row).toContain('checking · in EUR');
+    expect(row).toMatch(/Updated Oct 8, \d+:05 [AP]M/);
+  });
+
+  test('a synced balance says whose day it is', () => {
+    const fed = manual({ institution_name: 'Alpine CU', item_id: 'connector:c1:alpine', connector: 'simplefin', accounts: [account({ updated_at: noon('2026-10-08') })] });
+    expect(render(fed)).toContain('<span class="badge">Balance as of Oct 8</span>');
+  });
+
+  test('cash sitting in a brokerage is a badge on its row, amber only when worth acting on', () => {
+    const brokerage = account({ account_id: 'acc_ind', name: 'Individual', type: 'investment', subtype: 'brokerage', balance: 10000 });
+    const inst = institution({
+      institution_name: 'Fidelity',
+      accounts: [brokerage],
+      holdings: [
+        { account_id: 'acc_ind', name: 'Fidelity Government Money Market', quantity: 4200, value: 4200, cost_basis: 4200, is_cash_equivalent: true, security_type: 'cash' },
+        { account_id: 'acc_ind', name: 'Total Market Index', quantity: 50, value: 5800, cost_basis: 5000, security_type: 'mutual fund' },
+      ],
+    });
+    const html = render(inst);
+    expect(html).toMatch(/<span class="badge( warn)?">\$4,200\.00 (uninvested|in cash)<\/span>/);
+    // Positions that name their account are in its sheet, not on the card.
+    expect(html).not.toContain('holdings-toggle');
   });
 });

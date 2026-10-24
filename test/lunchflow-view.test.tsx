@@ -215,7 +215,9 @@ describe('words', () => {
     expect(connectorBalanceDay('lunchflow', 'Oct 9')).toBe('Balance as Lunch Flow gave it on Oct 9');
     expect(connectorBalanceDay('somethingnew', 'Oct 9')).toBe('Balance as of Oct 9');
     expect([connectorLabel('lunchflow'), connectorLabel('simplefin'), ANY_CONNECTOR]).toEqual(['Lunch Flow', 'SimpleFIN', 'SimpleFIN or Lunch Flow']);
-    const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
-    expect(card).toContain('connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at))');
+    // The row and the account sheet both say it through balanceDay (rendered
+    // in test/institution-card-view.test.tsx and test/account-sheet-view.test.tsx).
+    const format = readFileSync(join(import.meta.dir, '..', 'components', 'accounts-format.ts'), 'utf8');
+    expect(format).toContain('connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at))');
   });
 });

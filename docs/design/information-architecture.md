@@ -198,6 +198,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Connectors (ConnectorCards, ConnectorSheet) | Separate cards on Accounts | Institution card ⋯ menu; orphans in Settings > Connections |
 | Institution cards (InstitutionCard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
 | AccountSparkline, HoldingsRecorded, InvestmentActivity, LiabilityDetail | Inline expansion of a row | Account sheet |
+| AccountSheet | New in phase 3 | Tap an account row on Accounts: balance and source, history, holdings, terms; Hide and Close... in its footer, Update balance and Add transaction on typed accounts; Import a file, Import history and Delete in its ⋯ |
 | Manual account sheet, OwedFlipNote | Add manual, Update on a row | Add account sheet, Account sheet > Update balance |
 | ManualTxnSheet, ImportSheet | Manual row buttons; Activity add card | Account sheet; Activity bar ⋯ |
 | HistoryImportSheet | Expanded row; ended accounts | Account sheet; Accounts that ended |
