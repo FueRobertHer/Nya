@@ -14,6 +14,13 @@ import { checkItemUsage, unusedDays, type UsageReport } from '@/lib/item-usage';
 
 export const maxDuration = 300;
 
+/** No Item is started after this long into the run: one takes up to two
+ *  Plaid calls of 45 s each (lib/plaid.ts), so one started by then still
+ *  finishes inside maxDuration. The rest are counted as deferred and checked
+ *  the next day: a Plaid outage used to run the cron past 300 s, with no
+ *  answer and no counts. */
+const START_BUDGET_MS = 200_000;
+
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || !(await secretsMatch(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) {
@@ -28,11 +35,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'The container registry could not be read.' }, { status: 500 });
   }
 
+  const until = Date.now() + START_BUDGET_MS;
   const results: ({ container: string } & (UsageReport | { error: string }))[] = [];
   for (const c of registry) {
     if (c.status !== 'active') continue;
     try {
-      results.push({ container: c.id, ...(await checkItemUsage({ container: c.id })) });
+      results.push({ container: c.id, ...(await checkItemUsage({ container: c.id }, { until })) });
     } catch {
       // One container's trouble costs the others nothing.
       console.error('Item check failed for a container.');
@@ -41,7 +49,8 @@ export async function GET(req: Request) {
   }
 
   const total = results.reduce((n, r) => n + ('flagged' in r ? r.flagged : 0), 0);
-  console.log(`Item check: ${results.length} container(s), ${total} Item(s) flagged for review.`);
+  const deferred = results.reduce((n, r) => n + ('deferred' in r ? (r.deferred ?? 0) : 0), 0);
+  console.log(`Item check: ${results.length} container(s), ${total} Item(s) flagged for review${deferred > 0 ? `, ${deferred} left for tomorrow (out of time)` : ''}.`);
   const failed = results.some((r) => 'error' in r);
   return NextResponse.json({ flag_after_days: unusedDays(), results }, { status: failed ? 500 : 200 });
 }
