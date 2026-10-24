@@ -63,6 +63,11 @@ describe('each note’s color, from its institutions’ cards', () => {
     expect(caveats([held])).toEqual([['critical', '1 account stopped reporting']]);
     const heldAt = inst('Ally', { unconfirmed_missing: 1, accounts: [{ balance: 40, held: { as_of: '2026-09-01' } }] });
     expect(caveats([heldAt])).toEqual([['caution', '1 account stopped reporting']]);
+    // Held at its last known balance, at a bank whose card is red because only
+    // the person can fix it: red here too.
+    const heldAtLogin = inst('Ally', { unconfirmed_missing: 1, health: plaid('login'), accounts: [{ balance: 40, held: { as_of: '2026-09-01' } }] });
+    expect(severityOf(heldAtLogin)).toBe('critical');
+    expect(caveats([heldAtLogin])).toEqual([['critical', '1 account stopped reporting']]);
   });
 
   test('not counted at all: red, but a new connection waiting for its first answer is amber, as on its card', () => {
@@ -108,6 +113,12 @@ describe('the caveat line', () => {
   test('only neutral ones: the line is neutral too', () => {
     const html = renderToStaticMarkup(<TotalCaveats items={[c('a', 'info', 'converted into USD'), c('b', 'info', 'accrued interest left out')]} />);
     expect(html).toContain('<summary class="notice info">');
+  });
+
+  test('the same kind twice is named once, the count still every note', () => {
+    expect(summaryText([c('a', 'caution', 'accrued interest not known'), c('b', 'caution', 'accrued interest not known'), c('c', 'caution', 'old exchange rates')])).toBe(
+      '3 notes: accrued interest not known and old exchange rates'
+    );
   });
 
   test('more than three kinds: the first three and how many more', () => {

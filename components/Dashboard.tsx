@@ -2056,7 +2056,7 @@ export default function Dashboard({
             },
           ]
         : mixedAccountCurrency
-          ? [{ key: 'currency-mixed', severity: 'caution' as const, summary: 'currencies not converted', body: 'Accounts use multiple currencies; totals aren’t converted.' }]
+          ? [{ key: 'currency-mixed', severity: 'caution' as const, summary: 'currencies not converted', body: "Accounts use multiple currencies; totals aren't converted." }]
           : []),
   ];
 

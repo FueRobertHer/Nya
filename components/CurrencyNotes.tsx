@@ -59,7 +59,7 @@ export function heroCurrencyCaveats(base: NetWorthBase, main: string | null, onO
     });
   if (base.rates.stale) out.push({ key: 'stale-rates', severity: 'caution', summary: 'old exchange rates', body: staleText(base.rates.day) });
   if (unusable) out.push({ key: 'unusable-rates', severity: 'caution', summary: 'some rates couldn’t be read', body: unusable });
-  if (base.unknown > 0) out.push({ key: 'unknown-currency', severity: 'info', summary: 'accounts with no currency', body: unknownText(base.unknown, main) });
+  if (base.unknown > 0) out.push({ key: 'unknown-currency', severity: 'info', summary: base.unknown === 1 ? 'an account with no currency' : 'accounts with no currency', body: unknownText(base.unknown, main) });
   return out;
 }
 

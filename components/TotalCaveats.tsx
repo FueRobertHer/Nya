@@ -33,9 +33,10 @@ const CHEVRON = (
 
 const RANK: Record<CaveatSeverity, number> = { critical: 2, caution: 1, info: 0 };
 
-/** The summary line's words: the count, then at most three kinds. */
+/** The summary line's words: the count, then at most three kinds, each
+ *  once (two loans whose interest couldn't be read are one kind). */
 export function summaryText(lesser: readonly Caveat[]): string {
-  const kinds = lesser.map((c) => c.summary);
+  const kinds = [...new Set(lesser.map((c) => c.summary))];
   const shown = kinds.length > 3 ? [...kinds.slice(0, 3), `${kinds.length - 3} more`] : kinds;
   return `${lesser.length} notes: ${joinNames(shown)}`;
 }

@@ -170,8 +170,9 @@ function institutionNotes<T extends TotalNoteInstitution>(institutions: T[], day
     const paused = answered ? `until ${plural(n, 'it comes', 'they come')} back, two weeks at most` : 'until you answer';
     notes.push({
       text: `${n} ${plural(n, 'account', 'accounts')} at ${where} stopped reporting${what} · history is paused ${paused}`,
-      // Short by an account with no balance: red. Held at the last known one: amber.
-      severity: out === 0 ? 'caution' : 'critical',
+      // Short by an account with no balance: red. Held at the last known
+      // one: its card's color, amber unless the person must act there.
+      severity: out === 0 ? worst(vanished) : 'critical',
       summary: `${n} ${plural(n, 'account', 'accounts')} stopped reporting`,
     });
   }

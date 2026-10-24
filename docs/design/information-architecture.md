@@ -56,7 +56,7 @@ Principles behind the choices: one job per screen; settings live in Settings; on
 
 | Order | Block | Contents |
 |---|---|---|
-| 1 | **Net worth** (one card) | Total and change; one caveat line under the total (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout and what qualifies it under it; the nightly jobs' facts (their instructions only for the admin); a foot row with when it was updated, a **History paused** badge while history is paused, and a **Chart notes (N)** button that opens the timeline notes sheet (a foot row, as the mockup draws it: the chart's header has no room at 320px). |
+| 1 | **Net worth** (one card) | Total and change; under it, each critical caveat in full and the lesser ones gathered in one line that opens in place (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout and what qualifies it under it; the nightly jobs' facts (their instructions only for the admin); a foot row with when it was updated, a **History paused** badge while history is paused, and a **Chart notes (N)** button that opens the timeline notes sheet (a foot row, as the mockup draws it: the chart's header has no room at 320px). |
 | 2 | **Needs attention** | Shown only when something does. Each item says what and links to where it is fixed (list [below](#needs-attention)). |
 | 3 | **This month** | The passive insights (spending pace, biggest purchase, upcoming bills, idle cash) and one FI line ("FI in 11.4 years · 62% there"), with its caveats summarized in their severity color (for example an amber "Spending covers 11 of 12 months"), linking to Plan. |
 

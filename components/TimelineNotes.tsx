@@ -82,19 +82,22 @@ export function TimelineNotesSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const today = localDate();
-  const confirm = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
   /** A level, with no error left from before. */
   const go = (next: Level) => {
     setError('');
     setLevel(next);
   };
-  // Opened again: the list, not the form left behind.
-  useEffect(() => {
+  // Opened again: the list, not the form left behind, from its first frame.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) go({ at: 'list' });
-  }, [open]);
-  // The question replaces the form's buttons: focus goes to its answer.
+  }
+  // The question replaces the form's buttons: focus goes to the safe answer,
+  // so a stray Enter keeps the note.
   useEffect(() => {
-    if (level.at === 'delete') confirm.current?.focus({ preventScroll: true });
+    if (level.at === 'delete') keep.current?.focus({ preventScroll: true });
   }, [level.at]);
 
   const send = async (method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown>) => {
@@ -181,6 +184,8 @@ export function TimelineNotesSheet({
 
   const d = level.draft;
   if (level.at === 'delete') {
+    // The note as it is kept, not as the form was left: that is what goes.
+    const stored = notes.find((n) => n.id === d.id) ?? d;
     return (
       <Sheet
         open={open}
@@ -189,17 +194,17 @@ export function TimelineNotesSheet({
         onBack={back}
         footer={
           <div className="btn-row">
-            <button className="btn secondary" onClick={back} disabled={busy}>
+            <button ref={keep} className="btn secondary" onClick={back} disabled={busy}>
               Keep it
             </button>
-            <button ref={confirm} className="btn danger" onClick={() => remove(d.id!)} disabled={busy}>
+            <button className="btn danger" onClick={() => remove(d.id!)} disabled={busy}>
               {busy ? 'Deleting…' : 'Delete'}
             </button>
           </div>
         }
       >
         <div className="stack">
-          <p>{`Delete "${d.text}" from ${dayText(d.date)}? This can’t be undone.`}</p>
+          <p>{`Delete "${stored.text}" from ${dayText(stored.date)}? This can’t be undone.`}</p>
           {error && <div className="error">{error}</div>}
         </div>
       </Sheet>
