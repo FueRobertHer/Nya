@@ -17,7 +17,7 @@ The exceptions are the login page and API, the Security, Privacy and Developers 
 
 Sessions can be ended (`lib/auth.ts`, `lib/sessions.ts`):
 
-- **Sign out everywhere** (next to Log out) ends every session on every device, this one included. Other devices are sent to the login page within a few seconds.
+- **Sign out everywhere** (in Settings > Account, beside Sign out) ends every session on every device, this one included. Other devices are sent to the login page within a few seconds.
 - **Changing `APP_PASSWORD`** (then redeploying) ends every session too.
 - A session belongs to a container (see [operations.md](operations.md#containers)) and only works in a deployment using that container. **Logging in needs a container to exist:** create it before deploying to a new environment. Existing sessions keep working either way; without a container, new logins are refused with a message saying how to create one.
 - Sessions from before containers stay valid until they expire (at most 30 days) and do not end on a password change; Sign out everywhere does end them.

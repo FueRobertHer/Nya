@@ -82,7 +82,7 @@ export function composeAccessNotice(event: AccessEvent, at: Date, opts: { clerk:
   const when = noticeTime(at);
   const secure = opts.clerk
     ? "open your account window in Nya (your picture or initial at the top right, then Manage account), sign out every device you don't recognize, and change your password."
-    : 'use Sign out everywhere in Nya (beside Log out) to end every session, and change the app password, or ask whoever runs Nya to.';
+    : 'use Sign out everywhere in Nya (Settings > Account) to end every session, and change the app password, or ask whoever runs Nya to.';
   const open = opts.link ? `Open Nya: ${opts.link}/` : 'Open Nya to do it.';
   const footer =
     'Nya emails you each time your data is downloaded, brought back or emptied, or an API token is made to read it. Its emails never include balances, amounts or account numbers.';

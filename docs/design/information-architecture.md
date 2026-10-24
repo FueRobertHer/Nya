@@ -135,7 +135,7 @@ A full screen with a list of sections; each opens its own view with a back butto
 | **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget; for the admin, unused connections and "Check all accounts now" | AccountLinks, AdminUnusedItems, the all-hidden filter (Manage) |
 | **Sharing** | Invite, people, what each sees and for how long, blocked | SharingDrawer (avatar menu, Accounts button) |
 | **Your data and privacy** | Download my data; Your data (what Nya keeps); Bring back a download; Receipts and documents; API tokens and their changes | DownloadMyData, InventoryEntry, RestoreCard, ReceiptsCard, ApiTokens (Manage) |
-| **Account** | Profile (Clerk), Forget this device, Delete my account, Sign out, Sign out everywhere (password mode), the admin's Storage across accounts | ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
+| **Account** | With Clerk, a pointer to the avatar menu, which holds the profile, Delete my account and the one Sign out; in password mode, Sign out and Sign out everywhere, each saying what it ends; the admin's Storage across accounts | ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
 
 Settings is a screen inside the app, not a sheet: thirteen-plus cards in a bottom sheet would mean long scrolling sheets and sheets opened from sheets. Whether it is an in-app view or a `/settings` route is an implementation choice for the rollout (a route gives real URLs; it also remounts the dashboard).
 

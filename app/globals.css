@@ -215,8 +215,12 @@ h2.total-label {
   margin-left: auto;
 }
 
-/* The fill is deeper than --accent so its white label passes AA (4.5:1). */
-button {
+/* The fill is deeper than --accent so its white label passes AA (4.5:1).
+   Not on Clerk's own buttons (classes cl-...): its window sets no width on
+   "Update profile" or a row's ⋯, so the full width here squeezed the name and
+   address beside them to a few letters. :where keeps this at no specificity,
+   below every class rule, as the bare element selector was. */
+:where(button:not([class*="cl-"])) {
   background: var(--accent-fill);
   color: var(--on-fill);
   border: none;
@@ -1093,7 +1097,7 @@ button.danger {
   outline-offset: 1px;
 }
 
-button:disabled {
+button:disabled:not([class*="cl-"]) {
   opacity: 0.6;
   cursor: not-allowed;
 }
