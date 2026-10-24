@@ -188,7 +188,7 @@ The footer is `Sheet`'s `footer` prop, drawn as `.sheet-footer` after the scroll
 
 A small popover for an object's rare actions (the institution ⋯ menu, a transaction's overflow). Items are 44px rows; a destructive item is last, in `--neg`, and opens a confirm sheet.
 
-Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge, below it or above it when there is no room below. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
+Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge (moved in when that would take it past the screen's edge), below it or above it when there is no room below. Its ⋯ is outlined like a secondary button. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
 
 ### Empty state
 

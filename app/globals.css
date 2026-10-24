@@ -649,6 +649,14 @@ button:active:not(:disabled):not([class*="cl-"]) {
   flex-shrink: 0;
 }
 
+/* Its ⋯: outlined, as a secondary action, not filled. */
+.menu-anchor > .icon-btn {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-1);
+}
+
 .menu {
   position: absolute;
   top: 100%;
@@ -687,6 +695,7 @@ button:active:not(:disabled):not([class*="cl-"]) {
 
 .menu-item.danger {
   color: var(--neg);
+  background: transparent;
 }
 
 .menu-item:focus-visible {
@@ -2049,7 +2058,8 @@ button:disabled {
   padding: 4px 20px 24px;
 }
 
-/* The sheet's buttons, after its scrolling body so they stay in view. */
+/* The sheet's buttons, after its scrolling body so they stay in view, and at
+   the foot of a full-height panel however short the body is. */
 .sheet-footer {
   display: flex;
   flex-shrink: 0;
@@ -2058,6 +2068,7 @@ button:disabled {
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5) var(--sp-4);
   border-top: 1px solid var(--border-subtle);
+  margin-top: auto;
 }
 
 /* ...and a panel from the right on wider screens. */

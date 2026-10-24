@@ -36,7 +36,7 @@ export type InvestmentActivityPayload = {
 };
 type Payload = InvestmentActivityPayload;
 
-// One request per account for both readers. The expanded row mounts this list
+// One request per account for both readers. The account's sheet mounts this list
 // and the balance chart together, and both want this payload: fetched
 // separately they would miss the server cache together and cost two live
 // Plaid calls. Reused for a minute, which covers that and an expand/collapse;

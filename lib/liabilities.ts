@@ -25,7 +25,7 @@ export type AccountLiability = {
   last_payment_amount: number | null;
   last_payment_date: string | null;
   is_overdue: boolean | null;
-  // Kind-specific extras, shown only in the expanded account row.
+  // Kind-specific extras, shown only in the account's sheet.
   maturity_date?: string | null;
   escrow_balance?: number | null;
   expected_payoff_date?: string | null;

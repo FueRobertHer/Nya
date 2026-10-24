@@ -1,7 +1,7 @@
 'use client';
 
-// Importing a bank's file into a manual account (#43): the sheet behind the
-// Import button on a manual account's row and on the Activity tab. Built for a
+// Importing a bank's file into a manual account (#43): the sheet behind
+// Import a file in a manual account's sheet and on the Activity tab. Built for a
 // phone: one question at a time, lists rather than tables.
 //
 //   1. The account (when opened from Activity) and the file, with the

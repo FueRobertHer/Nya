@@ -81,7 +81,7 @@ export default function AddAccountSheet({
 
   return (
     <Sheet open={open} title="Add an account" onClose={onClose}>
-      <div className="stack">
+      <>
         <ul className="list-rows">
           {rows.map((row) => (
             <li key={row.key}>
@@ -102,7 +102,7 @@ export default function AddAccountSheet({
             {onConnectLunchFlow && <p className="helper">{LUNCHFLOW_OPTION.note}</p>}
           </div>
         </Why>
-      </div>
+      </>
     </Sheet>
   );
 }

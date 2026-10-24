@@ -15,7 +15,7 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { Menu, menuOrder, nextIndex } = await import('@/components/Menu');
+const { Menu, menuOrder, menuPlacement, nextIndex } = await import('@/components/Menu');
 const { Why } = await import('@/components/Why');
 const { Sheet } = await import('@/components/Sheet');
 
@@ -58,6 +58,18 @@ describe('the ⋯ menu', () => {
     expect(nextIndex('Home', 3, enabled)).toBe(0);
     expect(nextIndex('End', 0, enabled)).toBe(3);
     expect(nextIndex('a', 0, enabled)).toBeNull();
+  });
+
+  test('placed under its button and aligned to its right edge, or above it and moved in to stay on a 320px screen', () => {
+    const phone = { width: 320, height: 800 };
+    const menu = { width: 220, height: 98 };
+    // A card's ⋯ at the right edge, near the top: below, right-aligned.
+    expect(menuPlacement({ top: 100, bottom: 144, left: 260, right: 304 }, menu, phone)).toEqual({ up: false, left: null });
+    // A sheet footer's ⋯ in the middle of the bottom row (as measured at
+    // 320px): above it, and moved in from the left edge, 8px from it.
+    expect(menuPlacement({ top: 740, bottom: 784, left: 169, right: 213 }, menu, phone)).toEqual({ up: true, left: 8 - 169 });
+    // Never past the right edge either.
+    expect(menuPlacement({ top: 100, bottom: 144, left: 300, right: 344 }, menu, phone)).toEqual({ up: false, left: 320 - 8 - 220 - 300 });
   });
 
   test('closed, it is one labelled button that says it opens a menu', () => {

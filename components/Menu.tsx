@@ -39,10 +39,27 @@ export function nextIndex(key: string, at: number, enabled: boolean[]): number |
   return null;
 }
 
+type Box = { top: number; bottom: number; left: number; right: number };
+
+/** Where the menu goes: above its button when there is no room below it, and
+ *  aligned to the button's right edge unless that would take it past the
+ *  screen's edge, when it is moved in (`left`, from the button's left edge).
+ *  `margin` is the gap kept to the screen's edges. */
+export function menuPlacement(
+  button: Box,
+  menu: { width: number; height: number },
+  screen: { width: number; height: number },
+  margin = 8
+): { up: boolean; left: number | null } {
+  const up = button.bottom + menu.height > screen.height - margin && button.top > menu.height + margin;
+  const aligned = button.right - menu.width;
+  const kept = Math.min(Math.max(aligned, margin), screen.width - margin - menu.width);
+  return { up, left: kept === aligned ? null : kept - button.left };
+}
+
 export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
-  // Drawn above its button when there is no room below it.
-  const [up, setUp] = useState(false);
+  const [place, setPlace] = useState<{ up: boolean; left: number | null }>({ up: false, left: null });
   const id = useId();
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -58,13 +75,13 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
 
   useLayoutEffect(() => {
     if (!open) {
-      setUp(false);
+      setPlace({ up: false, left: null });
       return;
     }
     const menu = list.current?.getBoundingClientRect();
     const button = trigger.current?.getBoundingClientRect();
-    if (menu && button && typeof window.innerHeight === 'number') {
-      setUp(menu.bottom > window.innerHeight - 8 && button.top > menu.height + 8);
+    if (menu && button && typeof window.innerHeight === 'number' && typeof window.innerWidth === 'number') {
+      setPlace(menuPlacement(button, menu, { width: window.innerWidth, height: window.innerHeight }));
     }
     itemEls().find((el) => !el.disabled)?.focus();
   }, [open]);
@@ -128,7 +145,16 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
         </svg>
       </button>
       {open && (
-        <div ref={list} id={id} role="menu" aria-label={label} className={`menu${up ? ' up' : ''}`} onKeyDown={onKeyDown}>
+        <div
+          ref={list}
+          id={id}
+          role="menu"
+          aria-label={label}
+          className={`menu${place.up ? ' up' : ''}`}
+          // Moved in from the screen's edge (menuPlacement): its position only.
+          style={place.left === null ? undefined : { left: place.left, right: 'auto' }}
+          onKeyDown={onKeyDown}
+        >
           {shown.map((item, i) => (
             <button
               key={item.label}

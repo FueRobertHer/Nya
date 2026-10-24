@@ -170,7 +170,8 @@ async function linkedAccount(ctx: Ctx, account_id: unknown): Promise<{ account: 
 /** Why a manual account's id isn't one to import history into, in words:
  *  one SimpleFIN or Lunch Flow keeps up to date brings its own history,
  *  matched by the connector's own ids, which a file's rows can't be matched
- *  against here; a manual account imports a file through its own Import.
+ *  against here; a manual account imports a file through its own Import a
+ *  file, in its sheet's ⋯.
  *  Whether it is a connector's is read leniently: unknown, the words cover
  *  both. */
 async function notLinked(ctx: Ctx, account_id: string): Promise<string> {
@@ -181,8 +182,8 @@ async function notLinked(ctx: Ctx, account_id: string): Promise<string> {
   if (fed) {
     return `This account is kept up to date through ${connectorLabel(fed)}, which brings its older transactions itself, up to two years: importing history from a file isn’t offered for it.`;
   }
-  if (fed === false) return 'This is a manual account: import a file into it with Import on its row.';
-  return 'Importing history from a file is for accounts linked through Plaid: a manual account imports a file with Import on its row.';
+  if (fed === false) return 'This is a manual account: import a file into it with Import a file, in its ⋯ on the Accounts tab.';
+  return 'Importing history from a file is for accounts linked through Plaid: a manual account imports a file with Import a file, in its ⋯ on the Accounts tab.';
 }
 
 /** The account's context, or the response when its bank's rows can't be read. */
