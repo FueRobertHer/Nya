@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four) and 5a (Activity's bar and segments) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments) and 5b (its filter chips) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -16,8 +16,9 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 4c | Home: This month | 1 day |
 | 4d | Home: reconnected accounts to link, in Needs attention | 1 day |
 | 5a | Activity: pinned month bar, the three segments, the analysis moved to Spending | 1 to 2 days |
-| 5b | Activity: filter chips; one period control on Spending | 1 to 2 days |
-| 5c | Activity: the Transaction sheet, rule offer inside it | 1 to 2 days |
+| 5b | Activity: filter chips, the review count as a heading | 1 day |
+| 5c | Activity: one period control on Spending, the charts' pass | 1 to 2 days |
+| 5d | Activity: the Transaction sheet, rule offer inside it | 1 to 2 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
 | 7 | Light theme and the theme setting | 1 to 2 days |
 
@@ -185,7 +186,7 @@ Needs attention's information row "A reconnected account may continue an earlier
 
 **Risks:** Card Mode and keyboard review must keep working; a cash-flow selection must still filter the list; split and group rows still show under their transaction.
 
-Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 lines, drawn by a dozen test files) holds all of it: **5a** the bar and the segments, **5b** the filter chips and Spending's one period control, **5c** the Transaction sheet.
+Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 lines, drawn by a dozen test files) holds all of it: **5a** the bar and the segments, **5b** the filter chips, **5c** Spending's one period control, **5d** the Transaction sheet. 5b and 5c were one at first and were split before 5b was built: the chips touch only Transactions' list, while one period for every Spending card changes what each card sums (all but the cash flow sum the bar's month, the cash flow's periods count back from today, a pick keeps its period, the month's notes are by month, and Income vs spend draws one month).
 
 **Built in 5a:** `components/ActivityBar.tsx` is the tab's pinned bar (`.activity-bar`, sticky under the status bar): **‹ October 2026 ›**, whose arrows step through the months listed (the last 12 with transactions, as Net by month lists them) and stop at either end; the ⋯ with Add a transaction and Import a file while there are transactions and a manual account takes them; and `.segmented` Transactions · Spending · Shared, a WAI-ARIA tablist over one tabpanel. `MonthBreakdown` draws each segment from what it computes today: Transactions has the month's In / Out / Net card (its sentence of what it leaves out and its month notes, in their words and colors) over the list, unchanged; Spending has the cash flow, Net by month, Income vs spend, the same In / Out / Net card, top spending, spending by tag, online vs in-store, where you spent and Reports at its foot; Shared has the Shared expenses card, passed in. The dashboard keeps the segment, so the tab comes back on the last one chosen, and the review jump from Home lands on Transactions. A pick on the cash flow switches to Transactions, where the list shows it and focus goes to the line saying so; choosing a month with the arrows ends a pick, as a column of Net by month does. The Shared sheets (`SharedSheets`) moved out of the card and stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU. A jump's target stops under the bar (`scroll-margin-top`), and a segment chosen while the bar is pinned opens at its top. The month arrows stay focusable at either end (`aria-disabled`), and the month is announced as it changes.
 
@@ -201,11 +202,27 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 
 **Kept narrow in 5a:**
 
-- **Three time controls on Spending until 5b**: the bar's month, Net by month's columns (which choose it) and the cash flow's own period. 5b gives Spending one period control and the cash flow loses its own; until then, a pick from a longer period lists that period's rows under the bar's month, and the line over them names the period.
-- **The filters as they are**: the tag select, the receipt select and the review bar's filter become chips in 5b, with Card Mode opening from the To review chip. The review count becomes a heading then, since 5b redraws the review bar.
-- **The charts' axis text and range buttons** (4a's chart pass) go with 5b's period control.
+- **Three time controls on Spending until 5c**: the bar's month, Net by month's columns (which choose it) and the cash flow's own period. 5c gives Spending one period control and the cash flow loses its own; until then, a pick from a longer period lists that period's rows under the bar's month, and the line over them names the period.
+- **The filters as they are**: the tag select, the receipt select and the review bar's filter become chips in 5b, with Card Mode opening from the To review chip. The review count becomes a heading then, since 5b redraws the review bar. (Built in 5b, with Card Mode beside the count instead: see Decided in 5b.)
+- **The charts' axis text and range buttons** (4a's chart pass) go with 5c's period control.
 - **Card titles** ("Top spending by group", not the IA's "Spending by group"), and Shared's settings behind a gear: with each card's redraw, not a move.
 - **What a segment switch drops**: a draft in a transaction's note or the shared settings, and the review bar's undo, as leaving the tab does today.
+
+**Built in 5b:** the list's filters are a row of chips under the search (`.chip-row`, a labelled group, shown only when a chip is in it): **To review** (`button.chip`, `aria-pressed`) while the review queue is on, the review bar's Needs review button moved here, still turned on and off by the N key; **Tag** while there are tags and **Receipt** while a file store is connected, each a `ChipSelect` (`components/ChipSelect.tsx`): a native select laid unseen over the chip's 44px hit area, showing its word and the choice ("Tag: Groceries", "Receipt: has one", "Receipt: none, over"), "on" while a choice is made. "No receipt, money out over…" adds the amount field after the chips, as before. The review bar (`components/ReviewBar.tsx`) is under the chips: its count is a heading (`h3#review-count`, still where Home's jump and Card Mode's return land) beside **Review one at a time**, then Approve listed, its question and Undo, all `.btn`. The list card's title is a heading (`.card-header`, `<h2>Transactions</h2>` with its count), so the count's `h3` sits under it. An empty list says what narrowed it (`emptyListWords`): one filter names what it looked for ("No transaction listed has that tag." is new), the search or more than one say nothing matches them; before, two filters together could name only one, and a tag alone was "your search".
+
+**Decided in 5b:**
+
+- **Card Mode stays beside the count**, not on the To review chip as 5a's note and the mockup's caption had it: a chip that filters and also opens a full-screen mode would do two things on one tap. The IA's line already put Card Mode in the review bar; the mockup's caption is changed.
+- **No count on the To review chip.** The heading counts the queue (the year's, as Home's row says it) and Approve listed counts what is listed; a third number on the chip, for the month through the other filters, would sit beside both, and a group with one member to review lists all its members, so the chip and the list's "N of M" would differ.
+- **Native selects drawn as chips** for Tag and Receipt, rather than a menu: a phone opens its own picker, the chip says the choice in words, and focus and Escape are the browser's. The ⋯ menu (`Menu`) is for actions and has no checked state.
+- **The chips show a fixed word first** ("Tag: Groceries"), and the select is named by that word, so speech input can name the control by what it shows (WCAG 2.5.3); the options are the tags' names, under a select named Tag.
+
+**Kept narrow in 5b:**
+
+- **Over an amount** as a filter of its own (the mockup's fourth chip, in the IA's list): the amount narrows only the transactions without a receipt, as before. A filter by amount for every row is new behavior.
+- **The cash-flow pick stays a line** over the list (`FlowShown`), not a chip: it says the period and a node no longer in the cash flow, and focus lands on it.
+- **The keyboard shortcuts' toggle** keeps its link-like look: Card Mode shares it.
+- **The rows and day bars**: 5d's Transaction sheet redraws them.
 
 ## Phase 6: Budgets and Plan
 

@@ -94,7 +94,7 @@ A pinned bar at the top: **‹ October ›** month switcher and the segments **T
 
 | Segment | Contents |
 |---|---|
-| **Transactions** (default) | One In / Out / Net strip for the month (with its single caveat line); search; filter chips (tag, has receipt, over an amount, needs review, a cash-flow selection); the review bar with Card Mode and Approve listed when the queue is on; the list grouped by day. |
+| **Transactions** (default) | One In / Out / Net strip for the month (with its single caveat line); search; filter chips (To review while the queue is on, Tag, Receipt with its amount; since phase 5b); a cash-flow selection as a line over the list; the review bar with its count as a heading, Card Mode and Approve listed when the queue is on; the list grouped by day. |
 | **Spending** | One period control shared by every card here (the month from the bar by default, plus the ranges the cash-flow chart offers today: last month, 3 or 12 months, year to date). Cash flow (Sankey, "Show as a table"); Net by month (tapping a month sets the period); Income vs spend; Spending by group; Spending by tag; Online vs in-store; Where you spent; a **Reports** row (tax year, runway, year over year). Tapping a Sankey node switches to Transactions with that filter. |
 | **Shared** | Shared expenses: people and balances, Paid back?, Add someone, Add an IOU, archived; its settings (counting, Venmo and Cash App) behind a gear. |
 
@@ -245,8 +245,9 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
 | CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period control |
 | MonthFlowChart, CategoryRollup, SpendByTag | Activity | Activity > Spending |
-| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters; Transaction sheet |
-| ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions (unchanged behavior) |
+| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet |
+| ChipSelect | New (phase 5b) | A filter chip that chooses one of a few options: Transactions' Tag and Receipt chips |
+| ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions: the count as a heading beside Card Mode, under the filter chips (5b); its filter is the To review chip |
 | SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet; Budgets > Month notice |
 | AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet |
 | SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged. The sheets (`SharedSheets`) stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU |

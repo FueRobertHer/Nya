@@ -38,6 +38,7 @@ import type { CategoryChoice } from "./transaction-edits";
 import type { Tag } from "@/lib/tags";
 import TagChips from "./TagChips";
 import TagFilter from "./TagFilter";
+import ChipSelect from "./ChipSelect";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
@@ -202,6 +203,22 @@ export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_b
   if (!t.pending) return "toggle";
   if (t.excluded_by_rule) return "wait-rule";
   return t.excluded === true ? "toggle" : "wait";
+}
+
+/**
+ * What an empty list says, from what narrows it: one filter on says what it
+ * looked for; the search, or more than one, says nothing matches them; none,
+ * that the month (or the cash flow's pick) has nothing.
+ */
+export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; receipt: ReceiptChoice; pick: boolean }): string {
+  const count = [on.query, on.tag, on.review, on.receipt !== ""].filter(Boolean).length;
+  if (count === 0) return on.pick ? "Nothing to list." : "No transactions this month.";
+  if (count > 1) return on.query ? "No transactions match your search and filters." : "No transactions match these filters.";
+  if (on.review) return "Nothing listed needs review.";
+  if (on.receipt === "with") return "No transaction listed has a receipt or document.";
+  if (on.receipt === "without") return "Nothing listed over that amount is missing a receipt.";
+  if (on.tag) return "No transaction listed has that tag.";
+  return "No transactions match your search.";
 }
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
@@ -490,7 +507,7 @@ export default function MonthBreakdown({
   const [splitting, setSplitting] = useState<Txn | null>(null);
   const [grouping, setGrouping] = useState<{ start: Txn | null; group: Txn | null }>({ start: null, group: null });
   const [splitError, setSplitError] = useState<string | null>(null);
-  // The review queue: the Needs review filter, and Card Mode, open.
+  // The review queue: the To review filter, and Card Mode, open.
   const [reviewOnly, setReviewOnly] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(false);
   const reviewing = reviewOnly && !!review?.view?.on;
@@ -1080,13 +1097,13 @@ export default function MonthBreakdown({
             {summaryCard}
 
             <div className="card" ref={listRef}>
-              <div className="inst-header">
-                <div className="inst-name">Transactions</div>
-                <div className="inst-total">
+              <div className="card-header">
+                <h2>Transactions</h2>
+                <span className="meta">
                   {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
                   {countTransactions(visible)}
                   {filtering ? ` of ${countTransactions(listed)}` : ""}
-                </div>
+                </span>
               </div>
               {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
 
@@ -1097,29 +1114,44 @@ export default function MonthBreakdown({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
-              {onAttachmentsChanged && (
-                <div className="receipt-filter">
-                  <select className="text-input" value={receiptChoice} onChange={(e) => setReceiptChoice(e.target.value as ReceiptChoice)} aria-label="Show transactions by receipt">
-                    <option value="">With or without a receipt</option>
-                    <option value="with">Has a receipt or document</option>
-                    <option value="without">No receipt, money out over…</option>
-                  </select>
-                  {receiptChoice === "without" && (
+              {/* The filters, as chips: what needs review (while the queue is
+                  on), a tag, and a receipt (with a file store). */}
+              {(review?.view?.on || tags.length > 0 || onAttachmentsChanged) && (
+                <div className="chip-row" role="group" aria-label="Filter the list">
+                  {review?.view?.on && (
+                    <button type="button" className="chip" aria-pressed={reviewing} onClick={() => setReviewOnly(!reviewing)}>
+                      To review
+                    </button>
+                  )}
+                  <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
+                  {onAttachmentsChanged && (
+                    <ChipSelect
+                      label="Receipt"
+                      shown={receiptChoice === "with" ? "Receipt: has one" : receiptChoice === "without" ? "Receipt: none, over" : "Receipt"}
+                      on={receiptChoice !== ""}
+                      value={receiptChoice}
+                      onChange={(v) => setReceiptChoice(v as ReceiptChoice)}
+                    >
+                      <option value="">With or without a receipt</option>
+                      <option value="with">Has a receipt or document</option>
+                      <option value="without">No receipt, money out over…</option>
+                    </ChipSelect>
+                  )}
+                  {onAttachmentsChanged && receiptChoice === "without" && (
                     <input
-                      className="text-input"
+                      className="text-input receipt-over"
                       inputMode="decimal"
                       autoComplete="off"
                       value={receiptOver}
                       onChange={(e) => setReceiptOver(e.target.value)}
-                      placeholder="0"
+                      placeholder="Any amount"
                       aria-label="Money out over, in each transaction’s own currency"
                     />
                   )}
                 </div>
               )}
               {unknownNote(receipted.unknown) && <div className="stale-note">{unknownNote(receipted.unknown)}</div>}
-              {/* The review queue, while it is on: its count, filter, Card Mode and approving what's listed. */}
+              {/* The review queue, while it is on: its count, Card Mode and approving what's listed (its filter is the To review chip, and the N key). */}
               {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
 
               {actionError && <div className="error">{actionError}</div>}
@@ -1149,19 +1181,7 @@ export default function MonthBreakdown({
               )}
 
               {visible.length === 0 ? (
-                <p className="empty-note">
-                  {reviewing && !query && !filterTag && !byReceipt
-                    ? "Nothing listed needs review."
-                    : byReceipt === "with" && !query && !filterTag
-                    ? "No transaction listed has a receipt or document."
-                    : byReceipt === "without" && !query && !filterTag
-                    ? "Nothing listed over that amount is missing a receipt."
-                    : query || filterTag || byReceipt
-                    ? "No transactions match your search."
-                    : flowPick
-                      ? "Nothing to list."
-                      : "No transactions this month."}
-                </p>
+                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, receipt: byReceipt, pick: !!flowPick })}</p>
               ) : (
                 <table className="txn-table">
                   <tbody>

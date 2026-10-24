@@ -232,6 +232,14 @@ export class FakeElement extends FakeNode {
   get localName() {
     return this.tagName.toLowerCase();
   }
+  /** A field's type: its attribute, else "text" for an input, as a browser
+   *  has it (React reads it to tell a text field's typing from a click). */
+  get type(): string {
+    return this.getAttribute('type') ?? (this.tagName === 'INPUT' ? 'text' : '');
+  }
+  set type(v: string) {
+    this.setAttribute('type', v);
+  }
   setAttribute(k: string, v: string) {
     this.attributes.set(k, String(v));
     if (k === 'disabled') this.disabled = true;
