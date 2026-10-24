@@ -258,6 +258,8 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
+- Menu: an object's ⋯ menu of rare actions (the account sheet's, the institution card's).
+- Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 
 ## Vocabulary
 

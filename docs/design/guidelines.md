@@ -95,6 +95,9 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | In, out and net figures | `.summary-row` with `.summary-value` | |
 | A form field | `.field` around a plain `<input>` or `<select>` | |
 | A form in a sheet | `.sheet-form` | |
+| A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`) | a `.button-pair` at the end of the body |
+| An object's rare actions (⋯) | `Menu` (`.menu` of `.menu-item`) | an Options button that opens an action sheet |
+| An explanation behind "Why?" | `Why` (`.why`) | a second paragraph on screen |
 <!-- /design-guard:classes -->
 
 **Avoid in new code**: `.link-btn` (about 15px tall; use `.btn.ghost`); `.type-tag` and other uppercase labels; one-off button classes that undo `button { width: 100% }` (a `.btn` sizes itself). The global `button` rule still fills every bare `<button>` and makes it full width, so new buttons always take a `.btn` class (or `.icon-btn`, `.list-row`, `.chip`, or sit in a `.segmented`).

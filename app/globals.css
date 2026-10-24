@@ -575,6 +575,91 @@ button:active:not(:disabled):not([class*="cl-"]) {
   line-height: var(--lh-body);
 }
 
+/* "Why?": a ghost button that opens the explanation in place
+   (components/Why.tsx), so a second paragraph is never on screen by default. */
+.why > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding-inline: var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--accent);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  list-style: none;
+  cursor: pointer;
+}
+
+.why > summary::-webkit-details-marker {
+  display: none;
+}
+
+.why-body {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  line-height: var(--lh-body);
+}
+
+/* Menu: an object's rare actions (components/Menu.tsx), under its ⋯ button
+   and aligned to its right edge, or above it when there is no room below.
+   Items are 44px rows; a destructive one is last and red. */
+.menu-anchor {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  /* Over the content that follows it; the header and sheets stay above. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: calc(100vw - 2 * var(--sp-4));
+  padding: var(--sp-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--elevated);
+}
+
+.menu.up {
+  top: auto;
+  bottom: 100%;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-3);
+  font-weight: var(--fw-regular);
+  text-align: left;
+}
+
+.menu-item.danger {
+  color: var(--neg);
+}
+
+.menu-item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Matches the global button hover rule's specificity: raised, not dimmed. */
+@media (hover: hover) {
+  button.menu-item:hover:not(:disabled):not([class*="cl-"]) {
+    background: var(--surface);
+    opacity: 1;
+  }
+}
+
 /* Form controls without a class of their own: dark, rounded, and legible.
    :where keeps these below any class's styling. */
 :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [class*="cl-"]), select:not([class*="cl-"]), textarea:not([class*="cl-"])) {
@@ -1932,8 +2017,8 @@ button:disabled {
 }
 
 .sheet-icon-btn {
-  width: 36px;
-  height: 36px;
+  width: var(--tap);
+  height: var(--tap);
   padding: 0;
   flex-shrink: 0;
   display: grid;
@@ -1944,8 +2029,8 @@ button:disabled {
 }
 
 .sheet-icon-btn svg {
-  width: 18px;
-  height: 18px;
+  width: var(--icon);
+  height: var(--icon);
 }
 
 .sheet-body {
@@ -1953,6 +2038,17 @@ button:disabled {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 4px 20px 24px;
+}
+
+/* The sheet's buttons, after its scrolling body so they stay in view. */
+.sheet-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5) var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* ...and a panel from the right on wider screens. */
