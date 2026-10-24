@@ -8,7 +8,7 @@ import CategoryPicker, { pickerOptions } from '@/components/CategoryPicker';
 import CategoryManager from '@/components/CategoryManager';
 import CategoriesCard from '@/components/CategoriesCard';
 import MonthBreakdown, { categoryLabel, type Txn } from '@/components/MonthBreakdown';
-import Insights from '@/components/Insights';
+import { budgetTexts } from './home-attention';
 import { moveCategory, setArchived, setCategoryIcon, renameCategory, type Taxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
@@ -190,15 +190,15 @@ describe('Home’s budget alerts', () => {
     const rows = [
       { transaction_id: 'a', date: today, name: 'Shop', amount: 95, pending: false, account_name: 'C', institution_name: 'B', category: 'groceries', iso_currency_code: 'USD', vendor_key: 'v', logo_url: null, category_icon_url: null, subcategory: null, category_confidence: null, transaction_code: null, payment_channel: null, datetime: null, website: null, check_number: null, account_owner: null, city: null, region: null, counterparty: null, payment_processor: null, payment_reference: null },
     ] as Txn[];
-    const s = text(renderToStaticMarkup(<Insights txns={rows} taxonomy={t} budgets={budgets} accounts={[]} />));
+    const s = budgetTexts({ txns: rows, taxonomy: t, budgets });
     expect(s).toContain('Approaching your groceries budget (95%)');
     // A group without a budget of its own only adds its categories' up: no alert of its own.
     const tight = { ...budgets, categories: { ...budgets.categories, [t.categories.find((c) => c.name === 'restaurants')!.id]: { amount: 5 } } };
-    const sum = text(renderToStaticMarkup(<Insights txns={rows} taxonomy={t} budgets={tight} accounts={[]} />));
+    const sum = budgetTexts({ txns: rows, taxonomy: t, budgets: tight });
     expect(sum).toContain('Approaching your groceries budget (95%)');
     expect(sum).not.toContain('your Food budget');
     const capped = { ...budgets, groups: { [group(t, 'Food')]: { amount: 100 } } };
-    const g = text(renderToStaticMarkup(<Insights txns={rows} taxonomy={t} budgets={capped} accounts={[]} />));
+    const g = budgetTexts({ txns: rows, taxonomy: t, budgets: capped });
     expect(g).toContain('Approaching your Food budget (95%)');
   });
 });
@@ -248,10 +248,13 @@ describe('the Categories screen in Settings', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
     const section = dashboard.slice(dashboard.indexOf("id: 'transactions',"), dashboard.indexOf("id: 'connections',"));
     expect(section).toContain('<CategoriesCard');
-    for (const view of ['<MonthBreakdown', '<BudgetsTab', '<ManualTxnSheet', '<Insights']) {
+    for (const view of ['<MonthBreakdown', '<BudgetsTab', '<ManualTxnSheet']) {
       const at = dashboard.indexOf(view);
       expect([view, dashboard.slice(at, dashboard.indexOf('/>', at)).includes('taxonomy={categories.taxonomy}')]).toEqual([view, true]);
     }
+    // Home's budget alerts, in Needs attention.
+    const alerts = dashboard.indexOf('budgetAlerts({');
+    expect(dashboard.slice(alerts, dashboard.indexOf('})', alerts))).toContain('taxonomy: categories.taxonomy');
     expect(dashboard).toContain("field: 'budget_set'");
     // A budget on a category the page's set lacks reads the set again.
     expect(dashboard).toContain("useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');");

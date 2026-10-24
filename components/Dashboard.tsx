@@ -50,7 +50,9 @@ import SharedExpensesCard, { type SharedFacts } from './SharedExpensesCard';
 import { useSharedExpenses } from './shared-expenses-state';
 import type { SharedRowHooks } from './SharedRows';
 import { REMOVED_NAME } from '@/lib/shared-expenses/model';
-import Insights, { type IdleCashAccount } from './Insights';
+import Insights, { budgetAlerts, paymentAlerts, spendingNotes, type IdleCashAccount, type PaymentAccount } from './Insights';
+import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAttention';
+import { attentionItems, type Go } from './attention';
 import ConnectionDetails from './ConnectionDetails';
 import { ALERT, ConnectionStatus, connectionSeverity, statusBadge, type ConnectionPlace } from './ConnectionStatus';
 import { Menu } from './Menu';
@@ -81,7 +83,7 @@ import RulesCard from './RulesCard';
 import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
-import { ChartCurrencyNote, CurrencyOffer, dismissOffer, heroCurrencyCaveats, offerDismissed, offerFor } from './CurrencyNotes';
+import { ChartCurrencyNote, CurrencyOfferSheet, dismissOffer, heroCurrencyCaveats, offerDismissed, offerFor } from './CurrencyNotes';
 import { CORRECTION_KEEPS, RELABEL_KEEPS, rateEffectText, relabelledText } from './currency-text';
 import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
@@ -246,7 +248,7 @@ export default function Dashboard({
   const cacheKey = cacheKeyFor(viewer);
   // Hiding amounts (components/hide-amounts.ts) changes what every formatter
   // writes, so the whole dashboard draws again when the switch changes.
-  useAmountsHidden();
+  const amountsHidden = useAmountsHidden();
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   // 'update' re-authenticates or adds a product; 'accounts' is the account
@@ -351,6 +353,8 @@ export default function Dashboard({
   // the server's render and the browser's agree), and the sheet it opens,
   // with the currency it suggested.
   const [offerHidden, setOfferHidden] = useState(true);
+  // The offer's sheet, from its row in Needs attention.
+  const [offerOpen, setOfferOpen] = useState(false);
   useEffect(() => setOfferHidden(offerDismissed()), []);
   const [choosingHome, setChoosingHome] = useState<{ initial: string | null } | null>(null);
   // The Item update mode is open on, so its success can be recorded
@@ -1372,16 +1376,6 @@ export default function Dashboard({
   }, [loadNetWorth, loadTransactions, txns, budgetsStore, goalsStore]);
 
 
-  // Connections Plaid says will end on a date, for the Home alert (Insights).
-  const reconnectSoon = useMemo(
-    () =>
-      institutions.flatMap((i) =>
-        i.health?.state === 'reconnect_soon' && i.health.ends_at
-          ? [{ item_id: i.item_id, institution_name: i.institution_name, ends_at: i.health.ends_at, ends_estimated: i.health.ends_estimated }]
-          : []
-      ),
-    [institutions]
-  );
   // Connections whose transactions have stopped arriving, for Activity's months.
   // Not a connection that holds no bank account or card: it brings no
   // transactions in, so its lapse leaves no month short (lib/no-transactions.ts).
@@ -2023,6 +2017,101 @@ export default function Dashboard({
     },
   ];
 
+  // Home's Needs attention (components/attention.ts): what asks the person
+  // to act, from what the Accounts tab, Settings > Connections, the review
+  // count, the budgets and the offer of a home currency already show. Only
+  // while Home is on screen: the budgets read the year's transactions.
+  const homeShown = tab === 'home' && !settings && connected && !loading;
+  const paymentAccounts = useMemo(
+    () =>
+      sortedInstitutions.flatMap((i) =>
+        i.accounts.map((a): PaymentAccount => ({ item_id: i.item_id, account_id: a.account_id, name: a.name, type: a.type, balance: a.balance, currency: a.currency, liability: a.liability }))
+      ),
+    [sortedInstitutions]
+  );
+  const budgetCarries = budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null;
+  const reviewOn = !!review.view?.on;
+  const attention = useMemo(() => {
+    if (!homeShown) return null;
+    const now = new Date();
+    const budgetRows = budgetAlerts({ txns, fx: txnFx, budgets, taxonomy: categories.taxonomy, budgetCarries }, now);
+    const items = attentionItems({
+      cards: cardStatus.map((c) => ({ inst: sortedInstitutions.find((i) => i.item_id === c.item_id)!, severity: c.severity })),
+      hiddenOnly: allHiddenInstitutions.map((inst) => {
+        const full = institutions.find((i) => i.item_id === inst.item_id) ?? inst;
+        return { inst: full, severity: connectionSeverity(full) };
+      }),
+      institutions,
+      cardless: cardlessConnectors,
+      connectors: connectors.data ?? null,
+      review: reviewOn ? countToReview(txns ?? []) : 0,
+      payments: paymentAlerts(paymentAccounts, now),
+      budgets: budgetRows,
+      currency: offer && !base && !currencyProblem && !offerHidden ? offer : null,
+      restore: restoreHold,
+      now,
+    });
+    const notes = budgetRows.alerts.length > 0 ? spendingNotes({ txns, fx: txnFx, withoutTransactions: txnWithout, incomplete: txnIncomplete, stopped: stoppedTxns }, now) : { leftOut: null, missing: [] };
+    return { items, notes };
+    // `amountsHidden` isn't read inside: it changes what formatMoney writes there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
+
+  // Where a Needs attention row goes, focused once it is on screen: a tab's
+  // content can come a render later (the Budgets tab's after its spinner).
+  // Dropped when the person goes elsewhere first, or after a moment.
+  const [focusTarget, setFocusTarget] = useState<{ id: string; tab: Tab; settings: SettingsView | null; at: number } | null>(null);
+  useEffect(() => {
+    if (!focusTarget) return;
+    if (focusTarget.tab !== tab || focusTarget.settings !== settings || Date.now() - focusTarget.at > 10_000) {
+      setFocusTarget(null);
+      return;
+    }
+    const target = document.getElementById(focusTarget.id);
+    if (!target) return;
+    setFocusTarget(null);
+    target.scrollIntoView({ block: 'start' });
+    target.focus({ preventScroll: true });
+  });
+  const goTo = useCallback(
+    (go: Go) => {
+      const focus = (id: string, t: Tab, s: SettingsView | null) => setFocusTarget({ id, tab: t, settings: s, at: Date.now() });
+      switch (go.to) {
+        case 'card':
+          window.scrollTo(0, 0);
+          setTab('accounts');
+          focus(cardHeadingId(go.item_id), 'accounts', null);
+          return;
+        case 'connections':
+          openConnections();
+          // Settings focuses its title; the card there, when it has one.
+          if (go.item_id) focus(cardHeadingId(go.item_id), tab, 'connections');
+          return;
+        case 'account':
+          // Over Home: the sheet returns focus to the row that opened it.
+          setAccountOpen({ item_id: go.item_id, account_id: go.account_id });
+          return;
+        case 'budgets':
+          window.scrollTo(0, 0);
+          setTab('budgets');
+          focus('budgets-month-title', 'budgets', null);
+          return;
+        case 'review':
+          window.scrollTo(0, 0);
+          setTab('activity');
+          focus('review-count', 'activity', null);
+          return;
+        case 'restore':
+          openRestore();
+          return;
+        case 'currency':
+          setOfferOpen(true);
+          return;
+      }
+    },
+    [tab, openConnections, openRestore]
+  );
+
   // What qualifies the Home total, under it (components/TotalCaveats.tsx),
   // each in its color: what the total is missing, named
   // (components/total-notes.ts), colored as each institution's card is
@@ -2171,7 +2260,6 @@ export default function Dashboard({
                   notesProblem={timeline.problem}
                   backupProblem={backupProblem}
                   filesProblem={filesProblem}
-                  admin={admin}
                   asOf={asOf}
                   refreshing={refreshing}
                   notesCount={timeline.notes.length}
@@ -2215,26 +2303,16 @@ export default function Dashboard({
                   onChanged={timeline.reload}
                 />
 
-                {offer && !base && !currencyProblem && !offerHidden && (
-                  <CurrencyOffer
-                    offer={offer}
-                    onChoose={(code) => setChoosingHome({ initial: code })}
-                    onDismiss={() => {
-                      dismissOffer();
-                      setOfferHidden(true);
-                    }}
-                  />
-                )}
-
+                {/* What asks the person to act, each row going where it is
+                    fixed (rollout phase 4b); the admin's instructions for
+                    the nightly jobs under it. */}
+                {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
+                {admin && <AdminAttention backup={backupProblem} files={filesProblem} />}
 
                 <Insights
                   txns={txns}
                   fx={txnFx}
-                  budgets={budgets}
-                  taxonomy={categories.taxonomy}
-                  budgetCarries={budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null}
                   idleCash={idleCashAccounts}
-                  reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
                   series={recurring ?? undefined}
                   dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
@@ -2603,6 +2681,25 @@ export default function Dashboard({
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
       {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
       <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
+      {/* The offer, from its row in Needs attention: a choice closes it and
+          opens the sheet that confirms one, never one over the other. */}
+      <CurrencyOfferSheet
+        open={offerOpen && !!offer && !base && !currencyProblem && !offerHidden}
+        offer={offer}
+        onClose={() => setOfferOpen(false)}
+        onChoose={(code) => {
+          setOfferOpen(false);
+          setChoosingHome({ initial: code });
+        }}
+        onDismiss={() => {
+          dismissOffer();
+          setOfferHidden(true);
+          setOfferOpen(false);
+          // Its row has gone: the card's heading while the card stays, else the
+          // Net worth card's.
+          setFocusTarget({ id: (attention?.items.length ?? 0) > 1 ? NEEDS_ATTENTION_TITLE : 'net-worth-title', tab: 'home', settings: null, at: Date.now() });
+        }}
+      />
       {/* Opened from the offer on Home: only the person's confirmation in it
           chooses a home currency. */}
       <CurrencyChoiceSheet

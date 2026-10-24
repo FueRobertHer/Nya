@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
+import { HomeAttention } from './home-attention';
 import { FiCard } from '@/components/PlanTab';
 import { RedirectChoices, madeTheOtherWay, type RedirectItem } from '@/components/ConnectRedirect';
 import { wholeMoney } from '@/components/plan-text';
@@ -561,6 +562,8 @@ describe('a connection whose sign-in lapsed', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
     expect(dashboard).toContain('stoppedConnections(institutions, quietItemIds(txnWithout))');
     expect(dashboard).toMatch(/<Insights[^>]*withoutTransactions=\{txnWithout\}/);
+    // And beside Home's budget alerts, in Needs attention.
+    expect(dashboard).toContain('spendingNotes({ txns, fx: txnFx, withoutTransactions: txnWithout, incomplete: txnIncomplete, stopped: stoppedTxns }, now)');
   });
 });
 
@@ -610,8 +613,9 @@ describe('the "Allow transactions" action', () => {
 
 describe("Home's insights", () => {
   const near = categoriesFor({ groceries: 26 });
+  // The budget alert is in Needs attention since rollout phase 4b; the pace in Insights.
   const insights = (without: NoTransactionsView, txns: Txn[]) =>
-    text(renderToStaticMarkup(<Insights txns={txns} taxonomy={near.taxonomy} budgets={near.budgets} accounts={[]} withoutTransactions={without} />));
+    text(renderToStaticMarkup(<HomeAttention txns={txns} taxonomy={near.taxonomy} budgets={near.budgets} withoutTransactions={without} />));
 
   test('a budget alert or the pace beside a bank account or card whose transactions are missing says so', () => {
     const t = insights(refusedBeside, [row()]);

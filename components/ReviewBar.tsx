@@ -157,7 +157,8 @@ export default function ReviewBar({
       <div className="review-bar-row">
         {/* Where focus comes back to when Card Mode closes and its way in is
             gone (nothing left to review). */}
-        <span className="review-count" aria-live="polite" tabIndex={-1} data-review-return="" ref={countRef}>
+        {/* Also where Home's "Transactions to review" lands (components/NeedsAttention.tsx). */}
+        <span className="review-count" aria-live="polite" tabIndex={-1} data-review-return="" ref={countRef} id="review-count">
           {toReviewWords(total)}
         </span>
         <button className="secondary" onClick={onReview} disabled={total === 0}>

@@ -10,6 +10,7 @@ import MonthFlowChart from '@/components/MonthFlowChart';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { categoriesFor } from './category-fixture';
+import { budgetTexts } from './home-attention';
 
 // Which transactions count in budgets and reports (lib/spending.ts), and that
 // every total leaving transfers out leaves an excluded transaction out too,
@@ -198,19 +199,14 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(t).not.toContain('· over');
   });
 
-  test('the Home insights: budget alerts and the biggest purchase', () => {
-    const t = text(
-      renderToStaticMarkup(createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink' }], ...categoriesFor({ 'food and drink': 100 }), accounts: [] }))
-    );
-    expect(t).not.toContain('food and drink budget');
-    expect(t).toContain('Biggest purchase this month: Corner shop, $30.00');
+  test('Home: the budget alerts (in Needs attention since rollout phase 4b) and the biggest purchase', () => {
+    const txns = [COUNTED, { ...EXCLUDED, category: 'food and drink' }];
+    expect(budgetTexts({ txns, ...categoriesFor({ 'food and drink': 100 }) })).not.toContain('food and drink budget');
+    expect(text(renderToStaticMarkup(createElement(Insights, { txns, accounts: [] })))).toContain('Biggest purchase this month: Corner shop, $30.00');
     // Without the exclusion the same two would be over budget.
-    const all = text(
-      renderToStaticMarkup(
-        createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], ...categoriesFor({ 'food and drink': 100 }), accounts: [] })
-      )
+    expect(budgetTexts({ txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], ...categoriesFor({ 'food and drink': 100 }) })).toContain(
+      'Over your food and drink budget'
     );
-    expect(all).toContain('Over your food and drink budget');
   });
 
   test('recurring bills', () => {
