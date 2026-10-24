@@ -356,12 +356,19 @@ describe('a step that never answers', () => {
 
   test('the Vercel Blob store hands each call its signal', async () => {
     const s = await store();
-    const signal = new AbortController().signal;
+    const controller = new AbortController();
+    const signal = controller.signal;
     await s.put('backups/test/x.ndjson', 'body', signal);
     await s.get('backups/test/x.ndjson', signal);
     await s.list('backups/test/', signal);
     await s.del(['backups/test/x.ndjson'], signal);
-    expect(signals).toEqual({ put: signal, get: signal, list: signal, del: signal });
+    // The put gets it as it is; a lookup, a listing or a delete gets one of
+    // its own per attempt (lib/blob-attempts.ts), aborted along with it.
+    expect(signals.put).toBe(signal);
+    expect([signals.get, signals.list, signals.del].map((x) => x?.aborted)).toEqual([false, false, false]);
+    controller.abort();
+    expect([signals.get, signals.list, signals.del].map((x) => x?.aborted)).toEqual([true, true, true]);
+    expect((signals.list?.reason as Error).name).toBe('AbortError');
   });
 });
 

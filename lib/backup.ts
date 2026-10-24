@@ -45,7 +45,9 @@
 // without running anything after, so one call that never answered used to
 // leave a copy uploaded, nothing pruned, no outcome recorded, and only "Task
 // timed out" in the log. A step over its limit is now an ordinary failure that
-// names the step.
+// names the step. Within a step, a listing, a delete or a read that stalls is
+// sent again on a new request (lib/blob-attempts.ts), so one quiet connection
+// no longer uses up the whole step.
 
 import { get as httpGet } from 'node:http';
 import { get as httpsGet } from 'node:https';
@@ -55,6 +57,7 @@ import { envPrefix, kEnv, redis, rawRedis } from './storage';
 import { rewriteAfterDeletion, writeKeyArchive, type KeyArchiveResult, type KeysLock, type KeysPending } from './key-archive';
 import { containersUnderSharedKeys, keyIdsByContainer, namedKeyIds } from './archive-scan';
 import { MasterKeyError, masterKeyConfigured, readContainerEntries, readKeyRecords, updateContainerEntry, ContainerKeyError } from './crypto';
+import { retryStalled } from './blob-attempts';
 
 /** What a backup needs from object storage. Vercel Blob in production
  *  (vercelBlobStore); tests pass one kept in memory. Each call is given a
@@ -429,28 +432,32 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
       // route handlers. The same URL read with node's own client returns the
       // whole archive in under a second (as does Next's unpatched fetch), so
       // that is what is compared.
-      const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: signal });
-      if (!res || res.statusCode !== 200) return null;
-      res.stream.cancel().catch(() => {});
-      const url = new URL(res.blob.url);
-      // The token goes to Vercel Blob and nowhere else.
-      if (!url.hostname.endsWith('.blob.vercel-storage.com')) throw new Error(`The backup's read-back was pointed at ${url.hostname}, which is not Vercel Blob`);
-      // As the SDK's own read does, so what comes back is from the store, not a cache.
-      url.searchParams.set('cache', '0');
-      return readUrl(url.toString(), { authorization: `Bearer ${token}` }, signal ?? new AbortController().signal);
+      // The lookup and the read together, sent again if they stall
+      // (lib/blob-attempts.ts).
+      return retryStalled('a read', signal, async (s) => {
+        const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: s });
+        if (!res || res.statusCode !== 200) return null;
+        res.stream.cancel().catch(() => {});
+        const url = new URL(res.blob.url);
+        // The token goes to Vercel Blob and nowhere else.
+        if (!url.hostname.endsWith('.blob.vercel-storage.com')) throw new Error(`The backup's read-back was pointed at ${url.hostname}, which is not Vercel Blob`);
+        // As the SDK's own read does, so what comes back is from the store, not a cache.
+        url.searchParams.set('cache', '0');
+        return readUrl(url.toString(), { authorization: `Bearer ${token}` }, s);
+      });
     },
     async list(prefix, signal) {
       const out: { pathname: string; uploadedAt: Date }[] = [];
       let cursor: string | undefined;
       do {
-        const page = await blob.list({ prefix, cursor, abortSignal: signal });
+        const page = await retryStalled('a listing', signal, (s) => blob.list({ prefix, cursor, abortSignal: s }));
         for (const b of page.blobs) out.push({ pathname: b.pathname, uploadedAt: new Date(b.uploadedAt) });
         cursor = page.hasMore ? page.cursor : undefined;
       } while (cursor);
       return out;
     },
     async del(pathnames, signal) {
-      if (pathnames.length > 0) await blob.del(pathnames, { abortSignal: signal });
+      if (pathnames.length > 0) await retryStalled('a delete', signal, (s) => blob.del(pathnames, { abortSignal: s }));
     },
   };
 }

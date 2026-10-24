@@ -233,6 +233,22 @@ describe('the file store', () => {
     for (const call of s.calls) expect(JSON.stringify(call.args)).toContain(TOKEN);
   });
 
+  test('a listing, a folder listing and a delete each get a signal per attempt, aborted with the caller’s', async () => {
+    const s = sdk((p) => `https://abcd1234.private.blob.vercel-storage.com/${p}`);
+    const store = objects.vercelAttachmentObjects(TOKEN, { sdk: s.sdk });
+    const caller = new AbortController();
+    await store.del(['x'], caller.signal);
+    await store.list('p/', caller.signal);
+    await store.folders('p/', caller.signal);
+    const given = s.calls.map((c) => (c.args.at(-1) as { abortSignal: AbortSignal }).abortSignal);
+    expect(given).toHaveLength(3);
+    // Not the caller's own: one of lib/blob-attempts.ts's, which follows it.
+    for (const signal of given) expect(signal).not.toBe(caller.signal);
+    expect(given.map((x) => x.aborted)).toEqual([false, false, false]);
+    caller.abort();
+    expect(given.map((x) => x.aborted)).toEqual([true, true, true]);
+  });
+
   test('a store that answers on a public address: the object is deleted at once, and the write fails', async () => {
     const s = sdk((p) => `https://abcd1234.public.blob.vercel-storage.com/${p}`);
     const store = objects.vercelAttachmentObjects(TOKEN, { sdk: s.sdk });
