@@ -192,7 +192,7 @@ describe('the filter chips on Transactions', () => {
     expect(amount()).toBeNull();
 
     act(() => type(v.select('Receipt')!, 'without'));
-    expect(v.shown('Receipt')).toEqual({ text: 'Receipt: none, over', on: true });
+    expect(v.shown('Receipt')).toEqual({ text: 'Receipt: none', on: true });
     expect(amount()).not.toBeNull();
     act(() => type(amount()!, '50'));
     expect(v.names()).toEqual(['Hardware store']);

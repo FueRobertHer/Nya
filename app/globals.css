@@ -747,11 +747,14 @@ button:active:not(:disabled):not([class*="cl-"]) {
   content: none;
 }
 
+/* Sized outright: a form control laid out absolutely may keep its own
+   size (its widest option) rather than stretch between its insets. */
 .chip-select > select {
   position: absolute;
-  inset: min(0px, calc((100% - var(--tap)) / 2)) -1px;
-  width: auto;
-  height: auto;
+  top: min(0px, calc((100% - var(--tap)) / 2));
+  left: -1px;
+  width: calc(100% + 2px);
+  height: max(100%, var(--tap));
   min-height: 0;
   margin: 0;
   padding: 0;

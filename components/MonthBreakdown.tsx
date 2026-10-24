@@ -1127,7 +1127,7 @@ export default function MonthBreakdown({
                   {onAttachmentsChanged && (
                     <ChipSelect
                       label="Receipt"
-                      shown={receiptChoice === "with" ? "Receipt: has one" : receiptChoice === "without" ? "Receipt: none, over" : "Receipt"}
+                      shown={receiptChoice === "with" ? "Receipt: has one" : receiptChoice === "without" ? "Receipt: none" : "Receipt"}
                       on={receiptChoice !== ""}
                       value={receiptChoice}
                       onChange={(v) => setReceiptChoice(v as ReceiptChoice)}
