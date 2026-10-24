@@ -13,7 +13,7 @@ import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import { fmt, fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
 import { ALERT } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
-import TotalCaveats, { type Caveat } from './TotalCaveats';
+import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
 
 /** What a nightly job failing says, to everyone. What to do is only for the
  *  deployment's admin, who alone can (design-system.md "Who an instruction
@@ -39,7 +39,10 @@ function Caution({ children }: { children: ReactNode }) {
   return (
     <div className="notice caution">
       {ALERT}
-      <div>{children}</div>
+      <div>
+        <LevelWord level="caution" />
+        {children}
+      </div>
     </div>
   );
 }

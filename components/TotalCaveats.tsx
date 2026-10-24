@@ -44,11 +44,19 @@ export function summaryText(lesser: readonly Caveat[]): string {
   return `${lesser.length} notes: ${joinNames(shown)}`;
 }
 
+/** What a screen reader says first, for what the color shows. */
+export function LevelWord({ level }: { level: CaveatSeverity }) {
+  return <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : 'Note: '}</span>;
+}
+
 function Notice({ caveat }: { caveat: Caveat }) {
   return (
     <div className={`notice ${caveat.severity}`}>
       {caveat.severity === 'info' ? INFO : ALERT}
-      <div>{caveat.body}</div>
+      <div>
+        <LevelWord level={caveat.severity} />
+        {caveat.body}
+      </div>
     </div>
   );
 }
@@ -69,6 +77,7 @@ export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {
           <summary className={`notice ${worst}`}>
             {worst === 'info' ? INFO : ALERT}
             <span>
+              <LevelWord level={worst} />
               {/* Never an amount, but drawn as the notes are, so the switch
                   would cover one. */}
               <Masked>{summaryText(lesser)}</Masked>

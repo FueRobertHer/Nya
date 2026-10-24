@@ -146,7 +146,17 @@ Split in three pull requests, as phase 3 was: **4a** the Net worth card (its fir
 - **The low balance stays in This month.** It has no fix to go to and no way to set it aside, so in Needs attention a deliberately small account would sit there for good.
 - **The notes go under the FI row, outside its button**, not as a badge on its line as the mockup first drew it: a `<details>` can't sit inside a button.
 
+**From a UX review of Home, in 4c** (an independent review read Home as a person would, checked against the redesign mockups):
+
+- **Rows lead with what to do, as the mockups draw them.** A connection the person must fix at Nya reads "Reconnect Chase" over "Balances as of Oct 21" ("Connect SimpleFIN again" for a whole connector); one with nothing to do there keeps its name and badge. A payment reads "Amex due tomorrow" over "Minimum $35.00". The Admin card reads "Nightly backup failed" over "Last saved Oct 20 · timeout · Check the backup cron in Vercel.", the fact in full staying on the Net worth card.
+- **An empty Needs attention never claims too much.** When Plaid's warnings or the SimpleFIN and Lunch Flow connections couldn't be read on this load, a row says so, in the color of the Accounts tab's notice about it (amber, and red for the connections), and goes to that notice.
+- **This month keeps its own figures.** Its rows are ordered pace, biggest purchase, bills, low balance, idle cash before the cap of six, and low balances are one row ("and 3 more accounts"), so small accounts kept on purpose can't push the month off the card.
+- **Notices say their level.** Each notice and gathered line starts with a visually hidden "Critical:", "Caution:" or "Note:".
+
 **Kept narrow in 4c:**
+
+- **The FI line, as reviewed.** The review asked for "Plan defaults" on the line itself when no plan is saved, a shorter line under it ("$942,000 of $1,520,000 invested"), a row that says why when the plan can't be read, and focus after its jump. The FI part is likely to change, so these wait for that.
+- **From the same review, for later:** Needs attention can sit below the fold at 320px under the chart (a "2 things need you" jump under the delta); caution's clock fits "due soon" but not "over budget" (one caution shape for rows and notices); a low balance smaller than a bill due within the week belongs in Needs attention; the month's missing transactions said once, gathered, rather than twice; tab jumps pushed to history, so back returns to Home.
 
 - **Focus after the FI line's jump.** The Plan tab has no heading to land on until phase 6 gives it one; the line scrolls to its top, as it did.
 - **The month's missing transactions said twice on Home** when a budget row and the pace are both shown: once after each, since each card says what qualifies its own figures.

@@ -222,7 +222,9 @@ export function paymentAlerts(accounts: PaymentAccount[], now: Date = new Date()
     if (l.is_overdue) {
       overdue.push({
         key: `overdue-${a.account_id}`,
-        ...line(`${a.name} is overdue${l.minimum_payment != null ? ` (${formatMoney(l.minimum_payment, a.currency)} minimum)` : ''}`),
+        text: `${a.name} is overdue${l.minimum_payment != null ? ` (${formatMoney(l.minimum_payment, a.currency)} minimum)` : ''}`,
+        title: `${a.name} is overdue`,
+        ...(l.minimum_payment != null ? { sub: `Minimum ${formatMoney(l.minimum_payment, a.currency)}` } : {}),
         severity: 'critical',
         ...ids,
       });
@@ -234,11 +236,14 @@ export function paymentAlerts(accounts: PaymentAccount[], now: Date = new Date()
     // snapshot with no TTL, so a stale payload can carry a due date that has
     // since passed, and "due in -4 days" would render on first paint.
     if (days < 0 || days > 7) continue;
+    const when = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
     dueSoon.push({
       days,
       alert: {
         key: `due-${a.account_id}`,
-        ...line(a.name, `${l.minimum_payment != null ? `${formatMoney(l.minimum_payment, a.currency)} ` : ''}due ${days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`}`),
+        text: `${a.name}: ${l.minimum_payment != null ? `${formatMoney(l.minimum_payment, a.currency)} ` : ''}due ${when}`,
+        title: `${a.name} due ${when}`,
+        ...(l.minimum_payment != null ? { sub: `Minimum ${formatMoney(l.minimum_payment, a.currency)}` } : {}),
         severity: 'caution',
         ...ids,
       },
@@ -360,13 +365,16 @@ export default function Insights({
     // institution as a linked one), and a duplicate React key would drop an alert.
     // Not cash on hand (lib/balance.ts): a wallet running low is no risk of an
     // overdraft.
-    for (const [i, a] of accounts.entries()) {
-      if (a.type === 'depository' && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
-        out.push({
-          key: `low-${i}-${a.name}`,
-          text: `Low balance: ${a.name} at ${formatMoney(a.balance, a.currency)}`,
-        });
-      }
+    // One row: the first, and how many more. Several small accounts kept on
+    // purpose would otherwise push the month's own figures off the card.
+    const low = [...accounts.entries()].filter(([, a]) => a.type === 'depository' && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD);
+    if (low.length > 0) {
+      const [i, a] = low[0];
+      const more = low.length - 1;
+      out.push({
+        key: `low-${i}-${a.name}`,
+        text: `Low balance: ${a.name} at ${formatMoney(a.balance!, a.currency)}${more > 0 ? `, and ${more} more account${more === 1 ? '' : 's'}` : ''}`,
+      });
     }
 
     // Uninvested cash in a brokerage: a contribution never placed, or a settlement
@@ -460,7 +468,11 @@ export default function Insights({
       }
     }
 
-    const shown = out.slice(0, MAX_INSIGHTS);
+    // The month's own figures first (the pace, the biggest purchase, the bills
+    // coming), then a low balance, then idle cash, so the cap never drops the
+    // figures the card is named for.
+    const rank = (key: string) => (key === 'pace' ? 0 : key === 'biggest' ? 1 : key.startsWith('bill-') ? 2 : key.startsWith('low-') ? 3 : 4);
+    const shown = out.sort((a, b) => rank(a.key) - rank(b.key)).slice(0, MAX_INSIGHTS);
     // Said only beside a figure it is missing from.
     const fromSpending = shown.some((i) => i.key === 'pace' || i.key === 'biggest');
     const notes = fromSpending ? spendingNotes({ txns, fx, withoutTransactions, incomplete, stopped }, now, counted) : null;

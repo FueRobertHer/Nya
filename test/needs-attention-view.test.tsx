@@ -76,12 +76,16 @@ describe('the admin’s card: what to do about the nightly jobs', () => {
   test('the fact, then where to look; nothing while the clean-up only waits for a backup', () => {
     const backup = text(renderToStaticMarkup(<AdminAttention backup={{ last_ok: '2026-10-20T03:00:00Z', reason: 'timeout' }} files={null} />));
     expect(backup).toContain('Admin');
-    expect(backup).toContain('The nightly backup failed; the last one saved was on Oct 20. (timeout) Check the backup cron in Vercel.');
+    // As the redesign draws it: what failed, then when, why and where to look.
+    expect(backup).toContain('Nightly backup failed Last saved Oct 20 · timeout · Check the backup cron in Vercel.');
+    expect(text(renderToStaticMarkup(<AdminAttention backup={{ last_ok: null, reason: null, none: true }} files={null} />))).toContain(
+      'No nightly backup recorded yet Check the backup cron in Vercel.'
+    );
     expect(text(renderToStaticMarkup(<AdminAttention backup={null} files={{ last_ok: null, reason: null, held: true }} />))).toContain(
-      'so it removed none of them there. Its log in Vercel names the account.'
+      'Receipt clean-up held back It found more stored files with no record than it removes at once. Its log in Vercel names the account.'
     );
     expect(text(renderToStaticMarkup(<AdminAttention backup={null} files={{ last_ok: '2026-10-19T03:00:00Z', reason: 'quota', held: false }} />))).toContain(
-      'Check the clean-up cron in Vercel.'
+      'Receipt clean-up failed Last finished Oct 19 · quota · Check the clean-up cron in Vercel.'
     );
     expect(renderToStaticMarkup(<AdminAttention backup={null} files={{ last_ok: null, reason: null, held: false, paused: true }} />)).toBe('');
     expect(renderToStaticMarkup(<AdminAttention backup={null} files={null} />)).toBe('');

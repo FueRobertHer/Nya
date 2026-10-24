@@ -14,7 +14,7 @@
 import { cardlessSeverity, type Severity } from '@/lib/accounts-status';
 import { connectorBadge } from '@/lib/connectors/health';
 import type { ConnectorsList } from './Connectors';
-import type { Institution } from './accounts-format';
+import { fmtStaleDay, type Institution } from './accounts-format';
 import { accountName, questionText } from './AccountLifecycle';
 import { statusBadge } from './ConnectionStatus';
 import type { Offer } from './CurrencyNotes';
@@ -29,6 +29,7 @@ export type AttentionSeverity = Severity | 'info';
  *  of a home currency. */
 export type Go =
   | { to: 'card'; item_id: string }
+  | { to: 'accounts'; focus: string }
   | { to: 'connections'; item_id?: string }
   | { to: 'account'; item_id: string; account_id: string }
   | { to: 'budgets' }
@@ -69,6 +70,9 @@ export type AttentionInput = {
   /** The offer of a home currency, while it stands (not chosen, not set aside). */
   currency: Offer | null;
   restore: RestoreHoldNote | null;
+  /** What this load couldn't read about the connections: without it, a
+   *  connection that needs the person could be missing from the list. */
+  unread?: { health: boolean; connectors: boolean };
   now?: Date;
 };
 
@@ -76,6 +80,17 @@ const RANK: Record<AttentionSeverity, number> = { critical: 0, caution: 1, info:
 
 /** The line under a title, which starts a sentence of its own. */
 const sentence = (sub?: string) => (sub ? sub.charAt(0).toUpperCase() + sub.slice(1) : undefined);
+
+/** What fixes a connection, as the row's title, when the person must do it
+ *  at Nya (the redesign's "Reconnect Chase"); null when the badge says it. */
+function actionFor(inst: Institution): string | null {
+  const h = inst.health;
+  const name = inst.institution_name;
+  // A SimpleFIN or Lunch Flow connection is connected again as a whole.
+  if (h?.cause === 'connector') return h.detail && (h.detail.issue === 'refused' || h.detail.issue === 'credentials') ? `Connect ${h.detail.label} again` : null;
+  if (h) return h.state === 'needs_reauth' ? `Reconnect ${name}` : h.state === 'relink' ? `Connect ${name} again` : null;
+  return inst.needs_reauth && inst.error ? `Reconnect ${name}` : null;
+}
 
 const joinNames = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 
@@ -92,7 +107,7 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
   // A SimpleFIN or Lunch Flow connection that fails as a whole says the same
   // on every bank's card, word for word: one row, on its first. What it says
   // of one bank (a card to sign, a bank it can't reach) is that bank's row.
-  const said = new Set<string>();
+  const shown = new Set<string>();
   const soon = reconnectAlerts(
     [...input.cards, ...input.hiddenOnly].flatMap(({ inst }) =>
       inst.health?.state === 'reconnect_soon' && inst.health.ends_at
@@ -105,12 +120,16 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
     const go = where(inst.item_id);
     const badge = statusBadge(inst, now.getTime());
     if (severity === 'critical') {
-      const sub = badge ?? inst.error ?? "An account isn't counted in your net worth";
+      // What to do, then how old its balances are; else its name and its
+      // card's badge.
+      const act = actionFor(inst);
+      const said = badge ?? inst.error ?? "An account isn't counted in your net worth";
+      const sub = act ? (inst.stale_as_of ? `Balances as of ${fmtStaleDay(inst.stale_as_of, inst.stale_as_of_at)}` : undefined) : said;
       const who = inst.health?.cause === 'connector' && inst.connection_id ? `${inst.connection_id}:${(inst.health.detail?.messages ?? []).join('|')}` : inst.item_id;
-      const key = `connection:${who}:${sub}`;
-      if (said.has(key)) continue;
-      said.add(key);
-      items.push({ key, severity, title: inst.institution_name, sub, go });
+      const key = `connection:${who}:${act ?? said}`;
+      if (shown.has(key)) continue;
+      shown.add(key);
+      items.push({ key, severity, title: act ?? inst.institution_name, sub, go });
       continue;
     }
     const ending = soon.find((a) => a.key === `reconnect-${inst.item_id}`);
@@ -185,6 +204,14 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
       go: { to: 'currency' },
     });
   }
+
+  // What couldn't be read leaves the list short: said, so an empty card
+  // never claims nothing needs the person. In the Accounts tab's words and
+  // colors (amber for Plaid's warnings, red for the connections, as there).
+  if (input.unread?.health)
+    items.push({ key: 'health-unread', severity: 'caution', title: "Plaid's warnings couldn't be read just now", sub: 'A connection that is about to end may not be listed', go: { to: 'accounts', focus: 'health-unread' } });
+  if (input.unread?.connectors)
+    items.push({ key: 'connectors-unread', severity: 'critical', title: 'Your own sync’s connections couldn’t be loaded', sub: 'One that needs you may not be listed', go: { to: 'accounts', focus: 'connectors-unread' } });
 
   // An unfinished restore has its banner, on every tab. A bank it brought
   // back that isn't connected is missing from the total: red.

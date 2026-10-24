@@ -199,8 +199,8 @@ describe('the FI card on Home', () => {
     // and its gathered notes say, closed, that these are the defaults.
     const defaults = homeHtml(plan(), inputs(), false);
     expect(defaults).toMatch(/^<li><button type="button" class="list-row">/);
-    expect(defaults).toMatch(/<summary class="notice info">.*<span>2 notes: from the Plan’s defaults and pay before it reaches a bank<\/span>/);
-    expect(homeHtml(plan())).toContain('<span>2 notes: how these are estimated and pay before it reaches a bank</span>');
+    expect(defaults).toMatch(/<summary class="notice info">.*<span><span class="visually-hidden">Note: <\/span>2 notes: from the Plan’s defaults and pay before it reaches a bank<\/span>/);
+    expect(homeHtml(plan())).toContain('<span><span class="visually-hidden">Note: </span>2 notes: how these are estimated and pay before it reaches a bank</span>');
   });
 
   test('says which of the plan’s inputs were typed, and when a saved plan needed repairs', () => {
@@ -390,11 +390,11 @@ describe('each note in its level, the summary naming the worst first', () => {
     // transactions (amber): four kinds, so the summary names three.
     const i = inputs({ unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] });
     const html = homeHtml(plan(), i);
-    expect(html).toMatch(/<summary class="notice caution">.*<span>\d notes: spending may be low, /);
+    expect(html).toMatch(/<summary class="notice caution">.*<span><span class="visually-hidden">Caution: <\/span>\d notes: spending may be low, /);
     for (const s of ['Estimates, from your plan', 'Contributions taken from pay before it reaches a bank']) {
-      expect(html).toMatch(new RegExp(`<div class="notice info">.{0,400}<div>${s}`));
+      expect(html).toMatch(new RegExp(`<div class="notice info">.{0,400}<div><span class="visually-hidden">Note: </span>${s}`));
     }
-    expect(html).toMatch(/<div class="notice caution">.{0,400}<div>May be low: spending is missing/);
+    expect(html).toMatch(/<div class="notice caution">.{0,400}<div><span class="visually-hidden">Caution: <\/span>May be low: spending is missing/);
   });
 });
 

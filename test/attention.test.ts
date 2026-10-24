@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { attentionItems, type AttentionInput, type Placed } from '@/components/attention';
-import type { Institution } from '@/components/accounts-format';
+import { fmtStaleDay, type Institution } from '@/components/accounts-format';
 import { budgetAlerts, paymentAlerts, type PaymentAccount } from '@/components/Insights';
 import { severityOf } from '@/lib/accounts-status';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
@@ -30,9 +30,11 @@ const placed = (i: Institution): Placed => ({ inst: i, severity: severityOf(i) }
 const rows = (over: Partial<AttentionInput>) => attentionItems({ ...NOTHING, now, ...over }).map((r) => [r.severity, r.title, r.sub ?? null, r.go.to]);
 
 describe('connections, in their cards’ colors', () => {
-  test('one that needs the person, or is short, is red, named, with its card’s badge, going to its card', () => {
+  test('one that needs the person, or is short, is red, going to its card: what to do first, as the redesign draws it', () => {
     const login = inst('Chase', { error: 'Login', needs_reauth: true, stale_as_of: '2026-09-12', health: plaid('login') });
-    expect(rows({ cards: [placed(login)] })).toEqual([['critical', 'Chase', 'Needs reconnecting', 'card']]);
+    expect(rows({ cards: [placed(login)] })).toEqual([['critical', 'Reconnect Chase', `Balances as of ${fmtStaleDay('2026-09-12')}`, 'card']]);
+    expect(rows({ cards: [placed(inst('Chase', { error: 'Gone', health: plaid('revoked') }))] })[0][1]).toBe('Connect Chase again');
+    // Nothing for the person to do there: its name and its card's badge.
     // Short with no badge of its own: its card's error line.
     const down = inst('Ally', { error: "Couldn't refresh", stale_missing: 1, stale_as_of: '2026-09-12' });
     expect(rows({ cards: [placed(down)] })).toEqual([['critical', 'Ally', "Couldn't refresh", 'card']]);
@@ -54,6 +56,15 @@ describe('connections, in their cards’ colors', () => {
     // Red for something else as well: its one row is the red one.
     const both = inst('E', { error: 'Login', needs_reauth: true, health: plaid('consent_ending', { state: 'reconnect_soon', ends_at: new Date(2026, 9, 9, 12).toISOString() }) });
     expect(rows({ cards: [{ inst: both, severity: 'critical' }] }).map((r) => r[0])).toEqual(['critical']);
+  });
+
+  test('connection warnings that couldn’t be read: said, so an empty list never claims nothing needs you', () => {
+    // In the Accounts tab's colors: red for the connections, amber for Plaid's warnings.
+    expect(rows({ unread: { health: true, connectors: true } })).toEqual([
+      ['critical', 'Your own sync’s connections couldn’t be loaded', 'One that needs you may not be listed', 'accounts'],
+      ['caution', "Plaid's warnings couldn't be read just now", 'A connection that is about to end may not be listed', 'accounts'],
+    ]);
+    expect(rows({ unread: { health: false, connectors: false } })).toEqual([]);
   });
 
   test('a SimpleFIN connection failing as a whole is one row, not one per bank', () => {
@@ -139,10 +150,10 @@ describe('the rest', () => {
       now
     );
     expect(rows({ payments })).toEqual([
-      ['critical', 'Old is overdue ($40.00 minimum)', null, 'account'],
-      ['caution', 'Amex', '$35.00 due tomorrow', 'account'],
-      ['caution', 'Store', '$10.00 due in 2 days', 'account'],
-      ['caution', 'Visa', '$25.00 due in 5 days', 'account'],
+      ['critical', 'Old is overdue', 'Minimum $40.00', 'account'],
+      ['caution', 'Amex due tomorrow', 'Minimum $35.00', 'account'],
+      ['caution', 'Store due in 2 days', 'Minimum $10.00', 'account'],
+      ['caution', 'Visa due in 5 days', 'Minimum $25.00', 'account'],
     ]);
     expect(attentionItems({ ...NOTHING, now, payments })[0].go).toEqual({ to: 'account', item_id: 'i', account_id: 'Old' });
   });
@@ -195,7 +206,7 @@ describe('the rest', () => {
     const card: PaymentAccount = { item_id: 'i', account_id: 'a', name: 'Chase: Sapphire', type: 'credit', balance: 500, currency: 'USD', liability: { minimum_payment: 25, next_due_date: '2026-10-09', is_overdue: false } };
     const [due] = paymentAlerts([card], now);
     expect(due.text).toBe('Chase: Sapphire: $25.00 due tomorrow');
-    expect(rows({ payments: [due] })).toEqual([['caution', 'Chase: Sapphire', '$25.00 due tomorrow', 'account']]);
+    expect(rows({ payments: [due] })).toEqual([['caution', 'Chase: Sapphire due tomorrow', 'Minimum $25.00', 'account']]);
     // The line under it starts a sentence: "overspending" as "Overspending".
     const carried = { alerts: [{ key: 'c', text: 'x', title: 'Over your Food budget', sub: 'overspending carried over left nothing of it this month, and $10.00 is spent' }], more: 0 };
     expect(rows({ budgets: carried })[0][2]).toBe('Overspending carried over left nothing of it this month, and $10.00 is spent');

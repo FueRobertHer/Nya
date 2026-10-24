@@ -50,6 +50,17 @@ describe('the card', () => {
     expect(t).toContain('Spending is tracking');
   });
 
+  test('the month’s own figures first; low balances one row, however many, so the cap never drops the pace', () => {
+    const small = (name: string, balance: number) => ({ name, type: 'depository', subtype: 'savings', balance, currency: 'USD' });
+    const idleCash = [1, 2].map((n) => ({ account_id: `b${n}`, name: `Brokerage ${n}`, mask: null, institution_name: 'Fidelity', cash: 5_000, share: 0.2, currency: 'USD' }));
+    const t = text(renderToStaticMarkup(<Insights txns={spent} accounts={[small('Pot A', 20), small('Pot B', 30), small('Pot C', 40), small('Pot D', 50)]} idleCash={idleCash} />));
+    expect(t.indexOf('Spending is tracking')).toBeLessThan(t.indexOf('Biggest purchase'));
+    expect(t.indexOf('Biggest purchase')).toBeLessThan(t.indexOf('Low balance'));
+    expect(t.indexOf('Low balance')).toBeLessThan(t.indexOf('Brokerage 1'));
+    expect(t).toContain('Low balance: Pot A at $20.00, and 3 more accounts');
+    expect(t).not.toContain('Pot B');
+  });
+
   test('what the month may be missing follows the figures read from it, inside their row', () => {
     const html = renderToStaticMarkup(<Insights txns={spent} accounts={[]} stopped={[{ institution_name: 'Chase', last_ok_at: `${lastMonth}-12T15:00:00.000Z` }]} fi={FI} />);
     const notes = html.indexOf('<div class="stack tight row-notes">');

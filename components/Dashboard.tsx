@@ -2049,13 +2049,14 @@ export default function Dashboard({
       budgets: budgetRows,
       currency: offer && !base && !currencyProblem && !offerHidden ? offer : null,
       restore: restoreHold,
+      unread: { health: healthUnavailable, connectors: !!connectors.error },
       now,
     });
     const notes = budgetRows.alerts.length > 0 ? spendingNotes({ txns, fx: txnFx, withoutTransactions: txnWithout, incomplete: txnIncomplete, stopped: stoppedTxns }, now) : { leftOut: null, missing: [] };
     return { items, notes };
     // `amountsHidden` isn't read inside: it changes what formatMoney writes there.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
+  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, healthUnavailable, connectors.error, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
 
   // Where a Needs attention row goes, focused once it is on screen: a tab's
   // content can come a render later (the Budgets tab's after its spinner).
@@ -2077,6 +2078,11 @@ export default function Dashboard({
     (go: Go) => {
       const focus = (id: string, t: Tab, s: SettingsView | null) => setFocusTarget({ id, tab: t, settings: s, at: Date.now() });
       switch (go.to) {
+        case 'accounts':
+          window.scrollTo(0, 0);
+          setTab('accounts');
+          focus(go.focus, 'accounts', null);
+          return;
         case 'card':
           window.scrollTo(0, 0);
           setTab('accounts');
@@ -2397,7 +2403,8 @@ export default function Dashboard({
                 {/* What couldn't be read about every connection, said once
                     for the tab: a card can't say what is missing from it. */}
                 {healthUnavailable ? (
-                  <div className="notice caution">
+                  // Also where Home's row about it lands (components/attention.ts).
+                  <div className="notice caution" id="health-unread" tabIndex={-1}>
                     {ALERT}
                     <p>Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.</p>
                   </div>
@@ -2410,7 +2417,8 @@ export default function Dashboard({
                   )
                 )}
                 {connectors.error && (
-                  <div className="notice critical">
+                  // Also where Home's row about it lands (components/attention.ts).
+                  <div className="notice critical" id="connectors-unread" tabIndex={-1}>
                     {ALERT}
                     <p>Your own sync’s connections couldn’t be loaded: {connectors.error}</p>
                   </div>
