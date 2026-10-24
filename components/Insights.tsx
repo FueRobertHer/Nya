@@ -8,7 +8,7 @@
 // that may be missing a connection's transactions, in their words
 // (lib/month-coverage.ts).
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, currencyOf, leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { leftOutWhy, totalsIn, type TotalsIn } from '@/lib/fx/totals';
@@ -18,6 +18,7 @@ import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { useAmountsHidden } from './hide-amounts';
 import { Masked } from './HideAmounts';
+import { SpendingNotes } from './NeedsAttention';
 import { isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -132,10 +133,9 @@ export type PaymentAccount = InsightAccount & { item_id: string; account_id: str
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
 
-// 'warn' is the amber the Accounts tab uses for idle cash: worth doing
-// something about, but nothing has gone wrong, which is what separates it from
-// the red 'down' of a low balance.
-type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' | 'warn' };
+// Each says what it is in words: no color of its own (rollout.md "Decided in
+// 4c"), since amber is for what needs the person and red for a short number.
+type Insight = { key: string; text: string };
 
 /** What the budget alerts read: as the Budgets tab meters this month. */
 export type BudgetAlertInput = {
@@ -302,10 +302,13 @@ export function spendingNotes(
 }
 
 /**
- * Home's insights: what is worth knowing and needs nothing done (rollout
- * phase 4b moved the budget, payment and reconnect alerts into Needs
- * attention, components/NeedsAttention.tsx). A low balance stays here until
- * phase 4c decides it.
+ * Home's This month card (rollout phase 4c): what is worth knowing and needs
+ * nothing done, one plain row each (rollout phase 4b moved the budget,
+ * payment and reconnect alerts into Needs attention,
+ * components/NeedsAttention.tsx), with what the month may be missing after
+ * the pace and the biggest purchase, and the FI line last (`fi`,
+ * components/FiProgressCard.tsx, loaded after Home paints). A low balance
+ * stays here: it has no fix to go to and no way to set it aside.
  */
 export default function Insights({
   txns,
@@ -317,6 +320,7 @@ export default function Insights({
   dismissed = NO_DISMISSED,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
+  fi = null,
 }: {
   txns: Txn[] | null;
   /** What the figures convert with, once a home currency is chosen
@@ -334,6 +338,8 @@ export default function Insights({
   dismissed?: string[];
   incomplete?: Incomplete[];
   stopped?: Stopped[];
+  /** The FI line, an <li> once its figures are in (components/FiProgressLoader.tsx). */
+  fi?: ReactNode;
 }) {
   // The texts name amounts, so they are written again when hiding amounts is
   // turned on or off (components/hide-amounts.ts).
@@ -359,7 +365,6 @@ export default function Insights({
         out.push({
           key: `low-${i}-${a.name}`,
           text: `Low balance: ${a.name} at ${formatMoney(a.balance, a.currency)}`,
-          tone: 'down',
         });
       }
     }
@@ -379,7 +384,6 @@ export default function Insights({
         // line (as in the low-balance block above).
         key: `idle-cash-${a.account_id}`,
         text: `${where}: ${formatMoney(a.cash, a.currency)} uninvested${howMuch}`,
-        tone: 'warn',
       });
     }
 
@@ -398,7 +402,6 @@ export default function Insights({
         out.push({
           key: `bill-${b.name}`,
           text: late ? `Expected: ${b.name} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${b.name} (${amount}) around ${day(due)}`,
-          tone: 'neutral',
         });
         if (seen.size >= 2) break;
       }
@@ -428,13 +431,10 @@ export default function Insights({
               ? {
                   key: 'pace',
                   text: `Spending is tracking about even with ${monthName}'s pace`,
-                  tone: 'neutral',
                 }
               : {
                   key: 'pace',
                   text: `Spending is tracking ${pct.toFixed(0)}% ${ratio > 1 ? 'above' : 'below'} ${monthName}'s pace`,
-                  // more spending = down-tone, less = up-tone
-                  tone: ratio > 1 ? 'down' : 'up',
                 }
           );
         }
@@ -456,7 +456,6 @@ export default function Insights({
         out.push({
           key: 'biggest',
           text: `Biggest purchase this month: ${own.name}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,
-          tone: 'neutral',
         });
       }
     }
@@ -470,26 +469,33 @@ export default function Insights({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txns, fx, accounts, idleCash, withoutTransactions, series, dismissed, incomplete, stopped, hidden]);
 
-  if (insights.length === 0) return null;
-
+  if (insights.length === 0 && !fi) return null;
+  // What the month may be missing follows the last figure read from it.
+  let last = -1;
+  insights.forEach((i, n) => {
+    if (i.key === 'pace' || i.key === 'biggest') last = n;
+  });
+  const said = last >= 0 && (leftOut !== null || missing.length > 0);
+  // Hidden by CSS while it has no row: the FI line can arrive later, or not
+  // at all.
   return (
-    <div className="card">
-      <div className="inst-header">
-        <div className="inst-name">Insights</div>
+    <section className="card this-month" aria-labelledby="this-month-title">
+      <div className="card-header">
+        <h2 id="this-month-title">This month</h2>
       </div>
-      <ul className="insight-list">
-        {insights.map((i) => (
-          <li key={i.key} className={`insight insight-${i.tone}`}>
-            <Masked>{i.text}</Masked>
+      <ul className="list-rows">
+        {insights.map((i, n) => (
+          <li key={i.key}>
+            <div className="list-row">
+              <span className="list-row-text">
+                <Masked>{i.text}</Masked>
+              </span>
+            </div>
+            {said && n === last && <SpendingNotes leftOut={leftOut} missing={missing} />}
           </li>
         ))}
+        {fi}
       </ul>
-      {leftOut && <div className="chart-note">{leftOut}</div>}
-      {missing.map((n) => (
-        <div className="stale-note" key={n}>
-          {n}
-        </div>
-      ))}
-    </div>
+    </section>
   );
 }

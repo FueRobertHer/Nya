@@ -1,7 +1,8 @@
 // components/TotalCaveats.tsx
 //
-// What qualifies the Home total, under it (rollout phase 4a, design-system.md
-// "Status and honesty", rule 1): each critical caveat in full, in red, always.
+// What qualifies a figure, under it: the Home total (rollout phase 4a) and
+// the FI line in This month (4c), as design-system.md "Status and honesty"
+// rule 1 says: each critical caveat in full, in red, always.
 // The lesser ones show in full when there is one; two or more become one line
 // that says how many and of what, in the color of the worst, and opens in
 // place to each in its own words and color. A <details>, so it works with no
@@ -35,9 +36,10 @@ const CHEVRON = (
 const RANK: Record<CaveatSeverity, number> = { critical: 2, caution: 1, info: 0 };
 
 /** The summary line's words: the count, then at most three kinds, each
- *  once (two loans whose interest couldn't be read are one kind). */
+ *  once (two loans whose interest couldn't be read are one kind), the worst
+ *  first, so a line in amber names what made it amber. */
 export function summaryText(lesser: readonly Caveat[]): string {
-  const kinds = [...new Set(lesser.map((c) => c.summary))];
+  const kinds = [...new Set([...lesser].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((c) => c.summary))];
   const shown = kinds.length > 3 ? [...kinds.slice(0, 3), `${kinds.length - 3} more`] : kinds;
   return `${lesser.length} notes: ${joinNames(shown)}`;
 }

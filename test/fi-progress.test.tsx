@@ -78,8 +78,9 @@ const inputs = (over: Partial<Inputs> = {}): Inputs => ({
 });
 const hookInputs = (i: Inputs) => ({ ...i, coverage: transactionCoverage(i.without, i.transactionCount) });
 
-const home = (p: FirePlan, i = inputs(), saved = true, repaired = false) =>
-  text(renderToStaticMarkup(<FiProgressView figures={fiFigures(p, i, 'USD')} plan={p} saved={saved} repaired={repaired} inputs={hookInputs(i)} onOpenPlan={noop} />));
+const homeHtml = (p: FirePlan, i = inputs(), saved = true, repaired = false) =>
+  renderToStaticMarkup(<FiProgressView figures={fiFigures(p, i, 'USD')} plan={p} saved={saved} repaired={repaired} inputs={hookInputs(i)} onOpenPlan={noop} />);
+const home = (p: FirePlan, i = inputs(), saved = true, repaired = false) => text(homeHtml(p, i, saved, repaired));
 const planTab = (p: FirePlan, i = inputs()) => {
   const f = fiFigures(p, i, 'USD');
   return text(
@@ -153,10 +154,15 @@ describe('the FI card on Home', () => {
         const t = planTab(p, i);
         const fi = wholeMoney(f.view.fiNumber!, 'USD');
         const years = yearsToFiText(f.view.yearsToFi);
-        for (const s of [fi, years, `${Math.round(f.view.progress! * 100)}% of the way`, `${Math.round(f.savingsRate! * 100)}%`]) {
+        const progress = `${Math.round(f.view.progress! * 100)}%`;
+        for (const s of [fi, years, progress, `${Math.round(f.savingsRate! * 100)}%`]) {
           expect(h).toContain(s);
           expect(t).toContain(s);
         }
+        // Home's one line (rollout phase 4c): years and how far, then the FI
+        // number and the savings rate under it.
+        expect(h).toContain(`FI in ${years} · ${progress} there FI number ${fi} · ${wholeMoney(f.view.assets.value!, 'USD')} invested · ${Math.round(f.savingsRate! * 100)}% savings rate, last 12 months`);
+        expect(t).toContain(`${progress} of the way`);
       }
     }
   });
@@ -188,9 +194,13 @@ describe('the FI card on Home', () => {
   test('with no plan saved, says the figures come from the defaults and offers the Plan tab', () => {
     const t = home(plan(), inputs(), false);
     expect(t).toContain("from the Plan's default assumptions: a 4% withdrawal rate and a 5% real return. Set your own on the Plan tab.");
-    expect(t).toContain('Set up your plan');
     expect(t).toContain('$1,000,000');
-    expect(home(plan(), inputs(), true)).toContain('Your plan');
+    // The whole line opens the Plan tab (its button replaced "Set up your plan"),
+    // and its gathered notes say, closed, that these are the defaults.
+    const defaults = homeHtml(plan(), inputs(), false);
+    expect(defaults).toMatch(/^<li><button type="button" class="list-row">/);
+    expect(defaults).toMatch(/<summary class="notice info">.*<span>2 notes: from the Plan’s defaults and pay before it reaches a bank<\/span>/);
+    expect(homeHtml(plan())).toContain('<span>2 notes: how these are estimated and pay before it reaches a bank</span>');
   });
 
   test('says which of the plan’s inputs were typed, and when a saved plan needed repairs', () => {
@@ -342,6 +352,49 @@ describe('the FI card on Home', () => {
   test('a year that wasn’t a whole year says from when', () => {
     const short = inputs({ flows: { ...flows, from: '2026-07-01', days: 98, scaled: true } });
     expect(home(plan(), short)).toContain('savings rate, since Jul 1, 2026');
+  });
+});
+
+describe('the FI line’s title, for every case (rollout phase 4c)', () => {
+  // The figures as worked out, with years to FI and progress set to each case.
+  const title = (yearsToFi: number | null, progress: number | null) => {
+    const f = fiFigures(plan(), inputs(), 'USD');
+    const figures = { ...f, view: { ...f.view, yearsToFi, progress } };
+    const html = renderToStaticMarkup(<FiProgressView figures={figures} plan={plan()} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} />);
+    return text(html.slice(html.indexOf('<span class="list-row-title">'), html.indexOf('</span>', html.indexOf('<span class="list-row-title">')))).trim();
+  };
+
+  test('years and how far, each as the Plan says them', () => {
+    expect(title(11.4, 0.62)).toBe('FI in about 11.4 years · 62% there');
+    expect(title(0.5, 0.97)).toBe('FI in under a year · 97% there');
+    expect(title(11.4, null)).toBe('FI in about 11.4 years');
+  });
+
+  test('there already, never reached at this rate, or years not worked out', () => {
+    expect(title(0, 1.2)).toBe('You’re at FI');
+    expect(title(Infinity, 0.1)).toBe('FI not reached at this savings rate · 10% there');
+    expect(title(null, 0.36)).toBe('36% of the way to FI');
+  });
+
+  test('neither: the FI number leads, and the line under it has only the savings rate', () => {
+    expect(title(null, null)).toBe('FI number $1,000,000');
+    const f = fiFigures(plan(), inputs(), 'USD');
+    const html = renderToStaticMarkup(<FiProgressView figures={{ ...f, view: { ...f.view, yearsToFi: null, progress: null } }} plan={plan()} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} />);
+    expect(html).toMatch(/<span class="list-row-sub">\d+% savings rate, last 12 months<\/span>/);
+  });
+});
+
+describe('each note in its level, the summary naming the worst first', () => {
+  test('explanations neutral, what may be off amber; an amber line names its amber note', () => {
+    // Estimates, payroll and excluded (neutral), and spending missing a bank's
+    // transactions (amber): four kinds, so the summary names three.
+    const i = inputs({ unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] });
+    const html = homeHtml(plan(), i);
+    expect(html).toMatch(/<summary class="notice caution">.*<span>\d notes: spending may be low, /);
+    for (const s of ['Estimates, from your plan', 'Contributions taken from pay before it reaches a bank']) {
+      expect(html).toMatch(new RegExp(`<div class="notice info">.{0,400}<div>${s}`));
+    }
+    expect(html).toMatch(/<div class="notice caution">.{0,400}<div>May be low: spending is missing/);
   });
 });
 

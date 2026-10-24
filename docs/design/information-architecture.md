@@ -58,9 +58,9 @@ Principles behind the choices: one job per screen; settings live in Settings; on
 |---|---|---|
 | 1 | **Net worth** (one card) | Total and change; under it, each critical caveat in full and the lesser ones gathered in one line that opens in place (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout and what qualifies it under it; the nightly jobs' facts (what to do about them only for the admin, in the Admin card under Needs attention); a foot row with when it was updated, a **History paused** badge while history is paused, and a **Chart notes (N)** button that opens the timeline notes sheet (a foot row, as the mockup draws it: the chart's header has no room at 320px). |
 | 2 | **Needs attention** | Shown only when something does: a row per item, worst first, each with its level as an icon and a word, saying what and going where it is fixed (list [below](#needs-attention)). For the admin only, an **Admin** card under it says what to do about a nightly job that failed. |
-| 3 | **This month** | The passive insights (spending pace, biggest purchase, upcoming bills, idle cash) and one FI line ("FI in 11.4 years · 62% there"), with its caveats summarized in their severity color (for example an amber "Spending covers 11 of 12 months"), linking to Plan. |
+| 3 | **This month** | The passive insights (spending pace, biggest purchase, upcoming bills, idle cash, a low balance) as plain rows, with what the month may be missing after the pace and the biggest purchase, and one FI line ("FI in about 11.4 years · 62% there", the FI number, what is invested and the savings rate under it) that opens the Plan tab, with every note the FI card had under it, gathered into one line in the worst one's color when there are two or more (built in 4c). |
 
-Moves off Home: the timeline notes card (into a sheet from the chart), the backup instruction (into the Admin card under Needs attention, for the admin only; everyone keeps the amber "backup failed" line), the CurrencyOffer card (into Needs attention, a row that opens the offer in a sheet), the FI card's full caveat list (stays on Plan).
+Moves off Home: the timeline notes card (into a sheet from the chart), the backup instruction (into the Admin card under Needs attention, for the admin only; everyone keeps the amber "backup failed" line), the CurrencyOffer card (into Needs attention, a row that opens the offer in a sheet), the FI card (into one line in This month, every note gathered under it; the Plan tab says each beside its figure).
 
 ## Accounts
 
@@ -154,7 +154,7 @@ The only list on Home that asks the person to act (`components/NeedsAttention.ts
 | Accounts a SimpleFIN or Lunch Flow connection stopped sending ("Missing accounts") | Caution, as its card | Its card |
 | An account stopped reporting or sat at zero: did it close? (its card's question) | Caution | Its card |
 | A connection has accounts you haven't added | Information for Plaid's; Caution for a SimpleFIN or Lunch Flow connection with none chosen, as in Settings > Connections | Its card; Settings > Connections |
-| A reconnected account may continue an earlier one: link its history | Information | Not listed yet: rollout phase 4c |
+| A reconnected account may continue an earlier one: link its history | Information | Not listed yet: rollout phase 4d |
 | Transactions waiting for review ("12 transactions to review") | Information | Activity, focus on the review count |
 | A payment overdue ("Amex is overdue ($35.00 minimum)") | Critical | The account sheet, over Home |
 | A payment due within 7 days ("Amex" / "$35.00 due tomorrow"), every one | Caution | The account sheet, over Home |
@@ -163,7 +163,7 @@ The only list on Home that asks the person to act (`components/NeedsAttention.ts
 | A bank a restore brought back isn't connected; what a restore brought back can't be read | Critical; Caution | Settings > Your data |
 | The nightly backup or receipt clean-up failed (admin only): the fact, then where to look | Caution | Not a link: the Admin card under Needs attention |
 
-When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber. An unfinished restore keeps its banner on every tab, Home's too, rather than a row. What a budget row's month may be missing follows the budget rows, in the words Activity and Budgets use. A low balance stays in Insights until phase 4c decides it.
+When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber. An unfinished restore keeps its banner on every tab, Home's too, rather than a row. What a budget row's month may be missing follows the budget rows, in the words Activity and Budgets use. A low balance is a row in This month (decided in 4c): it has no fix to go to and no way to set it aside.
 
 ## Deep links
 
@@ -194,8 +194,8 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
 | CurrencyOffer (CurrencyNotes) | Its own Home card | A Needs attention row that opens CurrencyOfferSheet (built in 4b) |
 | TimelineNotes | Its own Home card | Chart notes sheet from the Net worth card's foot row (built in 4a) |
-| Insights | Home card | Split: Needs attention (budgets, payments, reconnects; built in 4b), This month (passive, 4c); a low balance stays in Insights until 4c |
-| FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line in This month; caveats stay on Plan |
+| Insights | Home card | Split: Needs attention (budgets, payments, reconnects; built in 4b), and the This month card it now draws (passive rows, a low balance among them; built in 4c) |
+| FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line, the last row of This month, its notes gathered under it; the Plan tab says each in full beside its figure (built in 4c) |
 | ConnectButtons, CoverageNote | Top of Accounts | Add account sheet; the empty state keeps them |
 | AddAccountSheet | New in phase 3 | + Add account on Accounts: every way in, coverage behind "Which should I use?" |
 | MigrationSheet (Switching link) | Top of Accounts | Add account sheet |

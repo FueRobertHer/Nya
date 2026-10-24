@@ -2330,25 +2330,26 @@ export default function Dashboard({
                         liability: a.liability,
                       }))
                   )}
-                />
-
-                {/* The Plan's FI number, years to FI and savings rate, from
-                    the same inputs and plan as the Plan tab. Below the
-                    insights: it appears only once its inputs are in, so
-                    nothing above it moves when it does. */}
-                <FiProgressLoader
-                  txns={txns}
-                  txnsLoading={txnsLoading}
-                  txnNotes={txnUnread}
-                  txnWithout={txnWithout}
-                  institutions={planInstitutions}
-                  currency={accountCurrency}
-                  txnFx={txnFx}
-                  balanceFx={base?.fx ?? null}
-                  onOpenPlan={() => {
-                    window.scrollTo(0, 0);
-                    setTab('plan');
-                  }}
+                  // This month's last row: the FI line (the Plan's years to
+                  // FI, FI number and savings rate, from the same inputs and
+                  // plan as the Plan tab). Last: it appears only once its
+                  // inputs are in, so nothing above it moves when it does.
+                  fi={
+                    <FiProgressLoader
+                      txns={txns}
+                      txnsLoading={txnsLoading}
+                      txnNotes={txnUnread}
+                      txnWithout={txnWithout}
+                      institutions={planInstitutions}
+                      currency={accountCurrency}
+                      txnFx={txnFx}
+                      balanceFx={base?.fx ?? null}
+                      onOpenPlan={() => {
+                        window.scrollTo(0, 0);
+                        setTab('plan');
+                      }}
+                    />
+                  }
                 />
                 {error && <div className="error">{error}</div>}
                 {lifecycleRepair}

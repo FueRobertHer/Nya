@@ -54,20 +54,21 @@ function Row({ level, what, detail, onClick }: { level: AttentionSeverity; what:
   );
 }
 
-/** What this month's spending may be missing, after its last row. */
-function Notes({ notes }: { notes: { leftOut: string | null; missing: readonly string[] } }) {
+/** What this month's spending may be missing, after the last row read from
+ *  it (here, and in This month, components/Insights.tsx). */
+export function SpendingNotes({ leftOut, missing }: { leftOut: string | null; missing: readonly string[] }) {
   return (
-    <div className="stack tight needs-attention-notes">
-      {notes.missing.map((n) => (
+    <div className="stack tight row-notes">
+      {missing.map((n) => (
         <div className="notice caution" key={n}>
           {ALERT}
           <div>{n}</div>
         </div>
       ))}
-      {notes.leftOut && (
+      {leftOut && (
         <div className="notice info">
           {ICONS.info}
-          <div>{notes.leftOut}</div>
+          <div>{leftOut}</div>
         </div>
       )}
     </div>
@@ -107,7 +108,7 @@ export default function NeedsAttention({
         {items.map((item, i) => (
           <li key={item.key}>
             <Row level={item.severity} what={item.title} detail={item.sub} onClick={() => onGo(item.go)} />
-            {said && i === last && <Notes notes={notes} />}
+            {said && i === last && <SpendingNotes leftOut={notes.leftOut} missing={notes.missing} />}
           </li>
         ))}
       </ul>

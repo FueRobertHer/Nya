@@ -170,7 +170,7 @@ The only way to say something is wrong or worth knowing. See [Status and honesty
 | Done | `--pos` text on `--pos-tint` | "Saved. 14 transactions now use this rule." |
 
 - Two forms: **inline** (one line under the number it qualifies) and **block** (inside a card or sheet, with an optional action button).
-- **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: accrued interest left out and old exchange rates" (past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
+- **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: old exchange rates and accrued interest left out" (the worst kinds first, so an amber line names what made it amber; past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
 - Never color alone: every notice has an icon and words.
 
 Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`, `.plan-warning`, `.forecast-warning`, `.api-access-warning`, `.restore-banner`, and the feature-scoped notes (`.lifecycle-note`, `.review-note`, `.split-note`, `.goal-note`, `.budget-note`, `.currency-note`, `.imported-history-note`, `.kind-warnings`, `.plan-save-error`, `.payoff-field-error`, `.card-mode-error`).
