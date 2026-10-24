@@ -170,7 +170,7 @@ describe('SimpleFIN rows in a report’s totals', () => {
     const tab = () => {
       const rows = a.transactions.filter((t: any) => t.date >= start && t.date <= end);
       const html = renderToStaticMarkup(
-        createElement(MonthBreakdown, { txns: rows, notes: [], loading: false, taxonomy: a.categories, onRecategorize: () => {}, onRename: () => {} })
+        createElement(MonthBreakdown, { txns: rows, notes: [], loading: false, taxonomy: a.categories, onRecategorize: () => {}, onRename: () => {}, segment: 'spending' })
       );
       const figure = (label: string) => new RegExp(`total-label">${label}</div><div class="summary-value[^"]*">([^<]*)<`).exec(html)?.[1];
       const top = html.slice(html.indexOf('Top spending'));

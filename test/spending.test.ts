@@ -138,8 +138,13 @@ describe('the rule', () => {
   });
 });
 
+// The Activity tab's two screens of the month: Spending's figures, then
+// Transactions' strip and list. What a test says isn't shown holds for both;
+// that each has the strip is test/activity-segments-view.test.tsx's.
 const activity = (txns: Txn[], extra: Record<string, unknown> = {}) =>
-  renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, ...extra }));
+  (['spending', 'transactions'] as const)
+    .map((segment) => renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, segment, ...extra })))
+    .join('');
 const BUDGET_PROPS = { ...categoriesFor(), onSave: async () => true, goals: [], onSaveGoals: async () => true, accounts: [], loading: false };
 
 describe('every total leaves an excluded transaction out, and still lists it', () => {
@@ -243,12 +248,16 @@ describe('every total leaves an excluded transaction out, and still lists it', (
 describe('the Activity tab', () => {
   test('offers to add a transaction only when there is a manual account to add to, empty or not', () => {
     const render = (txns: Txn[], onAddTransaction?: () => void) =>
-      text(renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, onAddTransaction })));
-    expect(render(MONTH, () => {})).toContain('Add a transaction');
-    expect(render([], () => {})).toContain('Add a transaction');
-    expect(render([], () => {})).toContain('No transactions in the last 12 months.');
-    expect(render(MONTH)).not.toContain('Add a transaction');
-    expect(render(MONTH, () => {})).toContain("It doesn't change the account's balance unless you ask.");
+      renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, onAddTransaction }));
+    // With transactions, in the bar's ⋯ (its items are in test/activity-segments-view.test.tsx).
+    expect(render(MONTH, () => {})).toContain('aria-label="Activity options"');
+    expect(render(MONTH)).not.toContain('aria-label="Activity options"');
+    expect(text(render(MONTH))).not.toContain('Add a transaction');
+    // With none, as buttons in view, and what adding one does.
+    expect(text(render([], () => {}))).toContain('Add a transaction');
+    expect(text(render([], () => {}))).toContain('No transactions in the last 12 months.');
+    expect(text(render([], () => {}))).toContain("It doesn't change the account's balance unless you ask.");
+    expect(render([], () => {})).not.toContain('aria-label="Activity options"');
   });
 
   test('a manual row says where it came from, beside its account and category', () => {

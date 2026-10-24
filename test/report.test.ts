@@ -250,9 +250,9 @@ describe('the period', () => {
   });
 });
 
-/** The figures the Activity tab shows for the only month it is given. */
+/** The figures the Activity tab shows for the only month it is given, on Spending. */
 function activityTab(txns: Txn[]) {
-  const html = renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {} }));
+  const html = renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, segment: 'spending' }));
   const figure = (label: string) => new RegExp(`total-label">${label}</div><div class="summary-value[^"]*">([^<]*)<`).exec(html)?.[1];
   const top = html.slice(html.indexOf('Top spending'));
   const categories = [...top.matchAll(/class="cat-name">([^<]*)<\/span>.*?class="cat-val">([^<]*)</g)].map((m) => [m[1], m[2]]);

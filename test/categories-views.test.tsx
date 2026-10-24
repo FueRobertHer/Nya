@@ -171,7 +171,7 @@ describe('the Activity tab’s top spending by group', () => {
       row({ category: 'groceries', category_id: id(taxonomy, 'groceries'), category_name: 'groceries', category_kind: 'expense', amount: 30 }),
       row({ category: 'transportation', amount: 70 }),
     ];
-    const t = text(renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />));
+    const t = text(renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />));
     expect(t).toContain('Top spending by group');
     expect(t).toContain('Transport $70.00');
     expect(t).toContain('Food $30.00');

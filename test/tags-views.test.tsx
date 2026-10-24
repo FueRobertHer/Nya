@@ -137,25 +137,29 @@ describe('on the Activity tab', () => {
   const { taxonomy } = categoriesFor({}, { words: ['food and drink'] });
 
   test('a row shows its tags as chips after the merchant, and the tab offers the filter and spending by tag', () => {
-    const html = renderToStaticMarkup(
-      <MonthBreakdown
-        txns={[txn('Taxi', { tags: ['trip', 'work'] }), txn('Groceries')]}
-        notes={[]}
-        loading={false}
-        taxonomy={taxonomy}
-        tags={TAGS}
-        onRecategorize={() => {}}
-        onRename={() => {}}
-        onChangeTags={() => {}}
-        onSaveNote={() => {}}
-      />
-    );
+    const render = (segment: 'transactions' | 'spending') =>
+      renderToStaticMarkup(
+        <MonthBreakdown
+          txns={[txn('Taxi', { tags: ['trip', 'work'] }), txn('Groceries')]}
+          notes={[]}
+          loading={false}
+          taxonomy={taxonomy}
+          tags={TAGS}
+          onRecategorize={() => {}}
+          onRename={() => {}}
+          onChangeTags={() => {}}
+          onSaveNote={() => {}}
+          segment={segment}
+        />
+      );
+    // The list and its filter on Transactions; spending by tag on Spending.
+    const html = render('transactions');
     const t = text(html);
     expect(t).toContain('Taxi Vacation 2026 Reimbursable');
     expect(html).toContain('class="tag-chip tag-blue"');
     expect(t).toContain('All tags');
     expect(t).toContain('Tagged Gift');
-    expect(t).toContain('Spending by tag');
+    expect(text(render('spending'))).toContain('Spending by tag');
   });
 
   test('a row with a note says so, a bank’s or one entered by hand; the note itself is in its detail', () => {

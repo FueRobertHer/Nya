@@ -1,5 +1,5 @@
-// Where the report page (app/reports) is found from: the Activity tab, under
-// its transactions.
+// Where the report page (app/reports) is found from: the foot of the Activity
+// tab's Spending segment.
 // A link, not state: the page makes its own report.
 
 export default function ReportsEntry() {

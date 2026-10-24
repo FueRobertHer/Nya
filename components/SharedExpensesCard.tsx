@@ -7,7 +7,8 @@
 // already loaded), never confirmed on their own; transactions carrying a
 // person's tag that aren't shared yet are offered in one tap; a shared or
 // paying transaction that is gone from the accounts is said, with what can be
-// done about it. Every sheet it opens is mounted here.
+// done about it. The sheets it opens are SharedSheets, below, mounted beside
+// it on every segment of the tab.
 //
 // Nya keeps the list; the money moves in Venmo, Cash App or however the
 // people pay each other. Balances are figures only when everything could be
@@ -115,7 +116,7 @@ export default function SharedExpensesCard({
    *  currencies said about in the home one. */
   fx?: FxTable | null;
 }) {
-  const { card, failed, open, setOpen, send } = shared;
+  const { card, failed, setOpen, send } = shared;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -604,7 +605,28 @@ export default function SharedExpensesCard({
       )}
 
       <div className="chart-note">Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.</div>
+    </div>
+  );
+}
 
+/** Every sheet the card opens, and the rows of Activity's list open too
+ *  (Share the cost, This paid back, an IOU's row): mounted on every segment,
+ *  so a row on Transactions opens its sheet while the card is on Shared. */
+export function SharedSheets({
+  shared,
+  tags,
+  taxonomy,
+  currency,
+}: {
+  shared: SharedExpenses;
+  tags: readonly Tag[];
+  taxonomy: Taxonomy | null;
+  /** The currency a new IOU is in, until changed. */
+  currency: string;
+}) {
+  const { open, setOpen } = shared;
+  return (
+    <>
       <ShareCostSheet t={open?.kind === 'share' ? open.t : null} shared={shared} onClose={() => setOpen(null)} />
       <ConfirmPaymentSheet
         t={open?.kind === 'paid' ? open.t : null}
@@ -633,6 +655,6 @@ export default function SharedExpensesCard({
         onClose={() => setOpen(null)}
       />
       <HandoffSheet person={open?.kind === 'handoff' ? open.person : null} currency={open?.kind === 'handoff' ? open.currency : currency} shared={shared} onClose={() => setOpen(null)} />
-    </div>
+    </>
   );
 }

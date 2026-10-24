@@ -594,6 +594,55 @@ button:active:not(:disabled):not([class*="cl-"]) {
   }
 }
 
+/* Activity's pinned bar (components/ActivityBar.tsx): the month switcher and
+   the tab's ⋯ over its segments, kept in view under the status bar while the
+   segment scrolls. */
+.activity-bar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  background: var(--canvas);
+}
+
+.activity-month {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: var(--tap);
+}
+
+.activity-month-name {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+}
+
+/* An arrow at either end looks as a disabled button does, and keeps focus. */
+.activity-month > .icon-btn[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Shared has no month: its ⋯ keeps to the right. */
+.activity-month > .menu-anchor {
+  margin-left: auto;
+}
+
+/* What a jump scrolls to on Activity (a segment chosen from the pinned bar,
+   a cash-flow pick's list, the review count) stops under the bar, not behind it: the bar's two 44px rows (the
+   segments' with their track's padding), its padding and gap, under the
+   status bar. */
+.activity-panel,
+.activity-panel :is(.card, .flow-shown, .review-count) {
+  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 2 * var(--tap) + 4 * var(--sp-2));
+}
+
 /* Badge: a status or source label, not clickable. Chip: clickable, 32px
    tall inside a 44px hit area. Sentence case, never color alone. */
 .badge,

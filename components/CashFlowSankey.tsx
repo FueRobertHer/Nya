@@ -28,9 +28,9 @@
 // are hidden is the mask, so a name's cut never says how long a hidden
 // figure is.
 //
-// TAPPING a payer, a group, a category or a fold lists its transactions in the
-// Activity list below (components/MonthBreakdown.tsx), with the list's own
-// search and tag filter on top, and tapping it again stops. The chart is an
+// TAPPING a payer, a group, a category or a fold lists its transactions on
+// Activity's Transactions segment (components/MonthBreakdown.tsx), with the
+// list's own search and tag filter on top, and tapping it again stops. The chart is an
 // image to a screen reader: its text alternative is the table under it, every
 // flow with its amount, each row's name a button that does what a tap does.
 
@@ -377,7 +377,7 @@ export default function CashFlowSankey({
               </span>
             )}
           </div>
-          {onPick && <p className="chart-note">Tap a payer, a group or a category to list its transactions below.</p>}
+          {onPick && <p className="chart-note">Tap a payer, a group or a category to list its transactions.</p>}
         </>
       )}
 
