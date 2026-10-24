@@ -1,6 +1,6 @@
 'use client';
 
-import ClerkAccount, { ClerkSignOut, GEAR } from './ClerkAccount';
+import ClerkAccount, { GEAR } from './ClerkAccount';
 import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
@@ -1989,28 +1989,30 @@ export default function Dashboard({
     {
       id: 'account',
       title: 'Account',
-      sub: clerk ? 'Sign out, and where your profile is' : 'Log out, sign out everywhere',
+      sub: clerk ? 'Your profile and signing out are in the account menu' : 'Sign out here, or on every device',
       content: (
-        <div className="card">
+        <div className="card stack">
           {clerk ? (
+            // Only where things are: Sign out is the account menu's own, so
+            // it is not repeated here. No button to the account window
+            // either: Clerk's openUserProfile() would open it without the
+            // Data & privacy page, which only the menu's window carries.
+            <p className="helper">
+              Tap your picture or initial, at the top right. Manage account there has your profile, how you
+              sign in, your devices and deleting your account; Sign out is beside it.
+            </p>
+          ) : (
             <>
-              <p className="panel-note">
-                Your profile, how you sign in, your devices and deleting your account are in the account
-                menu, under your picture at the top.
-              </p>
-              <div className="card-actions">
-                <ClerkSignOut clearDevice={clearDevice} />
+              <p className="helper">Sign out everywhere also signs out every other device.</p>
+              <div className="btn-row">
+                <button className="btn secondary" onClick={logout}>
+                  Sign out
+                </button>
+                <button className="btn secondary" onClick={signOutEverywhere}>
+                  Sign out everywhere
+                </button>
               </div>
             </>
-          ) : (
-            <div className="card-actions">
-              <button className="secondary" onClick={logout}>
-                Log out
-              </button>
-              <button className="secondary" onClick={signOutEverywhere}>
-                Sign out everywhere
-              </button>
-            </div>
           )}
         </div>
       ),
@@ -2194,7 +2196,7 @@ export default function Dashboard({
             {clerk ? (
               <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={() => setSharingOpen(true)} />
             ) : (
-              // Password mode has no account menu: Log out and Sign out
+              // Password mode has no account menu: Sign out and Sign out
               // everywhere are in Settings > Account.
               <button className="secondary icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

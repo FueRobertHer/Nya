@@ -672,7 +672,7 @@ describe('an email each time', () => {
     expect(mail.to).toEqual(['owner@example.com']);
     expect(mail.subject).toBe('Your Nya data was downloaded');
     expect(mail.text).toMatch(/^Your Nya data was downloaded on \w+day, \w+ \d{1,2}, \d{4}, at \d{2}:\d{2} UTC: everything, as one JSON file, protected with a passphrase\.\n\n/);
-    expect(mail.text).toContain("If it wasn't you, someone else has signed in as you: use Sign out everywhere in Nya (beside Log out) to end every session");
+    expect(mail.text).toContain("If it wasn't you, someone else has signed in as you: use Sign out everywhere in Nya (Settings > Account) to end every session");
     expect(mail.text).toContain('Open Nya: https://nya.example/');
     expect(mail.text).toContain('Its emails never include balances, amounts or account numbers.');
     expect(res.said).toEqual(['Data download: json, protected', 'Download notice: emailed.']);

@@ -30,7 +30,7 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 - The Payoff plan button stays on Accounts until phase 6.
 - Delete `manageMode`.
 
-**Decided:** an in-app view (keeps the dashboard's loaded data, no URL), chosen over a `/settings` route (real URLs and back button, remounts the dashboard and refetches). A route can follow. With Clerk on, Settings > Account has Sign out and points to the account menu for the profile and Delete my account; embedding Clerk's profile there is left for later.
+**Decided:** an in-app view (keeps the dashboard's loaded data, no URL), chosen over a `/settings` route (real URLs and back button, remounts the dashboard and refetches). A route can follow. With Clerk on, Settings > Account points to the account menu for the profile, Delete my account and Sign out (it had a Sign out of its own at first, which repeated the menu's and was taken out); embedding Clerk's profile there is left for later.
 
 **Also done in phase 1:** every message, email, page and doc that sent people "under Manage" now names the Settings section or the account's Options instead.
 

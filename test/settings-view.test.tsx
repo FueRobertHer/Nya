@@ -72,12 +72,21 @@ describe('the dashboard', () => {
       transactions: ['<CategoriesCard', '<TagsCard', '<RulesCard', '<VendorDefaultsCard', '<ReviewSettingsCard'],
       connections: ['allHiddenInstitutions.map', '<AccountLinks', '{admin && <AdminUnusedItems'],
       data: ['<DownloadMyData', '{filesMode?.connected && <ReceiptsCard', '<InventoryEntry', '<div id="bring-back" tabIndex={-1}>', '<ApiTokens'],
-      account: ['<ClerkSignOut', 'onClick={logout}', 'onClick={signOutEverywhere}'],
+      account: ['onClick={logout}', 'onClick={signOutEverywhere}'],
     };
     for (const [id, cards] of Object.entries(homes)) {
       const text = section(id);
       for (const card of cards) expect([id, card, text.includes(card)]).toEqual([id, card, true]);
     }
+    // With Clerk, signing out is the account menu's alone: Settings > Account
+    // points to it and repeats no Sign out of its own.
+    const account = section('account');
+    const clerkBranch = account.slice(account.indexOf('{clerk ? ('), account.indexOf(') : ('));
+    expect(clerkBranch).not.toContain('<button');
+    expect(clerkBranch).not.toMatch(/SignOut|signOut|logout/);
+    // Password mode's two say how they differ, and both say "Sign out".
+    expect(account).toContain('Sign out everywhere also signs out every other device.');
+    expect(dashboard).not.toContain('Log out');
     // Sharing only where there is Clerk to share between people.
     expect(dashboard).toContain("...(clerk\n      ? [\n          {\n            id: 'sharing' as const,");
   });
