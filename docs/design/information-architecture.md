@@ -191,7 +191,8 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | TimelineNotes | Its own Home card | Notes sheet from the chart header |
 | Insights | Home card | Split: Needs attention (urgent items), This month (passive) |
 | FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line in This month; caveats stay on Plan |
-| ConnectButtons, CoverageNote | Top of Accounts | Add account sheet |
+| ConnectButtons, CoverageNote | Top of Accounts | Add account sheet; the empty state keeps them |
+| AddAccountSheet | New in phase 3 | + Add account on Accounts: every way in, coverage behind "Which should I use?" |
 | MigrationSheet (Switching link) | Top of Accounts | Add account sheet |
 | ConnectionHealth | Collapsible card on Accounts | Status pill, institution cards, Connection details in ⋯ |
 | Connectors (ConnectorCards, ConnectorSheet) | Separate cards on Accounts | Institution card ⋯ menu; orphans in Settings > Connections |

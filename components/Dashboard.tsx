@@ -26,6 +26,7 @@ import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import ConnectButtons from './ConnectButtons';
+import AddAccountSheet from './AddAccountSheet';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -821,6 +822,8 @@ export default function Dashboard({
   // Switching from another app (components/MigrationSheet.tsx): accounts it
   // makes change net worth, and its rows join the Activity tab.
   const [migrationOpen, setMigrationOpen] = useState(false);
+  // Every way to add an account (components/AddAccountSheet.tsx).
+  const [addAccountOpen, setAddAccountOpen] = useState(false);
   const onImported = useCallback(
     async ({ balanceChanged }: { balanceChanged: boolean }) => {
       loadTransactions();
@@ -2176,34 +2179,32 @@ export default function Dashboard({
 
             {tab === 'accounts' && (
               <>
-                <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
-                  <CoverageNote />
-                  {/* Equal widths, icon over label. */}
-                  <div className="action-row">
-                    <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
-                      <ActionIcon d="M12 5v14M5 12h14" />
-                      Add manual
-                    </button>
-                    {clerk && (
-                      <button className="secondary" onClick={() => setSharingOpen(true)}>
-                        <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-                        Sharing
-                      </button>
-                    )}
-                    {/* Whenever there is a card or loan on screen to plan. */}
-                    {allAccounts.some((a) => isOwedType(a.type)) && (
-                      <button className="secondary" onClick={() => setPayoffOpen(true)}>
-                        <ActionIcon d="M22 17 13.5 8.5l-5 5L2 7M16 17h6v-6" />
-                        Payoff plan
-                      </button>
-                    )}
-                  </div>
-                  <SwitchingLink onOpen={() => setMigrationOpen(true)} />
-                  {error && <div className="error">{error}</div>}
-                  {lifecycleRepair}
-                  {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
+                {/* Connecting, a manual account and switching are in the
+                    Add account sheet; sharing is in the avatar menu and
+                    Settings > Sharing. */}
+                <div className="accounts-bar">
+                  <button className="btn" onClick={() => setAddAccountOpen(true)}>
+                    <ActionIcon d="M12 5v14M5 12h14" />
+                    Add account
+                  </button>
                 </div>
+                {error && <div className="error">{error}</div>}
+                {lifecycleRepair}
+                {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
+                {/* Whenever there is a card or loan on screen to plan, until
+                    it moves to Budgets > Goals (rollout phase 6). */}
+                {allAccounts.some((a) => isOwedType(a.type)) && (
+                  <ul className="card list-rows">
+                    <li>
+                      <button className="list-row" onClick={() => setPayoffOpen(true)}>
+                        <span className="list-row-text">
+                          <span className="list-row-title">Payoff plan</span>
+                        </span>
+                        <ActionIcon d="m9 6 6 6-6 6" />
+                      </button>
+                    </li>
+                  </ul>
+                )}
 
                 {/* Every linked institution's health, last good sync and the
                     action for it, in one place. Open whenever one needs
@@ -2767,6 +2768,17 @@ export default function Dashboard({
           requestBackfill(() => loadNetWorth());
           void loadNetWorth();
         }}
+      />
+      <AddAccountSheet
+        open={addAccountOpen}
+        onClose={() => setAddAccountOpen(false)}
+        connecting={connecting}
+        brokerage={brokerageLink}
+        onConnect={startConnect}
+        onConnectSimpleFin={connectSimpleFin}
+        onConnectLunchFlow={connectLunchFlow}
+        onAddManual={() => startAddManual(manualDefaultCurrency)}
+        onSwitching={() => setMigrationOpen(true)}
       />
       <MigrationSheet
         open={migrationOpen}

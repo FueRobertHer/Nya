@@ -309,6 +309,11 @@ button:active:not(:disabled):not([class*="cl-"]) {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* In a sheet the rows run to its edges, as on a card. */
+.sheet-body .list-rows:not(.card) {
+  margin-inline: calc(-1 * var(--sp-5));
+}
+
 /* The whole row is the target: a <button> or a link, never a row with
    buttons inside it. A title, one subtitle line, then a trailing value or a
    chevron. */
@@ -1939,6 +1944,19 @@ button:disabled {
 .action-row > button[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* The Accounts tab's own row: + Add account, on the right. */
+.accounts-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.accounts-bar .btn > svg {
+  width: var(--icon);
+  height: var(--icon);
 }
 
 /* --- drawer (components/Sheet.tsx) --- */
