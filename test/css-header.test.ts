@@ -75,6 +75,6 @@ describe("the app's base button rule", () => {
     const base = declared(':where(button:not([class*="cl-"]))');
     expect(base.get('width')).toBe('100%');
     expect(base.get('background')).toBe('var(--accent-fill)');
-    expect(css).toContain('button:disabled:not([class*="cl-"])');
+    expect(css).toContain('button:disabled:where(:not([class*="cl-"]))');
   });
 });

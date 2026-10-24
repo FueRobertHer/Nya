@@ -1097,7 +1097,7 @@ button.danger {
   outline-offset: 1px;
 }
 
-button:disabled:not([class*="cl-"]) {
+button:disabled:where(:not([class*="cl-"])) {
   opacity: 0.6;
   cursor: not-allowed;
 }
