@@ -9,6 +9,7 @@
 // so two concurrent link flows can't clobber each other's writes.
 
 import { Redis } from '@upstash/redis';
+import { RAW_REDIS_REQUEST_MS, REDIS_REQUEST_MS, requestLimit } from './redis-limit';
 import type { Ctx } from './containers';
 
 // The @upstash/redis client speaks HTTP, so it needs the *REST* URL
@@ -54,24 +55,10 @@ function credentials(): { url: string; token: string } {
   return { url, token };
 }
 
-/**
- * How long one request to Upstash may take. Upstash sets no limit, and its
- * client retries only a request that fails, never one still waiting, so one
- * that went quiet used to hold a cron (the snapshot, the backup) until Vercel
- * ended it, with no outcome recorded. Over the limit, the request fails like
- * any other error, which every caller already handles. Generous: a page of
- * the export (about 190 keys) answers in well under a second.
- */
-export const REDIS_REQUEST_MS = 15_000;
-
-/** Given as a function, called for each request: only then does the client
- * throw when it aborts. Handed a signal itself, it answers the abort's reason
- * as if it were the stored value (@upstash/redis 1.38, HttpClient.request). */
-const requestLimit = () => AbortSignal.timeout(REDIS_REQUEST_MS);
-
+// Every request has a time limit (lib/redis-limit.ts).
 let _redis: Redis | undefined;
 export function redis(): Redis {
-  if (!_redis) _redis = new Redis({ ...credentials(), signal: requestLimit });
+  if (!_redis) _redis = new Redis({ ...credentials(), signal: requestLimit(REDIS_REQUEST_MS) });
   return _redis;
 }
 
@@ -84,7 +71,7 @@ export function redis(): Redis {
  */
 let _rawRedis: Redis | undefined;
 export function rawRedis(): Redis {
-  if (!_rawRedis) _rawRedis = new Redis({ ...credentials(), automaticDeserialization: false, signal: requestLimit });
+  if (!_rawRedis) _rawRedis = new Redis({ ...credentials(), automaticDeserialization: false, signal: requestLimit(RAW_REDIS_REQUEST_MS) });
   return _rawRedis;
 }
 

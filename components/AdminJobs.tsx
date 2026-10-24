@@ -98,7 +98,7 @@ export function JobCard({ view, running, said, onRun }: { view: JobView; running
                 {running === view.job ? 'Running…' : 'Run now'}
               </button>
             </div>
-            {view.hold_until && running === null && <p className="helper">Its nightly run may still be going. Run it from here after {time(view.hold_until)}.</p>}
+            {view.hold_until && running === null && <p className="helper">A nightly job may be running now. Run it from here after {time(view.hold_until)}.</p>}
           </>
         )}
         <p className="helper" role="status">
@@ -130,6 +130,15 @@ export default function AdminJobs() {
     load();
   }, [load]);
 
+  // While the nightly crons may be running, the buttons wait; read again when
+  // that ends, so they come back without a reload.
+  const holdUntil = jobs?.find((j) => j.hold_until)?.hold_until ?? null;
+  useEffect(() => {
+    if (!holdUntil) return;
+    const timer = setTimeout(load, Math.max(0, Date.parse(holdUntil) - Date.now()) + 1000);
+    return () => clearTimeout(timer);
+  }, [holdUntil, load]);
+
   const run = async (job: Job) => {
     setRunning(job);
     setSaid(null);
@@ -159,7 +168,7 @@ export default function AdminJobs() {
       <p className="sub">The jobs that keep a copy of everything and tidy the file store. When one fails, see its reason here, then run it again now rather than waiting a night.</p>
       <div className="stack">
         {error && (
-          <div className="notice critical">
+          <div className="notice caution">
             {ALERT}
             <div>{error}</div>
           </div>

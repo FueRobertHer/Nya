@@ -14,12 +14,13 @@ import { checkItemUsage, unusedDays, type UsageReport } from '@/lib/item-usage';
 
 export const maxDuration = 300;
 
-/** No Item is started after this long into the run: one takes up to two
- *  Plaid calls of 45 s each (lib/plaid.ts), so one started by then still
- *  finishes inside maxDuration. The rest are counted as deferred and checked
- *  the next day: a Plaid outage used to run the cron past 300 s, with no
- *  answer and no counts. */
-const START_BUDGET_MS = 200_000;
+/** No Item, nor account, is started after this long into the run: an Item
+ *  takes up to two Plaid calls of 45 s each (lib/plaid.ts) and a few reads,
+ *  each within 15 s (lib/storage.ts), so one started by then still finishes
+ *  inside maxDuration. The rest are counted as deferred, or as not reached,
+ *  and checked the next day: a Plaid outage used to run the cron past 300 s,
+ *  with no answer and no counts. */
+const START_BUDGET_MS = 180_000;
 
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -37,8 +38,14 @@ export async function GET(req: Request) {
 
   const until = Date.now() + START_BUDGET_MS;
   const results: ({ container: string } & (UsageReport | { error: string }))[] = [];
+  // Accounts not started at all for want of time: their reads are skipped too.
+  const later: string[] = [];
   for (const c of registry) {
     if (c.status !== 'active') continue;
+    if (Date.now() >= until) {
+      later.push(c.id);
+      continue;
+    }
     try {
       results.push({ container: c.id, ...(await checkItemUsage({ container: c.id }, { until })) });
     } catch {
@@ -50,7 +57,9 @@ export async function GET(req: Request) {
 
   const total = results.reduce((n, r) => n + ('flagged' in r ? r.flagged : 0), 0);
   const deferred = results.reduce((n, r) => n + ('deferred' in r ? (r.deferred ?? 0) : 0), 0);
-  console.log(`Item check: ${results.length} container(s), ${total} Item(s) flagged for review${deferred > 0 ? `, ${deferred} left for tomorrow (out of time)` : ''}.`);
+  console.log(
+    `Item check: ${results.length} container(s), ${total} Item(s) flagged for review${deferred > 0 ? `, ${deferred} left for tomorrow (out of time)` : ''}${later.length > 0 ? `, ${later.length} container(s) not reached (out of time)` : ''}.`
+  );
   const failed = results.some((r) => 'error' in r);
-  return NextResponse.json({ flag_after_days: unusedDays(), results }, { status: failed ? 500 : 200 });
+  return NextResponse.json({ flag_after_days: unusedDays(), results, ...(later.length > 0 ? { not_reached: later } : {}) }, { status: failed ? 500 : 200 });
 }

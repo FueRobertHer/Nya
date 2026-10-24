@@ -40,6 +40,7 @@ import './inventory-limit';
 import './lifecycle';
 import './manual-txns';
 import './migration/store';
+import './nightly-run-limit';
 import './plan-scenarios';
 import './planned-store';
 import './rate-limit';

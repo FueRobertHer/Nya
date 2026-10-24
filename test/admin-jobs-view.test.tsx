@@ -127,10 +127,10 @@ describe('the Nightly jobs page', () => {
     listing = [job({ ...failedBackup, hold_until: '2026-10-24T17:05:00Z' }), goodFiles];
     const page = await mount();
     expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
-    expect(page.text('Nightly backup')).toContain('Its nightly run may still be going. Run it from here after');
+    expect(page.text('Nightly backup')).toContain('A nightly job may be running now. Run it from here after');
     page.unmount();
     listing = [failedBackup, goodFiles];
-    answer = json(409, { error: 'Its nightly run may still be going. Try again in 12 minutes.', jobs: listing });
+    answer = json(409, { error: 'A nightly job may be running now. Try again in 12 minutes.', jobs: listing });
     const later = await mount();
     await later.press(later.button('Nightly backup')!);
     expect(later.text('Nightly backup')).toContain('Try again in 12 minutes.');

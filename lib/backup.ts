@@ -842,38 +842,46 @@ export const CRON_SCHEDULES: Record<NightlyJob, { path: string; hour: number; mi
   files: { path: '/api/attachments/sweep', hour: 17, minute: 30 },
 };
 
-/** How long after its scheduled time a cron may still be running: Vercel may
- *  start one at any point in its hour (Hobby), and it runs for up to its
- *  maxDuration of 300 s. */
-export const CRON_HOLD_MS = 65 * 60_000;
+/** How long a run takes at most: the routes' maxDuration. */
+const RUN_MS = 5 * 60_000;
 
 /**
- * Until when the job's cron may be running, so a run started by hand would
- * overlap it, or null when it can't be: inside its window (CRON_HOLD_MS from today's scheduled time),
- * and no outcome recorded since that time (once tonight's run has recorded
- * one, it has finished). A record that can't be read holds nothing back: the
+ * Until when a run started by hand could overlap a nightly cron, or null when
+ * it can't. Both jobs count, whichever is to be run: two runs at once, of
+ * either job, race over the backups' record, which each reads and writes
+ * whole. For each cron, the span runs from five minutes before the top of its
+ * hour (a run started then is still going when the hour starts, and Vercel's
+ * Hobby plan may start a cron at any point in its hour) until five minutes
+ * after that hour ends (its limit), unless it has recorded an outcome since
+ * its hour began: then it has run. A run started by hand never records inside
+ * that span itself: it is refused there, and one started just before it ends
+ * before the hour does. A record that can't be read holds nothing back: the
  * run itself says what is wrong.
  */
-export async function cronHoldUntil(job: NightlyJob, now: Date = new Date()): Promise<Date | null> {
-  const { hour, minute } = CRON_SCHEDULES[job];
-  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute);
-  if (now.getTime() < start || now.getTime() >= start + CRON_HOLD_MS) return null;
+export async function cronHoldUntil(now: Date = new Date()): Promise<Date | null> {
   let status: Status | null;
   try {
     status = await readStatus();
   } catch {
     return null;
   }
-  const record = job === 'backup' ? status : sweepOf(status);
-  const at = [record?.last_ok, record?.last_failed].map((t) => (t ? Date.parse(t) : NaN));
-  return at.some((t) => t >= start) ? null : new Date(start + CRON_HOLD_MS);
+  let until: number | null = null;
+  for (const job of ['backup', 'files'] as const) {
+    const hour = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), CRON_SCHEDULES[job].hour);
+    const end = hour + 60 * 60_000 + RUN_MS;
+    if (now.getTime() < hour - RUN_MS || now.getTime() >= end) continue;
+    const record = job === 'backup' ? status : sweepOf(status);
+    const ran = [record?.last_ok, record?.last_failed].some((t) => !!t && Date.parse(t) >= hour);
+    if (!ran) until = Math.max(until ?? 0, end);
+  }
+  return until === null ? null : new Date(until);
 }
 
 // ---- What the admin's Nightly jobs page shows (app/admin-view/jobs) ----
 
 /** One job as the page shows it: when it runs, its last outcomes, what the
  *  dashboard says of it (null when nothing), and whether it can be run now:
- *  `hold_until` while its cron may be running (cronHoldUntil), `runnable`
+ *  `hold_until` while a nightly cron may be running (cronHoldUntil), `runnable`
  *  false where a run can't help (no blob store; a clean-up the breaker
  *  held, which would hold again). */
 export type JobView = {
@@ -893,11 +901,10 @@ export type JobView = {
 export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
   const status = await readStatus().catch(() => null);
   const sweep = sweepOf(status);
-  const [backupNow, filesNow, backupHold, filesHold] = await Promise.all([
+  const [backupNow, filesNow, hold] = await Promise.all([
     backupNotice(now),
     attachmentSweepProblem(now),
-    cronHoldUntil('backup', now),
-    cronHoldUntil('files', now),
+    cronHoldUntil(now),
   ]);
   const kept = backupRetention()?.kept === true;
   const jobs: JobView[] = [
@@ -909,7 +916,7 @@ export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
       last_failed: status?.last_failed ?? null,
       reason: status?.last_failed ? status.reason : null,
       problem: backupNow,
-      hold_until: backupHold?.toISOString() ?? null,
+      hold_until: hold?.toISOString() ?? null,
       runnable: kept,
     },
     {
@@ -920,7 +927,7 @@ export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
       last_failed: sweep?.last_failed ?? null,
       reason: sweep?.last_failed ? sweep.reason : null,
       problem: filesNow,
-      hold_until: filesHold?.toISOString() ?? null,
+      hold_until: hold?.toISOString() ?? null,
       runnable: kept && !filesNow?.held,
     },
   ];
