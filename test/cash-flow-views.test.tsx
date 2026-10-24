@@ -92,7 +92,7 @@ const sankey = (props: Partial<Parameters<typeof CashFlowSankey>[0]> = {}) =>
 
 describe('the issue’s acceptance, through the views themselves', () => {
   test('money in on the chart is the Activity tab’s money in for the same month, to the cent', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     const moneyIn = summarize(ROWS, (d) => d.startsWith(month), 'USD').money_in;
     expect(moneyIn).toBe(3138.5);
     // Once in the chart's figures, once in the month's summary: the same figure.
@@ -259,23 +259,46 @@ describe('what the load couldn’t read, beside the chart', () => {
     expect(text(sankey({ txns: [], notes: ['Could not load transactions.'] }))).toContain('Could not load transactions.');
   });
 
-  test('the Activity tab passes its notes: the chart says them as well as the list', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
-    expect(html).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
-    expect(html).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
+  test('the Activity tab passes its notes: the chart says them on Spending, as the list does on Transactions', () => {
+    const render = (segment: 'spending' | 'transactions') =>
+      renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment={segment} />);
+    expect(render('spending')).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
+    expect(render('transactions')).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
+  });
+
+  test('where the cash flow isn’t on the screen, the notes go with the month’s figures', () => {
+    const render = (segment: 'spending' | 'transactions', withCategories: boolean) =>
+      renderToStaticMarkup(
+        <MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={withCategories ? taxonomy : null} onRecategorize={() => {}} onRename={() => {}} segment={segment} />
+      );
+    const esc = manual.replace(/'/g, '&#x27;');
+    // In the In / Out / Net card, the one place on these screens that says a
+    // note as a stale-note without the chart's full stop. Spending before the
+    // categories load: no chart to say them.
+    expect(render('spending', false)).toContain(`<div class="stale-note">${esc}</div>`);
+    // Transactions: beside the figures, and still under the list.
+    for (const cats of [true, false]) {
+      expect(render('transactions', cats)).toContain(`<div class="stale-note">${esc}</div>`);
+      expect(render('transactions', cats)).toContain(`<div class="error">${esc}</div>`);
+    }
+    // Spending with the chart: the chart says them, once.
+    const chart = render('spending', true);
+    expect(chart.split(esc).length - 1).toBe(1);
   });
 
   test('what no figure reads (tags, the review queue’s settings) the list says, never the chart', () => {
     const tags = "Your tags couldn't be read, so transactions show without them until they can be.";
     const queue = 'Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.';
-    const html = renderToStaticMarkup(
-      <MonthBreakdown txns={ROWS} notes={[manual]} asideNotes={[tags, queue]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />
-    );
+    const render = (segment: 'spending' | 'transactions') =>
+      renderToStaticMarkup(
+        <MonthBreakdown txns={ROWS} notes={[manual]} asideNotes={[tags, queue]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment={segment} />
+      );
     const esc = (n: string) => n.replace(/'/g, '&#x27;');
-    expect(html).toContain(`<div class="error">${esc(manual)}</div><div class="error">${esc(tags)}</div><div class="error">${esc(queue)}</div>`);
-    expect(html).toContain(`<div class="stale-note">${esc(manual)}.</div>`);
-    expect(html).not.toContain(`<div class="stale-note">${esc(tags)}</div>`);
-    expect(html).not.toContain(`<div class="stale-note">${esc(queue)}</div>`);
+    expect(render('transactions')).toContain(`<div class="error">${esc(manual)}</div><div class="error">${esc(tags)}</div><div class="error">${esc(queue)}</div>`);
+    const chart = render('spending');
+    expect(chart).toContain(`<div class="stale-note">${esc(manual)}.</div>`);
+    expect(chart).not.toContain(esc(tags));
+    expect(chart).not.toContain(esc(queue));
     // With nothing listed, they still say why rather than the year looking empty.
     const none = renderToStaticMarkup(<MonthBreakdown txns={[]} notes={[]} asideNotes={[tags]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
     expect(none).not.toContain('No transactions in the last 12 months.');
@@ -363,8 +386,10 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
   });
 
   test('the chart waits for the categories it draws by: none without them', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} onRecategorize={() => {}} onRename={() => {}} />);
+    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     expect(text(html)).not.toContain('Cash flow');
+    // Where it would be, with them.
+    expect(text(renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />))).toContain('Cash flow');
   });
 
   test('the flows the views draw are the module’s own', () => {
@@ -382,7 +407,7 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
   const rows = [...ROWS, ...FILES];
 
   test('counted as the month counts them, and said as the month’s summary says them, of the chart’s period', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     const s = summarize(rows, (d) => d.startsWith(month), 'USD');
     expect(s.money_in).toBe(3638.5);
     expect(html.split(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`).length - 1).toBe(2);

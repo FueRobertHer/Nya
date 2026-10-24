@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), and 4a to 4c (Home) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four) and 5a (Activity's bar and segments) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -15,7 +15,9 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 4b | Home: Needs attention | 1 to 2 days |
 | 4c | Home: This month | 1 day |
 | 4d | Home: reconnected accounts to link, in Needs attention | 1 day |
-| 5 | Activity: segments, transaction sheet | 3 to 4 days |
+| 5a | Activity: pinned month bar, the three segments, the analysis moved to Spending | 1 to 2 days |
+| 5b | Activity: filter chips; one period control on Spending | 1 to 2 days |
+| 5c | Activity: the Transaction sheet, rule offer inside it | 1 to 2 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
 | 7 | Light theme and the theme setting | 1 to 2 days |
 
@@ -182,6 +184,28 @@ Needs attention's information row "A reconnected account may continue an earlier
 - Shared segment.
 
 **Risks:** Card Mode and keyboard review must keep working; a cash-flow selection must still filter the list; split and group rows still show under their transaction.
+
+Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 lines, drawn by a dozen test files) holds all of it: **5a** the bar and the segments, **5b** the filter chips and Spending's one period control, **5c** the Transaction sheet.
+
+**Built in 5a:** `components/ActivityBar.tsx` is the tab's pinned bar (`.activity-bar`, sticky under the status bar): **‹ October 2026 ›**, whose arrows step through the months listed (the last 12 with transactions, as Net by month lists them) and stop at either end; the ⋯ with Add a transaction and Import a file while there are transactions and a manual account takes them; and `.segmented` Transactions · Spending · Shared, a WAI-ARIA tablist over one tabpanel. `MonthBreakdown` draws each segment from what it computes today: Transactions has the month's In / Out / Net card (its sentence of what it leaves out and its month notes, in their words and colors) over the list, unchanged; Spending has the cash flow, Net by month, Income vs spend, the same In / Out / Net card, top spending, spending by tag, online vs in-store, where you spent and Reports at its foot; Shared has the Shared expenses card, passed in. The dashboard keeps the segment, so the tab comes back on the last one chosen, and the review jump from Home lands on Transactions. A pick on the cash flow switches to Transactions, where the list shows it and focus goes to the line saying so; choosing a month with the arrows ends a pick, as a column of Net by month does. The Shared sheets (`SharedSheets`) moved out of the card and stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU. A jump's target stops under the bar (`scroll-margin-top`), and a segment chosen while the bar is pinned opens at its top. The month arrows stay focusable at either end (`aria-disabled`), and the month is announced as it changes.
+
+**Decided in 5a:**
+
+- **The In / Out / Net card on both segments**, as the IA's feature table has it ("summary strip also on Transactions"): Spending's month cards need the month's notes beside them, and each segment is its own screen, so the figures are never twice on one.
+- **The load's notes go with the figures on each segment.** The cash flow says them on Spending, the list on Transactions; with no cash flow drawn (categories not loaded), Spending says them in the In / Out / Net card.
+- **No month on Shared**: its balances aren't by month. The bar keeps the ⋯ there.
+- **Adding stays in view while there is nothing to list**: the empty card keeps its two buttons and what adding does to a balance, since a closed ⋯ is easy to miss on an empty screen. With transactions, the ⋯ has them, as the IA says.
+- **Shared doesn't wait for the transactions**: its card reads its own, so it shows while the list loads. Nor does Reports: it is at Spending's foot while the list loads and when there is none, since the runway and what the accounts held need no transactions (it is the app's only way to `/reports`).
+- **The load's notes beside the In / Out / Net card wherever the cash flow isn't on the screen**: on Transactions (and still under the list, where they explain an empty or short list) and on Spending before the categories load. Before 5a the chart said them at the top of the one screen.
+- **The review keys work on Transactions**, where the review bar is: N and Shift+A act on what is listed, so they have nothing to act on elsewhere. Card Mode is unchanged.
+
+**Kept narrow in 5a:**
+
+- **Three time controls on Spending until 5b**: the bar's month, Net by month's columns (which choose it) and the cash flow's own period. 5b gives Spending one period control and the cash flow loses its own; until then, a pick from a longer period lists that period's rows under the bar's month, and the line over them names the period.
+- **The filters as they are**: the tag select, the receipt select and the review bar's filter become chips in 5b, with Card Mode opening from the To review chip. The review count becomes a heading then, since 5b redraws the review bar.
+- **The charts' axis text and range buttons** (4a's chart pass) go with 5b's period control.
+- **Card titles** ("Top spending by group", not the IA's "Spending by group"), and Shared's settings behind a gear: with each card's redraw, not a move.
+- **What a segment switch drops**: a draft in a transaction's note or the shared settings, and the review bar's undo, as leaving the tab does today.
 
 ## Phase 6: Budgets and Plan
 

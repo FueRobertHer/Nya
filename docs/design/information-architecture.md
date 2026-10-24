@@ -240,6 +240,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | DeleteAccount, DeletionReceipt, ForgetDevice | Clerk profile window; header (password mode) | Settings > Account |
 | AdminStorage | `/admin-view` | Settings > Account (admin link) and `/admin-view` |
 | AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
+| ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** (left out on Shared), the ⋯ with Add a transaction and Import a file while there are transactions (buttons in the empty card while there are none), and the segments Transactions · Spending · Shared |
 | MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; editor becomes the Transaction sheet |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
 | CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period control |
@@ -248,7 +249,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions (unchanged behavior) |
 | SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet; Budgets > Month notice |
 | AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet |
-| SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged |
+| SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged. The sheets (`SharedSheets`) stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU |
 | BudgetsTab, BudgetsCard, BudgetSuggestion, IncomePool | Budgets | Budgets > Month |
 | GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals |
 | ForecastCard, ForecastChart | Budgets | Budgets > Upcoming |

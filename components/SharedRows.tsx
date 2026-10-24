@@ -5,8 +5,9 @@
 // (components/shared-expenses-text.ts rowLine), and the actions in its
 // detail: Share the cost (or Who owes what, once shared), and This paid
 // back... on any posted row. An IOU's row is no transaction: tapping it
-// opens the IOU. Each action opens a sheet the Shared expenses card mounts
-// (components/SharedExpensesCard.tsx).
+// opens the IOU. Each action opens one of the Shared sheets, which the
+// dashboard mounts on every segment of the tab (SharedSheets, in
+// components/SharedExpensesCard.tsx).
 
 import { formatMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';

@@ -60,6 +60,15 @@ export class FakeNode {
     const p = this.parentNode;
     return p ? (p.childNodes[p.childNodes.indexOf(this) - 1] ?? null) : null;
   }
+  get previousElementSibling(): FakeElement | null {
+    const p = this.parentNode;
+    if (!p) return null;
+    for (let i = p.childNodes.indexOf(this) - 1; i >= 0; i--) {
+      const c = p.childNodes[i];
+      if (c instanceof FakeElement) return c;
+    }
+    return null;
+  }
   get parentElement(): FakeNode | null {
     return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null;
   }

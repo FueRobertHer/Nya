@@ -850,8 +850,11 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       ]}
     />
   ),
-  'Activity: the month, its totals, top spending and transactions': () => (
+  'Activity: the month, its totals and transactions': () => (
     <MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />
+  ),
+  'Activity: Spending, the cash flow, net by month, income vs spend, top spending, places and channels': () => (
+    <MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />
   ),
   'Budgets: the meters, opened to a group': () => (
     <BudgetsCard
@@ -1126,8 +1129,9 @@ describe('the main screens with amounts hidden', () => {
   });
 
   test('the hidden figures are said as "hidden" where they stand alone', () => {
-    const { hidden } = both(SCREENS['Activity: the month, its totals, top spending and transactions']);
-    expect(hidden).toContain('<span class="visually-hidden">hidden</span>');
+    for (const screen of ['Activity: the month, its totals and transactions', 'Activity: Spending, the cash flow, net by month, income vs spend, top spending, places and channels']) {
+      expect([screen, both(SCREENS[screen]).hidden.includes('<span class="visually-hidden">hidden</span>')]).toEqual([screen, true]);
+    }
     const meters = both(SCREENS['Budgets: the meters, opened to a group']).hidden;
     expect(meters).toContain('<span class="visually-hidden">hidden of hidden</span>');
   });

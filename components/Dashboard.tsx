@@ -16,7 +16,6 @@ import InventoryEntry from './InventoryEntry';
 import RestoreCard from './RestoreCard';
 import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
-import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
 import WeeklySummaryCard from './WeeklySummaryCard';
 import { localDate, localMonth } from '@/lib/local-date';
@@ -46,7 +45,8 @@ import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
 import { useTransactionEdits } from './transaction-edits';
-import SharedExpensesCard, { type SharedFacts } from './SharedExpensesCard';
+import SharedExpensesCard, { SharedSheets, type SharedFacts } from './SharedExpensesCard';
+import type { ActivitySegment } from './ActivityBar';
 import { useSharedExpenses } from './shared-expenses-state';
 import type { SharedRowHooks } from './SharedRows';
 import { REMOVED_NAME } from '@/lib/shared-expenses/model';
@@ -250,6 +250,9 @@ export default function Dashboard({
   // writes, so the whole dashboard draws again when the switch changes.
   const amountsHidden = useAmountsHidden();
   const [tab, setTab] = useState<Tab>('home');
+  // Activity's segment: the tab comes back on the last one chosen while the
+  // app is open (docs/design/information-architecture.md#navigation-model).
+  const [activitySegment, setActivitySegment] = useState<ActivitySegment>('transactions');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   // 'update' re-authenticates or adds a product; 'accounts' is the account
   // picker on an existing Item. Neither creates an Item.
@@ -2123,6 +2126,7 @@ export default function Dashboard({
         case 'review':
           window.scrollTo(0, 0);
           setTab('activity');
+          setActivitySegment('transactions');
           focus('review-count', 'activity', null);
           return;
         case 'restore':
@@ -2605,24 +2609,27 @@ export default function Dashboard({
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
                 withoutTransactions={txnWithout}
+                segment={activitySegment}
+                onSegment={setActivitySegment}
+                // Shared expenses (#49): who owes what, on its own segment.
+                sharedSegment={
+                  <SharedExpensesCard
+                    shared={sharedExpenses}
+                    txns={txns}
+                    facts={sharedFacts}
+                    tags={tagList.tags}
+                    taxonomy={categories.taxonomy}
+                    currency={accountCurrency ?? 'USD'}
+                    fx={txnFx}
+                  />
+                }
               />
             )}
 
-            {/* Shared expenses (#49): who owes what, under the transactions. */}
+            {/* Its sheets, which the list's rows open too, on every segment. */}
             {tab === 'activity' && (
-              <SharedExpensesCard
-                shared={sharedExpenses}
-                txns={txns}
-                facts={sharedFacts}
-                tags={tagList.tags}
-                taxonomy={categories.taxonomy}
-                currency={accountCurrency ?? 'USD'}
-                fx={txnFx}
-              />
+              <SharedSheets shared={sharedExpenses} tags={tagList.tags} taxonomy={categories.taxonomy} currency={accountCurrency ?? 'USD'} />
             )}
-
-            {/* Reports for an accountant (app/reports), under the transactions. */}
-            {tab === 'activity' && <ReportsEntry />}
 
             {tab === 'budgets' && (
               <BudgetsTab
