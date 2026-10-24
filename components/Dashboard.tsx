@@ -28,6 +28,7 @@ import { CoverageNote, TrustLinks } from './TrustLinks';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
+import { CollapsibleHeader } from './Collapsible';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -2274,72 +2275,51 @@ export default function Dashboard({
                 ))}
 
                 {hiddenAccounts.length > 0 && (
-                  <div className="card hidden-section">
-                    <button
-                      className="holdings-toggle"
-                      onClick={() => setHiddenExpanded((v) => !v)}
-                      aria-expanded={hiddenExpanded}
-                    >
-                      <span className="holdings-title">
-                        Hidden
-                        <span className="holdings-count">{hiddenAccounts.length}</span>
-                      </span>
-                      <span className="holdings-summary">
-                        <svg
-                          className={`chevron${hiddenExpanded ? ' open' : ''}`}
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={2}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="m6 9 6 6 6-6" />
-                        </svg>
-                      </span>
-                    </button>
+                  <section className="card stack">
+                    <CollapsibleHeader
+                      title="Hidden"
+                      count={hiddenAccounts.length}
+                      open={hiddenExpanded}
+                      onToggle={() => setHiddenExpanded((v) => !v)}
+                      controls="hidden-accounts"
+                    />
                     {hiddenExpanded && (
                       <>
-                        <p className="empty-note">
+                        <p className="helper">
                           These accounts still sync, but are left out of net worth, transactions,
                           budgets and insights, on every day, past ones too. Unhiding restores their
                           history in full. To stop counting one only from a day on, unhide it, then open
                           it, use Close… and choose Stop following: every day before then still counts.
                         </p>
-                        <table>
-                          <tbody>
-                            {hiddenAccounts.map(({ account, institution_name, resolved }) => (
-                              <tr key={account.account_id} className="hidden-row">
-                                <td>
-                                  {account.name}
-                                  <div className="type-tag">
-                                    {institution_name} · {account.subtype || account.type}
-                                  </div>
-                                </td>
-                                <td className="num">
-                                  {/* An unresolved account has no balance to
-                                      show; "--" beats a misleading $0.00. */}
-                                  <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
-                                  <div className="manual-row-actions">
-                                    <button
-                                      className="link-btn"
-                                      disabled={togglingHidden !== null}
-                                      onClick={() => toggleHidden(account.account_id, false)}
-                                    >
-                                      {togglingHidden === account.account_id
-                                        ? 'Unhiding…'
-                                        : 'Unhide'}
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        {/* Each row's Unhide sits beside its text, not inside
+                            a control. */}
+                        <ul id="hidden-accounts" className="list-rows">
+                          {hiddenAccounts.map(({ account, institution_name, resolved }) => (
+                            <li key={account.account_id} className="list-row">
+                              <span className="list-row-text">
+                                <span className="list-row-title">{account.name}</span>
+                                <span className="list-row-sub">
+                                  {institution_name} · {account.subtype || account.type}
+                                </span>
+                              </span>
+                              {/* An unresolved account has no balance to
+                                  show; "--" beats a misleading $0.00. */}
+                              <span className="list-row-value">
+                                <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
+                              </span>
+                              <button
+                                className="btn ghost"
+                                disabled={togglingHidden !== null}
+                                onClick={() => toggleHidden(account.account_id, false)}
+                              >
+                                {togglingHidden === account.account_id ? 'Unhiding…' : 'Unhide'}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
                       </>
                     )}
-                  </div>
+                  </section>
                 )}
 
                 {/* Accounts that ended (#50), from the

@@ -283,6 +283,42 @@ button:active:not(:disabled):not([class*="cl-"]) {
   font-weight: var(--fw-semibold);
 }
 
+/* Nothing follows a header that is all a closed card shows. */
+.card-header:last-child {
+  margin-bottom: 0;
+}
+
+/* A card that opens and closes on its title (components/Collapsible.tsx):
+   the heading holds one button, the whole title row, 44px tall; a count
+   and a status badge follow the title, the chevron is last. */
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+}
+
+.section-chevron {
+  width: var(--icon);
+  height: var(--icon);
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.section-chevron.open {
+  transform: rotate(180deg);
+}
+
 /* Rows that share a card, split by hairlines. On a card the rows run edge to
    edge, clipped to its corners (their focus ring is drawn inside them), and
    the card keeps its margin below. */
@@ -841,21 +877,6 @@ button.danger {
 .manage-toggle[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-/* --- hidden accounts ---
-   Dimmed so the Hidden card reads as an archive rather than part of the
-   balance sheet, while staying legible enough to find what you hid. */
-.hidden-section .holdings-title {
-  color: var(--muted);
-}
-
-.hidden-row td {
-  opacity: 0.62;
-}
-
-.hidden-row:hover td {
-  opacity: 1;
 }
 
 /* --- manually-tracked accounts --- */

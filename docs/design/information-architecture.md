@@ -262,6 +262,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - Sheet: every form, confirmation and detail view.
 - Menu: an object's ⋯ menu of rare actions (the account sheet's, the institution card's).
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
+- Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 
 ## Vocabulary
 
