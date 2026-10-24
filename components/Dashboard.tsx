@@ -4,11 +4,10 @@ import ClerkAccount, { ClerkSignOut, GEAR } from './ClerkAccount';
 import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePlaidLink, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
 import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
-import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
@@ -20,7 +19,7 @@ import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
 import WeeklySummaryCard from './WeeklySummaryCard';
-import { instantDay, localDate, localMonth } from '@/lib/local-date';
+import { localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
@@ -32,8 +31,6 @@ import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { unreadNotesOf } from '@/lib/fire/inputs';
 import { historyPausedSince } from '@/lib/history-status';
-import InvestmentActivity from './InvestmentActivity';
-import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
 import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
@@ -43,21 +40,19 @@ import MigrationSheet, { SwitchingLink } from './MigrationSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
-import { connectorBalanceDay, connectorLabel } from '@/lib/connectors/types';
 import { useTransactionEdits } from './transaction-edits';
 import SharedExpensesCard, { type SharedFacts } from './SharedExpensesCard';
 import { useSharedExpenses } from './shared-expenses-state';
 import type { SharedRowHooks } from './SharedRows';
 import { REMOVED_NAME } from '@/lib/shared-expenses/model';
 import Insights, { type IdleCashAccount } from './Insights';
-import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
+import ConnectionHealth from './ConnectionHealth';
 import {
   useAccountLifecycle,
   AccountQuestions,
   EndedAccounts,
   LifecycleRepair,
   lifecycleDamageOf,
-  type AccountQuestion,
   type EndedAccount,
   type EndedConnection,
   type LifecycleDamage,
@@ -66,7 +61,6 @@ import {
 import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
 import { totalNotes, type RestoreHoldNote } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
-import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab from './BudgetsTab';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { useCategories, useCategoriesForBudgets } from './categories-state';
@@ -80,10 +74,9 @@ import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
-import { CORRECTION_KEEPS, RELABEL_KEEPS, institutionNote, rateEffectText, relabelledText } from './currency-text';
+import { CORRECTION_KEEPS, RELABEL_KEEPS, rateEffectText, relabelledText } from './currency-text';
 import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
-import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import { totalsCurrency } from '@/lib/spending';
 import VendorDefaultsCard from './VendorDefaultsCard';
@@ -97,165 +90,28 @@ import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
-import { formatMoney, dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
+import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import AccruedInterestNote from './AccruedInterestNote';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
-import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { CASH_SUBTYPE, isCashOnHand, isOwedType } from '@/lib/balance';
 import { minorDigits } from '@/lib/manual-txn-input';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
-import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
+import { institutionCash } from '@/lib/cash';
 // The Plan tab carries the projection engine, so its code is loaded only when
 // the tab is opened, and a failure to load or run it stays on that tab.
 import PlanTabLoader from './PlanTabLoader';
 // The FI card on Home works its figures out with the Plan's code, so it is
 // loaded the same way, after Home paints.
 import FiProgressLoader from './FiProgressLoader';
+import InstitutionCard from './InstitutionCard';
+import { fmt, fmtAsOf, fmtDay, fmtInstantDay, fmtStaleDay, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
 
-type Account = {
-  account_id: string;
-  name: string;
-  official_name: string | null;
-  mask: string | null;
-  type: string;
-  subtype: string | null;
-  balance: number | null;
-  limit: number | null;
-  currency: string | null;
-  updated_at?: string; // manual accounts only: when the balance was last typed/pushed
-  hidden?: boolean; // excluded from every total and from the Activity tab
-  liability?: AccountLiability; // credit/loan only, and only where Plaid serves it
-  // Recovered from a past snapshot rather than fetched. Server-side this is
-  // what keeps the balance out of accountBalanceMap; the client only needs to
-  // know the field exists so it survives the localStorage round trip.
-  stale?: boolean;
-  // Investment accounts only: this load's holdings call failed for it, so its
-  // positions are unknown (lib/networth.ts markUnanswered).
-  holdings_unanswered?: boolean;
-  // Missing from its bank's answer, held at its last known balance until the
-  // person says whether it closed, and the question about it, which a zero
-  // for weeks raises too (#50, lib/lifecycle-questions.ts).
-  held?: { as_of: string | null; too_old?: string };
-  question?: AccountQuestion;
-};
 
-// Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
-// everywhere: a payload cached in localStorage before this shipped has none.
-type AccountLiability = {
-  kind: 'credit' | 'student' | 'mortgage';
-  apr: number | null;
-  apr_label: string | null;
-  minimum_payment: number | null;
-  next_due_date: string | null;
-  last_statement_balance: number | null;
-  last_payment_amount: number | null;
-  last_payment_date: string | null;
-  is_overdue: boolean | null;
-  maturity_date?: string | null;
-  escrow_balance?: number | null;
-  expected_payoff_date?: string | null;
-  outstanding_interest?: number | null;
-};
-
-type Holding = {
-  account_id?: string; // absent on payloads cached before hiding existed
-  name: string;
-  quantity: number | null;
-  value: number | null;
-  cost_basis: number | null;
-  // Plaid security fields, read by lib/cash.ts to tell an invested position from
-  // money parked in cash. Optional: a payload cached in localStorage before these
-  // shipped has none, but it does carry `name`, which lib/cash.ts's last rule
-  // reads, so an offline first paint still marks a "...Money Market..." fund as
-  // cash (without Plaid's confirmation). The amount and share come from `value`.
-  ticker?: string | null;
-  security_type?: string | null;
-  is_cash_equivalent?: boolean | null;
-  // What `value` is in, for the Plan's allocation. Absent on payloads cached
-  // before it was sent: the account's currency is used then.
-  currency?: string | null;
-};
-
-type Institution = {
-  institution_name: string;
-  item_id: string;
-  // Plaid's institution id, for recognizing a second connection to the same
-  // institution (lib/existing-items.ts). Absent on older cached payloads.
-  institution_id?: string | null;
-  // Which way it was linked (lib/item-products.ts linkedAs), for the sheet
-  // that stops a second connection to it (components/ConnectRedirect.tsx).
-  linked_as?: LinkKind;
-  // Plaid found accounts at this Item the user hasn't added (lib/new-accounts.ts).
-  new_accounts_available?: boolean;
-  accounts: Account[];
-  holdings: Holding[];
-  error: string | null;
-  needs_reauth: boolean;
-  // 'on' | 'off' | 'loading' | 'unavailable' (lib/networth.ts). Optional and
-  // compared explicitly against 'off' so a stale cached payload, which has no
-  // such field, never offers the Enable button.
-  liabilities?: string;
-  // YYYY-MM-DD when the shown balances were last observed, set only when the live
-  // fetch failed and they were recovered (all-or-nothing per institution, so it
-  // covers every account in it). Optional: a payload cached before this shipped
-  // has none, which reads as "not stale" and shows the plain error.
-  //
-  // The reverse is NOT disclosed: a rolled-back deploy reading a new localStorage
-  // payload renders recovered balances with no staleness marker, under the plain
-  // red error. The numbers are still real, just undated.
-  stale_as_of?: string;
-  // The instant behind stale_as_of (an ISO time), when the server knew it. The
-  // date is a UTC day; this is what names the viewer's own day (fmtStaleDay).
-  stale_as_of_at?: string;
-  stale_too_old_at?: string;
-  // Set instead of stale_as_of when last-known balances exist but are past the
-  // age limit. The card stays at $0.00, and says why rather than looking like
-  // an institution that never had recoverable balances at all.
-  stale_too_old?: string;
-  // How many of this institution's known accounts could not be recovered, set
-  // alongside stale_as_of. Nonzero means the subtotal is short, so the card
-  // says so rather than presenting an incomplete figure as merely dated.
-  stale_missing?: number;
-  // How many accounts this institution previously reported were absent from an
-  // otherwise SUCCESSFUL fetch (lib/vanished.ts). There is no error alongside it:
-  // the balances shown are fresh, just not all of them, so the total is short by
-  // whatever the missing ones held. History is paused while this is set, so it
-  // has to be said out loud, or the hero total drops and disagrees with the last
-  // charted point for three days with nothing to explain it.
-  unconfirmed_missing?: number;
-  manual?: boolean; // synthetic grouping of manually-tracked accounts
-  // Set on the accounts SimpleFIN feeds (lib/connectors/), `manual` too: they
-  // are not Plaid's, and their balances aren't typed (components/Connectors.tsx).
-  connector?: string;
-  connection_id?: string;
-  // The connection's health: state, when it last synced, whose side a problem
-  // is on and what to do (lib/connection-state.ts). Optional: a payload
-  // cached before it existed has none, and nothing is said then.
-  health?: Health;
-  // The accounts a broken card can't show, by name, for the health view, with
-  // their kind and currency (absent on a payload from before they were sent).
-  unshown_accounts?: { account_id: string; name: string; mask: string | null; type?: string; currency?: string | null }[];
-  // Accounts that ended that its bank still returns, moved since: a copy of
-  // each row with its question, counted in nothing (#50,
-  // lib/lifecycle-questions.ts askAboutReportedEnds).
-  ended_reported?: Account[];
-};
-
-// One manually-tracked account as the API returns it (see lib/manual.ts).
-type ManualAccount = {
-  account_id: string;
-  name: string;
-  institution_name: string;
-  type: string;
-  subtype: string | null;
-  balance: number;
-  /** The currency its balance is in; US dollars when it names none. */
-  currency?: string;
-};
 
 // The form's working copy. `balance` is a STRING, as in BudgetsTab and GoalsCard:
 // an <input type="number"> reports '' for a partly typed value like "-", and
@@ -318,142 +174,7 @@ function ActionIcon({ d }: { d: string }) {
   );
 }
 
-function fmt(n: number | null | undefined, currency?: string | null): string {
-  if (n == null) return '--';
-  return formatMoney(n, currency);
-}
 
-function signedBalance(a: Account): number {
-  return signedContribution(a.type, a.balance ?? 0);
-}
-
-// "+$12.34 · 5.2%" gain/loss for a holding vs its cost basis.
-function fmtGain(value: number, cost: number): string {
-  const gain = value - cost;
-  const sign = gain >= 0 ? '+' : '-';
-  const pct = cost !== 0 ? ` · ${((Math.abs(gain) / Math.abs(cost)) * 100).toFixed(1)}%` : '';
-  return `${sign}$${hiddenFigure(
-    Math.abs(gain).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
-  )}${pct}`;
-}
-
-// "Mar 4" from a YYYY-MM-DD. Parsed at local midnight, not UTC, so a due date
-// never renders as the day before for anyone west of Greenwich.
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
-// The local day of an instant (an ISO time), not its UTC day.
-function fmtInstantDay(iso: string): string {
-  return instantDay(iso) ?? fmtDay(iso.slice(0, 10));
-}
-
-// The day a stored snapshot was taken, in the viewer's own time. The snapshot's
-// date is a UTC day, which for anyone west of Greenwich can be the day after the
-// one they were in; when the server knows the instant it was taken, that instant
-// is shown as the local day instead. Otherwise the date is all there is.
-function fmtStaleDay(date: string, at?: string): string {
-  // The instant must belong to that date's UTC day; a mismatch (a restore keeps
-  // this environment's own record of instants) means it isn't this snapshot's.
-  const local = at && at.slice(0, 10) === date ? instantDay(at) : null;
-  return local ?? fmtDay(date);
-}
-
-// The one-line summary under a credit or loan row: rate, minimum, due date.
-// Built by pushing only the parts Plaid actually reported, so a card that
-// reports a due date but no APR still gets a useful line instead of "-- APR".
-function liabilitySummary(a: Account): string | null {
-  const l = a.liability;
-  if (!l) return null;
-  const parts: string[] = [];
-  if (l.apr != null) parts.push(`${l.apr.toFixed(2)}% APR`);
-  if (l.minimum_payment != null) parts.push(`min ${fmt(l.minimum_payment, a.currency)}`);
-  if (l.next_due_date) parts.push(`due ${fmtDay(l.next_due_date)}`);
-  return parts.length > 0 ? parts.join(' · ') : null;
-}
-
-/**
- * The rest of a liability's terms, shown only when the row is expanded (the
- * collapsed row already carries rate, minimum and due date).
- *
- * Follows TxnDetail in MonthBreakdown: push only fields that are present, and
- * render nothing rather than a list of dashes when none are.
- */
-function LiabilityDetail({
-  liability,
-  currency,
-}: {
-  liability?: AccountLiability;
-  currency: string | null;
-}) {
-  if (!liability) return null;
-  const l = liability;
-  const rows: { label: string; value: string }[] = [];
-
-  if (l.apr != null && l.apr_label) rows.push({ label: l.apr_label, value: `${l.apr.toFixed(2)}%` });
-  if (l.last_statement_balance != null) {
-    rows.push({ label: 'Statement balance', value: fmt(l.last_statement_balance, currency) });
-  }
-  if (l.last_payment_amount != null) {
-    rows.push({
-      label: 'Last payment',
-      value:
-        fmt(l.last_payment_amount, currency) +
-        (l.last_payment_date ? ` on ${fmtDay(l.last_payment_date)}` : ''),
-    });
-  }
-  if (l.outstanding_interest != null) {
-    rows.push({ label: 'Accrued interest', value: fmt(l.outstanding_interest, currency) });
-  }
-  if (l.escrow_balance != null) {
-    rows.push({ label: 'Escrow', value: fmt(l.escrow_balance, currency) });
-  }
-  if (l.expected_payoff_date) {
-    rows.push({ label: 'Expected payoff', value: fmtDay(l.expected_payoff_date) });
-  }
-  if (l.maturity_date) rows.push({ label: 'Matures', value: fmtDay(l.maturity_date) });
-
-  if (rows.length === 0) return null;
-  return (
-    <dl className="txn-detail">
-      {rows.map((r) => (
-        <div className="txn-detail-row" key={r.label}>
-          <dt>{r.label}</dt>
-          <dd>
-            <Masked>{r.value}</Masked>
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-/**
- * Whether to offer "Enable payment details" for an institution. Only 'off': the
- * product was never initialized on this Item and update mode can add it.
- * 'loading' means Plaid is already fetching (offering the button would loop, since
- * the reload after a successful enable arrives before the data), and
- * 'unavailable' means enabling would change nothing. A stale cached payload has
- * no field at all, which also yields false.
- */
-function canEnableLiabilities(inst: Institution): boolean {
-  return inst.liabilities === 'off' && inst.accounts.some((a) => isOwedType(a.type));
-}
-
-function fmtAsOf(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
 
 const TAB_ICONS: Record<Tab, React.ReactNode> = {
   home: (
@@ -2526,573 +2247,36 @@ export default function Dashboard({
                     Disconnect. Nothing when there is none. */}
                 <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
 
-                {sortedInstitutions.map((inst) => {
-                  // One verdict for the row badge, the per-holding chip and the
-                  // Holdings header, so they can't disagree about the same money.
-                  // `inst` is already filtered, so a hidden brokerage takes its
-                  // cash with it.
-                  const instCash = institutionCash(inst.accounts, inst.holdings);
-                  const instTotal = inst.accounts.reduce((sum, a) => sum + signedBalance(a), 0);
-                  const instCurrency = dominantCurrency(
-                    inst.accounts.map((a) => ({ iso_currency_code: a.currency }))
-                  );
-                  const instMixed =
-                    new Set(inst.accounts.map((a) => a.currency).filter(Boolean)).size > 1;
-                  // Mixed, with a home currency chosen: converted into it, at
-                  // the newest rates, as the hero is (lib/fx/view.ts).
-                  const instRows = inst.accounts.map((a) => ({ amount: signedBalance(a), currency: a.currency }));
-                  const instConverted = instMixed && base && needsConverting(instRows, base.fx, instCurrency) ? balancesNow(instRows, base.fx, instCurrency) : null;
-                  // Every row, hidden ones too, for the questions about them
-                  // (#50), and whether each one held was answered Still open.
-                  const allRows = institutions.find((i) => i.item_id === inst.item_id)?.accounts ?? inst.accounts;
-                  const heldRows = allRows.filter((a) => a.held);
-                  const heldStillOpen = heldRows.length > 0 && heldRows.every((a) => a.question?.still_open);
-                  return (
-                    <div className="card" key={inst.item_id}>
-                      <div className="inst-header">
-                        <div className="inst-name">
-                          {inst.institution_name}
-                          {inst.manual && <span className="manual-badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span>}
-                        </div>
-                        <div className="inst-header-right">
-                          <div className="inst-total">
-                            <Masked>{fmt(instConverted ? instConverted.total : instTotal, instConverted ? instConverted.currency : instCurrency)}</Masked>
-                          </div>
-                          {/* Add or remove accounts and Disconnect. Manual
-                              groupings aren't Plaid Items, so there's nothing
-                              to disconnect; they're removed per account. */}
-                          {!inst.manual && (
-                            <button
-                              className="secondary inst-options"
-                              onClick={() => setOptionsTarget(inst)}
-                              aria-label={`Options for ${inst.institution_name}`}
-                            >
-                              Options
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {instMixed && (
-                        <div className="chart-note">
-                          {instConverted ? institutionNote(instConverted) : <>Mixed currencies; total isn&apos;t converted.</>}
-                        </div>
-                      )}
-
-                      {inst.accounts.length > 0 && (
-                        <table>
-                          <tbody>
-                            {inst.accounts.map((a) => {
-                              const util =
-                                a.type === 'credit' && a.limit && a.limit > 0 && a.balance != null
-                                  ? Math.max(a.balance, 0) / a.limit
-                                  : null;
-                              const liabLine = liabilitySummary(a);
-                              // Undefined on an account that is cash by design:
-                              // institutionCash drops those, since 100% cash in a
-                              // cash management account is the account working.
-                              const cash = instCash.byAccount[a.account_id];
-                              return (
-                                <Fragment key={a.account_id}>
-                                <tr
-                                  className="acct-row"
-                                  onClick={() => toggleAccount(a.account_id)}
-                                  aria-expanded={expandedAccounts.has(a.account_id)}
-                                >
-                                  <td>
-                                    {a.name}
-                                    {a.mask && <span className="acct-mask"> ••{a.mask}</span>}
-                                    <div className="type-tag">
-                                      {a.official_name && a.official_name !== a.name
-                                        ? `${a.official_name} · `
-                                        : ''}
-                                      {a.subtype || a.type}
-                                      {/* The currency chosen for a typed
-                                          balance, when not the one shown. */}
-                                      {inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : ''}
-                                    </div>
-                                    {/* A Plaid balance is implicitly "now"; a
-                                        typed one has to say when it was set. */}
-                                    {inst.manual && a.updated_at && (
-                                      <div className="manual-updated">
-                                        {/* SimpleFIN's balance is as of the day the bank gave it; Lunch Flow gives no day, so its is the day Nya received it. */}
-                                        {inst.connector ? connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at)) : `Updated ${fmtAsOf(a.updated_at)}`}
-                                      </div>
-                                    )}
-                                    {/* Missing from its bank's answer, held
-                                        until the question below is answered
-                                        (#50): said, not passed off as now. */}
-                                    {a.held && (
-                                      <div className="manual-updated">
-                                        {a.held.as_of
-                                          ? `Last known balance, from ${fmtDay(a.held.as_of)}`
-                                          : 'No recent balance, so not counted'}
-                                      </div>
-                                    )}
-                                    {util != null && (
-                                      <div className="util">
-                                        <div className={`meter-track${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}>
-                                          <div
-                                            className={`meter-fill${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}
-                                            style={{ width: `${Math.min(util * 100, 100)}%` }}
-                                          />
-                                        </div>
-                                        <span className="util-label">
-                                          {Math.round(util * 100)}% of <Masked>{fmt(a.limit, a.currency)}</Masked> limit
-                                        </span>
-                                      </div>
-                                    )}
-                                    {liabLine && (
-                                      <div
-                                        className={`type-tag${a.liability?.is_overdue ? ' over-tag' : ''}`}
-                                      >
-                                        {a.liability?.is_overdue ? 'Overdue · ' : ''}
-                                        <Masked>{liabLine}</Masked>
-                                      </div>
-                                    )}
-                                    {/* Money sitting in the settlement fund
-                                        rather than invested. Always shown when
-                                        there is any, because a small cash line
-                                        is information; the amber treatment is
-                                        reserved for an amount worth acting on
-                                        (lib/cash.ts), so the colour keeps
-                                        meaning something. */}
-                                    {cash && cash.cash > 0 && (
-                                      <div className={`cash-tag${cash.flagged ? ' idle' : ''}`}>
-                                        {cash.flagged && (
-                                          <span className="cash-dot" aria-hidden="true" />
-                                        )}
-                                        <Masked>{fmt(cash.cash, a.currency)}</Masked>
-                                        {cash.flagged ? ' uninvested' : ' in cash'}
-                                        {/* "of holdings", not "of this
-                                            account": the denominator is the
-                                            positions Plaid priced, which can
-                                            fall short of the balance rendered
-                                            in the next column. */}
-                                        {/* Says whose share it is: "0.0% of
-                                            holdings" alone read as "0%
-                                            invested", the opposite of what it
-                                            meant. And never 0.0% while there
-                                            is cash to show. */}
-                                        {cash.total > 0 && ` · cash is ${cashSharePct(cash.share)} of holdings`}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="num">
-                                    <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>
-                                    {inst.manual && !inst.connector && (
-                                      // stopPropagation so tapping an action
-                                      // doesn't also toggle the history chart.
-                                      <div
-                                        className="manual-row-actions"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {inst.manual && !inst.connector && (
-                                          <button
-                                            className="link-btn"
-                                            disabled={savingManual || togglingHidden !== null}
-                                            onClick={() =>
-                                              startEditManual({
-                                                account_id: a.account_id,
-                                                name: a.name,
-                                                institution_name: inst.institution_name,
-                                                type: a.type,
-                                                subtype: a.subtype,
-                                                balance: a.balance ?? 0,
-                                                currency: a.currency ?? undefined,
-                                              })
-                                            }
-                                          >
-                                            Update
-                                          </button>
-                                        )}
-                                        {inst.manual && !inst.connector && (
-                                          <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
-                                            Add transaction
-                                          </button>
-                                        )}
-                                        {inst.manual && !inst.connector && !a.hidden && (
-                                          <button className="link-btn" onClick={() => setImportTarget({ account_id: a.account_id })}>
-                                            Import
-                                          </button>
-                                        )}
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                                {expandedAccounts.has(a.account_id) && (
-                                  <tr>
-                                    <td colSpan={2} className="acct-chart-cell">
-                                      {/* Hide, Close… and Delete, in the
-                                          expanded row rather than the
-                                          clickable one (a manual account's
-                                          Update, Add transaction and Import
-                                          stay on its row until the account
-                                          sheet, rollout phase 3). */}
-                                      <div className="card-actions acct-actions">
-                                        {/* Hiding works on any account, linked
-                                            or manual: it only stops the account
-                                            counting, it doesn't remove it. Not
-                                            on a row held for an answer: its
-                                            bank isn't returning it, so there is
-                                            nothing to hide yet (#50). */}
-                                        {!a.held && (
-                                          <button
-                                            className="secondary"
-                                            disabled={togglingHidden !== null}
-                                            onClick={() => toggleHidden(a.account_id, true)}
-                                          >
-                                            {togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}
-                                          </button>
-                                        )}
-                                        {/* Closed, no longer theirs, or not
-                                            tracked from a day (#50): unlike
-                                            Hide, every day before it counts. */}
-                                        <button
-                                          className="secondary"
-                                          disabled={lifecycle.busy}
-                                          aria-label={`${a.name}: closed, no longer yours, or stop following`}
-                                          onClick={() =>
-                                            lifecycle.open({
-                                              account_id: a.account_id,
-                                              name: a.name,
-                                              mask: a.mask,
-                                              institution: inst.institution_name,
-                                              ...(a.question ? { day: a.question.end } : {}),
-                                              // What it shows, so the sheet
-                                              // can say what ending it does.
-                                              balance: a.balance,
-                                              type: a.type,
-                                              currency: a.currency,
-                                              lastKnown: !!a.held,
-                                            })
-                                          }
-                                        >
-                                          Close…
-                                        </button>
-                                        {inst.manual && !inst.connector && (
-                                          <button
-                                            className="danger-outline"
-                                            disabled={savingManual || togglingHidden !== null}
-                                            onClick={() => {
-                                              setManualError('');
-                                              setManualDeleteTarget({
-                                                account_id: a.account_id,
-                                                name: a.name,
-                                                institution_name: inst.institution_name,
-                                                type: a.type,
-                                                subtype: a.subtype,
-                                                balance: a.balance ?? 0,
-                                              });
-                                            }}
-                                          >
-                                            Delete
-                                          </button>
-                                        )}
-                                      </div>
-                                      <AccountSparkline
-                                        accountId={a.account_id}
-                                        currency={a.currency}
-                                        investment={isInvestmentType(a.type)}
-                                        owed={isOwedType(a.type)}
-                                        itemId={
-                                          isInvestmentType(a.type) && !inst.manual
-                                            ? inst.item_id
-                                            : undefined
-                                        }
-                                      />
-                                      {/* Since when its positions have been
-                                          kept (lib/holdings-history.ts). A
-                                          manual account has none to keep. */}
-                                      {isInvestmentType(a.type) && !inst.manual && (
-                                        <HoldingsRecorded accountId={a.account_id} />
-                                      )}
-                                      <LiabilityDetail liability={a.liability} currency={a.currency} />
-                                      {/* Not for manual accounts: they're typed
-                                          by hand, and their synthetic
-                                          `manual:<name>` item_id doesn't
-                                          resolve to a Plaid Item, so the fetch
-                                          would 404 into a red error box under a
-                                          perfectly healthy row. */}
-                                      {isInvestmentType(a.type) && !inst.manual && (
-                                        <InvestmentActivity
-                                          accountId={a.account_id}
-                                          itemId={inst.item_id}
-                                        />
-                                      )}
-                                      {/* Years of a linked account's history
-                                          from its bank's own files (#52). */}
-                                      {!inst.manual && (
-                                        <button
-                                          className="link-btn history-import-link"
-                                          onClick={() =>
-                                            setHistoryTarget({
-                                              account_id: a.account_id,
-                                              name: a.name,
-                                              institution_name: inst.institution_name,
-                                              type: a.type,
-                                              currency: a.currency ?? null,
-                                            })
-                                          }
-                                        >
-                                          Import history from a file
-                                        </button>
-                                      )}
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      )}
-
-                      {inst.holdings.length > 0 && (
-                        <>
-                          <button
-                            className="holdings-toggle"
-                            onClick={() => toggleHoldings(inst.item_id)}
-                            aria-expanded={expandedHoldings.has(inst.item_id)}
-                          >
-                            <span className="holdings-title">
-                              Holdings
-                              <span className="holdings-count">{inst.holdings.length}</span>
-                            </span>
-                            <span className="holdings-summary">
-                              {/* Says "uninvested", not "cash", because it is
-                                  scoped the way the amber is: an account that
-                                  is cash by design is left out of this figure,
-                                  while its positions still carry their factual
-                                  Cash label in the list below. */}
-                              {instCash.cash > 0 && (
-                                <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
-                                  <Masked>{fmt(instCash.cash, instCurrency)}</Masked>{' '}
-                                  {instCash.flagged ? 'uninvested' : 'cash'}
-                                </span>
-                              )}
-                              <Masked>{fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0), instCurrency)}</Masked>
-                              <svg
-                                className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth={2}
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                aria-hidden="true"
-                              >
-                                <path d="m6 9 6 6 6-6" />
-                              </svg>
-                            </span>
-                          </button>
-                          {expandedHoldings.has(inst.item_id) && (
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Security</th>
-                                <th className="num">Qty</th>
-                                <th className="num">Value</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {inst.holdings.map((h, i) => {
-                                const isCash = isCashHolding(h);
-                                return (
-                                <tr key={i}>
-                                  <td>
-                                    {h.name}
-                                    {/* The chip says WHICH row is cash; the
-                                        amber says it's worth doing something
-                                        about, and only the owning account can
-                                        decide that. */}
-                                    {isCash && (
-                                      <span
-                                        className={`cash-chip${
-                                          h.account_id && instCash.flaggedAccounts.has(h.account_id)
-                                            ? ' idle'
-                                            : ''
-                                        }`}
-                                      >
-                                        Cash
-                                      </span>
-                                    )}
-                                  </td>
-                                  <td className="num"><Masked>{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</Masked></td>
-                                  <td className="num">
-                                    <Masked>{fmt(h.value)}</Masked>
-                                    {/* No gain/loss on a cash line: a money
-                                        market fund holds its $1 NAV, so the
-                                        figure is a permanent "+$0.00 · 0.0%"
-                                        that says nothing and reads as a real
-                                        measurement of a flat investment. */}
-                                    {!isCash && h.value != null && h.cost_basis != null && (
-                                      <div
-                                        className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
-                                      >
-                                        <Masked>{fmtGain(h.value, h.cost_basis)}</Masked>
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                          )}
-                        </>
-                      )}
-
-                      {/* Plaid's week of notice that this connection will end:
-                          the badge, the date and Reconnect, while it still works. */}
-                      <ReconnectSoonNote inst={inst} connecting={connecting} onReconnect={startReconnect} />
-
-                      {/* Recovering the balances adds a date to the error; it
-                          does not replace the error. The distinction matters:
-                          "could not fetch balances" usually clears itself,
-                          while "needs to be reconnected" never does until you
-                          act, and collapsing both into a soft "couldn't
-                          refresh" would let a dead connection look healthy for
-                          as long as the recovered numbers stay plausible --
-                          the same failure this feature exists to prevent, moved
-                          from the total to the label. So reauth keeps the red
-                          treatment and its own wording, and only a transient
-                          failure with real numbers behind it goes amber. */}
-                      {inst.error && (
-                        <div
-                          className={
-                            // Amber is for "real numbers, just dated". A card
-                            // missing rows isn't that: its subtotal is wrong,
-                            // not merely old, so it keeps the red treatment.
-                            inst.stale_as_of && !inst.needs_reauth && !inst.stale_missing
-                              ? 'stale-note'
-                              : 'error'
-                          }
-                        >
-                          {inst.error}
-                          {inst.stale_as_of && ` · balances as of ${fmtStaleDay(inst.stale_as_of, inst.stale_as_of_at)}`}
-                          {/* The shortfall is disclosed, not hidden: a card
-                              drawn short understates debt, which overstates
-                              net worth. Why a row is missing is unknowable
-                              here (see lib/last-known.ts), so say the count
-                              rather than guess at a reason. */}
-                          {!!inst.stale_missing &&
-                            ` · ${inst.stale_missing} account${
-                              inst.stale_missing === 1 ? '' : 's'
-                            } couldn't be shown, so this total is incomplete`}
-                          {inst.stale_too_old &&
-                            ` · last known balances are from ${fmtStaleDay(inst.stale_too_old, inst.stale_too_old_at)}, too old to show`}
-                        </div>
-                      )}
-
-                      {/* Its own block, NOT part of the error above, because
-                          there is no error: this institution answered and the
-                          balances on the card are fresh. It just answered with
-                          fewer accounts than it used to have, so the subtotal
-                          is short and nothing is being written to history
-                          until that resolves.
-
-                          Amber rather than red for the same reason the stale
-                          case is: the numbers shown are real. What is wrong is
-                          that there are not all of them. */}
-                      {!!inst.unconfirmed_missing && !inst.error && (
-                        <div className="stale-note">
-                          {inst.unconfirmed_missing} account
-                          {inst.unconfirmed_missing === 1 ? '' : 's'} this institution used to
-                          report {inst.unconfirmed_missing === 1 ? "isn't" : "aren't"} in its latest
-                          response · {inst.unconfirmed_missing === 1 ? 'it is' : 'they are'} held at{' '}
-                          {inst.unconfirmed_missing === 1 ? 'its' : 'their'} last known balance
-                          {/* Answered Still open: held for the account, two weeks at most. */}
-                          {heldStillOpen
-                            ? ` until ${inst.unconfirmed_missing === 1 ? 'it comes' : 'they come'} back, two weeks from your answer at most, and history is paused until then`
-                            : ` until you say whether ${inst.unconfirmed_missing === 1 ? 'it' : 'they'} closed, and history is paused until then`}
-                        </div>
-                      )}
-
-                      {/* The questions about its accounts (#50): missing
-                          from its answer, at zero for weeks, or ended and
-                          still reported. From every row, a hidden one's too:
-                          its absence holds every total all the same. */}
-                      <AccountQuestions
-                        accounts={[...allRows, ...(inst.ended_reported ?? [])]}
-                        institution={inst.institution_name}
-                        busy={lifecycle.busy}
-                        onOpen={lifecycle.open}
-                        onStillOpen={lifecycle.stillOpen}
-                        onConfirmEnd={lifecycle.confirmEnd}
-                        onReopen={lifecycle.reopen}
-                      />
-
-                      {/* Tells someone who just tapped Enable why the button
-                          vanished without any payment details appearing. */}
-                      {inst.liabilities === 'loading' && (
-                        <p className="empty-note">
-                          Payment details are still importing from this institution.
-                        </p>
-                      )}
-
-                      {inst.new_accounts_available && !inst.manual && (
-                        <p className="empty-note">
-                          {inst.institution_name} has accounts you haven&apos;t added yet.
-                        </p>
-                      )}
-
-                      {unallowedIds.has(inst.item_id) && (
-                        <p className="empty-note">
-                          You didn&apos;t allow Nya to see transactions from the bank or card accounts here.
-                        </p>
-                      )}
-
-                      {/* One container, independent actions. Enable must NOT
-                          sit inside a needs_reauth gate: a healthy institution
-                          is exactly the case it exists for. */}
-                      {(inst.needs_reauth ||
-                        canEnableLiabilities(inst) ||
-                        unallowedIds.has(inst.item_id) ||
-                        (!inst.manual && inst.new_accounts_available)) && (
-                        <div className="card-actions">
-                          {inst.needs_reauth && (
-                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
-                              Reconnect
-                            </button>
-                          )}
-                          {unallowedIds.has(inst.item_id) && (
-                            <button
-                              className="secondary"
-                              onClick={() => startAllowTransactions(inst.item_id)}
-                              disabled={connecting}
-                              aria-label={`Allow transactions from ${inst.institution_name}`}
-                            >
-                              Allow transactions
-                            </button>
-                          )}
-                          {canEnableLiabilities(inst) && (
-                            <button
-                              className="secondary"
-                              onClick={() => startEnableLiabilities(inst.item_id)}
-                              disabled={connecting}
-                            >
-                              Enable payment details
-                            </button>
-                          )}
-                          {/* Adds accounts to THIS Item rather than connecting
-                              the institution again (a second, separately
-                              billed Item). Here whenever Plaid has found new
-                              accounts; always under Options. */}
-                          {!inst.manual && inst.new_accounts_available && (
-                            <button
-                              className="secondary"
-                              onClick={() => startManageAccounts(inst.item_id)}
-                              disabled={connecting}
-                            >
-                              Review accounts
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {sortedInstitutions.map((inst) => (
+                  <InstitutionCard
+                    key={inst.item_id}
+                    inst={inst}
+                    institutions={institutions}
+                    base={base}
+                    shownCurrency={shownCurrency}
+                    connecting={connecting}
+                    savingManual={savingManual}
+                    togglingHidden={togglingHidden}
+                    expandedAccounts={expandedAccounts}
+                    expandedHoldings={expandedHoldings}
+                    unallowedIds={unallowedIds}
+                    lifecycle={lifecycle}
+                    txnEdits={txnEdits}
+                    toggleAccount={toggleAccount}
+                    toggleHoldings={toggleHoldings}
+                    toggleHidden={toggleHidden}
+                    setOptionsTarget={setOptionsTarget}
+                    startEditManual={startEditManual}
+                    setImportTarget={setImportTarget}
+                    setHistoryTarget={setHistoryTarget}
+                    setManualError={setManualError}
+                    setManualDeleteTarget={setManualDeleteTarget}
+                    startReconnect={startReconnect}
+                    startAllowTransactions={startAllowTransactions}
+                    startEnableLiabilities={startEnableLiabilities}
+                    startManageAccounts={startManageAccounts}
+                  />
+                ))}
 
                 {hiddenAccounts.length > 0 && (
                   <div className="card hidden-section">

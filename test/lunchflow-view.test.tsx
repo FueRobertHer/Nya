@@ -215,7 +215,7 @@ describe('words', () => {
     expect(connectorBalanceDay('lunchflow', 'Oct 9')).toBe('Balance as Lunch Flow gave it on Oct 9');
     expect(connectorBalanceDay('somethingnew', 'Oct 9')).toBe('Balance as of Oct 9');
     expect([connectorLabel('lunchflow'), connectorLabel('simplefin'), ANY_CONNECTOR]).toEqual(['Lunch Flow', 'SimpleFIN', 'SimpleFIN or Lunch Flow']);
-    const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
-    expect(dashboard).toContain('connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at))');
+    const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
+    expect(card).toContain('connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at))');
   });
 });

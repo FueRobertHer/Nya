@@ -325,12 +325,14 @@ describe('in connection health', () => {
     expect(dashboard.match(/onConnectSimpleFin=\{connectSimpleFin\}/g)?.length).toBe(2);
     expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
     expect(dashboard).toContain('const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;');
-    expect(dashboard).toContain("{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}");
+    // The institution's card (components/InstitutionCard.tsx).
+    const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
+    expect(card).toContain("{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}");
     for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (']) {
-      expect(dashboard).toContain(gate);
+      expect(card).toContain(gate);
     }
     // Delete, in the expanded row, is for typed accounts only.
-    expect(dashboard).toMatch(/\{inst\.manual && !inst\.connector && \(\s*<button\s+className="danger-outline"/);
+    expect(card).toMatch(/\{inst\.manual && !inst\.connector && \(\s*<button\s+className="danger-outline"/);
   });
 });
 

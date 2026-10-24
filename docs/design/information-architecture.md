@@ -195,7 +195,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | MigrationSheet (Switching link) | Top of Accounts | Add account sheet |
 | ConnectionHealth | Collapsible card on Accounts | Status pill, institution cards, Connection details in ⋯ |
 | Connectors (ConnectorCards, ConnectorSheet) | Separate cards on Accounts | Institution card ⋯ menu; orphans in Settings > Connections |
-| Institution cards (in Dashboard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
+| Institution cards (InstitutionCard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
 | AccountSparkline, HoldingsRecorded, InvestmentActivity, LiabilityDetail | Inline expansion of a row | Account sheet |
 | Manual account sheet, OwedFlipNote | Add manual, Update on a row | Add account sheet, Account sheet > Update balance |
 | ManualTxnSheet, ImportSheet | Manual row buttons; Activity add card | Account sheet; Activity bar ⋯ |

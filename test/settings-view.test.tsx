@@ -93,12 +93,15 @@ describe('the dashboard', () => {
     expect(dashboard).toContain(') : settings ? (\n          <SettingsScreen');
   });
 
+  // The institution's card and its rows (components/InstitutionCard.tsx).
+  const card = readFileSync(join(import.meta.dir, '..', 'components', 'InstitutionCard.tsx'), 'utf8');
+
   test('an account row holds no button that Manage used to add; its expanded row does', () => {
-    const row = dashboard.slice(dashboard.indexOf('className="acct-row"'), dashboard.indexOf('{expandedAccounts.has(a.account_id) && ('));
+    const row = card.slice(card.indexOf('className="acct-row"'), card.indexOf('{expandedAccounts.has(a.account_id) && ('));
     expect(row).not.toContain('Hide');
     expect(row).not.toContain('Close…');
     expect(row).not.toContain('Delete');
-    const expanded = dashboard.slice(dashboard.indexOf('{expandedAccounts.has(a.account_id) && ('), dashboard.indexOf('<AccountSparkline'));
+    const expanded = card.slice(card.indexOf('{expandedAccounts.has(a.account_id) && ('), card.indexOf('<AccountSparkline'));
     expect(expanded).toContain('<div className="card-actions acct-actions">');
     expect(expanded).toContain("{togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}");
     expect(expanded).toContain('Close…');
@@ -106,7 +109,8 @@ describe('the dashboard', () => {
   });
 
   test('a linked institution has Options, holding Add or remove accounts and Disconnect', () => {
-    expect(dashboard).toContain('onClick={() => setOptionsTarget(inst)}');
+    expect(card).toContain('onClick={() => setOptionsTarget(inst)}');
+    expect(dashboard).toContain('setOptionsTarget={setOptionsTarget}');
     // An institution whose accounts are all hidden has no card, so Settings > Connections offers the same Options.
     expect(section('connections')).toContain('onClick={() => setOptionsTarget(inst)}');
     const sheet = dashboard.slice(dashboard.indexOf('<Sheet open={!!optionsTarget}'), dashboard.indexOf('<Sheet\n        open={!!disconnectTarget}'));
