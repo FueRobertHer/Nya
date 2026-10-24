@@ -835,11 +835,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     setToken('');
     const conn = res.data.connection as ConnectionView | null;
     const f = conn?.last_fetch;
-    const listed = f && !f.ok ? `Connected, but ${label} didn’t list the accounts: ${f.message} Try again with Refresh on its card.` : null;
+    const listed = f && !f.ok ? `Connected, but ${label} didn’t list the accounts: ${f.message} Try again with Refresh on its card in Settings, Connections.` : null;
     // Spent requests mean no answer yet, never that the new token failed.
     const later =
       res.data.skipped === 'budget'
-        ? ` Nya has used today’s requests for your own sync; more are available${backIn(res.data.requests)}, and Refresh on its card then brings your accounts up to date.`
+        ? ` Nya has used today’s requests for your own sync; more are available${backIn(res.data.requests)}, and Refresh ${label} in the ⋯ on a bank’s card then brings your accounts up to date.`
         : '';
     if (connection_id) {
       onChanged(false);
@@ -850,7 +850,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (res.data.skipped === 'budget') {
       return setStep({
         kind: 'done',
-        text: `Connected, but Nya has used today’s requests for your own sync, so it couldn’t list your accounts yet. More are available${backIn(res.data.requests)}: then Refresh on its card lists them to choose from.`,
+        text: `Connected, but Nya has used today’s requests for your own sync, so it couldn’t list your accounts yet. More are available${backIn(res.data.requests)}: then Refresh on its card in Settings, Connections lists them to choose from.`,
       });
     }
     const where = connector === 'lunchflow' ? 'Lunch Flow' : 'SimpleFIN Bridge';
@@ -894,7 +894,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     const sofar = s.connector === 'lunchflow' ? 'everything Lunch Flow has from the last two years is in' : 'the last three months are in, and older transactions arrive over the next few nights';
     if (track.length) parts.push(`Tracking ${track.length} account${track.length === 1 ? '' : 's'}: ${sofar}.`);
     if (res.data.skipped === 'budget') {
-      parts.push(`Nya has used today’s requests for your own sync, so their balances come once more are available${backIn(res.data.requests)}: Refresh on its card then, or the daily update brings them.`);
+      parts.push(`Nya has used today’s requests for your own sync, so their balances come once more are available${backIn(res.data.requests)}: Refresh ${s.label} in the ⋯ on a bank’s card then, or the daily update brings them.`);
     }
     const retyped = typeof res.data.retyped === 'number' ? res.data.retyped : 0;
     if (retyped > 0) parts.push(`Changed what ${retyped === 1 ? 'one account is' : `${retyped} accounts are`}.`);

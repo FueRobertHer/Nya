@@ -472,7 +472,7 @@ The record of each problem with one of your bank connections that Nya kept for i
 
 #### `connection-syncs`
 
-When each of your bank connections last answered without an error, under its `item_id`: `at`, a time. It is the "Last synced" date on the Connection health card. It goes when the connection is removed.
+When each of your bank connections last answered without an error, under its `item_id`: `at`, a time. It is the "Last synced" date on its card on the Accounts tab. It goes when the connection is removed.
 
 #### `connection-warnings`
 

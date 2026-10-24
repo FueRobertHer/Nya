@@ -567,7 +567,7 @@ export async function sendNotices(batch: PendingNotices[], opts: SendOptions = {
     const now = Math.max(...batch.map((p) => p.now));
     const count = batch.reduce((n, p) => n + p.due.filter(holdNow).length, 0);
     console.error(
-      `Connection notices: new problems with the same Plaid code in ${MASS_BREAK_CONTAINERS} or more containers at once (${[...sharedCodes].map((l) => `${l} in ${containersOf.get(l)!.size}`).join(', ')}). That looks like a fault in Nya's setup or at Plaid rather than at each person's bank, so those ${count} email(s) are held back until ${utcDay(iso(now + HOLD_DAYS * DAY_MS))} (UTC), and go with that day's run if the problem is still there. Check PLAID_ENV, PLAID_CLIENT_ID and PLAID_SECRET, and Plaid's status page; each connection shows on its Connection health card.`
+      `Connection notices: new problems with the same Plaid code in ${MASS_BREAK_CONTAINERS} or more containers at once (${[...sharedCodes].map((l) => `${l} in ${containersOf.get(l)!.size}`).join(', ')}). That looks like a fault in Nya's setup or at Plaid rather than at each person's bank, so those ${count} email(s) are held back until ${utcDay(iso(now + HOLD_DAYS * DAY_MS))} (UTC), and go with that day's run if the problem is still there. Check PLAID_ENV, PLAID_CLIENT_ID and PLAID_SECRET, and Plaid's status page; each connection shows on its card on the Accounts tab.`
     );
     // Recorded on each held notice, so it waits out its days and is never
     // held again; only while it is still the episode, and not held already. A

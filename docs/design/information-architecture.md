@@ -169,7 +169,7 @@ When a backup or clean-up fails, everyone sees it as an amber line on the Net wo
 |---|---|
 | `openCurrency(rateFor)` switches to Accounts and turns Manage on | Opens Settings > Preferences with that currency's rate field focused |
 | `openRestore` and `#bring-back` switch to Accounts with Manage on | Open Settings > Your data with Bring back a download in view (the element keeps its id) |
-| `?view=connections` opens Accounts with Connection health expanded | Opens Accounts with the first card that needs attention in view; Settings > Connections when that connection has no card |
+| `?view=connections` opened Accounts with Connection health expanded | Opens Accounts with the first card that needs attention in view; Settings > Connections when that connection has no card |
 | Hidden card text "use Close... (under Manage)" | "Open the account to close it" |
 | Reports from Activity and from Manage | Activity > Spending > Reports; contextual links (runway from the forecast) stay |
 

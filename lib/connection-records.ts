@@ -22,7 +22,7 @@
 // Encrypted like every seam value; the ids are the item_ids the other stores
 // already hold in plain text. All three are in the person's data download
 // (docs/data-export.md): they are about that person's own connections, shown
-// on their Connection health card and named on /privacy, and the notices are
+// on their cards on the Accounts tab and named on /privacy, and the notices are
 // the record of the emails Nya sent them. The container's deletion deletes
 // them, and a disconnect removes the connection's entries
 // (lib/disconnect-item.ts).

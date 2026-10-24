@@ -144,7 +144,7 @@ class BalancesUnavailable extends Error {
  * above, and is skipped, as it is when the transactions read finds a
  * connection in that state, with the same answer and nothing more: nothing
  * shows a backfill's answer (the dashboard asks for one and only reloads when
- * history was built), and the Connection health card already says what the
+ * history was built), and the connection's card already says what the
  * connection needs and why, so no message is made for it here.
  */
 class NeedsTheirAction extends Error {

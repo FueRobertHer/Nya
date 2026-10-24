@@ -147,7 +147,7 @@ describe('Home, from what the server sends', () => {
     expect(home(body.institutions)).toEqual([
       {
         amber: true,
-        text: 'Payment details aren’t enabled for Nelnet, so the accrued interest on your student loan there isn’t known. To see it, tap Enable payment details on its card on the Accounts tab.',
+        text: 'Payment details aren’t enabled for Nelnet, so the accrued interest on your student loan there isn’t known. To see it, choose Enable payment details in the ⋯ on its card on the Accounts tab.',
       },
     ]);
     plaid.liabilitiesFail = 'PRODUCT_NOT_READY';
@@ -365,7 +365,7 @@ describe('the lines', () => {
         { institution: 'EdFinancial', loans: 1, why: 'not-enabled' },
       ]).unread
     ).toEqual([
-      'Payment details aren’t enabled for MOHELA and EdFinancial, so the accrued interest on 2 student loans there isn’t known. To see it, tap Enable payment details on their cards on the Accounts tab.',
+      'Payment details aren’t enabled for MOHELA and EdFinancial, so the accrued interest on 2 student loans there isn’t known. To see it, choose Enable payment details in the ⋯ on their cards on the Accounts tab.',
       'Payment details are still importing from Aidvantage, so the accrued interest on 2 student loans there isn’t known yet.',
       'Nelnet couldn’t be reached, so the accrued interest on a student loan there isn’t known until it answers.',
       'The accrued interest on a student loan at Navient couldn’t be read, so how much interest the total leaves out for it isn’t known.',

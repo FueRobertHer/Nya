@@ -705,8 +705,9 @@ export default function Dashboard({
     loadNetWorth();
   }, [loadNetWorth]);
 
-  // A notice email links to /?view=connections: open the Accounts tab at the
-  // connection health card, then drop the query, so a reload doesn't jump there.
+  // A notice email links to /?view=connections: open the Accounts tab and go
+  // to what needs attention once the accounts are in (healthFocus, below),
+  // then drop the query, so a reload doesn't jump there.
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('view') !== 'connections') return;
     setTab('accounts');

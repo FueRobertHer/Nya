@@ -537,7 +537,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['accounts[].as_of_time', 'The moment it was measured, where that is known, or null.'],
       [
         'accounts[].connection',
-        'How its bank connection was last found, from what Nya recorded, never a fresh check; null for a manual account. For one SimpleFIN or Lunch Flow feeds, its bank’s link through that service, as Connection health shows it, with what is wrong in words in notes.',
+        'How its bank connection was last found, from what Nya recorded, never a fresh check; null for a manual account. For one SimpleFIN or Lunch Flow feeds, its bank’s link through that service, as its card on the Accounts tab shows it, with what is wrong in words in notes.',
       ],
       ['accounts[].connection.last_ok_at', 'When Nya last reached the bank for it without an error, or null. Nya tries every connection once a day, so a connection that hasn’t answered in more than a day may not be working.'],
       ['accounts[].connection.problem', 'What the daily check last found wrong with it, while that lasts, or null.'],

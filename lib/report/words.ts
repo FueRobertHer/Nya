@@ -189,7 +189,7 @@ export function gapShort(g: Gap, day: DayFormat): string {
 /** What a connection that has stopped needs to be brought up to date: said
  *  once, after the gaps, when any connection's gap is one a sync can close. */
 export const SYNC_REMEDY =
-  'Opening Nya brings connections up to date where they can be, and Connection health on the Accounts tab says what to do about the rest. Then make this report again.';
+  'Opening Nya brings connections up to date where they can be, and each connection’s card on the Accounts tab says what to do about the rest. Then make this report again.';
 
 /** The headline: none of the period is there, some may be missing, or
  *  nothing is known to be missing. */
@@ -402,8 +402,8 @@ export function appendixSplitWords(
   return null;
 }
 
-/** A connection's recorded state, in the words of its badge on the Connection
- *  health card (components/ConnectionHealth.tsx; test/report.test.ts holds
+/** A connection's recorded state, in the words of its badge on its card on
+ *  the Accounts tab (components/ConnectionHealth.tsx badgeOf; test/report.test.ts holds
  *  the two together). */
 export const STATE_WORDS: Readonly<Record<HealthState, string>> = {
   healthy: 'Working',

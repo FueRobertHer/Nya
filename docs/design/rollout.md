@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`) and 3a (the first half of Accounts) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3a and 3b (Accounts but its status pill and type summary) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -9,7 +9,8 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 1 | Settings screen; Manage removed | 3 to 4 days |
 | 2 | Tokens and primitives (dark only) | 3 to 4 days |
 | 3a | Accounts: add sheet, account sheet, collapsible sections | 2 to 3 days |
-| 3b | Accounts: status, type summary, institution menu, Connection details | 2 to 3 days |
+| 3b | Accounts: each connection's status on its card, institution menu, Connection details | 2 to 3 days |
+| 3c | Accounts: status pill and type summary | 1 day |
 | 4 | Home: net worth card, needs attention, this month | 2 to 3 days |
 | 5 | Activity: segments, transaction sheet | 3 to 4 days |
 | 6 | Budgets and Plan segments | 3 to 4 days |
@@ -66,15 +67,22 @@ Split in two pull requests, so each leaves the app working and the one that move
 
 **3b**, the connection's status and actions:
 
-- Status pill and type summary line.
 - Institution cards on the new primitives; ConnectorCards folded into the institution ⋯ menu; Connection details.
 - Rewire `?view=connections` to focus the first affected card (or Settings > Connections when it has no card), since Connection health stops being a card here.
+
+**3c**, what the tab says of all of them:
+
+- Status pill and type summary line.
 
 **Risks:** the honesty notices (stale balances, missing rows, unconfirmed missing, too old) must keep their wording and their red or amber; diff the rendered text before and after for each state. SimpleFIN and Lunch Flow flows (Answer, Choose accounts, undo carrying) must keep working from the menu.
 
 **Built in 3a:** the institution card moved to `components/InstitutionCard.tsx`, and `test/institution-card-view.test.tsx` pinned the words and color of every notice on it before anything was restyled; its rows are `.list-row` buttons that open `components/AccountSheet.tsx`, with provenance as badges (a held balance's words unchanged, now amber, as design-system.md makes it a caution; Overdue red, as before). `components/AddAccountSheet.tsx` behind "+ Add account" replaced the connect block at the top of the tab (the empty state keeps its own). The primitives phase 2 left for their first users: `Menu` (the account sheet's ⋯), `Why` (Which should I use?), `Sheet`'s `footer`, and 44px sheet buttons. `CollapsibleHeader` for the three sections at the foot. Shared with me starts open, since what is shared is read only once it is on screen and each read counts as a showing in the sharer's record.
 
 **Decided in 3a:** an action in the account sheet closes it and opens that action's own sheet (the lifecycle sheet, Update, Add transaction, Import a file, Import history, Delete), as the dashboard already does elsewhere, instead of a second level with a back button inside the account sheet. Those sheets are separate components with their own state, and making each a level of the account sheet is a refactor beyond this phase. Focus goes back to the account's row when the second sheet closes.
+
+**Built in 3b:** each institution card carries its connection's status under its subtotal (`components/ConnectionStatus.tsx`): its own line, Plaid's or the connector's explanation, what it does to the total, when it last synced and whose side, the account questions, and each button that fixes it once. The Connection health card and the SimpleFIN and Lunch Flow cards are gone from the tab; `test/connection-words.test.tsx` holds the cards to every sentence those three showed, recorded from main for every Plaid cause and connector issue (`test/connection-words-before-3b.json`). An institution ⋯ (Connection details, Add or remove accounts, Enable payment details, Refresh and Choose accounts for a connector, Disconnect… last) replaced the Options sheet; Allow transactions stays a button on the card, beside the line that explains it, so the gap and its fix are seen together. Settings > Connections lists every connection with no card on Accounts, with its status and ⋯, and the tab says when one of them needs attention. `?view=connections` waits for the accounts from the server, then focuses the first card that needs attention, worst first. `useConnectors` reads the connections once for the whole dashboard.
+
+**Decided in 3b:** one color for a connection's problems, from two questions (`lib/accounts-status.ts`): red when it is broken in a way only the person can fix, or the total is missing an account's money; amber for anything else that is off. The card and the Connection health card used to color the same problem differently, in both directions (a Plaid outage with nothing recovered red on the card and amber in health; a connection that must be removed amber on the card when its balances were recovered, red in health; a SimpleFIN card amber whenever a balance existed). The rule keeps the worse of the two in the common cases and settles four on purpose: a new SimpleFIN or Lunch Flow connection waiting for its first answer, and a problem only Nya can fix while balances are shown, are amber; a card or loan waiting for its sign, and an account held with no balance, are red.
 
 ## Phase 4: Home
 

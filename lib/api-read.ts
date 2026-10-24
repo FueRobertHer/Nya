@@ -56,7 +56,7 @@
 // balance SimpleFIN last reported, in Nya's sign, as of the time the bank
 // gave it, and none to count while a card's or a loan's positive balance
 // waits for the person to say how to read it (an answer built on it says
-// complete: false), with each bank's health as Connection health shows it.
+// complete: false), with each bank's health as its card shows it.
 // Their rows come from the same assembly as the rest, and each bank is among
 // the sources, with whether its older history is all in. A Lunch Flow
 // connection's accounts are served the same way with source 'lunchflow', as
@@ -287,7 +287,7 @@ export type ApiAccount = {
   /** The moment, where it is known. */
   as_of_time: string | null;
   /** Null for a manual account. For one SimpleFIN feeds, its bank's link
-   *  through SimpleFIN, as Connection health shows it. */
+   *  through SimpleFIN, as its card shows it. */
   connection: ApiConnection | null;
   /** When it ended, as the person said (or Nya assumed, `assumed`, when
    *  nobody answered about an account its bank stopped returning), or null
@@ -643,9 +643,9 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
 }
 
 /**
- * A SimpleFIN bank's link, as Connection health shows it, in the API's shape:
+ * A SimpleFIN bank's link, as its card shows it, in the API's shape:
  * when it last synced cleanly, and what is wrong with it while that lasts,
- * with the state Connection health gives it and, as `since`, when Nya's
+ * with the state its card gives it and, as `since`, when Nya's
  * latest request found it (when it began isn't kept), or, with no answer in
  * over a day, when the last one came.
  */
