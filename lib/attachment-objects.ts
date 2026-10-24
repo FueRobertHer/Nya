@@ -37,10 +37,13 @@
 // TIME LIMITS. Neither Blob nor its SDK times out a request, and the SDK
 // retries failures with a doubling backoff, so every call here has a limit,
 // aborted with no reason (the SDK stops only on the default AbortError, as
-// lib/backup.ts explains).
+// lib/backup.ts explains). Within it, a listing's page or a delete that stalls
+// is sent again on a new request (lib/blob-attempts.ts), so one quiet
+// connection no longer uses up the whole limit.
 
 import { get as httpsGet } from 'node:https';
 import { envPrefix } from './storage';
+import { retryStalled } from './blob-attempts';
 import type { Ctx } from './containers';
 import type { PartName } from './attachment-crypto';
 
@@ -230,14 +233,14 @@ export function vercelAttachmentObjects(token: string, deps: { sdk?: () => Promi
     },
     async del(pathnames, signal) {
       const blob = await sdk();
-      for (let i = 0; i < pathnames.length; i += 100) await blob.del(pathnames.slice(i, i + 100), { token, abortSignal: signal });
+      for (let i = 0; i < pathnames.length; i += 100) await retryStalled('a delete', signal, (s) => blob.del(pathnames.slice(i, i + 100), { token, abortSignal: s }));
     },
     async list(prefix, signal) {
       const blob = await sdk();
       const out: StoredObject[] = [];
       let cursor: string | undefined;
       do {
-        const page = await blob.list({ token, prefix, cursor, limit: 1000, abortSignal: signal });
+        const page = await retryStalled('a listing', signal, (s) => blob.list({ token, prefix, cursor, limit: 1000, abortSignal: s }));
         for (const b of page.blobs) out.push({ pathname: b.pathname, size: b.size, uploadedAt: new Date(b.uploadedAt) });
         cursor = page.hasMore ? page.cursor : undefined;
       } while (cursor);
@@ -248,7 +251,7 @@ export function vercelAttachmentObjects(token: string, deps: { sdk?: () => Promi
       const out: string[] = [];
       let cursor: string | undefined;
       do {
-        const page = await blob.list({ token, prefix, cursor, mode: 'folded', abortSignal: signal });
+        const page = await retryStalled('a listing', signal, (s) => blob.list({ token, prefix, cursor, mode: 'folded', abortSignal: s }));
         out.push(...page.folders);
         cursor = page.hasMore ? page.cursor : undefined;
       } while (cursor);
