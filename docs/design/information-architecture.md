@@ -68,8 +68,8 @@ Moves off Home: the timeline notes card (into a sheet from the chart), the backu
 
 **Opens on:**
 
-- A compact header row: **+ Add account** and a status pill (green "All synced", amber "1 couldn't refresh", or red "1 needs you"), which moves focus to the first affected card.
-- One summary line by type: Cash, Credit, Investments, Loans, Other, with subtotals.
+- A compact header row: **+ Add account** and a status pill counting connections (red "1 problem", amber "2 to check", or green "All synced"), which moves focus to the first affected card, worst first. Red and amber are buttons; "All synced" is a badge, shown only when every connection was read in this load.
+- One summary line by type: Cash, Credit, Investments, Loans, Other, with subtotals (shown when the accounts fall in two or more). A group missing an account of its kind is marked Incomplete, and what the line can't count is said under it: a red notice naming the institutions whose accounts are left out, an amber one naming those whose figures are only last known.
 - **Institution cards**, grouped by institution as today. Header: name, source badge (Manual, via SimpleFIN, via Lunch Flow), subtotal, ⋯. A one-line "Synced 2h ago" (or the caveat, in its severity color). Rows: name and mask, one subtitle line (type, or the payment line on a card or loan, or a cash chip on a brokerage), balance, chevron.
 - Problems stay on the card they concern: the reconnect notice and **Reconnect** button, Review accounts, account questions ("Did this close?"), missing-rows and stale-balance notices.
 - Collapsible sections at the bottom: **Hidden (N)**, **Accounts that ended (N)**, **Shared with me**.
@@ -197,6 +197,8 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ConnectionHealth | Collapsible card on Accounts | Status pill, institution cards, Connection details in ⋯ |
 | Connectors (ConnectorCards, ConnectorSheet) | Separate cards on Accounts | Institution card ⋯ menu; orphans in Settings > Connections |
 | Institution cards (InstitutionCard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
+| AccountsStatus | New in phase 3c | The Accounts tab's header row: how many connections have a problem or something to check, in lib/accounts-status.ts's colors, jumping to the first |
+| AccountsSummary | New in phase 3c | Under the Accounts tab's header row: the line by type (components/account-groups.ts), with what it can't count |
 | ConnectionStatus | New in phase 3b | On each institution card (and Settings > Connections): what is wrong and what it does to the total, in one color from lib/accounts-status.ts, when it last synced and whose side, the account questions, and each button that fixes it once |
 | ConnectionDetails | New in phase 3b | Institution ⋯ > Connection details: Plaid's own words, side and code; a SimpleFIN or Lunch Flow connection's card (where it reaches, requests left, history) |
 | AccountSparkline, HoldingsRecorded, InvestmentActivity, LiabilityDetail | Inline expansion of a row | Account sheet |

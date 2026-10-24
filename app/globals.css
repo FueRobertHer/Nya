@@ -566,6 +566,28 @@ button:active:not(:disabled):not([class*="cl-"]) {
   color: var(--accent);
 }
 
+/* A chip that jumps to what it counts (the Accounts status pill), in its
+   severity's tint. The edge stays, in the text's color, so it reads as a
+   control and not as a badge; the chevron says where it goes. */
+.chip.neg {
+  border-color: currentColor;
+  background: var(--neg-tint);
+  color: var(--neg);
+}
+
+.chip.warn {
+  border-color: currentColor;
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.chip > svg,
+.badge > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 /* Notice: the one way to say something is wrong or worth knowing
    (design-system.md#status-and-honesty). Severity sets the color and is never
    lowered: critical when a number is wrong or short, caution when it is real
@@ -1913,8 +1935,10 @@ button:disabled {
   color: var(--accent);
 }
 
-/* The Accounts tab's own row: + Add account, on the right. */
+/* The Accounts tab's own row, on the right: the status pill
+   (components/AccountsStatus.tsx), then + Add account. */
 .accounts-bar {
+  align-items: center;
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
@@ -1924,6 +1948,34 @@ button:disabled {
 .accounts-bar .btn > svg {
   width: var(--icon);
   height: var(--icon);
+}
+
+/* The line by kind under it (components/AccountsSummary.tsx): each label
+   with its figure, wrapping at phone widths. */
+.accounts-summary {
+  margin-bottom: var(--sp-4);
+}
+
+.accounts-summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+}
+
+.accounts-summary-line > li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.accounts-summary-line .money {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
 /* The top of an account's sheet (components/AccountSheet.tsx): its balance,

@@ -19,7 +19,7 @@ How Nya should look and behave, screen to screen. The tokens are in [tokens.css]
 - **Dark and light.** The theme follows the system: dark when the system is dark or states no preference (so most people see what they see today), light when it is light. Settings > Preferences can pin Dark or Light. Keeping everyone on dark until they opt in is the alternative; see [Decisions you can reverse](README.md#decisions-you-can-reverse).
 - **Fewer boxes.** A screen is a few cards with grouped rows, not a column of cards each holding one fact. Rows share a card and are split by 1px dividers.
 - **One hero number per screen.** Net worth on Home, a month's net on Activity, the FI number on Plan. Everything else is smaller.
-- **Color is meaning.** Blue is for things you can act on and the current selection. Green and red are for money in and out, and for gain and loss. Amber is only for something that needs you. Red as a background means a number is wrong or short.
+- **Color is meaning.** Blue is for things you can act on and the current selection. Green and red are for money in and out, and for gain and loss. Amber is only for something that needs you. Red as a background means a number is wrong or short. One status uses green: the Accounts tab's "All synced", the good end of the status pill whose other ends are red and amber.
 - **Considered and rejected:** an editorial "warm paper" style with a serif display face. It is pleasant for reading and worse for scanning columns of figures.
 
 The mockups ([mockups/index.html](mockups/index.html)) show the refined current dark beside this direction on Home, so the choice can be made on a real screen.
@@ -152,7 +152,7 @@ A **range control** (1M ... All, the Spending periods) looks the same but is a l
 One family, `--r-xs`, `--fs-1`, weight 500, sentence case.
 
 - **Badge**: a status or source label that isn't clickable (Manual, via SimpleFIN, Pending, Overdue). Tones: neutral, accent, pos, neg, warn, each on its tint.
-- **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area.
+- **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area. Tones `neg` and `warn` (since phase 3c) for a status that jumps to what it counts, the Accounts status pill: its severity's tint, with the edge kept in the text's color and a trailing chevron, so it never reads as a badge.
 - **Tag colors**: the nine tag colors (`.tag-gray` to `.tag-pink`) stay. Today they are dark-only (a pastel text on an 18 to 20% tint). They become tokens in phase 7, which gives them light values, and join the contrast check then; they are not in `tokens.css` yet.
 
 Replaces `.pill`, `.manual-badge`, `.cash-chip`, `.health-badge`, `.tag-chip`, `button.tag-suggestion`, `.card-mode-category`, `.pending-tag`, `.low-conf-tag`, `.over-tag`, `.done-tag`.

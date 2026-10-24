@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3a and 3b (Accounts but its status pill and type summary) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`) and 3 (Accounts, in three pull requests) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -63,7 +63,7 @@ Split in two pull requests, so each leaves the app working and the one that move
 - Add account sheet (connect options, manual, switching, coverage disclosure).
 - Account sheet replacing the inline expansion and the row buttons (fixes buttons inside a clickable `<tr>`).
 - Hidden, Accounts that ended and Shared with me as collapsible sections.
-- The Payoff plan button stays (as a row under the + Add account bar, under the type summary once 3b adds it) until phase 6 moves it.
+- The Payoff plan button stays (as a row under the + Add account bar, under the type summary, which 3c added) until phase 6 moves it.
 
 **3b**, the connection's status and actions:
 
@@ -83,6 +83,14 @@ Split in two pull requests, so each leaves the app working and the one that move
 **Built in 3b:** each institution card carries its connection's status under its subtotal (`components/ConnectionStatus.tsx`): its own line, Plaid's or the connector's explanation, what it does to the total, when it last synced and whose side, the account questions, and each button that fixes it once. The Connection health card and the SimpleFIN and Lunch Flow cards are gone from the tab; `test/connection-words.test.tsx` holds the cards to every sentence those three showed, recorded from main for every Plaid cause and connector issue (`test/connection-words-before-3b.json`). An institution ⋯ (Connection details, Add or remove accounts, Enable payment details, Refresh and Choose accounts for a connector, Disconnect… last) replaced the Options sheet; Allow transactions stays a button on the card, beside the line that explains it, so the gap and its fix are seen together. Settings > Connections lists every connection with no card on Accounts, with its status and ⋯, and the tab says when one of them needs attention. `?view=connections` waits for the accounts from the server, then focuses the first card that needs attention, worst first. `useConnectors` reads the connections once for the whole dashboard.
 
 **Decided in 3b:** one color for a connection's problems, from two questions (`lib/accounts-status.ts`): red when it is broken in a way only the person can fix, or the total is missing an account's money; amber for anything else that is off. The card and the Connection health card used to color the same problem differently, in both directions (a Plaid outage with nothing recovered red on the card and amber in health; a connection that must be removed amber on the card when its balances were recovered, red in health; a SimpleFIN card amber whenever a balance existed). The rule keeps the worse of the two in the common cases and settles four on purpose: a new SimpleFIN or Lunch Flow connection waiting for its first answer, and a problem only Nya can fix while balances are shown, are amber; a card or loan waiting for its sign, and an account held with no balance, are red.
+
+**Built in 3c:** a status pill in the tab's header row (`components/AccountsStatus.tsx`) and a line by type under it (`components/AccountsSummary.tsx`, grouping in `components/account-groups.ts`). The pill counts connections, each in its card's color from `lib/accounts-status.ts` (a SimpleFIN or Lunch Flow connection's cards once, at the worst; the connections in Settings > Connections too), and jumps through the same `goToFirstToFix` as `?view=connections`. Its red and amber are `.chip` tones (`neg`, `warn`), edged and with a chevron so they read as controls. The line sums the accounts on the cards below, through `signedBalance`, converting mixed currencies as the cards do, and is shown when they fall in two or more kinds.
+
+**Decided in 3c:**
+
+- **The pill's words.** Red is "1 problem", not "1 needs you": a total missing money during an outage is red with nothing for the person to do. Amber is "2 to check", not "1 couldn't refresh": caution also covers an open account question, a connection ending soon, a record that couldn't be read and a new connection waiting for its first answer. With both, red shows its count and the amber count is in its label for screen readers; the click lands worst first.
+- **Only from this load.** The pill shows nothing while the accounts are this device's snapshot, after a load that failed, or before the connector list is read; "All synced" also waits for Plaid's warnings to be readable and for at least one connection that syncs. A count from old data could be wrong, and the tab's notices already say what wasn't read.
+- **The line says what it can't count, from the accounts themselves.** A kind is marked Incomplete only when an account of that kind is missing from it (held with no balance, a connector account with none, an account a broken card can't show, or a currency with no rate). When the kind is unknown (a count with no names, or a held account Nya never knew the kind of), no kind is marked, since it could be a debt anywhere: the red notice under the line names the institutions and says any total may be short. Figures that are last known, or a bank that stopped sending an account, get one amber line naming the institutions. The words of each card's notice are unchanged.
 
 ## Phase 4: Home
 
