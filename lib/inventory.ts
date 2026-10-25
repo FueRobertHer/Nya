@@ -61,6 +61,7 @@ export const RETENTION_ROWS = [
   'Your home currency and your own exchange rates',
   'Weekly summaries you asked for now, and uses of a link to turn one off',
   'Reads of what is shared with you, and of what someone sees of yours',
+  'Nightly jobs the admin ran by hand',
   'Failed password attempts, counted by IP address',
   'Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address',
   'The app’s own records about your data',
@@ -813,6 +814,13 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'File imports and previews this hour',
     unit: COUNT,
     kept: 'Counts that limit how often you can do something',
+    plain: COUNT_PLAIN,
+  },
+  'nightly-job-runs': {
+    group: 'machinery',
+    name: 'Nightly jobs run by hand (the admin)',
+    unit: COUNT,
+    kept: 'Nightly jobs the admin ran by hand',
     plain: COUNT_PLAIN,
   },
   'inventory-reads': {

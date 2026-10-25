@@ -62,7 +62,7 @@
 import type { Ctx, ContainerId } from './containers';
 import { isContainerId, listContainers } from './containers';
 import { readContainerEntries, readTombstones, ContainerKeyError } from './crypto';
-import { backupFolder, backupProblem, backupRecordExists, backupRetention, databaseBackupDays, dataArchiveName, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus } from './backup';
+import { backupFolder, backupProblem, backupRecordExists, backupRetention, databaseBackupDays, dataArchiveName, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus, type RunAnswer } from './backup';
 import { attachmentStore, isAttachmentId, placeStore, sweepStateStore, usageStore, type Attachment, type Place, type SweepState } from './attachment-stores';
 import { attachmentObjects, containerFolder, environmentFolder, parseObjectPath, withLimit, type AttachmentObjects } from './attachment-objects';
 import { discardUpload, finishDelete, fieldOf, usageFromRecords, POSTING_WAIT_MS } from './attachments';
@@ -479,5 +479,20 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
     const reason = err instanceof Error ? err.message : String(err);
     await recordAttachmentSweep({ ...before, cursor, last_failed: now.toISOString(), reason });
     throw err;
+  }
+}
+
+/** One sweep, as the cron runs it (app/api/attachments/sweep/route.ts), and
+ *  as the admin starts it again from the app (app/api/admin/jobs). Logs
+ *  counts and account ids, never a file's name or anything in it. */
+export async function runNightlySweep(now: Date = new Date()): Promise<RunAnswer> {
+  try {
+    const result = await runAttachmentSweep(now);
+    console.log('Receipts sweep', JSON.stringify(result));
+    return { status: 200, body: result };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error('Receipts sweep failed', reason);
+    return { status: 500, body: { error: reason } };
   }
 }

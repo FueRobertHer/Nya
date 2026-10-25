@@ -353,6 +353,17 @@ describe('the rows behind a node: what a tap shows', () => {
 });
 
 describe('what the chart marks for a pick from its table', () => {
+  test('in a chart drawn without categories (a phone), a category or a fold of them marks its group', () => {
+    const f = flowWith([5000, 300], { Eating: [450, 10, 8] });
+    const eating = f.groups.find((x) => x.name === 'Eating')!;
+    const g = flowGraph(f, { categories: false });
+    expect(g.nodes.filter((n) => n.column === 3)).toEqual([]);
+    expect(drawnNodeOf(f, g, `category:${eating.categories[0].id}`)).toBe(`group:${eating.id}`);
+    // A fold tapped where the categories were drawn, the phone turned since.
+    expect(drawnNodeOf(f, flowGraph(f), `other:${eating.id}`)).toBe(`other:${eating.id}`);
+    expect(drawnNodeOf(f, g, `other:${eating.id}`)).toBe(`group:${eating.id}`);
+  });
+
   test('the node itself when drawn; for a folded payer Other income, for a folded category its group’s Other, else its group', () => {
     const f = flowWith([5000, 300, 100, 50], { Eating: [450, 10, 8], Fees: [20, 15] });
     const g = flowGraph(f);
@@ -424,12 +435,12 @@ describe('the transactions held', () => {
     expect(windowStart(Date.parse('2026-11-01T03:00:00Z'))).toBe('2025-11-01');
   });
 
-  test('a period reaching before the window says its first days aren’t in it', () => {
+  test('a period reaching before the window says the part before it isn’t in it', () => {
     // A leap day's evening in California: UTC is March 1, so the window starts
     // March 2 a year back, a day after the twelve months begin.
     const now = Date.parse('2028-03-01T04:00:00Z');
     const p = periodOf('last-12-months', '2028-02-29');
-    expect(historyNote(p, [{ date: '2027-03-02' }], now)).toBe("The Activity tab loads the last 365 days of transactions, from Mar 2, 2027 on, so this period's first days aren't in it.");
+    expect(historyNote(p, [{ date: '2027-03-02' }], now)).toBe("The Activity tab loads the last 365 days of transactions, from Mar 2, 2027 on, so the part of this period before then isn't in it.");
     expect(historyNote(periodOf('last-3-months', '2028-02-29'), [{ date: '2027-03-02' }], now)).toBeNull();
   });
 

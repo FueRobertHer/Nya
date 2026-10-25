@@ -61,8 +61,9 @@ export const PENDING_DISCONNECT_LEAD_DAYS = 7;
 /** How many days before a connection ends the Home tab raises it too. */
 export const RECONNECT_ALERT_DAYS = 3;
 
-/** Where a notice email sends the person: the Connection health card on the
- *  Accounts tab (components/Dashboard.tsx), kept through sign-in (proxy.ts,
+/** Where a notice email sends the person: the card of the first connection
+ *  that needs attention on the Accounts tab, or Settings > Connections when it
+ *  has no card (components/Dashboard.tsx), kept through sign-in (proxy.ts,
  *  app/login). */
 export const CONNECTIONS_PATH = '/?view=connections';
 

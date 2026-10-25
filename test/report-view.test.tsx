@@ -349,11 +349,17 @@ describe('the page around it', () => {
     expect(unreadable).not.toContain('<button');
   });
 
-  test('found from Activity, and only there', () => {
+  test('found from Activity, and only there: at the foot of Spending', () => {
     expect(renderToStaticMarkup(<ReportsEntry />)).toContain('href="/reports"');
-    const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
-    expect(dashboard).toContain("{tab === 'activity' && <ReportsEntry />}");
-    expect(dashboard.match(/<ReportsEntry \/>/g)?.length).toBe(1);
+    const read = (f: string) => readFileSync(join(import.meta.dir, '..', 'components', f), 'utf8');
+    expect(read('Dashboard.tsx')).not.toContain('<ReportsEntry');
+    const activity = read('MonthBreakdown.tsx');
+    // Three: in Spending's branch, and on Spending while the list loads and
+    // when there is none, since reports need no transactions.
+    expect(activity.match(/<ReportsEntry \/>/g)?.length).toBe(3);
+    expect(activity.match(/\{segment === "spending" && <ReportsEntry \/>\}/g)?.length).toBe(2);
+    const spending = activity.slice(activity.indexOf('segment === "spending" ? ('), activity.indexOf('{summaryCard}', activity.indexOf(') : (', activity.indexOf('segment === "spending" ? ('))));
+    expect(spending).toContain('<ReportsEntry />');
   });
 
   test('gated like the dashboard: signed out, the page sends to the login and the data is refused', async () => {

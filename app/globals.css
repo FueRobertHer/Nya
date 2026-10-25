@@ -191,8 +191,36 @@ h2 {
   color: var(--down);
 }
 
-/* The fill is deeper than --accent so its white label passes AA (4.5:1). */
-button {
+/* Home's Net worth card (components/NetWorthCard.tsx): its title is a real
+   heading, drawn as the label it was. */
+h2.total-label {
+  margin: 0;
+  font-weight: var(--fw-regular);
+}
+
+.net-worth-card .notice {
+  overflow-wrap: anywhere;
+}
+
+/* When it was updated, History paused, and the chart notes, on one row that
+   wraps on a narrow phone. */
+.net-worth-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.net-worth-foot > .btn {
+  margin-left: auto;
+}
+
+/* The fill is deeper than --accent so its white label passes AA (4.5:1).
+   Not on Clerk's own buttons (classes cl-...): its window sets no width on
+   "Update profile" or a row's ⋯, so the full width here squeezed the name and
+   address beside them to a few letters. :where keeps this at no specificity,
+   below every class rule, as the bare element selector was. */
+:where(button:not([class*="cl-"])) {
   background: var(--accent-fill);
   color: var(--on-fill);
   border: none;
@@ -409,6 +437,70 @@ button:active:not(:disabled):not([class*="cl-"]) {
   color: var(--text-3);
 }
 
+/* A row's leading icon, for a status (Home's Needs attention): a tinted
+   square whose shape says the level too, never color alone. */
+.list-row-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  background: var(--elevated);
+  color: var(--text-2);
+}
+
+.list-row-icon > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.list-row-icon.critical {
+  background: var(--neg-tint);
+  color: var(--neg);
+}
+
+.list-row-icon.caution {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+/* Rows inside a card with a header: the focus ring drawn inside them, as on
+   a card that is all rows. */
+.card > .list-rows .list-row:focus-visible {
+  outline-offset: -2px;
+}
+
+/* A card header's count, beside its title. */
+.card-header .meta {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Home's cards of rows (Needs attention, This month): the rows run to the
+   card's foot; what qualifies a row (the month's missing transactions, the
+   FI line's notes) follows it, inside its item. */
+:is(.needs-attention, .this-month) {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+:is(.needs-attention, .this-month) > .list-rows {
+  margin-bottom: 0;
+}
+
+.row-notes {
+  padding: 0 var(--sp-5) var(--sp-3);
+}
+
+/* This month's FI line arrives after Home paints, or not at all: until a
+   card has a row, it isn't there. */
+.this-month:not(:has(li)) {
+  display: none;
+}
+
 /* Buttons. Width is the label's own; .btn-block makes one full width. Primary
    is the one main action in a card or sheet; danger only confirms, inside a
    confirm sheet. */
@@ -502,6 +594,55 @@ button:active:not(:disabled):not([class*="cl-"]) {
   }
 }
 
+/* Activity's pinned bar (components/ActivityBar.tsx): the month switcher and
+   the tab's ⋯ over its segments, kept in view under the status bar while the
+   segment scrolls. */
+.activity-bar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  background: var(--canvas);
+}
+
+.activity-month {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: var(--tap);
+}
+
+.activity-month-name {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+}
+
+/* An arrow at either end looks as a disabled button does, and keeps focus. */
+.activity-month > .icon-btn[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Shared has no month: its ⋯ keeps to the right. */
+.activity-month > .menu-anchor {
+  margin-left: auto;
+}
+
+/* What a jump scrolls to on Activity (a segment chosen from the pinned bar,
+   a cash-flow pick's list, the review count) stops under the bar, not behind it: the bar's two 44px rows (the
+   segments' with their track's padding), its padding and gap, under the
+   status bar. */
+.activity-panel,
+.activity-panel :is(.card, .flow-shown, .review-count) {
+  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 2 * var(--tap) + 4 * var(--sp-2));
+}
+
 /* Badge: a status or source label, not clickable. Chip: clickable, 32px
    tall inside a 44px hit area. Sentence case, never color alone. */
 .badge,
@@ -560,10 +701,71 @@ button:active:not(:disabled):not([class*="cl-"]) {
   inset: min(0px, calc((100% - var(--tap)) / 2)) -1px;
 }
 
-.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"]) {
+.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on]) {
   border-color: transparent;
   background: var(--accent-tint);
   color: var(--accent);
+}
+
+/* A chip that jumps to what it counts (the Accounts status pill), in its
+   severity's tint. The edge stays, in the text's color, so it reads as a
+   control and not as a badge; the chevron says where it goes. */
+.chip.neg {
+  border-color: currentColor;
+  background: var(--neg-tint);
+  color: var(--neg);
+}
+
+.chip.warn {
+  border-color: currentColor;
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.chip > svg,
+.badge > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* A row of filter chips. The rows are 12px apart when they wrap, so each
+   chip's 44px hit area stops where the next row's starts. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+
+/* A chip that chooses one of a few options (components/ChipSelect.tsx): the
+   native select, unseen, takes the whole 44px hit area in place of the
+   chip's own, so a tap anywhere on it opens the picker. "On" while a choice
+   is made (data-on, above). */
+.chip-select::after {
+  content: none;
+}
+
+/* Sized outright: a form control laid out absolutely may keep its own
+   size (its widest option) rather than stretch between its insets. */
+.chip-select > select {
+  position: absolute;
+  top: min(0px, calc((100% - var(--tap)) / 2));
+  left: -1px;
+  width: calc(100% + 2px);
+  height: max(100%, var(--tap));
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chip-select:has(> select:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
 }
 
 /* Notice: the one way to say something is wrong or worth knowing
@@ -606,6 +808,37 @@ button:active:not(:disabled):not([class*="cl-"]) {
 .notice.done {
   background: var(--pos-tint);
   color: var(--pos);
+}
+
+/* Two or more lesser notes on a figure, gathered (components/TotalCaveats.tsx,
+   design-system.md "Status and honesty"): one line saying how many and of
+   what, in the worst one's color, that opens in place to each in full. */
+.notice-summary > summary {
+  align-items: center;
+  min-height: var(--tap);
+  list-style: none;
+  cursor: pointer;
+}
+
+.notice-summary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.notice-summary > summary > span {
+  flex: 1;
+}
+
+.notice-summary > summary > .notice-chevron {
+  margin-top: 0;
+  transition: transform var(--dur-fast) ease;
+}
+
+.notice-summary[open] > summary > .notice-chevron {
+  transform: rotate(180deg);
+}
+
+.notice-summary[open] > .stack {
+  margin-top: var(--sp-2);
 }
 
 /* Helper text: one line under the thing it explains. */
@@ -808,6 +1041,9 @@ th.num {
 
 .inst-header {
   display: flex;
+  /* A hint too long to sit beside the title goes under it, never against it. */
+  flex-wrap: wrap;
+  column-gap: var(--sp-2);
   justify-content: space-between;
   align-items: baseline;
 }
@@ -935,24 +1171,6 @@ button.danger {
   color: var(--text);
 }
 
-/* Right side of an institution header: balance, plus its Options button. */
-.inst-header-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* An institution's Options (Add or remove accounts, Disconnect), and
-   Disconnect in Settings > Connections: sized to its label in the header,
-   not a full-width button. */
-button.inst-options {
-  width: auto;
-  min-height: 44px;
-  padding: 8px 12px;
-  font-size: 13px;
-  flex-shrink: 0;
-}
-
 .text-input {
   width: 100%;
   padding: 12px 14px;
@@ -970,7 +1188,7 @@ button.inst-options {
   outline-offset: 1px;
 }
 
-button:disabled {
+button:disabled:where(:not([class*="cl-"])) {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1063,30 +1281,90 @@ button:disabled {
   color: var(--up);
 }
 
-.pending-tag {
-  color: var(--muted);
-  font-size: 11px;
-  font-style: italic;
+/* Activity's list (components/MonthBreakdown.tsx): rows of the card's
+   .list-rows, each a button that opens its transaction's sheet
+   (components/TransactionSheet.tsx), under a line for each day with what
+   the day's rows come to. */
+.txn-day {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5) var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-medium);
 }
 
-.txn-date-header td {
-  padding: 6px 8px;
-  background-color: #2f3542;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
+.txn-row .list-row-title {
+  overflow-wrap: anywhere;
 }
 
-/* The first day heading sits right under the search box; no top rule needed. */
-.txn-date-header:first-child td {
-  padding-top: 6px;
+/* Its one line, then where it came from as chips. */
+.txn-row .list-row-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
 }
 
-/* Transactions divide with hairlines within a day; the last row of each day
-   drops its rule so the day reads as one block ending at the next heading. */
-.txn-table .acct-row.last-in-day td {
-  border-bottom: none;
+/* The notes that bear on what a transaction counts as, under its line on
+   the row and under its amount in its sheet (TxnNotes): never only in the
+   sheet. */
+.txn-row-note {
+  display: block;
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  line-height: var(--lh-body);
+}
+
+.txn-amount.inflow {
+  color: var(--pos);
+}
+
+/* Counted in no total here (excluded, or in a group counted before what is
+   shown), or a split transaction's own amount, whose parts are what count:
+   quieter. */
+.txn-amount.excluded,
+.txn-amount.split-whole {
+  color: var(--text-3);
+}
+
+/* A split transaction's parts and a group's transactions, each a row under
+   its transaction's, set in past its logo. */
+.txn-part-row {
+  padding-left: calc(var(--sp-5) + 28px + var(--sp-3));
+}
+
+.txn-part-row .list-row-title {
+  font-weight: var(--fw-regular);
+}
+
+/* A transaction's sheet: its amount, the day and account under it. */
+.txn-sheet-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.txn-sheet-hero > * {
+  margin: 0;
+}
+
+.txn-sheet-amount {
+  font-size: var(--fs-6);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+}
+
+.txn-sheet-amount.inflow {
+  color: var(--pos);
+}
+
+.txn-sheet-heading {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
 }
 
 .empty-note {
@@ -1227,6 +1505,14 @@ button:disabled {
 .chart-xlabel {
   fill: var(--muted);
   font-size: 10px;
+}
+
+/* A chart drawn at its own width (components/drawn-width.ts) has a viewBox
+   unit to a CSS pixel, so its text is the size it says. The charts still on
+   a fixed viewBox keep the size above until they are drawn at theirs. */
+.at-width .chart-tick,
+.at-width .chart-xlabel {
+  font-size: var(--fs-1);
 }
 
 /* The info button at the end of the readout row: the explanations of the
@@ -1405,39 +1691,6 @@ button:disabled {
   color: var(--down);
 }
 
-/* --- insights (Home tab) --- */
-
-.insight-list {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.insight {
-  font-size: 14px;
-}
-
-.insight-up {
-  color: var(--up);
-}
-
-.insight-down {
-  color: var(--down);
-}
-
-.insight-neutral {
-  color: var(--text);
-}
-
-/* Idle cash: worth acting on, but nothing has gone wrong -- amber rather than
-   the red an overdue payment gets. */
-.insight-warn {
-  color: var(--warn);
-}
-
 /* --- spending trend columns (Activity tab) --- */
 
 .trend-row {
@@ -1454,8 +1707,9 @@ button:disabled {
 
 .trend-col {
   /* grow to fill when there are only a few months, but never shrink below a
-     tappable width -- that's what makes the row overflow and scroll. */
-  flex: 1 0 42px;
+     tappable width, or the widest figure (--trend-col, from the currency) --
+     that's what makes the row overflow and scroll. */
+  flex: 1 0 var(--trend-col, 42px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1486,18 +1740,20 @@ button:disabled {
   background: var(--down);
 }
 
-.trend-col.active .trend-bar {
+/* The month the period ends with, and the others in it (Spending's period). */
+.trend-col:is(.active, .in-period) .trend-bar {
   opacity: 1;
 }
 
 .trend-val {
-  font-size: 10px;
+  font-size: var(--fs-1);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .trend-label {
-  font-size: 11px;
+  font-size: var(--fs-1);
   color: var(--muted);
   padding-bottom: 2px;
 }
@@ -1505,6 +1761,10 @@ button:disabled {
 .trend-col.active .trend-label {
   color: var(--accent);
   font-weight: 600;
+}
+
+.trend-col.in-period .trend-label {
+  color: var(--text-1);
 }
 
 /* --- budgets (Budgets tab) --- */
@@ -1618,17 +1878,11 @@ button:disabled {
 
 .rename-hint {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-1);
 }
 
-/* Low category-confidence nudge on a transaction row. */
-.low-conf-tag {
-  color: var(--warn, #d08a2a);
-  font-size: 11px;
-  font-style: italic;
-}
-
-/* "What is this charge?" detail list inside the expanded row. */
+/* Key and value details: the bank's, in a transaction's sheet; an account's
+   payment terms, in its sheet. */
 .txn-detail {
   margin: 8px 0 2px;
   display: grid;
@@ -1931,8 +2185,10 @@ button:disabled {
   color: var(--accent);
 }
 
-/* The Accounts tab's own row: + Add account, on the right. */
+/* The Accounts tab's own row, on the right: the status pill
+   (components/AccountsStatus.tsx), then + Add account. */
 .accounts-bar {
+  align-items: center;
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
@@ -1942,6 +2198,34 @@ button:disabled {
 .accounts-bar .btn > svg {
   width: var(--icon);
   height: var(--icon);
+}
+
+/* The line by kind under it (components/AccountsSummary.tsx): each label
+   with its figure, wrapping at phone widths. */
+.accounts-summary {
+  margin-bottom: var(--sp-4);
+}
+
+.accounts-summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+}
+
+.accounts-summary-line > li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.accounts-summary-line .money {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
 /* The top of an account's sheet (components/AccountSheet.tsx): its balance,
@@ -3303,85 +3587,6 @@ button.plan-edit:disabled {
   color: var(--muted);
 }
 
-/* --- connection health (#51): the health card on the Accounts tab, and the
-   "Reconnect soon" note on an institution's card --- */
-
-/* The collapsed card's summary, in amber while something needs attention. */
-.health-attention {
-  color: var(--warn);
-}
-
-.health-list {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-
-.health-row {
-  padding: 12px 0;
-  border-top: 1px solid var(--line);
-}
-
-.health-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.health-text {
-  margin: 6px 0 4px;
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.health-affected {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-/* When it last synced, whose side, and Plaid's code: a sentence, so not in
-   the type tag's capitals. */
-.health-meta {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-/* A state at a glance, shaped like the Manual badge: amber for a deadline or
-   something that clears on its own, red for what only the person can fix. */
-.health-badge {
-  flex-shrink: 0;
-  padding: 2px 8px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.health-up {
-  color: var(--up);
-}
-
-.health-warn {
-  color: var(--warn);
-}
-
-.health-down {
-  color: var(--down);
-}
-
-.reconnect-soon {
-  margin-top: 12px;
-}
-
-.reconnect-soon .stale-note {
-  margin-top: 8px;
-}
-
 /* --- API tokens (components/ApiTokens.tsx) --- */
 
 .api-token-list {
@@ -3567,39 +3772,6 @@ button.plan-edit:disabled {
 .alloc-readout-marked .chart-readout-date {
   min-height: 3.9em;
   line-height: 1.3;
-}
-
-/* The FI card on Home: the FI number leads, the years to FI and the savings
-   rate side by side under it, each wrapping in its own column on a narrow
-   phone. */
-.fi-lead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 10px;
-  margin-top: 10px;
-}
-
-.fi-lead-value {
-  font-size: 28px;
-  font-weight: 700;
-}
-
-.fi-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.fi-stats .plan-stat {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.fi-stats .plan-stat-value {
-  font-size: 20px;
 }
 
 /* --- link coverage: the two ways to connect (components/ConnectButtons.tsx) --- */
@@ -4637,22 +4809,6 @@ button.cat-manage-row.archived {
 
 /* --- bring your own sync (components/Connectors.tsx) --- */
 
-/* An external link among a card's buttons, drawn as one: the connector's own
-   site, where what it reports is fixed. */
-.card-actions a.connector-site {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  text-decoration: none;
-}
-
 /* A connection's host and counts under its name: a host can run long on a
    phone. */
 .connector-meta {
@@ -4689,7 +4845,7 @@ button.cat-manage-row.archived {
   max-width: 100%;
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--fs-1);
   font-weight: 600;
   line-height: 16px;
   overflow-wrap: anywhere;
@@ -4723,13 +4879,6 @@ button.cat-manage-row.archived {
   margin-top: 8px;
 }
 
-/* A row with a note says so, as pending does: the note is in its detail. */
-.note-tag {
-  color: var(--muted);
-  font-size: 11px;
-  font-style: italic;
-}
-
 .txn-tags-row .tag-chips {
   margin-left: 0;
 }
@@ -4757,12 +4906,6 @@ button.tag-suggestion {
   font-size: 14px;
   padding: 10px 12px;
   resize: vertical;
-}
-
-.tag-filter {
-  margin: 0 0 4px;
-  font-size: 14px;
-  padding: 10px 12px;
 }
 
 /* The color choice on the Tags screen: one round swatch per color. */
@@ -4888,19 +5031,18 @@ button.tag-suggestion.chosen {
   min-height: 32px;
 }
 
-/* The offer, after a transaction is given another category, to do the same
-   for every transaction with its name; and the rules a transaction matches,
-   in its detail. */
+/* The offer, in a transaction's sheet after it is given another category,
+   to do the same for every transaction with its name; and the rules it
+   matches. */
 .rule-offer {
-  margin: 8px 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--raised);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--elevated);
 }
 
 .rule-matched {
-  margin: 4px 0 6px;
-  padding-left: 18px;
+  margin: var(--sp-1) 0 0;
+  padding-left: var(--sp-5);
 }
 
 /* --- accounts that end, and notes on the timeline (#50) ---
@@ -5141,40 +5283,6 @@ button.tag-suggestion.chosen {
   font-size: 13px;
 }
 
-/* The notes card under the chart. */
-.timeline-note-list {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-
-.timeline-note-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.timeline-note-row > div:first-child {
-  min-width: 0;
-}
-
-.timeline-note-row .manual-row-actions {
-  flex-shrink: 0;
-  margin-top: 0;
-}
-
-.timeline-note-day {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 4px;
-}
-
 /* --- savings goals: the "where you should be" marker, outlooks and the
    archived list (#42, components/GoalsCard.tsx and GoalSheet.tsx) --- */
 
@@ -5411,31 +5519,9 @@ button.pool-toggle {
   margin: 4px 0 0;
 }
 
-/* Splits and groups (#39): a split transaction's parts and a group's
-   transactions, nested under its row on the Activity tab (components/SplitRows.tsx),
-   and the sheets that make them (components/SplitSheet.tsx,
-   components/GroupSheet.tsx). */
-.txn-table .part-row td {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  font-size: 13px;
-}
-
-.txn-table .part-row td:first-child {
-  padding-left: 46px;
-}
-
-/* A split transaction's own amount: the bank's, shown quieter, since its
-   parts below are what every total counts. */
-.txn-table .num.split-whole {
-  color: var(--muted);
-}
-
-.part-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
+/* Splits and groups (#39): the sheets that make them
+   (components/SplitSheet.tsx, components/GroupSheet.tsx). Their rows on the
+   Activity tab are .txn-part-row. */
 .split-part {
   padding: 10px 0 4px;
   border-bottom: 1px solid var(--border);
@@ -5529,10 +5615,6 @@ button.split-small {
    and what is left over in the up hue, spending in the accent, what came from
    savings or debt in the down hue, the middle in the muted gray. --- */
 
-.cash-flow-period {
-  margin-top: 10px;
-}
-
 .cash-flow-summary {
   margin-top: 12px;
 }
@@ -5540,8 +5622,8 @@ button.split-small {
 .sankey-svg {
   display: block;
   width: 100%;
-  /* The labels' size follows the drawing's: on a wide screen it stops
-     growing at about one and a half times a phone's. */
+  /* Drawn at its own width (components/drawn-width.ts), up to the 560px it
+     has had on a wide screen, centred past that. */
   max-width: 560px;
   height: auto;
   margin: 12px auto 0;
@@ -5605,7 +5687,7 @@ button.split-small {
 /* Text in the text colors, never a node's; a halo in the card's color keeps
    a label legible where it crosses a ribbon. */
 .sankey-label {
-  font-size: 10px;
+  font-size: var(--fs-1);
   fill: var(--text);
   paint-order: stroke;
   stroke: var(--card);
@@ -5861,35 +5943,28 @@ button.cash-flow-show {
    components/ReviewNote.tsx, components/CardMode.tsx), merchants' default
    categories (components/VendorDefaultsCard.tsx) --- */
 
-/* The Activity tab's bar, under the filters: count, Card Mode, the filter. */
+/* The Activity tab's bar, under the filters: the count as a heading, Card
+   Mode, approving what is listed. Its filter is the To review chip. */
 .review-bar {
-  margin: 4px 0 8px;
+  margin-bottom: var(--sp-3);
 }
 
 .review-bar-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--sp-2);
 }
 
-.review-bar-row button {
-  width: auto;
-  flex: 0 1 auto;
-  padding: 8px 12px;
-  font-size: 13px;
-}
-
-.review-bar-row button[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
+.review-bar-row + .review-bar-row {
+  margin-top: var(--sp-2);
 }
 
 .review-count {
   flex: 1 0 auto;
-  color: var(--muted);
-  font-size: 13px;
+  margin: 0;
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
 }
 
 /* The shortcuts, for a keyboard: shown only where there is a pointer. */
@@ -5952,12 +6027,6 @@ button.review-keys-toggle {
   margin: 0;
 }
 
-/* On a row of the list: it waits for review. */
-.review-tag {
-  color: var(--warn);
-  font-size: 11px;
-}
-
 /* In a transaction's detail: its review, and what can be done about it. */
 .review-note {
   display: flex;
@@ -5976,6 +6045,7 @@ button.review-keys-toggle {
 .review-note button {
   flex: 0 0 auto;
   width: auto;
+  min-height: var(--tap);
   padding: 8px 12px;
   font-size: 13px;
 }
@@ -6437,13 +6507,6 @@ button.review-keys-toggle {
 }
 
 /* --- a home currency (components/CurrencyNotes.tsx, CurrencyCard.tsx) --- */
-
-/* The hero's note of what was converted: a long list of parts wraps on a
-   phone rather than widening the card. */
-.currency-note {
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
 
 .currency-chart-note p {
   margin: 4px 0 0;
@@ -6932,29 +6995,17 @@ button.review-keys-toggle {
    (components/AttachmentViewer.tsx), the filter by receipt on the Activity
    tab, and the card under Manage accounts (components/ReceiptsCard.tsx). --- */
 
-.attach-tag {
-  color: var(--muted);
-  white-space: nowrap;
-}
-
 .attach-clip {
   width: 13px;
   height: 13px;
   vertical-align: -2px;
 }
 
-.receipt-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 4px;
-}
-
-.receipt-filter .text-input {
-  flex: 1 1 160px;
+/* The amount a transaction without a receipt is over, after the chips. */
+.receipt-over {
+  flex: 1 1 120px;
   min-width: 0;
-  font-size: 14px;
-  padding: 10px 12px;
+  margin: 0;
 }
 
 .attach-section {

@@ -5,8 +5,9 @@
 // (components/shared-expenses-text.ts rowLine), and the actions in its
 // detail: Share the cost (or Who owes what, once shared), and This paid
 // back... on any posted row. An IOU's row is no transaction: tapping it
-// opens the IOU. Each action opens a sheet the Shared expenses card mounts
-// (components/SharedExpensesCard.tsx).
+// opens the IOU. Each action opens one of the Shared sheets, which the
+// dashboard mounts on every segment of the tab (SharedSheets, in
+// components/SharedExpensesCard.tsx).
 
 import { formatMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
@@ -24,14 +25,15 @@ export type SharedRowHooks = {
   owes: boolean;
 };
 
-export function SharedRowLine({ t, hooks }: { t: Txn; hooks: SharedRowHooks }) {
+/** The line itself: a span inside a row's button, a paragraph in its sheet. */
+export function SharedRowLine({ t, hooks, as: Line = 'span' }: { t: Txn; hooks: SharedRowHooks; as?: 'span' | 'p' }) {
   const c = currencyOf(t);
   const line = rowLine(t, hooks.names, (n) => formatMoney(n, c));
   if (!line) return null;
   return (
-    <div className="excluded-tag">
+    <Line className="txn-row-note">
       <Masked>{line}</Masked>
-    </div>
+    </Line>
   );
 }
 
@@ -56,10 +58,10 @@ export function SharedRowActions({ t, hooks, onDone }: { t: Txn; hooks: SharedRo
   const isShared = !!t.shared || (t.split_parts ?? []).some((p) => p.shared);
   const amount = t.shared_was ?? t.amount;
   return (
-    <div className="rename-row">
+    <div className="btn-row">
       {shareable && (
         <button
-          className="secondary"
+          className="btn secondary"
           onClick={() => {
             hooks.onShare(t);
             onDone();
@@ -70,7 +72,7 @@ export function SharedRowActions({ t, hooks, onDone }: { t: Txn; hooks: SharedRo
       )}
       {payable && (
         <button
-          className="secondary"
+          className="btn secondary"
           onClick={() => {
             hooks.onPaidBack(t);
             onDone();

@@ -2,11 +2,12 @@
 
 // The review queue on the Activity tab, while it is on (lib/review-store.ts):
 // how many transactions need review, counted as transactions (a split one
-// once, each of a group's on its own: lib/review-layer.ts countToReview), a
-// way into Card Mode (components/CardMode.tsx), the Needs review filter (one
-// more filter of the list, beside the search and the tag filter:
-// components/txn-search.ts), and approving everything listed that needs it,
-// with how many and an undo. On a desktop, single keys do the same
+// once, each of a group's on its own: lib/review-layer.ts countToReview), as
+// a heading, a way into Card Mode (components/CardMode.tsx), and approving
+// everything listed that needs it, with how many and an undo. Its filter is
+// the list's To review chip (components/MonthBreakdown.tsx, one more filter
+// beside the search and the tag: components/txn-search.ts), which the N key
+// turns on and off from here. On a desktop, single keys do the same
 // (components/review-keys.ts): never with Ctrl, Alt or the Command key, never
 // while typing, never while a sheet or Card Mode is open; they can be turned
 // off in their help (components/activity-keys.ts, WCAG 2.1.4), and Shift+A
@@ -76,6 +77,7 @@ export default function ReviewBar({
   /** The rows the list shows now (the month or the cash flow's pick, through
    *  the search and the filters): what "approve what's listed" approves. */
   listed: readonly Txn[];
+  /** The To review chip's state, for the N key, which turns it on and off. */
   filtering: boolean;
   onFilter: (on: boolean) => void;
   /** Opens Card Mode. */
@@ -95,7 +97,7 @@ export default function ReviewBar({
   // Once the question is answered, or the listed approved by the button,
   // those buttons go, so focus moves to the count at once (never left to fall
   // to the page), then to Undo when the approval is saved.
-  const countRef = useRef<HTMLSpanElement>(null);
+  const countRef = useRef<HTMLHeadingElement>(null);
   const undoRef = useRef<HTMLButtonElement>(null);
   const [focusUndo, setFocusUndo] = useState(false);
   useEffect(() => {
@@ -157,14 +159,12 @@ export default function ReviewBar({
       <div className="review-bar-row">
         {/* Where focus comes back to when Card Mode closes and its way in is
             gone (nothing left to review). */}
-        <span className="review-count" aria-live="polite" tabIndex={-1} data-review-return="" ref={countRef}>
+        {/* Also where Home's "Transactions to review" lands (components/NeedsAttention.tsx). */}
+        <h3 className="review-count" aria-live="polite" tabIndex={-1} data-review-return="" ref={countRef} id="review-count">
           {toReviewWords(total)}
-        </span>
-        <button className="secondary" onClick={onReview} disabled={total === 0}>
+        </h3>
+        <button className="btn secondary" onClick={onReview} disabled={total === 0}>
           Review one at a time
-        </button>
-        <button className="secondary" aria-pressed={filtering} onClick={() => onFilter(!filtering)}>
-          Needs review
         </button>
       </div>
       {confirming && waiting.length > 0 ? (
@@ -177,24 +177,24 @@ export default function ReviewBar({
           }}
         >
           <span className="panel-note">{waiting.length === 1 ? 'Approve the 1 transaction listed?' : `Approve the ${waiting.length} transactions listed?`}</span>
-          <button ref={confirmRef} onClick={() => void approveListed()}>
+          <button className="btn" ref={confirmRef} onClick={() => void approveListed()}>
             Approve
           </button>
-          <button className="secondary" onClick={cancelConfirm}>
+          <button className="btn secondary" onClick={cancelConfirm}>
             Cancel
           </button>
         </div>
       ) : (
         waiting.length > 0 && (
           <div className="review-bar-row">
-            <button onClick={() => void approveListed()}>{waiting.length === 1 ? 'Approve the 1 listed' : `Approve the ${waiting.length} listed`}</button>
+            <button className="btn" onClick={() => void approveListed()}>{waiting.length === 1 ? 'Approve the 1 listed' : `Approve the ${waiting.length} listed`}</button>
           </div>
         )
       )}
       {undoable && (
         <div className="review-bar-row" role="status">
           <span className="panel-note">{undoable.n === 1 ? 'Approved 1 transaction.' : `Approved ${undoable.n} transactions.`}</span>
-          <button className="secondary" ref={undoRef} onClick={() => void undo()}>
+          <button className="btn secondary" ref={undoRef} onClick={() => void undo()}>
             Undo
           </button>
         </div>

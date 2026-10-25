@@ -11,8 +11,8 @@
 
 ## Branches and worktrees
 
-- Build each pull request in its own worktree beside this checkout, so the checkout's own uncommitted files stay out of it: `git worktree add -b <branch> ../Nya-<name> origin/main`, then `bun install` there.
-- Once the PR merges, remove the worktree (`git worktree remove ../Nya-<name>`) and delete its branch (`git branch -d <branch>`).
+- Build each pull request in its own worktree outside this checkout, so the checkout's own uncommitted files stay out of it: `git worktree add -b <branch> C:/Users/Fue/repo/worktrees/Nya/<name> origin/main`, then `bun install` there.
+- Once the PR merges, remove the worktree (`git worktree remove C:/Users/Fue/repo/worktrees/Nya/<name>`) and delete its branch (`git branch -d <branch>`).
 
 ## Line endings
 

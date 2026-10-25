@@ -382,7 +382,7 @@ describe('the payoff planner', () => {
 
   test('payment details not enabled: says how to get them from Plaid', () => {
     const html = panel([chase([{ ...sapphire, liability: undefined }], { liabilities: 'off' })]);
-    expect(html).toContain('tap Enable payment details on its card');
+    expect(html).toContain('choose Enable payment details in the ⋯ on its card on the Accounts tab');
   });
 
   test('no "Debt-free" beside a card whose balance was not reported', () => {

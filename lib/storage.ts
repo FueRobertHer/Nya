@@ -9,6 +9,7 @@
 // so two concurrent link flows can't clobber each other's writes.
 
 import { Redis } from '@upstash/redis';
+import { RAW_REDIS_REQUEST_MS, REDIS_REQUEST_MS, requestLimit } from './redis-limit';
 import type { Ctx } from './containers';
 
 // The @upstash/redis client speaks HTTP, so it needs the *REST* URL
@@ -54,9 +55,10 @@ function credentials(): { url: string; token: string } {
   return { url, token };
 }
 
+// Every request has a time limit (lib/redis-limit.ts).
 let _redis: Redis | undefined;
 export function redis(): Redis {
-  if (!_redis) _redis = new Redis(credentials());
+  if (!_redis) _redis = new Redis({ ...credentials(), signal: requestLimit(REDIS_REQUEST_MS) });
   return _redis;
 }
 
@@ -69,7 +71,7 @@ export function redis(): Redis {
  */
 let _rawRedis: Redis | undefined;
 export function rawRedis(): Redis {
-  if (!_rawRedis) _rawRedis = new Redis({ ...credentials(), automaticDeserialization: false });
+  if (!_rawRedis) _rawRedis = new Redis({ ...credentials(), automaticDeserialization: false, signal: requestLimit(RAW_REDIS_REQUEST_MS) });
   return _rawRedis;
 }
 

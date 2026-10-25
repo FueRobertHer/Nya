@@ -6,7 +6,16 @@ import { balancesNow, needsConverting, type PageFx } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import type { OwnRate } from '@/lib/fx/rates';
 import { chartGapLines, codedMoney, convertedHeading, convertedText, institutionNote, leftOutLines, noRateText, partText, rateEffectText, staleText, unknownText } from '@/components/currency-text';
-import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, offerFor } from '@/components/CurrencyNotes';
+import { ChartCurrencyNote, CurrencyOfferBody, heroCurrencyCaveats, offerFor } from '@/components/CurrencyNotes';
+
+/** Home's caveats on the total about its currency, each drawn as its body. */
+const HeroCurrencyNote = ({ base, main, onOpen }: { base: NetWorthBase; main: string | null; onOpen: (rateFor: string | null) => void }) => (
+  <>
+    {heroCurrencyCaveats(base, main, onOpen).map((c) => (
+      <div key={c.key}>{c.body}</div>
+    ))}
+  </>
+);
 import { CurrencyChoiceBody, CurrencyOptions, choiceText, manualText } from '@/components/CurrencyChoiceSheet';
 import { CurrencyCardBody, OwnRateForm, draftProblem, ecbBeside, ownRateText, type RateDraft } from '@/components/CurrencyCard';
 import { affectedText, type HealthInstitution } from '@/components/ConnectionHealth';
@@ -234,6 +243,12 @@ describe('Home’s notes', () => {
     const masked = text(hidden(() => renderToStaticMarkup(<HeroCurrencyNote base={b} main="USD" onOpen={noop} />)));
     expect(masked).toContain('1 USD = 0.86573 EUR');
     expect(masked).not.toMatch(/1,000|865\.73/);
+    // Converted is neutral; an account left out shortens the total, so red; old rates amber.
+    expect(heroCurrencyCaveats(b, 'USD', noop).map((c) => [c.severity, c.summary])).toEqual([
+      ['info', 'converted into EUR'],
+      ['critical', 'a currency left out'],
+      ['caution', 'old exchange rates'],
+    ]);
   });
 
   test('a home currency the ECB doesn’t publish: one note naming it, its link the form for its rate', () => {
@@ -280,7 +295,7 @@ describe('the offer to show totals in one currency (decision 1)', () => {
 
   test('for transactions in more than one over the last year (decision A, step 2): offered, saying why', () => {
     expect(offerFor({ accounts: ['USD'], budgets: 'USD', main: 'USD', transactions: ['USD', 'EUR', null] })).toEqual({ budgets: 'USD', accounts: null, why: 'transactions' });
-    const html = renderToStaticMarkup(<CurrencyOffer offer={{ budgets: 'USD', accounts: null, why: 'transactions' }} onChoose={noop} onDismiss={noop} />);
+    const html = renderToStaticMarkup(<CurrencyOfferBody offer={{ budgets: 'USD', accounts: null, why: 'transactions' }} onChoose={noop} onDismiss={noop} />);
     expect(text(html)).toContain('Your transactions over the last year are in more than one currency, and your spending totals leave out those in the others.');
     expect(text(html)).toContain('Nothing changes until you do.');
     expect(buttons(html)).toEqual(['Use USD your budgets are in it', 'Choose another', 'Not now']);
@@ -292,7 +307,7 @@ describe('the offer to show totals in one currency (decision 1)', () => {
   });
 
   test('says nothing changes until the person chooses, and offers each with why', () => {
-    const html = renderToStaticMarkup(<CurrencyOffer offer={{ budgets: 'USD', accounts: 'EUR' }} onChoose={noop} onDismiss={noop} />);
+    const html = renderToStaticMarkup(<CurrencyOfferBody offer={{ budgets: 'USD', accounts: 'EUR' }} onChoose={noop} onDismiss={noop} />);
     expect(text(html)).toContain('Your accounts are in more than one currency, and your net worth adds them up unconverted.');
     expect(text(html)).toContain('Nothing changes until you do.');
     expect(buttons(html)).toEqual(['Use USD your budgets are in it', 'Use EUR most of your accounts are in it', 'Choose another', 'Not now']);

@@ -11,8 +11,10 @@ import {
   questionText,
   type EndedAccount,
 } from '@/components/AccountLifecycle';
-import { TimelineNotesCard } from '@/components/TimelineNotes';
-import { ConnectionHealthView, needsAttention, type HealthInstitution } from '@/components/ConnectionHealth';
+import { TimelineNotesSheet } from '@/components/TimelineNotes';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
+import type { Institution } from '@/components/accounts-format';
+import { severityOf } from '@/lib/accounts-status';
 import { CAUSES, type ConnectionHealth } from '@/lib/connection-state';
 
 // What the person sees of accounts that end (#50): the questions, the sheet,
@@ -100,36 +102,36 @@ describe('the questions', () => {
     expect(renderToStaticMarkup(<AccountQuestions accounts={[accounts[2]]} institution="Chase" busy={false} onOpen={noop} onStillOpen={noop} />)).toBe('');
   });
 
-  test('connection health shows them too, and a question needs attention even on a working connection', () => {
+  test('a question needs attention even on a working connection, a hidden account’s too, and is asked on its card', () => {
     const health: ConnectionHealth = { ...CAUSES.ok, cause: 'ok', side: 'none', last_ok_at: '2026-10-08T12:00:00.000Z' };
-    const row: HealthInstitution & { health: ConnectionHealth } = {
-      institution_name: 'Ally',
-      item_id: 'item_ally',
-      error: null,
-      health,
-      accounts: [{ account_id: 'z', name: 'Old checking', mask: null, type: 'depository', balance: 0, currency: 'USD', question: { kind: 'zero' } }],
-    };
-    expect(needsAttention(row)).toBe(true);
+    const asked = { account_id: 'z', name: 'Old checking', official_name: null, mask: null, type: 'depository', subtype: null, balance: 0, limit: null, currency: 'USD', question: { kind: 'zero' as const, end: '2024-02-01', since: '2024-02-01' } };
+    const inst: Institution = { institution_name: 'Ally', item_id: 'item_ally', error: null, needs_reauth: false, holdings: [], health, accounts: [asked] };
+    // Amber (lib/accounts-status.ts): counted, but the person is asked.
+    expect(severityOf(inst)).toBe('caution');
     // A hidden account's question too: its absence holds every total all the same.
-    expect(needsAttention({ ...row, accounts: [{ ...row.accounts[0], hidden: true }] })).toBe(true);
-    expect(needsAttention({ ...row, accounts: [{ ...row.accounts[0], question: undefined }] })).toBe(false);
+    expect(severityOf({ ...inst, accounts: [{ ...asked, hidden: true }] })).toBe('caution');
+    expect(severityOf({ ...inst, accounts: [{ ...asked, question: undefined }] })).toBeNull();
     // And an end its bank disagrees with.
-    expect(needsAttention({ ...row, accounts: [], ended_reported: [{ question: { kind: 'reported' } }] })).toBe(true);
+    expect(severityOf({ ...inst, accounts: [], ended_reported: [{ ...asked, question: { kind: 'reported', end: '2024-02-01', since: null } }] })).toBe('caution');
+    // On the card, from every row, the hidden one's too.
     const html = renderToStaticMarkup(
-      <ConnectionHealthView
-        rows={[row]}
-        open={true}
-        onToggle={noop}
-        unavailable={false}
+      <ConnectionStatus
+        inst={{ ...inst, accounts: [] }}
+        allRows={[{ ...asked, hidden: true }]}
+        place={null}
+        fx={null}
         connecting={false}
+        unallowed={false}
+        lifecycle={{ busy: false, open: noop, stillOpen: async () => null, confirmEnd: async () => null, reopen: async () => {} }}
         onReconnect={noop}
         onRemove={noop}
         onManageAccounts={noop}
-        questions={(inst) => <p>asked about {inst.accounts.length}</p>}
+        onAllowTransactions={noop}
+        onConnector={noop}
       />
     );
-    expect(text(html)).toContain('1 of 1 needs attention');
-    expect(text(html)).toContain('asked about 1');
+    expect(text(html)).toContain('Old checking');
+    expect(html).toContain('lifecycle-question');
   });
 });
 
@@ -245,13 +247,34 @@ describe('closures that can’t be read', () => {
   });
 });
 
-describe('the notes card', () => {
-  test('collapsed with a count; what couldn’t be read is said', () => {
-    const notes = [{ id: 'n1', date: '2024-03-13', text: 'Bought the house', kind: 'user' as const }];
-    const html = renderToStaticMarkup(<TimelineNotesCard notes={notes} problem="One note couldn’t be read, so it isn’t shown." onChanged={noop} />);
-    expect(text(html)).toContain('Notes on the timeline 1');
-    expect(html).toContain('aria-expanded="false"');
+describe('the chart notes sheet', () => {
+  const notes = [
+    { id: 'n1', date: '2024-03-13', text: 'Bought the house', kind: 'user' as const },
+    { id: 'n2', date: '2024-05-02', text: 'Chase Savings closed', kind: 'auto' as const, account_id: 'a1' },
+  ];
+
+  test('closed: nothing on the page', () => {
+    expect(renderToStaticMarkup(<TimelineNotesSheet open={false} onClose={noop} notes={notes} problem={null} onChanged={noop} />)).toBe('');
+  });
+
+  test('open: every note newest first, Nya’s marked, only the person’s editable, and what couldn’t be read said', () => {
+    const html = renderToStaticMarkup(<TimelineNotesSheet open onClose={noop} notes={notes} problem="One note couldn’t be read, so it isn’t shown." onChanged={noop} />);
+    expect(html).toContain('aria-label="Chart notes"');
     expect(text(html)).toContain('One note couldn’t be read, so it isn’t shown.');
-    expect(html).not.toContain('Bought the house');
+    expect(html).toContain('<div class="notice caution">');
+    const t = text(html);
+    expect(t.indexOf('Chase Savings closed')).toBeLessThan(t.indexOf('Bought the house'));
+    expect(html).toContain('<span class="badge">Added when the account changed</span>');
+    expect(buttons(html).filter((b) => b === 'Edit')).toHaveLength(1);
+    expect(buttons(html)).toContain('Add a note');
+    // The explanation is behind "What are these?", its words kept.
+    expect(html).toContain('<summary>What are these?</summary>');
+    expect(t).toContain('A note marks its day on the chart, so a step in the line says what it was: a house bought, a 401(k) rolled over.');
+  });
+
+  test('no notes yet: said, and one can be added', () => {
+    const html = renderToStaticMarkup(<TimelineNotesSheet open onClose={noop} notes={[]} problem={null} onChanged={noop} />);
+    expect(text(html)).toContain('No notes yet.');
+    expect(buttons(html)).toContain('Add a note');
   });
 });

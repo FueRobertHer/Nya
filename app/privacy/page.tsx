@@ -6,6 +6,7 @@ import { masterKeyConfigured } from '@/lib/crypto';
 import { backupDaysAtMost, keyDeletionText, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
+import { MANUAL_RUN_WINDOW_SECONDS } from '@/lib/nightly-run-limit';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS, CHANGES_KEEP_DAYS, IDEMPOTENCY_HOURS } from '@/lib/api-limits';
 import { apiWritesEnabled } from '@/lib/api-writes-enabled';
@@ -339,6 +340,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ],
   ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
   ['Reads of what is shared with you, and of what someone sees of yours', `Counted for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`],
+  ['Nightly jobs the admin ran by hand', `Counted for ${MANUAL_RUN_WINDOW_SECONDS / 60} minutes, in the admin’s own account, so one runs at a time.`],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],

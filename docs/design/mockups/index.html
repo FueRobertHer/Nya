@@ -116,7 +116,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .row-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--elevated); color: var(--text-2); font-size: 13px; font-weight: 600; }
 .app .row-ico.crit { background: var(--neg-tint); color: var(--neg); }
 .app .row-ico.warn { background: var(--warn-tint); color: var(--warn); }
-.app .row-ico.info { background: var(--accent-tint); color: var(--accent); }
+.app .row-ico.info { background: var(--elevated); color: var(--text-2); }
 .app .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 1px 6px; border-radius: 6px; background: var(--elevated); color: var(--text-2); white-space: nowrap; }
 .app .badge.accent { background: var(--accent-tint); color: var(--accent); }
 .app .badge.warn { background: var(--warn-tint); color: var(--warn); }
@@ -155,9 +155,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .daybar { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); padding: 8px 14px 2px; font-weight: 500; }
 .app .summary-line { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 0 2px; }
 .app .summary-line b { color: var(--text-1); font-weight: 600; }
-.app .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 999px; }
+.app .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 4px 12px; min-height: 32px; border: 1px solid currentColor; border-radius: 6px; }
 .app .pill.crit { background: var(--neg-tint); color: var(--neg); }
-.app .pill.ok { background: var(--pos-tint); color: var(--pos); }
+.app .pill.ok { background: var(--pos-tint); color: var(--pos); border-color: transparent; min-height: 0; padding: 4px 8px; }
 .app .pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
 .app .sticky { position: sticky; top: 0; background: var(--canvas); padding: 10px 0 2px; display: grid; gap: 8px; z-index: 2; }
 .app .monthbar { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
@@ -178,6 +178,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app svg.chart .line { stroke: var(--accent); stroke-width: 2; fill: none; }
 .app svg.chart .area { fill: var(--accent-tint); }
 .app svg.chart .tick { fill: var(--text-3); font-size: 10px; font-family: var(--f-app); }
+.app svg.chart .tick.lg { font-size: 15px; }
 .app svg.chart .marker { fill: var(--warn); }
 .app svg.chart .low { fill: var(--neg); }
 
@@ -319,10 +320,10 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="hero-label">Net worth</div>
               <div class="hero money">$1,275,289.77</div>
               <div class="small pos">▲ $21,406.12 (1.7%) past 30 days</div>
-              <div class="notice crit"><svg><use href="#i-alert"/></svg><span>Chase needs reconnecting; its balances are from Oct 21. This total is short by 1 account.</span></div>
+              <div class="notice crit"><svg><use href="#i-alert"/></svg><span>Chase needs reconnecting; its balances are from Oct 21. This total is short by 1 account.</span></div><div class="notice warn"><svg><use href="#i-alert"/></svg><span style="flex:1">2 notes: old exchange rates and accrued interest left out</span><svg><use href="#i-chev"/></svg></div>
               <div class="seg"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
               <svg class="chart" viewBox="0 0 300 84" aria-hidden="true"><line class="grid" x1="0" y1="20" x2="300" y2="20"/><line class="grid" x1="0" y1="50" x2="300" y2="50"/><path class="area" d="M0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22 300,84 0,84Z"/><polyline class="line" points="0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22"/><circle class="marker" cx="120" cy="50" r="3.5"/><circle class="marker" cx="240" cy="34" r="3.5"/></svg>
-              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="why">Notes (2)</span></div>
+              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="badge warn">History paused</span><span class="why">Chart notes (2)</span></div>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>Needs attention</h2><span class="meta">3</span></div>
@@ -333,7 +334,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="card flush">
               <div class="card-header"><h2>This month</h2></div>
               <div class="row"><div class="main"><span class="title small">Spending is 8% below September's pace</span></div></div>
-              <div class="row"><div class="main"><span class="title small">FI in 11.4 years · 62% there</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title small">FI in about 11.4 years · 62% there</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
@@ -366,14 +367,15 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="notice info"><svg><use href="#i-info"/></svg><span>Includes 1 account in EUR, converted at ECB rates</span></div>
               <div class="seg"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
               <svg class="chart" viewBox="0 0 300 84" aria-hidden="true"><line class="grid" x1="0" y1="20" x2="300" y2="20"/><line class="grid" x1="0" y1="50" x2="300" y2="50"/><path class="area" d="M0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,20 300,84 0,84Z"/><polyline class="line" points="0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,20"/><text class="tick" x="0" y="82">May</text><text class="tick" x="130" y="82">Jul</text><text class="tick" x="262" y="82">Oct</text></svg>
-              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="why">Notes (2)</span></div>
+              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="why">Chart notes (2)</span></div>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>This month</h2></div>
               <div class="row"><div class="main"><span class="title small">Spending is 8% below September's pace</span></div></div>
               <div class="row"><div class="main"><span class="title small">Netflix, about $15.49, around Oct 26</span></div></div>
               <div class="row"><div class="main"><span class="title small">Biggest purchase: Costco, $312.08</span></div></div>
-              <div class="row"><div class="main"><span class="title small">FI in 11.4 years · 62% there</span><span class="sub"><span class="badge warn">Spending covers 11 of 12 months</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title small">FI in about 11.4 years · 62% there</span><span class="sub">FI number $1,520,000 · 34% savings rate, last 12 months</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="notice info"><svg><use href="#i-info"/></svg><span style="flex:1">2 notes: how these are estimated and pay before it reaches a bank</span><svg><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
@@ -395,7 +397,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             </div>
             <div class="card flush">
               <div class="card-header"><h2>Admin</h2></div>
-              <div class="row"><span class="row-ico warn"><svg><use href="#i-alert"/></svg></span><div class="main"><span class="title">Nightly backup failed</span><span class="sub">Last saved Oct 20 · check the backup cron in Vercel</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico warn"><svg><use href="#i-clock"/></svg></span><div class="main"><span class="title">Nightly backup failed</span><span class="sub">Last saved Oct 20 · check the backup cron in Vercel</span></div></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
@@ -421,7 +423,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
-            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit"><i></i>1 needs you</span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit">1 problem<svg width="14" height="14"><use href="#i-chev"/></svg></span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
             <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Credit <b class="money">-$1,420.18</b></span><span>Investments <b class="money">$1,209,400.00</b></span><span>Other <b class="money">$43,000.00</b></span></div>
             <div class="card flush">
               <div class="card-header"><h2>Chase</h2><span class="meta money">$6,794.37</span><span class="ibtn" style="border:0;width:30px;height:30px"><svg><use href="#i-dots"/></svg></span></div>
@@ -450,7 +452,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
-            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit"><i></i>1 needs you</span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
+            <div class="btn-row" style="align-items:center"><h1 class="screen-title" style="flex:1;margin:0">Accounts</h1><span class="pill crit">1 problem<svg width="14" height="14"><use href="#i-chev"/></svg></span><span class="btn primary sm"><svg width="14" height="14"><use href="#i-plus"/></svg>Add</span></div>
             <div class="summary-line"><span>Cash <b class="money">$24,309.95</b></span><span>Credit <b class="money">-$1,420.18</b></span></div>
             <div class="card flush" style="opacity:.6"><div class="card-header"><h2>Chase</h2><span class="meta money">$6,794.37</span></div><div class="row"><div class="main"><span class="title">Total Checking ••4421</span></div></div></div>
           </div>
@@ -548,7 +550,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="xs t3">Transfers and loan payments left out</div>
             </div>
             <div class="field"><svg><use href="#i-search"/></svg>Search transactions</div>
-            <div class="chips"><span class="chip on">To review · 12</span><span class="chip">Tags</span><span class="chip">Receipts</span><span class="chip">Over an amount</span></div>
+            <div class="chips"><span class="chip on">To review</span><span class="chip">Tag</span><span class="chip">Receipt</span></div>
             <div class="card flush">
               <div class="daybar"><span>Thu, Oct 22</span><span class="money">-$84.17</span></div>
               <div class="row"><span class="row-ico">W</span><div class="main"><span class="title">Whole Foods Market</span><span class="sub">Groceries · Chase ••4421</span></div><div class="end"><span class="money">-$62.40</span></div></div>
@@ -561,7 +563,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). Card Mode opens from the To review chip.</figcaption>
+        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -571,7 +573,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"><svg width="18" height="18"><use href="#i-dots"/></svg></span></div>
               <div class="seg"><span>Transactions</span><span class="on">Spending</span><span>Shared</span></div>
             </div>
-            <div class="chips"><span class="chip on">This month</span><span class="chip">Last month</span><span class="chip">3 months</span><span class="chip">12 months</span><span class="chip">Year to date</span></div>
+            <div class="chips"><span class="chip on">Month</span><span class="chip">3 months</span><span class="chip">12 months</span><span class="chip">Year to date</span></div>
             <div class="card">
               <div class="card-header"><h2>Where it went</h2><span class="meta money">$4,183</span></div>
               <svg class="chart" viewBox="0 0 300 120" aria-hidden="true">
@@ -597,7 +599,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>SPENDING</b>One period for every card. Below: net by month, income vs spend, tags, online vs in-store, places. Tapping a flow jumps to Transactions, filtered.</figcaption>
+        <figcaption><b>SPENDING</b>One period for every card: its length here, its last month the bar's. Below: net by month, income vs spend, tags, online vs in-store, places. Tapping a flow jumps to Transactions, filtered.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -608,19 +610,20 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scrim"></div>
           <div class="sheet" style="max-height:94%">
             <div class="handle"></div>
-            <div class="sheet-head"><h2>Whole Foods Market</h2><span class="ibtn" style="border:0"><svg><use href="#i-dots"/></svg></span></div>
-            <div><div class="hero money" style="font-size:28px">-$62.40</div><div class="xs muted">Thu, Oct 22 · Chase Total Checking ••4421</div></div>
-            <div class="row"><div class="main"><span class="title">Category</span></div><span class="muted small">Groceries</span><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><div class="main"><span class="title">Tags and note</span></div><span class="muted small">Add</span><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><div class="main"><span class="title">Split or group</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><div class="main"><span class="title">Share the cost</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><div class="main"><span class="title">Receipt</span></div><span class="muted small">Attach</span><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><div class="main"><span class="title">Count in budgets and reports</span></div><span class="badge pos">On</span></div>
-            <div class="row"><div class="main"><span class="title">Create a rule from this</span><span class="sub">No rule matched</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <span class="why">Bank details</span>
+            <div class="sheet-head"><h2>Whole Foods Market</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div><div class="hero money" style="font-size:28px">-$62.40</div><div class="xs muted">Thu, Oct 22, 2026 · Chase · Total Checking</div></div>
+            <div class="xs muted">Category</div>
+            <div class="field" style="color:var(--text-1)">Household<svg style="margin-left:auto;transform:rotate(90deg)"><use href="#i-chev"/></svg></div>
+            <div class="notice info"><span>Do the same for every transaction named “WHOLEFDS MKT”, past and future? A rule does it, and you can change or turn it off later.</span></div>
+            <div class="btn-row"><span class="btn sm secondary">Make a rule</span><span class="btn sm ghost">No thanks</span></div>
+            <div class="field">Add a tag</div>
+            <div class="btn-row"><span class="btn sm secondary">Split</span><span class="btn sm secondary">Group with others</span><span class="btn sm secondary">Share the cost</span></div>
+            <div class="btn-row"><span class="btn sm secondary">Exclude from budgets and reports</span><span class="btn sm secondary">Create a rule from this</span></div>
+            <div class="small" style="font-weight:600;color:var(--text-2)">Bank details</div>
+            <div class="sheet-foot"><span class="btn secondary" style="flex:none"><svg width="16" height="16"><use href="#i-dots"/></svg></span></div>
           </div>
         </div></div>
-        <figcaption><b>TRANSACTION SHEET</b>Replaces the inline editor. Rename vendor is in its ⋯; Edit or delete appears for manual transactions.</figcaption>
+        <figcaption><b>TRANSACTION SHEET</b>Replaces the inline editor, shown just after a new category: the offer to make a rule sits under it, and the sheet stays open. Rename vendor is in its ⋯; Edit or delete appears for manual transactions. A split's parts and a group's transactions open it on themselves.</figcaption>
       </figure>
     </div>
   </section>
@@ -720,12 +723,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
   <!-- ===================== PLAN ===================== -->
   <section class="spec" id="plan">
     <div class="spec-head">
-      <p class="eyebrow">Job: when can I stop working, and how sure is that?</p>
+      <p class="eyebrow">Job: where am I, where am I heading, and what changes it? · decided 2026-10-25</p>
       <h2>Plan</h2>
       <ul class="changes">
-        <li>A pinned scenario bar: switch, compare and return to your plan from any segment.</li>
-        <li>Segments: FI and timeline, Stress test, Portfolio. Each input is one line; how it was worked out is behind Why?.</li>
-        <li>About these numbers becomes a disclosure under the stress test.</li>
+        <li>The first segment becomes Your path: one answer against your own stop age, one chart from today to that age, then the four rows it rests on.</li>
+        <li>Life events stay in scenarios, and become easy to find: a What if… card on Your path offers templates (a home, a car, travel, a child, a raise, a windfall, a loan that ends). Picking one creates a scenario named after it and shows how it moves your FI age. Your plan stays what you have locked in.</li>
+        <li>Words: "financial independence" and the FI terms stay as labels, plain words carry the meaning ("growth after inflation", "how much you'd draw each year", "you could stop saving now"), and nothing says "retire early".</li>
+        <li>Each input is one row; how it was worked out is in its sheet behind Why?. Caveats stay on the figure: critical ones in full, lesser ones as one line that says how many and what kind.</li>
+        <li>Every result keeps a short "Hypothetical, from US history" label; the full text and data sources are said once, in About these numbers.</li>
       </ul>
     </div>
     <div class="phones">
@@ -734,27 +739,109 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scroll">
             <div class="sticky">
               <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
-              <div class="seg"><span class="on">FI and timeline</span><span>Stress test</span><span>Portfolio</span></div>
+              <div class="seg"><span class="on">Your path</span><span>Stress test</span><span>Portfolio</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Savings may be low: September is missing from Chase</span></div>
             <div class="card">
-              <div class="hero-label">FI number</div>
-              <div class="hero money">$1,950,000</div>
+              <div class="hero-label">Financial independence</div>
+              <div class="hero">Around age 39</div>
+              <div class="small muted">16 years before you stop at 55</div>
               <div class="meter pos"><i style="width:62%"></i></div>
-              <div class="stat"><div><div class="k">Years to FI</div><div class="v">11.4</div></div><div><div class="k">Coast FI</div><div class="v pos">Yes</div></div><div><div class="k">Savings rate</div><div class="v">45%</div></div></div>
+              <div class="xs muted"><span class="money">$1,209,400</span> of <span class="money">$1,950,000</span> invested</div>
+              <svg class="chart" viewBox="0 0 300 110" role="img" aria-label="Invested assets rise from $1.2M at 34 to the $1.95M FI number around 39 and keep growing to about $5.7M at 55">
+                <line class="grid" x1="0" y1="96" x2="300" y2="96"/>
+                <line x1="0" y1="66" x2="300" y2="66" stroke="var(--text-3)" stroke-width="1" stroke-dasharray="4 4"/>
+                <path class="area" d="M0,77 L71,66 L150,51 L225,32 L300,8 L300,96 L0,96Z"/>
+                <polyline class="line" points="0,77 71,66 150,51 225,32 300,8"/>
+                <text class="tick lg" x="104" y="86">FI number</text>
+                <circle cx="71" cy="66" r="4" fill="var(--pos)"/>
+                <line x1="299" y1="8" x2="299" y2="96" stroke="var(--text-3)" stroke-width="1"/>
+                <text class="tick lg" x="0" y="110">34</text><text class="tick lg" x="62" y="110">39</text><text class="tick lg" x="246" y="110">stop 55</text>
+              </svg>
+              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">At a steady 5% after inflation</span><span class="why">Show as a table</span></div>
             </div>
             <div class="card flush">
-              <div class="card-header"><h2>From</h2></div>
-              <div class="row"><div class="main"><span class="title">Annual spending</span><span class="sub">Last 12 months</span></div><div class="end money">$78,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Invested assets</span><span class="sub">3 accounts</span></div><div class="end money">$1,209,400</div></div>
-              <div class="row"><div class="main"><span class="title">Annual savings</span><span class="sub">Estimate <span class="badge warn">1 month missing</span></span></div><div class="end money">$64,000</div></div>
-              <div class="row"><div class="main"><span class="title">Ages</span></div><div class="end">34 to 90</div></div>
-              <div class="row"><div class="main"><span class="title">Assumptions</span></div><div class="end small">4% · 2% tax</div></div>
+              <div class="card-header"><h2>From your last 12 months</h2></div>
+              <div class="row"><div class="main"><span class="title">Spending</span><span class="sub">A year, from transactions</span></div><div class="end money">$78,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Saving</span><span class="sub" style="color:var(--warn)">2 notes: a month missing, payroll not set</span></div><div class="end money">$64,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Invested</span><span class="sub">3 accounts</span></div><div class="end money">$1,209,400</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Ages and assumptions</span><span class="sub">34, stop at 55 · 4% withdrawal</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>FI AND TIMELINE</b>One notice per segment when an input may be short. Tapping an input opens its edit sheet, where "Why?" explains it. Income, one-offs and (in a scenario) life events follow below.</figcaption>
+        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Home's FI line says the same words. With no age typed, this card asks for it first.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
+              <div class="seg"><span class="on">Your path</span><span>Stress test</span><span>Portfolio</span></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>What if…</h2></div>
+              <div class="chips" style="padding:0 14px 10px"><span class="chip">Buy a home</span><span class="chip">A car</span><span class="chip">Travel</span><span class="chip">A child</span><span class="chip">A raise</span><span class="chip">More…</span></div>
+              <div class="row"><span class="row-ico info">H</span><div class="main"><span class="title">Buy a home at 38</span><span class="sub">FI around 42, 3 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">C</span><div class="main"><span class="title">A child at 36</span><span class="sub">FI around 44, 5 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">B</span><div class="main"><span class="title">Sabbatical 2029</span><span class="sub">FI around 41, 2 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Income and one-offs</h2></div>
+              <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Social Security</span><span class="sub">From 67 · <span class="money">$28,000</span> a year</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Will it last?</span><span class="sub">Test a stop at 55 against US market history</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">You could stop saving now</span><span class="sub">Coast FI: what you have grows to the FI number by 55</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>YOUR PATH, SCROLLED</b>What if… lists your scenarios as life choices, each with how it moves your FI age; tapping one opens it under the scenario bar. A chip starts a new one from a template. Income and one-offs stay on your plan, unchanged.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>What if…</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div class="row"><span class="row-ico info">H</span><div class="main"><span class="title">Buy a home</span><span class="sub">A down payment, then costs that end and costs that stay</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">V</span><div class="main"><span class="title">Buy a car</span><span class="sub">Once, or every few years</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">T</span><div class="main"><span class="title">Travel or a big expense</span><span class="sub">Once, or a yearly amount for a while</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">C</span><div class="main"><span class="title">A child</span><span class="sub">A yearly cost for some years</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">B</span><div class="main"><span class="title">A career break</span><span class="sub">Savings stop for a while</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">R</span><div class="main"><span class="title">A raise, or part-time work</span><span class="sub">Save more before FI, or earn after it</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">W</span><div class="main"><span class="title">A windfall</span><span class="sub">An inheritance, a bonus, a sale</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">L</span><div class="main"><span class="title">A loan ends</span><span class="sub">Spending falls when it is paid off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico">+</span><div class="main"><span class="title">Something else</span><span class="sub">A yearly change, or a one-off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+          </div>
+        </div></div>
+        <figcaption><b>WHAT IF…, MORE</b>Every template, in plain names. Kinds that are new to the engine arrive in phase 8d: a car that repeats, a raise, a windfall, a loan that ends. Social Security and pensions stay income on your plan.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><h2>Buy a home</h2></div>
+            <div class="section-title">At age</div>
+            <div class="field">&nbsp;</div>
+            <div class="section-title">Paid from investments (0 if from cash the plan doesn't count)</div>
+            <div class="field">$</div>
+            <div class="section-title">Mortgage and costs that end: a year, for how many years</div>
+            <div class="btn-row" style="flex-wrap:nowrap"><div class="field" style="flex:1">$</div><div class="field" style="width:90px">years</div></div>
+            <div class="section-title">Lasting change a year: taxes and upkeep, less rent</div>
+            <div class="field">$ (+ or -)</div>
+            <div class="notice info"><svg><use href="#i-info"/></svg><span>In this what-if, FI moves from about 39 to about 42.</span></div>
+            <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn primary">Try it</span></div>
+          </div>
+        </div></div>
+        <figcaption><b>A TEMPLATE</b>Your own figures only: nothing is filled in or suggested (features.md). The effect shows as you type. "Try it" creates the scenario "Buy a home at 38" and opens it; "Back to your plan" returns.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -762,25 +849,30 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scroll">
             <div class="sticky">
               <div class="monthbar"><span>Scenario: Sabbatical 2029</span><span class="btn ghost sm">Back to plan</span></div>
-              <div class="seg"><span>FI and timeline</span><span class="on">Stress test</span><span>Portfolio</span></div>
+              <div class="seg"><span>Your path</span><span class="on">Stress test</span><span>Portfolio</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Savings may be low: September is missing from Chase</span></div>
             <div class="card">
               <div class="card-header"><h2>Will it last?</h2><span class="meta">History</span></div>
               <div class="hero money" style="font-size:30px">94%</div>
-              <div class="small muted">of 1871 to 1996 starts lasted 56 years</div>
+              <div class="small muted">of 1871 to 1983 starts lasted 40 years from 55</div>
+              <div class="xs t3">Hypothetical, from US history: not a prediction, and not advice.</div>
               <svg class="chart" viewBox="0 0 300 100" aria-hidden="true"><path d="M0,70 C80,60 160,40 300,10 L300,80 C160,90 80,88 0,78Z" fill="var(--accent-tint)"/><path d="M0,74 C80,66 160,56 300,40" fill="none" stroke="var(--accent)" stroke-width="2"/><line class="grid" x1="0" y1="96" x2="300" y2="96"/></svg>
               <span class="why">Worst starting years</span>
             </div>
             <div class="card flush">
               <div class="row"><div class="main"><span class="title">By withdrawal rate and length</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Assumptions</span><span class="sub">History · 75/25 · constant · 0.1% fee</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
               <div class="row"><div class="main"><span class="title">About these numbers</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The bar says which plan you are looking at on every segment, so a what-if is never mistaken for the plan.</figcaption>
+        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. Assumptions is one row that opens the sheet holding every setting the test uses.</figcaption>
       </figure>
+      <div class="note-box">
+        <p><b>Left out of the first version, on purpose.</b> Actual history on the path chart (snapshots keep no daily invested total, and they are in nominal dollars while the plan is in today's), the stress band on the path, event pins, a year-by-year sheet, and an FI line that steps with lasting events. Each is in the ProjectionLab track in the master plan.</p>
+      </div>
     </div>
   </section>
 

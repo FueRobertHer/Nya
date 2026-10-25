@@ -360,18 +360,23 @@ export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = n
   } catch (err) {
     console.error(`Connection notices failed for container ${ctx.container}:`, reasonOf(err));
   }
+  // Record how to draw these accounts, alongside the balances. On a day the
+  // app is never opened this is the only fetch there is, so without it an
+  // account added since the last dashboard load would be in the snapshot
+  // with nothing to render it from, and recovery would draw its institution
+  // short (lib/last-known.ts reports the shortfall but cannot undo it).
+  // Per institution and before the returns below, as /api/net-worth does:
+  // the banks that answered had their balances recorded above, so the
+  // directory's last day keeps pace with their history even when another
+  // bank is broken (Home's reconnected accounts read the directory alone,
+  // lib/links.ts linkOfferForDisplay). Neither throws for a bank that failed.
+  await rememberAccounts(ctx, institutions);
+  await recordDirectory(ctx, institutions);
   // The connectors' older history, which ran beside the recording above.
   await connectors.done;
   if (institutions.length === 0) return { status: 'empty', reason: 'Nothing is linked.' };
   if (!institutions.every(isRecordable)) return { status: 'unclean', reason: 'Not every account could be read.', ...counted };
 
-  // Record how to draw these accounts, alongside the balances. On a day the
-  // app is never opened this is the only clean fetch there is, so without it
-  // an account added since the last dashboard load would be in the snapshot
-  // with nothing to render it from, and recovery would draw its institution
-  // short (lib/last-known.ts reports the shortfall but cannot undo it).
-  await rememberAccounts(ctx, institutions);
-  await recordDirectory(ctx, institutions);
   await clearCaches(ctx); // cached payloads now have yesterday's history
   if (recorded === null) return { status: 'failed', reason: 'The snapshot could not be written.', ...counted };
   return { status: 'recorded', ...counted };

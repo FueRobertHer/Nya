@@ -64,3 +64,17 @@ describe("the dashboard's header", () => {
     expect(row.indexOf('<div className="top-actions">')).toBeGreaterThan(row.indexOf('<p className="sub">'));
   });
 });
+
+// Clerk's account window draws its own buttons (classes cl-...) with no width
+// of their own: the app's base button rule, full width with its padding and
+// fill, squeezed the name beside "Update profile" to a few letters. Seen in
+// Chromium with a row laid out as Clerk's.
+describe("the app's base button rule", () => {
+  test("leaves Clerk's buttons alone and stays below every class rule", () => {
+    expect(declared('button').size).toBe(0);
+    const base = declared(':where(button:not([class*="cl-"]))');
+    expect(base.get('width')).toBe('100%');
+    expect(base.get('background')).toBe('var(--accent-fill)');
+    expect(css).toContain('button:disabled:where(:not([class*="cl-"]))');
+  });
+});

@@ -43,7 +43,17 @@ const netWorthRoute = await import('@/app/api/net-worth/route');
 const { accruedApart, accruedAmountsText, accruedLines, homeAccrued, SALLIE_MAE } = await import('@/lib/accrued-interest');
 const { formatMoney } = await import('@/lib/format');
 const { debtAccounts } = await import('@/lib/payoff');
-const AccruedInterestNote = (await import('@/components/AccruedInterestNote')).default;
+const { accruedCaveats } = await import('@/components/AccruedInterestNote');
+/** Home's caveats on the total about accrued interest, each drawn as its body. */
+const AccruedInterestNote = ({ institutions, main, fx = null }: { institutions: any; main: string | null; fx?: any }) => (
+  <>
+    {accruedCaveats(institutions, main, fx).map((c) => (
+      <div key={c.key} className={c.severity === 'caution' ? 'notice caution' : 'notice info'}>
+        {c.body}
+      </div>
+    ))}
+  </>
+);
 
 const account = (account_id: string, type: string, subtype: string, current: number) => ({
   account_id,
@@ -92,10 +102,11 @@ const quietly = async <T,>(fn: () => Promise<T>): Promise<T> => {
     Object.assign(console, saved);
   }
 };
-/** What Home shows under the total, as text, with which lines are amber. */
+/** What Home shows under the total, as text, with which lines are amber (a
+ *  caution; what it leaves out is neutral). */
 const home = (institutions: unknown) => {
   const html = renderToStaticMarkup(<AccruedInterestNote institutions={institutions as any} main="USD" />);
-  const lines = [...html.matchAll(/<div class="([^"]+)">(.*?)<\/div>/g)].map((m) => ({ amber: m[1].includes('stale'), text: m[2].replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'") }));
+  const lines = [...html.matchAll(/<div class="([^"]+)">(.*?)<\/div>/g)].map((m) => ({ amber: m[1].includes('caution'), text: m[2].replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'") }));
   return lines;
 };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -147,7 +158,7 @@ describe('Home, from what the server sends', () => {
     expect(home(body.institutions)).toEqual([
       {
         amber: true,
-        text: 'Payment details aren’t enabled for Nelnet, so the accrued interest on your student loan there isn’t known. To see it, tap Enable payment details on its card on the Accounts tab.',
+        text: 'Payment details aren’t enabled for Nelnet, so the accrued interest on your student loan there isn’t known. To see it, choose Enable payment details in the ⋯ on its card on the Accounts tab.',
       },
     ]);
     plaid.liabilitiesFail = 'PRODUCT_NOT_READY';
@@ -365,7 +376,7 @@ describe('the lines', () => {
         { institution: 'EdFinancial', loans: 1, why: 'not-enabled' },
       ]).unread
     ).toEqual([
-      'Payment details aren’t enabled for MOHELA and EdFinancial, so the accrued interest on 2 student loans there isn’t known. To see it, tap Enable payment details on their cards on the Accounts tab.',
+      'Payment details aren’t enabled for MOHELA and EdFinancial, so the accrued interest on 2 student loans there isn’t known. To see it, choose Enable payment details in the ⋯ on their cards on the Accounts tab.',
       'Payment details are still importing from Aidvantage, so the accrued interest on 2 student loans there isn’t known yet.',
       'Nelnet couldn’t be reached, so the accrued interest on a student loan there isn’t known until it answers.',
       'The accrued interest on a student loan at Navient couldn’t be read, so how much interest the total leaves out for it isn’t known.',

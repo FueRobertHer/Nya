@@ -285,14 +285,14 @@ describe('the Activity list', () => {
 
   test('marks a transaction with one, and filters by it, where the file store is connected', () => {
     const html = renderToStaticMarkup(<MonthBreakdown {...props} txns={rows()} onAttachmentsChanged={() => {}} />);
-    expect(html).toContain('has a receipt or document');
-    expect(html.match(/class="attach-tag"/g)).toHaveLength(1);
-    expect(html).toContain('aria-label="Show transactions by receipt"');
+    expect(html.match(/<span class="visually-hidden">Has a receipt or document<\/span>/g)).toHaveLength(1);
+    expect(html.match(/class="attach-clip"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Receipt"');
   });
 
   test('says nothing of them where it isn’t', () => {
     const html = renderToStaticMarkup(<MonthBreakdown {...props} txns={rows()} />);
-    expect(html).not.toContain('attach-tag');
-    expect(html).not.toContain('Show transactions by receipt');
+    expect(html).not.toContain('attach-clip');
+    expect(html).not.toContain('aria-label="Receipt"');
   });
 });

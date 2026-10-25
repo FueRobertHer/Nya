@@ -1,11 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  createSessionToken,
-  verifyPassword,
-  previewLoginAllowed,
-  SESSION_COOKIE_NAME,
-  SESSION_MAX_AGE_SECONDS,
-} from '@/lib/auth';
+import { createSessionToken, verifyPassword, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from '@/lib/auth';
 import { ContainerError, type ContainerId } from '@/lib/containers';
 import { currentEpoch, loginContainer } from '@/lib/sessions';
 import { passwordAttemptsExhausted, countWrongPassword, clearWrongPasswords } from '@/lib/rate-limit';
@@ -25,16 +19,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const { password, previewLogin } = await req.json();
-
-    // One-click login for preview deployments. The browser asks for a session
-    // instead of being handed APP_PASSWORD, so the password is never shipped to
-    // the client. Refused on production, where previewLoginAllowed() is false.
-    if (previewLogin === true) {
-      if (!previewLoginAllowed()) {
-        return NextResponse.json({ error: 'Not available' }, { status: 403 });
-      }
-    } else if (!password || !(await verifyPassword(password))) {
+    const { password } = await req.json();
+    if (!password || !(await verifyPassword(password))) {
       await countWrongPassword(req);
       return NextResponse.json({ error: 'Incorrect password' }, { status: 401 });
     }

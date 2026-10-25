@@ -3,14 +3,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import CashFlowSankey, { FlowShown } from '@/components/CashFlowSankey';
+import { DrawnWidth } from '@/components/drawn-width';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
-import { cashFlow, inPeriod, periodCaption, periodOf, pickedRows, type FlowPick } from '@/lib/cash-flow';
+import { cashFlow, inPeriod, periodCaption, periodEnding, periodOf, pickedRows, type FlowPick } from '@/lib/cash-flow';
+import { addMonths } from '@/lib/rollover';
 import { summarize, spendingByCategory } from '@/lib/totals';
 import { filedId, indexTaxonomy } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { localDate, localMonth } from '@/lib/local-date';
-import { addMonths } from '@/lib/rollover';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 import { countTransactions } from '@/lib/spending';
 import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
@@ -87,12 +88,24 @@ const ROWS: Txn[] = [
   row(day(11, lastMonth), 'Whole Foods', 300, 'groceries'),
 ];
 
-const sankey = (props: Partial<Parameters<typeof CashFlowSankey>[0]> = {}) =>
-  renderToStaticMarkup(<CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" onPick={() => {}} {...props} />);
+const sankey = (props: Partial<Parameters<typeof CashFlowSankey>[0]> = {}, width?: number) =>
+  renderToStaticMarkup(
+    width === undefined ? (
+      <CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" onPick={() => {}} {...props} />
+    ) : (
+      <DrawnWidth.Provider value={width}>
+        <CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" onPick={() => {}} {...props} />
+      </DrawnWidth.Provider>
+    )
+  );
+// Near the narrowest a chart in dollars draws its fourth column, of
+// categories, at (components/CashFlowSankey.tsx fitsCategories): a label
+// there has about 108px, so names are cut beside their amounts.
+const FOUR = 380;
 
 describe('the issue’s acceptance, through the views themselves', () => {
   test('money in on the chart is the Activity tab’s money in for the same month, to the cent', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     const moneyIn = summarize(ROWS, (d) => d.startsWith(month), 'USD').money_in;
     expect(moneyIn).toBe(3138.5);
     // Once in the chart's figures, once in the month's summary: the same figure.
@@ -180,7 +193,7 @@ describe('the chart', () => {
   });
 
   test('a tall node whose name one line would cut puts it on a line of its own, above its amount; a thin one keeps one line', () => {
-    const html = sankey();
+    const html = sankey({}, FOUR);
     expect(html).toMatch(/<tspan class="sankey-name" x="[\d.]+" dy="-0.25em">Rent and utilities<\/tspan><tspan class="sankey-amount" x="[\d.]+" dy="1.2em">\$2\.1K<\/tspan>/);
     expect(html).toContain('<tspan class="sankey-name">Restaurants </tspan><tspan class="sankey-amount">$96</tspan>');
   });
@@ -188,7 +201,7 @@ describe('the chart', () => {
   test('Other income says so whole where it fits, else as Other, and its tooltip names whom it holds', () => {
     const payers = [row(day(1), 'Big Employer', -100_000, 'income'), ...['Ann', 'Bo', 'Cy'].map((name) => row(day(2), name, -500, 'income'))];
     // Four columns, so the payers' labels have a third of the width.
-    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')] });
+    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')] }, FOUR);
     expect(html).toContain('<tspan class="sankey-name">Other </tspan><tspan class="sankey-amount">$1.5K</tspan>');
     expect(html).toContain('<title>Other income: $1,500.00, 3 transactions (Ann, Bo, Cy)</title>');
     const small = sankey({ txns: [row(day(1), 'Big Employer', -3000, 'income'), ...['Ann', 'Bo'].map((name) => row(day(2), name, -20, 'income'))] });
@@ -219,9 +232,10 @@ describe('the chart', () => {
 
   test('the node whose transactions are listed is marked, and its ribbons lit', () => {
     const food = taxonomy.groups.find((g) => g.name === 'Food')!.id;
-    const html = sankey({ pick: { period: 'this-month', node: `group:${food}`, label: 'Food' } });
+    const html = sankey({ pick: { period: 'this-month', node: `group:${food}`, label: 'Food' } }, FOUR);
     expect(html).toContain('sankey-svg sankey-picking');
     expect(html).toContain('class="sankey-node out tappable picked"');
+    // Its ribbon in, and one to each of its two categories.
     expect((html.match(/sankey-link[^"]* lit"/g) ?? []).length).toBe(3);
     // A pick from another period marks nothing here.
     expect(sankey({ pick: { period: 'last-month', node: `group:${food}`, label: 'Food' } })).not.toContain('picked');
@@ -229,22 +243,27 @@ describe('the chart', () => {
 });
 
 describe('the period, kept beside the pick', () => {
-  test('a period kept by the caller is the one shown, with the pick it belongs to marked', () => {
+  test('the period given is the one shown, with the pick it belongs to marked, and only in the month it ended with', () => {
     const food = taxonomy.groups.find((g) => g.name === 'Food')!.id;
-    const html = sankey({ period: 'last-3-months', onPeriod: () => {}, pick: { period: 'last-3-months', node: `group:${food}`, label: 'Food' } });
-    expect(html).toContain('<option value="last-3-months" selected="">');
+    const thisMonth = today.slice(0, 7);
+    const html = sankey({ period: 'last-3-months', pick: { period: 'last-3-months', month: thisMonth, node: `group:${food}`, label: 'Food' } });
     expect(text(html)).toContain(periodCaption(periodOf('last-3-months', today), today));
     expect(html).toContain('class="sankey-node out tappable picked"');
-    // The card's own first period gives way to it.
-    expect(sankey({ period: 'last-month', initialPeriod: 'this-month' })).toContain('<option value="last-month" selected="">');
+    // A pick without its month is today's month's, as before months were kept.
+    expect(sankey({ period: 'last-3-months', pick: { period: 'last-3-months', node: `group:${food}`, label: 'Food' } })).toContain('tappable picked');
+    // The same length ending with another month isn't the pick's period.
+    const earlier = addMonths(thisMonth, -1);
+    expect(sankey({ period: 'last-3-months', month: earlier, pick: { period: 'last-3-months', month: thisMonth, node: `group:${food}`, label: 'Food' } })).not.toContain('tappable picked');
+    // No control of its own: Spending's period chips choose it.
+    expect(html).not.toContain('<select');
   });
 
   test('the Activity tab keeps it beside the pick, so a reload, which shows a spinner in the card’s place, brings both back', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
     const mount = source.slice(source.indexOf('<CashFlowSankey'), source.indexOf('/>', source.indexOf('<CashFlowSankey')));
-    expect(mount).toContain('period={flowPeriod}');
-    expect(mount).toContain('onPeriod={setFlowPeriod}');
-    expect(source).toContain('const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");');
+    expect(mount).toContain('period={span}');
+    expect(mount).toContain('month={selected ?? undefined}');
+    expect(source).toContain('const [span, setSpan] = useState<PeriodKey>("this-month");');
   });
 });
 
@@ -259,49 +278,72 @@ describe('what the load couldn’t read, beside the chart', () => {
     expect(text(sankey({ txns: [], notes: ['Could not load transactions.'] }))).toContain('Could not load transactions.');
   });
 
-  test('the Activity tab passes its notes: the chart says them as well as the list', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
-    expect(html).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
-    expect(html).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
+  test('the Activity tab passes its notes: the chart says them on Spending, as the list does on Transactions', () => {
+    const render = (segment: 'spending' | 'transactions') =>
+      renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment={segment} />);
+    expect(render('spending')).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
+    expect(render('transactions')).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
+  });
+
+  test('where the cash flow isn’t on the screen, the notes go with the figures', () => {
+    const render = (segment: 'spending' | 'transactions', withCategories: boolean) =>
+      renderToStaticMarkup(
+        <MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={withCategories ? taxonomy : null} onRecategorize={() => {}} onRename={() => {}} segment={segment} />
+      );
+    const esc = manual.replace(/'/g, '&#x27;');
+    // Spending before the categories load: no chart to say them, so the In /
+    // Out / Net card says them as the chart would (a sentence each), once.
+    const bare = render('spending', false);
+    expect(bare).toContain(`<div class="stale-note">${esc}.</div>`);
+    expect(bare.split(esc).length - 1).toBe(1);
+    // Transactions: beside the month's figures as a stale-note without the
+    // chart's full stop, and still under the list.
+    for (const cats of [true, false]) {
+      expect(render('transactions', cats)).toContain(`<div class="stale-note">${esc}</div>`);
+      expect(render('transactions', cats)).toContain(`<div class="error">${esc}</div>`);
+    }
+    // Spending with the chart: the chart says them, once.
+    const chart = render('spending', true);
+    expect(chart.split(esc).length - 1).toBe(1);
   });
 
   test('what no figure reads (tags, the review queue’s settings) the list says, never the chart', () => {
     const tags = "Your tags couldn't be read, so transactions show without them until they can be.";
     const queue = 'Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.';
-    const html = renderToStaticMarkup(
-      <MonthBreakdown txns={ROWS} notes={[manual]} asideNotes={[tags, queue]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />
-    );
+    const render = (segment: 'spending' | 'transactions') =>
+      renderToStaticMarkup(
+        <MonthBreakdown txns={ROWS} notes={[manual]} asideNotes={[tags, queue]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment={segment} />
+      );
     const esc = (n: string) => n.replace(/'/g, '&#x27;');
-    expect(html).toContain(`<div class="error">${esc(manual)}</div><div class="error">${esc(tags)}</div><div class="error">${esc(queue)}</div>`);
-    expect(html).toContain(`<div class="stale-note">${esc(manual)}.</div>`);
-    expect(html).not.toContain(`<div class="stale-note">${esc(tags)}</div>`);
-    expect(html).not.toContain(`<div class="stale-note">${esc(queue)}</div>`);
+    expect(render('transactions')).toContain(`<div class="error">${esc(manual)}</div><div class="error">${esc(tags)}</div><div class="error">${esc(queue)}</div>`);
+    const chart = render('spending');
+    expect(chart).toContain(`<div class="stale-note">${esc(manual)}.</div>`);
+    expect(chart).not.toContain(esc(tags));
+    expect(chart).not.toContain(esc(queue));
     // With nothing listed, they still say why rather than the year looking empty.
     const none = renderToStaticMarkup(<MonthBreakdown txns={[]} notes={[]} asideNotes={[tags]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
     expect(none).not.toContain('No transactions in the last 12 months.');
   });
 });
 
-describe('the period selector', () => {
-  test('offers this month, last month, the last 3 months, the year to date and the last 12 months, and says the months', () => {
-    const t = text(sankey());
-    for (const label of ['This month', 'Last month', 'Last 3 months', 'Year to date', 'Last 12 months']) expect(t).toContain(label);
-    for (const key of ['last-month', 'last-3-months', 'year-to-date', 'last-12-months'] as const) {
-      const html = sankey({ initialPeriod: key });
-      expect(html).toContain(`<option value="${key}" selected="">`);
-      expect(text(html)).toContain(periodCaption(periodOf(key, today), today));
+describe('the period it is given', () => {
+  test('says the months of each length, ending with this month or the month given', () => {
+    for (const key of ['this-month', 'last-3-months', 'year-to-date', 'last-12-months'] as const) {
+      expect(text(sankey({ period: key }))).toContain(periodCaption(periodOf(key, today), today));
+      const earlier = addMonths(today.slice(0, 7), -2);
+      expect(text(sankey({ period: key, month: earlier }))).toContain(periodCaption(periodEnding(key, earlier), today));
     }
   });
 
   test('a longer period adds its months up', () => {
-    const html = sankey({ initialPeriod: 'last-3-months' });
+    const html = sankey({ period: 'last-3-months' });
     const s = summarize(ROWS, inPeriod(periodOf('last-3-months', today)), 'USD');
     expect(s.money_in).toBe(6238.5);
     expect(html).toContain(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`);
   });
 
   test('a period reaching before the earliest transaction says it may be missing what came before', () => {
-    expect(text(sankey({ initialPeriod: 'last-12-months' }))).toContain(`The earliest transaction here is from`);
+    expect(text(sankey({ period: 'last-12-months' }))).toContain(`The earliest transaction here is from`);
   });
 
   test('an empty period says so, with no chart and no table', () => {
@@ -363,8 +405,10 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
   });
 
   test('the chart waits for the categories it draws by: none without them', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} onRecategorize={() => {}} onRename={() => {}} />);
+    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     expect(text(html)).not.toContain('Cash flow');
+    // Where it would be, with them.
+    expect(text(renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />))).toContain('Cash flow');
   });
 
   test('the flows the views draw are the module’s own', () => {
@@ -382,7 +426,7 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
   const rows = [...ROWS, ...FILES];
 
   test('counted as the month counts them, and said as the month’s summary says them, of the chart’s period', () => {
-    const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     const s = summarize(rows, (d) => d.startsWith(month), 'USD');
     expect(s.money_in).toBe(3638.5);
     expect(html.split(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`).length - 1).toBe(2);
@@ -391,7 +435,7 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
     expect(t).toContain('2 of this month’s transactions were imported from files, not sent by the bank.');
     expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from files, not sent by the bank.`);
     // Over a longer period, of the period.
-    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from files, not sent by the bank.');
+    expect(text(sankey({ txns: rows, period: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from files, not sent by the bank.');
     // Without them, nothing.
     expect(text(sankey())).not.toContain('imported from your bank');
   });
@@ -450,7 +494,7 @@ describe('split and grouped transactions (#39)', () => {
   });
 
   test('a fold’s tooltip counts the transaction once, though two of its parts are in it', () => {
-    expect(sankey({ txns: rows })).toContain('<title>Other: $20.00, 1 transaction (Groceries, Restaurants)</title>');
+    expect(sankey({ txns: rows }, FOUR)).toContain('<title>Other: $20.00, 1 transaction (Groceries, Restaurants)</title>');
   });
 
   test('a tap on a category lists the split transaction whole with the part in it under it, still said to be split in two; on a group’s payer, the group’s row with its transactions', () => {
@@ -474,9 +518,11 @@ describe('split and grouped transactions (#39)', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
     expect(source).toContain('<FlowShown pick={flowPick} count={countTransactions(picked ?? [])}');
     expect(source).toContain('const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);');
-    expect(source).toContain('{entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}');
-    expect(source).toContain('{entryNotice(whole(t)) && ');
-    expect(source).toContain('setSplitting(whole(x));');
-    expect(source).toContain('onEditSplit={(x) => setSplitting(whole(x))}');
+    expect(source).toContain('const sub = [entryLabel(whole(t)), ');
+    expect(source).toContain('<TxnNotes t={t} whole={whole(t)} ');
+    // Its sheet, and the split it edits, are the transaction's from every row
+    // loaded, put back whole: never from the parts the list happens to show.
+    expect(source).toContain('const byId = useMemo(() => new Map(bankRows(txns ?? [], { groups: "keep", ious: "keep" })');
+    expect(source).toContain('const sheetRows = useMemo(() => findTarget(sheet?.target ?? null, byId), [sheet, byId]);');
   });
 });

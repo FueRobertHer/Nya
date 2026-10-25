@@ -76,7 +76,10 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked, and sends the weekly summaries still due. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 16:30 | `/api/fx/fetch` | Fetches the European Central Bank's euro reference rates, published around 16:00 CET each working day, which a person's home currency converts with ([operations.md](operations.md#exchange-rates-and-rolling-back): on a preview or after a restore into an empty database, run it once by hand). |
-| 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
+| 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. It starts no connection after 180 seconds, so it always answers inside its 300; the rest are checked the next day. |
+| 17:30 | `/api/attachments/sweep` | Cleans up receipts and documents ([operations.md](operations.md#receipts-and-documents)). |
+
+The admin has a page for the backup and the clean-up, **Nightly jobs** (`/admin/jobs`, admin only like Storage across accounts: anyone else gets the 404 any missing page gets). It is linked from Settings, Your data and privacy, and from each row of Home's Admin card when one fails. It shows when each job runs, when it last worked and last failed, and why, and **Run now** runs one exactly as its cron does (`POST /api/admin/jobs`), recording its outcome the same way. One run at a time, of either job: it waits while a nightly cron may be running (from five minutes before 16:00 UTC, and before 17:00, until five minutes after that hour ends, since Vercel's Hobby plan may start a cron at any point in its hour; unless that cron has recorded tonight's outcome) and for six minutes after a run started there, and says until when. Demo accounts on Preview can't run them. A clean-up the breaker held can't be run from there: it would hold again.
 
 ## 5. Local development
 
@@ -124,12 +127,12 @@ When a bank connection needs you (a sign-in to redo, a connection to remove and 
 1. Create a Resend account and verify the domain you will send from (Resend's Domains page lists the DNS records to add).
 2. Create an API key with sending access only, and set it as `RESEND_API_KEY` (mark it Sensitive in Vercel).
 3. Set `MAIL_FROM` to an address on that domain, on its own or with a name: `Nya <alerts@example.com>`.
-4. Set `APP_URL` to the app's public address, so each email links straight to the Connection health card.
+4. Set `APP_URL` to the app's public address, so each email links straight to the connection that needs attention on the Accounts tab.
 5. With the shared password, set `NOTIFY_EMAIL` to the address to tell. With Clerk, nothing to set: each account's notices go to its primary email address once Clerk has verified it, and to nobody else. Preview's demo accounts are never emailed.
 
 The notices come from the daily snapshot, and crons run only on the production deployment ([Scheduled jobs](#4-scheduled-jobs)), so only production sends them. The record of what was sent is in the backups, so a restored copy doesn't send those again.
 
-An email names the institution and what to do, and for a connection about to end, the day it ends as a UTC date, which is why it says "around". It never carries a balance, an amount or an account number. A send that fails is logged with Resend's status (never the message or the address) and tried again by the next run, at most one email per container per run; one that has nobody to go to is logged as that. Without `RESEND_API_KEY` and `MAIL_FROM`, nothing is sent and the Connection health card on the Accounts tab is the only place a broken connection shows.
+An email names the institution and what to do, and for a connection about to end, the day it ends as a UTC date, which is why it says "around". It never carries a balance, an amount or an account number. A send that fails is logged with Resend's status (never the message or the address) and tried again by the next run, at most one email per container per run; one that has nobody to go to is logged as that. Without `RESEND_API_KEY` and `MAIL_FROM`, nothing is sent and the connection's card on the Accounts tab is the only place a broken connection shows.
 
 The emails go once every container's snapshot has run, so they never use the snapshots' time. They have 30 seconds in all, ending at the latest 285 seconds into the run (inside its 300-second limit), and each is started only if finding the recipient (3 seconds at most) and the send (4 seconds at most) can both end in time. They go one at a time, at most two a second (Resend's default rate limit); a 429 is waited out once when Resend asks for 2 seconds or less. What doesn't fit, and everything after Resend itself fails (no answer, a 5xx, still rate limited), waits for the next run, unmarked: the catch-up two hours later for an account whose snapshot came back unclean, which a broken connection's does, otherwise the next day.
 

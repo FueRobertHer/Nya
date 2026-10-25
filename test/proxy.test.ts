@@ -183,9 +183,8 @@ describe('without a session', () => {
     for (const path of ['/?view=other', '/?next=https://evil.example', '/settings?view=connections', '//evil.example/?view=connections']) {
       expect([path, (await call(path)).headers.get('location')]).toEqual([path, 'https://nya.test/login']);
     }
-    // The login form reads only that flag, and goes to the card or Home. On
-    // preview the form is components/LoginForm.tsx, beside the one-click button.
-    const page = readFileSync(new URL('../components/LoginForm.tsx', import.meta.url), 'utf8');
+    // The login page reads only that flag, and goes to the card or Home.
+    const page = readFileSync(new URL('../app/login/page.tsx', import.meta.url), 'utf8');
     expect(page).toContain("get('view') === 'connections' ? CONNECTIONS_PATH : '/'");
     expect(page).toContain('router.push(afterLogin());');
     expect(page).not.toMatch(/router\.push\((?!afterLogin\(\))/);

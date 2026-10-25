@@ -16,8 +16,9 @@
 // are spread, and a group as many as it holds. What it leaves out, and what
 // may be missing from the period, is said beside it.
 //
-// HOUSE STYLE. Dependency-free inline SVG on a 340-wide viewBox, as the other
-// charts, laid out by a pure function (lib/sankey.ts), its colors the app's
+// HOUSE STYLE. Dependency-free inline SVG drawn at its own width
+// (components/drawn-width.ts), so its labels are the 12px they say, laid out
+// by a pure function (lib/sankey.ts), its colors the app's
 // own variables: money in and what is left over in the up hue, spending in
 // the accent, what came from savings or debt in the down hue. Labels sit
 // outside their nodes, which are too thin to hold them, cut to fit. Where a
@@ -28,13 +29,20 @@
 // are hidden is the mask, so a name's cut never says how long a hidden
 // figure is.
 //
-// TAPPING a payer, a group, a category or a fold lists its transactions in the
-// Activity list below (components/MonthBreakdown.tsx), with the list's own
-// search and tag filter on top, and tapping it again stops. The chart is an
+// FOUR COLUMNS OR THREE. Payers, everything counted, the groups and their
+// categories, where a label has room for a name beside the widest amount;
+// on a screen too narrow for that (a phone, in most currencies) the groups
+// end it, and the table under it has their categories, each a button as a
+// tap on the chart is. Which is worked out from the width and the currency,
+// never the amounts, so hiding them changes nothing.
+//
+// TAPPING a payer, a group, a category or a fold lists its transactions on
+// Activity's Transactions segment (components/MonthBreakdown.tsx), with the
+// list's own search and tag filter on top, and tapping it again stops. The chart is an
 // image to a screen reader: its text alternative is the table under it, every
 // flow with its amount, each row's name a button that does what a tap does.
 
-import { Fragment, useMemo, useState, type Ref } from 'react';
+import { Fragment, useMemo, type Ref } from 'react';
 import { amountSamples, compactMoney, formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
@@ -44,12 +52,11 @@ import {
   drawnNodeOf,
   flowGraph,
   inPeriod,
-  isPeriodKey,
   payerLabel,
   periodCaption,
-  periodOf,
+  periodEnding,
+  pickPeriod,
   MIN_SHARE,
-  PERIODS,
   type CashFlow,
   type FlowNode,
   type FlowPick,
@@ -57,6 +64,7 @@ import {
   type PeriodKey,
 } from '@/lib/cash-flow';
 import { fitBeside, fitText, layoutSankey, textWidth, SANKEY_DEFAULTS, type SankeyNodeBox } from '@/lib/sankey';
+import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { instantDay, localDate } from '@/lib/local-date';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -66,8 +74,13 @@ const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
 const NO_NOTES: readonly string[] = [];
 
-/** A label's text size in the viewBox, as the other charts' ticks. */
-const LABEL_SIZE = 10;
+/** A label's text size: the chart is drawn at its width, so it is in CSS px. */
+const LABEL_SIZE = 12;
+/** A label's line: two labels' middles are never closer than this. */
+const LABEL_LINE = 14;
+/** The room a name must have beside the widest amount for the chart to draw
+ *  a fourth column, of categories: about seven letters. */
+const MIN_NAME = 48;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -125,7 +138,7 @@ function summaryText(flow: CashFlow, caption: string): string {
 }
 
 /** How tall a node must be for its label to take two lines. */
-const TWO_LINES = SANKEY_DEFAULTS.labelHeight * 2 + 2;
+const TWO_LINES = LABEL_LINE * 2 + 2;
 
 type Label = { name: string; amount: string; lines: 1 | 2; width: number };
 
@@ -135,6 +148,27 @@ type Label = { name: string; amount: string; lines: 1 | 2; width: number };
  *  nodes alone. */
 function amountRoom(currency: string | null): number {
   return Math.max(...amountSamples(currency).map((s) => textWidth(s, LABEL_SIZE)));
+}
+
+/** Whether a chart `width` wide has room for four columns: a label between
+ *  two of them (lib/sankey.ts places it a gap from each) fits a name of
+ *  MIN_NAME beside `room` for its amount. */
+function fitsCategories(width: number, room: number): boolean {
+  const { nodeWidth, labelGap } = SANKEY_DEFAULTS;
+  const between = (width - nodeWidth) / 3 - nodeWidth - 2 * labelGap;
+  return between >= room + textWidth(' ', LABEL_SIZE) + MIN_NAME;
+}
+
+/** The layout's options at `width`: today's shape, scaled with the width,
+ *  but never less room a label than a phone's. */
+function layoutAt(width: number) {
+  const grow = Math.max(1, width / FALLBACK_WIDTH);
+  return {
+    width,
+    labelHeight: LABEL_LINE,
+    rowHeight: Math.round(SANKEY_DEFAULTS.rowHeight * grow),
+    minPlotHeight: Math.round(SANKEY_DEFAULTS.minPlotHeight * grow),
+  };
 }
 
 /** A name on one line beside `room` for its amount, taking a node's short
@@ -187,7 +221,7 @@ function hitBoxes(b: SankeyNodeBox, label: Label | null): { x: number; y: number
  *  category's transactions are gone. */
 export function FlowShown({ pick, count, onClear, focusRef }: { pick: FlowPick; count: number; onClear: () => void; focusRef?: Ref<HTMLDivElement> }) {
   const today = localDate();
-  const caption = periodCaption(periodOf(pick.period, today), today);
+  const caption = periodCaption(pickPeriod(pick, today), today);
   return (
     <div className="flow-shown" role="status" ref={focusRef} tabIndex={-1}>
       <span>
@@ -212,9 +246,8 @@ export default function CashFlowSankey({
   notes = NO_NOTES,
   pick = null,
   onPick,
-  period: shown,
-  onPeriod,
-  initialPeriod = 'this-month',
+  period: periodKey = 'this-month',
+  month: shownMonth,
 }: {
   /** Every row the Activity tab has loaded (lib/activity.ts). */
   txns: readonly FlowRow[];
@@ -234,40 +267,39 @@ export default function CashFlowSankey({
    *  (null puts the list back). Without onPick, nothing can be tapped. */
   pick?: FlowPick | null;
   onPick?: (pick: FlowPick | null) => void;
-  /** The period shown, when the caller keeps it, and how to change it: the
-   *  Activity tab keeps it beside the pick, so a reload of the transactions,
-   *  which shows a spinner in this card's place, brings it back with the
-   *  pick. Without it, the card keeps its own, from `initialPeriod`. */
+  /** The period shown: its length, and the month it ends with (today's when
+   *  left out). The Activity tab's Spending chooses them for every card
+   *  there: the bar's month, and the length under it. */
   period?: PeriodKey;
-  onPeriod?: (period: PeriodKey) => void;
-  initialPeriod?: PeriodKey;
+  month?: string;
 }) {
-  const [own, setOwn] = useState<PeriodKey>(initialPeriod);
-  const periodKey = shown ?? own;
   const today = localDate();
-  const period = useMemo(() => periodOf(periodKey, today), [periodKey, today]);
+  const month = shownMonth ?? today.slice(0, 7);
+  const period = useMemo(() => periodEnding(periodKey, month), [periodKey, month]);
   const caption = periodCaption(period, today);
   const ix = useMemo(() => indexTaxonomy(taxonomy), [taxonomy]);
   const flow = useMemo(() => cashFlow(txns, inPeriod(period), currency, ix), [txns, period, currency, ix]);
-  const graph = useMemo(() => flowGraph(flow), [flow]);
-  const layout = useMemo(() => layoutSankey(graph.nodes, graph.links), [graph]);
+  const [drawnRef, width] = useDrawnWidth<SVGSVGElement>();
+  const room = amountRoom(flow.currency);
+  const categories = fitsCategories(width, room);
+  const graph = useMemo(() => flowGraph(flow, { categories }), [flow, categories]);
+  const layout = useMemo(() => layoutSankey(graph.nodes, graph.links, layoutAt(width)), [graph, width]);
   const said = useMemo(
     () => cashFlowNotes({ flow, period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) }),
     [flow, period, txns, notes, incomplete, stopped, withoutTransactions, today]
   );
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
-  const picked = pick && pick.period === periodKey ? pick.node : null;
+  const picked = pick && pick.period === periodKey && (pick.month ?? today.slice(0, 7)) === month ? pick.node : null;
   // What the chart marks for it: the node itself, or, for one from the table
   // the chart folds or leaves to its group, the node that holds it.
   const marked = picked ? drawnNodeOf(flow, graph, picked) : null;
 
   const choose = (node: string, label: string) => {
     if (!onPick) return;
-    onPick(picked === node ? null : { period: periodKey, node, label });
+    onPick(picked === node ? null : { period: periodKey, month, node, label });
   };
   const empty = graph.nodes.length === 0;
   const c = flow.currency;
-  const room = amountRoom(c);
 
   return (
     <div className="card">
@@ -275,25 +307,6 @@ export default function CashFlowSankey({
         <div className="inst-name">Cash flow</div>
         <div className="inst-total">{caption}</div>
       </div>
-      <select
-        className="text-input cash-flow-period"
-        value={periodKey}
-        onChange={(e) => {
-          if (!isPeriodKey(e.target.value)) return;
-          setOwn(e.target.value);
-          onPeriod?.(e.target.value);
-          // The list showed a node of the period left: it goes back too.
-          if (pick) onPick?.(null);
-        }}
-        aria-label="Period"
-      >
-        {PERIODS.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.label}
-          </option>
-        ))}
-      </select>
-
       {empty ? (
         <p className="empty-note">Nothing came in or went out in {caption}, of what the totals count.</p>
       ) : (
@@ -314,6 +327,7 @@ export default function CashFlowSankey({
           </div>
 
           <svg
+            ref={drawnRef}
             className={`sankey-svg${marked ? ' sankey-picking' : ''}`}
             viewBox={`0 0 ${layout.width} ${layout.height}`}
             role="img"
@@ -377,7 +391,11 @@ export default function CashFlowSankey({
               </span>
             )}
           </div>
-          {onPick && <p className="chart-note">Tap a payer, a group or a category to list its transactions below.</p>}
+          {onPick && (
+            <p className="chart-note">
+              {categories ? 'Tap a payer, a group or a category to list its transactions.' : "Tap a payer or a group to list its transactions, or a category in the table."}
+            </p>
+          )}
         </>
       )}
 
@@ -388,14 +406,15 @@ export default function CashFlowSankey({
         </div>
       ))}
 
-      {!empty && <FlowTable flow={flow} caption={caption} onShow={onPick ? choose : undefined} />}
+      {!empty && <FlowTable flow={flow} caption={caption} categories={categories} onShow={onPick ? choose : undefined} />}
     </div>
   );
 }
 
 /** The chart's text alternative: every flow, with its amount and how many
- *  transactions it sums, folds and all spelled out. */
-function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string; onShow?: (node: string, label: string) => void }) {
+ *  transactions it sums, folds and all spelled out, and the categories of a
+ *  chart drawn without them (`categories` false). */
+function FlowTable({ flow, caption, categories, onShow }: { flow: CashFlow; caption: string; categories: boolean; onShow?: (node: string, label: string) => void }) {
   const c = flow.currency;
   /** A flow's name: a button that lists its transactions, where it can. */
   const name = (node: string, label: string) =>
@@ -492,8 +511,17 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
         </tbody>
       </table>
       <p className="chart-note">
-        The chart draws payers and categories under {Math.round(MIN_SHARE * 100)}% of the flow together, as Other income and Other in their group, and
-        a group under it without its categories; this table lists each one.
+        {categories ? (
+          <>
+            The chart draws payers and categories under {Math.round(MIN_SHARE * 100)}% of the flow together, as Other income and Other in their group, and
+            a group under it without its categories; this table lists each one.
+          </>
+        ) : (
+          <>
+            The chart draws payers under {Math.round(MIN_SHARE * 100)}% of the flow together, as Other income, and, on a screen this narrow, the groups
+            without their categories; this table lists each one.
+          </>
+        )}
       </p>
     </details>
   );

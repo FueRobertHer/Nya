@@ -56,11 +56,11 @@ Principles behind the choices: one job per screen; settings live in Settings; on
 
 | Order | Block | Contents |
 |---|---|---|
-| 1 | **Net worth** (one card) | Total and change; one caveat line under the total (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout; a **Notes (N)** button in the chart header that opens the timeline notes sheet; a **History paused** badge on the chart header while history is paused. |
-| 2 | **Needs attention** | Shown only when something does. Each item says what and links to where it is fixed (list [below](#needs-attention)). |
-| 3 | **This month** | The passive insights (spending pace, biggest purchase, upcoming bills, idle cash) and one FI line ("FI in 11.4 years · 62% there"), with its caveats summarized in their severity color (for example an amber "Spending covers 11 of 12 months"), linking to Plan. |
+| 1 | **Net worth** (one card) | Total and change; under it, each critical caveat in full and the lesser ones gathered in one line that opens in place (see [design-system.md](design-system.md#status-and-honesty)); range chips; the chart with its readout and what qualifies it under it; the nightly jobs' facts (what to do about them only for the admin, in the Admin card under Needs attention); a foot row with when it was updated, a **History paused** badge while history is paused, and a **Chart notes (N)** button that opens the timeline notes sheet (a foot row, as the mockup draws it: the chart's header has no room at 320px). |
+| 2 | **Needs attention** | Shown only when something does: a row per item, worst first, each with its level as an icon and a word, saying what and going where it is fixed (list [below](#needs-attention)). For the admin only, an **Admin** card under it says what to do about a nightly job that failed. |
+| 3 | **This month** | The passive insights as plain rows, the month's own figures first (spending pace, biggest purchase, upcoming bills), then a low balance (one row, "and 3 more accounts"), then idle cash, with what the month may be missing after the pace and the biggest purchase, and one FI line ("FI in about 11.4 years · 62% there", the FI number, what is invested and the savings rate under it) that opens the Plan tab, with every note the FI card had under it, gathered into one line in the worst one's color when there are two or more (built in 4c). |
 
-Moves off Home: the timeline notes card (into a sheet from the chart), the backup instruction (into Needs attention, for the admin only; everyone keeps the amber "backup failed" line), the CurrencyOffer card (into Needs attention), the FI card's full caveat list (stays on Plan).
+Moves off Home: the timeline notes card (into a sheet from the chart), the backup instruction (into the Admin card under Needs attention, for the admin only; everyone keeps the amber "backup failed" line), the CurrencyOffer card (into Needs attention, a row that opens the offer in a sheet), the FI card (into one line in This month, every note gathered under it; the Plan tab says each beside its figure).
 
 ## Accounts
 
@@ -68,8 +68,8 @@ Moves off Home: the timeline notes card (into a sheet from the chart), the backu
 
 **Opens on:**
 
-- A compact header row: **+ Add account** and a status pill (green "All synced", amber "1 couldn't refresh", or red "1 needs you"), which moves focus to the first affected card.
-- One summary line by type: Cash, Credit, Investments, Loans, Other, with subtotals.
+- A compact header row: **+ Add account** and a status pill counting connections (red "1 problem", amber "2 to check", or green "All synced"), which moves focus to the first affected card, worst first (or opens Settings > Connections when that connection has no card). Red and amber are buttons; "All synced" is a badge. The pill shows only once every connection was read in this load, never from this device's snapshot or a load that failed.
+- One summary line by type: Cash, Credit, Investments, Loans, Other, with subtotals (shown when the accounts fall in two or more). A group missing an account of its kind is marked Incomplete, and what the line can't count is said under it: a red notice naming the institutions whose accounts are left out, an amber one naming those whose figures are only last known.
 - **Institution cards**, grouped by institution as today. Header: name, source badge (Manual, via SimpleFIN, via Lunch Flow), subtotal, ⋯. A one-line "Synced 2h ago" (or the caveat, in its severity color). Rows: name and mask, one subtitle line (type, or the payment line on a card or loan, or a cash chip on a brokerage), balance, chevron.
 - Problems stay on the card they concern: the reconnect notice and **Reconnect** button, Review accounts, account questions ("Did this close?"), missing-rows and stale-balance notices.
 - Collapsible sections at the bottom: **Hidden (N)**, **Accounts that ended (N)**, **Shared with me**.
@@ -94,11 +94,11 @@ A pinned bar at the top: **‹ October ›** month switcher and the segments **T
 
 | Segment | Contents |
 |---|---|
-| **Transactions** (default) | One In / Out / Net strip for the month (with its single caveat line); search; filter chips (tag, has receipt, over an amount, needs review, a cash-flow selection); the review bar with Card Mode and Approve listed when the queue is on; the list grouped by day. |
-| **Spending** | One period control shared by every card here (the month from the bar by default, plus the ranges the cash-flow chart offers today: last month, 3 or 12 months, year to date). Cash flow (Sankey, "Show as a table"); Net by month (tapping a month sets the period); Income vs spend; Spending by group; Spending by tag; Online vs in-store; Where you spent; a **Reports** row (tax year, runway, year over year). Tapping a Sankey node switches to Transactions with that filter. |
+| **Transactions** (default) | One In / Out / Net strip for the month (with its single caveat line); search; filter chips (To review while the queue is on, Tag, Receipt with its amount; since phase 5b); a cash-flow selection as a line over the list; the review bar with its count as a heading, Card Mode and Approve listed when the queue is on; the list grouped by day. |
+| **Spending** | One period shared by every card here (since phase 5c): chips for its length (Month, 3 months, 12 months, Year to date), ending with the bar's month, which the bar's arrows and Net by month's columns move; each card names it. Cash flow (Sankey, "Show as a table"); Net by month (tapping a month sets the period); Income vs spend; Spending by group; Spending by tag; Online vs in-store; Where you spent; a **Reports** row (tax year, runway, year over year). Tapping a Sankey node switches to Transactions with that filter. |
 | **Shared** | Shared expenses: people and balances, Paid back?, Add someone, Add an IOU, archived; its settings (counting, Venmo and Cash App) behind a gear. |
 
-**Transaction** sheet (tap a row) replaces the inline editor: category, tags and note, split or group, share the cost or "This paid back", receipt, include or exclude, the rules that matched and "Create a rule from this", and the bank's details. In the sheet's ⋯: rename vendor, and Edit or delete for manual transactions. After a category change, the "Make a rule" offer shows in the sheet.
+**Transaction** sheet (tap a row; since phase 5e) replaces the inline editor: category, tags and note, split or group, share the cost or "This paid back", receipt, include or exclude, the rules that matched and "Create a rule from this", and the bank's details. In the sheet's ⋯ (in its footer): rename vendor (a second level of the sheet), and Edit or delete for manual transactions. After a category change, the "Make a rule" offer shows in the sheet, under the category, and the sheet stays open. A split transaction's parts and a group's transactions are rows of their own and open the sheet on themselves: a part's category, whether it counts and Edit split; a group's transaction taken out of it. Each row is a button: its name, one line (category, account, where it came from) with its provenance as chips (Pending, Check category, To review, Excluded or Hidden by a rule, Note, a receipt), and under it the notes that bear on what it counts as.
 
 ## Budgets
 
@@ -114,15 +114,17 @@ Each segment has one time range, which removes today's three competing ranges on
 
 ## Plan
 
-**Job:** when can I stop working, and how sure is that?
+**Job:** where am I, where am I heading, and what changes it?
 
 A pinned **scenario bar**: "Your plan" or the open scenario, a switcher that opens the Scenarios sheet (list, new, rename, duplicate, delete, Compare two to four), and "Back to your plan". Repair and load-error notices sit above it when present. When an input may be incomplete (a month missing from spending, assets short), each segment opens with one amber notice saying so, since every figure on every segment rests on those inputs.
 
 | Segment | Contents |
 |---|---|
-| **FI and timeline** (default) | FI number, years to FI, Coast and Barista FI, progress; the five inputs (spending, assets, savings, ages, assumptions), each one row that opens its edit sheet, where "Why?" explains its derivation (no control inside the row); plan currency as a badge once confirmed (a notice only while it needs a decision); income and one-off expenses; life events when a scenario is open. |
-| **Stress test** | Method (History or Monte Carlo) and Change; success rate and fan chart; worst starting years; the withdrawal-rate grid; assumptions; About these numbers as a disclosure. |
+| **Your path** (default; was FI and timeline) | The answer against your stop age ("Around age 39, 16 years before you stop at 55"), progress, and the caveats on the FI number; the path chart from today to the stop age (phase 8b); the four figures it rests on (spending, saving, invested, ages and assumptions), each one row that opens its edit sheet, where "Why?" explains its derivation (no control inside the row), its lesser caveats on one line that says how many and what kind; plan currency as a badge once confirmed (a notice only while it needs a decision); the **What if…** card (phase 8c); income and one-off expenses; "Will it last?" and "You could stop saving now" (Coast FI) as rows. |
+| **Stress test** | Success rate with its "Hypothetical, from US history" label and fan chart; worst starting years; the withdrawal-rate grid; one Assumptions row that opens the sheet holding every setting the test uses (method, mix, rule, rate, return, tax, fee); About these numbers, once, as a disclosure. |
 | **Portfolio** | Allocation by asset class or tax bucket, target and drift, "For your plan" mix, mix over time. |
+
+**Life events stay in scenarios** (decided 2026-10-25). The What if… card offers templates: buy a home, travel or a big expense, a child, a career break and part-time work from phase 8c (the kinds that exist), and a car, a raise, a windfall and a loan ends from phase 8d. Social Security and pensions stay income on your plan. Picking one asks for your own figures, with nothing suggested, shows how it moves your FI age, and "Try it" creates a scenario named after it and opens it. The card lists the scenarios as life choices, each with its FI age; your plan stays what you have locked in. The path chart and the What if… card are new components, recorded in the table below when they are built (phases 8b and 8c).
 
 ## Settings
 
@@ -135,7 +137,7 @@ A full screen with a list of sections; each opens its own view with a back butto
 | **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget; for the admin, unused connections and "Check all accounts now" | AccountLinks, AdminUnusedItems, the all-hidden filter (Manage) |
 | **Sharing** | Invite, people, what each sees and for how long, blocked | SharingDrawer (avatar menu, Accounts button) |
 | **Your data and privacy** | Download my data; Your data (what Nya keeps); Bring back a download; Receipts and documents; API tokens and their changes | DownloadMyData, InventoryEntry, RestoreCard, ReceiptsCard, ApiTokens (Manage) |
-| **Account** | Profile (Clerk), Forget this device, Delete my account, Sign out, Sign out everywhere (password mode), the admin's Storage across accounts | ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
+| **Account** | Profile (Clerk), Forget this device, Delete my account, the admin's Storage across accounts; Sign out and Sign out everywhere in password mode (with Clerk, Sign out is the avatar menu's alone, and this section points to it) | ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
 
 Settings is a screen inside the app, not a sheet: thirteen-plus cards in a bottom sheet would mean long scrolling sheets and sheets opened from sheets. Whether it is an in-app view or a `/settings` route is an implementation choice for the rollout (a route gives real URLs; it also remounts the dashboard).
 
@@ -145,23 +147,26 @@ The tab bar is hidden, so this state keeps its own entry points, as today: the A
 
 ## Needs attention
 
-The only list on Home that asks the person to act. Each item has one line and a link.
+The only list on Home that asks the person to act (`components/NeedsAttention.tsx`, the rows from `components/attention.ts`, since rollout phase 4b). Each row takes the color its object already has and the words already said for it: the title and the line under it that the alert already builds, every word kept. Tapping it goes where it is fixed and moves focus there (to its heading where it has one; a sheet takes focus itself).
 
-| Item | Severity | Links to |
+| Item | Severity | Goes to |
 |---|---|---|
-| An institution needs reconnecting (or will soon) | Critical / Caution | Its card on Accounts, Reconnect |
-| Accounts couldn't be shown; a total is short | Critical | Its card |
-| An account stopped reporting or sat at zero: did it close? | Caution | Its card's question |
-| A connection has accounts you haven't added | Information | Review accounts |
-| A reconnected account may continue an earlier one: link its history | Information | Settings > Connections |
-| Transactions waiting for review (count) | Information | Activity > Transactions, needs review |
-| A payment is overdue or due within 7 days | Critical / Caution | The account sheet |
-| A budget is over or close | Caution | Budgets > Month |
-| Your accounts use several currencies: choose a home currency | Information | Settings > Preferences |
-| A restore is unfinished or held | Caution | Settings > Your data |
-| The nightly backup or receipt clean-up failed (admin only) | Caution | The admin's instructions |
+| A connection broken in a way only the person can fix, or missing money from the total (reconnect, connect again, pay or fix it at SimpleFIN or Lunch Flow, accounts couldn't be shown): what to do first where the person does it at Nya ("Reconnect Chase" over "Balances as of Oct 21"; "Connect SimpleFIN again"), else its name and its card's badge | Critical, its card's color; one row for a SimpleFIN or Lunch Flow connection failing as a whole | Its card on Accounts; its card in Settings > Connections when it has none there |
+| A connection Plaid says ends within three days ("Reconnect Chase" / "Plaid says its connection ends in 2 days") | Caution | Its card |
+| Accounts a SimpleFIN or Lunch Flow connection stopped sending ("Missing accounts") | Caution, as its card | Its card |
+| An account stopped reporting or sat at zero: did it close? (its card's question) | Caution | Its card |
+| A connection has accounts you haven't added | Information for Plaid's; Caution for a SimpleFIN or Lunch Flow connection with none chosen, as in Settings > Connections | Its card; Settings > Connections |
+| A reconnected account may continue an earlier one: link its history ("Chase Checking ••4821 may continue an earlier account" over "Link its history"; "2 reconnected accounts may continue earlier ones"), each pair Settings suggests, until linked or declined there | Information | Settings > Connections, focus on the Reconnected accounts card's title |
+| Transactions waiting for review ("12 transactions to review") | Information | Activity, focus on the review count |
+| A payment overdue ("Amex is overdue" over "Minimum $35.00") | Critical | The account sheet, over Home |
+| A payment due within 7 days ("Amex due tomorrow" over "Minimum $35.00"), every one | Caution | The account sheet, over Home |
+| A budget over or close: the worst two, then "3 more budgets over or nearly over" | Caution | The Budgets tab, focus on its month |
+| Your accounts use several currencies: choose a home currency ("Show your totals in one currency") | Caution while the total adds them unconverted (as its caveat); Information when only transactions are in several | The offer, in a sheet, with its choices and Not now |
+| A bank a restore brought back isn't connected; what a restore brought back can't be read | Critical; Caution | Settings > Your data |
+| Plaid's warnings (Caution), or your own sync's connections (Critical), couldn't be read on this load: one that needs you may be missing from the list | As the Accounts tab's notice | The Accounts tab, focus on its notice |
+| The nightly backup or receipt clean-up failed (admin only): "Nightly backup failed" over "Last saved Oct 20 · timeout · Check the backup cron in Vercel." | Caution | The Admin card under Needs attention; each row goes to the Nightly jobs page (`/admin/jobs`) |
 
-When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber.
+When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber. An unfinished restore keeps its banner on every tab, Home's too, rather than a row. What a budget row's month may be missing follows the budget rows, in the words Activity and Budgets use. A low balance is a row in This month (decided in 4c): it has no fix to go to and no way to set it aside.
 
 ## Deep links
 
@@ -169,7 +174,7 @@ When a backup or clean-up fails, everyone sees it as an amber line on the Net wo
 |---|---|
 | `openCurrency(rateFor)` switches to Accounts and turns Manage on | Opens Settings > Preferences with that currency's rate field focused |
 | `openRestore` and `#bring-back` switch to Accounts with Manage on | Open Settings > Your data with Bring back a download in view (the element keeps its id) |
-| `?view=connections` opens Accounts with Connection health expanded | Opens Accounts with the first card that needs attention in view; Settings > Connections when that connection has no card |
+| `?view=connections` opened Accounts with Connection health expanded | Opens Accounts with the first card that needs attention in view; Settings > Connections when that connection has no card |
 | Hidden card text "use Close... (under Manage)" | "Open the account to close it" |
 | Reports from Activity and from Manage | Activity > Spending > Reports; contextual links (runway from the forecast) stay |
 
@@ -185,18 +190,25 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections, each a view with a back button |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
-| NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card |
+| NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
+| NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
+| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place |
+| NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
-| CurrencyOffer (CurrencyNotes) | Its own Home card | Needs attention item |
-| TimelineNotes | Its own Home card | Notes sheet from the chart header |
-| Insights | Home card | Split: Needs attention (urgent items), This month (passive) |
-| FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line in This month; caveats stay on Plan |
+| CurrencyOffer (CurrencyNotes) | Its own Home card | A Needs attention row that opens CurrencyOfferSheet (built in 4b) |
+| TimelineNotes | Its own Home card | Chart notes sheet from the Net worth card's foot row (built in 4a) |
+| Insights | Home card | Split: Needs attention (budgets, payments, reconnects; built in 4b), and the This month card it now draws (passive rows, a low balance among them; built in 4c) |
+| FiProgressLoader, FiProgressCard | Home card with up to 12 caveat lines | One FI line, the last row of This month, its notes gathered under it; the Plan tab says each in full beside its figure (built in 4c) |
 | ConnectButtons, CoverageNote | Top of Accounts | Add account sheet; the empty state keeps them |
 | AddAccountSheet | New in phase 3 | + Add account on Accounts: every way in, coverage behind "Which should I use?" |
 | MigrationSheet (Switching link) | Top of Accounts | Add account sheet |
 | ConnectionHealth | Collapsible card on Accounts | Status pill, institution cards, Connection details in ⋯ |
 | Connectors (ConnectorCards, ConnectorSheet) | Separate cards on Accounts | Institution card ⋯ menu; orphans in Settings > Connections |
 | Institution cards (InstitutionCard) | Accounts, with Manage-only buttons | Accounts, ⋯ menu, no modes |
+| AccountsStatus | New in phase 3c | The Accounts tab's header row: how many connections have a problem or something to check, in lib/accounts-status.ts's colors, jumping to the first |
+| AccountsSummary | New in phase 3c | Under the Accounts tab's header row: the line by type (components/account-groups.ts), with what it can't count |
+| ConnectionStatus | New in phase 3b | On each institution card (and Settings > Connections): what is wrong and what it does to the total, in one color from lib/accounts-status.ts, when it last synced and whose side, the account questions, and each button that fixes it once |
+| ConnectionDetails | New in phase 3b | Institution ⋯ > Connection details: Plaid's own words, side and code; a SimpleFIN or Lunch Flow connection's card (where it reaches, requests left, history) |
 | AccountSparkline, HoldingsRecorded, InvestmentActivity, LiabilityDetail | Inline expansion of a row | Account sheet |
 | AccountSheet | New in phase 3 | Tap an account row on Accounts: balance and source, history, holdings, terms; Hide and Close... in its footer, Update balance and Add transaction on typed accounts; Import a file, Import history and Delete in its ⋯ |
 | Manual account sheet, OwedFlipNote | Add manual, Update on a row | Add account sheet, Account sheet > Update balance |
@@ -224,28 +236,32 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | CategoriesCard, CategoryManager, CategoryTemplates | Manage | Settings > Transactions |
 | TemplateOffer | Top of Budgets | Budgets > Month (dismissible notice) |
 | TagsCard | Manage | Settings > Transactions |
-| RulesCard, RuleSheet | Manage; Activity row | Settings > Transactions; Transaction sheet |
+| RulesCard, RuleSheet | Manage; Activity row | Settings > Transactions; Transaction sheet (the "Make a rule" offer and "Create a rule from this", since 5e) |
 | VendorDefaultsCard | Manage | Settings > Transactions |
 | ReviewSettingsCard | Manage | Settings > Transactions |
 | DeleteAccount, DeletionReceipt, ForgetDevice | Clerk profile window; header (password mode) | Settings > Account |
 | AdminStorage | `/admin-view` | Settings > Account (admin link) and `/admin-view` |
-| MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; editor becomes the Transaction sheet |
+| AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
+| ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** (left out on Shared), the ⋯ with Add a transaction and Import a file while there are transactions (buttons in the empty card while there are none), and the segments Transactions · Spending · Shared |
+| MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; the rows are list rows that open the Transaction sheet (5e) |
+| TransactionSheet | New (phase 5e), replacing the inline editor | A row's sheet on Activity > Transactions: a transaction, a split's part or a group's transaction |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
-| CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period control |
+| CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period (5c): no control of its own; on a phone, three columns, its categories in the table under it (5d) |
 | MonthFlowChart, CategoryRollup, SpendByTag | Activity | Activity > Spending |
-| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters; Transaction sheet |
-| ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions (unchanged behavior) |
-| SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet; Budgets > Month notice |
-| AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet |
-| SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged |
+| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet (5e) |
+| ChipSelect | New (phase 5b) | A filter chip that chooses one of a few options: Transactions' Tag and Receipt chips |
+| ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions: the count as a heading beside Card Mode, under the filter chips (5b); its filter is the To review chip |
+| SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet (5e), the parts and a group's transactions rows of their own; Budgets > Month notice |
+| AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet (5e) |
+| SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged. The sheets (`SharedSheets`) stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU |
 | BudgetsTab, BudgetsCard, BudgetSuggestion, IncomePool | Budgets | Budgets > Month |
 | GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals |
 | ForecastCard, ForecastChart | Budgets | Budgets > Upcoming |
 | CalendarView, RecurringCard, PlannedCard | Budgets | Budgets > Upcoming |
-| PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > FI and timeline |
+| PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > Your path |
 | PlanTab (SimulationCard, GridCard, About), PlanFanChart, PlanGrid | Plan | Plan > Stress test |
 | PlanScenarios, PlanCompare, ScenarioTag | Plan, below FiCard; bar at top | Scenario bar and Scenarios sheet |
-| PlanEvents | Plan, near the bottom | Plan > FI and timeline (with a scenario open) |
+| PlanEvents | Plan, near the bottom | Plan > Your path, with a scenario open; its kinds become the What if… card's templates (phase 8c) |
 | PlanForms | Plan sheet | Unchanged |
 | PlanCurrency | Plan card | Badge; notice only while it needs a decision |
 | AllocationCard | Plan, between FI and simulation | Plan > Portfolio |
@@ -257,10 +273,10 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 
 Components that only serve other components (a picker, a chart, a row, a notice) are listed here in one line each, with what they serve, instead of a row in the table above. A new component goes in one or the other; `test/design-guard.test.ts` fails until it does.
 
-- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets.
+- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets. `useDrawnWidth` (`components/drawn-width.ts`, phase 5d) draws a chart at its own width, so its text is 12px; MonthFlowChart and CashFlowSankey use it, the rest follow with phase 6.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
-- Menu: an object's ⋯ menu of rare actions (the account sheet's, the institution card's).
+- Menu: an object's ⋯ menu of rare actions (the account sheet's, the transaction sheet's, the institution card's).
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 
@@ -277,3 +293,6 @@ One word for one thing, everywhere:
 | **Forget** | Permanently remove what Nya kept about a disconnected account | Delete |
 | **Link** | Join a reconnected account's history to the account it replaces | Connect |
 | **Connect** / **Reconnect** | Bring an institution in through a provider / fix its login | Link |
+| **Financial independence** (FI) | Enough invested that work is optional: the Plan tab's subject and its label | Retire early |
+| **Stop age** | The age you plan to stop working, which the Plan's answer is measured against | Retirement age |
+| **What if** | A scenario, started from a life event's template or by hand | A life event on your plan |

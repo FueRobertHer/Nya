@@ -3,8 +3,8 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "rawColors": 44,
-    "smallFonts": 35
+    "rawColors": 42,
+    "smallFonts": 24
   },
   "app/not-allowed/page.tsx": {
     "inlineLayoutStyles": 1
@@ -90,7 +90,7 @@
     "inlineLayoutStyles": 22
   },
   "components/MonthBreakdown.tsx": {
-    "inlineLayoutStyles": 3
+    "inlineLayoutStyles": 1
   },
   "components/MonthFlowChart.tsx": {
     "rawColors": 2
@@ -162,9 +162,6 @@
     "inlineLayoutStyles": 6
   },
   "components/TemplateOffer.tsx": {
-    "inlineLayoutStyles": 1
-  },
-  "components/TimelineNotes.tsx": {
     "inlineLayoutStyles": 1
   },
   "components/VendorDefaultsCard.tsx": {

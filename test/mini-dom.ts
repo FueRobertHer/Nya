@@ -60,6 +60,15 @@ export class FakeNode {
     const p = this.parentNode;
     return p ? (p.childNodes[p.childNodes.indexOf(this) - 1] ?? null) : null;
   }
+  get previousElementSibling(): FakeElement | null {
+    const p = this.parentNode;
+    if (!p) return null;
+    for (let i = p.childNodes.indexOf(this) - 1; i >= 0; i--) {
+      const c = p.childNodes[i];
+      if (c instanceof FakeElement) return c;
+    }
+    return null;
+  }
   get parentElement(): FakeNode | null {
     return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null;
   }
@@ -222,6 +231,16 @@ export class FakeElement extends FakeNode {
   }
   get localName() {
     return this.tagName.toLowerCase();
+  }
+  /** A field's type: its attribute, else a browser's default ("text" for an
+   *  input, "submit" for a button). React reads it to tell a text field's
+   *  typing from a click. */
+  get type(): string {
+    if (this.tagName === 'SELECT') return this.hasAttribute('multiple') ? 'select-multiple' : 'select-one';
+    return this.getAttribute('type') ?? (this.tagName === 'INPUT' ? 'text' : this.tagName === 'BUTTON' ? 'submit' : '');
+  }
+  set type(v: string) {
+    this.setAttribute('type', v);
   }
   setAttribute(k: string, v: string) {
     this.attributes.set(k, String(v));

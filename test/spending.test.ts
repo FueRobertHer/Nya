@@ -7,9 +7,11 @@ import { trailingFlows } from '@/lib/fire/inputs';
 import { localDate } from '@/lib/local-date';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import MonthFlowChart from '@/components/MonthFlowChart';
+import { periodCaption, periodOf } from '@/lib/cash-flow';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { categoriesFor } from './category-fixture';
+import { budgetTexts } from './home-attention';
 
 // Which transactions count in budgets and reports (lib/spending.ts), and that
 // every total leaving transfers out leaves an excluded transaction out too,
@@ -137,8 +139,15 @@ describe('the rule', () => {
   });
 });
 
+// The Activity tab's two screens of the month: Spending's figures, then
+// Transactions' strip and list. What a test says isn't shown holds for both;
+// that each has the strip is test/activity-segments-view.test.tsx's.
+// Each Spending card names its period: by default the month the bar is on.
+const CAPTION = periodCaption(periodOf('this-month', today), today);
 const activity = (txns: Txn[], extra: Record<string, unknown> = {}) =>
-  renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, ...extra }));
+  (['spending', 'transactions'] as const)
+    .map((segment) => renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, segment, ...extra })))
+    .join('');
 const BUDGET_PROPS = { ...categoriesFor(), onSave: async () => true, goals: [], onSaveGoals: async () => true, accounts: [], loading: false };
 
 describe('every total leaves an excluded transaction out, and still lists it', () => {
@@ -148,14 +157,14 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(t).toContain('In $100.00 Out $30.00 Net $70.00');
     expect(t).toContain('Transfers and loan payments excluded, and 1 transaction you left out.');
     // Top spending, where you spent and online vs in store count the shop only.
-    expect(t).toContain('Top spending food and drink $30.00');
+    expect(t).toContain(`Top spending ${CAPTION} food and drink $30.00`);
     expect(t).not.toContain('general merchandise $80.00');
-    expect(t).toContain('Where you spent Austin $30.00');
-    expect(t).toContain('Online vs in-store Online $0.00 In store $30.00');
+    expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
+    expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
     // Still in the list, marked.
     expect(t).toContain('New laptop');
-    expect(t).toContain('Excluded from budgets and reports');
-    expect(html).toContain('num excluded');
+    expect(html).toContain('<span class="badge">Excluded</span>');
+    expect(html).toContain('txn-amount excluded');
   });
 
   test('the month’s chart', () => {
@@ -198,19 +207,14 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(t).not.toContain('· over');
   });
 
-  test('the Home insights: budget alerts and the biggest purchase', () => {
-    const t = text(
-      renderToStaticMarkup(createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink' }], ...categoriesFor({ 'food and drink': 100 }), accounts: [] }))
-    );
-    expect(t).not.toContain('food and drink budget');
-    expect(t).toContain('Biggest purchase this month: Corner shop, $30.00');
+  test('Home: the budget alerts (in Needs attention since rollout phase 4b) and the biggest purchase', () => {
+    const txns = [COUNTED, { ...EXCLUDED, category: 'food and drink' }];
+    expect(budgetTexts({ txns, ...categoriesFor({ 'food and drink': 100 }) })).not.toContain('food and drink budget');
+    expect(text(renderToStaticMarkup(createElement(Insights, { txns, accounts: [] })))).toContain('Biggest purchase this month: Corner shop, $30.00');
     // Without the exclusion the same two would be over budget.
-    const all = text(
-      renderToStaticMarkup(
-        createElement(Insights, { txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], ...categoriesFor({ 'food and drink': 100 }), accounts: [] })
-      )
+    expect(budgetTexts({ txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], ...categoriesFor({ 'food and drink': 100 }) })).toContain(
+      'Over your food and drink budget'
     );
-    expect(all).toContain('Over your food and drink budget');
   });
 
   test('recurring bills', () => {
@@ -247,19 +251,23 @@ describe('every total leaves an excluded transaction out, and still lists it', (
 describe('the Activity tab', () => {
   test('offers to add a transaction only when there is a manual account to add to, empty or not', () => {
     const render = (txns: Txn[], onAddTransaction?: () => void) =>
-      text(renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, onAddTransaction })));
-    expect(render(MONTH, () => {})).toContain('Add a transaction');
-    expect(render([], () => {})).toContain('Add a transaction');
-    expect(render([], () => {})).toContain('No transactions in the last 12 months.');
-    expect(render(MONTH)).not.toContain('Add a transaction');
-    expect(render(MONTH, () => {})).toContain("It doesn't change the account's balance unless you ask.");
+      renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, onAddTransaction }));
+    // With transactions, in the bar's ⋯ (its items are in test/activity-segments-view.test.tsx).
+    expect(render(MONTH, () => {})).toContain('aria-label="Activity options"');
+    expect(render(MONTH)).not.toContain('aria-label="Activity options"');
+    expect(text(render(MONTH))).not.toContain('Add a transaction');
+    // With none, as buttons in view, and what adding one does.
+    expect(text(render([], () => {}))).toContain('Add a transaction');
+    expect(text(render([], () => {}))).toContain('No transactions in the last 12 months.');
+    expect(text(render([], () => {}))).toContain("It doesn't change the account's balance unless you ask.");
+    expect(render([], () => {})).not.toContain('aria-label="Activity options"');
   });
 
   test('a manual row says where it came from, beside its account and category', () => {
     const manual = txn({ transaction_id: 'manual-txn:1', name: 'Farmers market', institution_name: 'Cash', account_name: 'Wallet', source: 'manual', vendor_key: '', account_id: 'manual_w' });
     const t = text(renderToStaticMarkup(createElement(MonthBreakdown, { txns: [manual], notes: [], loading: false, onRecategorize: () => {}, onRename: () => {} })));
     // Its category's name as the list shows names (lib/categories.ts displayName).
-    expect(t).toContain('Cash · Wallet · Food and drink · entered by hand');
+    expect(t).toContain('Food and drink · Cash · Wallet · entered by hand');
   });
 });
 
@@ -274,10 +282,10 @@ describe('no total adds up amounts in two currencies', () => {
     const t = text(activity([...MONTH, RAMEN, MAPLE, DOGE]));
     expect(t).toContain('In $100.00 Out $30.00 Net $70.00');
     expect(t).toContain("1 transaction in CAD, 1 in DOGE and 1 in JPY aren't in these totals, which are in USD.");
-    expect(t).toContain('Top spending food and drink $30.00');
-    expect(t).toContain('Where you spent Austin $30.00');
+    expect(t).toContain(`Top spending ${CAPTION} food and drink $30.00`);
+    expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
     expect(t).not.toContain('Tokyo $');
-    expect(t).toContain('Online vs in-store Online $0.00 In store $30.00');
+    expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
     // Listed, each in its own currency; one Intl doesn't know, with its code.
     expect(t).toContain('-¥3,200');
     expect(t).toContain('-CA$40.00');

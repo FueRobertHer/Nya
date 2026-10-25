@@ -14,7 +14,7 @@ import { spendingByTag, type TaggedRow } from '@/lib/tag-totals';
 import { shownColor, type Tag } from '@/lib/tags';
 import { Masked } from './HideAmounts';
 
-export default function SpendByTag({ txns, tags, currency }: { txns: readonly TaggedRow[]; tags: readonly Tag[]; currency: string | null }) {
+export default function SpendByTag({ txns, tags, currency, caption }: { txns: readonly TaggedRow[]; tags: readonly Tag[]; currency: string | null; caption?: string }) {
   const totals = useMemo(() => {
     const byId = new Map(tags.map((t) => [t.id, t]));
     return spendingByTag(txns, () => true, currency).flatMap((s) => {
@@ -29,6 +29,7 @@ export default function SpendByTag({ txns, tags, currency }: { txns: readonly Ta
     <div className="card">
       <div className="inst-header">
         <div className="inst-name">Spending by tag</div>
+        {caption && <div className="inst-total">{caption}</div>}
       </div>
       <div className="cat-list">
         {totals.map(({ tag, spent, transactions }) => (

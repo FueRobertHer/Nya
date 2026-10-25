@@ -19,7 +19,7 @@ How Nya should look and behave, screen to screen. The tokens are in [tokens.css]
 - **Dark and light.** The theme follows the system: dark when the system is dark or states no preference (so most people see what they see today), light when it is light. Settings > Preferences can pin Dark or Light. Keeping everyone on dark until they opt in is the alternative; see [Decisions you can reverse](README.md#decisions-you-can-reverse).
 - **Fewer boxes.** A screen is a few cards with grouped rows, not a column of cards each holding one fact. Rows share a card and are split by 1px dividers.
 - **One hero number per screen.** Net worth on Home, a month's net on Activity, the FI number on Plan. Everything else is smaller.
-- **Color is meaning.** Blue is for things you can act on and the current selection. Green and red are for money in and out, and for gain and loss. Amber is only for something that needs you. Red as a background means a number is wrong or short.
+- **Color is meaning.** Blue is for things you can act on and the current selection. Green and red are for money in and out, and for gain and loss. Amber is only for something that needs you. Red as a background means a number is wrong or short. One status uses green: the Accounts tab's "All synced", the good end of the status pill whose other ends are red and amber.
 - **Considered and rejected:** an editorial "warm paper" style with a serif display face. It is pleasant for reading and worse for scanning columns of figures.
 
 The mockups ([mockups/index.html](mockups/index.html)) show the refined current dark beside this direction on Home, so the choice can be made on a real screen.
@@ -62,7 +62,7 @@ Defined in `tokens.css` and copied into `app/globals.css`; Clerk's appearance an
 
 Today white on the accent button is 3.23:1 and white on the danger button 3.32:1; both fail. That is why the button fill is a deeper blue than the accent text in dark.
 
-**Charts** use the same tokens: `--pos` and `--neg` for in and out, `--accent` for the selected series, `--text-3` for ticks, `--border-subtle` for gridlines. The hardcoded `#262a33`, `#3a4150`, `#8b8f98` and `#6b7080` in the chart components go.
+**Charts** use the same tokens: `--pos` and `--neg` for in and out, `--accent` for the selected series, `--text-3` for ticks, `--border-subtle` for gridlines. The hardcoded `#262a33`, `#3a4150`, `#8b8f98` and `#6b7080` in the chart components go. A chart **drawn at its own width** (`useDrawnWidth`, `components/drawn-width.ts`: Income vs spend and the cash flow since phase 5d, the other charts with phase 6) has a viewBox as wide as it is laid out, so a viewBox unit is a CSS pixel and its text is `--fs-1` (12px) at every width, never scaled down on a phone. A chart on a fixed viewBox draws its text at a fraction of its size on a phone (10px at 340 units is 7.3px on a 248px card).
 
 **Print** keeps its own light palette (it already overrides tokens in `@media print`); it should be rebuilt on the light tokens so the two stay in step.
 
@@ -119,6 +119,8 @@ The workhorse. Leading logo or icon (optional), title, one subtitle line, traili
 - A row that opens a detail sheet is a `<button>` (or a link), never a `<tr>` with buttons inside it. Today account rows put Hide, Close..., Delete and Update inside a clickable `<tr>`.
 - At most one subtitle line and one trailing secondary line. Anything more belongs in the detail sheet.
 - Provenance (Updated, Last known, Estimated, Excluded, Rule, Split, Pending) is a chip on the subtitle line.
+- Activity's transactions are list rows (since phase 5e): a logo, the name with its tags, one line (category, account, where it came from) with its provenance as `.badge` chips, and the amount. The notes that bear on what a transaction counts as (an exclusion that couldn't be read, a pair worked out, its split or group, how it is shared, a file's amount the bank changed) stay under that line in `--fs-1`, never only in its sheet. A split's parts and a group's transactions are rows of their own, set in past the logo.
+- A row that reports a status (Home's Needs attention) leads with `.list-row-icon`, a 32px square in its level's tint holding a shape for each level (an alert, a clock, an info mark), and a word for a screen reader before its title: never color alone.
 
 Replaces `.acct-row`, `.txn-main` with `.txn-text`, `.peer-row`, `.peer-item`, `.cat-manage-row`, `.timeline-note-row`, `.budget-summary`, and the table-based account and transaction lists.
 
@@ -138,21 +140,22 @@ Two to four labelled figures in a row (In, Out, Net). Label `--fs-1` in `--text-
 
 - **Width is auto by default**; `.btn-block` makes one full width. Today `button { width: 100% }` forces about 25 one-off classes (`.logout-btn`, `.manage-toggle`, `.disconnect-btn`, `.plan-edit`, `.pool-toggle`, `.split-small`, `.rollup-toggle` and more) that each undo it.
 - **One button group** (`.btn-row`): gap `--sp-2`, wraps on narrow screens, primary last. Replaces `.button-pair`, `.action-row`, `.card-actions`, `.button-stack`.
-- **Danger is never a first-level button** on a working screen. Disconnect, Delete and Forget live in a menu or a detail sheet and confirm in a sheet. Replaces `.disconnect-btn` (red-bordered in a card header), `.danger-link`, `button.danger-outline`.
+- **Danger is never a first-level button** on a working screen. Disconnect, Delete and Forget live in a menu or a detail sheet and confirm in a sheet. Replaces `.disconnect-btn` (red-bordered in a card header), `.danger-link`, `button.danger-outline`. The one exception: a connection that can't be repaired shows **Remove {name}** (or Disconnect, for a SimpleFIN or Lunch Flow connection that is gone) as a secondary button on its card, since removing it is the fix; it still confirms in a sheet.
 - `.link-btn` (about 15px tall today) becomes Ghost.
 
 ### Segmented control
 
 Two to four mutually exclusive views of the same thing (Transactions / Spending / Shared; History / Monte Carlo). A track in `--elevated`, the selected item on `--surface` with `--text-1`, each item 44px tall on touch. `role="tablist"` when it switches views, a radio group when it switches a setting.
 
-A **range control** (1M ... All, the Spending periods) looks the same but is a labelled radio group, and may hold up to six options; more than that become chips. Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
+A **range control** (1M ... All) looks the same but is a labelled radio group, and may hold up to six options; more than that become chips. Spending's period lengths (since phase 5c) are chips in a labelled radio group (`role="radio"`, `aria-checked`, arrows, Home and End), as the mockup draws them: four labels as long as "Year to date" don't fit one segmented row at 320px. Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
 
 ### Badge and chip
 
 One family, `--r-xs`, `--fs-1`, weight 500, sentence case.
 
 - **Badge**: a status or source label that isn't clickable (Manual, via SimpleFIN, Pending, Overdue). Tones: neutral, accent, pos, neg, warn, each on its tint.
-- **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area.
+- **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area. Tones `neg` and `warn` (since phase 3c) for a status that jumps to what it counts, the Accounts status pill: its severity's tint, with the edge kept in the text's color and a trailing chevron, so it never reads as a badge.
+- **Filter chips** (since phase 5b) sit in a `.chip-row`, which wraps with 12px between rows so each chip's 44px hit area ends where the next row's begins. A filter that is on or off is a `button.chip` with `aria-pressed` (To review). One that chooses among a few options is a **select chip** (`ChipSelect`, `.chip-select`): a native select laid unseen over the whole hit area, so a phone opens its own picker, with a trailing down chevron. It shows its word and the choice ("Tag", "Tag: Groceries"), so its state is never color alone, and takes the "on" look (`data-on`) while a choice is made. The select is named by the chip's word, which the shown text starts with.
 - **Tag colors**: the nine tag colors (`.tag-gray` to `.tag-pink`) stay. Today they are dark-only (a pastel text on an 18 to 20% tint). They become tokens in phase 7, which gives them light values, and join the contrast check then; they are not in `tokens.css` yet.
 
 Replaces `.pill`, `.manual-badge`, `.cash-chip`, `.health-badge`, `.tag-chip`, `button.tag-suggestion`, `.card-mode-category`, `.pending-tag`, `.low-conf-tag`, `.over-tag`, `.done-tag`.
@@ -169,7 +172,8 @@ The only way to say something is wrong or worth knowing. See [Status and honesty
 | Done | `--pos` text on `--pos-tint` | "Saved. 14 transactions now use this rule." |
 
 - Two forms: **inline** (one line under the number it qualifies) and **block** (inside a card or sheet, with an optional action button).
-- Never color alone: every notice has an icon and words.
+- **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: old exchange rates and accrued interest left out" (the worst kinds first, so an amber line names what made it amber; past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
+- Never color alone: every notice has an icon and words, and starts with its level for a screen reader ("Critical:", "Caution:", "Note:", visually hidden), as Needs attention's rows do.
 
 Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`, `.plan-warning`, `.forecast-warning`, `.api-access-warning`, `.restore-banner`, and the feature-scoped notes (`.lifecycle-note`, `.review-note`, `.split-note`, `.goal-note`, `.budget-note`, `.currency-note`, `.imported-history-note`, `.kind-warnings`, `.plan-save-error`, `.payoff-field-error`, `.card-mode-error`).
 
@@ -207,17 +211,19 @@ Nya shows its gaps on purpose (see [features.md](../features.md)): a missing row
 
 | Severity | When | Color |
 |---|---|---|
-| Critical | A number is wrong or short: an institution needs reconnecting, rows couldn't be shown, a total is incomplete | Red |
-| Caution | Numbers are real but dated, held or paused: stale but recovered balances, an account that stopped reporting (held at its last known balance until you answer), a connection that ends soon (Reconnect soon), history paused, a backup or clean-up failed, a month may be missing transactions | Amber |
+| Critical | A number is wrong or short: an institution needs reconnecting, rows couldn't be shown, a total is incomplete. Also an overdue payment in Needs attention | Red |
+| Caution | Numbers are real but dated, held or paused: stale but recovered balances, an account that stopped reporting (held at its last known balance until you answer), a connection that ends soon (Reconnect soon), history paused, a backup or clean-up failed, a month may be missing transactions. In Needs attention, also a payment due within a week and a budget over or nearly over | Amber |
 | Information | Nothing is wrong: converted currency, imported history, rates used | Neutral |
 
 **Placement follows three rules.**
 
 1. **On the number.** A caveat sits directly under the figure it qualifies, as an inline notice. **Critical caveats are never collapsed**: each shows in full, naming the institution and what is wrong ("Chase needs reconnecting; its balances are from Oct 21", "This total is short by 1 account"). Caution and information caveats show in full when there is one; two or more become a summary line that states the count and kind in words, in the color of the worst of them ("2 notes: 1 balance from yesterday, accrued interest left out"), and expands in place to every note in its current full wording. Never an unlabeled icon, never only in a sheet.
-2. **Counted on Home.** Anything that needs the person to act (reconnect, answer an account question, approve the review queue, a payment due, a restore hold) is also an item in Home's **Needs attention**, linking to where it is fixed.
+2. **Counted on Home.** Anything that needs the person to act (reconnect, answer an account question, approve the review queue, a payment due, a bank a restore brought back or a restore that can't be read) is also an item in Home's **Needs attention**, linking to where it is fixed. An overdue payment is red there: nothing on screen is wrong, but it costs the person until it is paid.
 3. **Once per tab, not once per card.** On Budgets and Plan, a month or input that may be incomplete gets one notice at the top of the segment and a small badge on each affected card, instead of the same paragraph in every card.
 
-**Who an instruction is for.** The backup and receipt clean-up notices reach every user (the server sends them ungated), but only the deployment's admin can act on "check the backup cron in Vercel". When one fails, everyone sees it as an amber caution on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); the instruction and its action show only to the admin, in Needs attention. When backups are fine, nothing is shown.
+**A connection's problems have one color**, from two questions (`lib/accounts-status.ts`, since rollout phase 3b): is it broken in a way only the person can fix (sign in again, reconnect, connect again, pay or fix it at SimpleFIN or Lunch Flow, say which way a card goes, remove one that can't be repaired)? Is the total missing an account's money (nothing fetched or recovered, accounts not shown, too old, held with no balance)? Either makes it critical, and the card shows the button that fixes it or says what isn't counted. Anything else that is off is a caution, a new connection waiting for its first answer included. The card's notice, its badge, Settings > Connections and the Accounts status all use it, and the words never change with the color.
+
+**Who an instruction is for.** The backup and receipt clean-up notices reach every user (the server sends them ungated), but only the deployment's admin can act on "check the backup cron in Vercel". When one fails, everyone sees it as an amber caution on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); the instruction and its action show only to the admin, in an Admin card under Needs attention. Each of its rows goes to the admin's Nightly jobs page (`/admin/jobs`), a page of its own where the job's runs are and **Run now** runs it, so Home carries no controls for it. When backups are fine, nothing is shown.
 
 ## Copy
 

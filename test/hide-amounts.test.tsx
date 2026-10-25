@@ -20,6 +20,7 @@ import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsCard from '@/components/BudgetsCard';
 import GoalsCard from '@/components/GoalsCard';
 import Insights from '@/components/Insights';
+import { HomeAttention } from './home-attention';
 import ForecastCard from '@/components/ForecastCard';
 import CalendarView from '@/components/CalendarView';
 import RecurringCard from '@/components/RecurringCard';
@@ -32,6 +33,7 @@ import { ReportView } from '@/components/ReportView';
 import { CsvMapping, PreviewView as ImportPreview, type Picked, type Preview } from '@/components/ImportSheet';
 import { MappingStep, ReviewStep, type Question as MigrationQuestion, type Review as MigrationReview } from '@/components/MigrationSheet';
 import CashFlowSankey from '@/components/CashFlowSankey';
+import { DrawnWidth } from '@/components/drawn-width';
 import SplitSheet from '@/components/SplitSheet';
 import GroupSheet from '@/components/GroupSheet';
 import CardMode from '@/components/CardMode';
@@ -41,7 +43,7 @@ import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
 import { readImport, type ImportOptions } from '@/lib/import/read';
 import { bypasses, clientModules, FORMATTERS, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
-import { HeroCurrencyNote } from '@/components/CurrencyNotes';
+import { heroCurrencyCaveats } from '@/components/CurrencyNotes';
 import { balancesIn } from '@/lib/fx/net-worth';
 import { ecbTable } from './fx-fixture';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
@@ -267,7 +269,7 @@ describe('the formatters, with amounts hidden', () => {
     const fx = ecbTable({ home: 'EUR' });
     const b = balancesIn([{ amount: 1000, currency: 'USD' }, { amount: 2000, currency: 'EUR' }], fx, 'EUR', '2026-09-14', 'USD');
     const base = { currency: 'EUR', net_worth: b.total, parts: b.parts, left_out: b.left_out, unknown: 0, history: [], gaps: { unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, delta: null, rates: { day: '2026-09-14', stale: false, own: [], unusable: [] }, fx: { home: 'EUR', latest: fx.latest, own: [] } };
-    const html = renderToStaticMarkup(<HeroCurrencyNote base={base} main="USD" onOpen={() => {}} />);
+    const html = renderToStaticMarkup(<>{heroCurrencyCaveats(base, 'USD', () => {}).map((c) => <div key={c.key}>{c.body}</div>)}</>);
     expect(exposed(html)).toContain('1 USD = 0.86573 EUR');
     expectNoAmounts(html.replace(/1 [A-Z]{3,10} = [\d.,]+ [A-Z]{3,10}/g, ''));
   });
@@ -836,16 +838,24 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       ]}
     />
   ),
-  'Home: the insights': () => (
-    <Insights
+  'Home: the insights': () => <Insights txns={ROWS} accounts={[{ name: 'Checking', type: 'depository', subtype: 'checking', balance: 40.5, currency: 'USD' }]} />,
+  // The budget and payment rows: their sentences are built in a function the
+  // source scans can't follow into the row.
+  'Home: needs attention': () => (
+    <HomeAttention
       txns={ROWS}
       budgets={{ categories: { ...budgets.categories }, groups: {} }}
       taxonomy={taxonomy}
-      accounts={[{ name: 'Checking', type: 'depository', subtype: 'checking', balance: 40.5, currency: 'USD' }]}
+      payments={[
+        { item_id: 'i', account_id: 'a', name: 'Amex', type: 'credit', balance: 1820.4, currency: 'USD', liability: { minimum_payment: 35.12, next_due_date: null, is_overdue: true } },
+      ]}
     />
   ),
-  'Activity: the month, its totals, top spending and transactions': () => (
+  'Activity: the month, its totals and transactions': () => (
     <MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />
+  ),
+  'Activity: Spending, the cash flow, net by month, income vs spend, top spending, places and channels': () => (
+    <MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />
   ),
   'Budgets: the meters, opened to a group': () => (
     <BudgetsCard
@@ -1093,18 +1103,26 @@ describe('the main screens with amounts hidden', () => {
 
   test('the cash flow is drawn from the amounts’ proportions alone: its labels, their lines and where they are tapped never move with a figure’s size, and a hidden one’s names never say it', () => {
     const names = (html: string) => [...html.matchAll(/<tspan class="sankey-name"[^>]*>([^<]*)<\/tspan>/g)].map((m) => m[1]);
-    const flow = (scale: number) => () => <CashFlowSankey txns={FLOW.map((t) => ({ ...t, amount: t.amount * scale }))} taxonomy={taxonomy} currency="USD" onPick={() => {}} />;
-    const small = both(flow(1));
-    const large = both(flow(100));
-    // The same proportions, a hundred times the figures: the same drawing,
-    // tap areas and all, shown or hidden (to a millionth of a unit, past
-    // which floating point is all that differs).
-    const near = (html: string) => shapes(html).map((s) => s.replace(/-?\d+\.\d+/g, (n) => Number(n).toFixed(6)));
-    expect(near(large.shown)).toEqual(near(small.shown));
-    expect(near(large.hidden)).toEqual(near(small.shown));
-    // Hidden, every name is cut beside the mask, whatever the figure.
-    expect(names(small.hidden).some((n) => n.endsWith('…'))).toBe(true);
-    expect(names(large.hidden)).toEqual(names(small.hidden));
+    const flow = (scale: number, width: number) => () => (
+      <DrawnWidth.Provider value={width}>
+        <CashFlowSankey txns={FLOW.map((t) => ({ ...t, amount: t.amount * scale }))} taxonomy={taxonomy} currency="USD" onPick={() => {}} />
+      </DrawnWidth.Provider>
+    );
+    // At a phone's width (three columns), the narrowest four are drawn at,
+    // where names are cut, and a wide card's.
+    for (const width of [248, 380, 560]) {
+      const small = both(flow(1, width));
+      const large = both(flow(100, width));
+      // The same proportions, a hundred times the figures: the same drawing,
+      // tap areas and all, shown or hidden (to a millionth of a unit, past
+      // which floating point is all that differs).
+      const near = (html: string) => shapes(html).map((s) => s.replace(/-?\d+\.\d+/g, (n) => Number(n).toFixed(6)));
+      expect(near(large.shown)).toEqual(near(small.shown));
+      expect(near(large.hidden)).toEqual(near(small.shown));
+      // Hidden, every name is cut beside the mask, whatever the figure.
+      if (width === 380) expect(names(small.hidden).some((n) => n.endsWith('…'))).toBe(true);
+      expect(names(large.hidden)).toEqual(names(small.hidden));
+    }
     // The room kept is the widest any label writes in the currency here.
     for (const s of amountSamples('USD')) expect(s).toMatch(/^\$[\d.,]+[KMBT]?$/);
   });
@@ -1112,7 +1130,7 @@ describe('the main screens with amounts hidden', () => {
   test('percentages stay: they say no amount', () => {
     const groceries = taxonomy.categories.find((c) => c.name === 'groceries')!.id;
     const { hidden } = both(() => (
-      <Insights txns={[txn({ transaction_id: 'g', amount: 285, category: 'groceries' })]} budgets={{ categories: { [groceries]: { amount: 300 } }, groups: {} }} taxonomy={taxonomy} accounts={[]} />
+      <HomeAttention txns={[txn({ transaction_id: 'g', amount: 285, category: 'groceries' })]} budgets={{ categories: { [groceries]: { amount: 300 } }, groups: {} }} taxonomy={taxonomy} />
     ));
     expect(exposed(hidden)).toContain('Approaching your groceries budget (95%)');
     const chart = both(SCREENS['Home: the net worth chart']).hidden;
@@ -1120,8 +1138,9 @@ describe('the main screens with amounts hidden', () => {
   });
 
   test('the hidden figures are said as "hidden" where they stand alone', () => {
-    const { hidden } = both(SCREENS['Activity: the month, its totals, top spending and transactions']);
-    expect(hidden).toContain('<span class="visually-hidden">hidden</span>');
+    for (const screen of ['Activity: the month, its totals and transactions', 'Activity: Spending, the cash flow, net by month, income vs spend, top spending, places and channels']) {
+      expect([screen, both(SCREENS[screen]).hidden.includes('<span class="visually-hidden">hidden</span>')]).toEqual([screen, true]);
+    }
     const meters = both(SCREENS['Budgets: the meters, opened to a group']).hidden;
     expect(meters).toContain('<span class="visually-hidden">hidden of hidden</span>');
   });

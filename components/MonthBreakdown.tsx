@@ -11,67 +11,56 @@
 // what it left out in others: lib/spending.ts); top spending, rolled up to
 // your category groups (components/CategoryRollup.tsx), draws as single-hue
 // horizontal bars (magnitude lives in length, not color); and finally the
-// searchable transaction list, where a manual row can be edited, any row
-// given another of your categories, and any row excluded from budgets and
-// reports. Each row shows the name of the category it is filed under
+// searchable transaction list, each row a button that opens its sheet
+// (components/TransactionSheet.tsx), where a manual row can be edited, any
+// row given another of your categories, and any row excluded from budgets
+// and reports. Each row shows the name of the category it is filed under
 // (lib/categories.ts), so renaming a category renames it here at once.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivitySegment } from "./ActivityBar";
+import ReportsEntry from "./ReportsEntry";
 import MonthFlowChart from "./MonthFlowChart";
-import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { amountSamples, compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
-import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
 import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
-import { IMPORTED_TXN_PREFIX, importedChangedNote, importedRowsNote } from "@/lib/history-import/view";
-import { isConnectorKind } from "@/lib/connectors/types";
+import { importedRowsNote } from "@/lib/history-import/view";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
-import CategoryPicker from "./CategoryPicker";
 import type { CategoryChoice } from "./transaction-edits";
 import type { Tag } from "@/lib/tags";
 import TagChips from "./TagChips";
 import TagFilter from "./TagFilter";
+import ChipSelect from "./ChipSelect";
 import SpendByTag from "./SpendByTag";
-import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
+import type { TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
-import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
+import { inPeriod, periodCaption, periodEnding, periodGapNotes, pickedRows, SPANS, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from "@/lib/shared-expenses/rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
-import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
+import { entryLabel, MemberRows, PartRows, wholeSplits } from "./SplitRows";
 import { needsReview, type ReviewMarks } from "@/lib/review-layer";
 import type { ReviewControls } from "./review-state";
 import ReviewBar from "./ReviewBar";
-import ReviewNote from "./ReviewNote";
 import CardMode from "./CardMode";
-import { SharedRowActions, SharedRowLine, type SharedRowHooks } from "./SharedRows";
-import AttachmentSection from "./AttachmentSection";
+import type { SharedRowHooks } from "./SharedRows";
+import TransactionSheet, { findTarget, TxnNotes, type SheetTarget } from "./TransactionSheet";
+import { isLowConfidence } from "./txn-words";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 
-/** What one side of a pair Nya worked out between two SimpleFIN accounts
- *  (lib/manual-txns.ts connectorTransfers) is. */
-const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
-  card: "Card payment between your accounts",
-  loan: "Loan payment between your accounts",
-  transfer: "Transfer between your accounts",
-};
-
-/** The mark on one side of a pair: what it is, worked out from the amounts,
- *  and, while its category leaves it out of the totals, how to count it. It
- *  counts once its category is moved into a spending group (lib/spending.ts
- *  isTransfer: loan payments, say), and then says only what it is. */
-export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "category" | "category_kind">): string | null {
-  if (!t.paired) return null;
-  const what = `${PAIRED_WORDS[t.paired]}, worked out from the amounts`;
-  return isTransfer(t) ? `${what}: give it a category to count it` : what;
-}
+// What a row and its sheet say of a transaction (components/txn-words.ts),
+// re-exported for code that imported them from here.
+export { exclusionOffer, nameForRules, pairedWords } from "./txn-words";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -186,20 +175,20 @@ export type Txn = {
   // approved, what changed since, and the merchant's default that filed it.
 } & ReviewMarks;
 
-/** The name rules match a row by: the one it had before any rule named it. */
-export const nameForRules = (t: Pick<Txn, "name" | "name_before_rules">) => t.name_before_rules ?? t.name;
-
 /**
- * What a transaction's detail offers about leaving it out of budgets and
- * reports: the button to exclude it or put it back ("toggle"), or why not yet
- * ("wait"; "wait-rule" for one a rule hides). A pending row gets a new id
- * when it posts, and an exclusion or an include is kept by id: offered once
- * it has posted, so it can't quietly lapse.
+ * What an empty list says, from what narrows it: one filter on says what it
+ * looked for; the search, or more than one, says nothing matches them; none,
+ * that the month (or the cash flow's pick) has nothing.
  */
-export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_by_rule">): "toggle" | "wait" | "wait-rule" {
-  if (!t.pending) return "toggle";
-  if (t.excluded_by_rule) return "wait-rule";
-  return t.excluded === true ? "toggle" : "wait";
+export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; receipt: ReceiptChoice; pick: boolean }): string {
+  const count = [on.query, on.tag, on.review, on.receipt !== ""].filter(Boolean).length;
+  if (count === 0) return on.pick ? "Nothing to list." : "No transactions this month.";
+  if (count > 1) return on.query ? "No transactions match your search and filters." : "No transactions match these filters.";
+  if (on.review) return "Nothing listed needs review.";
+  if (on.receipt === "with") return "No transaction listed has a receipt or document.";
+  if (on.receipt === "without") return "Nothing listed over that amount is missing a receipt.";
+  if (on.tag) return "No transaction listed has that tag.";
+  return "No transactions match your search.";
 }
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
@@ -207,6 +196,15 @@ export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_b
 // Compact, signed, for the net-bar value labels: +$1.2K / -$340.
 function fmtCompactSigned(n: number, currency: string | null): string {
   return `${n < 0 ? "-" : "+"}${compactMoney(Math.abs(n), currency)}`;
+}
+
+// How wide Net by month's columns are, in px: the widest a month's figure
+// can be in `currency` at its 12px (lib/format.ts amountSamples), so no
+// figure widens its own column, and never under a finger's 42. From the
+// currency alone, so hiding amounts changes nothing.
+function trendColumn(currency: string | null): number {
+  const widest = Math.max(...amountSamples(currency).map((s) => textWidth(`+${s}`, 12)));
+  return Math.max(42, Math.ceil(widest) + 4);
 }
 
 // Plaid's convention: positive amounts are money leaving the account, so the
@@ -235,6 +233,11 @@ function fmtTxnDate(iso: string): string {
   });
 }
 
+/** The bar's month, in full: "October 2026". */
+function monthName(ym: string): string {
+  return new Date(`${ym}-01T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
 function monthLabel(ym: string): string {
   const d = new Date(`${ym}-01T00:00:00`);
   const now = new Date();
@@ -245,27 +248,11 @@ function monthLabel(ym: string): string {
   );
 }
 
-// Plaid categorizes with a confidence level; LOW/UNKNOWN rows are worth a
-// glance, so the row nudges the user toward the existing recategorize flow.
-const LOW_CONFIDENCE = new Set(["LOW", "UNKNOWN"]);
-function isLowConfidence(t: Txn): boolean {
-  return !!t.category_confidence && LOW_CONFIDENCE.has(t.category_confidence);
-}
-
 // Money moving between your own accounts isn't income or spending, and a
 // transaction the person excluded counts in no total: both decided in
 // lib/spending.ts, which every total uses. isTransfer is re-exported for code
 // that imported it from here.
 export { isTransfer } from "@/lib/spending";
-
-// A short "HH:MM" from Plaid's ISO datetime, in the viewer's locale. Null when
-// the row carries only a posting date.
-function fmtTime(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
 
 // Base category options for recategorization, merged with whatever
 // categories appear in the data (categoryOptions).
@@ -304,58 +291,6 @@ export function categoryOptions(txns: Txn[] | null): string[] {
   return [...set].sort();
 }
 
-// "What is this charge?" detail panel, shown inside the expanded row. Surfaces
-// the Plaid fields that answer the question (the real merchant behind a
-// processor, channel, place, time, website, reference/check numbers, and, for
-// joint accounts, the owner), skipping any the row doesn't carry.
-function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) {
-  const rows: { label: string; value: React.ReactNode }[] = [];
-  const time = fmtTime(t.datetime);
-
-  if (t.counterparty) rows.push({ label: "Merchant", value: t.counterparty });
-  if (t.payment_processor)
-    rows.push({ label: "Processed by", value: t.payment_processor });
-  if (t.payment_channel)
-    rows.push({ label: "Channel", value: t.payment_channel });
-  if (t.city)
-    rows.push({
-      label: "Where",
-      value: t.region ? `${t.city}, ${t.region}` : t.city,
-    });
-  if (time) rows.push({ label: "Time", value: time });
-  if (t.website)
-    rows.push({
-      label: "Website",
-      value: (
-        <a
-          href={`https://${t.website.replace(/^https?:\/\//, "")}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {t.website.replace(/^https?:\/\//, "")}
-        </a>
-      ),
-    });
-  if (t.payment_reference)
-    rows.push({ label: "Reference", value: t.payment_reference });
-  if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
-  if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
-  if (t.note && !noteEditor) rows.push({ label: "Note", value: t.note });
-
-  if (rows.length === 0) return null;
-
-  return (
-    <dl className="txn-detail">
-      {rows.map((r) => (
-        <div className="txn-detail-row" key={r.label}>
-          <dt>{r.label}</dt>
-          <dd>{r.value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
 export default function MonthBreakdown({
   txns,
   fx = null,
@@ -382,6 +317,9 @@ export default function MonthBreakdown({
   review,
   shared,
   onAttachmentsChanged,
+  segment: segmentShown,
+  onSegment,
+  sharedSegment = null,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -429,7 +367,8 @@ export default function MonthBreakdown({
   /** Saves a transaction's note (empty clears it). */
   onSaveNote?: (t: Txn, note: string) => void;
   /** Opens the rule drawer on a rule made from a transaction, filing it
-   *  under `category_id` (the one just chosen) or the one it is under now. */
+   *  under `category_id` (the one just chosen in its sheet) or the one it is
+   *  under now. */
   onCreateRule?: (t: Txn, category_id?: string) => void;
   /** A rule, by id, in a sentence, for the rules a transaction matches. */
   ruleSentenceOf?: (id: string) => string | null;
@@ -447,21 +386,36 @@ export default function MonthBreakdown({
    *  read again, for its paperclips. Without it (no file store connected),
    *  no receipt is shown, offered or filtered by. */
   onAttachmentsChanged?: () => void;
+  /** The segment shown (components/ActivityBar.tsx) and how to choose
+   *  another, when the caller keeps it: the dashboard does, so the tab
+   *  comes back on the last one chosen. Left out, it keeps its own,
+   *  starting on Transactions. */
+  segment?: ActivitySegment;
+  onSegment?: (s: ActivitySegment) => void;
+  /** What the Shared segment shows: the Shared expenses card. */
+  sharedSegment?: ReactNode;
 }) {
+  const [ownSegment, setOwnSegment] = useState<ActivitySegment>("transactions");
+  const segment = segmentShown ?? ownSegment;
+  const chooseSegment = onSegment ?? setOwnSegment;
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
-  const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
-  const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
+  // The row whose sheet is open (components/TransactionSheet.tsx), kept
+  // while it slides out, with the errors already said when it opened, so
+  // the sheet says only those its own changes bring. Each opening is its
+  // own (`n`): what was typed or offered in the last one doesn't carry over.
+  const [sheet, setSheet] = useState<{ target: SheetTarget; open: boolean; seen: (string | null)[]; n: number } | null>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null);
   const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
-  // After a transaction is given another category: the offer to do the same
-  // for every transaction with its name, as a rule (#36).
-  const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
   // A node of the cash flow tapped (#41): the list shows its transactions,
   // from every month of its period, until it is cleared or a month is chosen.
   // The chart's period is kept here beside it: a reload shows a spinner in
   // the chart's place, and it must come back on the pick's period.
   const [flowPick, setFlowPick] = useState<FlowPick | null>(null);
-  const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");
+  // Spending's period: its length (SPANS), ending with the bar's month. Kept
+  // here, so a reload's spinner brings it back, and across segments.
+  const [span, setSpan] = useState<PeriodKey>("this-month");
+  const spanRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const shownRef = useRef<HTMLDivElement>(null);
   const pickedNow = useRef(false);
@@ -469,7 +423,7 @@ export default function MonthBreakdown({
   const [splitting, setSplitting] = useState<Txn | null>(null);
   const [grouping, setGrouping] = useState<{ start: Txn | null; group: Txn | null }>({ start: null, group: null });
   const [splitError, setSplitError] = useState<string | null>(null);
-  // The review queue: the Needs review filter, and Card Mode, open.
+  // The review queue: the To review filter, and Card Mode, open.
   const [reviewOnly, setReviewOnly] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(false);
   const reviewing = reviewOnly && !!review?.view?.on;
@@ -496,6 +450,15 @@ export default function MonthBreakdown({
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
     [txns, selected],
   );
+  // Spending's period, and its rows: every card there sums them.
+  const period = useMemo(() => (selected ? periodEnding(span, selected) : null), [span, selected]);
+  const periodTxns = useMemo(() => {
+    if (!period) return [];
+    const within = inPeriod(period);
+    return (txns ?? []).filter((t) => within(t.date));
+  }, [txns, period]);
+  const onSpending = segment === "spending";
+  const today = localDate();
 
   // Every total on the tab sums amounts in one currency, the same for every
   // month so the trend compares like with like: the home currency once one
@@ -506,13 +469,23 @@ export default function MonthBreakdown({
   const counted = useMemo(() => totalsIn(txns ?? [], fx), [txns, fx]);
   const currency = counted.currency;
   const countedMonth = useMemo(() => counted.rows.filter((t) => t.date.slice(0, 7) === selected), [counted, selected]);
+  const countedPeriod = useMemo(() => {
+    if (!period) return [];
+    const within = inPeriod(period);
+    return counted.rows.filter((t) => within(t.date));
+  }, [counted, period]);
+  // What the figures shown sum: the bar's month on Transactions, the period
+  // on Spending. One segment is drawn at a time, so the sums below are its.
+  const scopeTxns = onSpending ? periodTxns : monthTxns;
+  const scopeCounted = onSpending ? countedPeriod : countedMonth;
   const leftOut = useMemo(
-    () => leftOutWhy(leftOutText(leftOutByCurrency(countedMonth, currency), currency), conversionIn(countedMonth, counted.conversion)),
-    [countedMonth, currency, counted]
+    () => leftOutWhy(leftOutText(leftOutByCurrency(scopeCounted, currency), currency), conversionIn(scopeCounted, counted.conversion)),
+    [scopeCounted, currency, counted]
   );
-  const convertedNote = useMemo(() => convertedText(conversionIn(countedMonth, counted.conversion)), [countedMonth, counted]);
+  const convertedNote = useMemo(() => convertedText(conversionIn(scopeCounted, counted.conversion)), [scopeCounted, counted]);
   // Rows imported into linked accounts from files (#52): the totals say so.
-  const importedNote = useMemo(() => importedRowsNote(monthTxns), [monthTxns]);
+  const periodWords = onSpending && period && period.months.length > 1 ? "this period" : "this month";
+  const importedNote = useMemo(() => importedRowsNote(scopeTxns, periodWords), [scopeTxns, periodWords]);
 
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
@@ -525,7 +498,7 @@ export default function MonthBreakdown({
     const hidden = new Set<string>();
     const unknown = new Set<string>();
     const shared = new Set<string>();
-    for (const t of monthTxns) {
+    for (const t of scopeTxns) {
       const id = t.split_of ?? t.shared_of ?? t.transaction_id;
       if (t.shared_part !== undefined) shared.add(id);
       else if (t.excluded === true && t.excluded_by_rule) hidden.add(id);
@@ -533,7 +506,7 @@ export default function MonthBreakdown({
       else if (t.excluded === null) unknown.add(id);
     }
     return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size, sharedCount: shared.size };
-  }, [monthTxns]);
+  }, [scopeTxns]);
 
   const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
     let inflow = 0;
@@ -543,7 +516,7 @@ export default function MonthBreakdown({
     const byCategory: Record<string, number> = {};
     const byCategoryId = new Map<string, number>();
     const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
-    for (const t of countedMonth) {
+    for (const t of scopeCounted) {
       if (!countsInTotals(t, currency)) continue;
       if (t.amount < 0) {
         inflow += -t.amount;
@@ -561,7 +534,7 @@ export default function MonthBreakdown({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
     return { moneyIn: inflow, moneyOut: outflow, categories, byCategoryId };
-  }, [countedMonth, currency, taxonomy]);
+  }, [scopeCounted, currency, taxonomy]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -569,19 +542,19 @@ export default function MonthBreakdown({
   const channelSplit = useMemo(() => {
     let online = 0;
     let inStore = 0;
-    for (const t of countedMonth) {
+    for (const t of scopeCounted) {
       if (t.amount <= 0 || !countsInTotals(t, currency)) continue;
       if (t.payment_channel === "online") online += t.amount;
       else if (t.payment_channel === "in store") inStore += t.amount;
     }
     return { online, inStore };
-  }, [countedMonth, currency]);
+  }, [scopeCounted, currency]);
 
   // Top places by spend, from transaction location. Disambiguates same-named
   // merchants and gives a light geo view without a map dependency.
   const topCities = useMemo(() => {
     const byCity: Record<string, number> = {};
-    for (const t of countedMonth) {
+    for (const t of scopeCounted) {
       if (t.amount <= 0 || !countsInTotals(t, currency) || !t.city) continue;
       const label = t.region ? `${t.city}, ${t.region}` : t.city;
       byCity[label] = (byCity[label] ?? 0) + t.amount;
@@ -589,7 +562,7 @@ export default function MonthBreakdown({
     return Object.entries(byCity)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-  }, [countedMonth, currency]);
+  }, [scopeCounted, currency]);
 
   // Net per month (oldest → newest) for the trend columns. Bar height tracks
   // net magnitude and bar color tracks its sign (green positive, red negative),
@@ -611,12 +584,30 @@ export default function MonthBreakdown({
   );
 
   // Keep the newest month in view when the row overflows (older months scroll
-  // off to the left).
+  // off to the left), and again each time Spending is opened, which draws it.
   const trendRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = trendRef.current;
     if (el) el.scrollLeft = el.scrollWidth;
-  }, [trend.length]);
+  }, [trend.length, segment]);
+
+  // A segment chosen from the bar while the bar is pinned opens at its top,
+  // just under the bar, not where the last one was scrolled to. (A pick
+  // scrolls to the list itself.)
+  const panelRef = useRef<HTMLDivElement>(null);
+  const switched = useRef(false);
+  useEffect(() => {
+    if (!switched.current) return;
+    switched.current = false;
+    const el = panelRef.current;
+    const pinned = el?.previousElementSibling;
+    if (el && pinned && el.getBoundingClientRect().top < pinned.getBoundingClientRect().bottom) el.scrollIntoView({ block: "start" });
+  }, [segment]);
+  const switchSegment = (s: ActivitySegment) => {
+    if (s === segment) return;
+    switched.current = true;
+    chooseSegment(s);
+  };
 
   // The search reads a row's tags and note too (#40), and the tag filter
   // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
@@ -680,20 +671,113 @@ export default function MonthBreakdown({
   const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
   const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
 
-  if (loading) {
+  // What an open sheet shows, found again in every row loaded, put back
+  // whole as the list puts them (a split one with all its parts, a group's
+  // row with its transactions): so a change shows in the sheet at once, and a
+  // filter the change takes the row out of leaves the sheet open on it.
+  const byId = useMemo(() => new Map(bankRows(txns ?? [], { groups: "keep", ious: "keep" }).map((t) => [t.transaction_id, t])), [txns]);
+  const sheetRows = useMemo(() => findTarget(sheet?.target ?? null, byId), [sheet, byId]);
+  const sheetErrors = [actionError, splitError, review?.error ?? null];
+  const openSheet = (target: SheetTarget) => setSheet((s) => ({ target, open: true, seen: sheetErrors, n: (s?.n ?? 0) + 1 }));
+  const closeSheet = () => {
+    setSheet((s) => (s ? { ...s, open: false } : s));
+    // Back to its row, as the sheet gives focus back; when a filter has
+    // taken the row out of the list meanwhile (approved under To review),
+    // to the list's heading rather than to nothing. Another sheet opened
+    // in its place keeps focus.
+    requestAnimationFrame(() => {
+      // Still in the sheet sliding out (its row gone, so it had nowhere to
+      // give focus back to), or nowhere.
+      let left = !document.activeElement || document.activeElement === document.body;
+      for (let n: Element | null = document.activeElement; n && !left; n = n.parentElement) {
+        if (n.getAttribute("role") === "dialog") left = n.getAttribute("data-open") === "false";
+      }
+      if (left) listHeading.current?.focus({ preventScroll: true });
+    });
+  };
+  // An error said before the sheet opened, once cleared, is forgotten: the
+  // same words coming back are a new refusal, and the sheet says it.
+  const [shownAction, shownSplit, shownReview] = sheetErrors;
+  useEffect(() => {
+    const now = [shownAction, shownSplit, shownReview];
+    setSheet((s) => (s && s.seen.some((e, i) => e !== null && now[i] === null) ? { ...s, seen: s.seen.map((e, i) => (now[i] === null ? null : e)) } : s));
+  }, [shownAction, shownSplit, shownReview]);
+  // Its row gone once the list is read again (posted under a new id,
+  // deleted): the sheet closes, and focus goes to the list's heading rather
+  // than to nothing.
+  useEffect(() => {
+    if (sheet?.open && !sheetRows) {
+      setSheet(null);
+      listHeading.current?.focus({ preventScroll: true });
+    }
+  }, [sheet, sheetRows]);
+  // The list read again with a spinner (after a change the server refused):
+  // the sheet goes with the list, and doesn't come back on its own.
+  useEffect(() => {
+    if (loading) setSheet(null);
+  }, [loading]);
+
+  // The pinned bar: the month (none on Shared, whose balances aren't by
+  // month, or before there is one), stepping through the months listed, and
+  // the ⋯ to add or import a transaction where a manual account takes one.
+  const at = selected ? months.indexOf(selected) : -1;
+  const goMonth = (m: string) => {
+    setMonth(m);
+    setFlowPick(null);
+  };
+  const bar = (withMenu: boolean) => (
+    <ActivityBar
+      month={segment !== "shared" && selected ? monthName(selected) : null}
+      onEarlier={at >= 0 && at < months.length - 1 ? () => goMonth(months[at + 1]) : undefined}
+      onLater={at > 0 ? () => goMonth(months[at - 1]) : undefined}
+      segment={segment}
+      onSegment={switchSegment}
+      menu={
+        withMenu && onAddTransaction
+          ? [{ label: "Add a transaction", onSelect: onAddTransaction }, ...(onImport ? [{ label: "Import a file", onSelect: onImport }] : [])]
+          : []
+      }
+    />
+  );
+  const panel = (body: ReactNode) => (
+    <div className="activity-panel" id={ACTIVITY_PANEL} role="tabpanel" aria-labelledby={segmentTabId(segment)} ref={panelRef}>
+      {body}
+    </div>
+  );
+
+  // Shared doesn't wait for the transactions: its card reads its own.
+  if (segment === "shared") {
     return (
-      <div className="card">
-        <div
-          className="spinner"
-          role="status"
-          aria-label="Loading transactions"
-        />
-      </div>
+      <>
+        {bar(true)}
+        {panel(sharedSegment)}
+      </>
     );
   }
 
-  // Entering a transaction by hand or importing a file, on a manual account:
-  // first on the tab, where a phone reaches it without scrolling.
+  if (loading) {
+    return (
+      <>
+        {bar(false)}
+        {panel(
+          <>
+            <div className="card">
+              <div
+                className="spinner"
+                role="status"
+                aria-label="Loading transactions"
+              />
+            </div>
+            {/* Reports read their own, so they don't wait for the list. */}
+            {segment === "spending" && <ReportsEntry />}
+          </>
+        )}
+      </>
+    );
+  }
+
+  // Entering a transaction by hand or importing a file, on a manual account,
+  // while there is nothing to list: in the ⋯ once there is.
   const addCard = onAddTransaction && (
     <div className="card">
       {onImport ? (
@@ -719,19 +803,26 @@ export default function MonthBreakdown({
     const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
     return (
       <>
-        {addCard}
-        <div className="card">
-          <p className="empty-note">
-            {none
-              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? (onImport ? ", or add a transaction by hand or import a file" : ", or add a transaction by hand") : ""}.`
-              : "No transactions in the last 12 months."}
-          </p>
-          {missing.map((n) => (
-            <div className="stale-note" key={n}>
-              {n}
+        {bar(false)}
+        {panel(
+          <>
+            {addCard}
+            <div className="card">
+              <p className="empty-note">
+                {none
+                  ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? (onImport ? ", or add a transaction by hand or import a file" : ", or add a transaction by hand") : ""}.`
+                  : "No transactions in the last 12 months."}
+              </p>
+              {missing.map((n) => (
+                <div className="stale-note" key={n}>
+                  {n}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+            {/* The runway and what the accounts held don't need transactions. */}
+            {segment === "spending" && <ReportsEntry />}
+          </>
+        )}
       </>
     );
   }
@@ -753,619 +844,487 @@ export default function MonthBreakdown({
   // When only rows entered by hand are here, the connections that bring in
   // none are named beside the totals: where they come from, not a warning.
   const namedWithout = withoutNote(withoutTransactions, historyCount(txns));
+  // On Spending, what may be missing from the period is said beside the cash
+  // flow; where it isn't drawn (categories not loaded), beside the totals,
+  // the load's notes first, as the cash flow says them.
+  const spendingGaps =
+    onSpending && !taxonomy
+      ? period
+        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) })
+        : notes
+      : [];
+  const caption = period ? periodCaption(period, today) : "";
+  // The period's length, from the chips at the top of Spending; a pick from
+  // the cash flow ends with it, as with a month chosen.
+  const chooseSpan = (k: PeriodKey) => {
+    if (k === span) return;
+    setSpan(k);
+    setFlowPick(null);
+  };
+
+  // The In / Out / Net, with what it leaves out and may be missing: the
+  // month's on Transactions over the list, and the period's on Spending among
+  // its cards, naming it as they do.
+  const summaryCard = (
+    <div className="card">
+      {onSpending && (
+        <div className="inst-header">
+          <div className="inst-name">In and out</div>
+          <div className="inst-total">{caption}</div>
+        </div>
+      )}
+      <div className="summary-row">
+        <div>
+          <div className="total-label">In</div>
+          <div className="summary-value inflow">
+            <Masked>{formatMoney(moneyIn, currency)}</Masked>
+          </div>
+        </div>
+        <div>
+          <div className="total-label">Out</div>
+          <div className="summary-value">
+            <Masked>{formatMoney(moneyOut, currency)}</Masked>
+          </div>
+        </div>
+        <div>
+          <div className="total-label">Net</div>
+          <div
+            className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
+          >
+            <Masked>{formatMoney(net, currency)}</Masked>
+          </div>
+        </div>
+      </div>
+      <div className="chart-note">
+        Transfers and loan payments excluded
+        {excludedCount > 0 &&
+          `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
+        {hiddenCount > 0 && `, and ${hiddenCount} transaction${hiddenCount === 1 ? "" : "s"} a rule hides`}
+        {sharedCount > 0 && `, and other people’s parts of ${sharedCount} shared transaction${sharedCount === 1 ? "" : "s"} or money paid back`}
+        .
+        {unknownCount > 0 &&
+          ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
+        {convertedNote && ` ${convertedNote}`}
+        {leftOut && ` ${leftOut}`}
+        {namedWithout && ` ${namedWithout}`}
+        {importedNote && ` ${importedNote}`}
+      </div>
+      {/* On Transactions, what may be missing from the month, then the load's
+          notes; on Spending, the period's (spendingGaps), only where the cash
+          flow isn't drawn to say them. */}
+      {(onSpending ? spendingGaps : gapNotes).map((n) => (
+        <div className="stale-note" key={n}>
+          {n}
+        </div>
+      ))}
+      {!onSpending &&
+        notes.map((n) => (
+          <div className="stale-note" key={`note:${n}`}>
+            {n}
+          </div>
+        ))}
+    </div>
+  );
 
   return (
     <>
-      {addCard}
-      {/* Where the money came from and went (#41), over a period of its own;
-          tapping a node lists its transactions below. */}
-      {taxonomy && (
-        <CashFlowSankey
-          txns={counted.rows}
-          taxonomy={taxonomy}
-          currency={currency}
-          incomplete={incomplete}
-          stopped={stopped}
-          withoutTransactions={withoutTransactions}
-          notes={notes}
-          pick={flowPick}
-          onPick={(p) => {
-            pickedNow.current = p !== null;
-            setFlowPick(p);
-          }}
-          period={flowPeriod}
-          onPeriod={setFlowPeriod}
-        />
-      )}
-      {trend.length > 1 && (
-        <div className="card">
-          <div className="inst-header">
-            <div className="inst-name">Net by month</div>
-            <div className="inst-total">tap a month to select</div>
-          </div>
-          <div className="trend-row" ref={trendRef}>
-            {(() => {
-              const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
-              return trend.map(({ month: m, net }) => (
-                <button
-                  key={m}
-                  className={`trend-col${m === selected ? " active" : ""}`}
-                  onClick={() => {
-                    setMonth(m);
-                    setFlowPick(null);
-                  }}
-                  aria-pressed={m === selected}
-                  aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
-                >
-                  <span className="trend-val">
-                    <Masked>{fmtCompactSigned(net, currency)}</Masked>
-                  </span>
-                  <span
-                    className={`trend-bar${net >= 0 ? " up" : " down"}`}
-                    style={{
-                      height: `${Math.max((Math.abs(net) / max) * 72, 2)}px`,
+      {bar(true)}
+      {panel(
+        segment === "spending" ? (
+          <>
+            {/* The period every card here sums: a length, ending with the bar's month. */}
+            {selected && (
+              <div className="chip-row" role="radiogroup" aria-label={`Period ending ${monthName(selected)}`}>
+                {SPANS.map((s, i) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    role="radio"
+                    className="chip"
+                    aria-checked={span === s.key}
+                    tabIndex={span === s.key ? 0 : -1}
+                    ref={(el) => {
+                      spanRefs.current[i] = el;
                     }}
-                  />
-                  <span className="trend-label">{monthLabel(m)}</span>
-                </button>
-              ));
-            })()}
-          </div>
-        </div>
-      )}
-
-      {selected && monthTxns.length > 0 && (
-        <div className="card">
-          <div className="inst-header">
-            <div className="inst-name">Income vs spend</div>
-            <div className="inst-total">{monthLabel(selected)}</div>
-          </div>
-          <MonthFlowChart txns={countedMonth} month={selected} currency={currency} />
-        </div>
-      )}
-
-      <div className="card">
-        <div className="summary-row">
-          <div>
-            <div className="total-label">In</div>
-            <div className="summary-value inflow">
-              <Masked>{formatMoney(moneyIn, currency)}</Masked>
-            </div>
-          </div>
-          <div>
-            <div className="total-label">Out</div>
-            <div className="summary-value">
-              <Masked>{formatMoney(moneyOut, currency)}</Masked>
-            </div>
-          </div>
-          <div>
-            <div className="total-label">Net</div>
-            <div
-              className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
-            >
-              <Masked>{formatMoney(net, currency)}</Masked>
-            </div>
-          </div>
-        </div>
-        <div className="chart-note">
-          Transfers and loan payments excluded
-          {excludedCount > 0 &&
-            `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
-          {hiddenCount > 0 && `, and ${hiddenCount} transaction${hiddenCount === 1 ? "" : "s"} a rule hides`}
-          {sharedCount > 0 && `, and other people’s parts of ${sharedCount} shared transaction${sharedCount === 1 ? "" : "s"} or money paid back`}
-          .
-          {unknownCount > 0 &&
-            ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
-          {convertedNote && ` ${convertedNote}`}
-          {leftOut && ` ${leftOut}`}
-          {namedWithout && ` ${namedWithout}`}
-          {importedNote && ` ${importedNote}`}
-        </div>
-        {gapNotes.map((n) => (
-          <div className="stale-note" key={n}>
-            {n}
-          </div>
-        ))}
-      </div>
-
-      {taxonomy && byCategoryId.size > 0 && (
-        <div className="card">
-          <div className="inst-header">
-            <div className="inst-name">Top spending</div>
-            <div className="inst-total">by group</div>
-          </div>
-          <CategoryRollup taxonomy={taxonomy} byCategory={byCategoryId} currency={currency} />
-        </div>
-      )}
-
-      {!taxonomy && categories.length > 0 && (
-        <div className="card">
-          <div className="inst-header">
-            <div className="inst-name">Top spending</div>
-          </div>
-          <div className="cat-list">
-            {categories.map(([cat, sum]) => (
-              <div className="cat-row" key={cat}>
-                <span className="cat-name">{cat}</span>
-                <div className="cat-track">
-                  <div
-                    className="cat-bar"
-                    style={{ width: `${(sum / maxCat) * 100}%` }}
-                  />
-                </div>
-                <span className="cat-val">
-                  <Masked>{formatMoney(sum, currency)}</Masked>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <SpendByTag txns={countedMonth} tags={tags} currency={currency} />
-
-      {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
-        <div className="card">
-          <div className="inst-header">
-            <div className="inst-name">Online vs in-store</div>
-          </div>
-          {(() => {
-            const total = channelSplit.online + channelSplit.inStore;
-            const rows: [string, number][] = [
-              ["Online", channelSplit.online],
-              ["In store", channelSplit.inStore],
-            ];
-            return (
-              <div className="cat-list">
-                {rows.map(([label, sum]) => (
-                  <div className="cat-row" key={label}>
-                    <span className="cat-name">{label}</span>
-                    <div className="cat-track">
-                      <div
-                        className="cat-bar"
-                        style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
-                      />
-                    </div>
-                    <span className="cat-val">
-                      <Masked>{formatMoney(sum, currency)}</Masked>
-                    </span>
-                  </div>
+                    onClick={() => chooseSpan(s.key)}
+                    onKeyDown={(e) => {
+                      const key = e.key === "ArrowUp" ? "ArrowLeft" : e.key === "ArrowDown" ? "ArrowRight" : e.key;
+                      const next = segmentKey(key, i, SPANS.length);
+                      if (next === null) return;
+                      e.preventDefault();
+                      chooseSpan(SPANS[next].key);
+                      spanRefs.current[next]?.focus();
+                    }}
+                  >
+                    {s.label}
+                  </button>
                 ))}
               </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {topCities.length > 0 && (
-        <div className="card">
-          <div className="inst-header">
-            <div className="inst-name">Where you spent</div>
-          </div>
-          <div className="cat-list">
-            {topCities.map(([place, sum]) => (
-              <div className="cat-row" key={place}>
-                <span className="cat-name">{place}</span>
-                <div className="cat-track">
-                  <div
-                    className="cat-bar"
-                    style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
-                  />
-                </div>
-                <span className="cat-val">
-                  <Masked>{formatMoney(sum, currency)}</Masked>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="card" ref={listRef}>
-        <div className="inst-header">
-          <div className="inst-name">Transactions</div>
-          <div className="inst-total">
-            {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
-            {countTransactions(visible)}
-            {filtering ? ` of ${countTransactions(listed)}` : ""}
-          </div>
-        </div>
-        {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
-
-        <input
-          className="text-input search-input"
-          type="search"
-          placeholder="Search transactions"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
-        {onAttachmentsChanged && (
-          <div className="receipt-filter">
-            <select className="text-input" value={receiptChoice} onChange={(e) => setReceiptChoice(e.target.value as ReceiptChoice)} aria-label="Show transactions by receipt">
-              <option value="">With or without a receipt</option>
-              <option value="with">Has a receipt or document</option>
-              <option value="without">No receipt, money out over…</option>
-            </select>
-            {receiptChoice === "without" && (
-              <input
-                className="text-input"
-                inputMode="decimal"
-                autoComplete="off"
-                value={receiptOver}
-                onChange={(e) => setReceiptOver(e.target.value)}
-                placeholder="0"
-                aria-label="Money out over, in each transaction’s own currency"
+            )}
+            {/* Where the money came from and went (#41), over the period;
+                tapping a node lists its transactions on Transactions. */}
+            {taxonomy && (
+              <CashFlowSankey
+                txns={counted.rows}
+                taxonomy={taxonomy}
+                currency={currency}
+                incomplete={incomplete}
+                stopped={stopped}
+                withoutTransactions={withoutTransactions}
+                notes={notes}
+                pick={flowPick}
+                onPick={(p) => {
+                  pickedNow.current = p !== null;
+                  setFlowPick(p);
+                  // The bar keeps the month the pick's period ends with, so a
+                  // reload that brings a later month doesn't move it.
+                  if (p && month === null && selected) setMonth(selected);
+                  if (p) chooseSegment("transactions");
+                }}
+                period={span}
+                month={selected ?? undefined}
               />
             )}
-          </div>
-        )}
-        {unknownNote(receipted.unknown) && <div className="stale-note">{unknownNote(receipted.unknown)}</div>}
-        {/* The review queue, while it is on: its count, filter, Card Mode and approving what's listed. */}
-        {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
-
-        {actionError && <div className="error">{actionError}</div>}
-        {splitError && <div className="error">{splitError}</div>}
-        {ruleOffer && onCreateRule && (
-          <div className="rule-offer">
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              Do the same for every transaction named “{nameForRules(ruleOffer.t)}”
-              {ruleOffer.t.name_before_rules !== undefined && ` (shown as “${ruleOffer.t.name}”)`}, past and future? A rule does it, and you can change or turn it off
-              later.
-            </p>
-            <div className="button-pair" style={{ marginTop: 0 }}>
-              <button
-                className="secondary"
-                onClick={() => {
-                  onCreateRule(ruleOffer.t, ruleOffer.category_id);
-                  setRuleOffer(null);
-                }}
-              >
-                Make a rule
-              </button>
-              <button className="secondary" onClick={() => setRuleOffer(null)}>
-                No thanks
-              </button>
-            </div>
-          </div>
-        )}
-
-        {visible.length === 0 ? (
-          <p className="empty-note">
-            {reviewing && !query && !filterTag && !byReceipt
-              ? "Nothing listed needs review."
-              : byReceipt === "with" && !query && !filterTag
-              ? "No transaction listed has a receipt or document."
-              : byReceipt === "without" && !query && !filterTag
-              ? "Nothing listed over that amount is missing a receipt."
-              : query || filterTag || byReceipt
-              ? "No transactions match your search."
-              : flowPick
-                ? "Nothing to list."
-                : "No transactions this month."}
-          </p>
-        ) : (
-          <table className="txn-table">
-            <tbody>
-              {days.map((g) => (
-                <Fragment key={g.date}>
-                  <tr className="txn-date-header">
-                    <td>{fmtTxnDate(g.date)}</td>
-                    <td className="num">
-                      <Masked>{fmtDayNet(g.nets, currency)}</Masked>
-                    </td>
-                  </tr>
-                  {g.entries.map((t, i) => (
-                    <Fragment key={t.transaction_id}>
-                    <tr
-                      className={`acct-row${i === g.entries.length - 1 && !t.split_parts && !t.group_members ? " last-in-day" : ""}`}
-                      onClick={() => {
-                        // An IOU's row is no transaction: it opens the IOU.
-                        if (t.shared_iou) return shared?.onIou(t.shared_iou.item);
-                        const opening = recatId !== t.transaction_id;
-                        setRecatId(opening ? t.transaction_id : null);
-                        if (opening) setRenameDraft(t.name);
-                      }}
-                    >
-                      <td>
-                        <div className="txn-main">
-                          {t.logo_url || t.category_icon_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              className="txn-logo"
-                              src={(t.logo_url || t.category_icon_url) ?? undefined}
-                              alt=""
-                              loading="lazy"
-                            />
-                          ) : (
-                            <span
-                              className="txn-logo txn-logo-fallback"
-                              aria-hidden="true"
-                            >
-                              {t.name.slice(0, 1).toUpperCase()}
-                            </span>
-                          )}
-                          <div className="txn-text">
-                            <div>
-                              {t.name}
-                              {t.pending && (
-                                <span className="pending-tag"> · pending</span>
-                              )}
-                              {isLowConfidence(t) && (
-                                <span
-                                  className="low-conf-tag"
-                                  title="Plaid was unsure of this category: tap to fix it"
-                                >
-                                  {" "}
-                                  · check category
-                                </span>
-                              )}
-                              {t.note && (
-                                <span className="note-tag" title={t.note}> · note</span>
-                              )}
-                              {onAttachmentsChanged && t.attached === true && (
-                                <span className="attach-tag" title="Has a receipt or document">
-                                  {" · "}
-                                  <PaperclipIcon />
-                                  <span className="visually-hidden">has a receipt or document</span>
-                                </span>
-                              )}
-                              {review?.view?.on && needsReview(t) && <span className="review-tag"> · to review</span>}
-                              <TagChips ids={t.tags} tags={tags} />
-                            </div>
-                            <div className="type-tag">
-                              {/* An IOU's row is on no account (#49). */}
-                              {t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`}
-                              {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
-                              {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
-                              {t.subcategory ? ` › ${t.subcategory}` : ""}
-                              {t.source && !t.shared_iou ? ` · ${sourceLabel(t.source)}` : ""}
-                            </div>
-                            {t.excluded === true && (
-                              <div className="excluded-tag">
-                                {t.excluded_by_rule ? "Hidden by a rule: out of budgets and reports" : "Excluded from budgets and reports"}
-                              </div>
-                            )}
-                            {/* A pair Nya worked out between two SimpleFIN
-                                accounts (lib/manual-txns.ts): said, so a
-                                wrong one is seen and given a category. */}
-                            {t.paired && <div className="excluded-tag">{pairedWords(t)}</div>}
-                            {t.excluded === null && (
-                              <div className="excluded-tag">
-                                Couldn&apos;t read whether you excluded this
-                              </div>
-                            )}
-                            {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
-                            {shared && <SharedRowLine t={t} hooks={shared} />}
-                            {/* A bank row standing for a row imported from
-                                its file, which the bank changed since (#52). */}
-                            {t.imported_amount !== undefined && (
-                              <div className="excluded-tag"><Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</Masked></div>
-                            )}
-                          </div>
-                        </div>
-                        {recatId === t.transaction_id && (
-                          <div
-                            className="txn-edit"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {/* Its review and its merchant's default (components/ReviewNote.tsx). */}
-                            {review && <ReviewNote t={whole(t)} taxonomy={taxonomy} review={review} onChanged={() => onSplitsChanged?.()} />}
-                            {/* Filed as its parts are, or as its group is (#39). */}
-                            {t.split_parts || t.group_outside ? null : taxonomy ? (
-                              <CategoryPicker
-                                taxonomy={taxonomy}
-                                className="text-input recat-select"
-                                value={t.category_id ?? taxonomy.uncategorized}
-                                onChange={(id) => {
-                                  if (id && id !== t.category_id && t.group_members) {
-                                    // A group's net is filed under the group's category.
-                                    void sendChange("/api/transaction-groups", "PATCH", { id: t.group_id, category_id: id }).then((failed) => {
-                                      setSplitError(failed);
-                                      onSplitsChanged?.();
-                                    });
-                                  } else if (id && id !== t.category_id) {
-                                    onRecategorize(t.transaction_id, { category_id: id });
-                                    setRuleOffer({ t, category_id: id });
-                                  }
-                                  setRecatId(null);
-                                }}
-                                label={`Category for ${t.name}`}
-                              />
-                            ) : t.group_members || t.group_outside ? null : (
-                              <select
-                                className="text-input recat-select"
-                                value={t.category ?? "other"}
-                                onChange={(e) => {
-                                  onRecategorize(t.transaction_id, { category: e.target.value });
-                                  setRecatId(null);
-                                }}
-                                aria-label={`Category for ${t.name}`}
-                              >
-                                {pickable.map((c) => (
-                                  <option key={c} value={c}>
-                                    {c}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                            {/* Splitting it, or grouping it with others (#39). */}
-                            {onSplitsChanged && (
-                              <SplitActions
-                                t={t}
-                                onSplit={(x) => {
-                                  setSplitting(whole(x));
-                                  setRecatId(null);
-                                }}
-                                onGroup={(x) => {
-                                  setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null });
-                                  setRecatId(null);
-                                }}
-                                onUngroup={(id) => {
-                                  setRecatId(null);
-                                  void sendChange("/api/transaction-groups", "DELETE", { id }).then((failed) => {
-                                    setSplitError(failed);
-                                    onSplitsChanged?.();
-                                  });
-                                }}
-                              />
-                            )}
-                            {/* Sharing it, or what it paid back (#49). */}
-                            {shared && <SharedRowActions t={whole(t)} hooks={shared} onDone={() => setRecatId(null)} />}
-                            {/* Not a row SimpleFIN brought nor one imported into
-                                a linked account: the bank's or the file's
-                                record, whose category alone is the person's. */}
-                            {t.source && !isConnectorKind(t.source) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX) && onEditTransaction && !t.group_members && (
-                              <div className="rename-row">
-                                <button
-                                  className="secondary"
-                                  onClick={() => {
-                                    onEditTransaction(t);
-                                    setRecatId(null);
-                                  }}
-                                >
-                                  Edit or delete
-                                </button>
-                              </div>
-                            )}
-                            {t.vendor_key && (
-                              <>
-                                <div className="rename-row">
-                                  <input
-                                    className="text-input"
-                                    value={renameDraft}
-                                    maxLength={100}
-                                    onChange={(e) =>
-                                      setRenameDraft(e.target.value)
-                                    }
-                                    placeholder="Rename vendor"
-                                    aria-label={`Rename ${t.name}`}
-                                  />
-                                  <button
-                                    className="secondary"
-                                    disabled={renameDraft.trim() === t.name}
-                                    onClick={() => {
-                                      onRename(t.vendor_key, renameDraft.trim());
-                                      setRecatId(null);
-                                    }}
-                                  >
-                                    Rename
-                                  </button>
-                                </div>
-                                <div className="rename-hint">
-                                  Applies to this vendor&apos;s transactions;
-                                  older ones may update later.
-                                </div>
-                              </>
-                            )}
-                            {/* Offered once a pending row has posted
-                                (exclusionOffer), one a rule hides too. */}
-                            {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) !== "toggle" && (
-                              <div className="rename-hint">
-                                {exclusionOffer(t) === "wait-rule"
-                                  ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
-                                  : "Once it posts, it can be excluded from budgets and reports."}
-                              </div>
-                            )}
-                            {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) === "toggle" && (
-                              <>
-                                <div className="rename-row">
-                                  <button
-                                    className="secondary"
-                                    onClick={() => {
-                                      onToggleExcluded(t, t.excluded !== true);
-                                      setRecatId(null);
-                                    }}
-                                  >
-                                    {t.excluded === true
-                                      ? "Include in budgets and reports"
-                                      : "Exclude from budgets and reports"}
-                                  </button>
-                                </div>
-                                <div className="rename-hint">
-                                  {t.excluded === true
-                                    ? "Puts it back in totals, budgets, insights, bills and the Plan."
-                                    : "For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan."}
-                                </div>
-                              </>
-                            )}
-                            {onChangeTags && onSaveNote && !t.group_members && (
-                              <TxnTagsNote
-                                key={`${t.transaction_id}:${t.note ?? ""}`}
-                                t={t}
-                                tags={tags}
-                                onChangeTags={(change) => onChangeTags(t, change)}
-                                onSaveNote={(note) => onSaveNote(t, note)}
-                              />
-                            )}
-                            {onCreateRule && !t.group_members && (
-                              <div className="rename-row">
-                                <button
-                                  className="secondary"
-                                  onClick={() => {
-                                    onCreateRule(t);
-                                    setRecatId(null);
-                                  }}
-                                >
-                                  Create a rule from this
-                                </button>
-                              </div>
-                            )}
-                            {ruleSentenceOf && (t.rule_ids?.length ?? 0) > 0 && (
-                              <div className="rename-hint">
-                                {t.rule_ids!.length === 1 ? "A rule matches it" : "Rules match it"}, in the order they run (what you set here wins):
-                                <ul className="rule-matched">
-                                  {t.rule_ids!.map((id) => {
-                                    const sentence = ruleSentenceOf(id);
-                                    return sentence ? <li key={id}><Masked>{sentence}</Masked></li> : null;
-                                  })}
-                                </ul>
-                              </div>
-                            )}
-                            {/* Its receipts and documents (#47), read as it opens. */}
-                            {onAttachmentsChanged && <AttachmentSection t={whole(t)} rows={txns} onChanged={onAttachmentsChanged} />}
-                            {!t.group_members && <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />}
-                          </div>
-                        )}
-                      </td>
-                      {/* A split transaction's own amount is the bank's; its parts below are what count (#39).
-                          One of a group counted before the transactions shown counts in no total here: dimmed as
-                          an excluded one is, its notice saying why. */}
-                      <td
-                        className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true || t.group_outside ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}
+            {trend.length > 1 && (
+              <div className="card">
+                <div className="inst-header">
+                  <div className="inst-name">Net by month</div>
+                  <div className="inst-total">tap a month to end on it</div>
+                </div>
+                <div className="trend-row" ref={trendRef} style={{ "--trend-col": `${trendColumn(currency)}px` } as CSSProperties}>
+                  {(() => {
+                    const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
+                    return trend.map(({ month: m, net }) => (
+                      <button
+                        key={m}
+                        className={`trend-col${m === selected ? " active" : period?.months.includes(m) ? " in-period" : ""}`}
+                        onClick={() => {
+                          setMonth(m);
+                          setFlowPick(null);
+                        }}
+                        aria-pressed={m === selected}
+                        aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
                       >
-                        <Masked>{fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}</Masked>
-                      </td>
-                    </tr>
-                    {t.split_parts && (
-                      <PartRows
-                        parent={t}
-                        last={i === g.entries.length - 1}
-                        taxonomy={taxonomy}
-                        open={recatId}
-                        onOpen={setRecatId}
-                        onChanged={() => onSplitsChanged?.()}
-                        onError={setSplitError}
-                        onEditSplit={(x) => setSplitting(whole(x))}
-                      />
-                    )}
-                    {t.group_members && (
-                      <MemberRows group={t} last={i === g.entries.length - 1} open={recatId} onOpen={setRecatId} onChanged={() => onSplitsChanged?.()} onError={setSplitError} />
-                    )}
+                        <span className="trend-val">
+                          <Masked>{fmtCompactSigned(net, currency)}</Masked>
+                        </span>
+                        <span
+                          className={`trend-bar${net >= 0 ? " up" : " down"}`}
+                          style={{
+                            height: `${Math.max((Math.abs(net) / max) * 72, 2)}px`,
+                          }}
+                        />
+                        <span className="trend-label">{monthLabel(m)}</span>
+                      </button>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {period && periodTxns.length > 0 && (
+              <div className="card">
+                <div className="inst-header">
+                  <div className="inst-name">Income vs spend</div>
+                  <div className="inst-total">{caption}</div>
+                </div>
+                <MonthFlowChart txns={countedPeriod} from={period.from} to={period.to} currency={currency} />
+              </div>
+            )}
+            {summaryCard}
+
+            {taxonomy && byCategoryId.size > 0 && (
+              <div className="card">
+                <div className="inst-header">
+                  <div className="inst-name">Top spending</div>
+                  <div className="inst-total">by group, {caption}</div>
+                </div>
+                <CategoryRollup taxonomy={taxonomy} byCategory={byCategoryId} currency={currency} />
+              </div>
+            )}
+
+            {!taxonomy && categories.length > 0 && (
+              <div className="card">
+                <div className="inst-header">
+                  <div className="inst-name">Top spending</div>
+                  <div className="inst-total">{caption}</div>
+                </div>
+                <div className="cat-list">
+                  {categories.map(([cat, sum]) => (
+                    <div className="cat-row" key={cat}>
+                      <span className="cat-name">{cat}</span>
+                      <div className="cat-track">
+                        <div
+                          className="cat-bar"
+                          style={{ width: `${(sum / maxCat) * 100}%` }}
+                        />
+                      </div>
+                      <span className="cat-val">
+                        <Masked>{formatMoney(sum, currency)}</Masked>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <SpendByTag txns={countedPeriod} tags={tags} currency={currency} caption={caption} />
+
+            {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
+              <div className="card">
+                <div className="inst-header">
+                  <div className="inst-name">Online vs in-store</div>
+                  <div className="inst-total">{caption}</div>
+                </div>
+                {(() => {
+                  const total = channelSplit.online + channelSplit.inStore;
+                  const rows: [string, number][] = [
+                    ["Online", channelSplit.online],
+                    ["In store", channelSplit.inStore],
+                  ];
+                  return (
+                    <div className="cat-list">
+                      {rows.map(([label, sum]) => (
+                        <div className="cat-row" key={label}>
+                          <span className="cat-name">{label}</span>
+                          <div className="cat-track">
+                            <div
+                              className="cat-bar"
+                              style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
+                            />
+                          </div>
+                          <span className="cat-val">
+                            <Masked>{formatMoney(sum, currency)}</Masked>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {topCities.length > 0 && (
+              <div className="card">
+                <div className="inst-header">
+                  <div className="inst-name">Where you spent</div>
+                  <div className="inst-total">{caption}</div>
+                </div>
+                <div className="cat-list">
+                  {topCities.map(([place, sum]) => (
+                    <div className="cat-row" key={place}>
+                      <span className="cat-name">{place}</span>
+                      <div className="cat-track">
+                        <div
+                          className="cat-bar"
+                          style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
+                        />
+                      </div>
+                      <span className="cat-val">
+                        <Masked>{formatMoney(sum, currency)}</Masked>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Reports for an accountant (app/reports), at the foot of the analysis. */}
+            <ReportsEntry />
+          </>
+        ) : (
+          <>
+            {summaryCard}
+
+            <div className="card" ref={listRef}>
+              <div className="card-header">
+                <h2 ref={listHeading} tabIndex={-1}>Transactions</h2>
+                <span className="meta">
+                  {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
+                  {countTransactions(visible)}
+                  {filtering ? ` of ${countTransactions(listed)}` : ""}
+                </span>
+              </div>
+              {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
+
+              <input
+                className="text-input search-input"
+                type="search"
+                placeholder="Search transactions"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              {/* The filters, as chips: what needs review (while the queue is
+                  on), a tag, and a receipt (with a file store). */}
+              {(review?.view?.on || tags.length > 0 || onAttachmentsChanged) && (
+                <div className="chip-row" role="group" aria-label="Filter the list">
+                  {review?.view?.on && (
+                    <button type="button" className="chip" aria-pressed={reviewing} onClick={() => setReviewOnly(!reviewing)}>
+                      To review
+                    </button>
+                  )}
+                  <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
+                  {onAttachmentsChanged && (
+                    <ChipSelect
+                      label="Receipt"
+                      shown={receiptChoice === "with" ? "Receipt: has one" : receiptChoice === "without" ? "Receipt: none" : "Receipt"}
+                      on={receiptChoice !== ""}
+                      value={receiptChoice}
+                      onChange={(v) => setReceiptChoice(v as ReceiptChoice)}
+                    >
+                      <option value="">With or without a receipt</option>
+                      <option value="with">Has a receipt or document</option>
+                      <option value="without">No receipt, money out over…</option>
+                    </ChipSelect>
+                  )}
+                  {onAttachmentsChanged && receiptChoice === "without" && (
+                    <input
+                      className="text-input receipt-over"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={receiptOver}
+                      onChange={(e) => setReceiptOver(e.target.value)}
+                      placeholder="Any amount"
+                      aria-label="Money out over, in each transaction’s own currency"
+                    />
+                  )}
+                </div>
+              )}
+              {unknownNote(receipted.unknown) && <div className="stale-note">{unknownNote(receipted.unknown)}</div>}
+              {/* The review queue, while it is on: its count, Card Mode and approving what's listed (its filter is the To review chip, and the N key). */}
+              {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
+
+              {actionError && <div className="error">{actionError}</div>}
+              {splitError && <div className="error">{splitError}</div>}
+              {visible.length === 0 ? (
+                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, receipt: byReceipt, pick: !!flowPick })}</p>
+              ) : (
+                <ul className="list-rows txn-list">
+                  {days.map((g) => (
+                    <Fragment key={g.date}>
+                      <li className="txn-day">
+                        <span>{fmtTxnDate(g.date)}</span>
+                        <span className="money">
+                          <Masked>{fmtDayNet(g.nets, currency)}</Masked>
+                        </span>
+                      </li>
+                      {g.entries.map((t) => {
+                        // A split one's parts or a group's size, its category
+                        // (a split one's are its parts'), where it is, and
+                        // where it came from: one line.
+                        const filed = !t.split_parts && categoryLabel(t) ? `${categoryLabel(t)}${t.subcategory ? ` › ${t.subcategory}` : ""}` : null;
+                        // An IOU's row is on no account (#49).
+                        const where = t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`;
+                        const sub = [entryLabel(whole(t)), filed, where, t.source && !t.shared_iou ? sourceLabel(t.source) : null].filter(Boolean).join(" · ");
+                        const body = (
+                          <>
+                            {t.logo_url || t.category_icon_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img className="txn-logo" src={(t.logo_url || t.category_icon_url) ?? undefined} alt="" loading="lazy" />
+                            ) : (
+                              <span className="txn-logo txn-logo-fallback" aria-hidden="true">
+                                {t.name.slice(0, 1).toUpperCase()}
+                              </span>
+                            )}
+                            <span className="list-row-text">
+                              <span className="list-row-title">
+                                {t.name}
+                                <TagChips ids={t.tags} tags={tags} />
+                              </span>
+                              {/* Where it came from as chips (design-system.md#list-row). */}
+                              <span className="list-row-sub">
+                                <span>{sub}</span>
+                                {t.pending && <span className="badge">Pending</span>}
+                                {isLowConfidence(t) && <span className="badge warn">Check category</span>}
+                                {review?.view?.on && needsReview(t) && <span className="badge warn">To review</span>}
+                                {t.excluded === true && <span className="badge">{t.excluded_by_rule ? "Hidden by a rule" : "Excluded"}</span>}
+                                {t.note && <span className="badge">Note</span>}
+                                {onAttachmentsChanged && t.attached === true && (
+                                  <span className="badge">
+                                    <PaperclipIcon />
+                                    <span className="visually-hidden">Has a receipt or document</span>
+                                  </span>
+                                )}
+                              </span>
+                              <TxnNotes t={t} whole={whole(t)} shared={shared} />
+                            </span>
+                            {/* A split transaction's own amount is the bank's; its parts below are what count (#39).
+                                One of a group counted before the transactions shown counts in no total here: quieter,
+                                as an excluded one is, its notice saying why. */}
+                            <span
+                              className={`list-row-value money txn-amount${t.amount < 0 ? " inflow" : ""}${t.excluded === true || t.group_outside ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}
+                            >
+                              <Masked>{fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}</Masked>
+                            </span>
+                          </>
+                        );
+                        const iou = t.shared_iou;
+                        return (
+                          <Fragment key={t.transaction_id}>
+                            <li>
+                              {/* An IOU's row is no transaction: it opens the IOU, where there is one to open. */}
+                              {iou && !shared ? (
+                                <div className="list-row txn-row">{body}</div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="list-row txn-row"
+                                  aria-haspopup="dialog"
+                                  onClick={() => (iou ? shared?.onIou(iou.item) : openSheet({ kind: "txn", id: t.transaction_id }))}
+                                >
+                                  {body}
+                                </button>
+                              )}
+                            </li>
+                            {t.split_parts && <PartRows parent={t} onOpen={openSheet} />}
+                            {t.group_members && <MemberRows group={t} onOpen={openSheet} />}
+                          </Fragment>
+                        );
+                      })}
                     </Fragment>
                   ))}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        )}
+                </ul>
+              )}
 
-        {[...new Set([...notes, ...asideNotes])].map((n) => (
-          <div className="error" key={n}>
-            {n}
-          </div>
-        ))}
-      </div>
+              {[...new Set([...notes, ...asideNotes])].map((n) => (
+                <div className="error" key={n}>
+                  {n}
+                </div>
+              ))}
+            </div>
+          </>
+        )
+      )}
+
+      {/* A row's sheet: what was its inline editor. Its Split and Group close
+          it and open the sheets below. */}
+      <TransactionSheet
+        key={sheet?.n ?? 0}
+        open={!!sheet?.open}
+        rows={sheetRows}
+        onClose={closeSheet}
+        currency={currency}
+        errors={sheetErrors.filter((e, i): e is string => !!e && e !== sheet?.seen[i])}
+        taxonomy={taxonomy}
+        pickable={pickable}
+        tags={tags}
+        list={txns}
+        review={review}
+        shared={shared}
+        ruleSentenceOf={ruleSentenceOf}
+        onRecategorize={onRecategorize}
+        onRename={onRename}
+        onEditTransaction={onEditTransaction}
+        onToggleExcluded={onToggleExcluded}
+        onChangeTags={onChangeTags}
+        onSaveNote={onSaveNote}
+        onCreateRule={onCreateRule}
+        onSplitsChanged={onSplitsChanged}
+        onSplit={(t) => setSplitting(t)}
+        onGroup={(start, group) => setGrouping({ start, group })}
+        onSplitError={setSplitError}
+        onAttachmentsChanged={onAttachmentsChanged}
+      />
 
       {/* Card Mode, over the tab: its Split and Group open the sheets below, over it. */}
       {review && (

@@ -3,7 +3,7 @@
 // Sending email, for the notices about bank connections (#51) and the weekly
 // summary. Resend's HTTP API through fetch, one POST per message, with no
 // SDK. Configured by RESEND_API_KEY and MAIL_FROM; with either unset, nothing
-// is sent, the app's connection health view is the only place a broken
+// is sent, each connection's card in the app is the only place a broken
 // connection shows, and one log line says mail is off.
 //
 // What goes in a message is the caller's to decide (lib/connection-notices.ts,
