@@ -184,7 +184,6 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 
 /* Loading placeholders (.skeleton) */
 .app .sk { display: block; height: 10px; border-radius: 6px; background: var(--elevated); }
-.app .sk.ibtn { height: 34px; border-radius: 10px; background: transparent; }
 .app .sk.avatar { height: 32px; border-radius: 50%; background: var(--elevated); }
 .app .sk.hero-sk { height: 30px; width: 62%; margin: 3px 0; }
 .app .sk.plot { height: 96px; border-radius: 12px; }
@@ -992,7 +991,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <ul class="changes">
         <li>The sign-in page is laid out from the top: Clerk's form arriving, or changing step, no longer moves the name and the demo card above it.</li>
         <li>Until the form loads, a placeholder of its size holds its place; the form fades in over it.</li>
-        <li>From a demo button's press, and on Home from the moment a sign-in moves there, the app loading: the dashboard's header and the Net worth card in placeholders, which the dashboard then draws itself while its first load is on its way.</li>
+        <li>A demo button signs in on the page, with no page loaded again. From its press, and on Home from the moment a sign-in moves there, the app loading: the dashboard's header and the Net worth card in placeholders, which the dashboard then draws itself while its first load is on its way.</li>
       </ul>
     </div>
     <div class="phones">
@@ -1021,7 +1020,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <figure class="shot">
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
-            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="sk ibtn"></span><span class="sk ibtn"></span><span class="sk avatar"></span></div>
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn" style="opacity:.6"><svg><use href="#i-ref"/></svg></span><span class="sk avatar"></span></div>
             <span class="small muted" style="padding:0 2px">Loading your accounts…</span>
             <div class="card" aria-label="Net worth loading">
               <div class="hero-label">Net worth</div>
@@ -1034,7 +1033,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             </div>
           </div>
         </div></div>
-        <figcaption><b>SIGNED IN, HOME LOADING</b>The header and the Net worth card on their own layout, figures as placeholders that pulse (still, with reduced motion). The card arrives in the same place, at the same height.</figcaption>
+        <figcaption><b>SIGNED IN, HOME LOADING</b>The header with its own buttons (Refresh turning, unavailable) and the Net worth card on its own layout, figures as placeholders that pulse in step (still, with reduced motion). The card arrives in the same place, at the same height.</figcaption>
       </figure>
     </div>
   </section>

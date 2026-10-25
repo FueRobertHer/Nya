@@ -17,7 +17,7 @@ await mockForFile('@/lib/clerk-tickets', () => ({
 const fake = new FakeRedis();
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { demoUsers, isDemoUser, demoEnvironment, DEMO_SIGN_INS_PER_WINDOW, DEMO_WINDOW_SECONDS } = await import('@/lib/demo');
+const { demoUsers, isDemoUser, demoEnvironment, DEMO_SIGN_INS_PER_WINDOW, DEMO_UNAVAILABLE, DEMO_WINDOW_SECONDS } = await import('@/lib/demo');
 const { clerkUserAllowed } = await import('@/lib/auth-mode');
 const { deletionCheck } = await import('@/lib/account-deletion');
 const { POST } = await import('@/app/api/demo/sign-in/route');
@@ -39,10 +39,12 @@ afterEach(() => {
   process.env = { ...saved };
 });
 
-const signIn = (user: string, ip = '1.2.3.4') => {
+const signIn = (user: string, ip = '1.2.3.4', accept?: string) => {
   const form = new FormData();
   form.set('user', user);
-  return POST(new Request('https://nya.test/api/demo/sign-in', { method: 'POST', body: form, headers: { 'x-forwarded-for': ip } }));
+  const headers: Record<string, string> = { 'x-forwarded-for': ip };
+  if (accept) headers.accept = accept;
+  return POST(new Request('https://nya.test/api/demo/sign-in', { method: 'POST', body: form, headers }));
 };
 
 describe('demo accounts', () => {
@@ -141,5 +143,31 @@ describe('the demo sign-in', () => {
     } finally {
       console.error = errors;
     }
+  });
+
+  // The page's own buttons (components/demo-sign-in.ts) sign in in place.
+  test('asked for JSON: the ticket itself, never kept by a cache', async () => {
+    const res = await signIn('user_sam', '1.2.3.4', 'application/json');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ticket: 'ticket-for-user_sam' });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(tickets).toEqual(['user_sam']);
+  });
+
+  test('asked for JSON: the same limits, and Clerk failing said in words', async () => {
+    expect((await signIn('user_owner', '1.2.3.4', 'application/json')).status).toBe(400);
+    ticketFails = true;
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      const res = await signIn('user_alex', '1.2.3.4', 'application/json');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: DEMO_UNAVAILABLE });
+    } finally {
+      console.error = errors;
+    }
+    ticketFails = false;
+    for (let i = 0; i < 19; i++) expect((await signIn('user_alex', '1.2.3.4', 'application/json')).status).toBe(200);
+    expect((await signIn('user_alex', '1.2.3.4', 'application/json')).status).toBe(429);
   });
 });

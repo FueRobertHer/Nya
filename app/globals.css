@@ -2879,17 +2879,9 @@ button.danger-outline {
   width: 5.5em;
 }
 
-/* The header's buttons while the app loads as a page (AppLoading): their
-   outlines, which their icons then fill. */
-.app-loading-btn {
-  width: var(--tap);
-  height: var(--tap);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
-  background: transparent;
-}
-
-.app-loading-avatar {
+/* The account menu's avatar until Clerk draws it (components/ClerkAccount.tsx,
+   and AppLoading's copy of the header). */
+.user-button-skeleton {
   width: 34px;
   height: 34px;
   border-radius: var(--r-pill);

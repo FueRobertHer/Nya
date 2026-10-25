@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AppLoading, HomeSkeleton, SignInSkeleton } from '@/components/LoadingSkeletons';
 import NetWorthCard from '@/components/NetWorthCard';
 import NetWorthChart from '@/components/NetWorthChart';
+import { GEAR, HeaderIcon, REFRESH } from '@/components/HeaderIcon';
 
 // What screens show while they load (components/LoadingSkeletons.tsx): Home's
 // Net worth card drawn on its own classes with placeholders for its figures,
@@ -53,26 +54,39 @@ describe('Home while it loads', () => {
 });
 
 describe('the app loading, as a page', () => {
-  test('the dashboard header with its loading line, its buttons outlined, and Home loading', () => {
-    const html = renderToStaticMarkup(<AppLoading account="clerk" />);
-    expect(html).toContain('<main class="wrap"><div class="top-row">');
-    expect(html).toContain('<h1>Nya</h1>');
-    expect(html).toContain('<p class="sub">Loading your accounts…</p>');
-    expect(html).toContain(
-      '<div class="top-actions" aria-hidden="true"><span class="skeleton app-loading-btn"></span><span class="skeleton app-loading-btn"></span><span class="user-button-slot"><span class="skeleton app-loading-avatar"></span></span></div>'
+  const clerk = renderToStaticMarkup(<AppLoading account="clerk" />);
+  const password = renderToStaticMarkup(<AppLoading account="password" />);
+  const actions = (html: string) => html.slice(html.indexOf('<div class="top-actions">'), html.indexOf('<section'));
+
+  test('the dashboard header with its loading line, and Home loading', () => {
+    expect(clerk).toContain('<main class="wrap"><div class="top-row">');
+    expect(clerk).toContain('<h1>Nya</h1>');
+    expect(clerk).toContain('<p class="sub">Loading your accounts…</p>');
+    expect(clerk).toContain(renderToStaticMarkup(<HomeSkeleton />));
+  });
+
+  test('the header’s own buttons, as the dashboard draws them while it loads', () => {
+    const header = actions(clerk);
+    // Hide amounts works; Refresh turns, unavailable, drawn with the dashboard's own icon.
+    expect(header).toContain('aria-label="Hide amounts"');
+    expect(header).toContain(
+      `<button class="secondary icon-btn" disabled="" aria-label="Refresh" title="Refresh">${renderToStaticMarkup(<HeaderIcon d={REFRESH} spin />)}</button>`
     );
-    expect(html).toContain(renderToStaticMarkup(<HomeSkeleton />));
+    // The account menu's place holds the circle ClerkAccount keeps until Clerk draws the avatar.
+    expect(header).toContain('<div class="user-button-slot"><span class="skeleton user-button-skeleton" aria-hidden="true"></span></div>');
+    expect(header).not.toContain('Settings');
+  });
+
+  test('password mode: the Settings gear, which does nothing until the dashboard is in', () => {
+    const header = actions(password);
+    expect(header).not.toContain('user-button-slot');
+    expect(header).toContain(
+      `<button class="secondary icon-btn" aria-disabled="true" aria-label="Settings" title="Settings">${renderToStaticMarkup(<HeaderIcon d={GEAR} />)}</button>`
+    );
   });
 
   test('said once to a screen reader: one status, the card’s', () => {
-    const html = renderToStaticMarkup(<AppLoading account="clerk" />);
-    expect(html.match(/role="status"/g)?.length).toBe(1);
-  });
-
-  test('password mode: the Settings gear in place of the account menu', () => {
-    const html = renderToStaticMarkup(<AppLoading account="password" />);
-    expect(html).not.toContain('user-button-slot');
-    expect(html.match(/app-loading-btn/g)?.length).toBe(3);
+    expect(clerk.match(/role="status"/g)?.length).toBe(1);
   });
 });
 

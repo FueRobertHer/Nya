@@ -20,6 +20,8 @@ export type DemoEvent =
   | { type: 'press' }
   // DEMO_WAIT_MS passed since that press (or since the page came with a ticket).
   | { type: 'waited'; attempt: number }
+  // The sign-in failed, and the demo card says why.
+  | { type: 'failed' }
   // The page came back from the browser's cache.
   | { type: 'back' };
 
@@ -38,6 +40,7 @@ export function demoStep(s: DemoState, e: DemoEvent): DemoState {
     case 'waited':
       // A wait from an earlier press ends nothing.
       return e.attempt === s.attempt ? { ...s, pending: false } : s;
+    case 'failed':
     case 'back':
       return { ...s, pending: false };
   }

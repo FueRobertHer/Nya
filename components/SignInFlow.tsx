@@ -1,21 +1,29 @@
 'use client';
 
 // The sign-in page's frame (app/sign-in), and its hand-over to the app while
-// a demo sign-in is on its way: from a demo button's press, and on the page
-// it comes back to with Clerk's ticket, the app loading shows in the page's
-// place (components/LoadingSkeletons.tsx AppLoading). Clerk's form stays
-// mounted underneath, hidden: it signs in with the ticket and moves to Home,
+// a demo sign-in is on its way: from a demo button's press
+// (components/DemoSignIn.tsx), and on the page a demo form's post comes back
+// to with Clerk's ticket, the app loading shows in the page's place
+// (components/LoadingSkeletons.tsx AppLoading). Clerk's form stays mounted
+// underneath, hidden, for that ticket: it signs in with it and moves to Home,
 // whose page streams the same view while it reads the session (app/page.tsx),
 // and then the dashboard draws it again while it loads. Any other sign-in
 // shows Clerk's form until Clerk moves to Home: Clerk sets the session only
 // once it has moved, so there is nothing here to hand over on.
 
-import { useEffect, useReducer, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react';
 import { AppLoading, SignInSkeleton } from './LoadingSkeletons';
 import { DEMO_WAIT_MS, FORM_WAIT_MS, demoStart, demoStep } from './sign-in-view';
 
+/** For the demo buttons (components/DemoSignIn.tsx): start shows the app
+ *  loading from a press; stop shows the page again when the sign-in failed. */
+type DemoHold = { start: () => void; stop: () => void };
+const DemoHoldContext = createContext<DemoHold>({ start: () => {}, stop: () => {} });
+export const useDemoHold = () => useContext(DemoHoldContext);
+
 export function SignInFlow({ demoTicket, children }: { demoTicket: boolean; children: ReactNode }) {
   const [demo, dispatch] = useReducer(demoStep, demoTicket, demoStart);
+  const hold = useMemo<DemoHold>(() => ({ start: () => dispatch({ type: 'press' }), stop: () => dispatch({ type: 'failed' }) }), []);
 
   useEffect(() => {
     if (!demo.pending) return;
@@ -34,21 +42,13 @@ export function SignInFlow({ demoTicket, children }: { demoTicket: boolean; chil
     return () => window.removeEventListener('pageshow', shown);
   }, []);
 
-  // A demo button's form (data-demo-sign-in, app/sign-in) posts as forms
-  // do, to app/api/demo/sign-in, which answers with this page and a ticket:
-  // the app loading shows from the press, while the browser waits. Clerk's
-  // own form submits through here too (its events bubble), and is left alone.
-  const onSubmit = (e: FormEvent) => {
-    if (e.target instanceof Element && e.target.closest('[data-demo-sign-in]')) dispatch({ type: 'press' });
-  };
-
   return (
-    <>
-      <main className="auth-wrap" hidden={demo.pending} onSubmit={onSubmit}>
+    <DemoHoldContext.Provider value={hold}>
+      <main className="auth-wrap" hidden={demo.pending}>
         {children}
       </main>
       {demo.pending && <AppLoading account="clerk" />}
-    </>
+    </DemoHoldContext.Provider>
   );
 }
 

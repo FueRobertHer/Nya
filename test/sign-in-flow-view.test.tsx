@@ -61,7 +61,8 @@ describe('a demo sign-in', () => {
     expect(waited(again, 2).pending).toBe(false);
   });
 
-  test('back from the browser’s cache: the page', () => {
+  test('a sign-in that failed, or back from the browser’s cache: the page', () => {
+    expect(demoStep(press(demoStart(false)), { type: 'failed' }).pending).toBe(false);
     expect(demoStep(press(demoStart(false)), { type: 'back' }).pending).toBe(false);
   });
 });
