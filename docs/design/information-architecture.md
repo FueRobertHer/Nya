@@ -270,6 +270,9 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Sheet | Every form and confirmation | Unchanged, plus sticky footer and second-level back |
 | CategoryPicker | Editors | Unchanged |
 | InfoPage, OpenProtectedDownload, UnsubscribeForm, ServiceWorkerRegistration | Standalone pages and plumbing | Unchanged |
+| LoadingSkeletons (HomeSkeleton, AppLoading, SignInSkeleton) | New, replacing Home's loading spinner | Home's Net worth card in placeholders while the dashboard's first load is on its way; the same under the dashboard's header as a whole page (AppLoading), which Home streams while the server reads the session (so a sign-in's move there shows it at once) and the sign-in page and the password login hand over to; the place of Clerk's form on the sign-in page while it loads |
+| SignInFlow (SignInPlaceholder) | New | The sign-in page's frame: the page from the top, Clerk's form in its placeholder (with a notice if it hasn't loaded in 15 seconds); the app loading in its place from a demo button's press until Clerk has moved to Home |
+| DemoSignIn | Sign-in page, inline | The sign-in page's Try the demo card: each button signs in as Alex or Sam in place, with the route's ticket, and says why when it can't; a plain form post before Clerk has loaded |
 
 ## Building blocks
 
@@ -278,6 +281,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets. `useDrawnWidth` (`components/drawn-width.ts`, phase 5d) draws a chart at its own width, so its text is 12px; MonthFlowChart and CashFlowSankey use it, the rest follow with phase 6.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
+- HeaderIcon: the icons of the header's buttons (Refresh, the Settings gear), for the dashboard's header and the app loading's copy of it.
 - Menu: an object's ⋯ menu of rare actions (the account sheet's, the transaction sheet's, the institution card's).
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).

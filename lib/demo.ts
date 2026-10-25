@@ -30,6 +30,10 @@ export const DEMO_NAMES = ['Alex', 'Sam'] as const;
 export const DEMO_SIGN_INS_PER_WINDOW = 20;
 export const DEMO_WINDOW_SECONDS = 10 * 60;
 
+/** What the sign-in page says when a demo sign-in couldn't be made: Clerk
+ *  didn't give a ticket, or didn't sign in with it. */
+export const DEMO_UNAVAILABLE = 'The demo couldn’t sign in just now. Try again.';
+
 /** Whether this deployment may offer demo accounts at all: any Vercel
  *  environment but Production, or a local `next dev` off Vercel. */
 export function demoEnvironment(): boolean {

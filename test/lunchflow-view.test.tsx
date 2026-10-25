@@ -68,7 +68,7 @@ describe('the option to connect', () => {
     // Decided on the server, from LUNCHFLOW_ENABLED, for both kinds of sign-in.
     const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
     expect(page).toContain('const lunchFlow = lunchFlowEnabled();');
-    expect(page.match(/lunchFlow=\{lunchFlow\}/g)?.length).toBe(2);
+    expect(page.match(/<Dashboard [^>]*lunchFlow=\{lunchFlow\}/g)?.length).toBe(2);
   });
 
   test('the switch is on only for LUNCHFLOW_ENABLED=1, and never stands in SimpleFIN’s way', () => {
