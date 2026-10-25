@@ -17,7 +17,7 @@
 // (lib/categories.ts), so renaming a category renames it here at once.
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import ActivityBar, { ACTIVITY_PANEL, segmentTabId, type ActivitySegment } from "./ActivityBar";
+import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivitySegment } from "./ActivityBar";
 import ReportsEntry from "./ReportsEntry";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
@@ -43,7 +43,7 @@ import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
-import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
+import { inPeriod, periodCaption, periodEnding, periodGapNotes, pickedRows, SPANS, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from "@/lib/shared-expenses/rows";
 import SplitSheet from "./SplitSheet";
@@ -499,7 +499,10 @@ export default function MonthBreakdown({
   // The chart's period is kept here beside it: a reload shows a spinner in
   // the chart's place, and it must come back on the pick's period.
   const [flowPick, setFlowPick] = useState<FlowPick | null>(null);
-  const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");
+  // Spending's period: its length (SPANS), ending with the bar's month. Kept
+  // here, so a reload's spinner brings it back, and across segments.
+  const [span, setSpan] = useState<PeriodKey>("this-month");
+  const spanRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const shownRef = useRef<HTMLDivElement>(null);
   const pickedNow = useRef(false);
@@ -534,6 +537,15 @@ export default function MonthBreakdown({
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
     [txns, selected],
   );
+  // Spending's period, and its rows: every card there sums them.
+  const period = useMemo(() => (selected ? periodEnding(span, selected) : null), [span, selected]);
+  const periodTxns = useMemo(() => {
+    if (!period) return [];
+    const within = inPeriod(period);
+    return (txns ?? []).filter((t) => within(t.date));
+  }, [txns, period]);
+  const onSpending = segment === "spending";
+  const today = localDate();
 
   // Every total on the tab sums amounts in one currency, the same for every
   // month so the trend compares like with like: the home currency once one
@@ -544,13 +556,23 @@ export default function MonthBreakdown({
   const counted = useMemo(() => totalsIn(txns ?? [], fx), [txns, fx]);
   const currency = counted.currency;
   const countedMonth = useMemo(() => counted.rows.filter((t) => t.date.slice(0, 7) === selected), [counted, selected]);
+  const countedPeriod = useMemo(() => {
+    if (!period) return [];
+    const within = inPeriod(period);
+    return counted.rows.filter((t) => within(t.date));
+  }, [counted, period]);
+  // What the figures shown sum: the bar's month on Transactions, the period
+  // on Spending. One segment is drawn at a time, so the sums below are its.
+  const scopeTxns = onSpending ? periodTxns : monthTxns;
+  const scopeCounted = onSpending ? countedPeriod : countedMonth;
   const leftOut = useMemo(
-    () => leftOutWhy(leftOutText(leftOutByCurrency(countedMonth, currency), currency), conversionIn(countedMonth, counted.conversion)),
-    [countedMonth, currency, counted]
+    () => leftOutWhy(leftOutText(leftOutByCurrency(scopeCounted, currency), currency), conversionIn(scopeCounted, counted.conversion)),
+    [scopeCounted, currency, counted]
   );
-  const convertedNote = useMemo(() => convertedText(conversionIn(countedMonth, counted.conversion)), [countedMonth, counted]);
+  const convertedNote = useMemo(() => convertedText(conversionIn(scopeCounted, counted.conversion)), [scopeCounted, counted]);
   // Rows imported into linked accounts from files (#52): the totals say so.
-  const importedNote = useMemo(() => importedRowsNote(monthTxns), [monthTxns]);
+  const periodWords = onSpending && period && period.months.length > 1 ? "this period" : "this month";
+  const importedNote = useMemo(() => importedRowsNote(scopeTxns, periodWords), [scopeTxns, periodWords]);
 
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
@@ -563,7 +585,7 @@ export default function MonthBreakdown({
     const hidden = new Set<string>();
     const unknown = new Set<string>();
     const shared = new Set<string>();
-    for (const t of monthTxns) {
+    for (const t of scopeTxns) {
       const id = t.split_of ?? t.shared_of ?? t.transaction_id;
       if (t.shared_part !== undefined) shared.add(id);
       else if (t.excluded === true && t.excluded_by_rule) hidden.add(id);
@@ -571,7 +593,7 @@ export default function MonthBreakdown({
       else if (t.excluded === null) unknown.add(id);
     }
     return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size, sharedCount: shared.size };
-  }, [monthTxns]);
+  }, [scopeTxns]);
 
   const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
     let inflow = 0;
@@ -581,7 +603,7 @@ export default function MonthBreakdown({
     const byCategory: Record<string, number> = {};
     const byCategoryId = new Map<string, number>();
     const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
-    for (const t of countedMonth) {
+    for (const t of scopeCounted) {
       if (!countsInTotals(t, currency)) continue;
       if (t.amount < 0) {
         inflow += -t.amount;
@@ -599,7 +621,7 @@ export default function MonthBreakdown({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
     return { moneyIn: inflow, moneyOut: outflow, categories, byCategoryId };
-  }, [countedMonth, currency, taxonomy]);
+  }, [scopeCounted, currency, taxonomy]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -607,19 +629,19 @@ export default function MonthBreakdown({
   const channelSplit = useMemo(() => {
     let online = 0;
     let inStore = 0;
-    for (const t of countedMonth) {
+    for (const t of scopeCounted) {
       if (t.amount <= 0 || !countsInTotals(t, currency)) continue;
       if (t.payment_channel === "online") online += t.amount;
       else if (t.payment_channel === "in store") inStore += t.amount;
     }
     return { online, inStore };
-  }, [countedMonth, currency]);
+  }, [scopeCounted, currency]);
 
   // Top places by spend, from transaction location. Disambiguates same-named
   // merchants and gives a light geo view without a map dependency.
   const topCities = useMemo(() => {
     const byCity: Record<string, number> = {};
-    for (const t of countedMonth) {
+    for (const t of scopeCounted) {
       if (t.amount <= 0 || !countsInTotals(t, currency) || !t.city) continue;
       const label = t.region ? `${t.city}, ${t.region}` : t.city;
       byCity[label] = (byCity[label] ?? 0) + t.amount;
@@ -627,7 +649,7 @@ export default function MonthBreakdown({
     return Object.entries(byCity)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-  }, [countedMonth, currency]);
+  }, [scopeCounted, currency]);
 
   // Net per month (oldest → newest) for the trend columns. Bar height tracks
   // net magnitude and bar color tracks its sign (green positive, red negative),
@@ -863,11 +885,35 @@ export default function MonthBreakdown({
   // When only rows entered by hand are here, the connections that bring in
   // none are named beside the totals: where they come from, not a warning.
   const namedWithout = withoutNote(withoutTransactions, historyCount(txns));
+  // On Spending, what may be missing from the period is said beside the cash
+  // flow; where it isn't drawn (categories not loaded), beside the totals,
+  // the load's notes first, as the cash flow says them.
+  const spendingGaps =
+    onSpending && !taxonomy
+      ? period
+        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) })
+        : notes
+      : [];
+  const caption = period ? periodCaption(period, today) : "";
+  // The period's length, from the chips at the top of Spending; a pick from
+  // the cash flow ends with it, as with a month chosen.
+  const chooseSpan = (k: PeriodKey) => {
+    if (k === span) return;
+    setSpan(k);
+    setFlowPick(null);
+  };
 
-  // The month's In / Out / Net, with what it leaves out and may be missing:
-  // on Transactions over the list, and on Spending among the month's cards.
+  // The In / Out / Net, with what it leaves out and may be missing: the
+  // month's on Transactions over the list, and the period's on Spending among
+  // its cards, naming it as they do.
   const summaryCard = (
     <div className="card">
+      {onSpending && (
+        <div className="inst-header">
+          <div className="inst-name">In and out</div>
+          <div className="inst-total">{caption}</div>
+        </div>
+      )}
       <div className="summary-row">
         <div>
           <div className="total-label">In</div>
@@ -904,15 +950,15 @@ export default function MonthBreakdown({
         {namedWithout && ` ${namedWithout}`}
         {importedNote && ` ${importedNote}`}
       </div>
-      {gapNotes.map((n) => (
+      {/* On Transactions, what may be missing from the month, then the load's
+          notes; on Spending, the period's (spendingGaps), only where the cash
+          flow isn't drawn to say them. */}
+      {(onSpending ? spendingGaps : gapNotes).map((n) => (
         <div className="stale-note" key={n}>
           {n}
         </div>
       ))}
-      {/* Where the cash flow isn't on the screen to say them (Transactions, or
-          Spending before the categories load), the load's notes go with the
-          figures they bear on, as the chart says them. */}
-      {(segment === "transactions" || !taxonomy) &&
+      {!onSpending &&
         notes.map((n) => (
           <div className="stale-note" key={`note:${n}`}>
             {n}
@@ -927,7 +973,36 @@ export default function MonthBreakdown({
       {panel(
         segment === "spending" ? (
           <>
-            {/* Where the money came from and went (#41), over a period of its own;
+            {/* The period every card here sums: a length, ending with the bar's month. */}
+            {selected && (
+              <div className="chip-row" role="radiogroup" aria-label={`Period ending ${monthName(selected)}`}>
+                {SPANS.map((s, i) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    role="radio"
+                    className="chip"
+                    aria-checked={span === s.key}
+                    tabIndex={span === s.key ? 0 : -1}
+                    ref={(el) => {
+                      spanRefs.current[i] = el;
+                    }}
+                    onClick={() => chooseSpan(s.key)}
+                    onKeyDown={(e) => {
+                      const key = e.key === "ArrowUp" ? "ArrowLeft" : e.key === "ArrowDown" ? "ArrowRight" : e.key;
+                      const next = segmentKey(key, i, SPANS.length);
+                      if (next === null) return;
+                      e.preventDefault();
+                      chooseSpan(SPANS[next].key);
+                      spanRefs.current[next]?.focus();
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Where the money came from and went (#41), over the period;
                 tapping a node lists its transactions on Transactions. */}
             {taxonomy && (
               <CashFlowSankey
@@ -942,17 +1017,20 @@ export default function MonthBreakdown({
                 onPick={(p) => {
                   pickedNow.current = p !== null;
                   setFlowPick(p);
+                  // The bar keeps the month the pick's period ends with, so a
+                  // reload that brings a later month doesn't move it.
+                  if (p && month === null && selected) setMonth(selected);
                   if (p) chooseSegment("transactions");
                 }}
-                period={flowPeriod}
-                onPeriod={setFlowPeriod}
+                period={span}
+                month={selected ?? undefined}
               />
             )}
             {trend.length > 1 && (
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Net by month</div>
-                  <div className="inst-total">tap a month to select</div>
+                  <div className="inst-total">tap a month to end on it</div>
                 </div>
                 <div className="trend-row" ref={trendRef}>
                   {(() => {
@@ -960,13 +1038,13 @@ export default function MonthBreakdown({
                     return trend.map(({ month: m, net }) => (
                       <button
                         key={m}
-                        className={`trend-col${m === selected ? " active" : ""}`}
+                        className={`trend-col${m === selected ? " active" : period?.months.includes(m) ? " in-period" : ""}`}
                         onClick={() => {
                           setMonth(m);
                           setFlowPick(null);
                         }}
                         aria-pressed={m === selected}
-                        aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
+                        aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
                       >
                         <span className="trend-val">
                           <Masked>{fmtCompactSigned(net, currency)}</Masked>
@@ -985,13 +1063,13 @@ export default function MonthBreakdown({
               </div>
             )}
 
-            {selected && monthTxns.length > 0 && (
+            {period && periodTxns.length > 0 && (
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Income vs spend</div>
-                  <div className="inst-total">{monthLabel(selected)}</div>
+                  <div className="inst-total">{caption}</div>
                 </div>
-                <MonthFlowChart txns={countedMonth} month={selected} currency={currency} />
+                <MonthFlowChart txns={countedPeriod} from={period.from} to={period.to} currency={currency} />
               </div>
             )}
             {summaryCard}
@@ -1000,7 +1078,7 @@ export default function MonthBreakdown({
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Top spending</div>
-                  <div className="inst-total">by group</div>
+                  <div className="inst-total">by group, {caption}</div>
                 </div>
                 <CategoryRollup taxonomy={taxonomy} byCategory={byCategoryId} currency={currency} />
               </div>
@@ -1010,6 +1088,7 @@ export default function MonthBreakdown({
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Top spending</div>
+                  <div className="inst-total">{caption}</div>
                 </div>
                 <div className="cat-list">
                   {categories.map(([cat, sum]) => (
@@ -1030,12 +1109,13 @@ export default function MonthBreakdown({
               </div>
             )}
 
-            <SpendByTag txns={countedMonth} tags={tags} currency={currency} />
+            <SpendByTag txns={countedPeriod} tags={tags} currency={currency} caption={caption} />
 
             {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Online vs in-store</div>
+                  <div className="inst-total">{caption}</div>
                 </div>
                 {(() => {
                   const total = channelSplit.online + channelSplit.inStore;
@@ -1069,6 +1149,7 @@ export default function MonthBreakdown({
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Where you spent</div>
+                  <div className="inst-total">{caption}</div>
                 </div>
                 <div className="cat-list">
                   {topCities.map(([place, sum]) => (

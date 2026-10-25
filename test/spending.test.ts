@@ -7,6 +7,7 @@ import { trailingFlows } from '@/lib/fire/inputs';
 import { localDate } from '@/lib/local-date';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import MonthFlowChart from '@/components/MonthFlowChart';
+import { periodCaption, periodOf } from '@/lib/cash-flow';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { categoriesFor } from './category-fixture';
@@ -141,6 +142,8 @@ describe('the rule', () => {
 // The Activity tab's two screens of the month: Spending's figures, then
 // Transactions' strip and list. What a test says isn't shown holds for both;
 // that each has the strip is test/activity-segments-view.test.tsx's.
+// Each Spending card names its period: by default the month the bar is on.
+const CAPTION = periodCaption(periodOf('this-month', today), today);
 const activity = (txns: Txn[], extra: Record<string, unknown> = {}) =>
   (['spending', 'transactions'] as const)
     .map((segment) => renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, segment, ...extra })))
@@ -154,10 +157,10 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(t).toContain('In $100.00 Out $30.00 Net $70.00');
     expect(t).toContain('Transfers and loan payments excluded, and 1 transaction you left out.');
     // Top spending, where you spent and online vs in store count the shop only.
-    expect(t).toContain('Top spending food and drink $30.00');
+    expect(t).toContain(`Top spending ${CAPTION} food and drink $30.00`);
     expect(t).not.toContain('general merchandise $80.00');
-    expect(t).toContain('Where you spent Austin $30.00');
-    expect(t).toContain('Online vs in-store Online $0.00 In store $30.00');
+    expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
+    expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
     // Still in the list, marked.
     expect(t).toContain('New laptop');
     expect(t).toContain('Excluded from budgets and reports');
@@ -279,10 +282,10 @@ describe('no total adds up amounts in two currencies', () => {
     const t = text(activity([...MONTH, RAMEN, MAPLE, DOGE]));
     expect(t).toContain('In $100.00 Out $30.00 Net $70.00');
     expect(t).toContain("1 transaction in CAD, 1 in DOGE and 1 in JPY aren't in these totals, which are in USD.");
-    expect(t).toContain('Top spending food and drink $30.00');
-    expect(t).toContain('Where you spent Austin $30.00');
+    expect(t).toContain(`Top spending ${CAPTION} food and drink $30.00`);
+    expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
     expect(t).not.toContain('Tokyo $');
-    expect(t).toContain('Online vs in-store Online $0.00 In store $30.00');
+    expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
     // Listed, each in its own currency; one Intl doesn't know, with its code.
     expect(t).toContain('-¥3,200');
     expect(t).toContain('-CA$40.00');

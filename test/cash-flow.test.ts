@@ -424,12 +424,12 @@ describe('the transactions held', () => {
     expect(windowStart(Date.parse('2026-11-01T03:00:00Z'))).toBe('2025-11-01');
   });
 
-  test('a period reaching before the window says its first days aren’t in it', () => {
+  test('a period reaching before the window says the part before it isn’t in it', () => {
     // A leap day's evening in California: UTC is March 1, so the window starts
     // March 2 a year back, a day after the twelve months begin.
     const now = Date.parse('2028-03-01T04:00:00Z');
     const p = periodOf('last-12-months', '2028-02-29');
-    expect(historyNote(p, [{ date: '2027-03-02' }], now)).toBe("The Activity tab loads the last 365 days of transactions, from Mar 2, 2027 on, so this period's first days aren't in it.");
+    expect(historyNote(p, [{ date: '2027-03-02' }], now)).toBe("The Activity tab loads the last 365 days of transactions, from Mar 2, 2027 on, so the part of this period before then isn't in it.");
     expect(historyNote(periodOf('last-3-months', '2028-02-29'), [{ date: '2027-03-02' }], now)).toBeNull();
   });
 
