@@ -37,18 +37,19 @@ function ready(text: string, options: ImportOptions = {}): Extract<ReadResult, {
 const rows = (records: RawRecord[]) => normalizeRecords(records, { today: TODAY, currency: 'USD' });
 
 /** How long `read` takes, in milliseconds: the smaller of its processor time
- *  (process.cpuUsage(), which counts the whole process, the collector's and
- *  compiler's threads included, and so work an earlier test left them) and
- *  its wall clock's time (which a machine busy with other work stretches).
- *  Each only ever adds to the read's own work, for reasons of its own, so the
- *  smaller is the closer. A full collection before each run keeps an earlier
- *  test's garbage off the read's time, and the best of three runs counts,
- *  stopping at the first under `under` (with none, all three run): a busy
- *  machine only ever adds time, and a read really too slow is over every
- *  time. The bounds below are on it. What they guard against is a read whose
- *  work grows faster than the file (a 3 MB file read in quadratic time takes
- *  minutes, not seconds), not a slow machine; each is a few times the most
- *  the read takes here. */
+ *  (process.cpuUsage()) and its wall clock's time. Both hold the read's own
+ *  work plus noise of their own: the processor time counts the whole
+ *  process, the collector's and compiler's threads included (and so work an
+ *  earlier test left them), and the wall clock stretches on a machine busy
+ *  with other work. So the smaller is the closer. A full collection before
+ *  each run keeps an earlier test's garbage off the read's time, and the best
+ *  of three runs counts, stopping at the first under `under` (with none, all
+ *  three run): a busy machine only ever adds time, and a read really too slow
+ *  is over every time. A test whose bound is more than a second gives itself
+ *  a timeout with room for the three. The bounds below are on it. What they
+ *  guard against is a read whose work grows faster than the file (a 3 MB
+ *  file read in quadratic time takes minutes, not seconds), not a slow
+ *  machine; each is a few times the most the read takes here. */
 function readMs(read: () => unknown, under = 0): number {
   let best = Infinity;
   for (let run = 0; run < 3 && best >= under; run++) {
@@ -606,7 +607,7 @@ describe('CSV in general', () => {
     let junk: unknown;
     expect(readMs(() => (junk = readCsvTable(separators)), 3000)).toBeLessThan(3000);
     expect(junk).toEqual({ error: 'This file is empty.' });
-  });
+  }, 15_000);
 
   test('more rows than one import takes: refused whole', () => {
     const text = 'Date,Description,Amount\n' + Array.from({ length: MAX_IMPORT_ROWS + 1 }, (_, i) => `2026-09-01,Row ${i},-1`).join('\n');
@@ -985,7 +986,7 @@ describe('files built to be large in the wrong way', () => {
     const fifty = `<OFX><BANKMSGSRSV1><STMTTRNRS>${one.repeat(MAX_STATEMENTS)}`;
     const asked = readImport(fifty, { options: {}, thisYear: YEAR });
     expect(asked.status === 'statement' ? asked.statements.length : asked.status).toBe(MAX_STATEMENTS);
-  });
+  }, 15_000);
 
   test('a question stays small: column names and the first rows cut short, and without control characters', () => {
     const cell = `x\u0001‮${'y'.repeat(5_000)}`;
@@ -1274,30 +1275,31 @@ describe('the review’s other probes, kept as tests', () => {
     };
     const read = (file: string) => readImport(file, { options: {}, thisYear: YEAR });
     const eighths = hostile(MB3 / 8);
+    // What this guards against is a read whose work grows faster than the
+    // file (read in quadratic time, a 3 MB file takes minutes), so each file's
+    // time is held against its own eighth's, read just before on the same
+    // machine, and not against a fixed number of milliseconds, which a CI
+    // runner about three times slower than a laptop once ran past on a file
+    // read in linear time. Eight times the file is eight times the work in
+    // linear time (more in practice, up to 23 times measured on one busy core)
+    // and 64 times in quadratic; the bound is 32 times, plus 50 ms for a read
+    // too short to time closely. That catches a read whose extra work is
+    // several times its linear work; a milder slowdown is left to a ceiling of
+    // 6 s, where the slowest takes about 1 s here. The eighth always runs
+    // three times, so a run slowed anyway can't loosen the bound.
     hostile(MB3).forEach((file, i) => {
-      // What this guards against is a read whose work grows faster than the
-      // file (read in quadratic time, a 3 MB file takes minutes), so each
-      // file's time is held against its own eighth's, read just before on
-      // the same machine, and not against a fixed number of milliseconds,
-      // which a CI runner about three times slower than a laptop once ran
-      // past on a file read in linear time. Eight times the file is eight
-      // times the work in linear time (up to 16 measured here, as the longer
-      // outgrows the processor's caches) and 64 times in quadratic; the bound
-      // is 32 times, plus 50 ms for a read too short to time closely. The
-      // eighth always runs three times, so a run slowed anyway can't loosen
-      // the bound.
+      // The OFX files share their first 63 characters.
+      const label = `file ${i}, ${JSON.stringify(file.slice(0, 100))}`;
       const small = readMs(() => read(eighths[i]));
       const growth = 32 * small + 50;
       let r!: ReadResult;
-      const ms = readMs(() => (r = read(file)), Math.min(growth, 10_000));
-      expect(ms, file.slice(0, 40)).toBeLessThan(growth);
-      // And however its eighth went, none takes ten seconds: a few times the
-      // slowest of them on CI, and minutes short of a quadratic read.
-      expect(ms, file.slice(0, 40)).toBeLessThan(10_000);
+      const ms = readMs(() => (r = read(file)), Math.min(growth, 6000));
+      expect(ms, label).toBeLessThan(growth);
+      expect(ms, label).toBeLessThan(6000);
       // Whatever it is, what is answered stays small: a question, an error,
       // or records with at most 10,000 rows of bounded fields.
       const answer = r.status === 'ready' ? { ...r, records: r.records.length, problems: r.problems.length } : r;
-      expect(JSON.stringify(answer).length, file.slice(0, 40)).toBeLessThan(250_000);
+      expect(JSON.stringify(answer).length, label).toBeLessThan(250_000);
     });
     // Room for the reruns on a slow runner, so a file over its bound is
     // named rather than lost to the timeout.
