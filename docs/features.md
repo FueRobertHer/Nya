@@ -123,7 +123,7 @@ That button goes through Link's *update mode*, which re-authenticates the instit
 
 ## Debt payoff plan
 
-**Payoff plan** on the Accounts tab (shown whenever a credit card or loan is on screen) works out when your cards and loans are paid off and what that costs in interest, paying a steady amount each month.
+**Payoff plan** on the Budgets tab's Goals (shown whenever a credit card or loan is on screen) works out when your cards and loans are paid off and what that costs in interest, paying a steady amount each month.
 
 Each debt starts from its balance and the terms Plaid supplies, and every figure says whether it came from Plaid, was worked out, or was typed. You can type over anything Plaid supplied, and go back to Plaid's figure. The plan waits until every debt has a rate and a payment, or has been left out of it: it never assumes either. Hidden accounts aren't included, and a card or loan with nothing owed is listed but not planned. Each debt in the plan shows roughly what it costs in interest a month at its current balance.
 
@@ -936,7 +936,7 @@ A carry is only as good as the months it counts. When one of them may be missing
 
 ### Looking back at a month
 
-The month under the budgets' heading picks a past month, back to the first with transactions, ten years at most: its budgets as they were then, its spending, what rolled into each, and its own notes. Past months are read from everything Nya has stored, not only the year the dashboard loads. They are shown as they were, never edited. A month that can't be loaded says so, with **Try again**.
+On the Budgets tab's Month, the arrows either side of the month step to the month before or after, and a tap on the month's name picks any past month, back to the first with transactions, ten years at most: its budgets as they were then, its spending, what rolled into each, and its own notes. Past months are read from everything Nya has stored, not only the year the dashboard loads. They are shown as they were, never edited. A month that can't be loaded says so, with **Try again**.
 
 ### Income carryover
 

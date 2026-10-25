@@ -884,7 +884,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     />
   ),
   'Budgets: recurring bills and income': () => <RecurringCard series={SERIES} today={TODAY} currency="USD" dismissed={new Set()} onDismiss={async () => true} />,
-  'Accounts: the payoff plan': () => <DebtPayoff open onClose={() => {}} institutions={[{ institution_name: 'Chase', liabilities: 'on', accounts: [sapphire] }]} />,
+  'Budgets > Goals: the payoff plan': () => <DebtPayoff open onClose={() => {}} institutions={[{ institution_name: 'Chase', liabilities: 'on', accounts: [sapphire] }]} />,
   'Sharing: the preview of what they see': () => (
     <PreviewView
       who="Pat"
@@ -1153,7 +1153,7 @@ describe('the main screens with amounts hidden', () => {
   });
 
   test('a field holding an amount is one the CSS hook covers, a percentage’s is marked to stay, and the hook is there', () => {
-    const { hidden } = both(SCREENS['Accounts: the payoff plan']);
+    const { hidden } = both(SCREENS['Budgets > Goals: the payoff plan']);
     const fields = [...hidden.matchAll(/<input[^>]*>/g)].map((m) => m[0]).filter((f) => /value="[^"]*\d/.test(f));
     const value = (f: string) => f.match(/value="([^"]*)"/)![1];
     // The card's APR, a percentage, stays; its minimum payment, an amount, is covered.
