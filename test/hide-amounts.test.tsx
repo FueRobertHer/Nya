@@ -25,6 +25,9 @@ import { HomeAttention } from './home-attention';
 import ForecastCard from '@/components/ForecastCard';
 import CalendarView from '@/components/CalendarView';
 import RecurringCard from '@/components/RecurringCard';
+import PlannedCard from '@/components/PlannedCard';
+import UpcomingPanel from '@/components/UpcomingPanel';
+import { CAR as UPCOMING_CAR, REFUND as UPCOMING_REFUND, SCENES as UPCOMING_SCENES, TODAY as UPCOMING_TODAY, derived as upcomingDerived } from './upcoming-notes-fixture';
 import { IncomePoolHeader } from '@/components/IncomePool';
 import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
@@ -899,6 +902,43 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     />
   ),
   'Budgets: recurring bills and income': () => <RecurringCard series={SERIES} today={TODAY} currency="USD" dismissed={new Set()} onDismiss={async () => true} />,
+  // Budgets > Upcoming as rollout 6a3 draws it: the segment's one notice (a
+  // card's payment due there names its statement), the forecast, the list and
+  // the calendar, Recurring and Planned; and the sheets they open.
+  'Budgets > Upcoming: the notice, the forecast, the list, the calendar, recurring and planned': () => {
+    const s = UPCOMING_SCENES['pay and bills it leaves out'];
+    const d = upcomingDerived(s);
+    return (
+      <UpcomingPanel
+        {...s}
+        plannedDrawn
+        dismissed={d.dismissed}
+        onDismiss={async () => true}
+        onSavePlanned={async () => true}
+        currency={d.currency}
+        plannedCurrency={d.plannedCurrency}
+        noSpending={d.noSpending}
+      />
+    );
+  },
+  'Budgets > Upcoming: the low-balance warning’s sheet': () => (
+    <ForecastCard
+      institutions={[chase()]}
+      series={SERIES}
+      planned={{ ...EMPTY_PLANNED, threshold: { amount: 250, currency: 'USD' } }}
+      onSavePlanned={async () => true}
+      today={TODAY}
+      open="warning"
+    />
+  ),
+  'Budgets > Upcoming: what if I buy…': () => <ForecastCard institutions={[chase()]} series={SERIES} planned={EMPTY_PLANNED} today={TODAY} open="what-if" />,
+  'Budgets > Upcoming: a bill’s sheet': () => <RecurringCard series={SERIES} today={TODAY} currency="USD" dismissed={new Set()} onDismiss={async () => true} edit={SERIES[0].id} />,
+  'Budgets > Upcoming: planned items': () => (
+    <PlannedCard planned={{ ...EMPTY_PLANNED, items: [UPCOMING_CAR, UPCOMING_REFUND] }} today={UPCOMING_TODAY} currency="USD" onSave={async () => true} />
+  ),
+  'Budgets > Upcoming: a planned item’s sheet': () => (
+    <PlannedCard planned={{ ...EMPTY_PLANNED, items: [UPCOMING_CAR, UPCOMING_REFUND] }} today={UPCOMING_TODAY} currency="USD" onSave={async () => true} edit={UPCOMING_CAR.id} />
+  ),
   'Budgets > Goals: the payoff plan': () => <DebtPayoff open onClose={() => {}} institutions={[{ institution_name: 'Chase', liabilities: 'on', accounts: [sapphire] }]} />,
   'Sharing: the preview of what they see': () => (
     <PreviewView

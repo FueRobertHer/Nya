@@ -615,6 +615,39 @@ const join = (names: string[]) => (names.length <= 1 ? names.join('') : `${names
 const unique = (names: string[]) => [...new Set(names)];
 const accountsWord = (n: number) => (n === 1 ? '1 account' : `${n} accounts`);
 
+/** What a note of the forecast's is about, for the line that gathers several
+ *  (components/upcoming-notes.tsx): a balance recovered from an earlier day,
+ *  a bank not reached, accounts not shown or that stopped reporting, a
+ *  connection's transactions not loaded, not syncing, still importing, not
+ *  provided or not allowed, a card's payment due, pay that stopped or varies,
+ *  a typed balance a week old, an account with no balance, what was left out
+ *  for its currency (cash accounts, pending charges, expected amounts), and
+ *  bills on an account of unknown type. */
+export type ForecastNoteKind =
+  | 'recovered'
+  | 'unreached'
+  | 'unshown'
+  | 'held'
+  | 'missing'
+  | 'stopped'
+  | 'importing'
+  | 'refused'
+  | 'no_consent'
+  | 'card'
+  | 'lapsed'
+  | 'varies'
+  | 'typed'
+  | 'no_balance'
+  | 'accounts_currency'
+  | 'pending_currency'
+  | 'amounts_currency'
+  | 'unplaced';
+
+/** One of the forecast's notes: what it is about, its words, and what it
+ *  bears on: the balance the forecast starts from (`start`), or the bills,
+ *  income and planned items that move it (`items`). */
+export type ForecastNote = { kind: ForecastNoteKind; text: string; of: 'start' | 'items' };
+
 /**
  * What the forecast may be missing or starting from old figures, as plain
  * sentences, most important first; empty when nothing is known to be wrong.
@@ -626,9 +659,15 @@ const accountsWord = (n: number) => (n === 1 ? '1 account' : `${n} accounts`);
  * may be missing), one whose transactions don't come in at all, pay that
  * stopped coming or varies too much to forecast, a typed balance not updated
  * for a week, and what was left out for its currency, for having no balance,
- * or for being on an account whose type isn't known.
+ * or for being on an account whose type isn't known. The sentences of
+ * forecastNoteItems, in its order.
  */
-export function forecastNotes(opts: {
+export function forecastNotes(opts: ForecastNoteInput): string[] {
+  return forecastNoteItems(opts).map((n) => n.text);
+}
+
+/** What forecastNoteItems and forecastNotes read. */
+export type ForecastNoteInput = {
   institutions: readonly ForecastInstitution[];
   position: CashPosition;
   /** Expected amounts left out for their currency (forecastEvents). */
@@ -650,9 +689,16 @@ export function forecastNotes(opts: {
   unallowed?: readonly string[];
   today: string;
   days: NoteDays;
-}): string[] {
+};
+
+/** The forecast's notes (forecastNotes), each with its kind and what it
+ *  bears on (ForecastNote), in the same order. */
+export function forecastNoteItems(opts: ForecastNoteInput): ForecastNote[] {
   const { institutions, position, today, days } = opts;
-  const notes: string[] = [];
+  const notes: ForecastNote[] = [];
+  /** A note about where the forecast starts, or about what moves it. */
+  const start = (kind: ForecastNoteKind, text: string) => notes.push({ kind, text, of: 'start' });
+  const items = (kind: ForecastNoteKind, text: string) => notes.push({ kind, text, of: 'items' });
   const included = new Set(position.included.map((a) => a.account_id));
   /** The unshown accounts that may hold cash: checking and savings, and any
    *  whose kind wasn't remembered. */
@@ -665,11 +711,11 @@ export function forecastNotes(opts: {
     if (!i.stale_as_of || !i.accounts.some((a) => included.has(a.account_id))) continue;
     const on = days.snapshot(i.stale_as_of, i.stale_as_of_at);
     if (i.connector && i.error) {
-      notes.push(`${i.error.replace(/[.\s]+$/, '')}, so this starts from ${i.institution_name}'s balances on ${on}.`);
+      start('recovered', `${i.error.replace(/[.\s]+$/, '')}, so this starts from ${i.institution_name}'s balances on ${on}.`);
       continue;
     }
     const why = i.needs_reauth ? 'needs reconnecting' : "couldn't refresh";
-    notes.push(`${i.institution_name} ${why}, so this starts from its balances on ${on}.`);
+    start('recovered', `${i.institution_name} ${why}, so this starts from its balances on ${on}.`);
   }
   // Couldn't be reached, with nothing recovered: its cash is missing, named
   // when its accounts are known. A manual account is never reached for; a
@@ -677,45 +723,45 @@ export function forecastNotes(opts: {
   const unreached = institutions.filter((i) => (!i.manual || !!i.connector) && (i.error || i.needs_reauth) && !i.stale_as_of && i.accounts.length === 0);
   const unknownCash = unique(unreached.filter((i) => !i.unshown_accounts).map((i) => i.institution_name));
   if (unknownCash.length > 0)
-    notes.push(`${join(unknownCash)} couldn't be reached, so any checking or savings there ${unknownCash.length === 1 ? "isn't" : "aren't"} in this forecast.`);
+    start('unreached', `${join(unknownCash)} couldn't be reached, so any checking or savings there ${unknownCash.length === 1 ? "isn't" : "aren't"} in this forecast.`);
   for (const i of unreached) {
     const names = i.unshown_accounts ? unshownCash(i) : [];
-    if (names.length > 0) notes.push(`${i.institution_name} couldn't be reached, so ${join(names)} there ${names.length === 1 ? "isn't" : "aren't"} in this forecast.`);
+    if (names.length > 0) start('unreached', `${i.institution_name} couldn't be reached, so ${join(names)} there ${names.length === 1 ? "isn't" : "aren't"} in this forecast.`);
   }
   // Reached, or recovered, without some of its accounts.
   for (const i of institutions) {
     if (i.manual || unreached.includes(i)) continue;
     const names = unshownCash(i);
-    if (names.length > 0) notes.push(`${join(names)} at ${i.institution_name} couldn't be shown, so ${names.length === 1 ? "its balance isn't" : "their balances aren't"} in this forecast.`);
+    if (names.length > 0) start('unshown', `${join(names)} at ${i.institution_name} couldn't be shown, so ${names.length === 1 ? "its balance isn't" : "their balances aren't"} in this forecast.`);
     else if (!i.unshown_accounts && (i.stale_missing ?? 0) > 0)
-      notes.push(`${accountsWord(i.stale_missing!)} at ${i.institution_name} couldn't be shown, so any cash in ${i.stale_missing === 1 ? 'it' : 'them'} isn't in this forecast.`);
+      start('unshown', `${accountsWord(i.stale_missing!)} at ${i.institution_name} couldn't be shown, so any cash in ${i.stale_missing === 1 ? 'it' : 'them'} isn't in this forecast.`);
     // Held at their last known balances until answered, so in the forecast
     // from those; a payload from before holds says only how many.
     const held = i.accounts.filter((a) => a.held);
     const heldCash = held.filter((a) => included.has(a.account_id)).map((a) => a.name);
     if (heldCash.length > 0)
-      notes.push(`${join(heldCash)} at ${i.institution_name} stopped reporting, so this starts from ${heldCash.length === 1 ? 'its last known balance' : 'their last known balances'}.`);
+      start('held', `${join(heldCash)} at ${i.institution_name} stopped reporting, so this starts from ${heldCash.length === 1 ? 'its last known balance' : 'their last known balances'}.`);
     else if (held.length === 0 && (i.unconfirmed_missing ?? 0) > 0)
-      notes.push(
+      start(
+        'held',
         `${accountsWord(i.unconfirmed_missing!)} at ${i.institution_name} stopped reporting, so any cash in ${i.unconfirmed_missing === 1 ? 'it' : 'them'} isn't in this forecast.`
       );
   }
 
   const missing = unique((opts.incomplete ?? []).filter((i) => i.coverage === 'missing').map((i) => i.institution_name));
-  if (missing.length > 0)
-    notes.push(`Transactions from ${join(missing)} couldn't be loaded, so bills and income there may be missing.`);
+  if (missing.length > 0) items('missing', `Transactions from ${join(missing)} couldn't be loaded, so bills and income there may be missing.`);
   const stopped = (opts.stopped ?? []).filter((s) => !missing.includes(s.institution_name));
   if (stopped.length > 0) {
     const parts = stopped.map((s) => (s.last_ok_at ? `${s.institution_name} hasn't synced since ${days.instant(s.last_ok_at)}` : `${s.institution_name} isn't syncing`));
-    notes.push(`${join(parts)}, so bills and income there may be missing or out of date.`);
+    items('stopped', `${join(parts)}, so bills and income there may be missing or out of date.`);
   }
   const importing = unique((opts.incomplete ?? []).filter((i) => i.coverage === 'importing').map((i) => i.institution_name)).filter((n) => !missing.includes(n));
   if (importing.length > 0)
-    notes.push(`${join(importing)} ${importing.length === 1 ? 'is' : 'are'} still importing older transactions, so some bills may not be found yet.`);
+    items('importing', `${join(importing)} ${importing.length === 1 ? 'is' : 'are'} still importing older transactions, so some bills may not be found yet.`);
   if (opts.refused && opts.refused.length > 0)
-    notes.push(`Plaid doesn't provide transactions for the bank or card accounts at ${join(unique([...opts.refused]))}, so their bills and income aren't in this forecast.`);
+    items('refused', `Plaid doesn't provide transactions for the bank or card accounts at ${join(unique([...opts.refused]))}, so their bills and income aren't in this forecast.`);
   if (opts.unallowed && opts.unallowed.length > 0)
-    notes.push(`You didn't allow Nya to see transactions from the bank or card accounts at ${join(unique([...opts.unallowed]))}, so their bills and income aren't in this forecast.`);
+    items('no_consent', `You didn't allow Nya to see transactions from the bank or card accounts at ${join(unique([...opts.unallowed]))}, so their bills and income aren't in this forecast.`);
 
   // A card's payment due within the forecast that it doesn't hold (none was
   // detected paying that card, as one that changes every month isn't), named
@@ -776,17 +822,18 @@ export function forecastNotes(opts: {
               ? `, ${money(owed)} left of its statement,`
               : `, statement balance ${money(owed)},`;
         if (part > 0 && figure && part < figure)
-          notes.push(
+          items(
+            'card',
             `${a.name}'s payment${amount} is due ${days.day(due)}. The ${money(part)} you planned around then for it may be part of it; the rest, ${money(Math.round((figure - part) * 100) / 100)}, isn't in this forecast, since it changes each month. Add it to what you planned if you'll pay it from checking.`
           );
-        else notes.push(`${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
+        else items('card', `${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
       }
 
   // Pay left out, named.
   for (const s of opts.series?.lapsed ?? [])
-    notes.push(`${s.name} hasn't come since ${days.day(s.lastDate)}, so it isn't in this forecast. If it still comes, add it as planned income.`);
+    items('lapsed', `${s.name} hasn't come since ${days.day(s.lastDate)}, so it isn't in this forecast. If it still comes, add it as planned income.`);
   for (const s of opts.series?.varied ?? [])
-    notes.push(`${s.name} comes on a schedule, but its amount varies too much to forecast, so it isn't in this. Add what you expect as planned income.`);
+    items('varies', `${s.name} comes on a schedule, but its amount varies too much to forecast, so it isn't in this. Add what you expect as planned income.`);
 
   // A typed balance holds until it is updated. (A connector's is the bank's,
   // held with its own date when it is old: said above.)
@@ -796,20 +843,21 @@ export function forecastNotes(opts: {
     if (Number.isNaN(at.getTime())) continue;
     const local = days.instant(a.updated_at);
     const age = (Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10))) - Date.UTC(at.getFullYear(), at.getMonth(), at.getDate())) / 86_400_000;
-    if (age > MANUAL_STALE_DAYS) notes.push(`${a.name}'s balance was last updated on ${local}.`);
+    if (age > MANUAL_STALE_DAYS) start('typed', `${a.name}'s balance was last updated on ${local}.`);
   }
 
-  for (const n of position.noBalance) notes.push(`${n.name} at ${n.institution} has no balance to start from, so it isn't in this forecast.`);
+  for (const n of position.noBalance) start('no_balance', `${n.name} at ${n.institution} has no balance to start from, so it isn't in this forecast.`);
   const accounts = withWhy(leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false }), position.conversion, position.leftOut);
-  if (accounts) notes.push(accounts);
+  if (accounts) start('accounts_currency', accounts);
   const charges = position.pending.leftOut ?? [];
   const pendingLeft = withWhy(leftOutText(charges, position.currency, { noun: 'pending charge', where: 'this forecast', plural: false }), position.conversion, charges);
-  if (pendingLeft) notes.push(pendingLeft);
+  if (pendingLeft) start('pending_currency', pendingLeft);
   const amounts = withWhy(leftOutText(opts.eventsLeftOut, position.currency, { noun: 'expected amount', where: 'this forecast', plural: false }), opts.eventsConversion);
-  if (amounts) notes.push(amounts);
+  if (amounts) items('amounts_currency', amounts);
   const unplaced = opts.series?.unplaced ?? [];
   if (unplaced.length > 0)
-    notes.push(
+    items(
+      'unplaced',
       `${join(unique(unplaced.map((s) => s.name)))} ${unplaced.length === 1 ? 'is' : 'are'} on an account whose type isn't known, so ${unplaced.length === 1 ? "it isn't" : "they aren't"} in this forecast.`
     );
   return notes;

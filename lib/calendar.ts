@@ -4,7 +4,9 @@
 // posted transactions, and from today on the bills and income expected
 // (lib/recurring.ts), the items planned (lib/planned.ts) and the card and
 // loan payments Plaid says are due (lib/liabilities.ts), with a figure for
-// each day. Pure; "today" is the viewer's own day (lib/local-date.ts).
+// each day. Upcoming's list (components/UpcomingList.tsx) is the same days
+// from today to the forecast's range's end (upcomingDays). Pure; "today" is
+// the viewer's own day (lib/local-date.ts).
 //
 // A DAY'S FIGURES, one for what posted and one for what is expected, never
 // added together: one is the bank's record, the other an estimate.
@@ -318,6 +320,45 @@ export function calendarMonth(opts: {
     days.set(date, { date, entries: list, posted: posted === null ? null : posted / scale, expected: expected === null ? null : expected / scale });
   }
   return { month, weeks: monthWeeks(month), days };
+}
+
+/** A day of Upcoming's list: what is expected or due on it, and its
+ *  expected figure (null when nothing on it counts). */
+export type UpcomingDay = Pick<CalendarDay, 'date' | 'entries' | 'expected'>;
+
+/** The days from today through `until` with something expected or due on
+ *  them, first to last: the calendar's own months, read with no
+ *  transactions (they only make what posted), so the list and the calendar
+ *  list the same entries by the same rules. */
+export function upcomingDays(opts: {
+  today: string;
+  until: string;
+  series: readonly RecurringSeries[];
+  planned: readonly PlannedItem[];
+  dismissed?: ReadonlySet<string>;
+  dues?: readonly DuePayment[];
+  /** The currency the day's figures are in (the calendar's). */
+  currency: string | null;
+  fx?: FxTable | null;
+}): UpcomingDay[] {
+  const { today, until } = opts;
+  const out: UpcomingDay[] = [];
+  for (let month = today.slice(0, 7); month <= until.slice(0, 7); month = addMonths(month, 1)) {
+    const view = calendarMonth({
+      month,
+      today,
+      txns: [],
+      series: opts.series,
+      planned: opts.planned,
+      dismissed: opts.dismissed,
+      dues: opts.dues,
+      currency: opts.currency,
+      fx: opts.fx,
+    });
+    for (const day of view.days.values())
+      if (day.date >= today && day.date <= until && day.entries.length > 0) out.push({ date: day.date, entries: day.entries, expected: day.expected });
+  }
+  return out;
 }
 
 /** The payments due that Plaid reports on visible cards and loans, from the

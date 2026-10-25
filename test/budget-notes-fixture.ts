@@ -205,7 +205,7 @@ export const CARD = {
 
 /** A note's level by its class, before 6a2 (stale-note, chart-note,
  *  panel-note) and after (the Notice's levels, helper); empty-note both. */
-function levelOf(cls: string): string | null {
+export function levelOf(cls: string): string | null {
   const c = new Set(cls.split(/\s+/));
   if (c.has('notice')) return c.has('critical') ? 'critical' : c.has('caution') ? 'caution' : c.has('info') ? 'info' : c.has('done') ? 'done' : null;
   if (c.has('error')) return 'critical';
@@ -219,8 +219,9 @@ function levelOf(cls: string): string | null {
 const decode = (s: string) => s.replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
 /** Each note in rendered markup, as its words (what a screen reader is
- *  given first included: "Caution: ") and its level. */
-export function notesIn(html: string): { text: string; level: string }[] {
+ *  given first included: "Caution: ") and its level, read from its classes
+ *  (by `levelOf`, unless another reading is given). */
+export function notesIn(html: string, classify: (cls: string) => string | null = levelOf): { text: string; level: string }[] {
   const out: { text: string; level: string }[] = [];
   const open: { level: string | null; text: string[] }[] = [];
   const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
@@ -232,7 +233,7 @@ export function notesIn(html: string): { text: string; level: string }[] {
     } else if (m[2]) {
       if (VOID.has(m[2].toLowerCase()) || m[4] === '/') continue;
       const cls = m[3]?.match(/\sclass="([^"]*)"/)?.[1] ?? '';
-      open.push({ level: levelOf(cls), text: [] });
+      open.push({ level: classify(cls), text: [] });
     } else if (m[5]) {
       for (const o of open) o.text.push(decode(m[5]));
     }

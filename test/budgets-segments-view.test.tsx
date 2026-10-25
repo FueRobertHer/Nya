@@ -98,19 +98,25 @@ function mount(props: Props = {}) {
     );
   render(props);
   const all = (test: (e: FakeElement) => boolean) => host.findAll(test);
-  const tab = (label: string) => all((e) => e.getAttribute('role') === 'tab' && e.textContent === label)[0];
-  const panels = () => all((e) => e.getAttribute('role') === 'tabpanel');
+  // The bar's tabs and the segments' panels, not Upcoming's own List and
+  // Calendar inside one.
+  const bar = () => all((e) => e.getAttribute('role') === 'tablist' && e.getAttribute('aria-label') === 'Budgets')[0];
+  const tabs = () => bar().findAll((e) => e.getAttribute('role') === 'tab');
+  const tab = (label: string) => tabs().filter((e) => e.textContent === label)[0];
+  const panels = () => all((e) => e.getAttribute('role') === 'tabpanel' && e.getAttribute('class') === 'budgets-panel');
   const panelOf = (label: string) => panels().find((p) => p.getAttribute('aria-labelledby') === tab(label).getAttribute('id'))!;
   return {
     host,
     render,
     all,
+    bar,
+    tabs,
     tab,
     panelOf,
     button: (label: string) => all((e) => e.getAttribute('aria-label') === label)[0],
     // The month's pick, named by the month it lies over.
     pick: () => all((e) => e.tagName === 'SELECT' && (e.getAttribute('aria-label') ?? '').startsWith('Month to show'))[0],
-    selected: () => all((e) => e.getAttribute('role') === 'tab' && e.getAttribute('aria-selected') === 'true').map((e) => e.textContent),
+    selected: () => tabs().filter((e) => e.getAttribute('aria-selected') === 'true').map((e) => e.textContent),
     // The panels a person can see.
     shown: () => panels().filter((p) => !p.hasAttribute('hidden')),
     heading: () => all((e) => e.tagName === 'H2' && e.getAttribute('class') === 'budgets-title')[0],
@@ -162,7 +168,7 @@ describe('Budgets: the bar and its segments', () => {
 
   test('the arrow keys, Home and End move between the segments and choose as they go', () => {
     const v = mount();
-    const [list] = v.all((e) => e.getAttribute('role') === 'tablist');
+    const list = v.bar();
     key(list, 'ArrowRight');
     expect(v.selected()).toEqual(['Upcoming']);
     expect(dom.document.activeElement).toBe(v.tab('Upcoming'));
@@ -173,7 +179,7 @@ describe('Budgets: the bar and its segments', () => {
     key(list, 'End');
     key(list, 'Home');
     expect(v.selected()).toEqual(['Month']);
-    expect(v.all((e) => e.getAttribute('role') === 'tab').map((e) => e.getAttribute('tabindex'))).toEqual(['0', '-1', '-1']);
+    expect(v.tabs().map((e) => e.getAttribute('tabindex'))).toEqual(['0', '-1', '-1']);
     v.unmount();
   });
 
@@ -217,20 +223,39 @@ describe('Budgets: the bar and its segments', () => {
     only.unmount();
   });
 
-  test('another segment and back: the month picked and what was typed are still there', () => {
-    // A draft inline in a panel (adding a budget is a sheet since 6a2): the
-    // forecast's warning, being changed.
+  test('another segment and back: the month picked, how far ahead, List or Calendar, and what was typed are still there', async () => {
+    // What holds state outside a sheet (the warning's figure is typed in a
+    // sheet since 6a3): the forecast's range, the view of what is coming,
+    // and the what-if's amount, kept after its sheet closes.
     const checking = { account_id: 'chk', name: 'Checking', type: 'depository', subtype: 'checking', balance: 1900, currency: 'USD' };
     const v = mount({ institutions: [{ institution_name: 'Chase', item_id: 'item_1', accounts: [checking] }], onSavePlanned: async () => true });
+    const settle = (ms = 5) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+    const upcoming = () => v.panelOf('Upcoming');
+    const range = (label: string) => upcoming().findAll((e) => e.getAttribute('role') === 'radio' && e.textContent === label)[0];
+    const view = (label: string) => upcoming().findAll((e) => e.getAttribute('role') === 'tab' && e.textContent === label)[0];
+    const whatIf = () => upcoming().findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'What if I buy…')[0];
+    const dialog = () => upcoming().findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0];
+    const amount = () => dialog().findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith('Amount'))[0].findAll((e) => e.tagName === 'INPUT')[0];
     act(() => click(v.tab('Upcoming')));
-    act(() => click(v.panelOf('Upcoming').findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'Change')[0]));
-    const warn = v.button('Warn when the forecast drops below, in USD');
-    act(() => type(warn, '250'));
+    act(() => click(range('60 days')));
+    act(() => click(view('Calendar')));
+    act(() => click(whatIf()));
+    await settle();
+    act(() => type(amount(), '250'));
+    act(() => click(dialog().findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'Done')[0]));
+    // Slid out and gone from the page.
+    await settle(400);
+    expect(upcoming().findAll((e) => e.getAttribute('role') === 'dialog')).toHaveLength(0);
     act(() => click(v.tab('Goals')));
     act(() => click(v.tab('Upcoming')));
-    // The same field, keeping what was typed, since the panel stayed mounted.
-    expect(v.button('Warn when the forecast drops below, in USD') === warn).toBe(true);
-    expect(warn.value).toBe('250');
+    // As they were, since the panel stayed mounted.
+    expect(range('60 days').getAttribute('aria-checked')).toBe('true');
+    expect(view('Calendar').getAttribute('aria-selected')).toBe('true');
+    act(() => click(whatIf()));
+    await settle();
+    expect(amount().value).toBe('250');
+    act(() => click(dialog().findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'Done')[0]));
+    await settle(400);
     act(() => click(v.tab('Month')));
     act(() => click(v.button('Earlier month')));
     act(() => click(v.tab('Goals')));
