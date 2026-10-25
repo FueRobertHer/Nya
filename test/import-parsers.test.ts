@@ -36,17 +36,32 @@ function ready(text: string, options: ImportOptions = {}): Extract<ReadResult, {
 }
 const rows = (records: RawRecord[]) => normalizeRecords(records, { today: TODAY, currency: 'USD' });
 
-/** The processor time since `started` (process.cpuUsage()), in milliseconds:
- *  the work this process did (the collector's threads included), never the
- *  wall clock's time, which a machine busy with other work stretches. The
- *  bounds below are on it. What they guard against is a read whose work
- *  grows faster than the file (a 3 MB file read in quadratic time takes
- *  minutes, not seconds); each is a few times the most the read takes here
- *  (at most about a second of processor time, for the largest), and a busy
- *  machine leaves the work as it is. */
-function cpuMs(started: NodeJS.CpuUsage): number {
-  const { user, system } = process.cpuUsage(started);
-  return (user + system) / 1000;
+/** How long `read` takes, in milliseconds: the smaller of its processor time
+ *  (process.cpuUsage()) and its wall clock's time. Both hold the read's own
+ *  work plus noise of their own: the processor time counts the whole
+ *  process, the collector's and compiler's threads included (and so work an
+ *  earlier test left them), and the wall clock stretches on a machine busy
+ *  with other work. So the smaller is the closer. A full collection before
+ *  each run keeps an earlier test's garbage off the read's time, and the best
+ *  of three runs counts, stopping at the first under `under` (with none, all
+ *  three run): a busy machine only ever adds time, and a read really too slow
+ *  is over every time. A test whose bound is more than a second gives itself
+ *  a timeout with room for the three. The bounds below are on it. What they
+ *  guard against is a read whose work grows faster than the file (a 3 MB
+ *  file read in quadratic time takes minutes, not seconds), not a slow
+ *  machine; each is a few times the most the read takes here. */
+function readMs(read: () => unknown, under = 0): number {
+  let best = Infinity;
+  for (let run = 0; run < 3 && best >= under; run++) {
+    Bun.gc(true);
+    const cpu = process.cpuUsage();
+    const wall = performance.now();
+    read();
+    const wallMs = performance.now() - wall;
+    const { user, system } = process.cpuUsage(cpu);
+    best = Math.min(best, wallMs, (user + system) / 1000);
+  }
+  return best;
 }
 
 describe('reading a file as text', () => {
@@ -387,9 +402,9 @@ describe('OFX that isn’t tidy', () => {
     const deep = `${head}<OFX>${'<X>'.repeat(20_000)}${'</X>'.repeat(20_000)}${stmt(trn('<TRNTYPE>DEBIT<DTPOSTED>20260903<TRNAMT>-1<FITID>E1<NAME>Deep')).slice(head.length + 5)}`;
     expect(() => parseOfx(deep)).not.toThrow();
     const claim = stmt(trn('<TRNTYPE>DEBIT<DTPOSTED>20260903<TRNAMT>-1<FITID>E2<NAME>One'), '<NTRN>1000000000<INTU.ROWS>999999999999');
-    const started = process.cpuUsage();
-    expect(ready(claim).records).toHaveLength(1);
-    expect(cpuMs(started)).toBeLessThan(1000);
+    let records: unknown;
+    expect(readMs(() => (records = ready(claim).records), 1000)).toBeLessThan(1000);
+    expect(records).toHaveLength(1);
   });
 
   test('more transactions than one import takes: the file is refused whole, never cut short', () => {
@@ -588,11 +603,11 @@ describe('CSV in general', () => {
   test('a billion-row claim, and a file of nothing but separators and line breaks, are bounded by what is there', () => {
     const claim = 'Rows: 1000000000\nDate,Description,Amount\n2026-09-01,Only one,-1\n';
     expect(ready(claim, map({ date: 0, description: 1, amount: 2 })).records).toHaveLength(1);
-    const started = process.cpuUsage();
-    const junk = readCsvTable(',,,\n'.repeat(750_000));
-    expect(cpuMs(started)).toBeLessThan(3000);
+    const separators = ',,,\n'.repeat(750_000);
+    let junk: unknown;
+    expect(readMs(() => (junk = readCsvTable(separators)), 3000)).toBeLessThan(3000);
     expect(junk).toEqual({ error: 'This file is empty.' });
-  });
+  }, 15_000);
 
   test('more rows than one import takes: refused whole', () => {
     const text = 'Date,Description,Amount\n' + Array.from({ length: MAX_IMPORT_ROWS + 1 }, (_, i) => `2026-09-01,Row ${i},-1`).join('\n');
@@ -921,13 +936,13 @@ describe('files built to be large in the wrong way', () => {
     let wide = '';
     while (wide.length < MB3 - 64) wide += 'a,';
     wide += '\n';
-    const started = process.cpuUsage();
-    expect(readImport(wide, { options: {}, thisYear: YEAR })).toEqual({
+    let refused: unknown;
+    expect(readMs(() => (refused = readImport(wide, { options: {}, thisYear: YEAR })), 500)).toBeLessThan(500);
+    expect(refused).toEqual({
       status: 'error',
       format: 'csv',
       error: `Line 1 of this file has more than ${MAX_CSV_COLUMNS} fields, more than a bank’s export has, so it can’t be read as a table.`,
     });
-    expect(cpuMs(started)).toBeLessThan(500);
     // A data line as wide is refused the same way; a table as wide as any
     // bank's reads.
     const header = Array.from({ length: MAX_CSV_COLUMNS }, (_, i) => (i === 0 ? 'Date' : i === 1 ? 'Description' : i === 2 ? 'Amount' : `Extra ${i}`)).join(',');
@@ -945,13 +960,13 @@ describe('files built to be large in the wrong way', () => {
   test('a QIF file of 286,000 accounts is refused at the one past the limit', () => {
     let many = '';
     while (many.length < MB3 - 16) many += '!Type:Bank\n';
-    const started = process.cpuUsage();
-    expect(readImport(many, { options: {}, thisYear: YEAR })).toEqual({
+    let refused: unknown;
+    expect(readMs(() => (refused = readImport(many, { options: {}, thisYear: YEAR })), 1000)).toBeLessThan(1000);
+    expect(refused).toEqual({
       status: 'error',
       format: 'qif',
       error: `This file holds more than ${MAX_STATEMENTS} accounts, more than one import can choose from. Export one account at a time.`,
     });
-    expect(cpuMs(started)).toBeLessThan(1000);
     const fifty = Array.from({ length: MAX_STATEMENTS }, (_, i) => `!Account\nNAccount ${i}\nTBank\n^\n!Type:Bank\nD09/01/2026\nT-1.00\nPA\n^`).join('\n');
     const asked = readImport(fifty, { options: {}, thisYear: YEAR });
     expect(asked.status === 'statement' ? asked.statements.length : asked.status).toBe(MAX_STATEMENTS);
@@ -961,17 +976,17 @@ describe('files built to be large in the wrong way', () => {
     const one = '<STMTRS><CURDEF>USD<BANKTRANLIST><STMTTRN><DTPOSTED>20261001<TRNAMT>-1<FITID>1<NAME>a</STMTTRN></BANKTRANLIST></STMTRS>';
     let many = '<OFX><BANKMSGSRSV1><STMTTRNRS>';
     while (many.length < MB3 - one.length) many += one;
-    const started = process.cpuUsage();
-    expect(readImport(many, { options: {}, thisYear: YEAR })).toEqual({
+    let refused: unknown;
+    expect(readMs(() => (refused = readImport(many, { options: {}, thisYear: YEAR })), 2000)).toBeLessThan(2000);
+    expect(refused).toEqual({
       status: 'error',
       format: 'ofx',
       error: `This file holds more than ${MAX_STATEMENTS} statements, more than one import can choose from. Export one account at a time.`,
     });
-    expect(cpuMs(started)).toBeLessThan(2000);
     const fifty = `<OFX><BANKMSGSRSV1><STMTTRNRS>${one.repeat(MAX_STATEMENTS)}`;
     const asked = readImport(fifty, { options: {}, thisYear: YEAR });
     expect(asked.status === 'statement' ? asked.statements.length : asked.status).toBe(MAX_STATEMENTS);
-  });
+  }, 15_000);
 
   test('a question stays small: column names and the first rows cut short, and without control characters', () => {
     const cell = `x\u0001‮${'y'.repeat(5_000)}`;
@@ -1233,35 +1248,60 @@ describe('the review’s other probes, kept as tests', () => {
 
   test('every hostile file the review tried is read or refused quickly, with a small answer', () => {
     const MB3 = 3 * 1024 * 1024;
-    const fill = (unit: string, prefix = '', suffix = '') => {
-      const n = Math.max(0, Math.floor((MB3 - prefix.length - suffix.length) / unit.length));
-      return prefix + unit.repeat(n) + suffix;
+    // Each file `size` characters long, so it can be read at an eighth of
+    // its size as well.
+    const hostile = (size: number) => {
+      const fill = (unit: string, prefix = '', suffix = '') => {
+        const n = Math.max(0, Math.floor((size - prefix.length - suffix.length) / unit.length));
+        return prefix + unit.repeat(n) + suffix;
+      };
+      const ofxHead = '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD<BANKTRANLIST>';
+      return [
+        fill('<A>', ofxHead),
+        fill('<STMTTRN>', ofxHead, '</STMTTRN>'.repeat(10)),
+        fill('<STMTTRN><TRNAMT>-1.00<DTPOSTED>20261001<FITID>x<NAME>y', ofxHead),
+        fill('<A' + ' '.repeat(199) + '<', ofxHead),
+        fill('<', ofxHead),
+        fill('&#x10FFFF;&amp;&#1234567;', ofxHead + '<STMTTRN><NAME>'),
+        ofxHead + '<!--' + 'x'.repeat(size - 100),
+        fill('<![CDATA[<x>]]>', ofxHead + '<STMTTRN><NAME>'),
+        'Date,Description,Amount\n2026-10-01,"' + 'x'.repeat(size - 100) + '",1\n',
+        '\n'.repeat(size),
+        '"'.repeat(size),
+        fill('"",', 'Date,Description,Amount\n'),
+        fill('Mxxxxxxxxx\n', '!Type:Bank\nD1/1/26\nT-1\nPa\n'),
+        fill('D1/13/26\nT-1\nPa\n^\n', '!Type:Bank\n'),
+      ];
     };
-    const ofxHead = '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD<BANKTRANLIST>';
-    const files = [
-      fill('<A>', ofxHead),
-      fill('<STMTTRN>', ofxHead, '</STMTTRN>'.repeat(10)),
-      fill('<STMTTRN><TRNAMT>-1.00<DTPOSTED>20261001<FITID>x<NAME>y', ofxHead),
-      fill('<A' + ' '.repeat(199) + '<', ofxHead),
-      fill('<', ofxHead),
-      fill('&#x10FFFF;&amp;&#1234567;', ofxHead + '<STMTTRN><NAME>'),
-      ofxHead + '<!--' + 'x'.repeat(MB3 - 100),
-      fill('<![CDATA[<x>]]>', ofxHead + '<STMTTRN><NAME>'),
-      'Date,Description,Amount\n2026-10-01,"' + 'x'.repeat(MB3 - 100) + '",1\n',
-      '\n'.repeat(MB3),
-      '"'.repeat(MB3),
-      fill('"",', 'Date,Description,Amount\n'),
-      fill('Mxxxxxxxxx\n', '!Type:Bank\nD1/1/26\nT-1\nPa\n'),
-      fill('D1/13/26\nT-1\nPa\n^\n', '!Type:Bank\n'),
-    ];
-    for (const file of files) {
-      const started = process.cpuUsage();
-      const r = readImport(file, { options: {}, thisYear: YEAR });
-      expect(cpuMs(started), file.slice(0, 40)).toBeLessThan(3000);
+    const read = (file: string) => readImport(file, { options: {}, thisYear: YEAR });
+    const eighths = hostile(MB3 / 8);
+    // What this guards against is a read whose work grows faster than the
+    // file (read in quadratic time, a 3 MB file takes minutes), so each file's
+    // time is held against its own eighth's, read just before on the same
+    // machine, and not against a fixed number of milliseconds, which a CI
+    // runner about three times slower than a laptop once ran past on a file
+    // read in linear time. Eight times the file is eight times the work in
+    // linear time (more in practice, up to 23 times measured on one busy core)
+    // and 64 times in quadratic; the bound is 32 times, plus 50 ms for a read
+    // too short to time closely. That catches a read whose extra work is
+    // several times its linear work; a milder slowdown is left to a ceiling of
+    // 6 s, where the slowest takes about 1 s here. The eighth always runs
+    // three times, so a run slowed anyway can't loosen the bound.
+    hostile(MB3).forEach((file, i) => {
+      // The OFX files share their first 63 characters.
+      const label = `file ${i}, ${JSON.stringify(file.slice(0, 100))}`;
+      const small = readMs(() => read(eighths[i]));
+      const growth = 32 * small + 50;
+      let r!: ReadResult;
+      const ms = readMs(() => (r = read(file)), Math.min(growth, 6000));
+      expect(ms, label).toBeLessThan(growth);
+      expect(ms, label).toBeLessThan(6000);
       // Whatever it is, what is answered stays small: a question, an error,
       // or records with at most 10,000 rows of bounded fields.
       const answer = r.status === 'ready' ? { ...r, records: r.records.length, problems: r.problems.length } : r;
-      expect(JSON.stringify(answer).length, file.slice(0, 40)).toBeLessThan(250_000);
-    }
-  }, 60_000);
+      expect(JSON.stringify(answer).length, label).toBeLessThan(250_000);
+    });
+    // Room for the reruns on a slow runner, so a file over its bound is
+    // named rather than lost to the timeout.
+  }, 120_000);
 });
