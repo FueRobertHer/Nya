@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import CashFlowSankey, { FlowShown } from '@/components/CashFlowSankey';
+import { DrawnWidth } from '@/components/drawn-width';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
 import { cashFlow, inPeriod, periodCaption, periodEnding, periodOf, pickedRows, type FlowPick } from '@/lib/cash-flow';
@@ -87,8 +88,20 @@ const ROWS: Txn[] = [
   row(day(11, lastMonth), 'Whole Foods', 300, 'groceries'),
 ];
 
-const sankey = (props: Partial<Parameters<typeof CashFlowSankey>[0]> = {}) =>
-  renderToStaticMarkup(<CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" onPick={() => {}} {...props} />);
+const sankey = (props: Partial<Parameters<typeof CashFlowSankey>[0]> = {}, width?: number) =>
+  renderToStaticMarkup(
+    width === undefined ? (
+      <CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" onPick={() => {}} {...props} />
+    ) : (
+      <DrawnWidth.Provider value={width}>
+        <CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" onPick={() => {}} {...props} />
+      </DrawnWidth.Provider>
+    )
+  );
+// Near the narrowest a chart in dollars draws its fourth column, of
+// categories, at (components/CashFlowSankey.tsx fitsCategories): a label
+// there has about 108px, so names are cut beside their amounts.
+const FOUR = 380;
 
 describe('the issue’s acceptance, through the views themselves', () => {
   test('money in on the chart is the Activity tab’s money in for the same month, to the cent', () => {
@@ -180,7 +193,7 @@ describe('the chart', () => {
   });
 
   test('a tall node whose name one line would cut puts it on a line of its own, above its amount; a thin one keeps one line', () => {
-    const html = sankey();
+    const html = sankey({}, FOUR);
     expect(html).toMatch(/<tspan class="sankey-name" x="[\d.]+" dy="-0.25em">Rent and utilities<\/tspan><tspan class="sankey-amount" x="[\d.]+" dy="1.2em">\$2\.1K<\/tspan>/);
     expect(html).toContain('<tspan class="sankey-name">Restaurants </tspan><tspan class="sankey-amount">$96</tspan>');
   });
@@ -188,7 +201,7 @@ describe('the chart', () => {
   test('Other income says so whole where it fits, else as Other, and its tooltip names whom it holds', () => {
     const payers = [row(day(1), 'Big Employer', -100_000, 'income'), ...['Ann', 'Bo', 'Cy'].map((name) => row(day(2), name, -500, 'income'))];
     // Four columns, so the payers' labels have a third of the width.
-    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')] });
+    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')] }, FOUR);
     expect(html).toContain('<tspan class="sankey-name">Other </tspan><tspan class="sankey-amount">$1.5K</tspan>');
     expect(html).toContain('<title>Other income: $1,500.00, 3 transactions (Ann, Bo, Cy)</title>');
     const small = sankey({ txns: [row(day(1), 'Big Employer', -3000, 'income'), ...['Ann', 'Bo'].map((name) => row(day(2), name, -20, 'income'))] });
@@ -219,9 +232,10 @@ describe('the chart', () => {
 
   test('the node whose transactions are listed is marked, and its ribbons lit', () => {
     const food = taxonomy.groups.find((g) => g.name === 'Food')!.id;
-    const html = sankey({ pick: { period: 'this-month', node: `group:${food}`, label: 'Food' } });
+    const html = sankey({ pick: { period: 'this-month', node: `group:${food}`, label: 'Food' } }, FOUR);
     expect(html).toContain('sankey-svg sankey-picking');
     expect(html).toContain('class="sankey-node out tappable picked"');
+    // Its ribbon in, and one to each of its two categories.
     expect((html.match(/sankey-link[^"]* lit"/g) ?? []).length).toBe(3);
     // A pick from another period marks nothing here.
     expect(sankey({ pick: { period: 'last-month', node: `group:${food}`, label: 'Food' } })).not.toContain('picked');
@@ -480,7 +494,7 @@ describe('split and grouped transactions (#39)', () => {
   });
 
   test('a fold’s tooltip counts the transaction once, though two of its parts are in it', () => {
-    expect(sankey({ txns: rows })).toContain('<title>Other: $20.00, 1 transaction (Groceries, Restaurants)</title>');
+    expect(sankey({ txns: rows }, FOUR)).toContain('<title>Other: $20.00, 1 transaction (Groceries, Restaurants)</title>');
   });
 
   test('a tap on a category lists the split transaction whole with the part in it under it, still said to be split in two; on a group’s payer, the group’s row with its transactions', () => {

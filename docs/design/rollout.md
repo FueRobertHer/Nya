@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips) and 5c (Spending's one period) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period) and 5d (its charts' text) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -242,6 +242,20 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 - **The charts' text** (4a's chart pass): SVG text scales with its viewBox (Income vs spend's 10px ticks draw at 7 to 8.5px on a phone), so 12px means drawing each chart at its own width rather than a class change. Activity's charts (Income vs spend, the cash flow's labels, Net by month's figures) are 5d; the charts on Home, Budgets, Plan and Reports, which share the classes, follow with phase 6.
 - **The figures twice on Spending**, in the cash flow's row and the In / Out / Net card: merging them means the cash flow saying the card's notes.
 - **A row dated after today** counts in the period's totals but isn't drawn in Income vs spend, which stops at today, as it did for this month.
+
+**Built in 5d:** Activity's charts are drawn at their own width, so their text is 12px (`--fs-1`) on a phone and on a wide card. `components/drawn-width.ts` (`useDrawnWidth`) reads the width a chart's svg is laid out at as it mounts, before it is painted, and follows it with a ResizeObserver; it rounds down to a whole pixel, keeps the last width while the svg isn't laid out, and draws at 340 (or what a `DrawnWidth` provider says) where nothing can be measured. A viewBox unit is then a CSS pixel. **Income vs spend** keeps its shape (150 to 340) at every width, with 4px more under its baseline for the 12px dates and 2px more over its top tick; its ticks and dates take `.at-width .chart-tick` and `.at-width .chart-xlabel`, so the charts still on a fixed viewBox keep their look until phase 6. **The cash flow** is laid out at its width (up to its 560px) with 12px labels a 14px line apart, taller on a wide card in the shape it had. Where a label between two columns has no room for about seven letters beside the widest amount the currency writes, as on a phone, it draws **three columns**: payers, everything counted and the groups; the table under it lists their categories, each a button as a tap on the chart is, and the chart's notes say so. **Net by month**'s figures and months are 12px, its columns as wide as the widest month's figure the currency writes (a CSS custom property, `--trend-col`), so no figure widens its own. A card's header (`.inst-header`) wraps a hint too long to sit beside its title, with a gap, rather than running them together (Net by month's "tap a month to end on it" did at 320px).
+
+**Decided in 5d:**
+
+- **Drawn at its width, not counter-scaled text.** Scaling only the font against the viewBox would make the text 12px, but the cash flow fits its labels in JavaScript (`fitBeside`, `amountRoom`), which needs the width they are drawn at; text drawn as HTML over the svg would repeat the labels' halos, cuts, masks and tap areas.
+- **Three columns on a phone** (chosen over four columns with every label on two lines, which still can't fit a euro or yen amount in 64px, and over a chart scrolling sideways). At 12px a four-column label on a 320px phone has 64px, of which a dollar amount takes 53, and a euro amount (81px) doesn't fit at all. Which is drawn is worked out from the width and the currency, never the amounts, so hiding them changes nothing.
+- **Net by month's columns grow** from 42 to 64px (in dollars, euros or yen, the widest figure each writes, up to billions), so a phone shows about four months at once rather than six; the row already scrolls, the newest month pinned at its right.
+
+**Kept narrow in 5d:**
+
+- **The other charts** (net worth, forecast, runway, the plan's fan, debt payoff, allocation) keep their fixed viewBox and 10px text: phase 6 moves them to `useDrawnWidth`, after which `.at-width` folds into `.chart-tick` and `.chart-xlabel`. So do `.chart-note` (11px, under many charts) and the gridlines' two hex colors in Income vs spend.
+- **The cash flow's In / Out / Net row** runs past a 320px phone when the figures reach six digits ($259,080.00), as it does on `main`: its own fix.
+- **Income vs spend's lowest tick** ("$0") sits on the lines where they start, as its ticks always have, now at 12px.
 
 ## Phase 6: Budgets and Plan
 

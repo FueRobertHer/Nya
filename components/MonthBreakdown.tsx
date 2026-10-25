@@ -16,11 +16,12 @@
 // reports. Each row shows the name of the category it is filed under
 // (lib/categories.ts), so renaming a category renames it here at once.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivitySegment } from "./ActivityBar";
 import ReportsEntry from "./ReportsEntry";
 import MonthFlowChart from "./MonthFlowChart";
-import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { amountSamples, compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
 import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
@@ -226,6 +227,15 @@ export function emptyListWords(on: { query: boolean; tag: boolean; review: boole
 // Compact, signed, for the net-bar value labels: +$1.2K / -$340.
 function fmtCompactSigned(n: number, currency: string | null): string {
   return `${n < 0 ? "-" : "+"}${compactMoney(Math.abs(n), currency)}`;
+}
+
+// How wide Net by month's columns are, in px: the widest a month's figure
+// can be in `currency` at its 12px (lib/format.ts amountSamples), so no
+// figure widens its own column, and never under a finger's 42. From the
+// currency alone, so hiding amounts changes nothing.
+function trendColumn(currency: string | null): number {
+  const widest = Math.max(...amountSamples(currency).map((s) => textWidth(`+${s}`, 12)));
+  return Math.max(42, Math.ceil(widest) + 4);
 }
 
 // Plaid's convention: positive amounts are money leaving the account, so the
@@ -1032,7 +1042,7 @@ export default function MonthBreakdown({
                   <div className="inst-name">Net by month</div>
                   <div className="inst-total">tap a month to end on it</div>
                 </div>
-                <div className="trend-row" ref={trendRef}>
+                <div className="trend-row" ref={trendRef} style={{ "--trend-col": `${trendColumn(currency)}px` } as CSSProperties}>
                   {(() => {
                     const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
                     return trend.map(({ month: m, net }) => (

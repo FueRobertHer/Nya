@@ -33,6 +33,7 @@ import { ReportView } from '@/components/ReportView';
 import { CsvMapping, PreviewView as ImportPreview, type Picked, type Preview } from '@/components/ImportSheet';
 import { MappingStep, ReviewStep, type Question as MigrationQuestion, type Review as MigrationReview } from '@/components/MigrationSheet';
 import CashFlowSankey from '@/components/CashFlowSankey';
+import { DrawnWidth } from '@/components/drawn-width';
 import SplitSheet from '@/components/SplitSheet';
 import GroupSheet from '@/components/GroupSheet';
 import CardMode from '@/components/CardMode';
@@ -1102,18 +1103,26 @@ describe('the main screens with amounts hidden', () => {
 
   test('the cash flow is drawn from the amounts’ proportions alone: its labels, their lines and where they are tapped never move with a figure’s size, and a hidden one’s names never say it', () => {
     const names = (html: string) => [...html.matchAll(/<tspan class="sankey-name"[^>]*>([^<]*)<\/tspan>/g)].map((m) => m[1]);
-    const flow = (scale: number) => () => <CashFlowSankey txns={FLOW.map((t) => ({ ...t, amount: t.amount * scale }))} taxonomy={taxonomy} currency="USD" onPick={() => {}} />;
-    const small = both(flow(1));
-    const large = both(flow(100));
-    // The same proportions, a hundred times the figures: the same drawing,
-    // tap areas and all, shown or hidden (to a millionth of a unit, past
-    // which floating point is all that differs).
-    const near = (html: string) => shapes(html).map((s) => s.replace(/-?\d+\.\d+/g, (n) => Number(n).toFixed(6)));
-    expect(near(large.shown)).toEqual(near(small.shown));
-    expect(near(large.hidden)).toEqual(near(small.shown));
-    // Hidden, every name is cut beside the mask, whatever the figure.
-    expect(names(small.hidden).some((n) => n.endsWith('…'))).toBe(true);
-    expect(names(large.hidden)).toEqual(names(small.hidden));
+    const flow = (scale: number, width: number) => () => (
+      <DrawnWidth.Provider value={width}>
+        <CashFlowSankey txns={FLOW.map((t) => ({ ...t, amount: t.amount * scale }))} taxonomy={taxonomy} currency="USD" onPick={() => {}} />
+      </DrawnWidth.Provider>
+    );
+    // At a phone's width (three columns), the narrowest four are drawn at,
+    // where names are cut, and a wide card's.
+    for (const width of [248, 380, 560]) {
+      const small = both(flow(1, width));
+      const large = both(flow(100, width));
+      // The same proportions, a hundred times the figures: the same drawing,
+      // tap areas and all, shown or hidden (to a millionth of a unit, past
+      // which floating point is all that differs).
+      const near = (html: string) => shapes(html).map((s) => s.replace(/-?\d+\.\d+/g, (n) => Number(n).toFixed(6)));
+      expect(near(large.shown)).toEqual(near(small.shown));
+      expect(near(large.hidden)).toEqual(near(small.shown));
+      // Hidden, every name is cut beside the mask, whatever the figure.
+      if (width === 380) expect(names(small.hidden).some((n) => n.endsWith('…'))).toBe(true);
+      expect(names(large.hidden)).toEqual(names(small.hidden));
+    }
     // The room kept is the widest any label writes in the currency here.
     for (const s of amountSamples('USD')) expect(s).toMatch(/^\$[\d.,]+[KMBT]?$/);
   });

@@ -62,7 +62,7 @@ Defined in `tokens.css` and copied into `app/globals.css`; Clerk's appearance an
 
 Today white on the accent button is 3.23:1 and white on the danger button 3.32:1; both fail. That is why the button fill is a deeper blue than the accent text in dark.
 
-**Charts** use the same tokens: `--pos` and `--neg` for in and out, `--accent` for the selected series, `--text-3` for ticks, `--border-subtle` for gridlines. The hardcoded `#262a33`, `#3a4150`, `#8b8f98` and `#6b7080` in the chart components go.
+**Charts** use the same tokens: `--pos` and `--neg` for in and out, `--accent` for the selected series, `--text-3` for ticks, `--border-subtle` for gridlines. The hardcoded `#262a33`, `#3a4150`, `#8b8f98` and `#6b7080` in the chart components go. A chart **drawn at its own width** (`useDrawnWidth`, `components/drawn-width.ts`: Income vs spend and the cash flow since phase 5d, the other charts with phase 6) has a viewBox as wide as it is laid out, so a viewBox unit is a CSS pixel and its text is `--fs-1` (12px) at every width, never scaled down on a phone. A chart on a fixed viewBox draws its text at a fraction of its size on a phone (10px at 340 units is 7.3px on a 248px card).
 
 **Print** keeps its own light palette (it already overrides tokens in `@media print`); it should be rebuilt on the light tokens so the two stay in step.
 
