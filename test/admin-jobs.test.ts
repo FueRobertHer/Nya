@@ -100,7 +100,7 @@ describe('the nightly jobs route', () => {
     process.env.VERCEL_ENV = 'preview';
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
     process.env.CLERK_SECRET_KEY = 'sk_test_x';
-    process.env.DEMO_USER_IDS = 'user_demo';
+    process.env.DEMO_USER_IDS = 'user_demo:Alex';
     clerk.signedIn = 'user_demo';
     const res = await post({ job: 'backup' });
     expect(res.status).toBe(403);

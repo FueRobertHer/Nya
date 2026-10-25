@@ -4,9 +4,9 @@ name: Sync preview with main
 # nya-git-preview-*.vercel.app shows shipped work without anyone remembering to
 # merge. Pushing here also triggers the Vercel preview deployment.
 #
-# This merges main INTO preview and never the other way round: preview carries
-# commits that are deliberately not on main (the one-click login button), so a
-# merge is used rather than a reset, which would delete them.
+# This merges main INTO preview and never the other way round: preview may
+# carry a branch merged into it by hand before it reaches main, so a merge is
+# used rather than a reset, which would delete it.
 
 on:
   push:

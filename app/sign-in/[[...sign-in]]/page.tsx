@@ -8,8 +8,8 @@ import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 import DeletionReceiptNotice from '@/components/DeletionReceipt';
 
 // Clerk's sign-in (lib/auth-mode.ts). Without Clerk keys the app signs in with
-// the shared password instead. On Preview, one-click demo accounts above it
-// (lib/demo.ts). A deletion of an account ends here, so its receipt is shown
+// the shared password instead. Off production, the one-click demo accounts,
+// Alex and Sam, above it (lib/demo.ts). A deletion of an account ends here, so its receipt is shown
 // here too, above everything (components/DeletionReceipt.tsx).
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (!clerkEnabled()) redirect('/login');

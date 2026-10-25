@@ -61,7 +61,7 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `CSP_MODE` | optional | How pages send their Content-Security-Policy: `report-only` (the default), `enforce` or `off`. See [Security headers](#security-headers-and-the-content-security-policy). |
 | `CONTAINER_ID` | optional | Which container this deployment serves. See [operations.md](operations.md#containers). |
 | `REDIS_PREFIX` | optional | Overrides the key namespace (defaults to the Vercel environment name, or `dev` locally). |
-| `DEMO_USER_IDS` | optional | Preview only: one-click demo accounts. |
+| `DEMO_USER_IDS` | optional | Every environment but Production: the two one-click demo accounts, Alex and Sam. See [authentication.md](authentication.md#demo-accounts). |
 | `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, and about each download of someone's data, new API token, restore, undo or emptying of an account, and the weekly summary for those who turn it on, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
 | `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Without it nothing is sent, and `/privacy` and `/security` name no email service. Ignored with Clerk, where each account's notices go to its own verified address. |
 | `APP_URL` | optional | The app's public `https` address, for the link in a notice email (`http://localhost:3000` works locally). Unset, the email says to open Nya without a link, and no weekly summary goes: each must carry its link to turn it off. |
@@ -211,7 +211,7 @@ Plaid Link and Clerk load scripts, frames and connections that only a live sessi
 2. Open the deployment in Chrome in a window without extensions (a guest profile, or Incognito with extensions off), open DevTools on the **Console** tab, and tick **Preserve log**, so messages survive the redirects of signing in.
 3. In the **Network** tab, click the request for the page itself and check its response headers include `content-security-policy-report-only` with a `'nonce-...'` and `'strict-dynamic'`.
 4. Go through every flow:
-   - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows, and on Preview with a demo button too;
+   - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows, and off production with the Alex and Sam demo buttons too;
    - open the account menu, **Manage account**, each page of the account window (Data & privacy included), then sign out from it;
    - **Connect a bank or card** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank), then, with `PLAID_BROKERAGE_LINK=1`, **Connect a brokerage or retirement account** once too;
    - **Reconnect** and **Add or remove accounts** on a connected institution;
@@ -230,7 +230,7 @@ There is no reporting endpoint: violations go only to the console of the browser
 
 Every branch you push gets a stable URL, `https://nya-git-<branch>-<team-slug>.vercel.app`, which repoints to that branch's newest deployment on every push (slashes in a branch name become dashes). Each individual build also keeps an immutable `https://nya-<hash>-<team-slug>.vercel.app` that never moves, which is what to send someone when you mean one exact version.
 
-This repo keeps a long-lived `preview` branch so that URL is predictable instead of changing with every feature branch. Anything on `main` lands there on its own: [`.github/workflows/sync-preview.yml`](../.github/workflows/sync-preview.yml) merges `main` into `preview` on every push to `main`, which also triggers the deployment. It merges rather than resets, so the preview-only commits below survive, and on a conflict it aborts and fails the run, leaving `preview` untouched for you to resolve by hand.
+This repo keeps a long-lived `preview` branch so that URL is predictable instead of changing with every feature branch. Anything on `main` lands there on its own: [`.github/workflows/sync-preview.yml`](../.github/workflows/sync-preview.yml) merges `main` into `preview` on every push to `main`, which also triggers the deployment. It merges rather than resets, so a branch you merged into `preview` by hand (below) stays until it reaches `main`, and on a conflict it aborts and fails the run, leaving `preview` untouched for you to resolve by hand.
 
 To see a branch that has *not* merged yet, merge it into `preview` yourself:
 
@@ -240,7 +240,7 @@ git merge your-feature-branch
 git push
 ```
 
-Treat `preview` as a throwaway integration target, never a merge source: real work reaches `main` by pull request. If it tangles, `git reset --hard origin/main && git push --force-with-lease` starts it over, at the cost of the login button described below.
+Treat `preview` as a throwaway integration target, never a merge source: real work reaches `main` by pull request. If it tangles, `git reset --hard origin/main && git push --force-with-lease` starts it over.
 
 A `?_vercel_share=` query parameter on the URL carries visitors through Deployment Protection without a Vercel account. It is a credential, so rotate it under **Settings > Deployment Protection** if the link travels further than intended.
 
@@ -257,10 +257,7 @@ Nothing here is inherited from production. A preview with no variables set build
 
 ### Demo access
 
-Two mechanisms let visitors in without credentials, both on Preview only:
-
-- **Demo accounts (Clerk).** One-click buttons on the sign-in page, on Plaid's sandbox. See [authentication.md](authentication.md#demo-accounts-preview-only).
-- **The preview login button.** The `preview` branch carries a **Use preview account** button on the shared-password login page that signs visitors in without a password. It posts `previewLogin` to `/api/login`, which mints a session only when `VERCEL_ENV` is not `production`; a production deployment refuses with a 403 and never renders the button. That commit lives on `preview` only and is deliberately not merged to `main`. It is only safe while preview has its own database.
+Visitors get in without credentials through the two demo accounts, **Alex** and **Sam**: one-click buttons on the Clerk sign-in page, on Plaid's sandbox, on every environment but Production. They are the only one-click sign-in; the shared-password login always asks for the password. See [authentication.md](authentication.md#demo-accounts).
 
 ### Gotchas
 
