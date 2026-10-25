@@ -136,7 +136,7 @@ describe('Budgets: the bar and its segments', () => {
     // Focusable by script, so Home's jump can land on it.
     expect(v.heading().getAttribute('tabindex')).toBe('-1');
     expect(v.shown()).toEqual([v.panelOf('Month')]);
-    expect(v.panelOf('Month').textContent).toContain('budgets');
+    expect(v.panelOf('Month').textContent).toContain('Spent');
     // Each tab controls its own panel, labelled by it.
     for (const label of ['Month', 'Upcoming', 'Goals']) expect(v.tab(label).getAttribute('aria-controls')).toBe(v.panelOf(label).getAttribute('id'));
     v.unmount();
@@ -218,14 +218,20 @@ describe('Budgets: the bar and its segments', () => {
   });
 
   test('another segment and back: the month picked and what was typed are still there', () => {
-    const v = mount();
-    const limit = v.button('Monthly limit');
-    act(() => type(limit, '250'));
+    // A draft inline in a panel (adding a budget is a sheet since 6a2): the
+    // forecast's warning, being changed.
+    const checking = { account_id: 'chk', name: 'Checking', type: 'depository', subtype: 'checking', balance: 1900, currency: 'USD' };
+    const v = mount({ institutions: [{ institution_name: 'Chase', item_id: 'item_1', accounts: [checking] }], onSavePlanned: async () => true });
     act(() => click(v.tab('Upcoming')));
-    act(() => click(v.tab('Month')));
+    act(() => click(v.panelOf('Upcoming').findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'Change')[0]));
+    const warn = v.button('Warn when the forecast drops below, in USD');
+    act(() => type(warn, '250'));
+    act(() => click(v.tab('Goals')));
+    act(() => click(v.tab('Upcoming')));
     // The same field, keeping what was typed, since the panel stayed mounted.
-    expect(v.button('Monthly limit') === limit).toBe(true);
-    expect(limit.value).toBe('250');
+    expect(v.button('Warn when the forecast drops below, in USD') === warn).toBe(true);
+    expect(warn.value).toBe('250');
+    act(() => click(v.tab('Month')));
     act(() => click(v.button('Earlier month')));
     act(() => click(v.tab('Goals')));
     act(() => click(v.tab('Month')));

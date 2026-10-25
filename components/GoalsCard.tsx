@@ -23,12 +23,13 @@ import type { ListStatus } from '@/lib/whole-list-store';
 import { formatMoney, hideAmountsIn, spoken } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import { goalViews, type GoalAccount, type GoalView } from '@/lib/goal-view';
-import { archivedText, goalNotes, meterLabel, outlookText, sourceNote, splitText, stateText } from '@/lib/goal-text';
+import { archivedText, gapItem, goalNotes, meterLabel, outlookText, sourceNote, splitText, stateText, type GapItem } from '@/lib/goal-text';
 import { MAX_GOALS, type Goal } from '@/lib/goal-model';
 import { useGoalFlows, type GoalFlowsState } from './goal-flows-state';
 import GoalSheet from './GoalSheet';
 import GoalPlansRepair, { type GoalPlansDamage } from './GoalPlansRepair';
 import { Masked } from './HideAmounts';
+import TotalCaveats, { type Caveat } from './TotalCaveats';
 
 export type { Goal } from '@/lib/goal-model';
 export type { GoalAccount } from '@/lib/goal-view';
@@ -120,6 +121,45 @@ export function GoalsCardView({
     return said && from ? `${said}. ${from}` : said;
   };
 
+  // What may be missing from the paces, said once at the card's top, before
+  // the goals (design-system.md "Status and honesty" rule 3), each in its
+  // words and at its level: what the server couldn't read, and each gap note
+  // two or more goals say word for word, those goals badged. A gap note only
+  // one goal says stays on it: it names a bank, not the goal, and the rows
+  // don't show the account. Built in a list, one at a time.
+  const projected = views.some((v) => v.projection);
+  const gaps = new Map<string, GapItem>();
+  const sayers = new Map<string, number>();
+  for (const v of views) {
+    const gap = gapItem(v);
+    if (!gap) continue;
+    gaps.set(v.goal.id, gap);
+    sayers.set(gap.text, (sayers.get(gap.text) ?? 0) + 1);
+  }
+  const caveats: Caveat[] = [];
+  if (flows.status === 'error' && projected) {
+    caveats.push({
+      key: 'flows-error',
+      severity: 'caution',
+      summary: 'paces at monthly targets only',
+      body: 'How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.',
+    });
+  }
+  if (projected) for (const n of flows.notes) caveats.push({ key: `flows-note:${n}`, severity: 'caution', summary: 'some data couldn’t be read', body: n });
+  const onTop = new Set<string>();
+  for (const v of views) {
+    const gap = gaps.get(v.goal.id);
+    if (!gap || (sayers.get(gap.text) ?? 0) < 2 || onTop.has(gap.text)) continue;
+    onTop.add(gap.text);
+    caveats.push({
+      key: `gap:${gap.text}`,
+      severity: 'caution',
+      summary: gap.kind === 'off' ? 'a goal’s pace may be off' : 'a goal’s pace not known',
+      body: gap.text,
+    });
+  }
+  const allocated = [...splits.values()].filter((s) => s.hasAllocations);
+
   // The editor stays mounted whatever the list's state: a save that fails
   // reloads the list (lib/whole-list-store.ts), and what was typed, with why
   // it wasn't saved, must still be there when it is back.
@@ -138,12 +178,11 @@ export function GoalsCardView({
     />
   );
 
+  // No title of its own: the Budgets tab's bar names the segment
+  // (components/BudgetsBar.tsx).
   if (status !== 'ready') {
     return (
-      <div className="card">
-        <div className="inst-header">
-          <div className="inst-name">Goals</div>
-        </div>
+      <div className="card goals-card">
         {status === 'loading' ? <p className="empty-note">Loading goals…</p> : <p className="stale-note">{error}</p>}
         {/* Plans that can't be read: said with the load's error, with the repair. */}
         {status === 'error' && damage && onRepaired && damage.unreadable + damage.unrecognised > 0 && (
@@ -155,32 +194,20 @@ export function GoalsCardView({
   }
 
   return (
-    <div className="card">
-      <div className="inst-header">
-        <div className="inst-name">Goals</div>
-      </div>
-
-      {saveError && <p className="stale-note"><Masked>{hideAmountsIn(saveError)}</Masked></p>}
-      {flows.status === 'error' && views.some((v) => v.projection) && (
-        <p className="stale-note">How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.</p>
+    <div className="card goals-card">
+      {(saveError || caveats.length > 0 || allocated.length > 0) && (
+        <div className="stack tight">
+          {saveError && <p className="stale-note"><Masked>{hideAmountsIn(saveError)}</Masked></p>}
+          <TotalCaveats items={caveats} />
+          {/* Each account with allocations on it: what they leave, or how
+              far they are over its balance. */}
+          {allocated.map((s) => (
+            <p className="panel-note goal-unallocated" key={s.account_id}>
+              <Masked>{splitText(s, accountName(s.account_id))}</Masked>
+            </p>
+          ))}
+        </div>
       )}
-      {/* What the server couldn't read for the paces, said once. */}
-      {views.some((v) => v.projection) &&
-        flows.notes.map((n) => (
-          <p className="stale-note" key={n}>
-            {n}
-          </p>
-        ))}
-
-      {/* Each account with allocations on it: what they leave, or how far
-          they are over its balance. */}
-      {[...splits.values()]
-        .filter((s) => s.hasAllocations)
-        .map((s) => (
-          <p className="panel-note goal-unallocated" key={s.account_id}>
-            <Masked>{splitText(s, accountName(s.account_id))}</Masked>
-          </p>
-        ))}
 
       {goals.length === 0 && <p className="empty-note">No goals yet. Set a target, track it against an account’s balance, and see when you’ll reach it.</p>}
 
@@ -193,13 +220,19 @@ export function GoalsCardView({
         // Underfunded, as a budget target would say: short of its date, or
         // nothing went in lately.
         const behind = v.projection?.status === 'behind' || v.projection?.status === 'no_recent_contributions';
+        // Its gap note when it is said at the top: badged here instead.
+        const gap = gaps.get(goal.id);
+        const above = gap && onTop.has(gap.text) ? gap : null;
         // Warnings in the warning style; what only informs, plain.
-        const notes = goalNotes(v, nameOf, goal.account_id ? splits.get(goal.account_id) : undefined);
+        const notes = goalNotes(v, nameOf, goal.account_id ? splits.get(goal.account_id) : undefined).filter((n) => n.text !== above?.text);
         return (
           <div className="budget-row" key={goal.id}>
             <button className="budget-summary" onClick={() => edit(goal)}>
               <div className="budget-line">
-                <span className="budget-name">{goal.name}</span>
+                <span>
+                  <span className="budget-name">{goal.name}</span>
+                  {above && <> <span className="badge warn">{above.kind === 'off' ? 'Pace may be off' : 'Pace not known'}</span></>}
+                </span>
                 <span className="budget-amounts">
                   <Masked>{`${v.saved !== null ? `${formatMoney(v.saved, v.currency)} of ` : ''}${formatMoney(goal.target, v.currency)}`}</Masked>
                   {done && <span className="done-tag"> · reached</span>}

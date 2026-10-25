@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text) and 5e (the Transaction sheet) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments) and 6a2 (Budgets' sheets and notices) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -22,7 +22,7 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 5e | Activity: the Transaction sheet, rule offer inside it; the rows redrawn as list rows | 1 to 2 days |
 | 6a1 | Budgets: Month, Upcoming and Goals segments under a pinned bar; debt payoff moved in | 1 day |
 | 6a2 | Budgets: add and edit a budget, and irregular income, in sheets; one completeness notice per segment | 1 to 2 days |
-| 6a3 | Budgets: Upcoming as one dated list or a calendar; the threshold in a sheet; its charts at their width | 1 to 2 days |
+| 6a3 | Budgets: Upcoming as one dated list or a calendar, with one completeness notice; the threshold in a sheet; its charts at their width | 2 days |
 | 6b | Plan: Your path, Stress test and Portfolio segments; the scenario bar | 1 day |
 | 6c | Plan: the inputs as rows, their caveats on one line each | 1 to 2 days |
 | 6d | Plan: one assumptions sheet, a label on each result, plain words, its charts drawn at their width | 1 to 2 days |
@@ -298,7 +298,7 @@ Split in pull requests: three for Budgets (6a1 to 6a3, about 4,700 lines of comp
 
 - **6a1**: Month, Upcoming (forecast, calendar, recurring, planned) and Goals as segments under a pinned bar. Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
 - **6a2**: add and edit a budget in a sheet, and "My income is irregular" as a row that opens its setting; one completeness notice per segment.
-- **6a3**: Upcoming's bills, income, planned items and card payments as one dated list, or a calendar of the same; the forecast's "Warns below" in a sheet; the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures at 12px (an HTML grid, so its figures have to fit the cell), and the payoff plan's chart at its width.
+- **6a3**: Upcoming's bills, income, planned items and card payments as one dated list, or a calendar of the same, with one notice at the top for what they may be missing (moved from 6a2); the forecast's "Warns below" in a sheet; the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures at 12px (an HTML grid, so its figures have to fit the cell), and the payoff plan's chart at its width.
 
 **Built in 6a1:**
 
@@ -317,9 +317,39 @@ Split in pull requests: three for Budgets (6a1 to 6a3, about 4,700 lines of comp
 
 **Kept narrow in 6a1:**
 
-- **Card titles under the bar**: the month's card keeps "October budgets" and Goals' card its "Goals" title under the bar's heading; 6a2 redraws the month's card ("Spent", as the mockup has it) and can drop Goals' title.
+- **Card titles under the bar**: the month's card keeps "October budgets" and Goals' card its "Goals" title under the bar's heading; 6a2 redraws the month's card ("Spent", as the mockup has it) and can drop Goals' title. (Both built in 6a2.)
 - **The payoff card's summary line** ("Paid off by May 2027", interest) needs the plan worked out on Goals; the row opens the plan as Accounts' did.
 - **Charts still owed a pass before `.at-width` folds into `.chart-tick` and `.chart-xlabel`**: Home's net worth chart and Reports' runway chart, besides the Budgets and Plan charts these phases take.
+
+**Built in 6a2:**
+
+- **The month's notice.** Month opens with one notice of what the month may be missing (`components/budget-notes.ts`, drawn by `TotalCaveats`): a connection that stopped syncing, transactions that couldn't be loaded or are still importing, bank accounts Plaid doesn't cover or you didn't allow, a past month's own reasons, and why rollover may be off. One shows in full; two or more are one line that says how many and of what, and opens in place to each. The words are the ones the card said under the budgets, each still amber. `monthGapItems` (`lib/month-coverage.ts`) and `missingMonthItems` (`lib/no-transactions.ts`) give each sentence its kind; the notes Activity and Home say are their texts.
+- **Spent** in place of the "October budgets" title: the month's total as the card's figure, a "May be incomplete" badge when the month has gaps of its own, the meter, and what the figure counts (converted, left out, split amounts changed, a bank with no accounts, budgets by month since) gathered the same way, as information.
+- **Available to allocate** is a card of its own above it while the income pool is on; Show how it built up is a ghost button.
+- **The budgets as rows.** Each group is a row that opens and closes on its categories, its meter under its name and its figures on the right; "For Food as a whole" and each category are rows that open the budget's sheet (`components/BudgetSheet.tsx`). A past month's rows open nothing.
+- **A budget's sheet**: its figures, the amount, the suggestion ("Use $325.00"), and a Rollover row opening a second level (on from a month, or off, with Reset carryover... a third level that asks first). Remove... asks first. A budget left on a deleted category or group opens a sheet holding Remove budget.
+- **+ Add budget** opens a sheet (`AddBudgetSheet`) with the category or group, the limit and the suggestion. **My income is irregular** is a row with On or Off that opens its setting in a sheet.
+- **A refused save keeps the sheet open** with what was typed and says why. The card stays drawn from the last saved budgets while they are read again, and the dashboard pauses the month's rollover and suggestions meanwhile rather than dropping them.
+- **Goals** says a gap note that two or more goals share once, at its top, with a badge on each of them ("Pace may be off", or "Pace not known" where the goal's own line says what went in lately isn't known); a note only one goal has stays on it. What the card says once already (paces at monthly targets only when the flows couldn't be read, and the server's notes) joins the same notice, in its words and level. Its "Goals" title, under the bar's, is gone.
+
+**Decided in 6a2:**
+
+- **Over is amber**, the badge and the meter past the limit, as 4b made an over budget on Home: a true number the person may act on, not a number that is wrong. It was red. The word tells over from nearly over, so it is never color alone.
+- **A group's row opens and closes in place** rather than opening a sheet: it holds its categories' budgets, each with a sheet of its own.
+- **One way to commit on the sheet's first level.** Rollover is a level of its own, so a rollover change never drops a typed amount; while the amount differs from the saved one, the Rollover row says to save it first.
+- **Remove asks first**: removing a budget ends its rollover (its carry starts again from zero), so adding it back doesn't undo it.
+- **Each opening starts afresh**, as 5e's sheet does: a budget half added isn't kept once the sheet closes. 6a1's "nothing typed is lost by looking at another segment" still holds, since nothing else can be looked at while a sheet is open.
+- **Errors in a sheet are only its own**, as in 5e, and keep their level: a refused save stays amber. A rollover or income change keeps its error in its own sheet.
+- **The month's badge is on Spent only.** Rule 3 asks for a badge on each card a gap affects; the budgets' rows rest on the same month but have no header to hold one, and each carry that may be off already says so on its row.
+- **Reset carryover keeps a plain button**, as before: it can be undone (turned off and on again from the month it began, the carry comes back), so it isn't a danger button. Remove is one.
+- **A goal's gap note stays on the goal unless several share it**: it names a bank, not a goal, so at the top it couldn't say which goal it is about.
+
+**Kept narrow in 6a2:**
+
+- **Upcoming's one notice** moves to 6a3, which merges the calendar, recurring and planned items into one list: what repeats there is load states, three of them critical (which are never gathered), and connection gaps only the forecast says.
+- **`Sheet` has no focus trap** (5e's note): Tab can reach the bar's month arrows behind it, and choosing another month closes the sheet.
+- **A reload that fails after a refused save** still replaces the card with its error, which closes the sheet.
+- **The meter tracks** became token tints, on every meter (accounts, goals, the Plan, shared expenses): a small change of tone.
 
 **6b**, the Plan tab's segments:
 

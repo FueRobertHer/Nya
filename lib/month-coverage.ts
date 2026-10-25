@@ -96,24 +96,36 @@ export function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
+/** What kind of gap a month's note is about, for a notice that gathers
+ *  several into one line (Budgets > Month's, components/budget-notes.ts). */
+export type MonthGapKind = 'missing' | 'stopped' | 'importing' | 'held';
+
 /**
- * The notes for a month, in the stale notes' plain style: empty when nothing
- * is known to be missing. `day` names a last sync's local day ("Sep 12").
+ * The notes for a month, each with its kind: empty when nothing is known to
+ * be missing. `day` names a last sync's local day ("Sep 12").
  */
-export function monthGapNotes(month: string, incomplete: Incomplete[], stopped: Stopped[], day: (iso: string) => string): string[] {
+export function monthGapItems(month: string, incomplete: Incomplete[], stopped: Stopped[], day: (iso: string) => string): { kind: MonthGapKind; text: string }[] {
   const gaps = monthGaps(month, incomplete, stopped);
-  const notes: string[] = [];
+  const items: { kind: MonthGapKind; text: string }[] = [];
   if (gaps.missing.length > 0) {
     const one = gaps.missing.length === 1;
-    notes.push(`Doesn't include ${joinNames(gaps.missing)}: ${one ? 'its' : 'their'} transactions couldn't be loaded, so this month may be incomplete.`);
+    items.push({ kind: 'missing', text: `Doesn't include ${joinNames(gaps.missing)}: ${one ? 'its' : 'their'} transactions couldn't be loaded, so this month may be incomplete.` });
   }
   if (gaps.stopped.length > 0) {
     const parts = gaps.stopped.map((s) => (s.last_ok_at ? `${s.institution_name} hasn't synced since ${day(s.last_ok_at)}` : `${s.institution_name} isn't syncing`));
-    notes.push(`${joinNames(parts)}, so this month may be missing some of ${gaps.stopped.length === 1 ? 'its' : 'their'} transactions.`);
+    items.push({ kind: 'stopped', text: `${joinNames(parts)}, so this month may be missing some of ${gaps.stopped.length === 1 ? 'its' : 'their'} transactions.` });
   }
   if (gaps.importing.length > 0) {
-    notes.push(`${joinNames(gaps.importing)} ${gaps.importing.length === 1 ? 'is' : 'are'} still importing older transactions, so this month may be incomplete.`);
+    items.push({ kind: 'importing', text: `${joinNames(gaps.importing)} ${gaps.importing.length === 1 ? 'is' : 'are'} still importing older transactions, so this month may be incomplete.` });
   }
-  if (gaps.held.length > 0) notes.push(heldNote(gaps.held));
-  return notes;
+  if (gaps.held.length > 0) items.push({ kind: 'held', text: heldNote(gaps.held) });
+  return items;
+}
+
+/**
+ * The notes for a month, in the stale notes' plain style: monthGapItems'
+ * words, so every view that says them says the same.
+ */
+export function monthGapNotes(month: string, incomplete: Incomplete[], stopped: Stopped[], day: (iso: string) => string): string[] {
+  return monthGapItems(month, incomplete, stopped, day).map((i) => i.text);
 }

@@ -6,6 +6,7 @@ import CashFlowSankey, { FlowShown } from '@/components/CashFlowSankey';
 import { DrawnWidth } from '@/components/drawn-width';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
+import BudgetsCard from '@/components/BudgetsCard';
 import { cashFlow, inPeriod, periodCaption, periodEnding, periodOf, pickedRows, type FlowPick } from '@/lib/cash-flow';
 import { addMonths } from '@/lib/rollover';
 import { summarize, spendingByCategory } from '@/lib/totals';
@@ -127,10 +128,13 @@ describe('the issue’s acceptance, through the views themselves', () => {
     const food = formatMoney(spent[taxonomy.categories.find((c) => c.name === 'groceries')!.id] + spent[taxonomy.categories.find((c) => c.name === 'restaurants')!.id], 'USD');
     expect(budgetsText).toContain(`Food ${food} of ${formatMoney(800, 'USD')}`);
     expect(chart).toMatch(listed('Food', food));
-    // Each category the Budgets tab offers to budget, with what it spent this month.
+    // Each category the Budgets tab offers to budget, with what it spent
+    // this month: in Add budget's sheet, opened on the budgets the tab draws,
+    // with its spending by the same function.
+    const addText = text(renderToStaticMarkup(<BudgetsCard taxonomy={taxonomy} budgets={budgets} spent={spent} currency="USD" editable noSpending={false} onSave={async () => true} adding />));
     for (const name of ['rent and utilities', 'general merchandise']) {
       const shown = name[0].toUpperCase() + name.slice(1);
-      expect(budgetsText).toContain(`${shown} (${figure(name)} this month)`);
+      expect(addText).toContain(`${shown} (${figure(name)} this month)`);
       expect(chart).toMatch(listed(shown, figure(name)));
     }
     // And the budgeted ones, by the same function the tab calls.

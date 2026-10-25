@@ -18,6 +18,7 @@ import { HideAmountsToggle, Masked } from '@/components/HideAmounts';
 import NetWorthChart from '@/components/NetWorthChart';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsCard from '@/components/BudgetsCard';
+import BudgetsTab from '@/components/BudgetsTab';
 import GoalsCard from '@/components/GoalsCard';
 import Insights from '@/components/Insights';
 import { HomeAttention } from './home-attention';
@@ -57,6 +58,7 @@ import type { Goal } from '@/lib/goal-model';
 import type { GoalAccount } from '@/lib/goal-view';
 import { localDate, localMonth } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
+import { CARD as MONTH_CARD, FOOD as MONTH_FOOD, GROCERIES as MONTH_GROCERIES, TAB as MONTH_TAB, TAB_SCENES as MONTH_SCENES } from './budget-notes-fixture';
 import { RunwayView } from '@/components/RunwayReport';
 import { YearOverYearView } from '@/components/YearOverYearReport';
 import { cashPosition } from '@/lib/forecast';
@@ -868,6 +870,19 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       onSave={async () => true}
       open={[taxonomy.groups.find((g) => g.name === 'Food')!.id]}
     />
+  ),
+  // Budgets > Month as rollout 6a2 draws it: the month's one notice, the
+  // pool, the Spent card and its notes, the budgets' rows; and its sheets.
+  'Budgets > Month: the notice, the pool, the Spent card and the budgets': () => <BudgetsTab {...MONTH_TAB} {...MONTH_SCENES['this month']} />,
+  'Budgets > Month: a budget’s sheet, its figures, reconcile and suggestion': () => (
+    <BudgetsCard {...MONTH_CARD} onRollover={async () => null} edit={{ kind: 'group', id: MONTH_FOOD }} />
+  ),
+  'Budgets > Month: a budget’s carryover reset': () => (
+    <BudgetsCard {...MONTH_CARD} onRollover={async () => null} edit={{ kind: 'category', id: MONTH_GROCERIES }} editLevel="reset" />
+  ),
+  'Budgets > Month: Add budget, with what each choice spent': () => <BudgetsCard {...MONTH_CARD} budgets={{ categories: {}, groups: {} }} adding />,
+  'Budgets > Month: a budget on a category since deleted': () => (
+    <BudgetsCard {...MONTH_CARD} budgets={{ categories: { gone: { amount: 25 } }, groups: {} }} edit={{ kind: 'category', id: 'gone' }} />
   ),
   'Budgets: goals': () => <GoalsCard goals={GOALS} accounts={GOAL_ACCOUNTS} onSave={async () => true} />,
   'Budgets: the income pool': () => <IncomePoolHeader pool={POOL} currency="USD" month={MONTH} today={MONTH} />,

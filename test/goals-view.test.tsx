@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import GoalsCard, { GoalsCardView } from '@/components/GoalsCard';
 import GoalSheet from '@/components/GoalSheet';
 import { archivedGoal, draftOf, pickAccount, readDraft } from '@/components/goal-draft';
-import { readFlowsAnswer } from '@/components/goal-flows-state';
+import { readFlowsAnswer, type GoalFlowsState } from '@/components/goal-flows-state';
 import { localDate } from '@/lib/local-date';
 import type { Goal } from '@/lib/goal-model';
 import { withAccountEnds, type GoalAccount } from '@/lib/goal-view';
@@ -165,11 +165,13 @@ describe('the card, with the months in', () => {
   const view = (goals: Goal[], flows: Map<string, any>, notes: string[] = []) =>
     text(renderToStaticMarkup(<GoalsCardView goals={goals} accounts={ACCOUNTS} onSave={async () => true} flows={{ status: 'ready', flows, notes }} />));
 
-  test('what the server couldn’t read for the paces is said once, above the goals', () => {
+  test('what the server couldn’t read for the paces is said once, above the goals, in its words, as a caution', () => {
     const html = renderToStaticMarkup(
       <GoalsCardView goals={[goal('Fund', 'sav', 20_000)]} accounts={ACCOUNTS} onSave={async () => true} flows={{ status: 'ready', flows: new Map(), notes: ['Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown'] }} />
     );
-    expect(html).toContain('<p class="stale-note">Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown</p>');
+    expect(html).toMatch(/<div class="notice caution"><svg[^>]*>.*?<\/svg><div><span class="visually-hidden">Caution: <\/span>Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown<\/div><\/div>/);
+    expect(html.indexOf('notice caution')).toBeLessThan(html.indexOf('budget-row'));
+    expect(html).not.toContain('stale-note');
   });
 
   test('a connection that stopped before the months: not "no contributions", and why, as a warning', () => {
@@ -207,6 +209,93 @@ describe('the card, with the months in', () => {
     const t = view([goal('Bike', 'sav', 900, { archived: true }, { archived_on: '2026-09-01', archived_amount: 950 })], new Map());
     expect(t).not.toContain('No goals yet');
     expect(t).toContain('1 archived · Show');
+  });
+});
+
+describe('one notice at the top of Goals (design-system.md "Status and honesty" rule 3)', () => {
+  const months = ['2026-07', '2026-08', '2026-09'];
+  // Two accounts at Chase, so two goals can say the same of the bank.
+  const accounts: GoalAccount[] = [...ACCOUNTS, { account_id: 'sav2', name: 'Rainy day', institution: 'Chase', balance: 4000, currency: 'USD', type: 'depository' }];
+  const importing = { kind: 'importing', institution: 'Chase' };
+  // Noon on Jun 10 in the machine's time zone, so Jun 10 in any.
+  const stopped = { kind: 'stopped', institution: 'Chase', since: new Date('2026-06-10T12:00:00').toISOString() };
+  /** Months known, the last one still importing: the pace may be off. */
+  const known = { source: 'transactions', months: [{ month: months[0], amount: 375.5 }, { month: months[1], amount: 189.75 }, { month: months[2], amount: 330.1, gaps: [importing] }] };
+  /** Every month short: what went in lately isn't known. */
+  const unknown = { source: 'transactions', months: months.map((month) => ({ month, amount: null, gaps: [stopped] })) };
+  const render = (goals: Goal[], flows: Map<string, any>, over: Partial<GoalFlowsState> = {}) =>
+    renderToStaticMarkup(<GoalsCardView goals={goals} accounts={accounts} onSave={async () => true} flows={{ status: 'ready', flows, notes: [], ...over }} />);
+  const count = (html: string, s: string) => html.split(s).length - 1;
+  const OFF = 'The pace may be off: Chase is still importing older transactions.';
+  const BADGE = '<span class="badge warn">Pace may be off</span>';
+
+  test('a gap note two goals say word for word: said once at the top, in its words, as a caution, and each goal badged', () => {
+    const goals = [goal('Fund', 'sav', 20_000, { monthly_target: 400 }), goal('Trip', 'sav2', 9000, { monthly_target: 100 })];
+    const html = render(goals, new Map([['sav', known], ['sav2', known]]));
+    expect(count(html, OFF)).toBe(1);
+    expect(html).toMatch(new RegExp(`<div class="notice caution"><svg[^>]*>.*?</svg><div><span class="visually-hidden">Caution: </span>${OFF.replace(/[.]/g, '\\.')}</div></div>`));
+    expect(html.indexOf(OFF)).toBeLessThan(html.indexOf('budget-row'));
+    expect(html).not.toContain('stale-note');
+    // A badge on each goal's line, beside its name.
+    expect(count(html, BADGE)).toBe(2);
+    for (const name of ['Fund', 'Trip']) expect(html).toContain(`<span class="budget-name">${name}</span> ${BADGE}</span>`);
+    expect(html).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  test('a gap note only one goal says stays on that goal, as a warning, with no badge and no notice', () => {
+    const goals = [goal('Fund', 'sav', 20_000, { monthly_target: 400 }), goal('Trip', 'sav2', 9000, { monthly_target: 100 })];
+    const html = render(goals, new Map([['sav', known]]));
+    expect(html).toContain(`<p class="stale-note goal-note">${OFF}</p>`);
+    expect(count(html, OFF)).toBe(1);
+    expect(html).not.toContain('notice');
+    expect(html).not.toContain('badge');
+  });
+
+  test('no goal with a gap note: no notice and no badge', () => {
+    const goals = [goal('Fund', 'sav', 20_000, { monthly_target: 400 }), goal('Trip', 'sav2', 9000, { monthly_target: 100 })];
+    const clean = { source: 'transactions', months: months.map((month) => ({ month, amount: 250 })) };
+    const html = render(goals, new Map([['sav', clean], ['sav2', clean]]));
+    expect(html).not.toContain('notice');
+    expect(html).not.toContain('badge');
+    expect(html).not.toContain('stale-note');
+  });
+
+  test('what went into an account lately isn’t known, said by both its goals: once at the top, each badged that its pace isn’t known', () => {
+    const said = 'What went into Savings lately isn’t known: Chase hasn’t synced since Jun 10.';
+    const html = render([goal('Fund', 'sav', 20_000, { allocation: 6000 }), goal('Trip', 'sav', 9000)], new Map([['sav', unknown]]));
+    expect(count(html, said)).toBe(1);
+    expect(html.indexOf(said)).toBeLessThan(html.indexOf('budget-row'));
+    expect(count(html, '<span class="badge warn">Pace not known</span>')).toBe(2);
+    expect(html).not.toContain('Pace may be off');
+    // Each goal's outlook still says so on the goal, as before.
+    expect(count(html, 'so this goal’s own pace isn’t known')).toBe(2);
+  });
+
+  test('with what the server couldn’t read: gathered into one line that says how many and of what, every note in full', () => {
+    const goals = [goal('Fund', 'sav', 20_000, { monthly_target: 400 }), goal('Trip', 'sav2', 9000, { monthly_target: 100 })];
+    const note = 'Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown';
+    const html = render(goals, new Map([['sav', known], ['sav2', known]]), { notes: [note] });
+    expect(html).toContain('<details class="notice-summary"><summary class="notice caution">');
+    expect(text(html)).toContain('Caution: 2 notes: some data couldn’t be read and a goal’s pace may be off');
+    expect(count(html, note)).toBe(1);
+    expect(count(html, OFF)).toBe(1);
+    expect(count(html, BADGE)).toBe(2);
+  });
+
+  test('the months couldn’t be read: said at the top, in its words, as a caution, when a goal is projected', () => {
+    const t = (goals: Goal[]) => render(goals, new Map(), { status: 'error', flows: null });
+    const said = 'How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.';
+    expect(t([goal('Fund', 'sav', 20_000, { monthly_target: 400 })])).toMatch(new RegExp(`<div class="notice caution"><svg[^>]*>.*?</svg><div><span class="visually-hidden">Caution: </span>${said.replace(/[.]/g, '\\.')}</div></div>`));
+    // No goal projected: nothing to say it of.
+    expect(t([goal('Fund', null, 20_000)])).not.toContain('notice');
+  });
+
+  test('no title of its own: the Budgets bar names the segment', () => {
+    for (const html of [render([goal('Fund', 'sav', 20_000)], new Map()), card([], { status: 'loading' }), card([], { status: 'error', error: 'Your saved goals could not be read' }), card([])]) {
+      expect(html).not.toContain('inst-name');
+      expect(html).not.toContain('inst-header');
+      expect(html).not.toContain('>Goals<');
+    }
   });
 });
 

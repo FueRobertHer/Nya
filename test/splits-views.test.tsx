@@ -341,7 +341,9 @@ describe('the Budgets tab', () => {
     expect(splitChangedText(changed, '2020-01')).toBeNull();
     expect(splitChangedText(served(), today.slice(0, 7))).toBeNull();
     const budgets = readFileSync(new URL('../components/BudgetsTab.tsx', import.meta.url), 'utf8');
-    expect(budgets).toContain('<SplitChangedNote txns={txns} month={shownMonth} />');
+    // Among the Spent card's notes, for the month shown (rollout 6a2).
+    expect(budgets).toContain('const splitChanged = hasTotal && txns ? splitChangedText(txns, shownMonth) : null;');
+    expect(budgets).toContain("if (splitChanged) spentNotes.push({ key: 'split-changed', severity: 'info', summary: 'split amounts changed', body: splitChanged });");
   });
 });
 

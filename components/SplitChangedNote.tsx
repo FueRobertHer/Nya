@@ -5,7 +5,8 @@
 // it was split, with the difference as a part of its own, until the split is
 // edited (lib/split-rows.ts). When the amount went down, or turned into money
 // in, a budget can show more spent than the bank's figure until then, so the
-// tab says so where the budgets are; the Activity tab marks the row itself.
+// tab says so among the Spent card's notes (components/BudgetsTab.tsx); the
+// Activity tab marks the row itself.
 
 import type { Txn } from './MonthBreakdown';
 
@@ -18,9 +19,4 @@ export function splitChangedText(txns: readonly Pick<Txn, 'date' | 'split_of' | 
   return n === 1
     ? 'A split transaction’s amount changed since it was split. Its parts count as you split them, and the difference on its own, until you edit the split on the Activity tab.'
     : `${n} split transactions’ amounts changed since they were split. Their parts count as you split them, and the differences on their own, until you edit the splits on the Activity tab.`;
-}
-
-export default function SplitChangedNote({ txns, month }: { txns: readonly Txn[] | null; month: string }) {
-  const text = txns ? splitChangedText(txns, month) : null;
-  return text ? <div className="chart-note">{text}</div> : null;
 }
