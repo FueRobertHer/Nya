@@ -1,15 +1,21 @@
 import { NextResponse } from 'next/server';
-import { demoUsers, DEMO_SIGN_INS_PER_WINDOW, DEMO_WINDOW_SECONDS } from '@/lib/demo';
+import { demoUsers, DEMO_SIGN_INS_PER_WINDOW, DEMO_UNAVAILABLE, DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { redis, kEnv } from '@/lib/storage';
 import { COUNT_IN_WINDOW } from '@/lib/rate-limit';
 
 // The demo buttons on the sign-in page (lib/demo.ts): a form post naming a
-// demo account; answers with Clerk's sign-in page carrying a one-minute
-// ticket for it, which signs the visitor in. Public (proxy.ts lets it
-// through): it only ever signs in as a listed demo account, and only on
-// Preview. Limited per address, since each ticket is a call to Clerk.
+// demo account, answered with a one-minute Clerk ticket for it, which signs
+// the visitor in. The page's own buttons ask for JSON (Accept:
+// application/json, components/demo-sign-in.ts) and get the ticket itself,
+// which they sign in with in place. A form posted before Clerk had loaded,
+// or without script, gets Clerk's sign-in page carrying the ticket and
+// `demo=ticket`, which has that page show the app loading meanwhile
+// (components/SignInFlow.tsx). Public (proxy.ts lets it through): it only
+// ever signs in as a listed demo account, and only on Preview. Limited per
+// address, since each ticket is a call to Clerk.
 
 export async function POST(req: Request) {
+  const json = (req.headers.get('accept') ?? '').includes('application/json');
   const users = demoUsers();
   if (users.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const form = await req.formData().catch(() => null);
@@ -30,9 +36,11 @@ export async function POST(req: Request) {
   try {
     const { signInTicket } = await import('@/lib/clerk-tickets');
     const ticket = await signInTicket(user.id);
-    return NextResponse.redirect(new URL(`/sign-in?__clerk_ticket=${encodeURIComponent(ticket)}`, req.url), 303);
+    if (json) return NextResponse.json({ ticket }, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.redirect(new URL(`/sign-in?__clerk_ticket=${encodeURIComponent(ticket)}&demo=ticket`, req.url), 303);
   } catch (err) {
     console.error('Demo sign-in failed', err instanceof Error ? err.name : err);
+    if (json) return NextResponse.json({ error: DEMO_UNAVAILABLE }, { status: 503 });
     return NextResponse.redirect(new URL('/sign-in?demo=unavailable', req.url), 303);
   }
 }

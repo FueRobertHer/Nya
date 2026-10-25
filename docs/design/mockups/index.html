@@ -182,6 +182,17 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app svg.chart .marker { fill: var(--warn); }
 .app svg.chart .low { fill: var(--neg); }
 
+/* Loading placeholders (.skeleton) */
+.app .sk { display: block; height: 10px; border-radius: 6px; background: var(--elevated); }
+.app .sk.avatar { height: 32px; border-radius: 50%; background: var(--elevated); }
+.app .sk.hero-sk { height: 30px; width: 62%; margin: 3px 0; }
+.app .sk.plot { height: 96px; border-radius: 12px; }
+.app .auth { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 44px 12px 0; }
+.app .auth .card { width: 100%; }
+.app .signin-sk { width: 100%; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); overflow: hidden; }
+.app .signin-sk .in { display: flex; flex-direction: column; gap: 20px; padding: 20px; }
+.app .signin-sk .foot { display: flex; justify-content: center; padding: 14px; border-top: 1px solid var(--border-subtle); }
+
 /* Tab bar */
 .app .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 58px; background: var(--glass); border-top: 1px solid var(--border-subtle); display: grid; grid-template-columns: repeat(5, 1fr); backdrop-filter: blur(12px); }
 .app .tab { display: grid; justify-items: center; align-content: center; gap: 2px; font-size: 12px; color: var(--text-3); }
@@ -268,6 +279,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <li><a href="#plan">Plan</a></li>
       <li><a href="#settings">Settings</a></li>
       <li><a href="#status">Status</a></li>
+      <li><a href="#loading">Signing in</a></li>
     </ul>
   </header>
 
@@ -969,6 +981,61 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <div class="note-box">
         <p><b>The three levels.</b> Critical (red): an institution needs reconnecting, rows couldn't be shown, a total is short. Caution (amber): recovered but dated balances, an account that stopped reporting (held at its last known balance), a connection that ends soon, history paused, a backup or clean-up failed, a month may be missing transactions. Information (neutral): converted currency, imported history, accrued interest left out. Anything that asks you to act is also counted in Home's Needs attention.</p>
       </div>
+    </div>
+  </section>
+
+  <!-- ===================== SIGNING IN AND LOADING ===================== -->
+  <section class="spec" id="loading">
+    <div class="spec-head">
+      <p class="eyebrow">Nothing moves while it loads</p>
+      <h2>Signing in and loading</h2>
+      <ul class="changes">
+        <li>The sign-in page is laid out from the top: Clerk's form arriving, or changing step, no longer moves the name and the demo card above it.</li>
+        <li>Until the form loads, a placeholder of its size holds its place; the form fades in over it.</li>
+        <li>A demo button signs in on the page, with no page loaded again. From its press, and on Home from the moment a sign-in moves there, the app loading: the dashboard's header and the Net worth card in placeholders, which the dashboard then draws itself while its first load is on its way.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="auth">
+            <span class="brand" style="flex:none"><span class="logo"></span>Nya</span>
+            <div class="card">
+              <div class="card-header"><h2>Try the demo</h2></div>
+              <span class="small muted">Sign in as a demo account, with pretend banks from Plaid's sandbox.</span>
+              <div class="btn-row"><span class="btn primary" style="flex:1">Alex</span><span class="btn primary" style="flex:1">Sam</span></div>
+            </div>
+            <div class="signin-sk" aria-label="The sign-in form loading">
+              <div class="in">
+                <div style="display:grid;gap:8px;justify-items:center"><span class="sk" style="width:55%;height:20px"></span><span class="sk" style="width:75%;height:12px"></span></div>
+                <div style="display:grid;gap:8px"><span class="sk" style="width:30%"></span><span class="sk" style="height:34px"></span><span class="sk" style="height:34px;margin-top:12px"></span></div>
+              </div>
+              <div class="foot"><span class="sk" style="width:40%"></span></div>
+            </div>
+            <span class="xs muted" style="text-align:center">Bank connections through Plaid work for US institutions only…</span>
+          </div>
+        </div></div>
+        <figcaption><b>SIGN-IN, FORM LOADING</b>The name and the demo card sit where they will stay; the placeholder is the form's width and about its height.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn" style="opacity:.6"><svg><use href="#i-ref"/></svg></span><span class="sk avatar"></span></div>
+            <span class="small muted" style="padding:0 2px">Loading your accounts…</span>
+            <div class="card" aria-label="Net worth loading">
+              <div class="hero-label">Net worth</div>
+              <span class="sk hero-sk"></span>
+              <span class="sk" style="width:52%"></span>
+              <span class="sk" style="width:34%;margin-top:6px"></span>
+              <span class="sk plot"></span>
+              <span class="sk" style="height:8px"></span>
+              <div class="btn-row" style="justify-content:space-between;align-items:center;min-height:40px"><span class="sk" style="width:44%"></span><span class="sk" style="width:24%"></span></div>
+            </div>
+          </div>
+        </div></div>
+        <figcaption><b>SIGNED IN, HOME LOADING</b>The header with its own buttons (Refresh turning, unavailable) and the Net worth card on its own layout, figures as placeholders that pulse in step (still, with reduced motion). The card arrives in the same place, at the same height.</figcaption>
+      </figure>
     </div>
   </section>
 

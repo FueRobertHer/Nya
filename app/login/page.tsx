@@ -1,9 +1,15 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
+import { AppLoading } from '@/components/LoadingSkeletons';
 import { CONNECTIONS_PATH } from '@/lib/connection-state';
+
+/** How long the app loading may stand in for this page before the form comes
+ *  back: a session the browser wouldn't keep sends Home back here, where
+ *  this page would otherwise go on loading. */
+const OPEN_WAIT_MS = 12_000;
 
 /** Where to go once signed in: Home, or the connection that needs attention when the
  *  proxy says that is where the person was going (a notice email's link). Only
@@ -18,7 +24,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Accepted: the app loading takes the page's place until the dashboard,
+  // which draws the same while it loads, is in (components/LoadingSkeletons.tsx).
+  const [accepted, setAccepted] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    if (!accepted) return;
+    const timer = setTimeout(() => {
+      setAccepted(false);
+      setError('Nya didn’t open. Try again, or reload the page.');
+    }, OPEN_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [accepted]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -31,6 +49,7 @@ export default function LoginPage() {
     });
     setLoading(false);
     if (res.ok) {
+      setAccepted(true);
       router.push(afterLogin());
       router.refresh();
     } else {
@@ -38,6 +57,8 @@ export default function LoginPage() {
       setError(data?.error ?? 'Incorrect password');
     }
   }
+
+  if (accepted) return <AppLoading account="password" />;
 
   return (
     <main className="wrap">

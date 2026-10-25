@@ -1,6 +1,7 @@
 'use client';
 
-import ClerkAccount, { GEAR } from './ClerkAccount';
+import ClerkAccount from './ClerkAccount';
+import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
@@ -24,6 +25,7 @@ import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
+import { HomeSkeleton } from './LoadingSkeletons';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
@@ -2202,46 +2204,37 @@ export default function Dashboard({
           </div>
           <div className="top-actions">
             <HideAmountsToggle />
-            {connected && !loading && (
-              <button
-                className="secondary icon-btn"
-                onClick={refreshAll}
-                disabled={refreshing}
-                aria-label="Refresh"
-                title="Refresh"
-              >
-                <svg
-                  className={refreshing ? 'spin' : undefined}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M20 12a8 8 0 1 1-2.35-5.65M20 4v4h-4" />
-                </svg>
-              </button>
-            )}
+            {/* Always there, unavailable and turning while the first load
+                is on its way, so the header doesn't change as it loads,
+                connected or not, nor when it takes over from the app
+                loading (components/LoadingSkeletons.tsx), which draws the
+                same. */}
+            <button
+              className="secondary icon-btn"
+              onClick={refreshAll}
+              disabled={refreshing || loading}
+              aria-label="Refresh"
+              title="Refresh"
+            >
+              <HeaderIcon d={REFRESH} spin={refreshing || loading} />
+            </button>
             {clerk ? (
               <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={() => setSharingOpen(true)} />
             ) : (
               // Password mode has no account menu: Sign out and Sign out
               // everywhere are in Settings > Account.
               <button className="secondary icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d={GEAR} />
-                </svg>
+                <HeaderIcon d={GEAR} />
               </button>
             )}
           </div>
         </div>
 
         {loading ? (
-          <div className="card">
-            <div className="spinner" role="status" aria-label="Loading" />
-          </div>
+          // Home's Net worth card as it will be, its figures still to come
+          // (components/LoadingSkeletons.tsx), rather than a spinner the
+          // whole page then grows from.
+          <HomeSkeleton />
         ) : settings ? (
           <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
         ) : !connected ? (
