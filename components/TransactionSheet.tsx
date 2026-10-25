@@ -219,7 +219,10 @@ export default function TransactionSheet(props: TransactionSheetProps) {
   );
   if (rows.kind === 'part') return <PartSheet {...props} parent={rows.parent} part={rows.part} said={said} />;
   if (rows.kind === 'member') return <MemberSheet {...props} group={rows.group} member={rows.member} said={said} />;
-  return <TxnSheet {...props} t={rows.t} said={said} open={open} onClose={onClose} />;
+  // The rules' sentences hold amounts: passed by name, so the hide-amounts
+  // scan (test/amount-sources.ts) traces them to the dashboard, which a
+  // spread hides from it.
+  return <TxnSheet {...props} t={rows.t} said={said} open={open} onClose={onClose} ruleSentenceOf={props.ruleSentenceOf} />;
 }
 
 type Inner = TransactionSheetProps & { said: ReactNode };
