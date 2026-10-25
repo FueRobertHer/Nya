@@ -4,6 +4,7 @@ import ForecastCard from '@/components/ForecastCard';
 import CalendarView from '@/components/CalendarView';
 import RecurringCard from '@/components/RecurringCard';
 import PlannedCard from '@/components/PlannedCard';
+import UpcomingPanel from '@/components/UpcomingPanel';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import type { Txn } from '@/components/MonthBreakdown';
@@ -13,10 +14,13 @@ import { EMPTY_PLANNED, type Planned } from '@/lib/planned';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { localDate } from '@/lib/local-date';
 import { EMPTY_BUDGETS } from '@/lib/budget-set';
+import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 
 // The forecast, the calendar, the recurring list and the planned items as the
 // Budgets tab renders them, and Home's upcoming bills: what each says, and
-// that an estimate is always labelled as one.
+// that an estimate is always labelled as one. What the segment may be missing
+// is said once at its top (rollout phase 6a3), so those sentences are read
+// off Upcoming as a whole.
 
 /** Markup as text, tags dropped and entities decoded, for reading sentences. */
 const text = (html: string) =>
@@ -93,10 +97,39 @@ function series(): RecurringSeries[] {
 describe('the forecast', () => {
   const card = (over: Partial<Parameters<typeof ForecastCard>[0]> = {}) =>
     text(renderToStaticMarkup(<ForecastCard institutions={[chase()]} series={series()} planned={EMPTY_PLANNED} today={TODAY} {...over} />));
+  // Upcoming as the Budgets tab draws it, for what is said at its top.
+  const upcoming = (over: Partial<Parameters<typeof UpcomingPanel>[0]> = {}) =>
+    text(
+      renderToStaticMarkup(
+        <UpcomingPanel
+          institutions={[chase()]}
+          series={series()}
+          planned={EMPTY_PLANNED}
+          plannedStatus="ready"
+          plannedDrawn
+          plannedError={null}
+          plannedSaveError={null}
+          dismissed={new Set()}
+          txns={[]}
+          failed={false}
+          balancesAsOf={null}
+          balancesSaved={false}
+          incomplete={[]}
+          stopped={[]}
+          withoutTransactions={NO_CONNECTIONS_WITHOUT}
+          fx={null}
+          today={TODAY}
+          currency="USD"
+          plannedCurrency="USD"
+          noSpending={null}
+          {...over}
+        />
+      )
+    );
 
   test('is labelled an estimate, starts from the cash accounts it names, and gives its lowest point', () => {
     const t = card();
-    expect(t).toContain('Cash forecast estimate');
+    expect(t).toContain('Cash forecast Estimate');
     expect(t).toContain('Starts from $900.00 in Checking at Chase.');
     // Rent on the 15th takes it to -$600, pay on the 25th back up: dates
     // after today are expectations.
@@ -121,7 +154,7 @@ describe('the forecast', () => {
   });
 
   test('a failed transactions load says so, never that nothing is coming', () => {
-    const t = card({ failed: true, series: [] });
+    const t = upcoming({ txns: null, failed: true, series: [] });
     expect(t).toContain("Transactions couldn't be loaded, so no bills or income are in this: it is your balance and what you planned.");
     expect(t).not.toContain('still loading');
   });
@@ -134,7 +167,7 @@ describe('the forecast', () => {
 
   test('pay that stopped coming is named, not dropped unseen', () => {
     const old = detectRecurring(monthly('2026-03', 5, 1).map((d) => row(d, -3000, { name: 'Old job', category: 'income' })));
-    expect(card({ series: [...series(), ...old] })).toContain("Old job hasn't come since Jul 1, so it isn't in this forecast. If it still comes, add it as planned income.");
+    expect(upcoming({ series: [...series(), ...old] })).toContain("Old job hasn't come since Jul 1, so it isn't in this forecast. If it still comes, add it as planned income.");
   });
 
   test('with pay expected today, the lowest is the balance now, not an estimate', () => {
@@ -148,9 +181,9 @@ describe('the forecast', () => {
 
   test('the ranges, 30 days chosen first', () => {
     const html = renderToStaticMarkup(<ForecastCard institutions={[chase()]} series={series()} planned={EMPTY_PLANNED} today={TODAY} />);
-    expect(html).toContain('aria-pressed="true">30 days</button>');
-    expect(html).toContain('aria-pressed="false">60 days</button>');
-    expect(html).toContain('aria-pressed="false">90 days</button>');
+    expect(html).toMatch(/aria-checked="true"[^>]*>30 days<\/button>/);
+    expect(html).toMatch(/aria-checked="false"[^>]*>60 days<\/button>/);
+    expect(html).toMatch(/aria-checked="false"[^>]*>90 days<\/button>/);
     // Drawn dashed: every point on it is an estimate.
     expect(html).toContain('stroke-dasharray="5 4"');
   });
@@ -167,19 +200,22 @@ describe('the forecast', () => {
 
   test('planned items count, and what it may be missing is said', () => {
     const planned: Planned = { ...EMPTY_PLANNED, items: [{ id: 'p', name: 'Car registration', kind: 'expense', amount: 212.5, currency: 'USD', date: '2026-10-20', cadence: 'once' }] };
-    const t = card({
+    const over = {
       planned,
       institutions: [chase({ needs_reauth: true, error: 'x', stale_as_of: '2026-10-03' })],
       stopped: [{ institution_name: 'Chase', last_ok_at: '2026-10-03T12:00:00Z' }],
-    });
+    };
+    const t = card(over);
     expect(t).toContain('Expected to end near $1,187.50 on Nov 8.');
+    // Where it starts from, on the card; what its bills and income may be
+    // missing, at the top of Upcoming.
     expect(t).toContain('Chase needs reconnecting, so this starts from its balances on Oct 3.');
-    expect(t).toContain("Chase hasn't synced since");
+    expect(upcoming(over)).toContain("Chase hasn't synced since");
   });
 
   test('without its planned items, or before transactions load, it says what is not in it', () => {
-    expect(card({ plannedStatus: 'error' })).toContain("Your planned items aren't loaded, so they aren't in this, and bills you marked not recurring may be.");
-    expect(card({ loading: true, series: [] })).toContain('Transactions are still loading, so no bills or income are in this yet.');
+    expect(upcoming({ plannedStatus: 'error', plannedDrawn: false })).toContain("Your planned items aren't loaded, so they aren't in this, and bills you marked not recurring may be.");
+    expect(upcoming({ txns: null, series: [] })).toContain('Transactions are still loading, so no bills or income are in this yet.');
   });
 
   test('with no cash accounts there is nothing to start from', () => {
@@ -301,7 +337,9 @@ describe('the recurring list', () => {
   });
 
   test('when the planned items could not be loaded, it says why nothing can be marked', () => {
-    expect(list({ status: 'error' })).toContain("Your planned items couldn't be loaded, so this can't be saved now.");
+    // In a series' sheet, beside Not recurring (rollout phase 6a3).
+    const s = series();
+    expect(list({ series: s, status: 'error', edit: s[0].id })).toContain("Your planned items couldn't be loaded, so this can't be saved now.");
   });
 
   test('a failed transactions load says so', () => {
@@ -319,7 +357,7 @@ describe('the recurring list', () => {
     const s = series();
     const t = list({ series: s, dismissed: new Set([s[0].id]) });
     expect(t).not.toContain('Rent Chase · Checking · Monthly');
-    expect(t).toContain('1 marked not recurring · Show');
+    expect(t).toContain('1 marked not recurring');
   });
 
   test('nothing detected yet says when things show up', () => {

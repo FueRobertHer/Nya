@@ -3,10 +3,9 @@
 // Budgets tab -- the Mint core loop: monthly budgets per category or per
 // category group, rolled up to your groups (components/BudgetsCard.tsx), with
 // progress meters (fill carries severity: accent -> warning -> over),
-// then savings goals, and what is coming: the cash forecast with its what-if
-// (components/ForecastCard.tsx), the calendar (components/CalendarView.tsx),
-// the recurring bills and income detected (components/RecurringCard.tsx) and
-// the items planned (components/PlannedCard.tsx). Spending is the current
+// then savings goals, and what is coming (components/UpcomingPanel.tsx): the
+// cash forecast with its what-if, the list or calendar of what is due, the
+// bills and income detected and the items planned. Spending is the current
 // month's outflows that count in totals (lib/spending.ts: not transfers or
 // loan payments, not excluded, and in the totals' currency, naming what is in
 // others), from the already-loaded transactions: the same rule as the
@@ -39,12 +38,22 @@
 // While your categories are still the ones Nya made, the starter sets are
 // offered here once, above the budgets (components/TemplateOffer.tsx).
 //
+// UPCOMING (rollout phase 6a3): one notice for what the bills, income,
+// planned items and payments may be missing (components/upcoming-notes.tsx),
+// the forecast, the list or the calendar, Recurring and Planned. As the
+// budgets are on Month, once the planned items have been ready a reload
+// (after a save the server refused: lib/whole-list-store.ts) keeps them
+// drawn from what the page holds, which is then what is saved, so the
+// forecast keeps them and its warning, the list its planned rows, and a
+// sheet open on them stays open on what was typed and says why. Changes
+// wait for them to be ready again. The first load says it is loading.
+//
 // THREE SEGMENTS (docs/design/information-architecture.md#budgets), each with
 // one time range, under a pinned bar (components/BudgetsBar.tsx): Month (the
-// month's budgets), Upcoming (the forecast, calendar, recurring and planned)
-// and Goals (savings goals, and the debt payoff plan when there is a card or
-// loan to plan). All three stay mounted, the others hidden, so nothing typed
-// in one is lost by looking at another.
+// month's budgets), Upcoming (the forecast, the list or calendar, recurring
+// and planned) and Goals (savings goals, and the debt payoff plan when there
+// is a card or loan to plan). All three stay mounted, the others hidden, so
+// nothing typed in one is lost by looking at another.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
@@ -64,17 +73,14 @@ import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, M
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
-import { EMPTY_PLANNED, type Planned, type PlannedItem } from '@/lib/planned';
+import { EMPTY_PLANNED, type Planned } from '@/lib/planned';
 import { formatMoney } from '@/lib/format';
 import { spendingByCategory } from '@/lib/totals';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import { noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
 import type { GoalPlansDamage } from './GoalPlansRepair';
-import ForecastCard from './ForecastCard';
-import CalendarView from './CalendarView';
-import RecurringCard from './RecurringCard';
-import PlannedCard from './PlannedCard';
+import UpcomingPanel from './UpcomingPanel';
 import { Masked } from './HideAmounts';
 import TemplateOffer from './TemplateOffer';
 import BudgetsBar, { budgetsPanelId, budgetsTabId, type BudgetsSegment } from './BudgetsBar';
@@ -85,7 +91,6 @@ const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
 const NO_SERIES: RecurringSeries[] = [];
 const NO_INSTITUTIONS: ForecastInstitution[] = [];
-const NO_ITEMS: PlannedItem[] = [];
 const NO_DISMISSED: string[] = [];
 const NOT_LOADED: BudgetMonthState = { status: 'idle', view: null, error: null, reload: () => {} };
 
@@ -392,15 +397,18 @@ export default function BudgetsTab({
   }
 
   // Bills and income detected (lib/recurring.ts), for the recurring list, the
-  // forecast and the calendar alike.
+  // forecast, the list and the calendar alike.
   const series = detected ?? NO_SERIES;
   // Until the planned items load, no item counts and nothing is dismissed: the
-  // forecast says so. A dismissal follows its series as amounts move
-  // (lib/recurring.ts dismissedSeries): the series' ids, and what each was
-  // saved as, to restore it.
-  const ready = plannedStatus === 'ready';
-  const items = ready ? planned.items : NO_ITEMS;
-  const dismissedIds = ready ? planned.dismissed : NO_DISMISSED;
+  // segment's notice says so. Once they have been ready, a reload (after a
+  // save the server refused) keeps them drawn, as the budgets are: the store
+  // has put back what is saved, which is what it reads again. A dismissal
+  // follows its series as amounts move (lib/recurring.ts dismissedSeries):
+  // the series' ids, and what each was saved as, to restore it.
+  const [plannedWasReady, setPlannedWasReady] = useState(plannedStatus === 'ready');
+  if (plannedStatus !== 'loading' && plannedWasReady !== (plannedStatus === 'ready')) setPlannedWasReady(plannedStatus === 'ready');
+  const plannedDrawn = plannedStatus === 'ready' || (plannedStatus === 'loading' && plannedWasReady);
+  const dismissedIds = plannedDrawn ? planned.dismissed : NO_DISMISSED;
   const gone = useMemo(() => dismissedSeries(series, dismissedIds), [series, dismissedIds]);
   const dismissed = useMemo(() => new Set(gone.keys()), [gone]);
   // A planned item starts in the forecast's currency: the cash accounts'.
@@ -622,69 +630,37 @@ export default function BudgetsTab({
 
       {panel(
         'upcoming',
-        <>
-          <ForecastCard
-            institutions={institutions}
-            series={series}
-            planned={planned}
-            plannedStatus={plannedStatus}
-            dismissed={dismissed}
-            onSavePlanned={onSavePlanned}
-            today={today}
-            txns={txns ?? undefined}
-            loading={txns === null && !txnsFailed}
-            failed={txnsFailed}
-            balancesAsOf={balancesAsOf}
-            balancesSaved={balancesSaved}
-            incomplete={incomplete}
-            stopped={stopped}
-            withoutTransactions={withoutTransactions}
-            fx={fx}
-          />
-
-          <CalendarView
-            txns={txns}
-            failed={txnsFailed}
-            series={series}
-            planned={items}
-            dismissed={dismissed}
-            institutions={institutions}
-            today={today}
-            currency={displayCurrency}
-            fx={fx}
-          />
-
-          <RecurringCard
-            series={series}
-            today={today}
-            currency={displayCurrency}
-            fx={fx}
-            dismissed={dismissed}
-            status={plannedStatus}
-            saveError={plannedSaveError}
-            onDismiss={
-              onSavePlanned &&
-              ((s, dismiss) => {
-                const saved = gone.get(s.id);
-                const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
-                return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
-              })
-            }
-            noSpending={noSpending}
-            loading={txns === null && !txnsFailed}
-            failed={txnsFailed}
-          />
-
-          <PlannedCard
-            planned={planned}
-            status={plannedStatus}
-            error={plannedError}
-            saveError={plannedSaveError}
-            onSave={onSavePlanned}
-            today={today}
-            currency={plannedCurrency}
-          />
-        </>
+        <UpcomingPanel
+          institutions={institutions}
+          series={series}
+          planned={planned}
+          plannedStatus={plannedStatus}
+          plannedDrawn={plannedDrawn}
+          plannedError={plannedError}
+          plannedSaveError={plannedSaveError}
+          onSavePlanned={onSavePlanned}
+          dismissed={dismissed}
+          onDismiss={
+            onSavePlanned &&
+            ((s, dismiss) => {
+              const saved = gone.get(s.id);
+              const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
+              return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
+            })
+          }
+          txns={txns}
+          failed={txnsFailed}
+          balancesAsOf={balancesAsOf}
+          balancesSaved={balancesSaved}
+          incomplete={incomplete}
+          stopped={stopped}
+          withoutTransactions={withoutTransactions}
+          fx={fx}
+          today={today}
+          currency={displayCurrency}
+          plannedCurrency={plannedCurrency}
+          noSpending={noSpending}
+        />
       )}
 
       {goalsPanel}

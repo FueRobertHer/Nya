@@ -686,26 +686,30 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="monthbar"><span>Upcoming</span></div>
               <div class="seg"><span>Month</span><span class="on">Upcoming</span><span>Goals</span></div>
             </div>
+            <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Chase hasn't synced since Oct 21, so bills and income there may be missing or out of date.</span></div>
             <div class="card">
-              <div class="card-header"><h2>Cash forecast</h2><span class="meta">30 · 60 · 90</span></div>
+              <div class="card-header"><h2>Cash forecast</h2><span class="badge">Estimate</span></div>
+              <div><span class="badge warn">May be incomplete</span></div>
+              <div class="small"><b class="money">$2,410</b> <span class="muted">lowest, around Nov 14 (estimated)</span></div>
               <svg class="chart" viewBox="0 0 300 80" aria-hidden="true"><line class="grid" x1="0" y1="60" x2="300" y2="60" stroke-dasharray="4 4"/><polyline class="line" points="0,20 40,24 70,46 100,44 130,30 170,34 200,58 230,40 300,30"/><circle class="low" cx="200" cy="58" r="4"/></svg>
-              <div class="small">Lowest <b class="money">$2,410</b> on Nov 14 <span class="muted">· warns below $2,000</span></div>
-              <span class="why">What if I buy…</span>
+              <div class="seg"><span class="on">30 days</span><span>60 days</span><span>90 days</span></div>
+              <div class="row"><div class="main"><span class="title">Warns below $2,000</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="btn-row"><span class="btn secondary sm">What if I buy…</span></div>
             </div>
             <div class="seg" style="max-width:180px"><span class="on">List</span><span>Calendar</span></div>
             <div class="card flush">
               <div class="daybar"><span>Sat, Oct 24</span></div>
-              <div class="row"><div class="main"><span class="title">Amex Platinum payment</span><span class="sub"><span class="badge warn">Due</span> Minimum</span></div><div class="end money">$35.00</div></div>
-              <div class="daybar"><span>Mon, Oct 26</span></div>
-              <div class="row"><div class="main"><span class="title">Netflix</span><span class="sub">Recurring · monthly</span></div><div class="end money">~$15.49</div></div>
-              <div class="daybar"><span>Sun, Nov 1</span></div>
-              <div class="row"><div class="main"><span class="title">Rent</span><span class="sub">Planned</span></div><div class="end money">$1,800.00</div></div>
-              <div class="row"><div class="main"><span class="title">Acme Corp payroll</span><span class="sub">Recurring income</span></div><div class="end money pos">+$3,210.00</div></div>
+              <div class="row"><div class="main"><span class="title">Amex Platinum</span><span class="sub"><span class="badge warn">Due</span> minimum due, not in the figures</span></div><div class="end money muted">$35.00</div></div>
+              <div class="daybar"><span>Mon, Oct 26</span><span class="money">-$15.49</span></div>
+              <div class="row"><div class="main"><span class="title">Netflix</span><span class="sub">bill · Monthly</span></div><div class="end money">-$15.49</div></div>
+              <div class="daybar"><span>Sun, Nov 1</span><span class="money">+$1,410.00</span></div>
+              <div class="row"><div class="main"><span class="title">Acme Corp payroll</span><span class="sub">income · Every 2 weeks</span></div><div class="end money pos">+$3,210.00</div></div>
+              <div class="row"><div class="main"><span class="title">Rent</span><span class="sub">planned · Monthly</span></div><div class="end money">-$1,800.00</div></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab on"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>UPCOMING</b>Bills, income, planned items and card payments in one dated list, or as a calendar. Recurring and Planned management sit at the foot.</figcaption>
+        <figcaption><b>UPCOMING</b>One notice at the top for what the bills, income and planned items may be missing, with a badge on each card it bears on. Warns below opens the warning in a sheet. Bills, income, planned items and card payments due in one dated list over the forecast's range, or as a calendar. Recurring and Planned sit at the foot, their rows opening their sheets.</figcaption>
       </figure>
 
       <figure class="shot">

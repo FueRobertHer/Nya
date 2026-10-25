@@ -1,16 +1,21 @@
 'use client';
 
-// The calendar on the Budgets tab (lib/calendar.ts): a month a page, each day
-// with a figure and a dot for each kind of thing on it. Days gone by show what
-// posted, as the Activity tab counts each day; from today on, the bills and
-// income expected, the items planned, and the card and loan payments Plaid
-// says are due. Tap a day for its list. The two figures are never added
-// together: one is the bank's record, the other an estimate, and the expected
-// one counts what the forecast counts (a card's own charges are listed, not
-// added). A cell's figure is in whole units, a thousand and up shortened, so
-// it fits a phone's narrow column; the day's list has the cents.
+// The calendar on Budgets > Upcoming (lib/calendar.ts), the List · Calendar
+// control's second view: a month a page, each day with a figure and a dot
+// for each kind of thing on it. Days gone by show what posted, as the
+// Activity tab counts each day; from today on, the bills and income
+// expected, the items planned, and the card and loan payments Plaid says are
+// due. Tap a day for its list, rows under a bar for what posted, what is
+// expected and what is due, as Activity lists a day (rollout phase 6a3).
+// The two figures are never added together: one is the bank's record, the
+// other an estimate, and the expected one counts what the forecast counts (a
+// card's own charges are listed, not added). A cell's figure is in whole
+// units, a thousand and up shortened, so it fits a phone's narrow column;
+// the day's list has the cents. Its tab names it, so it has no heading of
+// its own; the month's arrows stay focusable at either end (aria-disabled),
+// as Activity's do.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { addMonths, calendarMonth, duePayments, type CalendarEntry } from '@/lib/calendar';
 import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurring';
@@ -18,6 +23,9 @@ import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/li
 import { amountsHidden, compactMoney, formatMoney, hiddenMoney, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { Masked } from './HideAmounts';
+import { Notice } from './TotalCaveats';
+import { chevron, LEFT, RIGHT } from './ActivityBar';
+import { NoticeBadge, type UpcomingBadge } from './upcoming-notes';
 import type { FxTable } from '@/lib/fx/rates';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -91,6 +99,85 @@ function dotsOf(entries: CalendarEntry[]): string[] {
   return ['income', 'bill', 'planned', 'due'].filter((k) => kinds.has(k));
 }
 
+/** Why a posted row is quieter: pending, excluded, or in another currency,
+ *  and so not in the day's figure. */
+function postedTags(e: CalendarEntry, currency: string | null): string {
+  return [
+    e.pending ? 'pending' : null,
+    // One charge, split (#39): what of it the day's figure counts when a part is left out.
+    e.parts ? `split into ${e.parts}` : null,
+    e.counted !== undefined ? `${signedMoney(e.counted, e.currency ?? currency)} of it in the day's figure` : null,
+    // In another currency, converted (with a home currency).
+    e.figure !== undefined ? `${signedMoney(e.figure, currency)} in the day's figure` : null,
+    // Counted through its group, on the group's earlier day (#39).
+    e.group
+      ? `in the group “${e.group.name}”, counted on ${new Date(`${e.group.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, not in the day's figure`
+      : null,
+    e.excluded ? "excluded, not in the day's figure" : null,
+    !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** An expected entry's words: what it is and how often, then that it is
+ *  late, why it isn't in the day's figure, or what it counts as there. */
+function ExpectedWords({ e, currency }: { e: CalendarEntry; currency: string | null }) {
+  return (
+    <>
+      {e.source === 'planned' ? 'planned' : e.source === 'income' ? 'income' : 'bill'} · {cadenceText(e.cadence, e.source)}
+      {e.late && e.due ? ` · due ${fmtDay(e.due)}, not in yet` : ''}
+      {offText(e) ? ` · ${offText(e)}` : ''}
+      {e.figure !== undefined ? <Masked>{` · ${signedMoney(e.figure, currency)} in the day's figure, at today's rates`}</Masked> : ''}
+    </>
+  );
+}
+
+/** One entry of a day's list, as a row that opens nothing: its name, the
+ *  calendar's words for it, and its amount, quieter when it isn't in the
+ *  day's figure. Upcoming's list (components/UpcomingList.tsx) draws the
+ *  same rows, with a Due badge on a payment due, which has no "Payment due"
+ *  bar over it there. */
+export function EntryRow({ entry: e, currency, badgeDue = false }: { entry: CalendarEntry; currency: string | null; badgeDue?: boolean }) {
+  // A payment due is its minimum's size: what is owed, not money moving yet.
+  const amount = e.amount === null ? '' : e.kind === 'due' ? formatMoney(Math.abs(e.amount), e.currency ?? currency) : signedMoney(e.amount, e.currency ?? currency);
+  const tags = e.kind === 'posted' ? postedTags(e, currency) : '';
+  return (
+    <li>
+      <div className="list-row upcoming-row">
+        <span className="list-row-text">
+          <span className="list-row-title">{e.name}</span>
+          {e.kind === 'expected' && (
+            <span className="list-row-sub">
+              <span>
+                <ExpectedWords e={e} currency={currency} />
+              </span>
+            </span>
+          )}
+          {e.kind === 'due' && (
+            <span className="list-row-sub">
+              {badgeDue && <span className="badge warn">Due</span>}
+              <span>{e.amount === null ? 'due, minimum not reported' : 'minimum due, not in the figures'}</span>
+            </span>
+          )}
+          {tags !== '' && (
+            <span className="list-row-sub">
+              <span>
+                <Masked>{tags}</Masked>
+              </span>
+            </span>
+          )}
+        </span>
+        {e.amount !== null && (
+          <span className={`list-row-value upcoming-amount${e.amount > 0 ? ' inflow' : ''}${e.uncounted ? ' uncounted' : ''}`}>
+            <Masked>{amount}</Masked>
+          </span>
+        )}
+      </div>
+    </li>
+  );
+}
+
 const NO_TXNS: Txn[] = [];
 
 export default function CalendarView({
@@ -103,6 +190,7 @@ export default function CalendarView({
   today,
   currency,
   fx = null,
+  badge = null,
 }: {
   /** Null while transactions load, or when they couldn't be (`failed`). */
   txns: Txn[] | null;
@@ -121,10 +209,22 @@ export default function CalendarView({
   /** With a home currency, what converts an entry in another currency into
    *  the day figures' (lib/calendar.ts). */
   fx?: FxTable | null;
+  /** What Upcoming's notice says may leave entries out of it, as a badge at
+   *  its top (components/upcoming-notes.tsx). */
+  badge?: UpcomingBadge;
 }) {
   const thisMonth = today.slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
   const [selected, setSelected] = useState<string | null>(today);
+  // Today goes once pressed: focus moves to today's cell, where it took you,
+  // rather than to nothing.
+  const todayCell = useRef<HTMLButtonElement | null>(null);
+  const toToday = useRef(false);
+  useEffect(() => {
+    if (!toToday.current) return;
+    toToday.current = false;
+    todayCell.current?.focus();
+  }, [month]);
 
   const dues = useMemo(() => duePayments(institutions), [institutions]);
   const view = useMemo(
@@ -149,57 +249,32 @@ export default function CalendarView({
   const expected = day?.entries.filter((e) => e.kind === 'expected') ?? [];
   const due = day?.entries.filter((e) => e.kind === 'due') ?? [];
 
-  const amountOf = (e: CalendarEntry) => (e.amount === null ? '' : signedMoney(e.amount, e.currency ?? currency));
-  // Why a posted row is quieter: pending, excluded, or in another currency,
-  // and so not in the day's figure.
-  const postedTags = (e: CalendarEntry) =>
-    [
-      e.pending ? 'pending' : null,
-      // One charge, split (#39): what of it the day's figure counts when a part is left out.
-      e.parts ? `split into ${e.parts}` : null,
-      e.counted !== undefined ? `${signedMoney(e.counted, e.currency ?? currency)} of it in the day's figure` : null,
-      // In another currency, converted (with a home currency).
-      e.figure !== undefined ? `${signedMoney(e.figure, currency)} in the day's figure` : null,
-      // Counted through its group, on the group's earlier day (#39).
-      e.group
-        ? `in the group “${e.group.name}”, counted on ${new Date(`${e.group.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, not in the day's figure`
-        : null,
-      e.excluded ? "excluded, not in the day's figure" : null,
-      !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-
   return (
-    <div className="card">
-      <div className="inst-header">
-        <div className="inst-name">Calendar</div>
-        {month !== thisMonth && (
-          <button
-            className="link-btn"
-            onClick={() => {
-              setMonth(thisMonth);
-              setSelected(today);
-            }}
-          >
-            Today
-          </button>
-        )}
-      </div>
+    <div className="card stack">
+      {badge && <NoticeBadge tone={badge} />}
 
       <div className="cal-head">
-        <button className="cal-nav" onClick={() => go(-1)} disabled={month <= first} aria-label="Previous month">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m15 18-6-6 6-6" />
-          </svg>
+        <button type="button" className="secondary icon-btn" onClick={() => go(-1)} aria-disabled={month <= first} aria-label="Previous month">
+          {chevron(LEFT)}
         </button>
-        <div className="cal-title" aria-live="polite">
-          {monthTitle(month)}
+        <div className="cal-title">
+          <span aria-live="polite">{monthTitle(month)}</span>
+          {month !== thisMonth && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                toToday.current = true;
+                setMonth(thisMonth);
+                setSelected(today);
+              }}
+            >
+              Today
+            </button>
+          )}
         </div>
-        <button className="cal-nav" onClick={() => go(1)} disabled={month >= last} aria-label="Next month">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m9 18 6-6-6-6" />
-          </svg>
+        <button type="button" className="secondary icon-btn" onClick={() => go(1)} aria-disabled={month >= last} aria-label="Next month">
+          {chevron(RIGHT)}
         </button>
       </div>
 
@@ -227,6 +302,7 @@ export default function CalendarView({
           return (
             <button
               key={date}
+              ref={date === today ? todayCell : undefined}
               className={`cal-day${date === today ? ' today' : ''}${date === selected ? ' selected' : ''}${past ? ' past' : ''}`}
               onClick={() => setSelected(date)}
               aria-pressed={date === selected}
@@ -246,7 +322,7 @@ export default function CalendarView({
         })}
       </div>
 
-      {unknownPast && month <= thisMonth && <p className={failed ? 'error' : 'stale-note'}>{pastNote}</p>}
+      {unknownPast && month <= thisMonth && <Notice level={failed ? 'critical' : 'caution'}>{pastNote}</Notice>}
 
       <div className="cal-legend" aria-hidden="true">
         <span>
@@ -264,86 +340,53 @@ export default function CalendarView({
       </div>
 
       {day && (
-        <div className="cal-detail">
-          <div className="inst-header">
-            <div className="inst-name">{dayTitle(day.date)}</div>
+        <div className="cal-detail stack tight">
+          <div className="card-header">
+            <h3>{dayTitle(day.date)}</h3>
           </div>
           {day.entries.length === 0 && (
             <p className="empty-note">{day.date < today ? (unknownPast ? pastNote : 'Nothing posted.') : 'Nothing expected.'}</p>
           )}
           {day.entries.length > 0 && day.date <= today && unknownPast && <p className="empty-note">{pastNote}</p>}
-          {posted.length > 0 && (
-            <>
-              <div className="recurring-section">
-                Posted{day.posted !== null && <span> · <Masked>{signedMoney(day.posted, currency)}</Masked></span>}
-              </div>
-              <table>
-                <tbody>
-                  {posted.map((e) => (
-                    <tr key={`p-${e.ref}`} className={e.uncounted ? 'cal-uncounted' : undefined}>
-                      <td>
-                        {e.name}
-                        {postedTags(e) && <div className="type-tag">{postedTags(e)}</div>}
-                      </td>
-                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-          {expected.length > 0 && (
-            <>
-              <div className="recurring-section">
-                Expected{day.expected !== null && <span> · <Masked>{signedMoney(day.expected, currency)}</Masked></span>}
-              </div>
-              <table>
-                <tbody>
-                  {expected.map((e) => (
-                    <tr key={`e-${e.ref}`} className={e.uncounted ? 'cal-uncounted' : undefined}>
-                      <td>
-                        {e.name}
-                        <div className="type-tag">
-                          {e.source === 'planned' ? 'planned' : e.source === 'income' ? 'income' : 'bill'} · {cadenceText(e.cadence, e.source)}
-                          {e.late && e.due ? ` · due ${fmtDay(e.due)}, not in yet` : ''}
-                          {offText(e) ? ` · ${offText(e)}` : ''}
-                          {e.figure !== undefined ? <Masked>{` · ${signedMoney(e.figure, currency)} in the day's figure, at today's rates`}</Masked> : ''}
-                        </div>
-                      </td>
-                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-          {due.length > 0 && (
-            <>
-              <div className="recurring-section">Payment due</div>
-              <table>
-                <tbody>
-                  {due.map((e) => (
-                    <tr key={`d-${e.ref}`} className="cal-uncounted">
-                      <td>
-                        {e.name}
-                        <div className="type-tag">{e.amount === null ? 'due, minimum not reported' : 'minimum due, not in the figures'}</div>
-                      </td>
-                      <td className="num">
-                        <Masked>{e.amount === null ? '' : formatMoney(Math.abs(e.amount), e.currency ?? currency)}</Masked>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
+          {day.entries.length > 0 && (
+            <ul className="list-rows">
+              {posted.length > 0 && (
+                <li className="txn-day">
+                  <span>
+                    Posted{day.posted !== null && <> · <Masked>{signedMoney(day.posted, currency)}</Masked></>}
+                  </span>
+                </li>
+              )}
+              {posted.map((e) => (
+                <EntryRow key={`p-${e.ref}`} entry={e} currency={currency} />
+              ))}
+              {expected.length > 0 && (
+                <li className="txn-day">
+                  <span>
+                    Expected{day.expected !== null && <> · <Masked>{signedMoney(day.expected, currency)}</Masked></>}
+                  </span>
+                </li>
+              )}
+              {expected.map((e) => (
+                <EntryRow key={`e-${e.ref}`} entry={e} currency={currency} />
+              ))}
+              {due.length > 0 && (
+                <li className="txn-day">
+                  <span>Payment due</span>
+                </li>
+              )}
+              {due.map((e) => (
+                <EntryRow key={`d-${e.ref}`} entry={e} currency={currency} />
+              ))}
+            </ul>
           )}
         </div>
       )}
 
-      <div className="chart-note">
+      <p className="helper">
         Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the
         forecast counts it; a card&apos;s own charges and the payments due on cards and loans are listed, not added.
-      </div>
+      </p>
     </div>
   );
 }
