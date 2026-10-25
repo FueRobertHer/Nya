@@ -114,15 +114,17 @@ Each segment has one time range, which removes today's three competing ranges on
 
 ## Plan
 
-**Job:** when can I stop working, and how sure is that?
+**Job:** where am I, where am I heading, and what changes it?
 
 A pinned **scenario bar**: "Your plan" or the open scenario, a switcher that opens the Scenarios sheet (list, new, rename, duplicate, delete, Compare two to four), and "Back to your plan". Repair and load-error notices sit above it when present. When an input may be incomplete (a month missing from spending, assets short), each segment opens with one amber notice saying so, since every figure on every segment rests on those inputs.
 
 | Segment | Contents |
 |---|---|
-| **FI and timeline** (default) | FI number, years to FI, Coast and Barista FI, progress; the five inputs (spending, assets, savings, ages, assumptions), each one row that opens its edit sheet, where "Why?" explains its derivation (no control inside the row); plan currency as a badge once confirmed (a notice only while it needs a decision); income and one-off expenses; life events when a scenario is open. |
-| **Stress test** | Method (History or Monte Carlo) and Change; success rate and fan chart; worst starting years; the withdrawal-rate grid; assumptions; About these numbers as a disclosure. |
+| **Your path** (default; was FI and timeline) | The answer against your stop age ("Around age 39, 16 years before you stop at 55"), progress, and the caveats on the FI number; the path chart from today to the stop age (phase 8b); the four figures it rests on (spending, saving, invested, ages and assumptions), each one row that opens its edit sheet, where "Why?" explains its derivation (no control inside the row), its lesser caveats on one line that says how many and what kind; plan currency as a badge once confirmed (a notice only while it needs a decision); the **What if…** card (phase 8c); income and one-off expenses; "Will it last?" and "You could stop saving now" (Coast FI) as rows. |
+| **Stress test** | Success rate with its "Hypothetical, from US history" label and fan chart; worst starting years; the withdrawal-rate grid; one Assumptions row that opens the sheet holding every setting the test uses (method, mix, rule, rate, return, tax, fee); About these numbers, once, as a disclosure. |
 | **Portfolio** | Allocation by asset class or tax bucket, target and drift, "For your plan" mix, mix over time. |
+
+**Life events stay in scenarios** (decided 2026-10-25). The What if… card offers templates: buy a home, travel or a big expense, a child, a career break and part-time work from phase 8c (the kinds that exist), and a car, a raise, a windfall and a loan ends from phase 8d. Social Security and pensions stay income on your plan. Picking one asks for your own figures, with nothing suggested, shows how it moves your FI age, and "Try it" creates a scenario named after it and opens it. The card lists the scenarios as life choices, each with its FI age; your plan stays what you have locked in. The path chart and the What if… card are new components, recorded in the table below when they are built (phases 8b and 8c).
 
 ## Settings
 
@@ -256,10 +258,10 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals |
 | ForecastCard, ForecastChart | Budgets | Budgets > Upcoming |
 | CalendarView, RecurringCard, PlannedCard | Budgets | Budgets > Upcoming |
-| PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > FI and timeline |
+| PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > Your path |
 | PlanTab (SimulationCard, GridCard, About), PlanFanChart, PlanGrid | Plan | Plan > Stress test |
 | PlanScenarios, PlanCompare, ScenarioTag | Plan, below FiCard; bar at top | Scenario bar and Scenarios sheet |
-| PlanEvents | Plan, near the bottom | Plan > FI and timeline (with a scenario open) |
+| PlanEvents | Plan, near the bottom | Plan > Your path, with a scenario open; its kinds become the What if… card's templates (phase 8c) |
 | PlanForms | Plan sheet | Unchanged |
 | PlanCurrency | Plan card | Badge; notice only while it needs a decision |
 | AllocationCard | Plan, between FI and simulation | Plan > Portfolio |
@@ -291,3 +293,6 @@ One word for one thing, everywhere:
 | **Forget** | Permanently remove what Nya kept about a disconnected account | Delete |
 | **Link** | Join a reconnected account's history to the account it replaces | Connect |
 | **Connect** / **Reconnect** | Bring an institution in through a provider / fix its login | Link |
+| **Financial independence** (FI) | Enough invested that work is optional: the Plan tab's subject and its label | Retire early |
+| **Stop age** | The age you plan to stop working, which the Plan's answer is measured against | Retirement age |
+| **What if** | A scenario, started from a life event's template or by hand | A life event on your plan |

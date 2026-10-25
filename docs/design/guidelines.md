@@ -27,7 +27,7 @@ Decide this first. Most clutter in Nya came from good features placed in the fir
 3. **Asks the person to act** is shown on the object it concerns and is also an item in Home's Needs attention.
 4. **Analysis of transactions** goes with Activity's analysis (Spending, after phase 5), never above the transaction list.
 5. **This month's budget, what is coming, or something saved toward** goes in Budgets: Month, Upcoming or Goals.
-6. **Long-term or FI** goes in Plan: FI and timeline, Stress test or Portfolio.
+6. **Long-term or FI** goes in Plan: Your path, Stress test or Portfolio.
 7. **None of these**: say so in the pull request and propose a home. Don't add a card to Home.
 
 Also:
