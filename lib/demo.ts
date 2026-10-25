@@ -1,13 +1,16 @@
 // lib/demo.ts
 //
-// One-click demo accounts, on Vercel Preview only: two (or more) Clerk users
-// of the development instance that anyone can try the app as, on Plaid's
-// sandbox. They are named in DEMO_USER_IDS, comma-separated, each an id with
-// an optional label: "user_abc:Alex, user_def:Sam".
+// One-click demo accounts, everywhere but production: exactly two Clerk users
+// of the development instance, Alex and Sam, that anyone can try the app as,
+// on Plaid's sandbox. They are the only accounts with a one-click sign-in.
+// DEMO_USER_IDS gives each one's id, comma-separated, labelled with its name:
+// "user_abc:Alex, user_def:Sam". An entry labelled anything else, or nothing,
+// is ignored, so no other account can be given a demo button.
 //
-// Nothing here works anywhere but Preview (VERCEL_ENV=preview) or a local
-// `next dev`: set on Production by mistake, the variable does nothing, so a
-// demo button can never sign anyone into production.
+// Nothing here works on Production (VERCEL_ENV=production) or a self-hosted
+// `next start`: set there by mistake, the variable does nothing, so a demo
+// button can never sign anyone into production. Vercel's Preview and
+// Development environments and a local `next dev` offer them.
 //
 // Demo accounts are allowed in without being on CLERK_ALLOWED_USER_IDS
 // (lib/auth-mode.ts), and behave like any account (linking sandbox banks,
@@ -15,6 +18,9 @@
 // would find the demo gone.
 
 export type DemoUser = { id: string; label: string };
+
+/** The demo accounts, in the order the sign-in page offers them. */
+export const DEMO_NAMES = ['Alex', 'Sam'] as const;
 
 /** How many demo sign-ins one address may start per window, and the window: a
  *  courtesy to Clerk, since each is a call to it (app/api/demo/sign-in). Here
@@ -24,21 +30,30 @@ export type DemoUser = { id: string; label: string };
 export const DEMO_SIGN_INS_PER_WINDOW = 20;
 export const DEMO_WINDOW_SECONDS = 10 * 60;
 
-/** Whether this deployment may offer demo accounts at all. */
+/** Whether this deployment may offer demo accounts at all: any Vercel
+ *  environment but Production, or a local `next dev` off Vercel. */
 export function demoEnvironment(): boolean {
-  return process.env.VERCEL_ENV === 'preview' || (process.env.NODE_ENV === 'development' && !process.env.VERCEL_ENV);
+  const vercel = process.env.VERCEL_ENV;
+  if (vercel) return vercel === 'preview' || vercel === 'development';
+  return process.env.NODE_ENV === 'development';
 }
 
 export function demoUsers(): DemoUser[] {
   if (!demoEnvironment()) return [];
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !process.env.CLERK_SECRET_KEY) return [];
-  const out: DemoUser[] = [];
-  for (const [i, raw] of (process.env.DEMO_USER_IDS ?? '').split(',').entries()) {
+  // The first entry for each name wins, and one id can't be both.
+  const ids = new Map<string, string>();
+  for (const raw of (process.env.DEMO_USER_IDS ?? '').split(',')) {
     const [id, ...rest] = raw.trim().split(':');
-    if (!id || !id.startsWith('user_')) continue;
-    out.push({ id, label: rest.join(':').trim().slice(0, 24) || `Demo ${i + 1}` });
+    const label = rest.join(':').trim().toLowerCase();
+    const name = DEMO_NAMES.find((n) => n.toLowerCase() === label);
+    if (!id || !id.startsWith('user_') || !name || ids.has(name) || [...ids.values()].includes(id)) continue;
+    ids.set(name, id);
   }
-  return out;
+  return DEMO_NAMES.flatMap((label) => {
+    const id = ids.get(label);
+    return id ? [{ id, label }] : [];
+  });
 }
 
 export function isDemoUser(userId: string): boolean {

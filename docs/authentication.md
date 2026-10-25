@@ -5,7 +5,7 @@ Nya has two ways to sign in. Without Clerk keys set, one shared password protect
 - [Password gate](#password-gate)
 - [Signing in with Clerk](#signing-in-with-clerk)
 - [Sharing between people](#sharing-between-people)
-- [Demo accounts (Preview only)](#demo-accounts-preview-only)
+- [Demo accounts](#demo-accounts)
 - [API tokens](#api-tokens)
 - [What is not covered](#what-is-not-covered)
 
@@ -88,14 +88,14 @@ Connections are kept environment-wide under `connections` (in the backups, so re
 
 The records are a store on the storage seam ([architecture.md](architecture.md#storage-seam)): `sharing-access-log` in each person's container, one encrypted, compressed entry per connection, under its log id, so no field name can be traced to the two people (a connection's own id is made from their sign-in ids, and never leaves their own requests). They are in the backups with the rest of the container, and in both people's downloads, inside `sharing`, beside their connection. `lib/sharing.ts` is the only code that, on one person's request, reads or writes anything in another person's container, and in the records only by their log id: it reads the other person's record of showings to you (for your drawer and your download), records a showing (`recordShowing`), with nothing taken from the request (the quarter hour, a count, and the accounts and levels the read returned), and deletes both records when the connection ends (`forgetShowings`). Reading what someone shares changes nothing in their container (`projectShare` reads read-only), so a recorded showing is the only write anyone's read makes there. A showing recorded while the connection was being removed is taken back at once: after writing, `recordShowing` checks the connection is still the one it read, and deletes what it wrote if not (see "How long a record lasts").
 
-## Demo accounts (Preview only)
+## Demo accounts
 
-One-click buttons on the sign-in page that sign anyone in as a shared demo account, on Plaid's sandbox. To set them up:
+Two shared demo accounts, **Alex** and **Sam**, that anyone can sign in as with one click from the sign-in page, on Plaid's sandbox. They are the only accounts with a one-click sign-in. To set them up:
 
-1. In the Clerk instance Preview uses (the development one), create two users (Users, Create user). A `+clerk_test` address such as `alex+clerk_test@example.com` needs no real inbox. Copy their ids.
-2. On Vercel's Preview environment set `DEMO_USER_IDS` to them, each with a label: `user_abc:Alex, user_def:Sam`, and redeploy. The sign-in page then offers each one as a demo account.
+1. In the Clerk instance the non-production environments use (the development one), create two users (Users, Create user), Alex and Sam. A `+clerk_test` address such as `alex+clerk_test@example.com` needs no real inbox. Copy their ids.
+2. On Vercel's Preview and Development environments set `DEMO_USER_IDS` to them, each labelled with its name: `user_abc:Alex, user_def:Sam`, and redeploy. The sign-in page then offers both. An entry labelled anything but Alex or Sam, or not labelled, is ignored.
 
-They work only on Preview (`VERCEL_ENV=preview`) or a local `next dev`: set on Production, the variable does nothing. Demo accounts don't need to be on `CLERK_ALLOWED_USER_IDS`, can link sandbox banks (username `user_good`, password `pass_good`), connect and share like anyone, but can't be deleted. Everyone who tries them shares them.
+They work on every environment but production: Vercel's Preview and Development (`VERCEL_ENV=preview` or `development`) and a local `next dev`. Set on Production, or on a self-hosted `next start`, the variable does nothing. Demo accounts don't need to be on `CLERK_ALLOWED_USER_IDS`, can link sandbox banks (username `user_good`, password `pass_good`), connect and share like anyone, but can't be deleted. Everyone who tries them shares them.
 
 Before making Preview public (turning off Vercel's protection for it), give it its own database and `MASTER_KEY`, as described in [deployment.md](deployment.md#what-preview-runs-against).
 
@@ -112,7 +112,7 @@ A personal API token lets a program its owner chooses (a script, a dashboard, an
 - **The owner is told.** Making a token emails the account's owner (with email set up, [deployment.md](deployment.md#email-notices)) that a token was made and when, never the token or its name, and how to revoke one they didn't make, since a token outlives every session. A data download sends the same kind of email.
 - **Ending one.** Revoking takes effect on the token's next request, and needs no fresh sign-in. Sign out everywhere ends sessions, not tokens, and so does changing `APP_PASSWORD`; turning Clerk on ends every token made with the shared password (it has no account to vouch for it), so make new ones once signed in; taking someone off `CLERK_ALLOWED_USER_IDS` stops the tokens they made at once; deleting an account deletes its tokens with the rest of its data. Tokens are never in a backup ([operations.md](operations.md#restoring-a-backup)), so restoring one ends every token, and a token revoked before can never come back that way.
 - **Names of the people you split costs with** leave Nya through a token only in `/api/v1/shared-expenses` (and the MCP tool `get_shared_expenses`): every other answer names a person by a random id, so a token used for transactions never receives a friend's name. Nya keeps no payment app's credential for a token, or anything else, to reach.
-- **Not on the demo.** A demo account (Preview only) can't make a token: everyone who tries the demo shares its data, and a token would go on reading what later visitors type. A token whose account is a demo account never works. A sandbox for developers is a later step.
+- **Not on the demo.** A demo account (never on production) can't make a token: everyone who tries the demo shares its data, and a token would go on reading what later visitors type. A token whose account is a demo account never works. A sandbox for developers is a later step.
 
 ## What is not covered
 

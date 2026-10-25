@@ -180,9 +180,9 @@ describe('the Activity list', () => {
     });
   });
 
-  test('a demo account (Preview only, shared by everyone) is never offered adding, and is refused it', async () => {
+  test('a demo account (off production, shared by everyone) is never offered adding, and is refused it', async () => {
     process.env.VERCEL_ENV = 'preview';
-    process.env.DEMO_USER_IDS = 'user_owner';
+    process.env.DEMO_USER_IDS = 'user_owner:Sam';
     await as('user_owner', async () => {
       expect((await load()).attachments).toEqual({ connected: true, uploads: false });
       const start = await route.POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ transaction_id: coffee, kind: 'image', bytes: 10, part_sha256: ['0'.repeat(64)] }) }));

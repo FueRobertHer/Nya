@@ -32,7 +32,7 @@ beforeEach(async () => {
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
   process.env.CLERK_SECRET_KEY = 'sk_test_x';
   process.env.CLERK_ALLOWED_USER_IDS = 'user_owner';
-  process.env.DEMO_USER_IDS = 'user_alex:Alex, user_sam:Sam, not-an-id, user_third';
+  process.env.DEMO_USER_IDS = 'user_sam:Sam, user_alex:alex, not-an-id, user_third, user_jordan:Jordan, user_other:Alex, user_alex:Sam';
   (process.env as any).VERCEL_ENV = 'preview';
 });
 afterEach(() => {
@@ -46,15 +46,31 @@ const signIn = (user: string, ip = '1.2.3.4') => {
 };
 
 describe('demo accounts', () => {
-  test('listed with labels on Preview; entries that are not user ids are skipped', () => {
+  test('only Alex and Sam, in that order, whatever else is listed', () => {
+    // Unlabelled, other names, a second Alex and Sam given Alex's id are all
+    // skipped, as is anything that isn't a user id.
     expect(demoUsers()).toEqual([
       { id: 'user_alex', label: 'Alex' },
       { id: 'user_sam', label: 'Sam' },
-      { id: 'user_third', label: 'Demo 4' },
     ]);
+    for (const id of ['user_third', 'user_jordan', 'user_other']) expect(isDemoUser(id)).toBe(false);
   });
 
-  test('nowhere but Preview (or local development): on Production the variable does nothing', async () => {
+  test('on every environment but production', () => {
+    for (const env of ['preview', 'development']) {
+      (process.env as any).VERCEL_ENV = env;
+      expect([env, demoEnvironment()]).toEqual([env, true]);
+    }
+    // Off Vercel, a local `next dev` has them and a self-hosted `next start` doesn't.
+    delete process.env.VERCEL_ENV;
+    (process.env as any).NODE_ENV = 'development';
+    expect(demoEnvironment()).toBe(true);
+    (process.env as any).NODE_ENV = 'production';
+    expect(demoEnvironment()).toBe(false);
+    expect(demoUsers()).toEqual([]);
+  });
+
+  test('on Production the variable does nothing', async () => {
     (process.env as any).VERCEL_ENV = 'production';
     expect(demoEnvironment()).toBe(false);
     expect(demoUsers()).toEqual([]);
@@ -88,8 +104,8 @@ describe('the demo sign-in', () => {
     expect(tickets).toEqual(['user_sam']);
   });
 
-  test('only ever as a listed demo account', async () => {
-    for (const user of ['user_owner', 'user_stranger', '']) {
+  test('only ever as Alex or Sam', async () => {
+    for (const user of ['user_owner', 'user_stranger', 'user_third', 'user_jordan', '']) {
       expect((await signIn(user)).status).toBe(400);
     }
     expect(tickets).toEqual([]);
