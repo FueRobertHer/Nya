@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import BudgetsCard, { REFUND_NOTE } from '@/components/BudgetsCard';
+import BudgetsCard from '@/components/BudgetsCard';
+import { REFUND_NOTE } from '@/components/BudgetSheet';
 import BudgetsTab, { PastMonthPending } from '@/components/BudgetsTab';
 import { budgetTexts } from './home-attention';
 import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
@@ -15,9 +16,10 @@ import type { Taxonomy } from '@/lib/categories';
 import { categoriesFor } from './category-fixture';
 
 // Budget rollover and income carryover on screen (#37): meters against what
-// is available with the carry beneath them, the rollover editor, a past
-// month shown as it was, the income pool and its setting, and Home's alerts
-// weighing what is available.
+// is available with the carry on the line under them, a budget's sheet at
+// its rollover level, a past month shown as it was, the income pool and its
+// setting, and Home's alerts weighing what is available. A row reads its
+// name, then the line under its meter, then its amounts (rollout 6a2).
 
 const text = (html: string) =>
   html
@@ -61,11 +63,9 @@ const card = (props: Partial<Parameters<typeof BudgetsCard>[0]>) =>
 describe('the meters, against what is available', () => {
   test('leftover and overspending carried: each meter is spent of available, with the carry beneath it', () => {
     const t = card({ carries: carries({ [GROCERIES]: { carry: 120 }, [RESTAURANTS]: { carry: -45 } }) });
-    expect(t).toContain('Groceries $80.00 of $420.00');
-    expect(t).toContain('+$120.00 rolled over');
+    expect(t).toContain('Groceries +$120.00 rolled over $80.00 of $420.00');
     // Overspent: 100 less the 45 carried is 55 available, and 120 is over it.
-    expect(t).toContain('Restaurants $120.00 of $55.00 · over');
-    expect(t).toContain('$45.00 overspent, carried over');
+    expect(t).toContain('Restaurants Over $45.00 overspent, carried over $120.00 of $55.00');
     // The group rolls its categories' available up.
     expect(t).toContain('Food $200.00 of $475.00');
   });
@@ -90,9 +90,11 @@ describe('the meters, against what is available', () => {
       />
     );
     // Said in words, never as a limit below zero.
-    expect(text(html)).toContain('Groceries $0.00 spent, nothing left · over $150.00 overspent, carried over Began the month $50.00 over.');
+    expect(text(html)).toContain('Groceries Over $150.00 overspent, carried over $0.00 spent, nothing left Began the month $50.00 over.');
     expect(text(html)).not.toContain('-$');
-    expect(html).toContain('meter-fill over" style="width:100%"');
+    // Over is amber in Budgets, as nearly over is: the word tells them apart.
+    expect(html).toContain('meter-fill warn" style="width:100%"');
+    expect(html).not.toContain('meter-fill over');
   });
 
   test('a carry that uses up the budget exactly: nothing left, and over only once something is spent', () => {
@@ -110,12 +112,12 @@ describe('the meters, against what is available', () => {
           carries={carries({ [GROCERIES]: { carry: -100 } })}
         />
       );
-    expect(text(at(0))).toContain('Groceries $0.00 spent, nothing left $100.00 overspent, carried over');
-    expect(at(0)).not.toContain('over-tag');
+    expect(text(at(0))).toContain('Groceries $100.00 overspent, carried over $0.00 spent, nothing left');
+    expect(at(0)).not.toContain('>Over<');
     expect(at(0)).not.toContain('Began the month');
     expect(at(0)).toContain('meter-fill" style="width:0%"');
-    expect(text(at(12))).toContain('Groceries $12.00 spent, nothing left · over');
-    expect(at(12)).toContain('meter-fill over" style="width:100%"');
+    expect(text(at(12))).toContain('Groceries Over $100.00 overspent, carried over $12.00 spent, nothing left');
+    expect(at(12)).toContain('meter-fill warn" style="width:100%"');
   });
 
   test('the reconcile rule with nothing left on one side says so in words', () => {
@@ -123,7 +125,7 @@ describe('the meters, against what is available', () => {
       budgets: { categories: { [GROCERIES]: { amount: 300 }, [RESTAURANTS]: { amount: 100 } }, groups: { [FOOD]: { amount: 350 } } },
       carries: carries({}, { [FOOD]: { carry: -500 } }),
     });
-    expect(own).toContain('Food $200.00 spent, nothing left · over');
+    expect(own).toContain('Food Over Capped by the group’s budget $200.00 spent, nothing left');
     expect(own).toContain('Nothing is left of the budget for Food as a whole after what it carried over, so nothing more can be spent in the group, whatever its categories have available ($400.00).');
     expect(own).not.toContain('-$');
     // Every category in it budgeted, so theirs can bind.
@@ -132,7 +134,7 @@ describe('the meters, against what is available', () => {
       budgets: { categories: { ...all, [GROCERIES]: { amount: 300 }, [RESTAURANTS]: { amount: 100 }, [COFFEE]: { amount: 50 } }, groups: { [FOOD]: { amount: 350 } } },
       carries: carries({ [GROCERIES]: { carry: -400 }, [RESTAURANTS]: { carry: -150 }, [COFFEE]: { carry: -100 } }),
     });
-    expect(theirs).toContain('Food $200.00 spent, nothing left · over');
+    expect(theirs).toContain('Food Over Limited to its categories’ budgets $200.00 spent, nothing left');
     expect(theirs).toContain('Every category in Food has a budget, and after what they carried over nothing is left of them, so nothing more can be spent in the group, whatever it has available as a whole ($350.00).');
   });
 
@@ -141,8 +143,8 @@ describe('the meters, against what is available', () => {
       budgets: { categories: { [GROCERIES]: { amount: 300 }, [RESTAURANTS]: { amount: 100 } }, groups: { [FOOD]: { amount: 350 } } },
       carries: carries({}, { [FOOD]: { carry: 30 } }),
     });
-    expect(t).toContain('For Food as a whole $350.00 +$30.00 rolled over');
-    expect(t).toContain('Food $200.00 of $380.00');
+    expect(t).toContain('For Food as a whole +$30.00 rolled over $350.00');
+    expect(t).toContain('Food Capped by the group’s budget $200.00 of $380.00');
     expect(t).toContain('What its categories have available adds up to $400.00, more than the $380.00 available to Food as a whole, so $380.00 is the limit.');
   });
 
@@ -153,7 +155,7 @@ describe('the meters, against what is available', () => {
   });
 });
 
-describe('the rollover editor', () => {
+describe('a budget’s sheet, at its rollover', () => {
   const settings = (rolling: Record<string, string> = {}, ended: Record<string, string> = {}) => ({
     rolling: { categories: rolling, groups: {} },
     starts: { categories: { [GROCERIES]: addMonths(NOW, -3) }, groups: {} },
@@ -173,9 +175,10 @@ describe('the rollover editor', () => {
         onSave={async () => true}
         open={[FOOD]}
         edit={{ kind: 'category', id: GROCERIES }}
+        editLevel="rollover"
         month={NOW}
         rollover={settings()}
-        onRollover={async () => true}
+        onRollover={async () => null}
       />
     );
     const t = text(html);
@@ -199,16 +202,41 @@ describe('the rollover editor', () => {
           onSave={async () => true}
           open={[FOOD]}
           edit={{ kind: 'category', id: GROCERIES }}
+          editLevel="rollover"
           month={NOW}
           carries={carries({ [GROCERIES]: { carry: 40, why: 'reset', from: addMonths(NOW, -1) } })}
           rollover={settings({ [GROCERIES]: addMonths(NOW, -1) })}
-          onRollover={async () => true}
+          onRollover={async () => null}
         />
       )
     );
     expect(t).toMatch(/Carryover reset in \w+/);
-    expect(t).toContain('Reset carryover');
+    expect(t).toContain('Reset carryover…');
     expect(t).toContain('Turn off rollover');
+  });
+
+  test('its first level says whether it rolls over, as a row that opens the rollover level', () => {
+    const at = (rolling: Record<string, string>) =>
+      text(
+        renderToStaticMarkup(
+          <BudgetsCard
+            taxonomy={taxonomy}
+            budgets={{ categories: { [GROCERIES]: { amount: 300 } }, groups: {} }}
+            spent={{}}
+            currency="USD"
+            editable
+            noSpending={false}
+            onSave={async () => true}
+            open={[FOOD]}
+            edit={{ kind: 'category', id: GROCERIES }}
+            month={NOW}
+            rollover={settings(rolling)}
+            onRollover={async () => null}
+          />
+        )
+      );
+    expect(at({ [GROCERIES]: addMonths(NOW, -1) })).toMatch(/Rollover On since \w+/);
+    expect(at({})).toContain('Rollover Off');
   });
 
   test('turned off this month: the way to bring its carry back is said', () => {
@@ -225,9 +253,10 @@ describe('the rollover editor', () => {
             onSave={async () => true}
             open={[FOOD]}
             edit={{ kind: 'category', id: GROCERIES }}
+            editLevel="rollover"
             month={NOW}
             rollover={settings({}, ended)}
-            onRollover={async () => true}
+            onRollover={async () => null}
           />
         )
       );
@@ -243,26 +272,28 @@ describe('the rollover editor', () => {
 describe('a reset', () => {
   test('its confirmation says a returned purchase stays in the carry until reset', () => {
     expect(REFUND_NOTE).toBe('A refund counts as money in, never off a budget’s spending, so a purchase you returned stays in the carry until you reset it.');
-    const source = readFileSync(join(import.meta.dir, '..', 'components', 'BudgetsCard.tsx'), 'utf8');
-    const sheet = source.slice(source.indexOf('<Sheet open={resetting !== null}'), source.indexOf('</Sheet>'));
-    expect(sheet).toContain('{REFUND_NOTE}');
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'BudgetSheet.tsx'), 'utf8');
+    const level = source.slice(source.indexOf("if (level === 'reset')"), source.indexOf("if (level === 'remove')"));
+    expect(level).toContain('{REFUND_NOTE}');
   });
 });
 
 describe('a past month, as it was', () => {
   test('its budgets and spending then, with nothing to edit or add', () => {
     const t = card({ past: true, month: addMonths(NOW, -1), carries: carries({ [GROCERIES]: { carry: 10 } }) });
-    expect(t).toContain('Groceries $80.00 of $310.00');
-    expect(t).not.toContain('Add Budget');
+    expect(t).toContain('Groceries +$10.00 rolled over $80.00 of $310.00');
+    expect(t).not.toContain('Add budget');
     expect(card({ past: true, month: '2026-03', budgets: { categories: {}, groups: {} }, spent: {} })).toContain('No budgets in March 2026.');
   });
 
   test('one that couldn’t be loaded says so, with a way to try again', () => {
     const failed = (error: string) => <PastMonthPending state={{ status: 'error', view: null, error, reload: () => {} }} name="March" />;
     const html = renderToStaticMarkup(failed('Rollover couldn’t be worked out just now, so each budget shows its amount without it.'));
-    expect(text(html)).toBe('March couldn’t be loaded. Try again');
-    expect(html).toContain('<button class="secondary"');
-    expect(text(renderToStaticMarkup(failed(UNREADABLE_MONTHS)))).toBe(`${UNREADABLE_MONTHS} Try again`);
+    // A caution, as it always was, its level said first.
+    expect(text(html)).toBe('Caution: March couldn’t be loaded. Try again');
+    expect(html).toContain('<div class="notice caution">');
+    expect(html).toContain('<button type="button" class="btn secondary">Try again</button>');
+    expect(text(renderToStaticMarkup(failed(UNREADABLE_MONTHS)))).toBe(`Caution: ${UNREADABLE_MONTHS} Try again`);
     expect(text(renderToStaticMarkup(<PastMonthPending state={{ status: 'loading', view: null, error: null, reload: () => {} }} name="March" />))).toBe('Loading March…');
   });
 });
@@ -308,26 +339,29 @@ describe('income carryover', () => {
   });
 
   test('the setting is off until turned on, and says budgets work as before either way', () => {
-    const off = text(renderToStaticMarkup(<IncomeSetting setting={null} today={NOW} earliest={null} disabled={false} onChange={async () => true} />));
+    // A row, with its sheet closed until it is opened.
+    const row = text(renderToStaticMarkup(<IncomeSetting setting={null} today={NOW} earliest={null} disabled={false} onChange={async () => null} />));
+    expect(row).toBe('My income is irregular Off');
+    const off = text(renderToStaticMarkup(<IncomeSetting setting={null} today={NOW} earliest={null} disabled={false} onChange={async () => null} open />));
     expect(off).toContain('My income is irregular Off');
     expect(off).toContain('Budgets work as they always do.');
     expect(off).toContain('Turn on');
-    const on = text(renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: true, start: NOW }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />));
+    const on = text(renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: true, start: NOW }} today={NOW} earliest={null} disabled={false} onChange={async () => null} open />));
     expect(on).toContain('My income is irregular On');
     expect(on).toContain('Turn off');
     // Off again, the month it counted from is offered first.
-    const kept = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -2) }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />);
+    const kept = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -2) }} today={NOW} earliest={null} disabled={false} onChange={async () => null} open />);
     expect(kept).toContain(`<option value="${addMonths(NOW, -2)}" selected="">`);
   });
 
   test('a start kept from more than a year back is offered and chosen, before the history is read as after', () => {
     const start = addMonths(NOW, -18);
     for (const earliest of [null, addMonths(NOW, -30)]) {
-      const html = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start }} today={NOW} earliest={earliest} disabled={false} onChange={async () => true} />);
+      const html = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start }} today={NOW} earliest={earliest} disabled={false} onChange={async () => null} open />);
       expect([earliest, html.includes(`<option value="${start}" selected="">`)]).toEqual([earliest, true]);
     }
     // Out of reach (more than ten years back): this month, as for none.
-    const far = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -121) }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />);
+    const far = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -121) }} today={NOW} earliest={null} disabled={false} onChange={async () => null} open />);
     expect(far).toContain(`<option value="${NOW}" selected="">`);
   });
 });
@@ -424,9 +458,9 @@ describe('the Budgets tab, with the month loaded', () => {
         budgetMonth={state(view({ carries: carries({ [GROCERIES]: { carry: -500 } }) }))}
       />
     );
-    expect(text(html)).toContain(`${new Date().toLocaleDateString(undefined, { month: 'long' })} budgets $80.00 spent, nothing left`);
+    expect(text(html)).toContain('Spent $80.00 spent, nothing left');
     expect(text(html)).not.toContain('of -$');
-    expect(html).toContain('meter-fill over" style="width:100%"');
+    expect(html).toContain('meter-fill warn" style="width:100%"');
   });
 
   test('income carryover on: available to allocate above the meters', () => {
@@ -486,9 +520,11 @@ describe('the Budgets tab, with the month loaded', () => {
     expect(text(html)).toContain('$80.00 of $300.00');
     expect(html).not.toContain('Month to show');
     expect(text(html)).toContain('My income is irregular Off');
-    // A start from the last year, until the first month with transactions is known.
-    expect(text(html)).toContain(`Count from ${new Date().toLocaleDateString('en-US', { month: 'long' })} (this month)`);
-    expect(text(html)).not.toContain(String(Number(NOW.slice(0, 4)) - 2));
+    // Its sheet, opened: a start from the last year, until the first month
+    // with transactions is known (the tab hands it the month's `earliest`).
+    const opened = text(renderToStaticMarkup(<IncomeSetting setting={null} today={NOW} earliest={null} disabled={false} onChange={async () => null} open />));
+    expect(opened).toContain(`Count from ${new Date().toLocaleDateString('en-US', { month: 'long' })} (this month)`);
+    expect(opened).not.toContain(String(Number(NOW.slice(0, 4)) - 2));
   });
 });
 
@@ -562,9 +598,14 @@ describe('Home’s budget alerts weigh what is available', () => {
   test('the dashboard loads the month once the transactions have, never during a save, with the history on the Budgets tab', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
     const hook = dashboard.slice(dashboard.indexOf('useBudgetMonth('), dashboard.indexOf(');', dashboard.indexOf('useBudgetMonth(')));
-    expect(hook).toContain("budgetsState.status === 'ready' && (txns !== null || txnsFailed) ? thisMonth : null");
+    expect(hook).toContain('budgetsHeld && (txns !== null || txnsFailed) ? thisMonth : null');
     expect(hook).toContain('[budgets, txns, categories.taxonomy]');
-    expect(hook).toContain("{ paused: budgetsState.saving, history: tab === 'budgets' }");
+    // Paused while a save runs and while the budgets load again after one:
+    // a paused month keeps its view (components/budget-month-state.ts).
+    expect(hook).toContain("{ paused: budgetsState.saving || budgetsState.status !== 'ready', history: tab === 'budgets' }");
+    // Held through a reload once the budgets have been ready, never on the first load.
+    expect(dashboard).toContain("const budgetsHeld = budgetsState.status === 'ready' || (budgetsState.status === 'loading' && budgetsWereReady);");
+    expect(dashboard).toContain("useState(false);\n  if (budgetsState.status !== 'loading' && budgetsWereReady !== (budgetsState.status === 'ready')) setBudgetsWereReady(budgetsState.status === 'ready');");
   });
 });
 

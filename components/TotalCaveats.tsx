@@ -1,8 +1,9 @@
 // components/TotalCaveats.tsx
 //
-// What qualifies a figure, under it: the Home total (rollout phase 4a) and
-// the FI line in This month (4c), as design-system.md "Status and honesty"
-// rule 1 says: each critical caveat in full, in red, always.
+// What qualifies a figure, under it: the Home total (rollout phase 4a), the
+// FI line in This month (4c), and on Budgets > Month the month's one notice
+// and the Spent card's notes (6a2), as design-system.md "Status and honesty"
+// rules 1 and 3 say: each critical caveat in full, in red, always.
 // The lesser ones show in full when there is one; two or more become one line
 // that says how many and of what, in the color of the worst, and opens in
 // place to each in its own words and color. A <details>, so it works with no
@@ -49,16 +50,23 @@ export function LevelWord({ level }: { level: CaveatSeverity }) {
   return <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : 'Note: '}</span>;
 }
 
-function Notice({ caveat }: { caveat: Caveat }) {
+/** One notice on its own, in its level's color, with its icon and its
+ *  level said first: a caveat in full, or an error said where it arose (a
+ *  budget's sheet, the month's card). */
+export function Notice({ level, children }: { level: CaveatSeverity; children: ReactNode }) {
   return (
-    <div className={`notice ${caveat.severity}`}>
-      {caveat.severity === 'info' ? INFO : ALERT}
+    <div className={`notice ${level}`}>
+      {level === 'info' ? INFO : ALERT}
       <div>
-        <LevelWord level={caveat.severity} />
-        {caveat.body}
+        <LevelWord level={level} />
+        {children}
       </div>
     </div>
   );
+}
+
+function CaveatNotice({ caveat }: { caveat: Caveat }) {
+  return <Notice level={caveat.severity}>{caveat.body}</Notice>;
 }
 
 export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {
@@ -69,9 +77,9 @@ export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {
   return (
     <div className="stack tight">
       {critical.map((c) => (
-        <Notice key={c.key} caveat={c} />
+        <CaveatNotice key={c.key} caveat={c} />
       ))}
-      {lesser.length === 1 && <Notice caveat={lesser[0]} />}
+      {lesser.length === 1 && <CaveatNotice caveat={lesser[0]} />}
       {lesser.length > 1 && (
         <details className="notice-summary">
           <summary className={`notice ${worst}`}>
@@ -86,7 +94,7 @@ export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {
           </summary>
           <div className="stack tight">
             {lesser.map((c) => (
-              <Notice key={c.key} caveat={c} />
+              <CaveatNotice key={c.key} caveat={c} />
             ))}
           </div>
         </details>

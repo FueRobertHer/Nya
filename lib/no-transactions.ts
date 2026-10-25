@@ -214,23 +214,30 @@ export function coveredOutOfDays(view: NoTransactionsView, from: string, through
 }
 
 /** Under a month's totals (Activity, budgets, Home's spending insights): each
- *  bank account or card whose transactions the month lacks, and why. Empty
- *  when none does. With `month` (YYYY-MM), not one whose files cover the
- *  month in its bank's place (coveredOutOf). */
-export function missingMonthNotes(all: NoTransactionsView, month?: string): string[] {
+ *  bank account or card whose transactions the month lacks, and why, with
+ *  the reason as its kind (for Budgets > Month's notice, which gathers
+ *  several into one line). Empty when none does. With `month` (YYYY-MM), not
+ *  one whose files cover the month in its bank's place (coveredOutOf). */
+export function missingMonthItems(all: NoTransactionsView, month?: string): { kind: 'refused' | 'no_consent'; text: string }[] {
   const view = month ? coveredOutOf(all, month) : all;
   const refused = refusedNames(view);
   const unallowed = unallowedNames(view);
-  return [
-    ...(refused.length > 0
-      ? [`Doesn't include the bank or card accounts at ${joinNames(refused)}: Plaid doesn't provide their transactions, so this month may be incomplete.`]
-      : []),
-    ...(unallowed.length > 0
-      ? [
-          `Doesn't include the bank or card accounts at ${joinNames(unallowed)}: you didn't allow Nya to see their transactions, so this month may be incomplete. ${ALLOW_THEM}`,
-        ]
-      : []),
-  ];
+  const items: { kind: 'refused' | 'no_consent'; text: string }[] = [];
+  if (refused.length > 0) {
+    items.push({ kind: 'refused', text: `Doesn't include the bank or card accounts at ${joinNames(refused)}: Plaid doesn't provide their transactions, so this month may be incomplete.` });
+  }
+  if (unallowed.length > 0) {
+    items.push({
+      kind: 'no_consent',
+      text: `Doesn't include the bank or card accounts at ${joinNames(unallowed)}: you didn't allow Nya to see their transactions, so this month may be incomplete. ${ALLOW_THEM}`,
+    });
+  }
+  return items;
+}
+
+/** missingMonthItems' words alone, as Activity and Home say them. */
+export function missingMonthNotes(all: NoTransactionsView, month?: string): string[] {
+  return missingMonthItems(all, month).map((i) => i.text);
 }
 
 /** In place of the transactions, when there are none, and some bank account

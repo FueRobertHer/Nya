@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { goalViews, withAccountEnds, type GoalAccount, type GoalAccountEnd } from '@/lib/goal-view';
-import { fallbackText, gapNote, gapsText, goalNotes, goalSentences, meterLabel, outlookText, paceText, shouldHaveText, splitText, stateText } from '@/lib/goal-text';
+import { fallbackText, gapItem, gapNote, gapsText, goalNotes, goalSentences, meterLabel, outlookText, paceText, shouldHaveText, splitText, stateText } from '@/lib/goal-text';
 import type { Goal } from '@/lib/goal-model';
 import type { AccountFlow } from '@/lib/goal-projection';
 
@@ -328,6 +328,20 @@ describe('the outlook in words', () => {
     // Every month in question: then what went in lately isn't known.
     flows.set('sav', { source: 'transactions', months: ['2026-07', '2026-08', '2026-09'].map((m) => month(m, 100, { gaps: [importing] })) });
     expect(gapNote(viewsOf(goals, ACCOUNTS, flows).views.get('fund')!)).toBe('What went into Savings lately isn’t known: Chase is still importing older transactions.');
+  });
+
+  test('the gap note says which it is, for the card’s badge: the pace may be off, or isn’t known', () => {
+    const importing = { kind: 'importing' as const, institution: 'Chase' };
+    const flows = new Map(FLOWS);
+    flows.set('sav', { source: 'transactions', months: [month('2026-07', 375.5), month('2026-08', 189.75), month('2026-09', 330.1, { gaps: [importing] })] });
+    const off = viewsOf([goal('fund', 'sav', 15_000, { monthly_target: 400 })], ACCOUNTS, flows).views.get('fund')!;
+    expect(gapItem(off)).toEqual({ kind: 'off', text: 'The pace may be off: Chase is still importing older transactions.' });
+    flows.set('sav', { source: 'transactions', months: ['2026-07', '2026-08', '2026-09'].map((m) => month(m, null, { gaps: [importing] })) });
+    const unknown = viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!;
+    expect(gapItem(unknown)).toEqual({ kind: 'unknown', text: 'What went into Savings lately isn’t known: Chase is still importing older transactions.' });
+    // gapNote is its words, and nothing when there are none.
+    expect(gapNote(unknown)).toBe(gapItem(unknown)!.text);
+    expect(gapItem(viewsOf([goal('fund', 'sav', 15_000)]).views.get('fund')!)).toBeNull();
   });
 
   test('paced by its balance because its transactions couldn’t be read: said', () => {

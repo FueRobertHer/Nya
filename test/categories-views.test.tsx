@@ -60,13 +60,12 @@ describe('the Budgets tab’s group meters', () => {
 
   test('the reconcile rule, shown: a group’s amount capping its categories’, and categories adding up to less', () => {
     const capped = card({ budgets: { categories: amounts({ groceries: 500, restaurants: 400 }), groups: { [FOOD]: { amount: 800 } } }, open: [FOOD] });
-    expect(capped).toContain('Food $0.00 of $800.00');
-    expect(capped).toContain('Capped by the group’s budget');
+    // The badge on the group's line, the sentence once it is open.
+    expect(capped).toContain('Food Capped by the group’s budget $0.00 of $800.00');
     expect(capped).toContain('Its categories’ budgets add up to $900.00, more than the $800.00 set for Food, so $800.00 is the limit.');
     const all = amounts({ groceries: 100, restaurants: 100, coffee: 50, 'food and drink': 50 });
     const limited = card({ budgets: { categories: all, groups: { [FOOD]: { amount: 800 } } }, open: [FOOD] });
-    expect(limited).toContain('Food $0.00 of $300.00');
-    expect(limited).toContain('Limited to its categories’ budgets');
+    expect(limited).toContain('Food Limited to its categories’ budgets $0.00 of $300.00');
     expect(limited).toContain('Every category in Food has a budget, and they add up to $300.00, less than the $800.00 set for the group, so $300.00 is the limit.');
   });
 
@@ -75,19 +74,27 @@ describe('the Budgets tab’s group meters', () => {
     expect(card({ budgets: { categories: {}, groups: { [FOOD]: { amount: 400 } } }, noSpending: true })).toContain('Food $400.00 limit');
   });
 
-  test('over its limit says so', () => {
-    expect(card({ budgets: { categories: amounts({ groceries: 100 }), groups: {} }, spent: spentBy({ groceries: 140 }) })).toContain('Food $140.00 of $100.00 · over');
+  test('over its limit says so, in a word beside its name', () => {
+    const html = renderToStaticMarkup(
+      <BudgetsCard taxonomy={taxonomy} budgets={{ categories: amounts({ groceries: 100 }), groups: {} }} spent={spentBy({ groceries: 140 })} currency="USD" editable noSpending={false} onSave={async () => true} />
+    );
+    expect(text(html)).toContain('Food Over $140.00 of $100.00');
+    expect(html).toContain('<span class="badge warn">Over</span>');
   });
 
-  test('a budget on a category since deleted is shown, and can be removed', () => {
+  test('a budget on a category since deleted is shown, and its row opens a sheet that removes it', () => {
     const t = card({ budgets: { categories: { gone_1: { amount: 25 } }, groups: {} } });
-    expect(t).toContain('A category since deleted $25.00 Remove budget');
+    expect(t).toContain('A category since deleted $25.00');
+    expect(t).not.toContain('Remove budget');
+    const sheet = card({ budgets: { categories: { gone_1: { amount: 25 } }, groups: {} }, edit: { kind: 'category', id: 'gone_1' } });
+    expect(sheet).toContain('A category since deleted $25.00 Cancel Remove budget');
   });
 
   test('to add one: whole groups without a budget, then each group’s categories without one, archived ones left out', () => {
     const archived = setArchived(taxonomy, id(taxonomy, 'coffee'), true);
+    // In Add budget's sheet.
     const html = renderToStaticMarkup(
-      <BudgetsCard taxonomy={archived} budgets={{ categories: amounts({ groceries: 1 }), groups: {} }} spent={spentBy({ restaurants: 12 })} currency="USD" editable noSpending={false} onSave={async () => true} />
+      <BudgetsCard taxonomy={archived} budgets={{ categories: amounts({ groceries: 1 }), groups: {} }} spent={spentBy({ restaurants: 12 })} currency="USD" editable noSpending={false} onSave={async () => true} adding />
     );
     expect(html).toContain(`<option value="group:${FOOD}">Food ($12.00 this month)</option>`);
     expect(html).toContain(`<option value="category:${id(taxonomy, 'restaurants')}">Restaurants ($12.00 this month)</option>`);
@@ -97,7 +104,7 @@ describe('the Budgets tab’s group meters', () => {
 
   test('only spending is offered: income and transfers never count against a budget, and one already on them says why it never moves', () => {
     const html = renderToStaticMarkup(
-      <BudgetsCard taxonomy={taxonomy} budgets={{ categories: {}, groups: {} }} spent={{}} currency="USD" editable noSpending={false} onSave={async () => true} />
+      <BudgetsCard taxonomy={taxonomy} budgets={{ categories: {}, groups: {} }} spent={{}} currency="USD" editable noSpending={false} onSave={async () => true} adding />
     );
     for (const name of ['income', 'transfer in', 'transfer out', 'loan payments']) expect(html).not.toContain(`category:${id(taxonomy, name)}`);
     for (const name of ['Income', 'Transfers']) expect(html).not.toContain(`value="group:${group(taxonomy, name)}"`);

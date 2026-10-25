@@ -176,17 +176,29 @@ export function gapsText(gaps: readonly MonthGap[]): string | null {
   return said.length === 0 ? null : `The pace may be off: ${said.join('; ')}.`;
 }
 
+/** A goal's gap note, and which of the two it is: that its pace may be off
+ *  ('off'), or that it isn't known ('unknown'), for the card's badge. */
+export type GapItem = { kind: 'off' | 'unknown'; text: string };
+
 /** What the goal says of its months' gaps: that its pace may be off, when it
  *  is projected from them or some of them are known (a shared account's pace
  *  is still said, though not projected from); otherwise, with none it can go
  *  by, that what went in lately isn't known, and why (a connection that
  *  stopped before the months began). Null when nothing says either. */
-export function gapNote(view: GoalView): string | null {
+export function gapItem(view: GoalView): GapItem | null {
   if (view.projection?.status === 'complete') return null;
   const m = view.measured;
-  if (m && (view.projection?.rateFrom === 'contributions' || !m.allUncertain)) return gapsText(m.gaps);
+  if (m && (view.projection?.rateFrom === 'contributions' || !m.allUncertain)) {
+    const text = gapsText(m.gaps);
+    return text ? { kind: 'off', text } : null;
+  }
   const said = gapReasons(view.gaps);
-  return said.length === 0 ? null : `What went into ${view.account?.name ?? 'its account'} lately isn’t known: ${said.join('; ')}.`;
+  return said.length === 0 ? null : { kind: 'unknown', text: `What went into ${view.account?.name ?? 'its account'} lately isn’t known: ${said.join('; ')}.` };
+}
+
+/** The gap note's words alone (gapItem). */
+export function gapNote(view: GoalView): string | null {
+  return gapItem(view)?.text ?? null;
 }
 
 /** Why it is paced by its recorded balance rather than its transactions,
