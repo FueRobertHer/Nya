@@ -49,6 +49,25 @@ function cpuMs(started: NodeJS.CpuUsage): number {
   return (user + system) / 1000;
 }
 
+/** How long `read` takes, in milliseconds: the smaller of its processor time
+ *  (cpuMs, which also counts the collector's and compiler's threads, and so
+ *  work an earlier test left them) and its wall clock's time (which a machine
+ *  busy with other work stretches). Each only ever adds to the read's own
+ *  work, for reasons of its own, so the smaller is the closer. A full
+ *  collection first keeps an earlier test's garbage off the read's time, and
+ *  the best of `runs` drops a run slowed anyway. */
+function readMs(read: () => unknown, runs = 1): number {
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    Bun.gc(true);
+    const cpu = process.cpuUsage();
+    const wall = performance.now();
+    read();
+    best = Math.min(best, performance.now() - wall, cpuMs(cpu));
+  }
+  return best;
+}
+
 describe('reading a file as text', () => {
   test('a byte order mark decides, and is dropped: UTF-8, UTF-16 either way round', () => {
     expect(decodeFile(new Uint8Array([0xef, 0xbb, 0xbf, 0x41, 0xc3, 0xa9]))).toEqual({ text: 'Aé', encoding: 'utf-8' });
@@ -1233,35 +1252,61 @@ describe('the review’s other probes, kept as tests', () => {
 
   test('every hostile file the review tried is read or refused quickly, with a small answer', () => {
     const MB3 = 3 * 1024 * 1024;
-    const fill = (unit: string, prefix = '', suffix = '') => {
-      const n = Math.max(0, Math.floor((MB3 - prefix.length - suffix.length) / unit.length));
-      return prefix + unit.repeat(n) + suffix;
+    // Each file `size` characters long, so it can be read at an eighth of
+    // its size as well.
+    const hostile = (size: number) => {
+      const fill = (unit: string, prefix = '', suffix = '') => {
+        const n = Math.max(0, Math.floor((size - prefix.length - suffix.length) / unit.length));
+        return prefix + unit.repeat(n) + suffix;
+      };
+      const ofxHead = '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD<BANKTRANLIST>';
+      return [
+        fill('<A>', ofxHead),
+        fill('<STMTTRN>', ofxHead, '</STMTTRN>'.repeat(10)),
+        fill('<STMTTRN><TRNAMT>-1.00<DTPOSTED>20261001<FITID>x<NAME>y', ofxHead),
+        fill('<A' + ' '.repeat(199) + '<', ofxHead),
+        fill('<', ofxHead),
+        fill('&#x10FFFF;&amp;&#1234567;', ofxHead + '<STMTTRN><NAME>'),
+        ofxHead + '<!--' + 'x'.repeat(size - 100),
+        fill('<![CDATA[<x>]]>', ofxHead + '<STMTTRN><NAME>'),
+        'Date,Description,Amount\n2026-10-01,"' + 'x'.repeat(size - 100) + '",1\n',
+        '\n'.repeat(size),
+        '"'.repeat(size),
+        fill('"",', 'Date,Description,Amount\n'),
+        fill('Mxxxxxxxxx\n', '!Type:Bank\nD1/1/26\nT-1\nPa\n'),
+        fill('D1/13/26\nT-1\nPa\n^\n', '!Type:Bank\n'),
+      ];
     };
-    const ofxHead = '<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><CURDEF>USD<BANKTRANLIST>';
-    const files = [
-      fill('<A>', ofxHead),
-      fill('<STMTTRN>', ofxHead, '</STMTTRN>'.repeat(10)),
-      fill('<STMTTRN><TRNAMT>-1.00<DTPOSTED>20261001<FITID>x<NAME>y', ofxHead),
-      fill('<A' + ' '.repeat(199) + '<', ofxHead),
-      fill('<', ofxHead),
-      fill('&#x10FFFF;&amp;&#1234567;', ofxHead + '<STMTTRN><NAME>'),
-      ofxHead + '<!--' + 'x'.repeat(MB3 - 100),
-      fill('<![CDATA[<x>]]>', ofxHead + '<STMTTRN><NAME>'),
-      'Date,Description,Amount\n2026-10-01,"' + 'x'.repeat(MB3 - 100) + '",1\n',
-      '\n'.repeat(MB3),
-      '"'.repeat(MB3),
-      fill('"",', 'Date,Description,Amount\n'),
-      fill('Mxxxxxxxxx\n', '!Type:Bank\nD1/1/26\nT-1\nPa\n'),
-      fill('D1/13/26\nT-1\nPa\n^\n', '!Type:Bank\n'),
-    ];
-    for (const file of files) {
-      const started = process.cpuUsage();
-      const r = readImport(file, { options: {}, thisYear: YEAR });
-      expect(cpuMs(started), file.slice(0, 40)).toBeLessThan(3000);
+    const read = (file: string) => readImport(file, { options: {}, thisYear: YEAR });
+    const eighths = hostile(MB3 / 8);
+    hostile(MB3).forEach((file, i) => {
+      // What this guards against is a read whose work grows faster than the
+      // file (read in quadratic time, a 3 MB file takes minutes), so each
+      // file's time is held against its own eighth's, read just before on
+      // the same machine, and not against a fixed number of milliseconds,
+      // which a CI runner about three times slower than a laptop once ran
+      // past on a file read in linear time. Eight times the file is eight
+      // times the work in linear time (up to 16 measured here, as the longer
+      // outgrows the processor's caches) and 64 times in quadratic; the bound
+      // is 32 times, plus 50 ms for a read too short to time closely. The
+      // eighth is the best of three runs, and the whole file is run again
+      // while it is over, up to three runs: a busy machine only ever adds
+      // time, and a read that grows too fast is over every time.
+      const small = readMs(() => read(eighths[i]), 3);
+      const growth = 32 * small + 50;
+      let r!: ReadResult;
+      let ms = Infinity;
+      for (let run = 0; run < 3 && ms >= Math.min(growth, 10_000); run++) ms = Math.min(ms, readMs(() => (r = read(file))));
+      expect(ms, file.slice(0, 40)).toBeLessThan(growth);
+      // And however its eighth went, none takes ten seconds: a few times the
+      // slowest of them on CI, and minutes short of a quadratic read.
+      expect(ms, file.slice(0, 40)).toBeLessThan(10_000);
       // Whatever it is, what is answered stays small: a question, an error,
       // or records with at most 10,000 rows of bounded fields.
       const answer = r.status === 'ready' ? { ...r, records: r.records.length, problems: r.problems.length } : r;
       expect(JSON.stringify(answer).length, file.slice(0, 40)).toBeLessThan(250_000);
-    }
-  }, 60_000);
+    });
+    // Room for the reruns on a slow runner, so a file over its bound is
+    // named rather than lost to the timeout.
+  }, 120_000);
 });
