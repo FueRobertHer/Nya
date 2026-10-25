@@ -3,7 +3,7 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "rawColors": 42,
+    "rawColors": 38,
     "smallFonts": 24
   },
   "app/not-allowed/page.tsx": {
@@ -24,9 +24,6 @@
   },
   "components/ApiTokens.tsx": {
     "inlineLayoutStyles": 2
-  },
-  "components/BudgetsTab.tsx": {
-    "inlineLayoutStyles": 1
   },
   "components/CategoriesCard.tsx": {
     "inlineLayoutStyles": 3

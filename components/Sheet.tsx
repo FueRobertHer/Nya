@@ -15,6 +15,7 @@ export function Sheet({
   title,
   onClose,
   onBack,
+  level: levelName,
   footer,
   children,
 }: {
@@ -23,6 +24,11 @@ export function Sheet({
   onClose: () => void;
   /** Shows a back arrow before the title (a second level inside the drawer). */
   onBack?: () => void;
+  /** Which level is shown, for a sheet with more than one inside it (a
+   *  budget's: its rollover, then the reset under that), so a step from one
+   *  inner level to another moves focus too. Left out, the levels are the
+   *  first and any with a back arrow. */
+  level?: string;
   /** Its buttons, kept in view at the foot while the body scrolls. */
   footer?: ReactNode;
   children: ReactNode;
@@ -70,7 +76,7 @@ export function Sheet({
 
   // A new level (back or forward) starts with focus on the panel, not lost
   // with the button that went away.
-  const level = onBack ? 'inner' : 'top';
+  const level = levelName ?? (onBack ? 'inner' : 'top');
   useEffect(() => {
     if (active) panel.current?.focus({ preventScroll: true });
   }, [level, active]);

@@ -1,0 +1,260 @@
+{
+  "tab: this month": [
+    {
+      "text": "Could not save budgets. Showing what is saved.",
+      "level": "caution"
+    },
+    {
+      "text": "May be off: {month -1} is incomplete.",
+      "level": "caution"
+    },
+    {
+      "text": "Counting from {month -2}, the first month with transactions (it was set to start in {month -3}).",
+      "level": "helper"
+    },
+    {
+      "text": "What is left of each month’s income carries into the next, counted from {month -3}, and the total available to allocate shows above your budgets. Budgets work as they always do.",
+      "level": "helper"
+    },
+    {
+      "text": "1 transaction in EUR isn't in these budgets, which are in USD.",
+      "level": "info"
+    },
+    {
+      "text": "1 transaction in EUR isn't in what rolled over from earlier months, which is in USD.",
+      "level": "info"
+    },
+    {
+      "text": "A split transaction’s amount changed since it was split. Its parts count as you split them, and the difference on its own, until you edit the split on the Activity tab.",
+      "level": "info"
+    },
+    {
+      "text": "Rollover may be off where a month is incomplete: Chase hasn’t synced since {day} ({month -1}); Whether you excluded 2 transactions couldn’t be read ({month -1}).",
+      "level": "caution"
+    },
+    {
+      "text": "Nya began keeping budgets by month in {month 0}, so before then each budget counts its amount in {month 0}.",
+      "level": "info"
+    },
+    {
+      "text": "Doesn't include Ally: its transactions couldn't be loaded, so this month may be incomplete.",
+      "level": "caution"
+    },
+    {
+      "text": "Capital One isn't syncing, so this month may be missing some of its transactions.",
+      "level": "caution"
+    },
+    {
+      "text": "Wells is still importing older transactions, so this month may be incomplete.",
+      "level": "caution"
+    },
+    {
+      "text": "Doesn't include Old Bank's transactions from your download: they count once its accounts are linked to the bank connected again (Settings, Connections), or once you answer for it (Settings, Your data and privacy, Bring back a download), so this month may be incomplete.",
+      "level": "caution"
+    },
+    {
+      "text": "Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete.",
+      "level": "caution"
+    },
+    {
+      "text": "Doesn't include the bank or card accounts at Credit Union: you didn't allow Nya to see their transactions, so this month may be incomplete. To bring them in, choose Allow transactions on the Accounts tab.",
+      "level": "caution"
+    }
+  ],
+  "tab: budgets not loaded": [
+    {
+      "text": "Budgets could not be loaded. Editing is paused until they are; press Refresh to try again.",
+      "level": "caution"
+    },
+    {
+      "text": "1 transaction in EUR isn't in these budgets, which are in USD.",
+      "level": "info"
+    },
+    {
+      "text": "A split transaction’s amount changed since it was split. Its parts count as you split them, and the difference on its own, until you edit the split on the Activity tab.",
+      "level": "info"
+    }
+  ],
+  "tab: budgets loading": [
+    {
+      "text": "Loading budgets…",
+      "level": "empty"
+    },
+    {
+      "text": "1 transaction in EUR isn't in these budgets, which are in USD.",
+      "level": "info"
+    },
+    {
+      "text": "A split transaction’s amount changed since it was split. Its parts count as you split them, and the difference on its own, until you edit the split on the Activity tab.",
+      "level": "info"
+    }
+  ],
+  "tab: month not worked out": [
+    {
+      "text": "Rollover couldn’t be worked out just now, so each budget shows its amount without it.",
+      "level": "caution"
+    },
+    {
+      "text": "1 transaction in EUR isn't in these budgets, which are in USD.",
+      "level": "info"
+    },
+    {
+      "text": "A split transaction’s amount changed since it was split. Its parts count as you split them, and the difference on its own, until you edit the split on the Activity tab.",
+      "level": "info"
+    }
+  ],
+  "tab: categories not loaded": [
+    {
+      "text": "Your categories couldn’t be loaded. Budgets are shown once they are.",
+      "level": "caution"
+    },
+    {
+      "text": "1 transaction in EUR isn't in these budgets, which are in USD.",
+      "level": "info"
+    }
+  ],
+  "tab: categories loading": [
+    {
+      "text": "Loading your categories…",
+      "level": "empty"
+    },
+    {
+      "text": "1 transaction in EUR isn't in these budgets, which are in USD.",
+      "level": "info"
+    }
+  ],
+  "tab: no spending to count": [
+    {
+      "text": "Your connected accounts are investment accounts, so there's no spending to count against budgets. To track them, connect a bank or card.",
+      "level": "empty"
+    }
+  ],
+  "tab: spending only by hand": [
+    {
+      "text": "Empower holds no bank account or card, so no transactions come from it.",
+      "level": "info"
+    }
+  ],
+  "card": [
+    {
+      "text": "What its categories have available adds up to $520.00, more than the $350.00 available to Food as a whole, so $350.00 is the limit.",
+      "level": "helper"
+    },
+    {
+      "text": "The categories in Transfers count as transfers, not spending, so nothing counts against a budget here. Move a category into a spending group to budget it.",
+      "level": "helper"
+    }
+  ],
+  "a category’s sheet": [
+    {
+      "text": "What its categories have available adds up to $520.00, more than the $350.00 available to Food as a whole, so $350.00 is the limit.",
+      "level": "helper"
+    },
+    {
+      "text": "Suggested: $325.00, from the average of {month -3}, {month -2} and {month -1} ($322.37 a month).",
+      "level": "helper"
+    },
+    {
+      "text": "{month -2} may be incomplete (Chase isn’t syncing), so this may be low.",
+      "level": "helper"
+    },
+    {
+      "text": "1 transaction in EUR isn't in this average, which is in USD.",
+      "level": "helper"
+    },
+    {
+      "text": "Rollover was turned off this month. Turn it on again from {month -2} to bring its carry back.",
+      "level": "helper"
+    },
+    {
+      "text": "The categories in Transfers count as transfers, not spending, so nothing counts against a budget here. Move a category into a spending group to budget it.",
+      "level": "helper"
+    }
+  ],
+  "the group’s sheet": [
+    {
+      "text": "What its categories have available adds up to $520.00, more than the $350.00 available to Food as a whole, so $350.00 is the limit.",
+      "level": "helper"
+    },
+    {
+      "text": "Suggested: $325.00, from the average of {month -3}, {month -2} and {month -1} ($322.37 a month).",
+      "level": "helper"
+    },
+    {
+      "text": "{month -2} may be incomplete (Chase isn’t syncing), so this may be low.",
+      "level": "helper"
+    },
+    {
+      "text": "1 transaction in EUR isn't in this average, which is in USD.",
+      "level": "helper"
+    },
+    {
+      "text": "The categories in Transfers count as transfers, not spending, so nothing counts against a budget here. Move a category into a spending group to budget it.",
+      "level": "helper"
+    }
+  ],
+  "no budgets": [
+    {
+      "text": "No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.",
+      "level": "empty"
+    }
+  ],
+  "no budgets in a past month": [
+    {
+      "text": "No budgets in {month -1 with its year}.",
+      "level": "empty"
+    }
+  ],
+  "pool": [
+    {
+      "text": "May be off: {month -1} is incomplete.",
+      "level": "caution"
+    },
+    {
+      "text": "Counting from {month -2}, the first month with transactions (it was set to start in {month -3}).",
+      "level": "helper"
+    }
+  ],
+  "pool before it began": [
+    {
+      "text": "Income carryover counts from {month 0}, so nothing is in it in {month -1}.",
+      "level": "helper"
+    }
+  ],
+  "pool with nothing to count": [
+    {
+      "text": "There are no transactions to count yet.",
+      "level": "helper"
+    }
+  ],
+  "income on": [
+    {
+      "text": "What is left of each month’s income carries into the next, counted from {month -3}, and the total available to allocate shows above your budgets. Budgets work as they always do.",
+      "level": "helper"
+    }
+  ],
+  "income off": [
+    {
+      "text": "For income that doesn’t arrive every month: carry what is left of each month’s income into the next, and see what is available to allocate above your budgets. Budgets work as they always do.",
+      "level": "helper"
+    }
+  ],
+  "past month not loaded": [
+    {
+      "text": "March couldn’t be loaded.",
+      "level": "caution"
+    }
+  ],
+  "past month unreadable": [
+    {
+      "text": "Your budgets by month couldn’t be read, so they were left untouched. Rollover and past months can’t be shown or changed until they can; your budgets still save.",
+      "level": "caution"
+    }
+  ],
+  "past month loading": [
+    {
+      "text": "Loading March…",
+      "level": "empty"
+    }
+  ]
+}

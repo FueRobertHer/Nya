@@ -106,9 +106,9 @@ A pinned bar at the top: **‹ October ›** month switcher and the segments **T
 
 | Segment | Contents |
 |---|---|
-| **Month** (default) | The month as the bar's heading, ‹ and › to the month either side, and a tap on its name to pick any month back to the first with transactions (ten years at most); the "Categories that fit you" offer while it applies (dismissible); income pool and its build-up; total meter; groups and categories with meters, rollover and suggestions, edited in a sheet; **+ Add budget** (a sheet); "My income is irregular" as a row that opens its setting; one completeness notice for the month. |
+| **Month** (default) | The month as the bar's heading, ‹ and › to the month either side, and a tap on its name to pick any month back to the first with transactions (ten years at most); the "Categories that fit you" offer while it applies (dismissible); income pool and its build-up; total meter; groups and categories with meters, rollover and suggestions, edited in a sheet; **+ Add budget** (a sheet); "My income is irregular" as a row that opens its setting; one completeness notice for the month (built in 6a2: the notice at the top, then Available to allocate, then **Spent**, the month's total with what it counts, then the budgets as rows; a group opens in place to its categories, each budget opens its sheet). |
 | **Upcoming** | Cash forecast (30, 60, 90 days, lowest point, "What if I buy..."; the "Warns below" threshold in a sheet); a list or calendar toggle over the same data (bills, income, planned items, card payments due); Recurring (bills and income, Not recurring, the marked list); Planned items with Add. |
-| **Goals** | Savings goals with outlook and Add goal; archived goals; **Debt payoff** (moved from Accounts; shown when there is a card or loan). |
+| **Goals** | Savings goals with outlook and Add goal; archived goals; **Debt payoff** (moved from Accounts; shown when there is a card or loan). What several goals say of their months is said once at the top, each of them badged (6a2). |
 
 Each segment has one time range, which removes today's three competing ranges on one page.
 
@@ -192,7 +192,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
 | NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
 | NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
-| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place |
+| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place; also the FI line (4c), Budgets > Month's notice and the notes under Spent, and the notice at the top of Goals (6a2). Its `Notice` draws one notice with its level word, for the errors on the Month card and in the budgets' sheets |
 | NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
 | CurrencyOffer (CurrencyNotes) | Its own Home card | A Needs attention row that opens CurrencyOfferSheet (built in 4b) |
@@ -252,11 +252,12 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet (5e) |
 | ChipSelect | New (phase 5b) | A filter chip that chooses one of a few options: Transactions' Tag and Receipt chips |
 | ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions: the count as a heading beside Card Mode, under the filter chips (5b); its filter is the To review chip |
-| SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet (5e), the parts and a group's transactions rows of their own; Budgets > Month notice |
+| SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet (5e), the parts and a group's transactions rows of their own; Budgets > Month, a note under Spent (6a2) |
 | AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet (5e) |
 | SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged. The sheets (`SharedSheets`) stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU |
 | BudgetsTab, BudgetsCard, BudgetSuggestion, IncomePool | Budgets | Budgets > Month |
-| GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals |
+| BudgetSheet (BudgetSheet, OrphanBudgetSheet, AddBudgetSheet) | Budgets editor and add form, open under the list | Budgets > Month (6a2): a budget's sheet from its row (its amount, then Rollover, Reset carryover and Remove as levels with Back), a deleted category's or group's from its row, and Add budget from + Add budget |
+| GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals; what several goals say of their months, and what the card says once, in one notice at its top (6a2) |
 | ForecastCard, ForecastChart | Budgets | Budgets > Upcoming |
 | CalendarView, RecurringCard, PlannedCard | Budgets | Budgets > Upcoming |
 | PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > Your path |

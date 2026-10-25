@@ -447,11 +447,18 @@ export default function Dashboard({
   // loaded (a load syncs what the server reads), again whenever the budgets,
   // the transactions or the categories change, never while a save is under
   // way; with the stored history on the Budgets tab (its month picker).
+  // Once the budgets have been ready, a reload (after a save the server
+  // refused) keeps the month, paused, rather than dropping it: the Budgets
+  // tab stays drawn through it, and a budget's sheet open there keeps its
+  // suggestion, rollover and carries (components/BudgetsTab.tsx).
   const thisMonth = localMonth();
+  const [budgetsWereReady, setBudgetsWereReady] = useState(false);
+  if (budgetsState.status !== 'loading' && budgetsWereReady !== (budgetsState.status === 'ready')) setBudgetsWereReady(budgetsState.status === 'ready');
+  const budgetsHeld = budgetsState.status === 'ready' || (budgetsState.status === 'loading' && budgetsWereReady);
   const budgetMonth = useBudgetMonth(
-    budgetsState.status === 'ready' && (txns !== null || txnsFailed) ? thisMonth : null,
+    budgetsHeld && (txns !== null || txnsFailed) ? thisMonth : null,
     [budgets, txns, categories.taxonomy],
-    { paused: budgetsState.saving, history: tab === 'budgets' }
+    { paused: budgetsState.saving || budgetsState.status !== 'ready', history: tab === 'budgets' }
   );
   const goals = goalsState.value;
   // The Settings screen (components/Settings.tsx), in place of the tabs while

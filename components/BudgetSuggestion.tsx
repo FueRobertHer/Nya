@@ -1,7 +1,7 @@
 'use client';
 
-// A budget suggestion from history (lib/budget-suggestions.ts), beside a
-// budget in the editor and beside a category or group about to get one: what
+// A budget suggestion from history (lib/budget-suggestions.ts), in a budget's
+// sheet and in Add budget's once a category or group is chosen: what
 // was spent there on average over the last three complete months, rounded
 // up, the months it averaged, and why any were left out or may be short,
 // with one tap to use it. Shown only in the currency the budgets are in.
@@ -44,17 +44,19 @@ export default function BudgetSuggestion({
     gapText: (g: MonthGap) => gapText(g, dayOf),
   });
   return (
-    <div className="budget-suggestion">
-      <p className="panel-note budget-note">
+    <div className="stack tight">
+      <p className="helper">
         <Masked>{words.line}</Masked>
       </p>
       {words.amount !== null && (
-        <button type="button" className="secondary" onClick={() => onUse(words.amount!)} disabled={busy}>
-          <Masked>{`${verb} ${formatMoney(words.amount, currency)}`}</Masked>
-        </button>
+        <div className="btn-row">
+          <button type="button" className="btn secondary" onClick={() => onUse(words.amount!)} disabled={busy}>
+            <Masked>{`${verb} ${formatMoney(words.amount, currency)}`}</Masked>
+          </button>
+        </div>
       )}
       {words.notes.map((n) => (
-        <p className="panel-note budget-note" key={n}>
+        <p className="helper" key={n}>
           <Masked>{n}</Masked>
         </p>
       ))}

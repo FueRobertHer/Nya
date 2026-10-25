@@ -1830,17 +1830,23 @@ button:disabled:where(:not([class*="cl-"])) {
 .meter-track {
   height: 10px;
   border-radius: 5px;
-  background: rgba(91, 141, 239, 0.16);
+  background: var(--accent-tint);
   overflow: hidden;
   margin-top: 8px;
 }
 
 .meter-track.warn {
-  background: rgba(224, 168, 60, 0.16);
+  background: var(--warn-tint);
 }
 
 .meter-track.over {
-  background: rgba(239, 91, 91, 0.16);
+  background: var(--neg-tint);
+}
+
+/* Drawn as spans where it sits in a row that is a button (Budgets'). */
+span.meter-track,
+span.meter-fill {
+  display: block;
 }
 
 .meter-fill {
@@ -1985,6 +1991,12 @@ button:disabled:where(:not([class*="cl-"])) {
   margin-top: 16px;
 }
 
+/* Goals has no title under the bar's, so its first line sits on the
+   card's padding. */
+.goals-card > :first-child {
+  margin-top: 0;
+}
+
 .budget-summary {
   display: block;
   width: 100%;
@@ -2015,37 +2027,60 @@ button:disabled:where(:not([class*="cl-"])) {
   font-variant-numeric: tabular-nums;
 }
 
-.over-tag {
-  color: var(--down);
-  font-weight: 600;
-}
-
-.budget-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.budget-edit .card-actions {
-  margin-top: 0;
-}
-
 .budget-input {
   margin-bottom: 0;
 }
 
-.budget-add {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid #262a33;
+/* Budgets > Month's rows (components/BudgetsCard.tsx, rollout phase 6a2): a
+   meter under the name and its carry on the line under that; the amounts
+   as the trailing value, with how far over the month began as its second
+   line, which wraps rather than crowd the name on a phone. */
+.list-row .meter-track {
+  margin-top: var(--sp-1);
 }
 
-.budget-select {
-  margin-bottom: 0;
-  appearance: none;
+.budget-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-1);
+  max-width: 50%;
+  font-size: var(--fs-2);
+  text-align: right;
+}
+
+.budget-value > .budget-carry {
+  margin-top: 0;
+}
+
+/* A group opened: its own budget and its categories set in under it, and
+   what explains it as lines of their own. */
+.budget-sub-rows {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.budget-sub-rows .list-row {
+  padding-left: calc(var(--sp-5) + var(--sp-4));
+}
+
+.budget-sub-rows .list-row-title {
+  font-weight: var(--fw-regular);
+}
+
+.budget-sub-rows > li > .helper {
+  padding: var(--sp-3) var(--sp-5) var(--sp-3) calc(var(--sp-5) + var(--sp-4));
+}
+
+.budget-add-button > svg {
+  width: var(--icon);
+  height: var(--icon);
+}
+
+/* A budget's sheet: its Rollover row while a new amount waits to be saved.
+   It stays in the tab order, so the line under it saying why is met. */
+.budget-rollover-row[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* --- uninvested cash (Accounts tab) --- */
@@ -4729,49 +4764,6 @@ button.rollup-toggle {
   opacity: 0.55;
 }
 
-.budget-label {
-  font-size: 14px;
-  font-weight: 500;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.budget-group .budget-label {
-  display: inline-flex;
-  align-items: baseline;
-}
-
-.budget-reconcile {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.budget-children {
-  margin: 10px 0 0 14px;
-  padding-left: 10px;
-  border-left: 1px solid var(--line);
-}
-
-.budget-child {
-  margin-top: 12px;
-}
-
-.budget-child .budget-label,
-.budget-own .budget-label {
-  font-weight: 400;
-}
-
-.budget-note {
-  margin: 0 0 8px;
-}
-
-button.budget-own:disabled,
-.budget-child button.budget-summary:disabled {
-  cursor: default;
-  opacity: 1;
-}
-
 /* A group's heading opens the group: a whole row, as tall as a category's,
    so it is as easy to tap on a phone. */
 button.cat-manage-group {
@@ -5432,61 +5424,15 @@ button.tag-suggestion.chosen {
   color: var(--warn);
 }
 
-/* Rolling a budget over, below its amount in the editor. */
-.budget-rollover {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-
-.budget-rollover .card-actions {
-  margin-top: 0;
-}
-
-/* Available to allocate, above the meters while income carryover is on. */
-.pool-header {
-  margin: 8px 0 16px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--raised);
-}
-
-.pool-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.pool-label {
-  font-size: 14px;
-  font-weight: 500;
-}
-
+/* Available to allocate, the pool card's figure beside its title, while
+   income carryover is on. */
 .pool-amount {
-  font-size: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-5);
+  font-weight: var(--fw-semibold);
 }
 
 .pool-amount.negative {
-  color: var(--down);
-}
-
-.pool-breakdown {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-button.pool-toggle {
-  margin-top: 10px;
-  padding: 6px 10px;
-  font-size: 13px;
+  color: var(--neg);
 }
 
 /* The pool month by month: four narrow columns fit a phone, and amounts
@@ -5535,24 +5481,6 @@ button.pool-toggle {
 
 .pool-uncertain {
   color: var(--warn);
-}
-
-/* The setting, at the foot of the budgets. */
-.income-setting {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-
-.income-setting .panel-note {
-  margin: 0;
-}
-
-.income-setting .card-actions {
-  margin-top: 0;
 }
 
 /* Importing a linked account's history (#52, components/HistoryImportSheet.tsx):
@@ -5911,26 +5839,6 @@ button.cash-flow-show {
 
 .template-changes li + li {
   margin-top: 4px;
-}
-
-/* --- budget suggestions from history (components/BudgetSuggestion.tsx) ---
-   In the editor and under the budget about to be added: the line, a button
-   as wide as its words, and the notes. */
-.budget-suggestion {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.budget-suggestion .budget-note {
-  margin: 0;
-}
-
-.budget-suggestion > button {
-  align-self: flex-start;
-  width: auto;
-  padding: 8px 14px;
-  font-size: 14px;
 }
 
 /* The weekly summary (components/WeeklySummaryCard.tsx, app/unsubscribe):

@@ -447,7 +447,8 @@ describe('budgets', () => {
   test('spending counted beside a refused bank account says the month may be short', () => {
     const t = budgets([row()], refusedBeside);
     expect(t).toContain('$25.00 of $500.00');
-    expect(t).toContain("Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete.");
+    // In the month's notice, a caution, as it was under the budgets.
+    expect(t).toContain("Caution: Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete.");
   });
 
   test('ordinary budgets are unchanged, and rows from anywhere still count', () => {
