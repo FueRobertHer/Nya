@@ -2082,7 +2082,7 @@ export default function Dashboard({
   }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, healthUnavailable, connectors.error, linkOffer, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
 
   // Where a Needs attention row goes, focused once it is on screen: a tab's
-  // content can come a render later (the Budgets tab's after its spinner).
+  // content can come a render later.
   // Dropped when the person goes elsewhere first, or after a moment.
   const [focusTarget, setFocusTarget] = useState<{ id: string; tab: Tab; settings: SettingsView | null; at: number } | null>(null);
   useEffect(() => {

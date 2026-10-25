@@ -5,7 +5,8 @@
 // heading is the month shown, with arrows to the month either side and, when
 // there are earlier months, a native select laid unseen over the name to jump
 // further back (up to ten years: a step at a time would read each month from
-// the server). Only the month's name is announced as it changes; a segment's
+// the server). The select's name holds the month it lies over (WCAG 2.5.3), so
+// "October 2026" spoken or clicked by voice reaches it. Only the month's name is announced as it changes; a segment's
 // own name isn't, since choosing the segment already says it. The segments
 // are tabs, as Activity's are (components/ActivityBar.tsx).
 
@@ -84,7 +85,7 @@ export default function BudgetsBar({
               {pick && (
                 <>
                   {chevron(DOWN)}
-                  <select value={pick.value} onChange={(e) => pick.onChange(e.target.value)} aria-label="Month to show">
+                  <select value={pick.value} onChange={(e) => pick.onChange(e.target.value)} aria-label={`Month to show: ${month}`}>
                     {pick.options.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}

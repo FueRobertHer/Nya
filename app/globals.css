@@ -479,8 +479,8 @@ button:active:not(:disabled):not([class*="cl-"]) {
   font-variant-numeric: tabular-nums;
 }
 
-/* Home's cards of rows (Needs attention, This month): the rows run to the
-   card's foot; what qualifies a row (the month's missing transactions, the
+/* Cards of rows (Home's Needs attention and This month, Budgets' Debt
+   payoff): the rows run to the card's foot; what qualifies a row (the month's missing transactions, the
    FI line's notes) follows it, inside its item. */
 :is(.needs-attention, .this-month, .debt-payoff) {
   padding-bottom: 0;
@@ -649,6 +649,12 @@ button:active:not(:disabled):not([class*="cl-"]) {
 
 .budgets-month-pick > .budgets-title {
   flex: none;
+}
+
+/* Home's budget alerts scroll the month's heading into view: it stops where
+   the pinned bar holds it, so the panel's top isn't left under the bar. */
+#budgets-month-title {
+  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + var(--sp-2));
 }
 
 .budgets-month-pick > svg {

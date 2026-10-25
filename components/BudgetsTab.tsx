@@ -434,16 +434,16 @@ export default function BudgetsTab({
   );
 
   if (loading) {
-    const spinner = (
+    const spinner = (label: string) => (
       <div className="card">
-        <div className="spinner" role="status" aria-label="Loading budgets" />
+        <div className="spinner" role="status" aria-label={label} />
       </div>
     );
     return (
       <>
         {bar}
-        {panel('month', spinner)}
-        {panel('upcoming', spinner)}
+        {panel('month', spinner('Loading budgets'))}
+        {panel('upcoming', spinner('Loading what is coming'))}
         {goalsPanel}
       </>
     );

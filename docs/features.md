@@ -936,7 +936,7 @@ A carry is only as good as the months it counts. When one of them may be missing
 
 ### Looking back at a month
 
-The month under the budgets' heading picks a past month, back to the first with transactions, ten years at most: its budgets as they were then, its spending, what rolled into each, and its own notes. Past months are read from everything Nya has stored, not only the year the dashboard loads. They are shown as they were, never edited. A month that can't be loaded says so, with **Try again**.
+On the Budgets tab's Month, the arrows either side of the month step to the month before or after, and a tap on the month's name picks any past month, back to the first with transactions, ten years at most: its budgets as they were then, its spending, what rolled into each, and its own notes. Past months are read from everything Nya has stored, not only the year the dashboard loads. They are shown as they were, never edited. A month that can't be loaded says so, with **Try again**.
 
 ### Income carryover
 

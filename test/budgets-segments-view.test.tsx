@@ -108,6 +108,8 @@ function mount(props: Props = {}) {
     tab,
     panelOf,
     button: (label: string) => all((e) => e.getAttribute('aria-label') === label)[0],
+    // The month's pick, named by the month it lies over.
+    pick: () => all((e) => e.tagName === 'SELECT' && (e.getAttribute('aria-label') ?? '').startsWith('Month to show'))[0],
     selected: () => all((e) => e.getAttribute('role') === 'tab' && e.getAttribute('aria-selected') === 'true').map((e) => e.textContent),
     // The panels a person can see.
     shown: () => panels().filter((p) => !p.hasAttribute('hidden')),
@@ -131,6 +133,8 @@ describe('Budgets: the bar and its segments', () => {
     expect(v.heading().textContent).toBe(monthName(NOW));
     expect(v.heading().getAttribute('id')).toBe(BUDGETS_MONTH_TITLE);
     expect(v.heading().getAttribute('aria-live')).toBe('polite');
+    // Focusable by script, so Home's jump can land on it.
+    expect(v.heading().getAttribute('tabindex')).toBe('-1');
     expect(v.shown()).toEqual([v.panelOf('Month')]);
     expect(v.panelOf('Month').textContent).toContain('budgets');
     // Each tab controls its own panel, labelled by it.
@@ -197,14 +201,17 @@ describe('Budgets: the bar and its segments', () => {
 
   test('a tap on the month’s name picks any month; with only this month there is nothing to pick', () => {
     const v = mount();
-    const select = v.button('Month to show');
+    const select = v.pick();
+    // Its name holds the month shown, which is what a person sees on it.
+    expect(select.getAttribute('aria-label')).toBe(`Month to show: ${monthName(NOW)}`);
     expect(select.options.map((o) => o.value)).toEqual([NOW, addMonths(NOW, -1), addMonths(NOW, -2)]);
     act(() => type(select, addMonths(NOW, -2)));
     expect(v.heading().textContent).toBe(monthName(addMonths(NOW, -2)));
+    expect(v.pick().getAttribute('aria-label')).toBe(`Month to show: ${monthName(addMonths(NOW, -2))}`);
     expect(v.button('Later month').getAttribute('aria-disabled')).toBe('false');
     v.unmount();
     const only = mount({ budgetMonth: state(view({ earliest: null })) });
-    expect(only.button('Month to show')).toBeUndefined();
+    expect(only.pick()).toBeUndefined();
     expect(only.button('Earlier month').getAttribute('aria-disabled')).toBe('true');
     expect(only.button('Later month').getAttribute('aria-disabled')).toBe('true');
     only.unmount();
@@ -230,9 +237,29 @@ describe('Budgets: the bar and its segments', () => {
     const v = mount({ loading: true });
     expect(v.heading().getAttribute('id')).toBe(BUDGETS_MONTH_TITLE);
     expect(v.panelOf('Month').findAll((e) => e.getAttribute('aria-label') === 'Loading budgets')).toHaveLength(1);
-    expect(v.panelOf('Upcoming').findAll((e) => e.getAttribute('aria-label') === 'Loading budgets')).toHaveLength(1);
-    expect(v.panelOf('Goals').findAll((e) => e.getAttribute('aria-label') === 'Loading budgets')).toHaveLength(0);
+    expect(v.panelOf('Upcoming').findAll((e) => e.getAttribute('aria-label') === 'Loading what is coming')).toHaveLength(1);
+    expect(v.panelOf('Goals').findAll((e) => e.getAttribute('role') === 'status')).toHaveLength(0);
     expect(v.panelOf('Goals').textContent).toContain('No goals yet');
+    // Nothing to step to or pick until the month's budgets are there.
+    expect(v.pick()).toBeUndefined();
+    expect(v.button('Earlier month').getAttribute('aria-disabled')).toBe('true');
+    // Once loaded, Goals is the same panel, its goals the same: a goal being
+    // added while the rest loaded isn't lost.
+    const goals = v.panelOf('Goals');
+    const add = v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add Goal')[0];
+    v.render({ loading: false });
+    expect(v.panelOf('Goals') === goals).toBe(true);
+    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add Goal')[0] === add).toBe(true);
+    expect(v.pick()).toBeDefined();
+    v.unmount();
+  });
+
+  test('while the budgets themselves load, the month can’t be stepped or picked', () => {
+    const v = mount({ budgetsStatus: 'loading' });
+    expect(v.heading().textContent).toBe(monthName(NOW));
+    expect(v.pick()).toBeUndefined();
+    expect(v.button('Earlier month').getAttribute('aria-disabled')).toBe('true');
+    expect(v.button('Later month').getAttribute('aria-disabled')).toBe('true');
     v.unmount();
   });
 
