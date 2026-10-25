@@ -72,6 +72,7 @@ import { useTimelineNotes, TimelineNotesSheet } from './TimelineNotes';
 import { totalCaveats, type RestoreHoldNote } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import BudgetsTab from './BudgetsTab';
+import { BUDGETS_MONTH_TITLE, type BudgetsSegment } from './BudgetsBar';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { useCategories, useCategoriesForBudgets } from './categories-state';
 import { useBudgetMonth } from './budget-month-state';
@@ -253,6 +254,8 @@ export default function Dashboard({
   // Activity's segment: the tab comes back on the last one chosen while the
   // app is open (docs/design/information-architecture.md#navigation-model).
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>('transactions');
+  // Budgets' segment, kept the same way.
+  const [budgetsSegment, setBudgetsSegment] = useState<BudgetsSegment>('month');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   // 'update' re-authenticates or adds a product; 'accounts' is the account
   // picker on an existing Item. Neither creates an Item.
@@ -481,7 +484,7 @@ export default function Dashboard({
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
-  // The debt payoff planner, opened from the Accounts tab (components/DebtPayoff.tsx).
+  // The debt payoff planner, opened from Budgets > Goals (components/DebtPayoff.tsx).
   const [payoffOpen, setPayoffOpen] = useState(false);
   const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
@@ -2121,7 +2124,8 @@ export default function Dashboard({
         case 'budgets':
           window.scrollTo(0, 0);
           setTab('budgets');
-          focus('budgets-month-title', 'budgets', null);
+          setBudgetsSegment('month');
+          focus(BUDGETS_MONTH_TITLE, 'budgets', null);
           return;
         case 'review':
           window.scrollTo(0, 0);
@@ -2407,21 +2411,6 @@ export default function Dashboard({
                 {error && <div className="error">{error}</div>}
                 {lifecycleRepair}
                 {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
-                {/* Whenever there is a card or loan on screen to plan, until
-                    it moves to Budgets > Goals (rollout phase 6). */}
-                {allAccounts.some((a) => isOwedType(a.type)) && (
-                  <ul className="card list-rows">
-                    <li>
-                      <button className="list-row" onClick={() => setPayoffOpen(true)}>
-                        <span className="list-row-text">
-                          <span className="list-row-title">Payoff plan</span>
-                        </span>
-                        <ActionIcon d="m9 6 6 6-6 6" />
-                      </button>
-                    </li>
-                  </ul>
-                )}
-
                 {/* What couldn't be read about every connection, said once
                     for the tab: a card can't say what is missing from it. */}
                 {healthUnavailable ? (
@@ -2688,6 +2677,11 @@ export default function Dashboard({
                   loadTransactions();
                   budgetsStore.load();
                 }}
+                segment={budgetsSegment}
+                onSegment={setBudgetsSegment}
+                // Whenever there is a card or loan on screen to plan: hidden
+                // accounts left out, as everywhere the accounts are listed.
+                onPayoff={allAccounts.some((a) => isOwedType(a.type)) ? () => setPayoffOpen(true) : undefined}
               />
             )}
 

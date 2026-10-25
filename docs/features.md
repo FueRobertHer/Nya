@@ -123,7 +123,7 @@ That button goes through Link's *update mode*, which re-authenticates the instit
 
 ## Debt payoff plan
 
-**Payoff plan** on the Accounts tab (shown whenever a credit card or loan is on screen) works out when your cards and loans are paid off and what that costs in interest, paying a steady amount each month.
+**Payoff plan** on the Budgets tab's Goals (shown whenever a credit card or loan is on screen) works out when your cards and loans are paid off and what that costs in interest, paying a steady amount each month.
 
 Each debt starts from its balance and the terms Plaid supplies, and every figure says whether it came from Plaid, was worked out, or was typed. You can type over anything Plaid supplied, and go back to Plaid's figure. The plan waits until every debt has a rate and a payment, or has been left out of it: it never assumes either. Hidden accounts aren't included, and a card or loan with nothing owed is listed but not planned. Each debt in the plan shows roughly what it costs in interest a month at its current balance.
 

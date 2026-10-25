@@ -482,12 +482,12 @@ button:active:not(:disabled):not([class*="cl-"]) {
 /* Home's cards of rows (Needs attention, This month): the rows run to the
    card's foot; what qualifies a row (the month's missing transactions, the
    FI line's notes) follows it, inside its item. */
-:is(.needs-attention, .this-month) {
+:is(.needs-attention, .this-month, .debt-payoff) {
   padding-bottom: 0;
   overflow: hidden;
 }
 
-:is(.needs-attention, .this-month) > .list-rows {
+:is(.needs-attention, .this-month, .debt-payoff) > .list-rows {
   margin-bottom: 0;
 }
 
@@ -594,10 +594,13 @@ button:active:not(:disabled):not([class*="cl-"]) {
   }
 }
 
-/* Activity's pinned bar (components/ActivityBar.tsx): the month switcher and
+/* Activity's and Budgets' pinned bars (components/ActivityBar.tsx,
+   components/BudgetsBar.tsx). Activity's: the month switcher and
    the tab's ⋯ over its segments, kept in view under the status bar while the
-   segment scrolls. */
-.activity-bar {
+   segment scrolls. Budgets': its heading (the month, with its switcher, on
+   Month) over its segments. */
+.activity-bar,
+.budgets-bar {
   position: sticky;
   top: env(safe-area-inset-top, 0px);
   z-index: 2;
@@ -608,14 +611,16 @@ button:active:not(:disabled):not([class*="cl-"]) {
   background: var(--canvas);
 }
 
-.activity-month {
+.activity-month,
+.budgets-heading {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   min-height: var(--tap);
 }
 
-.activity-month-name {
+.activity-month-name,
+.budgets-title {
   flex: 1;
   margin: 0;
   text-align: center;
@@ -624,9 +629,52 @@ button:active:not(:disabled):not([class*="cl-"]) {
 }
 
 /* An arrow at either end looks as a disabled button does, and keeps focus. */
-.activity-month > .icon-btn[aria-disabled="true"] {
+:is(.activity-month, .budgets-heading) > .icon-btn[aria-disabled="true"] {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Budgets' month, with a native select laid unseen over its name (and the
+   chevron that says it opens), so a tap on the name picks any month. */
+.budgets-month-pick {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+}
+
+.budgets-month-pick > .budgets-title {
+  flex: none;
+}
+
+.budgets-month-pick > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.budgets-month-pick > select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.budgets-month-pick:has(> select:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
 }
 
 /* Shared has no month: its ⋯ keeps to the right. */
@@ -639,7 +687,9 @@ button:active:not(:disabled):not([class*="cl-"]) {
    segments' with their track's padding), its padding and gap, under the
    status bar. */
 .activity-panel,
-.activity-panel :is(.card, .flow-shown, .review-count) {
+.activity-panel :is(.card, .flow-shown, .review-count),
+.budgets-panel,
+.budgets-panel .card {
   scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 2 * var(--tap) + 4 * var(--sp-2));
 }
 
@@ -5388,11 +5438,6 @@ button.tag-suggestion.chosen {
 
 .budget-rollover .card-actions {
   margin-top: 0;
-}
-
-/* The month shown, under the card's heading. */
-.month-picker {
-  margin: 4px 0 8px;
 }
 
 /* Available to allocate, above the meters while income carryover is on. */

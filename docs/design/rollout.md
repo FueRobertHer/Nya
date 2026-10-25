@@ -20,7 +20,9 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 5c | Activity: one period on Spending | 1 to 2 days |
 | 5d | Activity: its charts drawn at their width, their text at 12px | 1 day |
 | 5e | Activity: the Transaction sheet, rule offer inside it; the rows redrawn as list rows | 1 to 2 days |
-| 6a | Budgets: Month, Upcoming and Goals segments; debt payoff moved in | 2 to 3 days |
+| 6a1 | Budgets: Month, Upcoming and Goals segments under a pinned bar; debt payoff moved in | 1 day |
+| 6a2 | Budgets: add and edit a budget, and irregular income, in sheets; one completeness notice per segment | 1 to 2 days |
+| 6a3 | Budgets: Upcoming as one dated list or a calendar; the threshold in a sheet; its charts at their width | 1 to 2 days |
 | 6b | Plan: Your path, Stress test and Portfolio segments; the scenario bar | 1 day |
 | 6c | Plan: the inputs as rows, their caveats on one line each | 1 to 2 days |
 | 6d | Plan: one assumptions sheet, a label on each result, plain words, its charts drawn at their width | 1 to 2 days |
@@ -290,13 +292,34 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 
 ## Phase 6: Budgets and Plan
 
-Split in four pull requests: one for Budgets, three for the Plan tab's layout. All four are layout only: no saved plan, scenario, budget or goal changes shape.
+Split in pull requests: three for Budgets (6a1 to 6a3, about 4,700 lines of components between them, split as phase 5 was), three for the Plan tab's layout. All are layout only: no saved plan, scenario, budget or goal changes shape.
 
 **6a**, Budgets:
 
-- Month, Upcoming (forecast, calendar or list, recurring, planned), Goals; add budget and irregular income in sheets; one completeness notice per segment.
-- Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
-- The calendar's figures and the forecast's chart at 12px (`useDrawnWidth`).
+- **6a1**: Month, Upcoming (forecast, calendar, recurring, planned) and Goals as segments under a pinned bar. Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
+- **6a2**: add and edit a budget in a sheet, and "My income is irregular" as a row that opens its setting; one completeness notice per segment.
+- **6a3**: Upcoming's bills, income, planned items and card payments as one dated list, or a calendar of the same; the forecast's "Warns below" in a sheet; the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures at 12px (an HTML grid, so its figures have to fit the cell), and the payoff plan's chart at its width.
+
+**Built in 6a1:**
+
+- **The bar** (`components/BudgetsBar.tsx`), pinned like Activity's and reusing its tab keys: on Month the month is the heading, "‹ October 2026 ›", with a native select laid unseen over the name to pick any month back to the first with transactions; on Upcoming and Goals the segment's name. Under it Month · Upcoming · Goals as tabs.
+- **Three panels, all mounted**, the two not shown `hidden`. Nothing typed in one (a budget being added, the forecast's what-if, a planned item, a goal) is lost by looking at another, and a save under way finishes where it started.
+- **Home's budget alerts** open Month and land on the month's heading, which the bar draws before anything has loaded.
+- **Goals doesn't wait for transactions**: Month and Upcoming show the spinner while they load, Goals its goals.
+- **Debt payoff** is a card on Goals holding the Payoff plan row, shown by the same rule Accounts used (a card or loan that isn't hidden); the sheet is still mounted once outside the tabs, so what was typed in it lasts.
+- The segment is kept by the dashboard, as Activity's is: the tab comes back on it while the app is open.
+
+**Decided in 6a1:**
+
+- **Arrows and a pick, not arrows alone.** Budgets reach back up to ten years, and each month is read from the server, so stepping back three years a month at a time would be 36 reads. The arrows take the month either side; a tap on the name picks any month.
+- **"Upcoming", not "Next 30 days"**, as the bar's heading: the forecast has three ranges.
+- **The panels stay mounted** rather than one drawn at a time, as Activity does: Budgets' segments hold forms (Activity's hold filters).
+
+**Kept narrow in 6a1:**
+
+- **Card titles under the bar**: the month's card keeps "October budgets" and Goals' card its "Goals" title under the bar's heading; 6a2 redraws the month's card ("Spent", as the mockup has it) and can drop Goals' title.
+- **The payoff card's summary line** ("Paid off by May 2027", interest) needs the plan worked out on Goals; the row opens the plan as Accounts' did.
+- **Charts still owed a pass before `.at-width` folds into `.chart-tick` and `.chart-xlabel`**: Home's net worth chart and Reports' runway chart, besides the Budgets and Plan charts these phases take.
 
 **6b**, the Plan tab's segments:
 

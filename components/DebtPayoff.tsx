@@ -1,7 +1,7 @@
 'use client';
 
 // The debt payoff planner (lib/payoff.ts), opened from "Payoff plan" on the
-// Accounts tab. Lists each credit card and loan that isn't hidden with the terms
+// Budgets tab's Goals. Lists each credit card and loan that isn't hidden with the terms
 // Plaid supplies and where each came from, takes what is missing (or a
 // correction) from the person, and shows when everything is paid off and the
 // interest that costs: avalanche or snowball, beside paying only the minimums.
