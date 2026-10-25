@@ -6,6 +6,8 @@
 // spending overtook (or stayed under) income. Dependency-free
 // inline SVG, same house style as NetWorthChart, but with two series it
 // carries a small legend, and the scrub readout shows both values at once.
+// It is drawn at its own width (components/drawn-width.ts), in today's
+// shape, so its text is the 12px it says on a phone and on a wide card.
 //
 // Transfers and loan payments are excluded (same rule as the rest of the
 // Activity tab, lib/spending.ts) so credit-card payments don't double-count,
@@ -15,20 +17,23 @@
 // to its end (a row dated later in it counts in the period's totals, not
 // here).
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState, type PointerEvent } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, totalsCurrency } from '@/lib/spending';
 import { formatMoney, compactMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { lastDayOf } from '@/lib/cash-flow';
 import { localDate } from '@/lib/local-date';
+import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 
-const W = 340;
-const H = 150;
+/** Its height for its width: 150 to 340, the shape it has always had. */
+const ASPECT = 150 / FALLBACK_WIDTH;
 const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
-const PAD_TOP = 12;
-const PAD_BOTTOM = 20;
+// Room over the top tick for its 12px figure.
+const PAD_TOP = 14;
+// Room under the baseline's dots for the 12px dates.
+const PAD_BOTTOM = 24;
 
 function niceTicks(min: number, max: number): number[] {
   const span = max - min || 1;
@@ -59,7 +64,8 @@ export default function MonthFlowChart({
   /** The currency of the totals it sits with; else the one most of `txns` are in. */
   currency?: string | null;
 }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
+  const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
   const currency = useMemo(() => (given !== undefined ? given : totalsCurrency(txns)), [given, txns]);
 
@@ -125,7 +131,7 @@ export default function MonthFlowChart({
       totalIn: ri,
       totalOut: ro,
     };
-  }, [txns, first, last, today, currency]);
+  }, [txns, first, last, today, currency, W, H]);
 
   const { days, cumIn, cumOut, xs, y, inPath, outPath, baseY, ticks, toDate, totalIn, totalOut } = geo;
   const lastAt = days.length - 1;
@@ -141,11 +147,9 @@ export default function MonthFlowChart({
     });
   }
 
-  function scrub(clientX: number) {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
+  function scrub(e: PointerEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
     let best = 0;
     let bestDist = Infinity;
     for (let i = 0; i < xs.length; i++) {
@@ -186,13 +190,13 @@ export default function MonthFlowChart({
       </div>
 
       <svg
-        ref={svgRef}
-        className="chart-svg"
+        ref={drawnRef}
+        className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
         aria-label={spoken(`Cumulative income and spending for ${dayLabel(days[0])} to ${dayLabel(days[lastAt])}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
-        onPointerMove={(e) => scrub(e.clientX)}
-        onPointerDown={(e) => scrub(e.clientX)}
+        onPointerMove={scrub}
+        onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
         {ticks.map((t) => (

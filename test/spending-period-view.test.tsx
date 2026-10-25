@@ -20,7 +20,8 @@ const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const { localDate, localMonth } = await import('@/lib/local-date');
 const { addMonths } = await import('@/lib/rollover');
 const { periodCaption, periodEnding } = await import('@/lib/cash-flow');
-const { formatMoney } = await import('@/lib/format');
+const { amountSamples, formatMoney } = await import('@/lib/format');
+const { textWidth } = await import('@/lib/sankey');
 type Txn = import('@/components/MonthBreakdown').Txn;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -140,7 +141,7 @@ describe('Spending’s period', () => {
     expect(v.text()).toContain(`Austin, TX${money(620)}`);
     expect(v.text()).toContain(`In store${money(620)}`);
     // Income vs spend runs from the period's first day.
-    const [chart] = v.all((e) => e.getAttribute('class') === 'chart-svg');
+    const [chart] = v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('chart-svg'));
     const first = new Date(`${back(2)}-01T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC', ...(back(2).slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' as const } : {}) });
     expect(chart.getAttribute('aria-label')).toContain(`for ${first} to`);
     act(() => click(v.chip('12 months')));
@@ -183,6 +184,21 @@ describe('Spending’s period', () => {
     expect(v.out()).toBe(money(620));
     expect(pressed()).toBe(1);
     v.unmount();
+  });
+
+  test('Net by month’s columns are as wide as the widest month’s figure the currency writes at 12px, whatever the figures are', () => {
+    const column = (rows: Txn[]) => {
+      const v = mount({ txns: rows });
+      const [trend] = v.all((e) => e.getAttribute('class') === 'trend-row');
+      const px = (trend.style as unknown as { getPropertyValue: (k: string) => string }).getPropertyValue('--trend-col');
+      v.unmount();
+      return px;
+    };
+    const usd = column(ROWS);
+    expect(usd).toMatch(/^\d+px$/);
+    for (const s of amountSamples('USD')) expect(parseInt(usd, 10)).toBeGreaterThanOrEqual(textWidth(`+${s}`, 12));
+    // From the currency alone: a hundred times the figures, the same columns.
+    expect(column(ROWS.map((t) => ({ ...t, amount: t.amount * 100 })))).toBe(usd);
   });
 
   test('a pick lists the period’s rows on Transactions, which stays on the month; choosing a length ends it', () => {

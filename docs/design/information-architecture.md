@@ -243,7 +243,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** (left out on Shared), the ⋯ with Add a transaction and Import a file while there are transactions (buttons in the empty card while there are none), and the segments Transactions · Spending · Shared |
 | MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; editor becomes the Transaction sheet |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
-| CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period (5c): no control of its own |
+| CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period (5c): no control of its own; on a phone, three columns, its categories in the table under it (5d) |
 | MonthFlowChart, CategoryRollup, SpendByTag | Activity | Activity > Spending |
 | TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet |
 | ChipSelect | New (phase 5b) | A filter chip that chooses one of a few options: Transactions' Tag and Receipt chips |
@@ -270,7 +270,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 
 Components that only serve other components (a picker, a chart, a row, a notice) are listed here in one line each, with what they serve, instead of a row in the table above. A new component goes in one or the other; `test/design-guard.test.ts` fails until it does.
 
-- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets.
+- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets. `useDrawnWidth` (`components/drawn-width.ts`, phase 5d) draws a chart at its own width, so its text is 12px; MonthFlowChart and CashFlowSankey use it, the rest follow with phase 6.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
 - Menu: an object's ⋯ menu of rare actions (the account sheet's, the institution card's).

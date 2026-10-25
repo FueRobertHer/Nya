@@ -1041,6 +1041,9 @@ th.num {
 
 .inst-header {
   display: flex;
+  /* A hint too long to sit beside the title goes under it, never against it. */
+  flex-wrap: wrap;
+  column-gap: var(--sp-2);
   justify-content: space-between;
   align-items: baseline;
 }
@@ -1444,6 +1447,14 @@ button:disabled:where(:not([class*="cl-"])) {
   font-size: 10px;
 }
 
+/* A chart drawn at its own width (components/drawn-width.ts) has a viewBox
+   unit to a CSS pixel, so its text is the size it says. The charts still on
+   a fixed viewBox keep the size above until they are drawn at theirs. */
+.at-width .chart-tick,
+.at-width .chart-xlabel {
+  font-size: var(--fs-1);
+}
+
 /* The info button at the end of the readout row: the explanations of the
    lines are one tap away instead of under every chart. */
 .chart-info-btn {
@@ -1636,8 +1647,9 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .trend-col {
   /* grow to fill when there are only a few months, but never shrink below a
-     tappable width -- that's what makes the row overflow and scroll. */
-  flex: 1 0 42px;
+     tappable width, or the widest figure (--trend-col, from the currency) --
+     that's what makes the row overflow and scroll. */
+  flex: 1 0 var(--trend-col, 42px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1674,13 +1686,14 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .trend-val {
-  font-size: 10px;
+  font-size: var(--fs-1);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .trend-label {
-  font-size: 11px;
+  font-size: var(--fs-1);
   color: var(--muted);
   padding-bottom: 2px;
 }
@@ -5585,8 +5598,8 @@ button.split-small {
 .sankey-svg {
   display: block;
   width: 100%;
-  /* The labels' size follows the drawing's: on a wide screen it stops
-     growing at about one and a half times a phone's. */
+  /* Drawn at its own width (components/drawn-width.ts), up to the 560px it
+     has had on a wide screen, centred past that. */
   max-width: 560px;
   height: auto;
   margin: 12px auto 0;
@@ -5650,7 +5663,7 @@ button.split-small {
 /* Text in the text colors, never a node's; a halo in the card's color keeps
    a label legible where it crosses a ribbon. */
 .sankey-label {
-  font-size: 10px;
+  font-size: var(--fs-1);
   fill: var(--text);
   paint-order: stroke;
   stroke: var(--card);

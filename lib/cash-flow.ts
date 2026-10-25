@@ -287,7 +287,10 @@ function fold<T>(items: readonly T[], keep: (t: T, i: number) => boolean): { sho
  * group's categories under `minShare` fold into Other, in its group; a group
  * under it, or whose categories would all fold, ends at its group.
  */
-export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?: number } = {}): FlowGraph {
+export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?: number; categories?: boolean } = {}): FlowGraph {
+  // Without categories (a chart too narrow for a fourth column) the groups
+  // end it, and the table under it lists their categories.
+  const categories = opts.categories ?? true;
   const minShare = opts.minShare ?? MIN_SHARE;
   const maxPayers = opts.maxPayers ?? MAX_PAYERS;
   const total = Math.max(flow.money_in, flow.money_out);
@@ -345,7 +348,7 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
     links.push({ source: 'total', target: 'left-over', value: flow.left_over });
   }
 
-  for (const g of flow.groups) {
+  for (const g of categories ? flow.groups : []) {
     if (!big(g.amount)) continue;
     const cats = fold(g.categories, (c) => big(c.amount));
     if (cats.shown.length === 0) continue;
@@ -403,6 +406,9 @@ export function drawnNodeOf(flow: CashFlow, graph: FlowGraph, id: string): strin
     const group = flow.groups.find((g) => g.categories.some((c) => c.id === rest));
     return group ? (drawn(`other:${group.id}`) ?? drawn(`group:${group.id}`)) : null;
   }
+  // A fold of a group's categories, picked where they were drawn, in a chart
+  // now drawn without them.
+  if (kind === 'other') return drawn(`group:${rest}`);
   return null;
 }
 
