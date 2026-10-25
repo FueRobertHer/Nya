@@ -192,7 +192,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
 | NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
 | NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
-| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place |
+| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place; also the FI line (4c), Budgets > Month's notice and the notes under Spent, and the notice at the top of Goals (6a2). Its `Notice` draws one notice with its level word, for the errors on the Month card and in the budgets' sheets |
 | NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
 | CurrencyOffer (CurrencyNotes) | Its own Home card | A Needs attention row that opens CurrencyOfferSheet (built in 4b) |

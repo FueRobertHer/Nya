@@ -36,8 +36,9 @@ import { Masked } from './HideAmounts';
 import NetWorthChart from './NetWorthChart';
 import { shortDate } from './SharingDates';
 
-/** A bar as long as a share (capped at the whole), with the meter's colors
- *  for budgets: warn near the limit, over past it. */
+/** A bar as long as a share (capped at the whole), in the meter's colors:
+ *  warn near the limit, over (red) past it, as a shared budget still shows;
+ *  the Budgets tab's own meters stay amber past it (rollout 6a2). */
 function Bar({ pct, state = '' }: { pct: number | null; state?: '' | ' warn' | ' over' | ' done' }) {
   const width = pct === null ? 0 : Math.max(0, Math.min(pct, 100));
   return (

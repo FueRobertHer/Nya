@@ -309,6 +309,28 @@ describe('a budget’s sheet', () => {
   });
 });
 
+describe('focus after a sheet closes', () => {
+  test('a Remove refused takes the row out and puts it back: closing gives focus to the row as it is drawn now', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    const v = mountCard({ open: [FOOD], ok: () => new Promise<boolean>((r) => (finish = r)) });
+    await v.open('Groceries');
+    const before = v.row('Groceries')!;
+    act(() => click(v.button('Remove…', v.dialog()!)!));
+    act(() => click(v.button('Remove', v.dialog()!)!));
+    // Its group's last budget: the list shown while it saves has no Food.
+    expect(v.row('Food')).toBeNull();
+    await act(async () => finish(false));
+    // Put back: a row of its own, drawn again.
+    const now = v.row('Groceries')!;
+    expect(now === before).toBe(false);
+    act(() => click(v.button('Keep it', v.dialog()!)!));
+    act(() => click(v.button('Close', v.dialog()!)!));
+    await settle();
+    expect(v.focused() === now).toBe(true);
+    v.unmount();
+  });
+});
+
 describe('a budget’s rollover, a level in', () => {
   const rolled: [Target, RolloverChange][] = [];
   const onRollover = async (t: Target, c: RolloverChange) => {
@@ -334,7 +356,7 @@ describe('a budget’s rollover, a level in', () => {
     act(() => type(v.field('Monthly budget for Groceries')!, '300.00'));
     expect(r().hasAttribute('aria-disabled')).toBe(false);
     act(() => click(r()));
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover');
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover for Groceries');
     expect(v.dialog()!.textContent).toContain('Roll over what’s left (or overspent) into the next month, counting from');
     act(() => type(v.select('Roll over')!, addMonths(NOW, -1)));
     await act(async () => click(v.button('Turn on rollover', v.dialog()!)!));
@@ -357,14 +379,16 @@ describe('a budget’s rollover, a level in', () => {
     expect(v.focused() === v.button('Cancel', v.dialog()!)).toBe(true);
     // Back, one inner level to another: focus on the sheet, not lost.
     act(() => click(v.button('Back', v.dialog()!)!));
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover');
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover for Groceries');
     expect(v.focused() === v.dialog()).toBe(true);
     act(() => click(v.button('Reset carryover…', v.dialog()!)!));
     act(() => click(v.button('Cancel', v.dialog()!)!));
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover');
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover for Groceries');
     act(() => click(v.button('Reset carryover…', v.dialog()!)!));
+    // Undone by turning it on again from the month it ran from: the level's
+    // primary button, not a danger one.
     const reset = v.button('Reset carryover', v.dialog()!)!;
-    expect(reset.getAttribute('class')).toBe('btn danger');
+    expect(reset.getAttribute('class')).toBe('btn');
     await act(async () => click(reset));
     await settle();
     expect(rolled).toEqual([[{ kind: 'category', id: GROCERIES }, { reset: true }]]);
@@ -379,7 +403,7 @@ describe('a budget’s rollover, a level in', () => {
     const v = mountCard({ open: [FOOD], rollover: settings(), onRollover: async () => 'That change couldn’t be saved. Try again.', edit: { kind: 'category', id: GROCERIES }, editLevel: 'rollover' });
     await settle();
     await act(async () => click(v.button('Turn on rollover', v.dialog()!)!));
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover');
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover for Groceries');
     expect(v.notices()).toEqual(['Caution: That change couldn’t be saved. Try again.']);
     // Back, and the refusal goes with the level it was said on.
     act(() => click(v.button('Back', v.dialog()!)!));
@@ -394,12 +418,16 @@ describe('a budget’s rollover, a level in', () => {
     act(() => click(v.button('Turn on rollover', v.dialog()!)!));
     act(() => click(v.button('Back', v.dialog()!)!));
     v.key('Escape');
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover');
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Rollover for Groceries');
     await act(async () => finish(null));
     v.unmount();
   });
 
-  test('should the month’s view go, the level says why instead of its controls, and they come back with it', async () => {
+  for (const [level, control] of [
+    ['rollover', 'Turn on rollover'],
+    ['reset', 'Reset carryover'],
+  ] as const) {
+  test(`should the month’s view go, the ${level} level says why instead of its controls, and they come back with it`, async () => {
     const host = dom.document.createElement('div');
     dom.document.body.appendChild(host);
     const root = createRoot(host as unknown as HTMLElement);
@@ -417,7 +445,7 @@ describe('a budget’s rollover, a level in', () => {
             open={[FOOD]}
             month={NOW}
             edit={{ kind: 'category', id: GROCERIES }}
-            editLevel="rollover"
+            editLevel={level}
             rollover={known ? settings() : null}
             onRollover={known ? onRollover : undefined}
             monthError={known ? null : 'Rollover couldn’t be worked out just now, so each budget shows its amount without it.'}
@@ -427,13 +455,42 @@ describe('a budget’s rollover, a level in', () => {
     draw(true);
     const v = harness(host as unknown as FakeElement);
     await settle();
-    expect(v.button('Turn on rollover', v.dialog()!)).not.toBeNull();
+    expect(v.button(control, v.dialog()!)).not.toBeNull();
     draw(false);
     expect(v.notices()).toEqual(['Caution: Rollover couldn’t be worked out just now, so each budget shows its amount without it.']);
-    expect(v.button('Turn on rollover', v.dialog()!)).toBeNull();
+    expect(v.button(control, v.dialog()!)).toBeNull();
     draw(true);
-    expect(v.button('Turn on rollover', v.dialog()!)).not.toBeNull();
+    expect(v.button(control, v.dialog()!)).not.toBeNull();
     act(() => root.unmount());
+  });
+  }
+
+  test('its row waits while a change is under way too: a suggestion just used, say', async () => {
+    let finish: (ok: boolean) => void = () => {};
+    const v = mountCard({ open: [FOOD], rollover: settings(), onRollover, suggestions: SUGGESTIONS, ok: () => new Promise<boolean>((r) => (finish = r)) });
+    await v.open('Groceries');
+    act(() => click(v.button(`Use ${money(SUGGESTED)}`, v.dialog()!)!));
+    const r = v.row('Rollover', v.dialog()!)!;
+    expect(r.getAttribute('aria-disabled')).toBe('true');
+    act(() => click(r));
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Groceries');
+    // Refused: the amount as saved, and the row open again.
+    await act(async () => finish(false));
+    expect(v.row('Rollover', v.dialog()!)!.hasAttribute('aria-disabled')).toBe(false);
+    v.unmount();
+  });
+
+  test('its row names the month its carry counts from, as the level says it, when the two differ', async () => {
+    // Rolling over from three months back, the carry counted from the first
+    // month with transactions, two months back.
+    const carries = { categories: { [GROCERIES]: { carry: 40, from: addMonths(NOW, -2), why: 'data' as const, start: addMonths(NOW, -3), uncertain: [] } }, groups: {} };
+    const v = mountCard({ open: [FOOD], rollover: settings({ [GROCERIES]: addMonths(NOW, -3) }), onRollover, carries });
+    await v.open('Groceries');
+    const r = v.row('Rollover', v.dialog()!)!;
+    expect(r.textContent).toContain(`On since ${monthName(addMonths(NOW, -2), NOW)}`);
+    act(() => click(r));
+    expect(v.dialog()!.textContent).toContain(`Rolling over since ${monthName(addMonths(NOW, -2), NOW)}, the first month with transactions`);
+    v.unmount();
   });
 });
 
@@ -697,5 +754,164 @@ describe('a save that fails, through the store and the month as the dashboard wi
     expect(v.dialog()).toBeNull();
     expect(stored).toEqual({ categories: { [GROCERIES]: { amount: 450 } }, groups: {} });
     act(() => root.unmount());
+  });
+});
+
+describe('the tab around its sheets: the income setting and a past month', () => {
+  // The month's answers, as the server gives them, and whether it can be reached.
+  let offline = false;
+  const reply = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body }) as unknown as Response;
+  const monthView = (over: Partial<BudgetMonthView> = {}): BudgetMonthView => ({
+    history: true,
+    month: NOW,
+    today: NOW,
+    currency: 'USD',
+    budgets: ONE,
+    assumed: { categories: [], groups: [] },
+    recorded_since: addMonths(NOW, -6),
+    carries: { categories: {}, groups: {} },
+    rollover: { categories: {}, groups: {} },
+    starts: { categories: {}, groups: {} },
+    ended: { categories: {}, groups: {} },
+    spent: { [GROCERIES]: 80 },
+    income: null,
+    pool: null,
+    earliest: addMonths(NOW, -6),
+    gaps: [],
+    left_out_text: null,
+    counted_left_out_text: null,
+    notes: [],
+    ...over,
+  });
+  /** The answer for each month asked, by month. */
+  let answers: Record<string, BudgetMonthView> = {};
+  const server = async (url: string) => {
+    if (offline) throw new TypeError('Failed to fetch');
+    const month = new URL(url, 'https://nya.test').searchParams.get('month');
+    if (url.startsWith('/api/budgets/month') && month && answers[month]) return reply(200, answers[month]);
+    return reply(404, {});
+  };
+
+  type TabProps = Partial<React.ComponentProps<typeof BudgetsTab>>;
+  /** The tab, its month read through the month's own hook. */
+  function mountTab(props: TabProps = {}) {
+    globalThis.fetch = server as unknown as typeof fetch;
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    let reload: () => void = () => {};
+    function Page() {
+      const month = useBudgetMonth(NOW, [], { history: true });
+      reload = month.reload;
+      return (
+        <BudgetsTab
+          txns={[row('g', { amount: 80 })]}
+          budgets={ONE}
+          taxonomy={taxonomy}
+          onSave={async () => true}
+          goals={[]}
+          onSaveGoals={async () => true}
+          accounts={[]}
+          loading={false}
+          series={[]}
+          budgetMonth={month}
+          {...props}
+        />
+      );
+    }
+    act(() => root.render(<Page />));
+    const v = harness(host as unknown as FakeElement);
+    const panel = () => v.all((e) => e.getAttribute('id') === 'budgets-panel-month')[0];
+    /** The Month panel's notices before the Spent card: the month's one notice. */
+    const notice = () => {
+      const spent = panel().findAll((e) => e.getAttribute('aria-labelledby') === 'budgets-spent-title')[0];
+      return panel()
+        .findAll((e) => (e.getAttribute('class') ?? '').startsWith('notice ') && !spent.contains(e))
+        .map((e) => e.textContent);
+    };
+    const badge = () => panel().findAll((e) => e.getAttribute('class') === 'badge warn' && e.textContent === 'May be incomplete');
+    return { ...v, host, panel, notice, badge, reload: () => act(() => reload()), unmount: () => act(() => root.unmount()) };
+  }
+
+  test('a change refused offline, and the month not read again after it: the setting stays, its sheet open and saying both, and comes back with the month', async () => {
+    offline = false;
+    answers = { [NOW]: monthView() };
+    const v = mountTab();
+    await settle();
+    await v.open('My income is irregular');
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('My income is irregular');
+    offline = true;
+    await act(async () => click(v.button('Turn on', v.dialog()!)!));
+    await settle();
+    // Still on the page, open, focus in it: why the change wasn't saved, and
+    // why nothing is offered until the month is read again.
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('My income is irregular');
+    expect(v.dialog()!.contains(v.focused())).toBe(true);
+    expect(v.notices()).toEqual([
+      'Caution: That change couldn’t be saved. Check your connection and try again.',
+      'Caution: Rollover couldn’t be worked out just now, so each budget shows its amount without it.',
+    ]);
+    expect(v.button('Turn on', v.dialog()!)).toBeNull();
+    expect(v.row('My income is irregular')!.textContent).toContain('Off');
+    offline = false;
+    v.reload();
+    await settle();
+    expect(v.button('Turn on', v.dialog()!)).not.toBeNull();
+    expect(v.select('Count from')).not.toBeNull();
+    v.unmount();
+  });
+
+  test('its months to count from are the ones the tab hands it: a year while the first month with transactions isn’t known, back to it once it is', async () => {
+    offline = false;
+    const months = async (earliest: string | null) => {
+      answers = { [NOW]: monthView({ earliest, history: earliest !== null }) };
+      const v = mountTab();
+      await settle();
+      await v.open('My income is irregular');
+      const values = v.select('Count from')!.options.map((o) => o.value);
+      v.unmount();
+      return values;
+    };
+    const unknown = await months(null);
+    expect([unknown.length, unknown[0], unknown[unknown.length - 1]]).toEqual([12, NOW, addMonths(NOW, -11)]);
+    const known = await months(addMonths(NOW, -30));
+    expect([known.length, known[known.length - 1]]).toEqual([31, addMonths(NOW, -30)]);
+  });
+
+  test('a month gone by: its own reasons in the month’s notice, and the Spent card’s badge', async () => {
+    offline = false;
+    const last = addMonths(NOW, -1);
+    answers = {
+      [NOW]: monthView(),
+      [last]: monthView({ month: last, gaps: [{ month: last, gaps: [{ kind: 'stopped', institution: 'Chase', since: null }] }] }),
+    };
+    const v = mountTab();
+    await settle();
+    act(() => click(v.button('Earlier month')!));
+    await settle();
+    expect(v.notice()).toEqual([`Caution: ${monthName(last, NOW)} may be incomplete: Chase isn’t syncing.`]);
+    expect(v.badge()).toHaveLength(1);
+    v.unmount();
+  });
+
+  test('a month gone by whose carry counts one that may be incomplete: the carry’s note, and no badge on its own figures', async () => {
+    offline = false;
+    const last = addMonths(NOW, -1);
+    const before = addMonths(NOW, -2);
+    answers = {
+      [NOW]: monthView(),
+      [last]: monthView({
+        month: last,
+        carries: { categories: { [GROCERIES]: { carry: 20, from: addMonths(NOW, -3), why: 'start', start: addMonths(NOW, -3), uncertain: [before] } }, groups: {} },
+        gaps: [{ month: before, gaps: [{ kind: 'stopped', institution: 'Chase', since: null }] }],
+      }),
+    };
+    const v = mountTab();
+    await settle();
+    act(() => click(v.button('Earlier month')!));
+    await settle();
+    expect(v.notice()).toEqual([`Caution: Rollover may be off where a month is incomplete: Chase isn’t syncing (${monthName(before, NOW)}).`]);
+    expect(v.badge()).toHaveLength(0);
+    v.unmount();
   });
 });

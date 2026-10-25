@@ -55,12 +55,12 @@ import type { FxTable } from '@/lib/fx/rates';
 import { splitChangedText } from './SplitChangedNote';
 import type { Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
-import BudgetsCard, { budgetTotals, type RolloverChange, type Target } from './BudgetsCard';
+import BudgetsCard, { budgetTotals, NoBudgets, type RolloverChange, type Target } from './BudgetsCard';
 import { changeRollover, useBudgetMonth, NOT_LOADED as NOT_LOADED_TEXT, type BudgetMonthState } from './budget-month-state';
 import { IncomePoolHeader, IncomeSetting } from './IncomePool';
 import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { monthNotice, pastMonthNotes, thisMonthNotes } from './budget-notes';
-import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type MonthGap } from '@/lib/rollover';
+import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type IncomeCarryover, type MonthGap } from '@/lib/rollover';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
@@ -282,6 +282,15 @@ export default function BudgetsTab({
   const [wasReady, setWasReady] = useState(budgetsStatus === 'ready');
   if (budgetsStatus !== 'loading' && wasReady !== (budgetsStatus === 'ready')) setWasReady(budgetsStatus === 'ready');
   const drawn = budgetsStatus === 'ready' || (budgetsStatus === 'loading' && wasReady);
+  // This month's income setting as its view last had it, so the setting's
+  // row, and its sheet open on a change, stay when the month can't be read
+  // again (offline, the change fails and so does the reload after it): the
+  // sheet says why, and nothing is offered until the month is back.
+  const thisView = budgetMonth.view?.month === thisMonth ? budgetMonth.view : null;
+  const [heldIncome, setHeldIncome] = useState<{ income: IncomeCarryover | null; earliest: string | null } | null>(null);
+  if (thisView && (heldIncome?.income !== thisView.income || heldIncome?.earliest !== thisView.earliest)) {
+    setHeldIncome({ income: thisView.income, earliest: thisView.earliest });
+  }
   const monthName = past
     ? nameOfMonth(shownMonth, thisMonth)
     : new Date().toLocaleDateString(undefined, { month: 'long' });
@@ -550,7 +559,6 @@ export default function BudgetsTab({
                 <div className={`meter-fill${meterState(totalRatio)}`} style={{ width: `${Math.min(totalRatio * 100, 100)}%` }} />
               </div>
             )}
-            <TotalCaveats items={spentNotes} />
             {budgetsStatus === 'error' ? (
               <Notice level="caution">{budgetsError}</Notice>
             ) : !drawn ? (
@@ -573,8 +581,11 @@ export default function BudgetsTab({
                 ) : (
                   past && !view && <PastMonthPending state={month} name={monthName} />
                 )}
+                {taxonomy && shownBudgets && shownSpent && !hasTotal && <NoBudgets past={past} month={shownMonth} />}
               </>
             )}
+            {/* What the figure counts, after what went wrong with it. */}
+            <TotalCaveats items={spentNotes} />
           </section>
           {drawn && taxonomy && shownBudgets && shownSpent && (
             <BudgetsCard
@@ -596,8 +607,15 @@ export default function BudgetsTab({
               monthError={!past && month.status === 'error' ? month.error : null}
             />
           )}
-          {drawn && !past && view && (
-            <IncomeSetting setting={view.income} today={thisMonth} earliest={view.earliest} disabled={budgetsStatus !== 'ready'} onChange={onIncome} />
+          {drawn && !past && heldIncome && (
+            <IncomeSetting
+              setting={heldIncome.income}
+              today={thisMonth}
+              earliest={heldIncome.earliest}
+              disabled={budgetsStatus !== 'ready' || !thisView}
+              monthError={thisView ? null : (budgetMonth.error ?? NOT_LOADED_TEXT)}
+              onChange={onIncome}
+            />
           )}
         </div>
       )}

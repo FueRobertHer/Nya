@@ -17,11 +17,12 @@
 //   - rollover: on since when, with Reset carryover... and Turn off; or off,
 //     with the month to count from and Turn on. A change that is saved
 //     closes the sheet: the meter shows it once the month is worked out
-//     again. Should the month's view go (a reload that failed), the level
-//     says why rather than offering what can't be known.
+//     again. Should the month's view go (a reload that failed), this level
+//     and the next say why rather than offering what can't be known.
 //   - reset: what a reset does and why one is needed, confirmed (Cancel is
-//     focused); it sets a carry aside, which turning rollover on again
-//     doesn't bring back, so it is a danger button.
+//     focused). It can be undone (lib/rollover.ts TURNING IT OFF AND ON:
+//     turned on again from the month it ran from, the carry comes back), so
+//     it is the level's primary button, not a danger one.
 //   - remove: confirmed (Keep it is focused), saying that a budget's
 //     rollover ends with it (lib/rollover.ts: no budget, nothing to roll).
 // Back, like closing, waits for a change under way.
@@ -185,11 +186,17 @@ export function BudgetSheet({
     </Sheet>
   );
 
+  // Without the month's rollover (its view gone: a reload that failed),
+  // the levels that change it say why instead of offering what can't be known.
+  const unknown = <Notice level="caution">{monthError ?? NOT_LOADED}</Notice>;
+  // The rollover level names the budget, as the reset and remove levels' words do.
+  const rolloverTitle = `Rollover for ${name}`;
+
   if (level === 'rollover') {
-    if (!rollover) return sheet('Rollover', <Notice level="caution">{monthError ?? NOT_LOADED}</Notice>);
+    if (!rollover) return sheet(rolloverTitle, unknown);
     if (rollover.since) {
       return sheet(
-        'Rollover',
+        rolloverTitle,
         <p>{carry ? sinceText(carry, month) : `Rolling over since ${monthName(rollover.since, month)}`}</p>,
         <div className="btn-row">
           <button type="button" className="btn secondary" onClick={() => onLevel('reset')} disabled={!editable || busy}>
@@ -206,7 +213,7 @@ export function BudgetSheet({
     const { first, ran } = rollover;
     const choices = startChoices(month, rollover.earliest, ran).filter((m) => !first || m >= first);
     return sheet(
-      'Rollover',
+      rolloverTitle,
       <>
         {ran && choices.includes(ran) && (
           <p className="helper">Rollover was turned off this month. Turn it on again from {monthName(ran, month)} to bring its carry back.</p>
@@ -231,6 +238,7 @@ export function BudgetSheet({
   }
 
   if (level === 'reset') {
+    if (!rollover) return sheet('Reset carryover', unknown);
     return sheet(
       'Reset carryover',
       <>
@@ -244,7 +252,7 @@ export function BudgetSheet({
         <button type="button" ref={safe} className="btn secondary" onClick={back} disabled={busy}>
           Cancel
         </button>
-        <button type="button" className="btn danger" onClick={() => onRoll({ reset: true })} disabled={!editable || busy}>
+        <button type="button" className="btn" onClick={() => onRoll({ reset: true })} disabled={!editable || busy}>
           Reset carryover
         </button>
       </div>
@@ -272,8 +280,10 @@ export function BudgetSheet({
 
   const amount = positive(draft);
   // A new amount is saved before its rollover changes, so the first level
-  // has one way to commit; "300" is the 300.00 saved.
+  // has one way to commit; "300" is the 300.00 saved. Nor is it entered while
+  // a change is under way (a suggestion just used, say).
   const differs = Number(draft) !== saved;
+  const waits = differs || busy;
   return sheet(
     name,
     <>
@@ -298,16 +308,18 @@ export function BudgetSheet({
               <button
                 type="button"
                 className="list-row budget-rollover-row"
-                aria-disabled={differs ? 'true' : undefined}
+                aria-disabled={waits ? 'true' : undefined}
                 aria-describedby={differs ? helpId : undefined}
                 onClick={() => {
-                  if (!differs) onLevel('rollover');
+                  if (!waits) onLevel('rollover');
                 }}
               >
                 <span className="list-row-text">
                   <span className="list-row-title">Rollover</span>
                 </span>
-                <span className="list-row-value">{rollover.since ? `On since ${monthName(rollover.since, month)}` : 'Off'}</span>
+                {/* The month its carry counts from when one is known, as the
+                    rollover level says it (sinceText); else the period's. */}
+                <span className="list-row-value">{rollover.since ? `On since ${monthName(carry?.from ?? rollover.since, month)}` : 'Off'}</span>
                 {chevron(RIGHT)}
               </button>
             </li>

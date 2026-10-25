@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import BudgetsTab, { PastMonthPending } from '@/components/BudgetsTab';
-import BudgetsCard from '@/components/BudgetsCard';
+import BudgetsCard, { NoBudgets } from '@/components/BudgetsCard';
+import AccountSheet from '@/components/AccountSheet';
 import { REFUND_NOTE } from '@/components/BudgetSheet';
 import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
 import { NOT_LOADED, UNREADABLE_MONTHS } from '@/components/budget-month-state';
-import { KIND_WORDS, monthNotice, pastMonthNotes, thisMonthNotes } from '@/components/budget-notes';
-import { monthGapItems, monthGapNotes } from '@/lib/month-coverage';
-import { missingMonthItems, missingMonthNotes } from '@/lib/no-transactions';
+import { KIND_WORDS, monthNotice, pastMonthNotes } from '@/components/budget-notes';
 import { addMonths, gapText, monthName, type MonthGap } from '@/lib/rollover';
-import { instantDay } from '@/lib/local-date';
 import before from './budget-words-before-6a2.json';
 import {
   CARD,
@@ -69,8 +69,9 @@ const now: Record<string, () => string> = {
   card: () => card(),
   'a category’s sheet': () => card({ edit: { kind: 'category', id: RESTAURANTS } }) + card({ edit: { kind: 'category', id: RESTAURANTS }, editLevel: 'rollover' }),
   'the group’s sheet': () => card({ edit: { kind: 'group', id: FOOD } }),
-  'no budgets': () => card({ budgets: { categories: {}, groups: {} }, spent: {} }),
-  'no budgets in a past month': () => card({ budgets: { categories: {}, groups: {} }, spent: {}, past: true, month: addMonths(NOW, -1) }),
+  // Said in the Spent card now (a past month's in its card too: NoBudgets).
+  'no budgets': () => monthPanel(tab({ budgets: { categories: {}, groups: {} } })),
+  'no budgets in a past month': () => renderToStaticMarkup(<NoBudgets past month={addMonths(NOW, -1)} />),
   pool: () => renderToStaticMarkup(<IncomePoolHeader pool={POOL} currency="USD" month={NOW} today={NOW} />),
   'pool before it began': () => renderToStaticMarkup(<IncomePoolHeader pool={POOL_BEFORE} currency="USD" month={addMonths(NOW, -1)} today={NOW} />),
   'pool with nothing to count': () => renderToStaticMarkup(<IncomePoolHeader pool={POOL_EMPTY} currency="USD" month={addMonths(NOW, -1)} today={NOW} />),
@@ -123,19 +124,35 @@ describe('every note the month said is still said, in its words and at its level
     expect(html).not.toContain('meter-fill over');
     expect(html).toContain('<span class="meter-fill warn" style="width:100%">');
     expect(html).toContain('<span class="badge warn">Over</span>');
+    // A card used to 90% of its limit, in its account's sheet: red, as before.
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\r/g, '');
+    expect(css).toContain('.meter-fill.over {\n  background: var(--down);');
+    const noop = () => {};
+    const card90 = { account_id: 'card', name: 'Sapphire', official_name: null, mask: '1234', type: 'credit', subtype: 'credit card', balance: 900, limit: 1000, currency: 'USD' };
+    const sheet = renderToStaticMarkup(
+      <AccountSheet
+        open
+        account={card90}
+        inst={{ institution_name: 'Chase', item_id: 'item_chase', accounts: [card90], holdings: [], error: null, needs_reauth: false }}
+        shownCurrency="USD"
+        saving={false}
+        hiding={false}
+        lifecycleBusy={false}
+        onDismiss={noop}
+        onHide={noop}
+        onEnd={noop}
+        onUpdate={noop}
+        onAddTransaction={noop}
+        onImport={noop}
+        onImportHistory={noop}
+        onDelete={noop}
+      />
+    );
+    expect(sheet).toContain('<div class="meter-fill over" style="width:90%">');
   });
 });
 
-describe('the words come from one place', () => {
-  test('a month’s gap notes are their items’ words, for Activity and Home as for Budgets', () => {
-    const day = (at: string) => instantDay(at) ?? at.slice(0, 10);
-    expect(monthGapNotes(NOW, INCOMPLETE, STOPPED, day)).toEqual(monthGapItems(NOW, INCOMPLETE, STOPPED, day).map((i) => i.text));
-    expect(monthGapItems(NOW, INCOMPLETE, STOPPED, day).map((i) => i.kind)).toEqual(['missing', 'stopped', 'importing', 'held']);
-    expect(missingMonthNotes(WITHOUT, NOW)).toEqual(missingMonthItems(WITHOUT, NOW).map((i) => i.text));
-    expect(missingMonthItems(WITHOUT, NOW).map((i) => i.kind)).toEqual(['refused', 'no_consent']);
-    expect(thisMonthNotes(NOW, INCOMPLETE, STOPPED, WITHOUT, day).map((n) => n.text)).toEqual([...monthGapNotes(NOW, INCOMPLETE, STOPPED, day), ...missingMonthNotes(WITHOUT, NOW)]);
-  });
-
+describe('a kind for each reason', () => {
   test('a kind for each of the server’s reasons, in a few words with no amount', () => {
     const all: MonthGap[] = [
       { kind: 'missing', institution: 'A' },
@@ -181,7 +198,7 @@ describe('the month’s one notice', () => {
     const html = tab({ ...TAB_SCENES['this month'], budgetsSaveError: null });
     const top = notice(html);
     expect(top).toContain('<details class="notice-summary"><summary class="notice caution">');
-    // Seven of the month's own, then the carry's: the first three kinds named.
+    // Six of the month's own, then the carry's: seven kinds, the first three named.
     expect(text(top)).toContain('Caution: 7 notes: transactions not loaded, a bank not syncing, older transactions still importing and 4 more');
     for (const n of recorded['tab: this month'].filter((r) => r.level === 'caution' && !r.text.startsWith('May be off') && !r.text.startsWith('Could not save'))) {
       expect(text(top)).toContain(filled(n.text));
@@ -228,6 +245,16 @@ describe('the month’s one notice', () => {
 });
 
 describe('the Spent card', () => {
+  test('with no budget, it says so, in its words, and there is no card of rows', () => {
+    const html = tab({ budgets: { categories: {}, groups: {} } });
+    const spent = spentCard(html);
+    expect(text(spent.slice(0, spent.indexOf('</section>')))).toContain('No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.');
+    expect(monthPanel(html).split('No budgets yet').length - 1).toBe(1);
+    expect(monthPanel(html)).not.toContain('budget-rows');
+    // + Add budget, under it.
+    expect(text(monthPanel(html))).toContain('Add budget');
+  });
+
   test('its title, what is spent of what is available, and its notes for the figures, each in full or gathered', () => {
     const spent = spentCard(tab({ budgetMonth: ready(VIEW) }));
     expect(spent).toContain('<h3 id="budgets-spent-title">Spent</h3>');

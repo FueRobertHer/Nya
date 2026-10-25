@@ -110,7 +110,9 @@ type IncomeChange = { enabled: true; start: string } | { enabled: false };
 /** The setting, as a row that opens its sheet: off by default, turned on
  *  from a month chosen (this month by default), and off again (the month it
  *  counted from is kept). The sheet closes once a change is saved, and stays
- *  open saying why when it isn't. */
+ *  open saying why when it isn't. While the month can't be read (the setting
+ *  is the last one read), the sheet says why instead of offering a change,
+ *  as a budget's rollover does. */
 export function IncomeSetting({
   setting,
   today,
@@ -118,6 +120,7 @@ export function IncomeSetting({
   disabled,
   onChange,
   open: openAtFirst = false,
+  monthError = null,
 }: {
   setting: IncomeCarryover | null;
   today: string;
@@ -127,6 +130,8 @@ export function IncomeSetting({
   onChange: (change: IncomeChange) => Promise<string | null>;
   /** Its sheet open at first. */
   open?: boolean;
+  /** Why the month isn't known now, when it isn't. */
+  monthError?: string | null;
 }) {
   // Turned off, it kept the month it counted from: offered again first,
   // whether or not the first month with transactions is known yet (the
@@ -174,7 +179,7 @@ export function IncomeSetting({
         title="My income is irregular"
         onClose={close}
         footer={
-          on ? (
+          monthError ? undefined : on ? (
             <button type="button" className="btn secondary" onClick={() => save({ enabled: false })} disabled={disabled || busy}>
               Turn off
             </button>
@@ -187,7 +192,9 @@ export function IncomeSetting({
       >
         <div className="stack">
           {error && <Notice level="caution">{error}</Notice>}
-          {on ? (
+          {monthError ? (
+            <Notice level="caution">{monthError}</Notice>
+          ) : on ? (
             <p className="helper">
               What is left of each month’s income carries into the next, counted from {monthName(setting!.start, today)}, and the total available to
               allocate shows above your budgets. Budgets work as they always do.

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import BudgetsCard from '@/components/BudgetsCard';
+import BudgetsCard, { NoBudgets } from '@/components/BudgetsCard';
 import { REFUND_NOTE } from '@/components/BudgetSheet';
 import BudgetsTab, { PastMonthPending } from '@/components/BudgetsTab';
 import { budgetTexts } from './home-attention';
@@ -283,7 +283,9 @@ describe('a past month, as it was', () => {
     const t = card({ past: true, month: addMonths(NOW, -1), carries: carries({ [GROCERIES]: { carry: 10 } }) });
     expect(t).toContain('Groceries +$10.00 rolled over $80.00 of $310.00');
     expect(t).not.toContain('Add budget');
-    expect(card({ past: true, month: '2026-03', budgets: { categories: {}, groups: {} }, spent: {} })).toContain('No budgets in March 2026.');
+    // Said in the Spent card (components/BudgetsTab.tsx), not by the card of rows.
+    expect(card({ past: true, month: '2026-03', budgets: { categories: {}, groups: {} }, spent: {} })).toBe('');
+    expect(text(renderToStaticMarkup(<NoBudgets past month="2026-03" />))).toBe('No budgets in March 2026.');
   });
 
   test('one that couldn’t be loaded says so, with a way to try again', () => {
@@ -520,8 +522,9 @@ describe('the Budgets tab, with the month loaded', () => {
     expect(text(html)).toContain('$80.00 of $300.00');
     expect(html).not.toContain('Month to show');
     expect(text(html)).toContain('My income is irregular Off');
-    // Its sheet, opened: a start from the last year, until the first month
-    // with transactions is known (the tab hands it the month's `earliest`).
+    // Its sheet, opened alone: a start from the last year while the first
+    // month with transactions isn't known. That the tab hands it the month's
+    // `earliest` is tested through the tab, in test/budget-sheets-view.test.tsx.
     const opened = text(renderToStaticMarkup(<IncomeSetting setting={null} today={NOW} earliest={null} disabled={false} onChange={async () => null} open />));
     expect(opened).toContain(`Count from ${new Date().toLocaleDateString('en-US', { month: 'long' })} (this month)`);
     expect(opened).not.toContain(String(Number(NOW.slice(0, 4)) - 2));

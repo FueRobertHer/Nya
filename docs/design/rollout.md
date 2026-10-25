@@ -340,6 +340,8 @@ Split in pull requests: three for Budgets (6a1 to 6a3, about 4,700 lines of comp
 - **Remove asks first**: removing a budget ends its rollover (its carry starts again from zero), so adding it back doesn't undo it.
 - **Each opening starts afresh**, as 5e's sheet does: a budget half added isn't kept once the sheet closes. 6a1's "nothing typed is lost by looking at another segment" still holds, since nothing else can be looked at while a sheet is open.
 - **Errors in a sheet are only its own**, as in 5e, and keep their level: a refused save stays amber. A rollover or income change keeps its error in its own sheet.
+- **The month's badge is on Spent only.** Rule 3 asks for a badge on each card a gap affects; the budgets' rows rest on the same month but have no header to hold one, and each carry that may be off already says so on its row.
+- **Reset carryover keeps a plain button**, as before: it can be undone (turned off and on again from the month it began, the carry comes back), so it isn't a danger button. Remove is one.
 - **A goal's gap note stays on the goal unless several share it**: it names a bank, not a goal, so at the top it couldn't say which goal it is about.
 
 **Kept narrow in 6a2:**

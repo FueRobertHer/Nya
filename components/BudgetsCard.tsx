@@ -231,6 +231,14 @@ export default function BudgetsCard({
   });
   const [busy, setBusy] = useState(false);
   const addRef = useRef<HTMLButtonElement>(null);
+  /** Each budget's row as it is drawn now, by "kind:id": a row taken out
+   *  and drawn again (a refused save puts back what the optimistic list
+   *  took out) is a new element. */
+  const rows = useRef(new Map<string, HTMLElement>());
+  const rowRef = (t: Target) => (el: HTMLElement | null) => {
+    if (el) rows.current.set(`${t.kind}:${t.id}`, el);
+    else rows.current.delete(`${t.kind}:${t.id}`);
+  };
 
   // A refusal said before the sheet opened, once cleared, is forgotten: the
   // same words coming back are a new refusal, and the sheet says it.
@@ -245,20 +253,7 @@ export default function BudgetsCard({
   const setAt = (change: (at: Opened) => Opened) => setSheet((s) => (s ? { ...s, at: change(s.at) } : s));
   /** A level of a budget's sheet, with no refusal left from the last. */
   const goTo = (level: BudgetLevel) => setSheet((s) => (s && s.at.kind === 'budget' ? { ...s, error: null, at: { ...s.at, level } } : s));
-  /** Closed: focus goes back to the row that opened it (the sheet gives it
-   *  back), or, when that row has gone (a group's last budget removed takes
-   *  the group with it), to + Add budget rather than to nothing. */
-  const close = () => {
-    setSheet((s) => (s ? { ...s, open: false } : s));
-    requestAnimationFrame(() => {
-      // Still in the sheet sliding out, or nowhere.
-      let left = !document.activeElement || document.activeElement === document.body;
-      for (let n: Element | null = document.activeElement; n && !left; n = n.parentElement) {
-        if (n.getAttribute('role') === 'dialog') left = n.getAttribute('data-open') === 'false';
-      }
-      if (left) addRef.current?.focus({ preventScroll: true });
-    });
-  };
+  const close = () => setSheet((s) => (s ? { ...s, open: false } : s));
 
   /** The budgets changed from a sheet: it closes once they are saved, and
    *  stays open on what was typed when they aren't, saying why (the store
@@ -382,18 +377,32 @@ export default function BudgetsCard({
 
   const at = sheet?.at ?? null;
   const sheetOpen = !!sheet?.open;
+  // Closed: the sheet gives focus back to the row that opened it as its own
+  // effect ends, which runs before this one. When it couldn't (that row was
+  // taken out meanwhile), focus goes to the budget's row as it is drawn now,
+  // or, when it has none (a group's last budget removed takes the group with
+  // it), to + Add budget rather than to nothing.
+  const wasOpen = useRef(sheetOpen);
+  useEffect(() => {
+    const closed = wasOpen.current && !sheetOpen;
+    wasOpen.current = sheetOpen;
+    if (!closed) return;
+    let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
+    if (!lost) return;
+    const row = at && at.kind !== 'add' ? rows.current.get(`${at.target.kind}:${at.target.id}`) : undefined;
+    (row?.isConnected ? row : addRef.current)?.focus({ preventScroll: true });
+    // Only the sheet's closing moves focus; what it was open on is read as it is then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetOpen]);
   const sheetErrors: string[] = [];
   if (sheet?.error) sheetErrors.push(sheet.error);
   if (sheet && saveError && saveError !== sheet.seen && saveError !== sheet.error) sheetErrors.push(saveError);
 
   return (
     <>
-      {shown.length === 0 && (
-        <p className="empty-note">
-          {past ? `No budgets in ${monthName(shownMonth)}.` : 'No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.'}
-        </p>
-      )}
-
+      {/* With no budget, the Spent card says so (NoBudgets); a budget on
+          a category since deleted is still a row. */}
       {(shown.length > 0 || orphans.length > 0) && (
         <ul className="card list-rows budget-rows">
           {shown.map((m) => {
@@ -461,7 +470,7 @@ export default function BudgetsCard({
                       {past ? (
                         <div className="list-row">{whole}</div>
                       ) : (
-                        <button type="button" className="list-row" aria-haspopup="dialog" onClick={() => show(opening(groupTarget))}>
+                        <button type="button" ref={rowRef(groupTarget)} className="list-row" aria-haspopup="dialog" onClick={() => show(opening(groupTarget))}>
                           {whole}
                         </button>
                       )}
@@ -495,7 +504,7 @@ export default function BudgetsCard({
                           {past ? (
                             <div className="list-row">{body}</div>
                           ) : (
-                            <button type="button" className="list-row" aria-haspopup="dialog" onClick={() => show(opening(t))}>
+                            <button type="button" ref={rowRef(t)} className="list-row" aria-haspopup="dialog" onClick={() => show(opening(t))}>
                               {body}
                             </button>
                           )}
@@ -510,7 +519,7 @@ export default function BudgetsCard({
 
           {orphans.map((o) => (
             <li key={`${o.kind}:${o.id}`}>
-              <button type="button" className="list-row" aria-haspopup="dialog" onClick={() => show(opening({ kind: o.kind, id: o.id }))}>
+              <button type="button" ref={rowRef(o)} className="list-row" aria-haspopup="dialog" onClick={() => show(opening({ kind: o.kind, id: o.id }))}>
                 <span className="list-row-text">
                   <span className="list-row-title">A {o.kind} since deleted</span>
                 </span>
@@ -607,6 +616,17 @@ export default function BudgetsCard({
         />
       )}
     </>
+  );
+}
+
+/** What the month says with no budget in it, in the Spent card
+ *  (components/BudgetsTab.tsx): this month how to add one, a past month that
+ *  there were none. */
+export function NoBudgets({ past, month }: { past: boolean; month: string }) {
+  return (
+    <p className="empty-note">
+      {past ? `No budgets in ${monthName(month)}.` : 'No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.'}
+    </p>
   );
 }
 
