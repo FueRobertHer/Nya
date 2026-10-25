@@ -117,10 +117,10 @@ const list = (rows: Txn[]) =>
 describe('the Activity tab’s list', () => {
   test('a split transaction is listed once, its parts under it; a group’s row with its transactions under it', () => {
     const page = list(served());
-    expect(page).toContain('Costco · note Chase · Card · Split into 3 -$150.00');
+    expect(page).toContain('Costco Split into 3 · Chase · Card Note -$150.00');
     expect(page.match(/Costco/g)).toHaveLength(1);
-    expect(page).toContain('Groceries · food -$100.01 Household -$30.00 Auto -$19.99');
-    expect(page).toContain('Dinner with Sam Chase · Card · Group of 2 · Restaurants -$60.00 Bistro');
+    expect(page).toContain('Groceries food -$100.01 Household -$30.00 Auto -$19.99');
+    expect(page).toContain('Dinner with Sam Group of 2 · Restaurants · Chase · Card -$60.00 Bistro');
     expect(page).toContain('Venmo from Sam');
     // The day's figure counts the parts and the net: 150 + 60 + 4.50 out.
     expect(page).toContain('-$214.50');
@@ -219,8 +219,8 @@ describe('the Activity tab’s list', () => {
     expect(page).toContain('before the transactions shown here begin, so it isn’t counted here.');
     // Its amount dimmed, as an excluded one's is; the coffee's not.
     const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} />);
-    expect(html).toMatch(/<td class="num inflow excluded">[^<]*60\.00<\/td>/);
-    expect(html).toMatch(/<td class="num">[^<]*4\.50<\/td>/);
+    expect(html).toMatch(/<span class="list-row-value money txn-amount inflow excluded">[^<]*60\.00<\/span>/);
+    expect(html).toMatch(/<span class="list-row-value money txn-amount">[^<]*4\.50<\/span>/);
     // The day's figure is the coffee's alone; the month's money in, nothing.
     expect(page).toContain('-$4.50');
     expect(page).not.toContain('+$55.50');

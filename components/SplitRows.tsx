@@ -6,17 +6,18 @@
 // with them nested under it. Grouping is how they are shown, keyed on
 // split_of and group_id (lib/split-rows.ts): the totals above the list count
 // the parts and the nets, as every total does. This file holds the nested
-// rows, what a tap on one offers, and the actions a transaction's detail
-// gains (Split, Group with others, Edit split, Edit group); the sheets are
-// components/SplitSheet.tsx and components/GroupSheet.tsx.
+// rows, which open the transaction's sheet (components/TransactionSheet.tsx),
+// and the actions that sheet gains (Split, Group with others, Edit split,
+// Edit group); the sheets that make them are components/SplitSheet.tsx and
+// components/GroupSheet.tsx.
 
 import type { Txn } from './MonthBreakdown';
-import CategoryPicker from './CategoryPicker';
+import type { SheetTarget } from './TransactionSheet';
 import { Masked } from './HideAmounts';
 import { signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
-import { bankRows, PART_PREFIX, MIN_MEMBERS } from '@/lib/split-rows';
+import { bankRows } from '@/lib/split-rows';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { isFileImportedId } from '@/lib/history-import/view';
 
@@ -139,8 +140,8 @@ export function SplitActions({
   const listless = t.group_unapplied ?? t.group_outside;
   if (listless) {
     return (
-      <div className="rename-row">
-        <button className="secondary" onClick={() => onUngroup(listless.id)}>
+      <div className="btn-row">
+        <button className="btn secondary" onClick={() => onUngroup(listless.id)}>
           Ungroup “{listless.name}”
         </button>
       </div>
@@ -148,32 +149,32 @@ export function SplitActions({
   }
   if (t.group_members) {
     return (
-      <div className="rename-row">
-        <button className="secondary" onClick={() => onGroup(t)}>
+      <div className="btn-row">
+        <button className="btn secondary" onClick={() => onGroup(t)}>
           Edit group
         </button>
       </div>
     );
   }
   if (t.split_unread) return null;
-  if (t.pending) return <div className="rename-hint">Once it posts, it can be split or grouped with others.</div>;
+  if (t.pending) return <p className="helper">Once it posts, it can be split or grouped with others.</p>;
   // Shared whole, or paying something back, under Shared expenses (its own
   // or carried to it across a re-link): that says how it counts, so it is
   // changed there first, as the server asks (lib/shared-expenses/edits.ts
   // sharesBlock).
   if (!t.split_parts && (t.shared || t.shared_unapplied)) {
-    return <div className="rename-hint">It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.</div>;
+    return <p className="helper">It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.</p>;
   }
   if (!t.split_parts && (t.settles || t.settles_unapplied)) {
-    return <div className="rename-hint">It pays something back under Shared expenses: reopen that payment to split it or group it.</div>;
+    return <p className="helper">It pays something back under Shared expenses: reopen that payment to split it or group it.</p>;
   }
   return (
-    <div className="rename-row">
-      <button className="secondary" onClick={() => onSplit(t)}>
+    <div className="btn-row">
+      <button className="btn secondary" onClick={() => onSplit(t)}>
         {t.split_parts ? 'Edit split' : 'Split'}
       </button>
       {!t.split_parts && (
-        <button className="secondary" onClick={() => onGroup(t)}>
+        <button className="btn secondary" onClick={() => onGroup(t)}>
           Group with others
         </button>
       )}
@@ -195,104 +196,40 @@ export async function sendChange(url: string, method: string, body: unknown): Pr
 }
 
 /**
- * A split transaction's parts, nested under it: each with its category and
- * amount, its note marked, and one left out of budgets on its own said so.
- * A tap opens one: its category, whether it counts, and the whole split.
+ * A split transaction's parts, each a row of its own under it: its category
+ * and amount, its note, and one left out of budgets on its own said so. A
+ * tap opens it in the transaction's sheet (components/TransactionSheet.tsx):
+ * its category, whether it counts, and the whole split.
  */
-export function PartRows({
-  parent,
-  last,
-  taxonomy,
-  open,
-  onOpen,
-  onChanged,
-  onError,
-  onEditSplit,
-}: {
-  parent: Txn;
-  /** Whether the transaction is the day's last: its last part ends the day. */
-  last: boolean;
-  taxonomy: Taxonomy | null;
-  /** The id of the row whose detail is open. */
-  open: string | null;
-  onOpen: (id: string | null) => void;
-  onChanged: () => void;
-  /** What went wrong with a change, or null once one is made. */
-  onError: (message: string | null) => void;
-  onEditSplit: (t: Txn) => void;
-}) {
+export function PartRows({ parent, onOpen }: { parent: Txn; onOpen: (target: SheetTarget) => void }) {
   const currency = currencyOf(parent);
-  const patch = async (part: Txn, change: Record<string, unknown>) => {
-    onError(await sendChange('/api/transaction-splits', 'PATCH', { transaction_id: splitKeptUnder(parent), part_id: part.transaction_id.slice(PART_PREFIX.length), ...change }));
-    onChanged();
-  };
   return (
     <>
-      {(parent.split_parts ?? []).map((p, i, all) => {
+      {(parent.split_parts ?? []).map((p) => {
         const label = p.category_name !== undefined ? p.category_name : p.category;
-        const opened = open === p.transaction_id;
         return (
-          <tr
-            key={p.transaction_id}
-            className={`acct-row part-row${last && i === all.length - 1 ? ' last-in-day' : ''}`}
-            onClick={() => onOpen(opened ? null : p.transaction_id)}
-          >
-            <td>
-              <div className="part-text">
-                <div>
-                  {label ? displayName(label) : 'No category'}
-                  {p.note && <span className="note-tag"> · {p.note}</span>}
-                </div>
+          <li key={p.transaction_id}>
+            <button
+              type="button"
+              className="list-row txn-row txn-part-row"
+              aria-haspopup="dialog"
+              onClick={() => onOpen({ kind: 'part', parent: parent.transaction_id, id: p.transaction_id })}
+            >
+              <span className="list-row-text">
+                <span className="list-row-title">{label ? displayName(label) : 'No category'}</span>
+                {p.note && <span className="list-row-sub">{p.note}</span>}
                 {p.split_remainder && (
-                  <div className="excluded-tag">
+                  <span className="txn-row-note">
                     {bankKept(parent) ? 'What the bank changed the amount by' : 'What the amount changed by'} since you split it: edit the split to place it.
-                  </div>
+                  </span>
                 )}
-                {p.split_excluded && <div className="excluded-tag">Left out of budgets and reports on its own</div>}
-              </div>
-              {opened && (
-                <div className="txn-edit" onClick={(e) => e.stopPropagation()}>
-                  {taxonomy && !p.split_remainder && (
-                    <CategoryPicker
-                      taxonomy={taxonomy}
-                      className="text-input recat-select"
-                      value={p.category_id ?? taxonomy.uncategorized}
-                      onChange={(id) => {
-                        if (id && id !== p.category_id) void patch(p, { category_id: id });
-                        onOpen(null);
-                      }}
-                      label={`Category for this part of ${parent.name}`}
-                    />
-                  )}
-                  {!p.split_remainder && parent.excluded !== true && (
-                    <div className="rename-row">
-                      <button
-                        className="secondary"
-                        onClick={() => {
-                          void patch(p, { excluded: !p.split_excluded });
-                          onOpen(null);
-                        }}
-                      >
-                        {p.split_excluded ? 'Count this part again' : 'Leave this part out of budgets and reports'}
-                      </button>
-                    </div>
-                  )}
-                  <div className="rename-row">
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        onEditSplit(parent);
-                        onOpen(null);
-                      }}
-                    >
-                      Edit split
-                    </button>
-                  </div>
-                </div>
-              )}
-            </td>
-            <td className={`num${p.amount < 0 ? ' inflow' : ''}${p.excluded === true ? ' excluded' : ''}`}><Masked>{signedMoney(-p.amount, currency, { always: true })}</Masked></td>
-          </tr>
+                {p.split_excluded && <span className="txn-row-note">Left out of budgets and reports on its own</span>}
+              </span>
+              <span className={`list-row-value money txn-amount${p.amount < 0 ? ' inflow' : ''}${p.excluded === true ? ' excluded' : ''}`}>
+                <Masked>{signedMoney(-p.amount, currency, { always: true })}</Masked>
+              </span>
+            </button>
+          </li>
         );
       })}
     </>
@@ -300,73 +237,37 @@ export function PartRows({
 }
 
 /**
- * A group's transactions, nested under its row: each as it is, its own
- * amount and day. A tap opens one, which can be taken out of the group.
+ * A group's transactions, each a row of its own under the group's: as it is,
+ * its own amount and day. A tap opens it in the transaction's sheet, where
+ * it can be taken out of the group.
  */
-export function MemberRows({
-  group,
-  last,
-  open,
-  onOpen,
-  onChanged,
-  onError,
-}: {
-  group: Txn;
-  /** Whether the group's row is the day's last: its last transaction ends the day. */
-  last: boolean;
-  open: string | null;
-  onOpen: (id: string | null) => void;
-  onChanged: () => void;
-  /** What went wrong with a change, or null once one is made. */
-  onError: (message: string | null) => void;
-}) {
+export function MemberRows({ group, onOpen }: { group: Txn; onOpen: (target: SheetTarget) => void }) {
   const members = group.group_members ?? [];
   const currency = currencyOf(group);
   return (
     <>
-      {members.map((m, i) => {
-        const opened = open === `${group.transaction_id}>${m.transaction_id}`;
-        return (
-          <tr
-            key={m.transaction_id}
-            className={`acct-row part-row${last && i === members.length - 1 ? ' last-in-day' : ''}`}
-            onClick={() => onOpen(opened ? null : `${group.transaction_id}>${m.transaction_id}`)}
+      {members.map((m) => (
+        <li key={m.transaction_id}>
+          <button
+            type="button"
+            className="list-row txn-row txn-part-row"
+            aria-haspopup="dialog"
+            onClick={() => onOpen({ kind: 'member', group: group.transaction_id, id: m.transaction_id })}
           >
-            <td>
-              <div className="part-text">
-                <div>{m.name}</div>
-                <div className="type-tag">
-                  {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {m.institution_name} · {m.account_name}
-                </div>
-                {/* What was said of it on its own doesn't change the group's net. */}
-                {m.excluded === true && <div className="excluded-tag">{m.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</div>}
-              </div>
-              {opened && (
-                <div className="txn-edit" onClick={(e) => e.stopPropagation()}>
-                  {members.length > MIN_MEMBERS ? (
-                    <div className="rename-row">
-                      <button
-                        className="secondary"
-                        onClick={async () => {
-                          onOpen(null);
-                          onError(await sendChange('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [heldInGroupAs(m)] }));
-                          onChanged();
-                        }}
-                      >
-                        Take it out of the group
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="rename-hint">A group holds at least {MIN_MEMBERS} transactions: to take this one out, ungroup it from the group’s row.</div>
-                  )}
-                  <div className="rename-hint">In a group, it counts through the group’s total, under the group’s category.</div>
-                </div>
-              )}
-            </td>
-            <td className={`num${m.amount < 0 ? ' inflow' : ''} excluded`}><Masked>{signedMoney(-m.amount, currency, { always: true })}</Masked></td>
-          </tr>
-        );
-      })}
+            <span className="list-row-text">
+              <span className="list-row-title">{m.name}</span>
+              <span className="list-row-sub">
+                {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {m.institution_name} · {m.account_name}
+              </span>
+              {/* What was said of it on its own doesn't change the group's net. */}
+              {m.excluded === true && <span className="txn-row-note">{m.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</span>}
+            </span>
+            <span className={`list-row-value money txn-amount${m.amount < 0 ? ' inflow' : ''} excluded`}>
+              <Masked>{signedMoney(-m.amount, currency, { always: true })}</Masked>
+            </span>
+          </button>
+        </li>
+      ))}
     </>
   );
 }

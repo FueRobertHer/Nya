@@ -262,7 +262,7 @@ describe('a month’s totals on the Activity tab', () => {
     const t = text(renderToStaticMarkup(<MonthBreakdown txns={[row({}), imported]} notes={[]} loading={false} onRecategorize={noop} onRename={noop} />));
     expect(t).toContain('1 of this month’s transactions was imported from files, not sent by the bank.');
     // Its category as the person's categories name it, as any row's is.
-    expect(t).toContain('Chase · Checking · Groceries · imported from OFX');
+    expect(t).toContain('Groceries · Chase · Checking · imported from OFX');
     expect(importedRowsNote([row({})])).toBeNull();
   });
 });

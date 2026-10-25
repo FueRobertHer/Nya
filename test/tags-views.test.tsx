@@ -178,9 +178,10 @@ describe('on the Activity tab', () => {
         onSaveNote={() => {}}
       />
     );
-    expect(html).toContain('<span class="note-tag" title="Airport run"> · note</span>');
-    expect(html).toContain('<span class="note-tag" title="apples"> · note</span>');
-    expect(html.match(/class="note-tag"/g)).toHaveLength(2);
+    expect(html.match(/<span class="badge">Note<\/span>/g)).toHaveLength(2);
+    // The note itself is in its sheet, not on the row.
+    expect(html).not.toContain('Airport run');
+    expect(html).not.toContain('apples');
   });
 
   test('chips leave out an id no tag has', () => {

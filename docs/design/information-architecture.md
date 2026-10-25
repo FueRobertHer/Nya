@@ -98,7 +98,7 @@ A pinned bar at the top: **‹ October ›** month switcher and the segments **T
 | **Spending** | One period shared by every card here (since phase 5c): chips for its length (Month, 3 months, 12 months, Year to date), ending with the bar's month, which the bar's arrows and Net by month's columns move; each card names it. Cash flow (Sankey, "Show as a table"); Net by month (tapping a month sets the period); Income vs spend; Spending by group; Spending by tag; Online vs in-store; Where you spent; a **Reports** row (tax year, runway, year over year). Tapping a Sankey node switches to Transactions with that filter. |
 | **Shared** | Shared expenses: people and balances, Paid back?, Add someone, Add an IOU, archived; its settings (counting, Venmo and Cash App) behind a gear. |
 
-**Transaction** sheet (tap a row) replaces the inline editor: category, tags and note, split or group, share the cost or "This paid back", receipt, include or exclude, the rules that matched and "Create a rule from this", and the bank's details. In the sheet's ⋯: rename vendor, and Edit or delete for manual transactions. After a category change, the "Make a rule" offer shows in the sheet.
+**Transaction** sheet (tap a row; since phase 5e) replaces the inline editor: category, tags and note, split or group, share the cost or "This paid back", receipt, include or exclude, the rules that matched and "Create a rule from this", and the bank's details. In the sheet's ⋯ (in its footer): rename vendor (a second level of the sheet), and Edit or delete for manual transactions. After a category change, the "Make a rule" offer shows in the sheet, under the category, and the sheet stays open. A split transaction's parts and a group's transactions are rows of their own and open the sheet on themselves: a part's category, whether it counts and Edit split; a group's transaction taken out of it. Each row is a button: its name, one line (category, account, where it came from) with its provenance as chips (Pending, Check category, To review, Excluded or Hidden by a rule, Note, a receipt), and under it the notes that bear on what it counts as.
 
 ## Budgets
 
@@ -234,22 +234,23 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | CategoriesCard, CategoryManager, CategoryTemplates | Manage | Settings > Transactions |
 | TemplateOffer | Top of Budgets | Budgets > Month (dismissible notice) |
 | TagsCard | Manage | Settings > Transactions |
-| RulesCard, RuleSheet | Manage; Activity row | Settings > Transactions; Transaction sheet |
+| RulesCard, RuleSheet | Manage; Activity row | Settings > Transactions; Transaction sheet (the "Make a rule" offer and "Create a rule from this", since 5e) |
 | VendorDefaultsCard | Manage | Settings > Transactions |
 | ReviewSettingsCard | Manage | Settings > Transactions |
 | DeleteAccount, DeletionReceipt, ForgetDevice | Clerk profile window; header (password mode) | Settings > Account |
 | AdminStorage | `/admin-view` | Settings > Account (admin link) and `/admin-view` |
 | AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
 | ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** (left out on Shared), the ⋯ with Add a transaction and Import a file while there are transactions (buttons in the empty card while there are none), and the segments Transactions · Spending · Shared |
-| MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; editor becomes the Transaction sheet |
+| MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; the rows are list rows that open the Transaction sheet (5e) |
+| TransactionSheet | New (phase 5e), replacing the inline editor | A row's sheet on Activity > Transactions: a transaction, a split's part or a group's transaction |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
 | CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period (5c): no control of its own; on a phone, three columns, its categories in the table under it (5d) |
 | MonthFlowChart, CategoryRollup, SpendByTag | Activity | Activity > Spending |
-| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet |
+| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet (5e) |
 | ChipSelect | New (phase 5b) | A filter chip that chooses one of a few options: Transactions' Tag and Receipt chips |
 | ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions: the count as a heading beside Card Mode, under the filter chips (5b); its filter is the To review chip |
-| SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet; Budgets > Month notice |
-| AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet |
+| SplitSheet, GroupSheet, SplitRows, SplitChangedNote | Activity editor; Budgets note | Transaction sheet (5e), the parts and a group's transactions rows of their own; Budgets > Month notice |
+| AttachmentSection, AttachmentViewer | Activity editor | Transaction sheet (5e) |
 | SharedExpensesCard, SharedRows, ShareCostSheet, ConfirmPaymentSheet, SettleSheet, PersonSheet, IouSheet, HandoffSheet | Activity, below the list; row lines | Activity > Shared; row lines unchanged. The sheets (`SharedSheets`) stay mounted on every segment, since a row on Transactions opens Share the cost, This paid back and an IOU |
 | BudgetsTab, BudgetsCard, BudgetSuggestion, IncomePool | Budgets | Budgets > Month |
 | GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals |
@@ -273,7 +274,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets. `useDrawnWidth` (`components/drawn-width.ts`, phase 5d) draws a chart at its own width, so its text is 12px; MonthFlowChart and CashFlowSankey use it, the rest follow with phase 6.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
-- Menu: an object's ⋯ menu of rare actions (the account sheet's, the institution card's).
+- Menu: an object's ⋯ menu of rare actions (the account sheet's, the transaction sheet's, the institution card's).
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 

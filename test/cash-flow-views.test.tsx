@@ -518,9 +518,11 @@ describe('split and grouped transactions (#39)', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
     expect(source).toContain('<FlowShown pick={flowPick} count={countTransactions(picked ?? [])}');
     expect(source).toContain('const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);');
-    expect(source).toContain('{entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}');
-    expect(source).toContain('{entryNotice(whole(t)) && ');
-    expect(source).toContain('setSplitting(whole(x));');
-    expect(source).toContain('onEditSplit={(x) => setSplitting(whole(x))}');
+    expect(source).toContain('const sub = [entryLabel(whole(t)), ');
+    expect(source).toContain('<TxnNotes t={t} whole={whole(t)} ');
+    // Its sheet, and the split it edits, are the transaction's from every row
+    // loaded, put back whole: never from the parts the list happens to show.
+    expect(source).toContain('const byId = useMemo(() => new Map(bankRows(txns ?? [], { groups: "keep", ious: "keep" })');
+    expect(source).toContain('const sheetRows = useMemo(() => findTarget(sheet?.target ?? null, byId), [sheet, byId]);');
   });
 });
