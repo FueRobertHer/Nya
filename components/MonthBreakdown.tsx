@@ -11,9 +11,10 @@
 // what it left out in others: lib/spending.ts); top spending, rolled up to
 // your category groups (components/CategoryRollup.tsx), draws as single-hue
 // horizontal bars (magnitude lives in length, not color); and finally the
-// searchable transaction list, where a manual row can be edited, any row
-// given another of your categories, and any row excluded from budgets and
-// reports. Each row shows the name of the category it is filed under
+// searchable transaction list, each row a button that opens its sheet
+// (components/TransactionSheet.tsx), where a manual row can be edited, any
+// row given another of your categories, and any row excluded from budgets
+// and reports. Each row shows the name of the category it is filed under
 // (lib/categories.ts), so renaming a category renames it here at once.
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -23,25 +24,23 @@ import MonthFlowChart from "./MonthFlowChart";
 import { amountSamples, compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
-import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
 import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
-import { IMPORTED_TXN_PREFIX, importedChangedNote, importedRowsNote } from "@/lib/history-import/view";
-import { isConnectorKind } from "@/lib/connectors/types";
+import { importedRowsNote } from "@/lib/history-import/view";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
-import CategoryPicker from "./CategoryPicker";
 import type { CategoryChoice } from "./transaction-edits";
 import type { Tag } from "@/lib/tags";
 import TagChips from "./TagChips";
 import TagFilter from "./TagFilter";
 import ChipSelect from "./ChipSelect";
 import SpendByTag from "./SpendByTag";
-import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
+import type { TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
 import { inPeriod, periodCaption, periodEnding, periodGapNotes, pickedRows, SPANS, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
@@ -49,33 +48,19 @@ import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@
 import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from "@/lib/shared-expenses/rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
-import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
+import { entryLabel, MemberRows, PartRows, wholeSplits } from "./SplitRows";
 import { needsReview, type ReviewMarks } from "@/lib/review-layer";
 import type { ReviewControls } from "./review-state";
 import ReviewBar from "./ReviewBar";
-import ReviewNote from "./ReviewNote";
 import CardMode from "./CardMode";
-import { SharedRowActions, SharedRowLine, type SharedRowHooks } from "./SharedRows";
-import AttachmentSection from "./AttachmentSection";
+import type { SharedRowHooks } from "./SharedRows";
+import TransactionSheet, { findTarget, TxnNotes, type SheetTarget } from "./TransactionSheet";
+import { isLowConfidence } from "./txn-words";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 
-/** What one side of a pair Nya worked out between two SimpleFIN accounts
- *  (lib/manual-txns.ts connectorTransfers) is. */
-const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
-  card: "Card payment between your accounts",
-  loan: "Loan payment between your accounts",
-  transfer: "Transfer between your accounts",
-};
-
-/** The mark on one side of a pair: what it is, worked out from the amounts,
- *  and, while its category leaves it out of the totals, how to count it. It
- *  counts once its category is moved into a spending group (lib/spending.ts
- *  isTransfer: loan payments, say), and then says only what it is. */
-export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "category" | "category_kind">): string | null {
-  if (!t.paired) return null;
-  const what = `${PAIRED_WORDS[t.paired]}, worked out from the amounts`;
-  return isTransfer(t) ? `${what}: give it a category to count it` : what;
-}
+// What a row and its sheet say of a transaction (components/txn-words.ts),
+// re-exported for code that imported them from here.
+export { exclusionOffer, nameForRules, pairedWords } from "./txn-words";
 
 // Stable empty defaults, as in Insights: a fresh literal per render would be
 // a new identity each time.
@@ -190,22 +175,6 @@ export type Txn = {
   // approved, what changed since, and the merchant's default that filed it.
 } & ReviewMarks;
 
-/** The name rules match a row by: the one it had before any rule named it. */
-export const nameForRules = (t: Pick<Txn, "name" | "name_before_rules">) => t.name_before_rules ?? t.name;
-
-/**
- * What a transaction's detail offers about leaving it out of budgets and
- * reports: the button to exclude it or put it back ("toggle"), or why not yet
- * ("wait"; "wait-rule" for one a rule hides). A pending row gets a new id
- * when it posts, and an exclusion or an include is kept by id: offered once
- * it has posted, so it can't quietly lapse.
- */
-export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_by_rule">): "toggle" | "wait" | "wait-rule" {
-  if (!t.pending) return "toggle";
-  if (t.excluded_by_rule) return "wait-rule";
-  return t.excluded === true ? "toggle" : "wait";
-}
-
 /**
  * What an empty list says, from what narrows it: one filter on says what it
  * looked for; the search, or more than one, says nothing matches them; none,
@@ -279,27 +248,11 @@ function monthLabel(ym: string): string {
   );
 }
 
-// Plaid categorizes with a confidence level; LOW/UNKNOWN rows are worth a
-// glance, so the row nudges the user toward the existing recategorize flow.
-const LOW_CONFIDENCE = new Set(["LOW", "UNKNOWN"]);
-function isLowConfidence(t: Txn): boolean {
-  return !!t.category_confidence && LOW_CONFIDENCE.has(t.category_confidence);
-}
-
 // Money moving between your own accounts isn't income or spending, and a
 // transaction the person excluded counts in no total: both decided in
 // lib/spending.ts, which every total uses. isTransfer is re-exported for code
 // that imported it from here.
 export { isTransfer } from "@/lib/spending";
-
-// A short "HH:MM" from Plaid's ISO datetime, in the viewer's locale. Null when
-// the row carries only a posting date.
-function fmtTime(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
 
 // Base category options for recategorization, merged with whatever
 // categories appear in the data (categoryOptions).
@@ -336,58 +289,6 @@ export function categoryOptions(txns: Txn[] | null): string[] {
     if (t.category) set.add(t.category);
   });
   return [...set].sort();
-}
-
-// "What is this charge?" detail panel, shown inside the expanded row. Surfaces
-// the Plaid fields that answer the question (the real merchant behind a
-// processor, channel, place, time, website, reference/check numbers, and, for
-// joint accounts, the owner), skipping any the row doesn't carry.
-function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) {
-  const rows: { label: string; value: React.ReactNode }[] = [];
-  const time = fmtTime(t.datetime);
-
-  if (t.counterparty) rows.push({ label: "Merchant", value: t.counterparty });
-  if (t.payment_processor)
-    rows.push({ label: "Processed by", value: t.payment_processor });
-  if (t.payment_channel)
-    rows.push({ label: "Channel", value: t.payment_channel });
-  if (t.city)
-    rows.push({
-      label: "Where",
-      value: t.region ? `${t.city}, ${t.region}` : t.city,
-    });
-  if (time) rows.push({ label: "Time", value: time });
-  if (t.website)
-    rows.push({
-      label: "Website",
-      value: (
-        <a
-          href={`https://${t.website.replace(/^https?:\/\//, "")}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {t.website.replace(/^https?:\/\//, "")}
-        </a>
-      ),
-    });
-  if (t.payment_reference)
-    rows.push({ label: "Reference", value: t.payment_reference });
-  if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
-  if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
-  if (t.note && !noteEditor) rows.push({ label: "Note", value: t.note });
-
-  if (rows.length === 0) return null;
-
-  return (
-    <dl className="txn-detail">
-      {rows.map((r) => (
-        <div className="txn-detail-row" key={r.label}>
-          <dt>{r.label}</dt>
-          <dd>{r.value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
 }
 
 export default function MonthBreakdown({
@@ -466,7 +367,8 @@ export default function MonthBreakdown({
   /** Saves a transaction's note (empty clears it). */
   onSaveNote?: (t: Txn, note: string) => void;
   /** Opens the rule drawer on a rule made from a transaction, filing it
-   *  under `category_id` (the one just chosen) or the one it is under now. */
+   *  under `category_id` (the one just chosen in its sheet) or the one it is
+   *  under now. */
   onCreateRule?: (t: Txn, category_id?: string) => void;
   /** A rule, by id, in a sentence, for the rules a transaction matches. */
   ruleSentenceOf?: (id: string) => string | null;
@@ -498,12 +400,13 @@ export default function MonthBreakdown({
   const chooseSegment = onSegment ?? setOwnSegment;
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
-  const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
-  const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
+  // The row whose sheet is open (components/TransactionSheet.tsx), kept
+  // while it slides out, with the errors already said when it opened, so
+  // the sheet says only those its own changes bring. Each opening is its
+  // own (`n`): what was typed or offered in the last one doesn't carry over.
+  const [sheet, setSheet] = useState<{ target: SheetTarget; open: boolean; seen: (string | null)[]; n: number } | null>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null);
   const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
-  // After a transaction is given another category: the offer to do the same
-  // for every transaction with its name, as a rule (#36).
-  const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
   // A node of the cash flow tapped (#41): the list shows its transactions,
   // from every month of its period, until it is cleared or a month is chosen.
   // The chart's period is kept here beside it: a reload shows a spinner in
@@ -767,6 +670,52 @@ export default function MonthBreakdown({
   // from all of them, never from those the list happens to show.
   const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
   const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
+
+  // What an open sheet shows, found again in every row loaded, put back
+  // whole as the list puts them (a split one with all its parts, a group's
+  // row with its transactions): so a change shows in the sheet at once, and a
+  // filter the change takes the row out of leaves the sheet open on it.
+  const byId = useMemo(() => new Map(bankRows(txns ?? [], { groups: "keep", ious: "keep" }).map((t) => [t.transaction_id, t])), [txns]);
+  const sheetRows = useMemo(() => findTarget(sheet?.target ?? null, byId), [sheet, byId]);
+  const sheetErrors = [actionError, splitError, review?.error ?? null];
+  const openSheet = (target: SheetTarget) => setSheet((s) => ({ target, open: true, seen: sheetErrors, n: (s?.n ?? 0) + 1 }));
+  const closeSheet = () => {
+    setSheet((s) => (s ? { ...s, open: false } : s));
+    // Back to its row, as the sheet gives focus back; when a filter has
+    // taken the row out of the list meanwhile (approved under To review),
+    // to the list's heading rather than to nothing. Another sheet opened
+    // in its place keeps focus.
+    requestAnimationFrame(() => {
+      // Still in the sheet sliding out (its row gone, so it had nowhere to
+      // give focus back to), or nowhere.
+      let left = !document.activeElement || document.activeElement === document.body;
+      for (let n: Element | null = document.activeElement; n && !left; n = n.parentElement) {
+        if (n.getAttribute("role") === "dialog") left = n.getAttribute("data-open") === "false";
+      }
+      if (left) listHeading.current?.focus({ preventScroll: true });
+    });
+  };
+  // An error said before the sheet opened, once cleared, is forgotten: the
+  // same words coming back are a new refusal, and the sheet says it.
+  const [shownAction, shownSplit, shownReview] = sheetErrors;
+  useEffect(() => {
+    const now = [shownAction, shownSplit, shownReview];
+    setSheet((s) => (s && s.seen.some((e, i) => e !== null && now[i] === null) ? { ...s, seen: s.seen.map((e, i) => (now[i] === null ? null : e)) } : s));
+  }, [shownAction, shownSplit, shownReview]);
+  // Its row gone once the list is read again (posted under a new id,
+  // deleted): the sheet closes, and focus goes to the list's heading rather
+  // than to nothing.
+  useEffect(() => {
+    if (sheet?.open && !sheetRows) {
+      setSheet(null);
+      listHeading.current?.focus({ preventScroll: true });
+    }
+  }, [sheet, sheetRows]);
+  // The list read again with a spinner (after a change the server refused):
+  // the sheet goes with the list, and doesn't come back on its own.
+  useEffect(() => {
+    if (loading) setSheet(null);
+  }, [loading]);
 
   // The pinned bar: the month (none on Shared, whose balances aren't by
   // month, or before there is one), stepping through the months listed, and
@@ -1189,7 +1138,7 @@ export default function MonthBreakdown({
 
             <div className="card" ref={listRef}>
               <div className="card-header">
-                <h2>Transactions</h2>
+                <h2 ref={listHeading} tabIndex={-1}>Transactions</h2>
                 <span className="meta">
                   {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
                   {countTransactions(visible)}
@@ -1247,346 +1196,94 @@ export default function MonthBreakdown({
 
               {actionError && <div className="error">{actionError}</div>}
               {splitError && <div className="error">{splitError}</div>}
-              {ruleOffer && onCreateRule && (
-                <div className="rule-offer">
-                  <p className="panel-note" style={{ marginTop: 0 }}>
-                    Do the same for every transaction named “{nameForRules(ruleOffer.t)}”
-                    {ruleOffer.t.name_before_rules !== undefined && ` (shown as “${ruleOffer.t.name}”)`}, past and future? A rule does it, and you can change or turn it off
-                    later.
-                  </p>
-                  <div className="button-pair" style={{ marginTop: 0 }}>
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        onCreateRule(ruleOffer.t, ruleOffer.category_id);
-                        setRuleOffer(null);
-                      }}
-                    >
-                      Make a rule
-                    </button>
-                    <button className="secondary" onClick={() => setRuleOffer(null)}>
-                      No thanks
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {visible.length === 0 ? (
                 <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, receipt: byReceipt, pick: !!flowPick })}</p>
               ) : (
-                <table className="txn-table">
-                  <tbody>
-                    {days.map((g) => (
-                      <Fragment key={g.date}>
-                        <tr className="txn-date-header">
-                          <td>{fmtTxnDate(g.date)}</td>
-                          <td className="num">
-                            <Masked>{fmtDayNet(g.nets, currency)}</Masked>
-                          </td>
-                        </tr>
-                        {g.entries.map((t, i) => (
-                          <Fragment key={t.transaction_id}>
-                          <tr
-                            className={`acct-row${i === g.entries.length - 1 && !t.split_parts && !t.group_members ? " last-in-day" : ""}`}
-                            onClick={() => {
-                              // An IOU's row is no transaction: it opens the IOU.
-                              if (t.shared_iou) return shared?.onIou(t.shared_iou.item);
-                              const opening = recatId !== t.transaction_id;
-                              setRecatId(opening ? t.transaction_id : null);
-                              if (opening) setRenameDraft(t.name);
-                            }}
-                          >
-                            <td>
-                              <div className="txn-main">
-                                {t.logo_url || t.category_icon_url ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img
-                                    className="txn-logo"
-                                    src={(t.logo_url || t.category_icon_url) ?? undefined}
-                                    alt=""
-                                    loading="lazy"
-                                  />
-                                ) : (
-                                  <span
-                                    className="txn-logo txn-logo-fallback"
-                                    aria-hidden="true"
-                                  >
-                                    {t.name.slice(0, 1).toUpperCase()}
+                <ul className="list-rows txn-list">
+                  {days.map((g) => (
+                    <Fragment key={g.date}>
+                      <li className="txn-day">
+                        <span>{fmtTxnDate(g.date)}</span>
+                        <span className="money">
+                          <Masked>{fmtDayNet(g.nets, currency)}</Masked>
+                        </span>
+                      </li>
+                      {g.entries.map((t) => {
+                        // A split one's parts or a group's size, its category
+                        // (a split one's are its parts'), where it is, and
+                        // where it came from: one line.
+                        const filed = !t.split_parts && categoryLabel(t) ? `${categoryLabel(t)}${t.subcategory ? ` › ${t.subcategory}` : ""}` : null;
+                        // An IOU's row is on no account (#49).
+                        const where = t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`;
+                        const sub = [entryLabel(whole(t)), filed, where, t.source && !t.shared_iou ? sourceLabel(t.source) : null].filter(Boolean).join(" · ");
+                        const body = (
+                          <>
+                            {t.logo_url || t.category_icon_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img className="txn-logo" src={(t.logo_url || t.category_icon_url) ?? undefined} alt="" loading="lazy" />
+                            ) : (
+                              <span className="txn-logo txn-logo-fallback" aria-hidden="true">
+                                {t.name.slice(0, 1).toUpperCase()}
+                              </span>
+                            )}
+                            <span className="list-row-text">
+                              <span className="list-row-title">
+                                {t.name}
+                                <TagChips ids={t.tags} tags={tags} />
+                              </span>
+                              {/* Where it came from as chips (design-system.md#list-row). */}
+                              <span className="list-row-sub">
+                                <span>{sub}</span>
+                                {t.pending && <span className="badge">Pending</span>}
+                                {isLowConfidence(t) && <span className="badge warn">Check category</span>}
+                                {review?.view?.on && needsReview(t) && <span className="badge warn">To review</span>}
+                                {t.excluded === true && <span className="badge">{t.excluded_by_rule ? "Hidden by a rule" : "Excluded"}</span>}
+                                {t.note && <span className="badge">Note</span>}
+                                {onAttachmentsChanged && t.attached === true && (
+                                  <span className="badge">
+                                    <PaperclipIcon />
+                                    <span className="visually-hidden">Has a receipt or document</span>
                                   </span>
                                 )}
-                                <div className="txn-text">
-                                  <div>
-                                    {t.name}
-                                    {t.pending && (
-                                      <span className="pending-tag"> · pending</span>
-                                    )}
-                                    {isLowConfidence(t) && (
-                                      <span
-                                        className="low-conf-tag"
-                                        title="Plaid was unsure of this category: tap to fix it"
-                                      >
-                                        {" "}
-                                        · check category
-                                      </span>
-                                    )}
-                                    {t.note && (
-                                      <span className="note-tag" title={t.note}> · note</span>
-                                    )}
-                                    {onAttachmentsChanged && t.attached === true && (
-                                      <span className="attach-tag" title="Has a receipt or document">
-                                        {" · "}
-                                        <PaperclipIcon />
-                                        <span className="visually-hidden">has a receipt or document</span>
-                                      </span>
-                                    )}
-                                    {review?.view?.on && needsReview(t) && <span className="review-tag"> · to review</span>}
-                                    <TagChips ids={t.tags} tags={tags} />
-                                  </div>
-                                  <div className="type-tag">
-                                    {/* An IOU's row is on no account (#49). */}
-                                    {t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`}
-                                    {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
-                                    {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
-                                    {t.subcategory ? ` › ${t.subcategory}` : ""}
-                                    {t.source && !t.shared_iou ? ` · ${sourceLabel(t.source)}` : ""}
-                                  </div>
-                                  {t.excluded === true && (
-                                    <div className="excluded-tag">
-                                      {t.excluded_by_rule ? "Hidden by a rule: out of budgets and reports" : "Excluded from budgets and reports"}
-                                    </div>
-                                  )}
-                                  {/* A pair Nya worked out between two SimpleFIN
-                                      accounts (lib/manual-txns.ts): said, so a
-                                      wrong one is seen and given a category. */}
-                                  {t.paired && <div className="excluded-tag">{pairedWords(t)}</div>}
-                                  {t.excluded === null && (
-                                    <div className="excluded-tag">
-                                      Couldn&apos;t read whether you excluded this
-                                    </div>
-                                  )}
-                                  {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
-                                  {shared && <SharedRowLine t={t} hooks={shared} />}
-                                  {/* A bank row standing for a row imported from
-                                      its file, which the bank changed since (#52). */}
-                                  {t.imported_amount !== undefined && (
-                                    <div className="excluded-tag"><Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</Masked></div>
-                                  )}
-                                </div>
-                              </div>
-                              {recatId === t.transaction_id && (
-                                <div
-                                  className="txn-edit"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {/* Its review and its merchant's default (components/ReviewNote.tsx). */}
-                                  {review && <ReviewNote t={whole(t)} taxonomy={taxonomy} review={review} onChanged={() => onSplitsChanged?.()} />}
-                                  {/* Filed as its parts are, or as its group is (#39). */}
-                                  {t.split_parts || t.group_outside ? null : taxonomy ? (
-                                    <CategoryPicker
-                                      taxonomy={taxonomy}
-                                      className="text-input recat-select"
-                                      value={t.category_id ?? taxonomy.uncategorized}
-                                      onChange={(id) => {
-                                        if (id && id !== t.category_id && t.group_members) {
-                                          // A group's net is filed under the group's category.
-                                          void sendChange("/api/transaction-groups", "PATCH", { id: t.group_id, category_id: id }).then((failed) => {
-                                            setSplitError(failed);
-                                            onSplitsChanged?.();
-                                          });
-                                        } else if (id && id !== t.category_id) {
-                                          onRecategorize(t.transaction_id, { category_id: id });
-                                          setRuleOffer({ t, category_id: id });
-                                        }
-                                        setRecatId(null);
-                                      }}
-                                      label={`Category for ${t.name}`}
-                                    />
-                                  ) : t.group_members || t.group_outside ? null : (
-                                    <select
-                                      className="text-input recat-select"
-                                      value={t.category ?? "other"}
-                                      onChange={(e) => {
-                                        onRecategorize(t.transaction_id, { category: e.target.value });
-                                        setRecatId(null);
-                                      }}
-                                      aria-label={`Category for ${t.name}`}
-                                    >
-                                      {pickable.map((c) => (
-                                        <option key={c} value={c}>
-                                          {c}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  )}
-                                  {/* Splitting it, or grouping it with others (#39). */}
-                                  {onSplitsChanged && (
-                                    <SplitActions
-                                      t={t}
-                                      onSplit={(x) => {
-                                        setSplitting(whole(x));
-                                        setRecatId(null);
-                                      }}
-                                      onGroup={(x) => {
-                                        setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null });
-                                        setRecatId(null);
-                                      }}
-                                      onUngroup={(id) => {
-                                        setRecatId(null);
-                                        void sendChange("/api/transaction-groups", "DELETE", { id }).then((failed) => {
-                                          setSplitError(failed);
-                                          onSplitsChanged?.();
-                                        });
-                                      }}
-                                    />
-                                  )}
-                                  {/* Sharing it, or what it paid back (#49). */}
-                                  {shared && <SharedRowActions t={whole(t)} hooks={shared} onDone={() => setRecatId(null)} />}
-                                  {/* Not a row SimpleFIN brought nor one imported into
-                                      a linked account: the bank's or the file's
-                                      record, whose category alone is the person's. */}
-                                  {t.source && !isConnectorKind(t.source) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX) && onEditTransaction && !t.group_members && (
-                                    <div className="rename-row">
-                                      <button
-                                        className="secondary"
-                                        onClick={() => {
-                                          onEditTransaction(t);
-                                          setRecatId(null);
-                                        }}
-                                      >
-                                        Edit or delete
-                                      </button>
-                                    </div>
-                                  )}
-                                  {t.vendor_key && (
-                                    <>
-                                      <div className="rename-row">
-                                        <input
-                                          className="text-input"
-                                          value={renameDraft}
-                                          maxLength={100}
-                                          onChange={(e) =>
-                                            setRenameDraft(e.target.value)
-                                          }
-                                          placeholder="Rename vendor"
-                                          aria-label={`Rename ${t.name}`}
-                                        />
-                                        <button
-                                          className="secondary"
-                                          disabled={renameDraft.trim() === t.name}
-                                          onClick={() => {
-                                            onRename(t.vendor_key, renameDraft.trim());
-                                            setRecatId(null);
-                                          }}
-                                        >
-                                          Rename
-                                        </button>
-                                      </div>
-                                      <div className="rename-hint">
-                                        Applies to this vendor&apos;s transactions;
-                                        older ones may update later.
-                                      </div>
-                                    </>
-                                  )}
-                                  {/* Offered once a pending row has posted
-                                      (exclusionOffer), one a rule hides too. */}
-                                  {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) !== "toggle" && (
-                                    <div className="rename-hint">
-                                      {exclusionOffer(t) === "wait-rule"
-                                        ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
-                                        : "Once it posts, it can be excluded from budgets and reports."}
-                                    </div>
-                                  )}
-                                  {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) === "toggle" && (
-                                    <>
-                                      <div className="rename-row">
-                                        <button
-                                          className="secondary"
-                                          onClick={() => {
-                                            onToggleExcluded(t, t.excluded !== true);
-                                            setRecatId(null);
-                                          }}
-                                        >
-                                          {t.excluded === true
-                                            ? "Include in budgets and reports"
-                                            : "Exclude from budgets and reports"}
-                                        </button>
-                                      </div>
-                                      <div className="rename-hint">
-                                        {t.excluded === true
-                                          ? "Puts it back in totals, budgets, insights, bills and the Plan."
-                                          : "For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan."}
-                                      </div>
-                                    </>
-                                  )}
-                                  {onChangeTags && onSaveNote && !t.group_members && (
-                                    <TxnTagsNote
-                                      key={`${t.transaction_id}:${t.note ?? ""}`}
-                                      t={t}
-                                      tags={tags}
-                                      onChangeTags={(change) => onChangeTags(t, change)}
-                                      onSaveNote={(note) => onSaveNote(t, note)}
-                                    />
-                                  )}
-                                  {onCreateRule && !t.group_members && (
-                                    <div className="rename-row">
-                                      <button
-                                        className="secondary"
-                                        onClick={() => {
-                                          onCreateRule(t);
-                                          setRecatId(null);
-                                        }}
-                                      >
-                                        Create a rule from this
-                                      </button>
-                                    </div>
-                                  )}
-                                  {ruleSentenceOf && (t.rule_ids?.length ?? 0) > 0 && (
-                                    <div className="rename-hint">
-                                      {t.rule_ids!.length === 1 ? "A rule matches it" : "Rules match it"}, in the order they run (what you set here wins):
-                                      <ul className="rule-matched">
-                                        {t.rule_ids!.map((id) => {
-                                          const sentence = ruleSentenceOf(id);
-                                          return sentence ? <li key={id}><Masked>{sentence}</Masked></li> : null;
-                                        })}
-                                      </ul>
-                                    </div>
-                                  )}
-                                  {/* Its receipts and documents (#47), read as it opens. */}
-                                  {onAttachmentsChanged && <AttachmentSection t={whole(t)} rows={txns} onChanged={onAttachmentsChanged} />}
-                                  {!t.group_members && <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />}
-                                </div>
-                              )}
-                            </td>
+                              </span>
+                              <TxnNotes t={t} whole={whole(t)} shared={shared} />
+                            </span>
                             {/* A split transaction's own amount is the bank's; its parts below are what count (#39).
-                                One of a group counted before the transactions shown counts in no total here: dimmed as
-                                an excluded one is, its notice saying why. */}
-                            <td
-                              className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true || t.group_outside ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}
+                                One of a group counted before the transactions shown counts in no total here: quieter,
+                                as an excluded one is, its notice saying why. */}
+                            <span
+                              className={`list-row-value money txn-amount${t.amount < 0 ? " inflow" : ""}${t.excluded === true || t.group_outside ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}
                             >
                               <Masked>{fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}</Masked>
-                            </td>
-                          </tr>
-                          {t.split_parts && (
-                            <PartRows
-                              parent={t}
-                              last={i === g.entries.length - 1}
-                              taxonomy={taxonomy}
-                              open={recatId}
-                              onOpen={setRecatId}
-                              onChanged={() => onSplitsChanged?.()}
-                              onError={setSplitError}
-                              onEditSplit={(x) => setSplitting(whole(x))}
-                            />
-                          )}
-                          {t.group_members && (
-                            <MemberRows group={t} last={i === g.entries.length - 1} open={recatId} onOpen={setRecatId} onChanged={() => onSplitsChanged?.()} onError={setSplitError} />
-                          )}
+                            </span>
+                          </>
+                        );
+                        const iou = t.shared_iou;
+                        return (
+                          <Fragment key={t.transaction_id}>
+                            <li>
+                              {/* An IOU's row is no transaction: it opens the IOU, where there is one to open. */}
+                              {iou && !shared ? (
+                                <div className="list-row txn-row">{body}</div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="list-row txn-row"
+                                  aria-haspopup="dialog"
+                                  onClick={() => (iou ? shared?.onIou(iou.item) : openSheet({ kind: "txn", id: t.transaction_id }))}
+                                >
+                                  {body}
+                                </button>
+                              )}
+                            </li>
+                            {t.split_parts && <PartRows parent={t} onOpen={openSheet} />}
+                            {t.group_members && <MemberRows group={t} onOpen={openSheet} />}
                           </Fragment>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </ul>
               )}
 
               {[...new Set([...notes, ...asideNotes])].map((n) => (
@@ -1598,6 +1295,36 @@ export default function MonthBreakdown({
           </>
         )
       )}
+
+      {/* A row's sheet: what was its inline editor. Its Split and Group close
+          it and open the sheets below. */}
+      <TransactionSheet
+        key={sheet?.n ?? 0}
+        open={!!sheet?.open}
+        rows={sheetRows}
+        onClose={closeSheet}
+        currency={currency}
+        errors={sheetErrors.filter((e, i): e is string => !!e && e !== sheet?.seen[i])}
+        taxonomy={taxonomy}
+        pickable={pickable}
+        tags={tags}
+        list={txns}
+        review={review}
+        shared={shared}
+        ruleSentenceOf={ruleSentenceOf}
+        onRecategorize={onRecategorize}
+        onRename={onRename}
+        onEditTransaction={onEditTransaction}
+        onToggleExcluded={onToggleExcluded}
+        onChangeTags={onChangeTags}
+        onSaveNote={onSaveNote}
+        onCreateRule={onCreateRule}
+        onSplitsChanged={onSplitsChanged}
+        onSplit={(t) => setSplitting(t)}
+        onGroup={(start, group) => setGrouping({ start, group })}
+        onSplitError={setSplitError}
+        onAttachmentsChanged={onAttachmentsChanged}
+      />
 
       {/* Card Mode, over the tab: its Split and Group open the sheets below, over it. */}
       {review && (

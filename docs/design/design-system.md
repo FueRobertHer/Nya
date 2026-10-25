@@ -119,6 +119,7 @@ The workhorse. Leading logo or icon (optional), title, one subtitle line, traili
 - A row that opens a detail sheet is a `<button>` (or a link), never a `<tr>` with buttons inside it. Today account rows put Hide, Close..., Delete and Update inside a clickable `<tr>`.
 - At most one subtitle line and one trailing secondary line. Anything more belongs in the detail sheet.
 - Provenance (Updated, Last known, Estimated, Excluded, Rule, Split, Pending) is a chip on the subtitle line.
+- Activity's transactions are list rows (since phase 5e): a logo, the name with its tags, one line (category, account, where it came from) with its provenance as `.badge` chips, and the amount. The notes that bear on what a transaction counts as (an exclusion that couldn't be read, a pair worked out, its split or group, how it is shared, a file's amount the bank changed) stay under that line in `--fs-1`, never only in its sheet. A split's parts and a group's transactions are rows of their own, set in past the logo.
 - A row that reports a status (Home's Needs attention) leads with `.list-row-icon`, a 32px square in its level's tint holding a shape for each level (an alert, a clock, an info mark), and a word for a screen reader before its title: never color alone.
 
 Replaces `.acct-row`, `.txn-main` with `.txn-text`, `.peer-row`, `.peer-item`, `.cat-manage-row`, `.timeline-note-row`, `.budget-summary`, and the table-based account and transaction lists.

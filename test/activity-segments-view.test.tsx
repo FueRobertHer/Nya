@@ -144,14 +144,14 @@ describe('Activity: the bar and its segments', () => {
     expect(v.text()).toContain('Cash flow');
     expect(v.text()).toContain('Net by month');
     expect(v.text()).toContain('Open reports');
-    expect(v.all((e) => e.getAttribute('class') === 'txn-table')).toHaveLength(0);
+    expect(v.all((e) => e.getAttribute('class') === 'list-rows txn-list')).toHaveLength(0);
     act(() => click(v.tab('Shared')));
     expect(v.text()).toContain('Shared expenses');
     expect(v.all((e) => e.getAttribute('class') === 'shared-here')).toHaveLength(1);
     expect(v.month()).toBeNull();
     // Back on Transactions, the list is where it was.
     act(() => click(v.tab('Transactions')));
-    expect(v.all((e) => e.getAttribute('class') === 'txn-table')).toHaveLength(1);
+    expect(v.all((e) => e.getAttribute('class') === 'list-rows txn-list')).toHaveLength(1);
     v.unmount();
   });
 

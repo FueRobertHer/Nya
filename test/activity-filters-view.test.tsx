@@ -110,7 +110,7 @@ function mount(props: Props = {}) {
     return chipEl ? { text: words?.textContent ?? null, on: chipEl.hasAttribute('data-on') } : null;
   };
   // The merchants listed, in order.
-  const names = () => all((e) => e.getAttribute('class') === 'txn-text').map((e) => NAMES.find((m) => e.textContent.startsWith(m)));
+  const names = () => all((e) => e.getAttribute('class') === 'list-row-title').map((e) => NAMES.find((m) => e.textContent.startsWith(m)));
   return { host, render, all, group, chip, select, shown, names, text: () => host.textContent, unmount: () => act(() => root.unmount()) };
 }
 

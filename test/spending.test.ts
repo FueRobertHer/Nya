@@ -163,8 +163,8 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
     // Still in the list, marked.
     expect(t).toContain('New laptop');
-    expect(t).toContain('Excluded from budgets and reports');
-    expect(html).toContain('num excluded');
+    expect(html).toContain('<span class="badge">Excluded</span>');
+    expect(html).toContain('txn-amount excluded');
   });
 
   test('the month’s chart', () => {
@@ -267,7 +267,7 @@ describe('the Activity tab', () => {
     const manual = txn({ transaction_id: 'manual-txn:1', name: 'Farmers market', institution_name: 'Cash', account_name: 'Wallet', source: 'manual', vendor_key: '', account_id: 'manual_w' });
     const t = text(renderToStaticMarkup(createElement(MonthBreakdown, { txns: [manual], notes: [], loading: false, onRecategorize: () => {}, onRename: () => {} })));
     // Its category's name as the list shows names (lib/categories.ts displayName).
-    expect(t).toContain('Cash · Wallet · Food and drink · entered by hand');
+    expect(t).toContain('Food and drink · Cash · Wallet · entered by hand');
   });
 });
 

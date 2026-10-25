@@ -6,6 +6,7 @@
 // now, so a transaction filed under one keeps it until another is chosen.
 // The value is a category id ('' for none, where `none` names it).
 
+import type { Ref } from 'react';
 import { categoriesIn, displayName, sortedGroups, type Taxonomy } from '@/lib/categories';
 
 /** The groups and the categories in each that the list offers, in order. */
@@ -28,6 +29,7 @@ export default function CategoryPicker({
   className = 'text-input',
   label,
   disabled,
+  ref,
 }: {
   taxonomy: Taxonomy;
   value: string | null | undefined;
@@ -38,9 +40,11 @@ export default function CategoryPicker({
   /** For a list with no visible label of its own. */
   label?: string;
   disabled?: boolean;
+  /** The select itself, to give focus to. */
+  ref?: Ref<HTMLSelectElement>;
 }) {
   return (
-    <select className={className} value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} disabled={disabled}>
+    <select ref={ref} className={className} value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} disabled={disabled}>
       {none !== undefined && <option value="">{none}</option>}
       {pickerOptions(taxonomy, value).map((g) => (
         <optgroup key={g.group} label={g.group}>
