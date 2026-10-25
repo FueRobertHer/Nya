@@ -20,8 +20,18 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 5c | Activity: one period on Spending | 1 to 2 days |
 | 5d | Activity: its charts drawn at their width, their text at 12px | 1 day |
 | 5e | Activity: the Transaction sheet, rule offer inside it; the rows redrawn as list rows | 1 to 2 days |
-| 6 | Budgets and Plan segments | 3 to 4 days |
+| 6a | Budgets: Month, Upcoming and Goals segments; debt payoff moved in | 2 to 3 days |
+| 6b | Plan: Your path, Stress test and Portfolio segments; the scenario bar | 1 day |
+| 6c | Plan: the inputs as rows, their caveats on one line each | 1 to 2 days |
+| 6d | Plan: one assumptions sheet, a label on each result, plain words, its charts drawn at their width | 1 to 2 days |
+| 8a | Plan: the path, year by year, as a pure function | 1 day |
+| 8b | Plan: the headline against the stop age, the path chart, Home's FI line | 2 days |
+| 8c | Plan: the What if… card | 2 days |
+| 8d | Plan: new life event kinds | 2 to 3 days |
+| 8e | Plan: progress against your plan | 3 to 4 days |
 | 7 | Light theme and the theme setting | 1 to 2 days |
+
+Phase 8, the Plan track, comes before phase 7: the Plan tab was the screen people found most confusing (decided 2026-10-25).
 
 ## Phase 1: Settings screen, Manage removed
 
@@ -159,7 +169,7 @@ Split in three pull requests, as phase 3 was: **4a** the Net worth card (its fir
 
 **Kept narrow in 4c:**
 
-- **The FI line, as reviewed.** The review asked for "Plan defaults" on the line itself when no plan is saved, a shorter line under it ("$942,000 of $1,520,000 invested"), a row that says why when the plan can't be read, and focus after its jump. The FI part is likely to change, so these wait for that.
+- **The FI line, as reviewed.** The review asked for "Plan defaults" on the line itself when no plan is saved, a shorter line under it ("$942,000 of $1,520,000 invested"), a row that says why when the plan can't be read, and focus after its jump. The FI part is likely to change, so these wait for that (phase 8b, which gives the line the Plan tab's new words).
 - **From the same review, for later:** Needs attention can sit below the fold at 320px under the chart (a "2 things need you" jump under the delta); caution's clock fits "due soon" but not "over budget" (one caution shape for rows and notices); a low balance smaller than a bill due within the week belongs in Needs attention; the month's missing transactions said once, gathered, rather than twice; tab jumps pushed to history, so back returns to Home.
 
 - **Focus after the FI line's jump.** The Plan tab has no heading to land on until phase 6 gives it one; the line scrolls to its top, as it did.
@@ -280,11 +290,70 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 
 ## Phase 6: Budgets and Plan
 
-- Budgets: Month, Upcoming (forecast, calendar or list, recurring, planned), Goals; add budget and irregular income in sheets; one completeness notice per segment.
-- Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
-- Plan: scenario bar and Scenarios sheet with Compare; FI and timeline, Stress test, Portfolio; "Why?" on each input; currency as a badge.
+Split in four pull requests: one for Budgets, three for the Plan tab's layout. All four are layout only: no saved plan, scenario, budget or goal changes shape.
 
-**Risks:** the plan's saved inputs and scenarios are unchanged (layout only); the forecast's threshold and what-if keep their behavior.
+**6a**, Budgets:
+
+- Month, Upcoming (forecast, calendar or list, recurring, planned), Goals; add budget and irregular income in sheets; one completeness notice per segment.
+- Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
+- The calendar's figures and the forecast's chart at 12px (`useDrawnWidth`).
+
+**6b**, the Plan tab's segments:
+
+- The scenario bar pinned at the top ("Your plan" or the open scenario, Scenarios, Back to your plan) and the Scenarios sheet with Compare.
+- Three segments: **Your path** (the first, renamed from FI and timeline), **Stress test**, **Portfolio**. The cards move as they are; nothing is reworded yet.
+- The Plan tab gets a heading for Home's FI line to land on.
+
+**6c**, the figures the plan rests on:
+
+- Spending, saving, invested, and ages and assumptions as rows that open their edit sheets. Each source sentence moves into its sheet behind Why?.
+- Under each figure, its critical caveats in full and the lesser ones as one line that says how many and what kind ("2 notes: a month missing, payroll not set") and opens in place to every note in its words, as `TotalCaveats` does on Home (guidelines.md allows it). The caveats on the FI number stay on it.
+- Each segment opens with one amber notice when an input may be incomplete.
+
+**6d**, the assumptions and the words:
+
+- One Assumptions sheet holds every setting the stress test uses (withdrawal rate, return, tax, mix, rule, method, fee), so each sits with what it changes; the mix is set in one place.
+- Each result keeps a short label ("Hypothetical, from US history: not a prediction, and not advice."); the full text and the data sources are said once, in About these numbers.
+- Plain words, with the FI terms as labels (see [information-architecture.md](information-architecture.md#vocabulary)): "growth after inflation", "how much you'd draw each year", "you could stop saving now". Never "retire early".
+- The fan chart and the rate grid drawn at their width (`useDrawnWidth`), their text at 12px.
+
+**Risks:** the plan's saved inputs and scenarios are unchanged (layout only); the forecast's threshold and what-if keep their behavior; every caveat the Plan tab shows keeps its words and level, and each PR that moves one says so (diff the rendered text before and after, as 3b did).
+
+## Phase 8: The Plan track
+
+Runs after phase 6 and before phase 7. The engine is built (`lib/fire/`); what holds the tab back is that it never draws your path, and life events are hard to find. The phones are in [mockups/index.html](mockups/index.html#plan).
+
+**Decided (2026-10-25):**
+
+- **The first answer is against your stop age**: "Around age 39, 16 years before you stop at 55", or "3 years after". With no age typed, the card asks for it first. Home's FI line says the same words.
+- **The first chart is one line**: invested assets from today to your stop age at a steady return, the FI number as a flat line, an FI marker and the stop age, with "Show as a table" and a text summary. No band, no actual history and no event pins on it yet: the band stays on Stress test, snapshots keep no daily invested total (and are in nominal dollars, the plan in today's), and pins can't be 44px targets at four pixels a year.
+- **Life events stay in scenarios.** A **What if…** card on Your path offers templates; picking one asks for your own figures, shows how it moves your FI age, and "Try it" creates a scenario named after it ("Buy a home at 38") and opens it. The card lists the scenarios as life choices, each with its FI age. Your plan stays what you have locked in.
+- **No suggested amounts** in templates: nothing is filled in, and nothing suggests what a home or a child usually costs (as [features.md](../features.md) already says of life events).
+
+**8a**, the path as a pure function: the year-by-year balances the walk already computes and discards (`walkBalanceAt` in `lib/fire/events.ts`), returned as a series, with property tests (no value from nowhere, the series meets `view.atTargetAge`). Nothing stored changes.
+
+**8b**, the headline and the path chart:
+
+- The headline and progress, with the caveats that sit on the FI number today kept there, critical ones in full.
+- The chart (a new component pattern: design-system.md gains it in this PR), drawn with `useDrawnWidth` and through `lib/format.ts`, added to the hide-amounts render test, with a `role="img"` summary and a table.
+- Home's FI line takes the same words in the same PR, so Home and the Plan agree; the review's FI-line items from 4c land here.
+
+**8c**, the What if… card: templates for the kinds that exist (house, child, sabbatical, part-time, spending change) that create a named scenario; the effect shown as you type; the scenarios listed with their FI age. Nothing stored changes shape: a template makes an ordinary scenario.
+
+**8d**, new kinds, each a new shape in the scenario store:
+
+- A car, once or every few years, saying that car loan payments are already in measured spending.
+- A raise: more saved each year until FI (never a change to retirement spending).
+- A windfall: money in at an age, with its own path in the walk and the simulation (both take only positive costs today).
+- A loan ends: spending falls for good at an age.
+
+Ship each kind's shape once: an older release reads a scenario with a kind it doesn't know as "not understood".
+
+**8e**, progress against your plan: when you say "this is my plan", save its assumptions (never a result) and draw actual invested assets against it, through a route that sums each day's invested accounts by the Plan's rules (hidden accounts, include cash, currency). A new store, so it is in the download, the deletion and the privacy page from the first PR.
+
+**Later (the master plan's ProjectionLab track):** milestones that events can start or end at, a home as an asset with a mortgage, balances by tax bucket and a drawdown order, a flat tax per bucket, a year sheet, and the band along the whole path.
+
+**Risks:** money math (8a, 8d and 8e get an independent review before they merge); Home and the Plan must agree on every figure and word; the rule that every result says it is hypothetical; hide amounts on every new figure.
 
 ## Phase 7: Light theme
 

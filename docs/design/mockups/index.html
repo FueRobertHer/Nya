@@ -178,6 +178,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app svg.chart .line { stroke: var(--accent); stroke-width: 2; fill: none; }
 .app svg.chart .area { fill: var(--accent-tint); }
 .app svg.chart .tick { fill: var(--text-3); font-size: 10px; font-family: var(--f-app); }
+.app svg.chart .tick.lg { font-size: 15px; }
 .app svg.chart .marker { fill: var(--warn); }
 .app svg.chart .low { fill: var(--neg); }
 
@@ -722,12 +723,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
   <!-- ===================== PLAN ===================== -->
   <section class="spec" id="plan">
     <div class="spec-head">
-      <p class="eyebrow">Job: when can I stop working, and how sure is that?</p>
+      <p class="eyebrow">Job: where am I, where am I heading, and what changes it? · decided 2026-10-25</p>
       <h2>Plan</h2>
       <ul class="changes">
-        <li>A pinned scenario bar: switch, compare and return to your plan from any segment.</li>
-        <li>Segments: FI and timeline, Stress test, Portfolio. Each input is one line; how it was worked out is behind Why?.</li>
-        <li>About these numbers becomes a disclosure under the stress test.</li>
+        <li>The first segment becomes Your path: one answer against your own stop age, one chart from today to that age, then the four rows it rests on.</li>
+        <li>Life events stay in scenarios, and become easy to find: a What if… card on Your path offers templates (a home, a car, travel, a child, a raise, a windfall, a loan that ends). Picking one creates a scenario named after it and shows how it moves your FI age. Your plan stays what you have locked in.</li>
+        <li>Words: "financial independence" and the FI terms stay as labels, plain words carry the meaning ("growth after inflation", "how much you'd draw each year", "you could stop saving now"), and nothing says "retire early".</li>
+        <li>Each input is one row; how it was worked out is in its sheet behind Why?. Caveats stay on the figure: critical ones in full, lesser ones as one line that says how many and what kind.</li>
+        <li>Every result keeps a short "Hypothetical, from US history" label; the full text and data sources are said once, in About these numbers.</li>
       </ul>
     </div>
     <div class="phones">
@@ -736,27 +739,109 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scroll">
             <div class="sticky">
               <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
-              <div class="seg"><span class="on">FI and timeline</span><span>Stress test</span><span>Portfolio</span></div>
+              <div class="seg"><span class="on">Your path</span><span>Stress test</span><span>Portfolio</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Savings may be low: September is missing from Chase</span></div>
             <div class="card">
-              <div class="hero-label">FI number</div>
-              <div class="hero money">$1,950,000</div>
+              <div class="hero-label">Financial independence</div>
+              <div class="hero">Around age 39</div>
+              <div class="small muted">16 years before you stop at 55</div>
               <div class="meter pos"><i style="width:62%"></i></div>
-              <div class="stat"><div><div class="k">Years to FI</div><div class="v">11.4</div></div><div><div class="k">Coast FI</div><div class="v pos">Yes</div></div><div><div class="k">Savings rate</div><div class="v">45%</div></div></div>
+              <div class="xs muted"><span class="money">$1,209,400</span> of <span class="money">$1,950,000</span> invested</div>
+              <svg class="chart" viewBox="0 0 300 110" role="img" aria-label="Invested assets rise from $1.2M at 34 to the $1.95M FI number around 39 and keep growing to about $5.7M at 55">
+                <line class="grid" x1="0" y1="96" x2="300" y2="96"/>
+                <line x1="0" y1="66" x2="300" y2="66" stroke="var(--text-3)" stroke-width="1" stroke-dasharray="4 4"/>
+                <path class="area" d="M0,77 L71,66 L150,51 L225,32 L300,8 L300,96 L0,96Z"/>
+                <polyline class="line" points="0,77 71,66 150,51 225,32 300,8"/>
+                <text class="tick lg" x="104" y="86">FI number</text>
+                <circle cx="71" cy="66" r="4" fill="var(--pos)"/>
+                <line x1="299" y1="8" x2="299" y2="96" stroke="var(--text-3)" stroke-width="1"/>
+                <text class="tick lg" x="0" y="110">34</text><text class="tick lg" x="62" y="110">39</text><text class="tick lg" x="246" y="110">stop 55</text>
+              </svg>
+              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">At a steady 5% after inflation</span><span class="why">Show as a table</span></div>
             </div>
             <div class="card flush">
-              <div class="card-header"><h2>From</h2></div>
-              <div class="row"><div class="main"><span class="title">Annual spending</span><span class="sub">Last 12 months</span></div><div class="end money">$78,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Invested assets</span><span class="sub">3 accounts</span></div><div class="end money">$1,209,400</div></div>
-              <div class="row"><div class="main"><span class="title">Annual savings</span><span class="sub">Estimate <span class="badge warn">1 month missing</span></span></div><div class="end money">$64,000</div></div>
-              <div class="row"><div class="main"><span class="title">Ages</span></div><div class="end">34 to 90</div></div>
-              <div class="row"><div class="main"><span class="title">Assumptions</span></div><div class="end small">4% · 2% tax</div></div>
+              <div class="card-header"><h2>From your last 12 months</h2></div>
+              <div class="row"><div class="main"><span class="title">Spending</span><span class="sub">A year, from transactions</span></div><div class="end money">$78,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Saving</span><span class="sub" style="color:var(--warn)">2 notes: a month missing, payroll not set</span></div><div class="end money">$64,000</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Invested</span><span class="sub">3 accounts</span></div><div class="end money">$1,209,400</div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Ages and assumptions</span><span class="sub">34, stop at 55 · 4% withdrawal</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>FI AND TIMELINE</b>One notice per segment when an input may be short. Tapping an input opens its edit sheet, where "Why?" explains it. Income, one-offs and (in a scenario) life events follow below.</figcaption>
+        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Home's FI line says the same words. With no age typed, this card asks for it first.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
+              <div class="seg"><span class="on">Your path</span><span>Stress test</span><span>Portfolio</span></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>What if…</h2></div>
+              <div class="chips" style="padding:0 14px 10px"><span class="chip">Buy a home</span><span class="chip">A car</span><span class="chip">Travel</span><span class="chip">A child</span><span class="chip">A raise</span><span class="chip">More…</span></div>
+              <div class="row"><span class="row-ico info">H</span><div class="main"><span class="title">Buy a home at 38</span><span class="sub">FI around 42, 3 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">C</span><div class="main"><span class="title">A child at 36</span><span class="sub">FI around 44, 5 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><span class="row-ico info">B</span><div class="main"><span class="title">Sabbatical 2029</span><span class="sub">FI around 41, 2 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Income and one-offs</h2></div>
+              <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Social Security</span><span class="sub">From 67 · <span class="money">$28,000</span> a year</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Will it last?</span><span class="sub">Test a stop at 55 against US market history</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">You could stop saving now</span><span class="sub">Coast FI: what you have grows to the FI number by 55</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>YOUR PATH, SCROLLED</b>What if… lists your scenarios as life choices, each with how it moves your FI age; tapping one opens it under the scenario bar. A chip starts a new one from a template. Income and one-offs stay on your plan, unchanged.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>What if…</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div class="row"><span class="row-ico info">H</span><div class="main"><span class="title">Buy a home</span><span class="sub">A down payment, then costs that end and costs that stay</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">V</span><div class="main"><span class="title">Buy a car</span><span class="sub">Once, or every few years</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">T</span><div class="main"><span class="title">Travel or a big expense</span><span class="sub">Once, or a yearly amount for a while</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">C</span><div class="main"><span class="title">A child</span><span class="sub">A yearly cost for some years</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">B</span><div class="main"><span class="title">A career break</span><span class="sub">Savings stop for a while</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">R</span><div class="main"><span class="title">A raise, or part-time work</span><span class="sub">Save more before FI, or earn after it</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">W</span><div class="main"><span class="title">A windfall</span><span class="sub">An inheritance, a bonus, a sale</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico info">L</span><div class="main"><span class="title">A loan ends</span><span class="sub">Spending falls when it is paid off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><span class="row-ico">+</span><div class="main"><span class="title">Something else</span><span class="sub">A yearly change, or a one-off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+          </div>
+        </div></div>
+        <figcaption><b>WHAT IF…, MORE</b>Every template, in plain names. Kinds that are new to the engine arrive in phase 8d: a car that repeats, a raise, a windfall, a loan that ends. Social Security and pensions stay income on your plan.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><h2>Buy a home</h2></div>
+            <div class="section-title">At age</div>
+            <div class="field">&nbsp;</div>
+            <div class="section-title">Paid from investments (0 if from cash the plan doesn't count)</div>
+            <div class="field">$</div>
+            <div class="section-title">Mortgage and costs that end: a year, for how many years</div>
+            <div class="btn-row" style="flex-wrap:nowrap"><div class="field" style="flex:1">$</div><div class="field" style="width:90px">years</div></div>
+            <div class="section-title">Lasting change a year: taxes and upkeep, less rent</div>
+            <div class="field">$ (+ or -)</div>
+            <div class="notice info"><svg><use href="#i-info"/></svg><span>In this what-if, FI moves from about 39 to about 42.</span></div>
+            <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn primary">Try it</span></div>
+          </div>
+        </div></div>
+        <figcaption><b>A TEMPLATE</b>Your own figures only: nothing is filled in or suggested (features.md). The effect shows as you type. "Try it" creates the scenario "Buy a home at 38" and opens it; "Back to your plan" returns.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -764,25 +849,30 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scroll">
             <div class="sticky">
               <div class="monthbar"><span>Scenario: Sabbatical 2029</span><span class="btn ghost sm">Back to plan</span></div>
-              <div class="seg"><span>FI and timeline</span><span class="on">Stress test</span><span>Portfolio</span></div>
+              <div class="seg"><span>Your path</span><span class="on">Stress test</span><span>Portfolio</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Savings may be low: September is missing from Chase</span></div>
             <div class="card">
               <div class="card-header"><h2>Will it last?</h2><span class="meta">History</span></div>
               <div class="hero money" style="font-size:30px">94%</div>
-              <div class="small muted">of 1871 to 1996 starts lasted 56 years</div>
+              <div class="small muted">of 1871 to 1983 starts lasted 40 years from 55</div>
+              <div class="xs t3">Hypothetical, from US history: not a prediction, and not advice.</div>
               <svg class="chart" viewBox="0 0 300 100" aria-hidden="true"><path d="M0,70 C80,60 160,40 300,10 L300,80 C160,90 80,88 0,78Z" fill="var(--accent-tint)"/><path d="M0,74 C80,66 160,56 300,40" fill="none" stroke="var(--accent)" stroke-width="2"/><line class="grid" x1="0" y1="96" x2="300" y2="96"/></svg>
               <span class="why">Worst starting years</span>
             </div>
             <div class="card flush">
               <div class="row"><div class="main"><span class="title">By withdrawal rate and length</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Assumptions</span><span class="sub">History · 75/25 · constant · 0.1% fee</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
               <div class="row"><div class="main"><span class="title">About these numbers</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The bar says which plan you are looking at on every segment, so a what-if is never mistaken for the plan.</figcaption>
+        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. Assumptions is one row that opens the sheet holding every setting the test uses.</figcaption>
       </figure>
+      <div class="note-box">
+        <p><b>Left out of the first version, on purpose.</b> Actual history on the path chart (snapshots keep no daily invested total, and they are in nominal dollars while the plan is in today's), the stress band on the path, event pins, a year-by-year sheet, and an FI line that steps with lasting events. Each is in the ProjectionLab track in the master plan.</p>
+      </div>
     </div>
   </section>
 
