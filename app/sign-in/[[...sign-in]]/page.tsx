@@ -6,9 +6,7 @@ import { Brand } from '@/components/Brand';
 import { ForgetDevice } from '@/components/ForgetDevice';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 import DeletionReceiptNotice from '@/components/DeletionReceipt';
-import { SignInSkeleton } from '@/components/LoadingSkeletons';
-import { SignInFlow } from '@/components/SignInFlow';
-import { goesHome } from '@/components/sign-in-view';
+import { SignInFlow, SignInPlaceholder } from '@/components/SignInFlow';
 
 // Clerk's sign-in (lib/auth-mode.ts). Without Clerk keys the app signs in with
 // the shared password instead. Off production, the one-click demo accounts,
@@ -16,9 +14,9 @@ import { goesHome } from '@/components/sign-in-view';
 // here too, above everything (components/DeletionReceipt.tsx).
 //
 // Clerk's form loads after the page, so a placeholder of its size holds its
-// place (components/LoadingSkeletons.tsx). From a demo button's press, and
-// once signed in, the page hands over to the app loading
-// (components/SignInFlow.tsx).
+// place, and from a demo button's press the page hands over to the app
+// loading (components/SignInFlow.tsx). Once Clerk signs in, Home streams the
+// same while it loads (app/page.tsx).
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (!clerkEnabled()) redirect('/login');
   const demos = demoUsers();
@@ -29,7 +27,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   // demo's: a Clerk invitation's ticket may still ask for a password.
   const demoTicket = demos.length > 0 && params.demo === 'ticket' && typeof params.__clerk_ticket === 'string';
   return (
-    <SignInFlow demoTicket={demoTicket} home={goesHome(params.redirect_url)}>
+    <SignInFlow demoTicket={demoTicket}>
       <ForgetDevice />
       <Brand />
       <DeletionReceiptNotice />
@@ -51,7 +49,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
           {unavailable && <p className="error">The demo couldn’t sign in just now. Try again.</p>}
         </div>
       )}
-      <SignIn fallback={<SignInSkeleton />} />
+      <SignIn fallback={<SignInPlaceholder />} />
       <CoverageNote />
       <TrustLinks />
     </SignInFlow>

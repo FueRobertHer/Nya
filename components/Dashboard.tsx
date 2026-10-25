@@ -2196,31 +2196,29 @@ export default function Dashboard({
           </div>
           <div className="top-actions">
             <HideAmountsToggle />
-            {/* There while the first load is on its way too (unavailable
-                until it is in), so the buttons beside it don't move when it
-                comes. */}
-            {(connected || loading) && (
-              <button
-                className="secondary icon-btn"
-                onClick={refreshAll}
-                disabled={refreshing || loading}
-                aria-label="Refresh"
-                title="Refresh"
+            {/* Always there, unavailable while the first load is on its
+                way, so the header doesn't change as it loads, connected or
+                not. */}
+            <button
+              className="secondary icon-btn"
+              onClick={refreshAll}
+              disabled={refreshing || loading}
+              aria-label="Refresh"
+              title="Refresh"
+            >
+              <svg
+                className={refreshing ? 'spin' : undefined}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                <svg
-                  className={refreshing ? 'spin' : undefined}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M20 12a8 8 0 1 1-2.35-5.65M20 4v4h-4" />
-                </svg>
-              </button>
-            )}
+                <path d="M20 12a8 8 0 1 1-2.35-5.65M20 4v4h-4" />
+              </svg>
+            </button>
             {clerk ? (
               <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={() => setSharingOpen(true)} />
             ) : (

@@ -1,33 +1,44 @@
 // components/sign-in-view.ts
 //
-// What the sign-in page shows while it hands over to the app
-// (components/SignInFlow.tsx), apart from Clerk, so it can be tested alone.
+// Where a demo sign-in is on the sign-in page (components/SignInFlow.tsx),
+// apart from React, so it can be tested alone.
 
 /** How long a demo sign-in may take before the sign-in page shows again, so
  *  a ticket that didn't work (Clerk says so in its form) never leaves only a
  *  placeholder on screen. Loading Clerk and signing in takes a second or two. */
 export const DEMO_WAIT_MS = 12_000;
 
-export type SignInView = 'page' | 'signing-in' | 'loading';
+/** How long Clerk's form may take to load before the page says it hasn't,
+ *  and what may be in its way. */
+export const FORM_WAIT_MS = 15_000;
 
-/** What the sign-in page shows: the app loading once signed in when Home is
- *  next ("loading"); the same while a demo sign-in is on its way, until it
- *  has waited too long ("signing-in"); else itself. Once signed in for
- *  anywhere but Home (an invite link), Clerk's own form says so. */
-export function signInView(s: { signedIn: boolean; home: boolean; demo: boolean; waited: boolean }): SignInView {
-  if (s.signedIn) return s.home ? 'loading' : 'page';
-  return s.demo && !s.waited ? 'signing-in' : 'page';
+/** A demo sign-in: on its way or not, and which press it is, so each press
+ *  waits DEMO_WAIT_MS of its own. */
+export type DemoState = { pending: boolean; attempt: number };
+
+export type DemoEvent =
+  | { type: 'press' }
+  // DEMO_WAIT_MS passed since that press (or since the page came with a ticket).
+  | { type: 'waited'; attempt: number }
+  // The page came back from the browser's cache.
+  | { type: 'back' };
+
+/** The first state: on its way when the page came with a demo ticket. Taken
+ *  once, from the first render: Clerk takes the ticket out of the address and
+ *  refreshes the page as it signs in, and that render, without the ticket,
+ *  must not show the sign-in page again. */
+export function demoStart(ticket: boolean): DemoState {
+  return { pending: ticket, attempt: 0 };
 }
 
-/** Whether Clerk goes Home after signing in: with no redirect_url (its
- *  default is "/"), or one whose path is "/", a notice email's
- *  /?view=connections included (proxy.ts returnPath). */
-export function goesHome(redirect: string | string[] | undefined): boolean {
-  if (redirect === undefined) return true;
-  if (typeof redirect !== 'string') return false;
-  try {
-    return new URL(redirect, 'https://nya.invalid').pathname === '/';
-  } catch {
-    return false;
+export function demoStep(s: DemoState, e: DemoEvent): DemoState {
+  switch (e.type) {
+    case 'press':
+      return { pending: true, attempt: s.attempt + 1 };
+    case 'waited':
+      // A wait from an earlier press ends nothing.
+      return e.attempt === s.attempt ? { ...s, pending: false } : s;
+    case 'back':
+      return { ...s, pending: false };
   }
 }

@@ -2825,56 +2825,63 @@ button.danger-outline {
   width: 100%;
 }
 
+/* Says Clerk's form hasn't loaded (components/SignInFlow.tsx), under its
+   placeholder and as wide. */
+.auth-notice {
+  width: 400px;
+  max-width: calc(100vw - 40px);
+}
+
 /* --- loading placeholders (components/LoadingSkeletons.tsx) --- */
 
 /* Home's Net worth card: each placeholder about as wide as what it stands
    for, in the line that will hold it, so the card keeps its height; the plot
    at the chart's own proportions (components/NetWorthChart.tsx W and H). */
-.skeleton-total {
+.home-skeleton-total {
   width: 5.5em;
 }
 
-.skeleton-delta {
+.home-skeleton-delta {
   width: 15em;
   max-width: 100%;
 }
 
-.skeleton-readout {
+.home-skeleton-readout {
   width: 7em;
 }
 
-.skeleton-readout-date {
+.home-skeleton-readout-date {
   width: 10em;
 }
 
-.skeleton-info {
+.home-skeleton-info {
   width: 16px;
   height: 16px;
   border-radius: var(--r-pill);
 }
 
-.skeleton-plot {
+.home-skeleton-plot {
   width: 100%;
   height: auto;
   aspect-ratio: 340 / 150;
   border-radius: var(--r-md);
 }
 
-.skeleton-ranges {
+.home-skeleton-ranges {
   width: 100%;
 }
 
-.skeleton-as-of {
+.home-skeleton-as-of {
   width: 12em;
 }
 
-.skeleton-chart-notes {
+.home-skeleton-chart-notes {
   width: 5.5em;
 }
 
-/* The header's buttons, on a page that hands over to the dashboard: their
+/* The header's buttons while the app loads as a page (AppLoading): their
    outlines, which their icons then fill. */
-.skeleton-icon-btn {
+.app-loading-btn {
   width: var(--tap);
   height: var(--tap);
   border: 1px solid var(--border-strong);
@@ -2882,7 +2889,7 @@ button.danger-outline {
   background: transparent;
 }
 
-.skeleton-avatar {
+.app-loading-avatar {
   width: 34px;
   height: 34px;
   border-radius: var(--r-pill);

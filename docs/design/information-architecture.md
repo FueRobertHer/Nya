@@ -269,8 +269,8 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Sheet | Every form and confirmation | Unchanged, plus sticky footer and second-level back |
 | CategoryPicker | Editors | Unchanged |
 | InfoPage, OpenProtectedDownload, UnsubscribeForm, ServiceWorkerRegistration | Standalone pages and plumbing | Unchanged |
-| LoadingSkeletons (HomeSkeleton, AppLoading, SignInSkeleton) | New, replacing Home's loading spinner | Home's Net worth card in placeholders while the dashboard's first load is on its way; the same under the dashboard's header as a whole page (AppLoading), which the sign-in page and the password login hand over to; the place of Clerk's form on the sign-in page while it loads |
-| SignInFlow | New | The sign-in page's frame: the page from the top, Clerk's form in its placeholder; the app loading in its place from a demo button's press, and once signed in with Home next, Clerk's form still mounted under it |
+| LoadingSkeletons (HomeSkeleton, AppLoading, SignInSkeleton) | New, replacing Home's loading spinner | Home's Net worth card in placeholders while the dashboard's first load is on its way; the same under the dashboard's header as a whole page (AppLoading), which Home streams while the server reads the session (so a sign-in's move there shows it at once) and the sign-in page and the password login hand over to; the place of Clerk's form on the sign-in page while it loads |
+| SignInFlow (SignInPlaceholder) | New | The sign-in page's frame: the page from the top, Clerk's form in its placeholder (with a notice if it hasn't loaded in 15 seconds); the app loading in its place from a demo button's press until Clerk, still mounted under it, has signed in with the ticket and moved to Home |
 
 ## Building blocks
 

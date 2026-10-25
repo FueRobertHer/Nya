@@ -20,10 +20,10 @@ export function HomeSkeleton() {
           Net worth
         </h2>
         <div className="total-value" aria-hidden="true">
-          <span className="skeleton skeleton-total" />
+          <span className="skeleton home-skeleton-total" />
         </div>
         <div className="hero-delta" aria-hidden="true">
-          <span className="skeleton skeleton-delta" />
+          <span className="skeleton home-skeleton-delta" />
         </div>
       </div>
       {/* The chart on its own classes (components/NetWorthChart.tsx): the
@@ -32,19 +32,19 @@ export function HomeSkeleton() {
       <div aria-hidden="true">
         <div className="chart-readout chart-readout-stable">
           <span className="chart-readout-value">
-            <span className="skeleton skeleton-readout" />
+            <span className="skeleton home-skeleton-readout" />
           </span>
           <span className="chart-readout-date">
-            <span className="skeleton skeleton-readout-date" />
+            <span className="skeleton home-skeleton-readout-date" />
           </span>
           <span className="chart-info-btn">
-            <span className="skeleton block skeleton-info" />
+            <span className="skeleton block home-skeleton-info" />
           </span>
         </div>
-        <span className="skeleton block skeleton-plot" />
+        <span className="skeleton block home-skeleton-plot" />
         <div className="chart-ranges">
           <span className="chart-range">
-            <span className="skeleton skeleton-ranges" />
+            <span className="skeleton home-skeleton-ranges" />
           </span>
         </div>
       </div>
@@ -52,12 +52,13 @@ export function HomeSkeleton() {
           wraps onto a line of its own as it does the card's. */}
       <div className="net-worth-foot" aria-hidden="true">
         <span className="helper">
-          <span className="skeleton skeleton-as-of" />
+          <span className="skeleton home-skeleton-as-of" />
         </span>
         <span className="btn ghost">
-          <span className="skeleton skeleton-chart-notes" />
+          <span className="skeleton home-skeleton-chart-notes" />
         </span>
       </div>
+      {/* The one thing a screen reader is told while it loads. */}
       <p className="visually-hidden" role="status">
         Loading
       </p>
@@ -65,33 +66,33 @@ export function HomeSkeleton() {
   );
 }
 
-/** The app loading, as a whole page, for the pages that hand over to it: the
- *  sign-in page while a demo sign-in is on its way and once signed in
- *  (components/SignInFlow.tsx), and the password login once it is accepted.
+/** The app loading, as a whole page: what Home streams while the server
+ *  reads who is signed in (app/page.tsx), which a sign-in's move there shows
+ *  at once; the sign-in page while a demo sign-in is on its way
+ *  (components/SignInFlow.tsx); and the password login once it is accepted.
  *  It is the dashboard's header and Home as the dashboard draws them while it
  *  loads, the line under the name included, so the dashboard arriving moves
- *  nothing. */
+ *  nothing. The header's buttons are their outlines, which their icons then
+ *  fill. */
 export function AppLoading({ account }: { account: 'clerk' | 'password' }) {
   return (
     <main className="wrap">
       <div className="top-row">
         <div>
           <Brand />
-          <p className="sub" role="status">
-            Loading your accounts…
-          </p>
+          <p className="sub">Loading your accounts…</p>
         </div>
         {/* Where the header's buttons go: hide amounts, refresh, then the
             account menu, or the Settings gear in password mode. */}
         <div className="top-actions" aria-hidden="true">
-          <span className="skeleton skeleton-icon-btn" />
-          <span className="skeleton skeleton-icon-btn" />
+          <span className="skeleton app-loading-btn" />
+          <span className="skeleton app-loading-btn" />
           {account === 'clerk' ? (
             <span className="user-button-slot">
-              <span className="skeleton skeleton-avatar" />
+              <span className="skeleton app-loading-avatar" />
             </span>
           ) : (
-            <span className="skeleton skeleton-icon-btn" />
+            <span className="skeleton app-loading-btn" />
           )}
         </div>
       </div>
@@ -100,14 +101,15 @@ export function AppLoading({ account }: { account: 'clerk' | 'password' }) {
   );
 }
 
-/** Clerk's sign-in form while its script loads (the sign-in page gives it to
- *  <SignIn> as its fallback): a card of the form's width and about its height,
- *  with its title, field, button and footer as placeholders, so the form
- *  arriving moves nothing above it and little below. */
-export function SignInSkeleton() {
+/** Clerk's sign-in form while its script loads (components/SignInFlow.tsx
+ *  SignInPlaceholder, the sign-in page's <SignIn fallback>): a card of the
+ *  form's width and about its height, with its title, field, button and
+ *  footer as placeholders, so the form arriving moves nothing above it and
+ *  little below. `status` is what a screen reader is told. */
+export function SignInSkeleton({ status }: { status: string }) {
   return (
     <div className="signin-skeleton" role="status">
-      <span className="visually-hidden">Loading the sign-in form</span>
+      <span className="visually-hidden">{status}</span>
       <div className="signin-skeleton-card" aria-hidden="true">
         <div className="signin-skeleton-head">
           <span className="skeleton block" />
