@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments) and 6a2 (Budgets' sheets and notices) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices) and 6a3 (Budgets' Upcoming) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -22,7 +22,8 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 | 5e | Activity: the Transaction sheet, rule offer inside it; the rows redrawn as list rows | 1 to 2 days |
 | 6a1 | Budgets: Month, Upcoming and Goals segments under a pinned bar; debt payoff moved in | 1 day |
 | 6a2 | Budgets: add and edit a budget, and irregular income, in sheets; one completeness notice per segment | 1 to 2 days |
-| 6a3 | Budgets: Upcoming as one dated list or a calendar, with one completeness notice; the threshold in a sheet; its charts at their width | 2 days |
+| 6a3 | Budgets: Upcoming as one dated list or a calendar, with one completeness notice; the threshold in a sheet | 2 days |
+| 6a4 | Budgets: the forecast's and the payoff plan's charts at their width, the calendar's figures at 12px | 1 day |
 | 6b | Plan: Your path, Stress test and Portfolio segments; the scenario bar | 1 day |
 | 6c | Plan: the inputs as rows, their caveats on one line each | 1 to 2 days |
 | 6d | Plan: one assumptions sheet, a label on each result, plain words, its charts drawn at their width | 1 to 2 days |
@@ -292,13 +293,14 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 
 ## Phase 6: Budgets and Plan
 
-Split in pull requests: three for Budgets (6a1 to 6a3, about 4,700 lines of components between them, split as phase 5 was), three for the Plan tab's layout. All are layout only: no saved plan, scenario, budget or goal changes shape.
+Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of components between them, split as phase 5 was; 6a3's charts became 6a4 once its layout was built, as 5d followed 5c), three for the Plan tab's layout. All are layout only: no saved plan, scenario, budget or goal changes shape.
 
 **6a**, Budgets:
 
 - **6a1**: Month, Upcoming (forecast, calendar, recurring, planned) and Goals as segments under a pinned bar. Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
 - **6a2**: add and edit a budget in a sheet, and "My income is irregular" as a row that opens its setting; one completeness notice per segment.
-- **6a3**: Upcoming's bills, income, planned items and card payments as one dated list, or a calendar of the same, with one notice at the top for what they may be missing (moved from 6a2); the forecast's "Warns below" in a sheet; the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures at 12px (an HTML grid, so its figures have to fit the cell), and the payoff plan's chart at its width.
+- **6a3**: Upcoming's bills, income, planned items and card payments as one dated list, or a calendar of the same, with one notice at the top for what they may be missing (moved from 6a2); the forecast's "Warns below" in a sheet.
+- **6a4**: the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures and weekday letters at 12px (an HTML grid, so its figures have to fit a 34px cell at 320px: "+$3.5K" is about 40px at 12px), and the payoff plan's chart at its width. Its day cells are 34px wide there, under the 44px target. Split from 6a3 (decided 2026-10-25).
 
 **Built in 6a1:**
 
@@ -350,6 +352,37 @@ Split in pull requests: three for Budgets (6a1 to 6a3, about 4,700 lines of comp
 - **`Sheet` has no focus trap** (5e's note): Tab can reach the bar's month arrows behind it, and choosing another month closes the sheet.
 - **A reload that fails after a refused save** still replaces the card with its error, which closes the sheet.
 - **The meter tracks** became token tints, on every meter (accounts, goals, the Plan, shared expenses): a small change of tone.
+
+**Built in 6a3:**
+
+- **The segment** (`components/UpcomingPanel.tsx`): one notice at the top, the cash forecast, **List · Calendar** (a tablist of two over the same entries, both views mounted and the other hidden, so the calendar keeps its month and day), Recurring and Planned. The forecast and the list share the range (30, 60 or 90 days).
+- **The notice** (`components/upcoming-notes.tsx`, drawn by `TotalCaveats`): what the bills, income, planned items and payments may be missing. Transactions that couldn't be loaded (critical, in full) or are still loading, planned items not loaded, then the forecast's notes on them: a connection not syncing or whose transactions couldn't be loaded or are still importing, a bank whose transactions Plaid doesn't provide or you didn't allow, a card's payment due that isn't in it, pay that stopped or varies, amounts left out for their currency, an account of unknown type. Two or more cautions are one line that says how many and of what. `forecastNoteItems` (`lib/forecast.ts`) gives each of the forecast's notes its kind and whether it is about where the forecast starts; `forecastNotes` is their texts, unchanged. A badge says the notice bears on a card: "May be incomplete", or "Incomplete" when transactions couldn't be loaded, on the forecast, and on the list and the calendar when the notice says entries may be missing.
+- **The forecast's card**: its notes on where it starts under "Starts from", gathered the same way; its range a radio group drawn as `.segmented`; its answer (below zero, below the warning) as notices at their levels; **Warns below** a row that opens the low-balance warning's sheet (`aria-disabled` while the planned items can't be saved); What if I buy… a button; how it counts behind How this works.
+- **The list** (`components/UpcomingList.tsx`, `upcomingDays` in `lib/calendar.ts`, built from `calendarMonth` so both views list the same entries): from today over the range, Activity's day bars over plain rows in the calendar's words, a payment due led by a **Due** badge, an amount not in the day's figure quieter.
+- **The calendar**: 44px month arrows that stay focusable at either end, Today beside the month's name, its day's list as the same rows.
+- **Recurring**: bills and income as rows that open a series' sheet (what it was seen as, what the forecast makes of it, Not recurring, and why it is off when it is); the marked list behind one row that opens in place, each with Restore.
+- **Planned**: items as rows that open the item's sheet; Delete asks first, as a level; Money out or in as a radio group.
+- **A refused save keeps the sheet open** with what was typed and says why. The planned items, their dismissals and the warning are held through the store's reload (`plannedDrawn` in `components/BudgetsTab.tsx`, as 6a2 held the budgets), so the forecast, the list and Warns below don't drop them meanwhile, and Warns below stays a button focus can return to.
+
+**Decided in 6a3:**
+
+- **The forecast's notes on where it starts stay on its card** (rule 1): only it rests on that balance. The notice at the top holds what the list and the calendar rest on too.
+- **Those notes stay amber**, as before, those that say cash is left out of where it starts included (a bank not reached, accounts not shown, an account with no balance, cash in another currency): two or more fold into one amber line, as every caution does since 4a. Raising them to red, as Home's total is when it is short, was weighed and not taken (decided 2026-10-25).
+- **Badges only where entries may be missing**: not for pay that varies, an account of unknown type, another currency or a card's payment due, which the list and the calendar already show, each saying why it isn't in the day's figure.
+- **Each card's own words stay, at their levels**: the calendar's line for days gone by ("what posted isn't shown", critical) and Recurring's empty states say why their cards are empty, so they aren't left to the notice.
+- **With no cash accounts** there is no forecast and no notice: the list says the load states itself, in Recurring's, the calendar's and the forecast's words, so with transactions not loaded the list and Recurring both say Recurring's sentence.
+- **The calendar keeps its own months**: a month a page, a year back and a year ahead, with what posted on days gone by, another shape of the same entries; the forecast and the list share the range.
+- **No headings on the list and the calendar**: their tabs name them.
+- **The planned items' save error where it was said**: on Recurring and on Planned (each card's own sheet saying it instead while it arose there), and in the warning's sheet, at their levels (caution, and critical in a planned item's sheet, as before).
+
+**Kept narrow in 6a3:**
+
+- **The list's rows open nothing**, as the mockup draws them: Recurring's and Planned's rows, at the foot, open their sheets.
+- **The range and the List · Calendar choice** start afresh when the Budgets tab mounts again, as the forecast's range did.
+- **`Sheet` has no focus trap** (5e's note).
+- **A sheet open on what a reload took away**, as before: a planned item's sheet stays open on an item another device deleted meanwhile (Save then saves the list unchanged and closes), and a series' sheet keeps the series as it was when it opened if transactions are read again under it.
+- **The charts** (the forecast's and the payoff plan's at their width, the calendar's figures at 12px): 6a4.
+- **Recurring's subtitle** (where, how often, how many times, when next) runs to three or four lines at 320px, and the list's to three where it says why an entry isn't in the day's figure: the design system's one subtitle line, shortened when those rows are next redrawn.
 
 **6b**, the Plan tab's segments:
 

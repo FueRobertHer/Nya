@@ -1,0 +1,978 @@
+{
+  "as it usually is": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $2,387.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "below the warning, above zero": [
+    {
+      "text": "Expected below $500.00 from around Oct 15.",
+      "level": "caution"
+    },
+    {
+      "text": "Starts from $1,700.00 in Checking at Chase. Expected to end near $2,200.00 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Nothing planned yet. Add an expense or income you know is coming, once or on a schedule, and the forecast and the calendar count it.",
+      "level": "empty"
+    }
+  ],
+  "no cash to start from": [
+    {
+      "text": "A forecast starts from your checking and savings. Connect a bank, or add a manual account, to see one.",
+      "level": "empty"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "transactions not loaded": [
+    {
+      "text": "Transactions couldn't be loaded, so no bills or income are in this: it is your balance and what you planned.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,887.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Transactions couldn't be loaded, so what posted isn't shown.",
+      "level": "critical"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Transactions couldn't be loaded, so no bills or income can be found.",
+      "level": "critical"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "transactions loading": [
+    {
+      "text": "Transactions are still loading, so no bills or income are in this yet.",
+      "level": "caution"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,887.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Transactions are still loading.",
+      "level": "caution"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Transactions are still loading.",
+      "level": "empty"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "planned items not read": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Your planned items aren't loaded, so they aren't in this, and bills you marked not recurring may be.",
+      "level": "caution"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,400.00 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Your planned items couldn't be loaded, so this can't be saved now.",
+      "level": "caution"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Your saved planned items could not be read, so they have been left untouched and editing is paused.",
+      "level": "caution"
+    }
+  ],
+  "planned items loading": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Your planned items aren't loaded, so they aren't in this, and bills you marked not recurring may be.",
+      "level": "caution"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,400.00 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Loading planned items…",
+      "level": "empty"
+    }
+  ],
+  "a save refused": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $2,387.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Could not save your planned items. Nothing was changed.",
+      "level": "caution"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "connections that leave it short": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $1,065.00 in Checking at Chase, Everyday at Wells Fargo, Citi Checking at Citi and Cash jar at Cash. Expected to end near $2,552.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "Chase needs reconnecting, so this starts from its balances on Oct 3.",
+      "level": "caution"
+    },
+    {
+      "text": "Ally couldn't be reached, so any checking or savings there isn't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "Capital One couldn't be reached, so 360 Checking there isn't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "2 accounts at Wells Fargo couldn't be shown, so any cash in them isn't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "Citi Checking at Citi stopped reporting, so this starts from its last known balance.",
+      "level": "caution"
+    },
+    {
+      "text": "Transactions from Wells Fargo couldn't be loaded, so bills and income there may be missing.",
+      "level": "caution"
+    },
+    {
+      "text": "Chase hasn't synced since Oct 3 and Ally isn't syncing, so bills and income there may be missing or out of date.",
+      "level": "caution"
+    },
+    {
+      "text": "Citi is still importing older transactions, so some bills may not be found yet.",
+      "level": "caution"
+    },
+    {
+      "text": "Plaid doesn't provide transactions for the bank or card accounts at Discover, so their bills and income aren't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "You didn't allow Nya to see transactions from the bank or card accounts at Amex, so their bills and income aren't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "Cash jar's balance was last updated on Sep 20.",
+      "level": "caution"
+    },
+    {
+      "text": "Envelope at Cash has no balance to start from, so it isn't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "1 cash account in EUR isn't in this forecast, which is in USD.",
+      "level": "caution"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "pending",
+      "level": "tag"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates. 1 bill in USD isn't in this total, which is in EUR. 1 deposit in USD isn't in the income total, which is in EUR.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "pay and bills it leaves out": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $2,387.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "Sapphire's payment, statement balance $600.00, is due Oct 22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
+      "level": "caution"
+    },
+    {
+      "text": "Old job hasn't come since Jul 1, so it isn't in this forecast. If it still comes, add it as planned income.",
+      "level": "caution"
+    },
+    {
+      "text": "Gig pay comes on a schedule, but its amount varies too much to forecast, so it isn't in this. Add what you expect as planned income.",
+      "level": "caution"
+    },
+    {
+      "text": "Gym is on an account whose type isn't known, so it isn't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "income · Every 2 weeks · its amount varies, not in the day's figure",
+      "level": "tag"
+    },
+    {
+      "text": "bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash",
+      "level": "tag"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Wallet · Monthly · seen 6 times · next ~Oct 12",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Sapphire · Monthly · seen 6 times · next ~Oct 9",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Every 2 weeks · seen 12 times · amount varies · next ~Oct 9",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 5 times · last Jul 1, may have ended",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates. Bills charged to a card are in this total, and the forecast counts the card's payment instead.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "a series marked not recurring": [
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $2,900.00 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Nothing planned yet. Add an expense or income you know is coming, once or on a schedule, and the forecast and the calendar count it.",
+      "level": "empty"
+    }
+  ],
+  "a bill late": [
+    {
+      "text": "Expected to drop below zero today.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $887.50 on Nov 16.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "bill · Monthly · due Oct 15, not in yet",
+      "level": "tag"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · due Oct 15, not in yet",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "a bill that ended": [
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $900.00 on Jan 19.",
+      "level": "helper"
+    },
+    {
+      "text": "Payroll hasn't come since Sep 25, so it isn't in this forecast. If it still comes, add it as planned income.",
+      "level": "caution"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · last Sep 15, may have ended",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · last Sep 25, may have ended",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · was Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · was Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "a warning set in another currency": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,400.00 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "Your warning of €500.00 was set in EUR, and this forecast is in USD, so it warns below $100.00 until you change it.",
+      "level": "caution"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Nothing planned yet. Add an expense or income you know is coming, once or on a schedule, and the forecast and the calendar count it.",
+      "level": "empty"
+    }
+  ],
+  "converted into a home currency": [
+    {
+      "text": "Expected to drop below zero around Oct 20.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $1,577.55 in Checking and Girokonto at Chase. Expected to end near $1,832.09 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "1 cash account in BTC isn't in this forecast, which is in USD: there is no rate for BTC.",
+      "level": "caution"
+    },
+    {
+      "text": "Converted into USD at today’s ECB rates: 1 cash account in EUR and 1 expected amount in EUR.",
+      "level": "info"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    }
+  ],
+  "balances saved on this device": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Those are the balances saved on Oct 7 at 3:12 PM, the last time they loaded; anything since isn't in it. Expected to end near $2,387.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "balances as of today, less what is pending": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $756.73: $900.00 in Checking at Chase, less $143.27 still pending. Balances as of 2:15 PM. Expected to end near $2,244.23 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "pending",
+      "level": "tag"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "nothing detected yet": [
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,887.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "No recurring bills or income detected yet. They show up once a merchant has charged, or paid you, the same amount on a regular schedule three times (four when the amount varies a little), or a yearly charge twice at exactly the same amount.",
+      "level": "empty"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "no connection brings in spending": [
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,887.50 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "Plaid doesn't provide transactions for the bank or card accounts at Chase, so their bills and income aren't in this forecast.",
+      "level": "caution"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Plaid doesn't provide transactions for the bank or card accounts at Chase, so there are no bills to detect.",
+      "level": "empty"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Once · next Oct 20, 2026",
+      "level": "tag"
+    },
+    {
+      "text": "Once · next Oct 30, 2026",
+      "level": "tag"
+    }
+  ],
+  "nothing planned": [
+    {
+      "text": "Expected to drop below zero around Oct 15.",
+      "level": "critical"
+    },
+    {
+      "text": "Starts from $900.00 in Checking at Chase. Expected to end near $1,400.00 on Nov 8.",
+      "level": "helper"
+    },
+    {
+      "text": "An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you planned. A card's own charges aren't in it, since the card's payment is what leaves your checking, and that payment counts only when it repeats at a steady amount. Everyday spending and money moved to your other accounts aren't in it either. On a day with money both in and out, the money out is counted first.",
+      "level": "info"
+    },
+    {
+      "text": "How long your cash would last at your recent spending, with your income and without it: see your runway .",
+      "level": "info"
+    },
+    {
+      "text": "Nothing expected.",
+      "level": "empty"
+    },
+    {
+      "text": "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
+      "level": "info"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 15",
+      "level": "tag"
+    },
+    {
+      "text": "Chase · Checking · Monthly · seen 6 times · next ~Oct 25",
+      "level": "tag"
+    },
+    {
+      "text": "Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.",
+      "level": "info"
+    },
+    {
+      "text": "Nothing planned yet. Add an expense or income you know is coming, once or on a schedule, and the forecast and the calendar count it.",
+      "level": "empty"
+    }
+  ]
+}

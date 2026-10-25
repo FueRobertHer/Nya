@@ -250,16 +250,16 @@ button.secondary {
 /* Hover only where there is a pointer: on touch screens it sticks after a tap. */
 /* Clerk's own controls (classes cl-...) keep their own hover and press. */
 @media (hover: hover) {
-  button:hover:not(:disabled):not([class*="cl-"]) {
+  button:hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
     opacity: 0.9;
   }
-  button.secondary:hover:not(:disabled) {
+  button.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
     background: var(--raised);
     opacity: 1;
   }
 }
 
-button:active:not(:disabled):not([class*="cl-"]) {
+button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   transform: scale(0.98);
 }
 
@@ -404,7 +404,7 @@ button:active:not(:disabled):not([class*="cl-"]) {
 /* :is(button, a) matches the global button hover rule's specificity, so the
    row is raised rather than dimmed. */
 @media (hover: hover) {
-  :is(button, a).list-row:hover:not(:disabled):not([class*="cl-"]) {
+  :is(button, a).list-row:hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
     background: var(--elevated);
     opacity: 1;
   }
@@ -546,7 +546,7 @@ button:active:not(:disabled):not([class*="cl-"]) {
 }
 
 @media (hover: hover) {
-  .btn:is(.secondary, .ghost):hover:not(:disabled) {
+  .btn:is(.secondary, .ghost):hover:not(:disabled):not([aria-disabled="true"]) {
     background: var(--elevated);
     opacity: 1;
   }
@@ -630,8 +630,10 @@ button:active:not(:disabled):not([class*="cl-"]) {
   font-weight: var(--fw-semibold);
 }
 
-/* An arrow at either end looks as a disabled button does, and keeps focus. */
-:is(.activity-month, .budgets-heading) > .icon-btn[aria-disabled="true"] {
+/* An arrow at either end looks as a disabled button does, and keeps focus.
+   A control that is aria-disabled is never raised or pressed on hover
+   (the hover and press rules above leave it out). */
+:is(.activity-month, .budgets-heading, .cal-head) > .icon-btn[aria-disabled="true"] {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1909,13 +1911,7 @@ span.meter-fill {
   appearance: none;
 }
 
-/* Transaction row: merchant logo + text. */
-.txn-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
+/* A merchant's logo, or its first letter. */
 .txn-logo {
   flex: 0 0 auto;
   width: 28px;
@@ -1938,11 +1934,6 @@ span.meter-fill {
 
 .txn-text {
   min-width: 0;
-}
-
-/* Inline edit panel (category + vendor rename). */
-.txn-edit {
-  margin-top: 6px;
 }
 
 .rename-row {
@@ -2184,16 +2175,6 @@ span.meter-fill {
 
 .holdings-summary .chevron.open {
   transform: rotate(180deg);
-}
-
-/* --- expandable account rows (Accounts tab) --- */
-
-.acct-row {
-  cursor: pointer;
-}
-
-.acct-row:active td {
-  background: rgba(91, 141, 239, 0.06);
 }
 
 /* Investment activity inside an account's sheet. Separated from the
@@ -4053,28 +4034,80 @@ button.plan-edit:disabled {
   margin-top: 14px;
 }
 
-/* --- recurring, the cash forecast and the calendar (components/RecurringCard.tsx,
-   components/ForecastCard.tsx, components/CalendarView.tsx) --- */
+/* --- Budgets > Upcoming (rollout 6a3): the segment (components/UpcomingPanel.tsx),
+   the cash forecast (components/ForecastCard.tsx), the list
+   (components/UpcomingList.tsx), the calendar (components/CalendarView.tsx),
+   recurring (components/RecurringCard.tsx) and planned
+   (components/PlannedCard.tsx) --- */
 
-/* Bills and income, and a calendar day's lists: a quiet heading over each. */
-.recurring-section {
-  margin: 14px 0 2px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+/* List or Calendar: two short words, capped as the mockup draws it. */
+.upcoming-views {
+  max-width: 180px;
 }
 
-.recurring-section span {
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
+/* Recurring's Bills and Income: a quiet heading over each kind's rows, nearer
+   its rows than what is above it. The monthly figure after Income's name is
+   in the regular weight. */
+.recurring-kind {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
 }
 
-/* A series whose dates went by with nothing arriving: still listed, quieter. */
-.recurring-ended td {
+.recurring-kind > span {
+  font-weight: var(--fw-regular);
+}
+
+.stack > .recurring-kind:not(:first-child) {
+  margin-top: var(--sp-2);
+}
+
+.stack > .recurring-kind + .list-rows {
+  margin-top: calc(-1 * var(--sp-2));
+}
+
+/* A series whose dates went by with nothing arriving: still listed, quieter
+   (its words say why). */
+.list-row.recurring-ended,
+.recurring-ended .list-row-sub,
+.recurring-ended .recurring-amount.inflow {
+  color: var(--text-3);
+}
+
+/* Money in on Recurring's and Planned's rows. */
+.recurring-amount.inflow,
+.planned-amount.inflow {
+  color: var(--pos);
+}
+
+/* Those marked not recurring, opened in place under their row: set in, each
+   with Restore, and why Restore is off as a line of its own (as
+   .budget-sub-rows in Budgets > Month). */
+.recurring-marked {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.recurring-marked .list-row {
+  padding-left: calc(var(--sp-5) + var(--sp-4));
+}
+
+.recurring-marked .list-row-title {
+  font-weight: var(--fw-regular);
+}
+
+.recurring-marked > li > .helper {
+  padding: var(--sp-3) var(--sp-5) var(--sp-3) calc(var(--sp-5) + var(--sp-4));
+}
+
+/* Planned's rows and Add while the items are read again after a refused
+   save, and Warns below while it can't be changed: drawn and in the tab
+   order, so focus can come back to them, and a press opens nothing. */
+.planned-rows .list-row[aria-disabled="true"],
+.planned-add[aria-disabled="true"],
+.forecast-warn[aria-disabled="true"] {
   opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .recurring-dismissed {
@@ -4097,31 +4130,10 @@ button.plan-edit:disabled {
   border-top: 1px solid var(--line);
 }
 
-/* The forecast's warning sits right under the range buttons. */
-.forecast-warning {
-  margin-top: 10px;
-}
-
-.forecast-warn-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.forecast-warn-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.forecast-warn-field input {
-  width: 96px;
-  padding: 6px 10px;
-  font-size: 14px;
+/* The forecast's row (Warns below): one row of the card between hairlines,
+   so it reads as a row rather than loose text. */
+.forecast-rows {
+  border-block: 1px solid var(--border-subtle);
 }
 
 /* The what-if's answer: the new lowest point, coloured as the line's point. */
@@ -4141,33 +4153,27 @@ button.plan-edit:disabled {
 }
 
 /* The calendar: seven columns that fit a phone, a figure and dots a day. */
+/* The month's arrows (44px .icon-btn) either side of its name, with Today
+   beside the name when another month is shown. */
 .cal-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin: 10px 0 6px;
+  gap: var(--sp-1);
 }
 
+/* On the narrowest phones (320px), "September 2026" and Today don't fit
+   between the arrows: Today goes under the name. */
 .cal-title {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.cal-nav {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--raised);
-  color: var(--text);
-}
-
-.cal-nav svg {
-  width: 18px;
-  height: 18px;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  column-gap: var(--sp-1);
+  min-width: 0;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  text-align: center;
 }
 
 .cal-grid {
@@ -4290,16 +4296,42 @@ button.plan-edit:disabled {
   vertical-align: middle;
 }
 
+/* The selected day's list, under a hairline: its rows run to the card's
+   edges, as a card's .list-rows do. */
 .cal-detail {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
 }
 
-/* Listed on the day, not in its figure: another currency, excluded, or a
-   payment due. */
-.cal-uncounted td {
-  color: var(--muted);
+.cal-detail > .list-rows {
+  margin-inline: calc(-1 * var(--sp-5));
+}
+
+/* Upcoming's list and the calendar's day list: Activity's day bars
+   (.txn-day) over plain rows that open nothing. A payment due's Due badge
+   leads its line, the words running on after it. */
+.upcoming-row .list-row-title {
+  overflow-wrap: anywhere;
+}
+
+.upcoming-row .list-row-sub > .badge {
+  margin-inline-end: var(--sp-2);
+}
+
+/* Money in is green; what isn't in the day's figure (another currency, a
+   card's charge, pay that varies, a payment due, an excluded transaction)
+   is quieter, as Activity's excluded amounts are. Quieter wins. */
+.upcoming-amount.inflow {
+  color: var(--pos);
+}
+
+.upcoming-amount.uncounted {
+  color: var(--text-3);
+}
+
+/* The list has no heading, so its first day's bar starts at the card's top. */
+.upcoming-list > .list-rows > .txn-day:first-child {
+  padding-top: 0;
 }
 
 /* --- file import (components/ImportSheet.tsx): lists, not tables, so the

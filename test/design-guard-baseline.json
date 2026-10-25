@@ -3,8 +3,8 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "rawColors": 38,
-    "smallFonts": 24
+    "rawColors": 37,
+    "smallFonts": 23
   },
   "app/not-allowed/page.tsx": {
     "inlineLayoutStyles": 1
@@ -49,9 +49,6 @@
   "components/DebtPayoff.tsx": {
     "rawColors": 3,
     "inlineLayoutStyles": 1
-  },
-  "components/ForecastCard.tsx": {
-    "inlineLayoutStyles": 2
   },
   "components/ForecastChart.tsx": {
     "rawColors": 2
@@ -121,12 +118,6 @@
   },
   "components/PlanTab.tsx": {
     "inlineLayoutStyles": 6
-  },
-  "components/PlannedCard.tsx": {
-    "inlineLayoutStyles": 5
-  },
-  "components/RecurringCard.tsx": {
-    "inlineLayoutStyles": 2
   },
   "components/ReviewSettingsCard.tsx": {
     "inlineLayoutStyles": 2

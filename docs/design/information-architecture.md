@@ -107,7 +107,7 @@ A pinned bar at the top: **‹ October ›** month switcher and the segments **T
 | Segment | Contents |
 |---|---|
 | **Month** (default) | The month as the bar's heading, ‹ and › to the month either side, and a tap on its name to pick any month back to the first with transactions (ten years at most); the "Categories that fit you" offer while it applies (dismissible); income pool and its build-up; total meter; groups and categories with meters, rollover and suggestions, edited in a sheet; **+ Add budget** (a sheet); "My income is irregular" as a row that opens its setting; one completeness notice for the month (built in 6a2: the notice at the top, then Available to allocate, then **Spent**, the month's total with what it counts, then the budgets as rows; a group opens in place to its categories, each budget opens its sheet). |
-| **Upcoming** | Cash forecast (30, 60, 90 days, lowest point, "What if I buy..."; the "Warns below" threshold in a sheet); a list or calendar toggle over the same data (bills, income, planned items, card payments due); Recurring (bills and income, Not recurring, the marked list); Planned items with Add. |
+| **Upcoming** | One notice at the top for what the bills, income, planned items and payments may be missing; the cash forecast (30, 60 or 90 days, its lowest point, where it starts from with the notes on that, **Warns below** as a row that opens the low-balance warning's sheet, and "What if I buy..."); **List · Calendar** over the same entries (bills, income, planned items, card payments due): the list a bar per day over the forecast's range, the calendar a month a page with what posted on the days gone by; **Recurring** (bills and income as rows that open a sheet with Not recurring, and the marked list with Restore); **Planned** items as rows that open their sheet, with Add (built in 6a3). |
 | **Goals** | Savings goals with outlook and Add goal; archived goals; **Debt payoff** (moved from Accounts; shown when there is a card or loan). What several goals say of their months is said once at the top, each of them badged (6a2). |
 
 Each segment has one time range, which removes today's three competing ranges on one page.
@@ -192,7 +192,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
 | NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
 | NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
-| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place; also the FI line (4c), Budgets > Month's notice and the notes under Spent, and the notice at the top of Goals (6a2). Its `Notice` draws one notice with its level word, for the errors on the Month card and in the budgets' sheets |
+| TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place; also the FI line (4c), Budgets > Month's notice and the notes under Spent, and the notice at the top of Goals (6a2); Budgets > Upcoming's notice and the forecast's notes on where it starts (6a3). Its `Notice` draws one notice with its level word, for the errors on the Month card and in the budgets' sheets, and the forecast's answer, Upcoming's load states and its sheets' errors (6a3) |
 | NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
 | CurrencyOffer (CurrencyNotes) | Its own Home card | A Needs attention row that opens CurrencyOfferSheet (built in 4b) |
@@ -258,8 +258,10 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | BudgetsTab, BudgetsCard, BudgetSuggestion, IncomePool | Budgets | Budgets > Month |
 | BudgetSheet (BudgetSheet, OrphanBudgetSheet, AddBudgetSheet) | Budgets editor and add form, open under the list | Budgets > Month (6a2): a budget's sheet from its row (its amount, then Rollover, Reset carryover and Remove as levels with Back), a deleted category's or group's from its row, and Add budget from + Add budget |
 | GoalsCard, GoalSheet, GoalPlansRepair | Budgets | Budgets > Goals; what several goals say of their months, and what the card says once, in one notice at its top (6a2) |
-| ForecastCard, ForecastChart | Budgets | Budgets > Upcoming |
-| CalendarView, RecurringCard, PlannedCard | Budgets | Budgets > Upcoming |
+| UpcomingPanel | New (phase 6a3) | Budgets > Upcoming: the segment, its one notice at the top, the forecast, the **List · Calendar** tabs (both views mounted, the other hidden), Recurring and Planned; it holds the range the forecast and the list share |
+| ForecastCard, ForecastChart | Budgets | Budgets > Upcoming: the range as a radio group, its notes on where it starts under that line, **Warns below** as a row opening the low-balance warning's sheet, and What if I buy… (6a3) |
+| UpcomingList | New (phase 6a3) | Budgets > Upcoming, under the List tab: the bills, income, planned items and payments due from today over the forecast's range, a bar per day, as plain rows |
+| CalendarView, RecurringCard, PlannedCard | Budgets | Budgets > Upcoming: the calendar under the Calendar tab, its day's list as rows; Recurring's bills and income and Planned's items as rows that open their sheets (6a3) |
 | PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > Your path |
 | PlanTab (SimulationCard, GridCard, About), PlanFanChart, PlanGrid | Plan | Plan > Stress test |
 | PlanScenarios, PlanCompare, ScenarioTag | Plan, below FiCard; bar at top | Scenario bar and Scenarios sheet |
@@ -285,6 +287,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - Menu: an object's ⋯ menu of rare actions (the account sheet's, the transaction sheet's, the institution card's).
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
+- upcoming-notes (NoticeBadge): what Budgets > Upcoming says it may be missing (the notice at its top, through TotalCaveats, and the forecast's notes on where it starts), and the badge on each card the notice bears on (6a3).
 
 ## Vocabulary
 
