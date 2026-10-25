@@ -1,6 +1,6 @@
 // lib/payoff.ts
 //
-// Debt payoff planning, for the planner on the Accounts tab
+// Debt payoff planning, for the planner on the Budgets tab's Goals
 // (components/DebtPayoff.tsx): how long a set of cards and loans takes to pay
 // off, and what it costs in interest, paying a steady amount each month.
 //

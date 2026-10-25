@@ -25,8 +25,15 @@
 //
 // While your categories are still the ones Nya made, the starter sets are
 // offered here once, above the budgets (components/TemplateOffer.tsx).
+//
+// THREE SEGMENTS (docs/design/information-architecture.md#budgets), each with
+// one time range, under a pinned bar (components/BudgetsBar.tsx): Month (the
+// month's budgets), Upcoming (the forecast, calendar, recurring and planned)
+// and Goals (savings goals, and the debt payoff plan when there is a card or
+// loan to plan). All three stay mounted, the others hidden, so nothing typed
+// in one is lost by looking at another.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { historyCount, leftOutByCurrency, leftOutText } from '@/lib/spending';
@@ -55,6 +62,8 @@ import RecurringCard from './RecurringCard';
 import PlannedCard from './PlannedCard';
 import { Masked } from './HideAmounts';
 import TemplateOffer from './TemplateOffer';
+import BudgetsBar, { budgetsPanelId, budgetsTabId, type BudgetsSegment } from './BudgetsBar';
+import { chevron, RIGHT } from './ActivityBar';
 
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
@@ -139,6 +148,9 @@ export default function BudgetsTab({
   onSavePlanned,
   budgetMonth = NOT_LOADED,
   onCategories,
+  segment: segmentShown,
+  onSegment,
+  onPayoff,
 }: {
   txns: Txn[] | null;
   /** What spending in other currencies converts with, once a home currency
@@ -208,7 +220,35 @@ export default function BudgetsTab({
   /** Takes the set a starter template made (components/TemplateOffer.tsx),
    *  offered here once while your categories are still the ones Nya made. */
   onCategories?: (t: unknown) => void;
+  /** The segment shown, kept by the dashboard so the tab comes back on it;
+   *  left out, the tab keeps its own. */
+  segment?: BudgetsSegment;
+  onSegment?: (s: BudgetsSegment) => void;
+  /** Opens the debt payoff plan (components/DebtPayoff.tsx), when there is a
+   *  card or loan on screen to plan; left out, Goals doesn't offer it. */
+  onPayoff?: () => void;
 }) {
+  const [ownSegment, setOwnSegment] = useState<BudgetsSegment>('month');
+  const segment = segmentShown ?? ownSegment;
+  const chooseSegment = onSegment ?? setOwnSegment;
+  // A segment chosen while the bar is pinned opens at its top, just under
+  // the bar, not where the last one was scrolled to.
+  const barRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const switched = useRef(false);
+  useEffect(() => {
+    if (!switched.current) return;
+    switched.current = false;
+    const el = panelRef.current;
+    const bar = barRef.current;
+    if (el && bar && el.getBoundingClientRect().top < bar.getBoundingClientRect().bottom) el.scrollIntoView({ block: 'start' });
+  }, [segment]);
+  const switchSegment = (s: BudgetsSegment) => {
+    if (s === segment) return;
+    switched.current = true;
+    chooseSegment(s);
+  };
+
   const thisMonth = localMonth();
   // The month shown: this month, or one picked to look back on.
   const [picked, setPicked] = useState<string | null>(null);
@@ -334,11 +374,78 @@ export default function BudgetsTab({
   const plannedCurrency = useMemo(() => cashPosition(institutions).currency ?? displayCurrency, [institutions, displayCurrency]);
   const today = localDate();
 
+  // The months either side of the one shown, and every month to choose
+  // from, once the budgets are there to show.
+  const canPick = budgetsStatus === 'ready' && !loading;
+  const at = pickable.indexOf(shownMonth);
+  const onEarlier = canPick && at >= 0 && at < pickable.length - 1 ? () => setPicked(pickable[at + 1]) : undefined;
+  const onLater = canPick && at > 0 ? () => setPicked(pickable[at - 1]) : undefined;
+  const pick =
+    canPick && pickable.length > 1
+      ? {
+          value: shownMonth,
+          options: pickable.map((m) => ({ value: m, label: m === thisMonth ? `${nameOfMonth(m, thisMonth)} (this month)` : nameOfMonth(m, thisMonth) })),
+          onChange: setPicked,
+        }
+      : null;
+
+  // The bar is drawn before anything has loaded, so the month's heading is
+  // there for Home's budget alerts to land on.
+  const bar = (
+    <BudgetsBar ref={barRef} segment={segment} onSegment={switchSegment} month={nameOfMonth(shownMonth)} onEarlier={onEarlier} onLater={onLater} pick={pick} />
+  );
+  const panel = (s: BudgetsSegment, body: ReactNode) => (
+    <div className="budgets-panel" id={budgetsPanelId(s)} role="tabpanel" aria-labelledby={budgetsTabId(s)} hidden={s !== segment} ref={s === segment ? panelRef : undefined}>
+      {body}
+    </div>
+  );
+  // Goals needs no transactions, so it never waits for them.
+  const goalsPanel = panel(
+    'goals',
+    <>
+      <GoalsCard
+        goals={goals}
+        status={goalsStatus}
+        error={goalsError}
+        saveError={goalsSaveError}
+        damage={goalsDamage}
+        onRepaired={onGoalsRepaired}
+        accounts={accounts}
+        onSave={onSaveGoals}
+      />
+      {onPayoff && (
+        <section className="card debt-payoff" aria-labelledby="debt-payoff-title">
+          <div className="card-header">
+            <h3 id="debt-payoff-title">Debt payoff</h3>
+          </div>
+          <ul className="list-rows">
+            <li>
+              <button className="list-row" onClick={onPayoff}>
+                <span className="list-row-text">
+                  <span className="list-row-title">Payoff plan</span>
+                </span>
+                {chevron(RIGHT)}
+              </button>
+            </li>
+          </ul>
+        </section>
+      )}
+    </>
+  );
+
   if (loading) {
-    return (
+    const spinner = (label: string) => (
       <div className="card">
-        <div className="spinner" role="status" aria-label="Loading budgets" />
+        <div className="spinner" role="status" aria-label={label} />
       </div>
+    );
+    return (
+      <>
+        {bar}
+        {panel('month', spinner('Loading budgets'))}
+        {panel('upcoming', spinner('Loading what is coming'))}
+        {goalsPanel}
+      </>
     );
   }
 
@@ -364,181 +471,169 @@ export default function BudgetsTab({
 
   return (
     <>
-      {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
-      <div className="card">
-        <div className="inst-header">
-          {/* Where Home's budget alerts land (components/NeedsAttention.tsx);
-              a real heading in rollout phase 6. */}
-          <div id="budgets-month-title" className="inst-name" tabIndex={-1}>
-            {monthName} budgets
-          </div>
-          {hasTotal && budgetsStatus === 'ready' && !noSpending && (
-            <div className="inst-total">
-              <Masked>
-                {totalBudget > 0
-                  ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
-                  : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
-              </Masked>
+      {bar}
+      {panel(
+        'month',
+        <>
+          {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
+          <div className="card">
+            <div className="inst-header">
+              <div className="inst-name">{monthName} budgets</div>
+              {hasTotal && budgetsStatus === 'ready' && !noSpending && (
+                <div className="inst-total">
+                  <Masked>
+                    {totalBudget > 0
+                      ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
+                      : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+                  </Masked>
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {pickable.length > 1 && budgetsStatus === 'ready' && (
-          <select className="text-input budget-select month-picker" value={shownMonth} onChange={(e) => setPicked(e.target.value)} aria-label="Month to show">
-            {pickable.map((m) => (
-              <option key={m} value={m}>
-                {m === thisMonth ? `${nameOfMonth(m, thisMonth)} (this month)` : nameOfMonth(m, thisMonth)}
-              </option>
-            ))}
-          </select>
-        )}
+            {budgetsStatus === 'loading' ? (
+              <p className="empty-note">Loading budgets…</p>
+            ) : budgetsStatus === 'error' ? (
+              <p className="stale-note">{budgetsError}</p>
+            ) : (
+              <>
+            {budgetsSaveError && <p className="stale-note">{budgetsSaveError}</p>}
+            {rolloverError && <p className="stale-note">{rolloverError}</p>}
+            {!past && month.status === 'error' && month.error && <p className="stale-note">{month.error}</p>}
+            {noSpending && (
+              <p className="empty-note">
+                {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
+              </p>
+            )}
+            {view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}
+            {hasTotal && !noSpending && (
+              <div className={`meter-track${meterState(totalRatio)}`}>
+                <div
+                  className={`meter-fill${meterState(totalRatio)}`}
+                  style={{ width: `${Math.min(totalRatio * 100, 100)}%` }}
+                />
+              </div>
+            )}
 
-        {budgetsStatus === 'loading' ? (
-          <p className="empty-note">Loading budgets…</p>
-        ) : budgetsStatus === 'error' ? (
-          <p className="stale-note">{budgetsError}</p>
-        ) : (
-          <>
-        {budgetsSaveError && <p className="stale-note">{budgetsSaveError}</p>}
-        {rolloverError && <p className="stale-note">{rolloverError}</p>}
-        {!past && month.status === 'error' && month.error && <p className="stale-note">{month.error}</p>}
-        {noSpending && (
-          <p className="empty-note">
-            {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
-          </p>
-        )}
-        {view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}
-        {hasTotal && !noSpending && (
-          <div className={`meter-track${meterState(totalRatio)}`}>
-            <div
-              className={`meter-fill${meterState(totalRatio)}`}
-              style={{ width: `${Math.min(totalRatio * 100, 100)}%` }}
-            />
+            {!taxonomy ? (
+              <p className={categoriesError ? 'stale-note' : 'empty-note'}>
+                {categoriesError ? `${categoriesError} Budgets are shown once they are.` : 'Loading your categories…'}
+              </p>
+            ) : past && !view ? (
+              <PastMonthPending state={month} name={monthName} />
+            ) : (
+              <BudgetsCard
+                key={shownMonth}
+                taxonomy={taxonomy}
+                budgets={shownBudgets!}
+                spent={shownSpent!}
+                currency={shownCurrency}
+                editable={budgetsStatus === 'ready' && !past}
+                noSpending={!!noSpending}
+                onSave={onSave}
+                carries={carries}
+                month={shownMonth}
+                past={past}
+                rollover={!past && view ? { rolling: view.rollover, starts: view.starts, ended: view.ended, earliest: view.earliest } : null}
+                onRollover={!past && view ? onRollover : undefined}
+                suggestions={!past ? (view?.suggestions ?? null) : null}
+              />
+            )}
+            {!past && view && (
+              <IncomeSetting setting={view.income} today={thisMonth} earliest={view.earliest} disabled={budgetsStatus !== 'ready'} onChange={onIncome} />
+            )}
+              </>
+            )}
+
+            {shownConverted && <div className="chart-note">{shownConverted}</div>}
+            {shownLeftOut && <div className="chart-note">{shownLeftOut}</div>}
+            {view?.counted_left_out_text && <div className="chart-note">{view.counted_left_out_text}</div>}
+            {/* A split whose amount changed since counts as split until edited (#39). */}
+            {hasTotal && <SplitChangedNote txns={txns} month={shownMonth} />}
+            {hasTotal && namedWithout && <div className="chart-note">{namedWithout}</div>}
+            {carryNotes.length > 0 && <div className="stale-note">Rollover may be off where a month is incomplete: {carryNotes.join('; ')}.</div>}
+            {assumedNote && <div className="chart-note">{assumedNote}</div>}
+            {/* With no spending to count at all, nothing can be missing from it. */}
+            {hasTotal &&
+              !noSpending &&
+              (past
+                ? shownGaps.map((n) => `${monthName} may be incomplete: ${n}.`)
+                : [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingNotes]
+              ).map((n) => (
+                <div className="stale-note" key={n}>
+                  {n}
+                </div>
+              ))}
           </div>
-        )}
+        </>
+      )}
 
-        {!taxonomy ? (
-          <p className={categoriesError ? 'stale-note' : 'empty-note'}>
-            {categoriesError ? `${categoriesError} Budgets are shown once they are.` : 'Loading your categories…'}
-          </p>
-        ) : past && !view ? (
-          <PastMonthPending state={month} name={monthName} />
-        ) : (
-          <BudgetsCard
-            key={shownMonth}
-            taxonomy={taxonomy}
-            budgets={shownBudgets!}
-            spent={shownSpent!}
-            currency={shownCurrency}
-            editable={budgetsStatus === 'ready' && !past}
-            noSpending={!!noSpending}
-            onSave={onSave}
-            carries={carries}
-            month={shownMonth}
-            past={past}
-            rollover={!past && view ? { rolling: view.rollover, starts: view.starts, ended: view.ended, earliest: view.earliest } : null}
-            onRollover={!past && view ? onRollover : undefined}
-            suggestions={!past ? (view?.suggestions ?? null) : null}
+      {panel(
+        'upcoming',
+        <>
+          <ForecastCard
+            institutions={institutions}
+            series={series}
+            planned={planned}
+            plannedStatus={plannedStatus}
+            dismissed={dismissed}
+            onSavePlanned={onSavePlanned}
+            today={today}
+            txns={txns ?? undefined}
+            loading={txns === null && !txnsFailed}
+            failed={txnsFailed}
+            balancesAsOf={balancesAsOf}
+            balancesSaved={balancesSaved}
+            incomplete={incomplete}
+            stopped={stopped}
+            withoutTransactions={withoutTransactions}
+            fx={fx}
           />
-        )}
-        {!past && view && (
-          <IncomeSetting setting={view.income} today={thisMonth} earliest={view.earliest} disabled={budgetsStatus !== 'ready'} onChange={onIncome} />
-        )}
-          </>
-        )}
 
-        {shownConverted && <div className="chart-note">{shownConverted}</div>}
-        {shownLeftOut && <div className="chart-note">{shownLeftOut}</div>}
-        {view?.counted_left_out_text && <div className="chart-note">{view.counted_left_out_text}</div>}
-        {/* A split whose amount changed since counts as split until edited (#39). */}
-        {hasTotal && <SplitChangedNote txns={txns} month={shownMonth} />}
-        {hasTotal && namedWithout && <div className="chart-note">{namedWithout}</div>}
-        {carryNotes.length > 0 && <div className="stale-note">Rollover may be off where a month is incomplete: {carryNotes.join('; ')}.</div>}
-        {assumedNote && <div className="chart-note">{assumedNote}</div>}
-        {/* With no spending to count at all, nothing can be missing from it. */}
-        {hasTotal &&
-          !noSpending &&
-          (past
-            ? shownGaps.map((n) => `${monthName} may be incomplete: ${n}.`)
-            : [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingNotes]
-          ).map((n) => (
-            <div className="stale-note" key={n}>
-              {n}
-            </div>
-          ))}
-      </div>
+          <CalendarView
+            txns={txns}
+            failed={txnsFailed}
+            series={series}
+            planned={items}
+            dismissed={dismissed}
+            institutions={institutions}
+            today={today}
+            currency={displayCurrency}
+            fx={fx}
+          />
 
-      <GoalsCard
-        goals={goals}
-        status={goalsStatus}
-        error={goalsError}
-        saveError={goalsSaveError}
-        damage={goalsDamage}
-        onRepaired={onGoalsRepaired}
-        accounts={accounts}
-        onSave={onSaveGoals}
-      />
+          <RecurringCard
+            series={series}
+            today={today}
+            currency={displayCurrency}
+            fx={fx}
+            dismissed={dismissed}
+            status={plannedStatus}
+            saveError={plannedSaveError}
+            onDismiss={
+              onSavePlanned &&
+              ((s, dismiss) => {
+                const saved = gone.get(s.id);
+                const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
+                return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
+              })
+            }
+            noSpending={noSpending}
+            loading={txns === null && !txnsFailed}
+            failed={txnsFailed}
+          />
 
-      <ForecastCard
-        institutions={institutions}
-        series={series}
-        planned={planned}
-        plannedStatus={plannedStatus}
-        dismissed={dismissed}
-        onSavePlanned={onSavePlanned}
-        today={today}
-        txns={txns ?? undefined}
-        loading={txns === null && !txnsFailed}
-        failed={txnsFailed}
-        balancesAsOf={balancesAsOf}
-        balancesSaved={balancesSaved}
-        incomplete={incomplete}
-        stopped={stopped}
-        withoutTransactions={withoutTransactions}
-        fx={fx}
-      />
+          <PlannedCard
+            planned={planned}
+            status={plannedStatus}
+            error={plannedError}
+            saveError={plannedSaveError}
+            onSave={onSavePlanned}
+            today={today}
+            currency={plannedCurrency}
+          />
+        </>
+      )}
 
-      <CalendarView
-        txns={txns}
-        failed={txnsFailed}
-        series={series}
-        planned={items}
-        dismissed={dismissed}
-        institutions={institutions}
-        today={today}
-        currency={displayCurrency}
-        fx={fx}
-      />
-
-      <RecurringCard
-        series={series}
-        today={today}
-        currency={displayCurrency}
-        fx={fx}
-        dismissed={dismissed}
-        status={plannedStatus}
-        saveError={plannedSaveError}
-        onDismiss={
-          onSavePlanned &&
-          ((s, dismiss) => {
-            const saved = gone.get(s.id);
-            const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
-            return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
-          })
-        }
-        noSpending={noSpending}
-        loading={txns === null && !txnsFailed}
-        failed={txnsFailed}
-      />
-
-      <PlannedCard
-        planned={planned}
-        status={plannedStatus}
-        error={plannedError}
-        saveError={plannedSaveError}
-        onSave={onSavePlanned}
-        today={today}
-        currency={plannedCurrency}
-      />
+      {goalsPanel}
     </>
   );
 }

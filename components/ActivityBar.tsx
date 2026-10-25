@@ -33,13 +33,14 @@ export function segmentKey(key: string, at: number, count: number): number | nul
   return null;
 }
 
-const chevron = (d: string) => (
+/** An arrow's icon, by its path; Budgets' bar draws the same ones. */
+export const chevron = (d: string) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d={d} />
   </svg>
 );
-const LEFT = 'm15 18-6-6 6-6';
-const RIGHT = 'm9 18 6-6-6-6';
+export const LEFT = 'm15 18-6-6 6-6';
+export const RIGHT = 'm9 18 6-6-6-6';
 
 export default function ActivityBar({
   month,

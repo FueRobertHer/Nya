@@ -106,7 +106,7 @@ A pinned bar at the top: **‹ October ›** month switcher and the segments **T
 
 | Segment | Contents |
 |---|---|
-| **Month** (default) | Month picker; the "Categories that fit you" offer while it applies (dismissible); income pool and its build-up; total meter; groups and categories with meters, rollover and suggestions, edited in a sheet; **+ Add budget** (a sheet); "My income is irregular" as a row that opens its setting; one completeness notice for the month. |
+| **Month** (default) | The month as the bar's heading, ‹ and › to the month either side, and a tap on its name to pick any month back to the first with transactions (ten years at most); the "Categories that fit you" offer while it applies (dismissible); income pool and its build-up; total meter; groups and categories with meters, rollover and suggestions, edited in a sheet; **+ Add budget** (a sheet); "My income is irregular" as a row that opens its setting; one completeness notice for the month. |
 | **Upcoming** | Cash forecast (30, 60, 90 days, lowest point, "What if I buy..."; the "Warns below" threshold in a sheet); a list or calendar toggle over the same data (bills, income, planned items, card payments due); Recurring (bills and income, Not recurring, the marked list); Planned items with Add. |
 | **Goals** | Savings goals with outlook and Add goal; archived goals; **Debt payoff** (moved from Accounts; shown when there is a card or loan). |
 
@@ -220,7 +220,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ConnectRedirect ("already connected") | After Connect | Unchanged |
 | AccountLinks | Manage | Settings > Connections; a notice on Accounts when a match is waiting |
 | AdminUnusedItems | Manage (admin) | Settings > Connections (admin) |
-| DebtPayoff | Accounts top card button | Budgets > Goals |
+| DebtPayoff | Accounts top card button | Budgets > Goals (6a1): a Debt payoff card holding a Payoff plan row, shown when a card or loan that isn't hidden is on screen; the sheet stays mounted once, outside the tabs |
 | Sharing (SharingDrawer, SharedViews, ShareKinds, SharingDates) | Avatar menu, Accounts button | Avatar menu, Settings > Sharing |
 | Sharing (SharedWithMe) | Bottom of Accounts; empty state | Bottom of Accounts; empty state |
 | AcceptInvite | Invite link page | Unchanged |
@@ -243,6 +243,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | AdminStorage | `/admin-view` | Settings > Account (admin link) and `/admin-view` |
 | AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
 | ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** (left out on Shared), the ⋯ with Add a transaction and Import a file while there are transactions (buttons in the empty card while there are none), and the segments Transactions · Spending · Shared |
+| BudgetsBar | New (phase 6a1) | Budgets' pinned bar: on Month the month as its heading (**‹ October 2026 ›**, a tap on the name picks any month), on the others the segment's name; under it the segments Month · Upcoming · Goals. Each segment's panel stays mounted, the others hidden |
 | MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; the rows are list rows that open the Transaction sheet (5e) |
 | TransactionSheet | New (phase 5e), replacing the inline editor | A row's sheet on Activity > Transactions: a transaction, a split's part or a group's transaction |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
