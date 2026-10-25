@@ -5,9 +5,11 @@ import { COUNT_IN_WINDOW } from '@/lib/rate-limit';
 
 // The demo buttons on the sign-in page (lib/demo.ts): a form post naming a
 // demo account; answers with Clerk's sign-in page carrying a one-minute
-// ticket for it, which signs the visitor in. Public (proxy.ts lets it
-// through): it only ever signs in as a listed demo account, and only on
-// Preview. Limited per address, since each ticket is a call to Clerk.
+// ticket for it, which signs the visitor in, and `demo=ticket`, which has the
+// page show the app loading meanwhile (components/SignInFlow.tsx). Public
+// (proxy.ts lets it through): it only ever signs in as a listed demo account,
+// and only on Preview. Limited per address, since each ticket is a call to
+// Clerk.
 
 export async function POST(req: Request) {
   const users = demoUsers();
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
   try {
     const { signInTicket } = await import('@/lib/clerk-tickets');
     const ticket = await signInTicket(user.id);
-    return NextResponse.redirect(new URL(`/sign-in?__clerk_ticket=${encodeURIComponent(ticket)}`, req.url), 303);
+    return NextResponse.redirect(new URL(`/sign-in?__clerk_ticket=${encodeURIComponent(ticket)}&demo=ticket`, req.url), 303);
   } catch (err) {
     console.error('Demo sign-in failed', err instanceof Error ? err.name : err);
     return NextResponse.redirect(new URL('/sign-in?demo=unavailable', req.url), 303);

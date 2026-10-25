@@ -82,6 +82,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | A group of buttons | `.btn-row` | `.button-pair`, `.card-actions` |
 | Helper text | `.helper` | `.panel-note` |
 | Empty state | `.empty-note` | |
+| Content still loading | `.skeleton` (`.skeleton.block` for a box), on the real component's classes | `.spinner` in an empty card |
 | Critical notice (a number is wrong or short) | `.notice.critical` | `.error` |
 | Caution notice (real but dated, needs you) | `.notice.caution` | `.stale-note` |
 | Information notice | `.notice.info` | `.info-notice` |

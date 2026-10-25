@@ -90,7 +90,7 @@ System UI font, as today: fast, native, and no font file to host or put in the C
 - **Spacing**: `--sp-1` to `--sp-8` on a 4px grid. Card padding `--sp-4` on phones and `--sp-5` from 720px; gap between cards `--sp-3`; between rows 0 (dividers do the separating).
 - **Margins belong to layout, not to text.** Notes and labels carry no built-in top margin; a stack container sets the gap. This is what removes the 245 inline `marginTop` patches (100 of them `marginTop: 0`, undoing a class's own margin).
 - **Radii**: `--r-xs` 6 (chips), `--r-sm` 8 (inputs, segmented items), `--r-md` 12 (buttons, notices), `--r-lg` 16 (cards, sheets), `--r-pill`. Today there are 19 radii.
-- **Motion**: `--dur-fast` 140ms for presses and toggles, `--dur-base` 220ms for sheets and segment changes, one easing. One global reduced-motion rule zeroes both; today only the sheets and Card Mode respect it.
+- **Motion**: `--dur-fast` 140ms for presses and toggles, `--dur-base` 220ms for sheets and segment changes, `--dur-pulse` 900ms for each way of a loading placeholder's pulse, one easing. One global reduced-motion rule zeroes them; today only the sheets and Card Mode respect it.
 - **Layers**: header, tab bar, sheet backdrop, sheet, toast, as tokens.
 
 ## Components
@@ -198,6 +198,18 @@ Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="me
 
 A title, one line of helper text, and one primary action. Replaces the empty-note paragraphs that explain at length ("No recurring charges detected yet; they show up once...").
 
+### Skeleton
+
+What a screen shows while what fills it is on its way: the screen itself, with placeholders where its data goes, so nothing moves when the data arrives. Not a spinner in an empty card, which the page then grows from.
+
+- **The placeholder** (`.skeleton`): `--elevated` at `--r-xs`, pulsing between full and half opacity over `--dur-pulse`, held still under reduced motion. Inside text it is an inline block 0.8em tall, so its line keeps the height of the words it stands for; given a width near theirs. `.skeleton.block` is a box, for a field, a button or a plot, sized where it is used.
+- **Drawn on the real component's classes.** The loading view is the card it stands for, its header, rows and chart on their own classes, with placeholders only where data goes, so it is as tall as what replaces it at every width. Words that are known (a card's title) show as words.
+- **Said once.** Placeholders are hidden from a screen reader; the card is `aria-busy` and one `role="status"` says it is loading.
+- **Never in place of a warning.** A skeleton stands for data on its way, never for a figure that couldn't be read: a load that fails says so in its notice, as before.
+- **Where it is** (`components/LoadingSkeletons.tsx`): Home's Net worth card while the dashboard's first load is on its way, and the same under the dashboard's header as a whole page, which the sign-in page and the password login hand over to. A small wait inside a card (an account's history) keeps its spinner, in a box the chart's size.
+
+**The sign-in page** is laid out from the top, not centered: Clerk's form arrives after the page and changes height from step to step, and centered, every change moved the name and the demo card above it. Until Clerk's form loads, a placeholder of its width and about its height holds its place, and the form fades in over it. From a demo button's press, and once Clerk has signed in with Home next, the page shows the app loading in its place, the same header and card the dashboard then draws while it loads.
+
 ### Header and tab bar
 
 - **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention.
@@ -263,3 +275,4 @@ A summary of the current CSS, from an audit of `app/globals.css` (about 6,700 li
 | 14 uppercase micro-label styles | Sentence case at 12 to 13px |
 | Contrast fails on primary and danger buttons | All 76 checked pairs pass AA |
 | Broken fallbacks (`var(--track)` undefined, `var(--card, #fff)`) | Removed |
+| A spinner in an empty card while Home loads, a sign-in page that moved as Clerk's form arrived | Placeholders on the real card's classes; the sign-in page from the top, with a placeholder for the form |

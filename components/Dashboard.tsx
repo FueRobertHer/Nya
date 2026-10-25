@@ -24,6 +24,7 @@ import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
+import { HomeSkeleton } from './LoadingSkeletons';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
@@ -2195,11 +2196,14 @@ export default function Dashboard({
           </div>
           <div className="top-actions">
             <HideAmountsToggle />
-            {connected && !loading && (
+            {/* There while the first load is on its way too (unavailable
+                until it is in), so the buttons beside it don't move when it
+                comes. */}
+            {(connected || loading) && (
               <button
                 className="secondary icon-btn"
                 onClick={refreshAll}
-                disabled={refreshing}
+                disabled={refreshing || loading}
                 aria-label="Refresh"
                 title="Refresh"
               >
@@ -2232,9 +2236,10 @@ export default function Dashboard({
         </div>
 
         {loading ? (
-          <div className="card">
-            <div className="spinner" role="status" aria-label="Loading" />
-          </div>
+          // Home's Net worth card as it will be, its figures still to come
+          // (components/LoadingSkeletons.tsx), rather than a spinner the
+          // whole page then grows from.
+          <HomeSkeleton />
         ) : settings ? (
           <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
         ) : !connected ? (

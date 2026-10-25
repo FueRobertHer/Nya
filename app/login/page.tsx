@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
+import { AppLoading } from '@/components/LoadingSkeletons';
 import { CONNECTIONS_PATH } from '@/lib/connection-state';
 
 /** Where to go once signed in: Home, or the connection that needs attention when the
@@ -18,6 +19,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Accepted: the app loading takes the page's place until the dashboard,
+  // which draws the same while it loads, is in (components/LoadingSkeletons.tsx).
+  const [accepted, setAccepted] = useState(false);
   const router = useRouter();
 
   async function handleSubmit(e: FormEvent) {
@@ -31,6 +35,7 @@ export default function LoginPage() {
     });
     setLoading(false);
     if (res.ok) {
+      setAccepted(true);
       router.push(afterLogin());
       router.refresh();
     } else {
@@ -38,6 +43,8 @@ export default function LoginPage() {
       setError(data?.error ?? 'Incorrect password');
     }
   }
+
+  if (accepted) return <AppLoading account="password" />;
 
   return (
     <main className="wrap">

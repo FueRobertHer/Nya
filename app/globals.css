@@ -47,6 +47,7 @@
   /* Motion. One reduced-motion rule zeroes these (design-system.md). */
   --dur-fast: 140ms;
   --dur-base: 220ms;
+  --dur-pulse: 900ms; /* one way of a placeholder's pulse (.skeleton) */
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* Layers. */
@@ -274,6 +275,7 @@ button:active:not(:disabled):not([class*="cl-"]) {
   :root {
     --dur-fast: 0ms;
     --dur-base: 0ms;
+    --dur-pulse: 0ms;
   }
 
   *,
@@ -903,6 +905,30 @@ button:active:not(:disabled):not([class*="cl-"]) {
   color: var(--text-2);
   font-size: var(--fs-2);
   line-height: var(--lh-body);
+}
+
+/* A placeholder for what is still loading (components/LoadingSkeletons.tsx):
+   --elevated, pulsing slowly. Inside text it is an inline block 0.8em tall,
+   so the line keeps the height its words will have; give it a width near
+   theirs. .block is a block, for a field, a button or a chart, sized by
+   where it is. Reduced motion holds it still. */
+.skeleton {
+  display: inline-block;
+  vertical-align: middle;
+  height: 0.8em;
+  border-radius: var(--r-xs);
+  background: var(--elevated);
+  animation: skeleton-pulse var(--dur-pulse) var(--ease) infinite alternate;
+}
+
+.skeleton.block {
+  display: block;
+}
+
+@keyframes skeleton-pulse {
+  to {
+    opacity: 0.5;
+  }
 }
 
 /* "Why?": a ghost button that opens the explanation in place
@@ -2739,14 +2765,35 @@ button.danger-outline {
 
 /* --- sign-in and invite pages --- */
 
+/* From the top, not centered: Clerk's form arrives after the page, and
+   changes height from step to step, and in the middle every change would
+   move everything above it too. The space above is the screen's, not the
+   content's, so it never moves either. */
 .auth-wrap {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 20px;
-  padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  padding: calc(max(var(--sp-6), 10vh) + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+/* The sign-in page while the app loads in its place (components/SignInFlow.tsx). */
+.auth-wrap[hidden] {
+  display: none;
+}
+
+/* Clerk's form fades in where its placeholder was. Its box is hidden until
+   the form is in it, and showing it starts this again. */
+.auth-wrap [data-clerk-component="SignIn"] {
+  animation: auth-form-in var(--dur-base) var(--ease);
+}
+
+@keyframes auth-form-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .auth-wrap .brand h1 {
@@ -2776,6 +2823,135 @@ button.danger-outline {
 
 .demo-panel form button {
   width: 100%;
+}
+
+/* --- loading placeholders (components/LoadingSkeletons.tsx) --- */
+
+/* Home's Net worth card: each placeholder about as wide as what it stands
+   for, in the line that will hold it, so the card keeps its height; the plot
+   at the chart's own proportions (components/NetWorthChart.tsx W and H). */
+.skeleton-total {
+  width: 5.5em;
+}
+
+.skeleton-delta {
+  width: 15em;
+  max-width: 100%;
+}
+
+.skeleton-readout {
+  width: 7em;
+}
+
+.skeleton-readout-date {
+  width: 10em;
+}
+
+.skeleton-info {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+}
+
+.skeleton-plot {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 340 / 150;
+  border-radius: var(--r-md);
+}
+
+.skeleton-ranges {
+  width: 100%;
+}
+
+.skeleton-as-of {
+  width: 12em;
+}
+
+.skeleton-chart-notes {
+  width: 5.5em;
+}
+
+/* The header's buttons, on a page that hands over to the dashboard: their
+   outlines, which their icons then fill. */
+.skeleton-icon-btn {
+  width: var(--tap);
+  height: var(--tap);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+}
+
+.skeleton-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-pill);
+}
+
+/* Clerk's sign-in form while it loads: its card's width (25rem, and 40px
+   less than the screen on a phone) and about its height, with its title,
+   field, button and footer. */
+.signin-skeleton {
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.signin-skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-8);
+  padding: var(--sp-8);
+}
+
+.signin-skeleton-head,
+.signin-skeleton-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.signin-skeleton-head {
+  align-items: center;
+}
+
+.signin-skeleton-head > :first-child {
+  width: 55%;
+  height: var(--sp-6);
+}
+
+.signin-skeleton-head > :last-child {
+  width: 75%;
+  height: var(--sp-4);
+}
+
+/* The field's label, the field, and the button under it. */
+.signin-skeleton-form > :first-child {
+  width: 30%;
+  height: var(--sp-3);
+}
+
+.signin-skeleton-form > :not(:first-child) {
+  height: 36px;
+}
+
+.signin-skeleton-form > :last-child {
+  margin-top: var(--sp-4);
+}
+
+.signin-skeleton-foot {
+  display: flex;
+  justify-content: center;
+  padding: var(--sp-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.signin-skeleton-foot > .skeleton {
+  width: 40%;
+  height: var(--sp-3);
 }
 
 /* Accounts in the Sharing drawer, grouped by institution. */

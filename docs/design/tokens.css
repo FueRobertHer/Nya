@@ -55,6 +55,7 @@
   /* Motion. One reduced-motion rule zeroes these (design-system.md). */
   --dur-fast: 140ms;
   --dur-base: 220ms;
+  --dur-pulse: 900ms; /* one way of a placeholder's pulse (.skeleton) */
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* Layers. */
@@ -188,5 +189,6 @@
   :root {
     --dur-fast: 0ms;
     --dur-base: 0ms;
+    --dur-pulse: 0ms;
   }
 }

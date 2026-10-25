@@ -100,7 +100,7 @@ describe('the demo sign-in', () => {
   test('sends a demo account to Clerk’s sign-in with a ticket', async () => {
     const res = await signIn('user_sam');
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('https://nya.test/sign-in?__clerk_ticket=ticket-for-user_sam');
+    expect(res.headers.get('location')).toBe('https://nya.test/sign-in?__clerk_ticket=ticket-for-user_sam&demo=ticket');
     expect(tickets).toEqual(['user_sam']);
   });
 
