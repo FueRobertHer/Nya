@@ -18,7 +18,7 @@ import type { Bands } from '@/lib/fire/simulate';
 import { compactMoney, spoken } from '@/lib/format';
 import { wholeMoney } from './plan-text';
 import { Masked } from './HideAmounts';
-import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
+import { FALLBACK_WIDTH, MIN_LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
 
 /** Its height for its width: 160 to 340, the shape it has always had. */
 const ASPECT = 160 / FALLBACK_WIDTH;
@@ -27,13 +27,6 @@ const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 // Room under the baseline for the 12px ages.
 const PAD_BOTTOM = 24;
-// A 12px label's width, roughly: tabular digits and currency signs about
-// 7px, a space 3px, a letter 6.5px ("age 55" is about 36px).
-function textWidth(text: string): number {
-  let w = 0;
-  for (const c of text) w += /[0-9$]/.test(c) ? 7 : c === ' ' ? 3 : 6.5;
-  return w;
-}
 
 // A money tick's 12px figure's width, roughly, from its value alone (never
 // from the figure as written, which hide amounts masks, so the chart's shape
@@ -50,10 +43,9 @@ function tickWidth(value: number, currency: string | null): number {
 }
 
 // Neighbouring gridlines are at least this far apart, in CSS pixels, so their
-// 12px figures, each centred on its line, never touch.
+// 12px figures, each centred on its line, never touch (and the ages along the
+// bottom MIN_LABEL_GAP apart, edge to edge).
 const MIN_TICK_GAP = 20;
-// And the ages along the bottom at least this far apart, edge to edge.
-const MIN_LABEL_GAP = 6;
 
 type XTick = { x: number; label: string; anchor: 'start' | 'middle' | 'end' };
 
@@ -119,7 +111,7 @@ export default function PlanFanChart({
     // at the end. A tick that would crowd the last one is left out.
     const label = (y: number) => (startAge !== null ? `${y === 0 ? 'age ' : ''}${startAge + y}` : `${y === 0 ? 'year ' : ''}${y}`);
     const span = (t: XTick) => {
-      const w = textWidth(t.label);
+      const w = labelWidth(t.label);
       return t.anchor === 'start' ? [t.x, t.x + w] : t.anchor === 'end' ? [t.x - w, t.x] : [t.x - w / 2, t.x + w / 2];
     };
     const apart = (a: XTick, b: XTick) => span(b)[0] - span(a)[1] >= MIN_LABEL_GAP;

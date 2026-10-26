@@ -22,6 +22,10 @@ import type { SimResult } from '@/lib/fire/simulate';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { Missing } from '@/lib/fire/plan';
 import { startsWithText } from './plan-scenario-text';
+import type { Shortfall } from '@/lib/fire/events';
+
+/** The same shortfall: one place says it. */
+const sameShort = (a: Shortfall | null, b: Shortfall | null) => a !== null && b !== null && a.year === b.year && a.kind === b.kind && a.have === b.have && a.need === b.need;
 import { successText, yearsToFiText } from './plan-text';
 import { plainNumber } from '@/lib/format';
 
@@ -179,7 +183,10 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
       cells: columns.map((c) =>
         cell(
           c,
-          (fig) => (fig.startsWith ? { value: startsWithText(fig.startsWith, money) } : { value: 'nothing yet' }),
+          // Where the FI date's walk stops at the same place, its row below
+          // says why; otherwise (the steady projection, or a walk that gets
+          // to FI and then runs out) it is said here.
+          (fig) => (fig.startsWith ? { value: startsWithText(fig.startsWith, money, sameShort(fig.startsWith.short, fig.short) ? 'below' : null, fig.plan.age) } : { value: 'nothing yet' }),
           false
         )
       ),

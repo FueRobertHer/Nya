@@ -290,7 +290,7 @@ describe('the FI card', () => {
     // Typed instead: what was typed counts, so nothing says it may be low,
     // on the number or under the row.
     const typed = cardHtml(plan({ assets: 300_000 }), { a: assets({ caveats: [{ kind: 'unreachable', institution: 'Schwab' }] }) });
-    expect(text(typed)).toContain('$300,000 invested · 30% of the way');
+    expect(text(typed)).toContain('$300,000 of $1,000,000 invested · 30% of the way');
     expect(text(typed)).not.toContain('Invested assets may be low');
     expect(text(figureRow(typed, 'Invested assets'))).toContain('Invested assets Typed by you $300,000');
     expect(text(typed)).not.toContain("Schwab couldn't be reached");
@@ -759,7 +759,7 @@ describe('a saved plan this version cannot use as it is', () => {
         />
       )
     );
-    expect(t).toContain('FI number --');
+    expect(t).toContain('Financial independence --');
     expect(t).toContain("Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions.");
   });
 });

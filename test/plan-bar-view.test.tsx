@@ -371,7 +371,7 @@ describe('the segments', () => {
     serve();
     const tab = await mount();
     expect(tab.shown()).toEqual(['Your path']);
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses']);
     const stress = tab.titles(tab.panelOf('Stress test'));
     expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length']);
     // Then its settings and About these numbers, as rows (rollout 6d).
@@ -655,7 +655,7 @@ describe('the scenario’s card, on every segment', () => {
     const tab = await mount();
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses', 'Life events']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses', 'Life events']);
     expect(tab.panelOf('Stress test').textContent).toContain('as the Life events card on Your path says');
     await tab.unmount();
   });

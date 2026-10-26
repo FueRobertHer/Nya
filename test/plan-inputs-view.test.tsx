@@ -327,7 +327,7 @@ describe('Your figures, under the FI card', () => {
     const card = tab.card()!;
     // A card of its own on Your path, between the FI card and the income.
     expect(tab.panel('path').contains(card)).toBe(true);
-    expect(tab.titles(tab.panel('path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses']);
+    expect(tab.titles(tab.panel('path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses']);
     const heading = card.findAll((e) => e.tagName === 'H3')[0];
     expect([heading.textContent, heading.getAttribute('id'), card.getAttribute('aria-labelledby')]).toEqual(['Your figures', 'plan-inputs-title', 'plan-inputs-title']);
     expect(has(heading.parentNode, 'card-header')).toBe(true);
@@ -1143,5 +1143,53 @@ describe('the Assumptions sheet, and Stress test’s rows', () => {
     const whole = await mount();
     expect(badges(whole)).toEqual([]);
     await whole.unmount();
+  });
+});
+
+describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
+  test('a button under the answer opens the Ages sheet; closed, focus is back on it, and once the ages are saved (the button gone) on the Ages row', async () => {
+    let current: unknown = { ...DEFAULT_PLAN };
+    serve({
+      answers: {
+        'GET /api/fire-plan': () => [200, { plan: current, currency: null }],
+        'PUT /api/fire-plan': (c) => {
+          current = c.body.plan;
+          return [200, { plan: current, currency: null }];
+        },
+      },
+    });
+    const tab = await mount();
+    const ask = () => button(tab.panel('path'), 'Add your age and when you’d like to stop');
+    expect(ask()).not.toBeNull();
+    await press(ask());
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Your ages');
+    await press(closeOf(tab.dialog()!));
+    await settle(400);
+    expect(dom.document.activeElement).toBe(ask()!);
+    // Saved: the answer is against the stop age, and nothing asks.
+    await press(ask());
+    const form = tab.dialog()!;
+    const [age, stop] = form.findAll((e) => e.tagName === 'INPUT');
+    await act(async () => type(age, '40'));
+    await act(async () => type(stop, '55'));
+    await press(button(form, 'Save'));
+    await settle(400);
+    expect(ask()).toBeNull();
+    expect(tab.panel('path').textContent).toContain('Financial independenceAround age');
+    expect(tab.panel('path').textContent).toMatch(/years? (before|after) you stop at 55|Right when you stop at 55/);
+    expect(dom.document.activeElement).toBe(tab.row('Ages')!);
+    await tab.unmount();
+  }, 20_000);
+
+  test('only the age missing, or only the stop age: it asks for that one', async () => {
+    for (const [over, words] of [
+      [{ targetAge: 55 }, 'Add your age'],
+      [{ age: 40 }, 'Add when you’d like to stop'],
+    ] as const) {
+      serve({ plan: { plan: { ...DEFAULT_PLAN, ...over }, currency: null } });
+      const tab = await mount();
+      expect(button(tab.panel('path'), words)).not.toBeNull();
+      await tab.unmount();
+    }
   });
 });
