@@ -9,9 +9,10 @@
 //   - otherwise projectBalance at each whole year (lib/fire/fi.ts), the
 //     closed form fiView projects the target age's balance with. Savings
 //     below zero can take it below zero there, as they take atTargetAge.
-// Nothing from nowhere: no point the figures couldn't also give, and none
-// where the walk can't go on (a cost larger than the balance, or a year
-// taking out more than there is).
+// Nothing from nowhere: no point the figures couldn't also give, no money in
+// but a windfall's, and none where the walk can't go on (a cost larger than
+// the balance, or a year taking out more than there is). A point is the
+// balance at the start of its year, before that year's money in and costs.
 //
 // Arithmetic only, and nothing that touches storage: the Plan tab runs this
 // in the browser.

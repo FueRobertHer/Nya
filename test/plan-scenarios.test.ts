@@ -460,6 +460,14 @@ describe('life events, kind by kind', () => {
     const late = compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 100, amount: 200_000 }], at);
     expect(late.notes).toEqual([{ id: 'w', part: 'after-end' }]);
     expect(late.sim.income).toEqual([{ amount: 200_000, fromYear: 50, toYear: 51, inflationAdjusted: true }]);
+    // Without your age: from the stop age the simulation places it; before
+    // it, nothing can, and it says it is left out (review: not "placed").
+    const noAge = { ...at, age: null };
+    expect(compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 }], noAge).notes).toEqual([{ id: 'w', part: 'no-today' }]);
+    const early = compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 45, amount: 200_000 }], noAge);
+    expect([early.walk.moneyIn, early.sim.income, early.notes]).toEqual([[], [], [{ id: 'w', part: 'no-today-walk' }]]);
+    const cars = compileEvents([{ id: 'v', kind: 'car', label: 'Cars', atAge: 44, cost: 30_000, every: 4, times: 2 }], noAge);
+    expect([cars.sim.oneOffs, cars.notes]).toEqual([[], [{ id: 'v', part: 'no-today-walk' }]]);
   });
 
   test('a loan paid off: spending lower for good, as a change in spending of the same amount less', () => {

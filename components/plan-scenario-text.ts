@@ -170,7 +170,7 @@ export function eventCountsText(e: LifeEvent): string {
 
 export const EVENT_PART_TEXT: Record<EventPart, string> = {
   past: 'Some of it is before today: it counts from today, and your measured figures may already count what has begun.',
-  already: 'It is before today, so your figures already count it, and it is left out here.',
+  already: 'It is before today, so it is left out: your measured figures may already count it.',
   'no-today': 'Without your age there is no today to count from, so the FI date leaves it out; the simulation places it from the stop age.',
   'no-today-walk': 'Without your age there is no today to count from, so it is left out: it counts only in the FI date.',
   'no-age': 'Without your age or a stop age it can’t be placed, so it is left out.',

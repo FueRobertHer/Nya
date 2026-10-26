@@ -30,11 +30,11 @@ const KIND_NOTES: Record<LifeEventKind, string> = {
     'How much more (or less) you would spend a year, for some years or for good. It changes what you save in its years too. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number. Typing the scenario’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
   car: 'What you pay from your investments for each car when you buy it, once or every few years. Payments on a car loan are already in your measured spending, so count only what comes from your investments, never a loan’s payments.',
   raise:
-    'How much more you would save each year from then, after tax, until FI. It moves your FI date only: it never changes your spending in retirement, or your FI number.',
+    'How much more you would save each year from then, after tax, until FI. It moves your FI date and what you’d have at your stop age: it never changes your spending in retirement, or your FI number.',
   windfall:
     'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From the stop age on, the simulation takes it as money in that year.',
   'loan-end':
-    'How much less you would spend a year, for good, once a loan is paid off: its payments, which are in your measured spending until then. You save that much more from then until you stop working. Paid off by the time you stop, it is part of your spending in retirement, and so of your FI number.',
+    'How much less you would spend a year, for good, once a loan is paid off: its payments, which are in your measured spending until then. You save that much more from then until FI. Paid off by the time you stop, it is part of your spending in retirement, and so of your FI number.',
 };
 
 export function LifeEventsCard({

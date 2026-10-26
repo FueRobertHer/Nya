@@ -148,7 +148,7 @@ describe('a car', () => {
 describe('a raise', () => {
   test('from an age, how much more is saved a year; never spending in retirement', async () => {
     const f = await form('raise');
-    expect(f.text()).toContain('It moves your FI date only: it never changes your spending in retirement, or your FI number.');
+    expect(f.text()).toContain('It moves your FI date and what you’d have at your stop age: it never changes your spending in retirement, or your FI number.');
     expect(f.labels()).not.toContain('More');
     await f.fill('From age', '42');
     await f.save();

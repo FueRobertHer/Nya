@@ -234,14 +234,15 @@ export type WalkChanges = {
  *  - past: some of its years are before today (they count from today;
  *    your measured figures may already count what has begun);
  *  - already: a change that happens once (money in, a car, a raise, a loan
- *    paid off) is before today, so your figures already count it, and it
- *    is left out: counting a raise or a paid-off loan from today would count
- *    it twice;
+ *    paid off) is before today, so your figures may already count it, and
+ *    it is left out: counting a raise or a paid-off loan from today would
+ *    count it twice;
  *  - no-today: without your age, its years can't be placed from today, so
  *    the FI date leaves it out (the simulation still places it from the
  *    retirement age);
- *  - no-today-walk: the same for a raise, which is only in the FI date, so
- *    it is left out altogether;
+ *  - no-today-walk: the same for a raise, which is only in the FI date, or
+ *    a windfall or cars all before the retirement age, which the simulation
+ *    doesn't reach: so it is left out altogether;
  *  - no-age: without either age it can't be placed at all;
  *  - retired: a sabbatical's years from the retirement age change nothing;
  *  - before-start: part-time work before the retirement age is left out;
@@ -287,7 +288,11 @@ export function compileEvents(events: readonly LifeEvent[], at: { age: number | 
       note('already');
       continue;
     }
-    if (a === null) note(e.kind === 'raise' ? 'no-today-walk' : 'no-today');
+    // Without your age, a raise (only ever in the walk), or money in or cars
+    // all before the start age (which the simulation doesn't reach), count
+    // nowhere.
+    const walkOnly = e.kind === 'raise' || (S !== null && start !== null && start < S);
+    if (a === null) note(walkOnly ? 'no-today-walk' : 'no-today');
 
     /** A cost paid once, at age x. */
     const cost = (x: number, amount: number) => {

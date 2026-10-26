@@ -56,6 +56,20 @@ describe('by hand', () => {
     expect(f.view.atTargetAge).toBeNull();
   });
 
+  test('a windfall pays a home bought in its own year: in first, then the cost, and the path goes on (8d)', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 300_000 };
+    const f = figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [home(900_000), gift]);
+    const p = path(f);
+    expect(p.short).toBeNull();
+    // 653,750 at 42, before the windfall and the home; 53,750 left after both.
+    const want = [500_000, 575_000, 653_750, 106_437.5, 161_759.375, 219_847.34375];
+    balances(p).forEach((b, k) => expect(b).toBeCloseTo(want[k], 6));
+    expect(balances(p)[5]).toBe(f.view.atTargetAge as number);
+    // Less than the home takes, with the windfall: it stops, and says what there was.
+    const less = path(figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [home(900_000), { ...gift, amount: 100_000 }]));
+    expect(less.short).toEqual({ year: 2, have: 753_750, need: 900_000, kind: 'cost' });
+  });
+
   test('savings below zero in the walk: it stops the year that would take it below zero, never a negative balance', () => {
     // Spending $30,000 more a year for good from today, saving nothing: the
     // walk saves -$30,000 a year at no growth.
