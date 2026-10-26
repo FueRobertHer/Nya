@@ -1280,7 +1280,7 @@ The **Plan** tab answers two questions: how much you need to be financially inde
 - **Years to FI**: how long your invested assets take to reach the FI number, adding your annual savings at the end of each year and growing a steady amount after inflation (5% a year by default, the **growth after inflation** setting). It says "Not at this rate" when savings and growth never get there.
 - **Coast FI**: what you need invested today for it to grow to the FI number by your stop age with nothing more added, at the same growth: with that much, you could stop saving now.
 - **Barista FI**: the FI number when part-time income (after tax) covers part of your spending, so the portfolio covers only the rest.
-- **At your stop age**: the balance projected at the steady growth. Real markets don't move steadily, which is what the simulation is for.
+- **At your stop age**: the balance projected at the steady growth, with a scenario's life events counted in the years they cover (where one costs more than you'd have then, it says so instead of a balance). Real markets don't move steadily, which is what the simulation is for.
 
 ### Where the inputs come from
 

@@ -110,6 +110,8 @@ import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './
 import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
 import { planFigures, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { planPath } from '@/lib/fire/path';
+import { hasWalk, type Shortfall } from '@/lib/fire/events';
 import {
   NO_ANSWER,
   askText,
@@ -159,6 +161,9 @@ function withOwn(values: number[], own: number): number[] {
 
 /** The value, or the last one that wasn't null: what a closing drawer keeps
  *  showing while it slides out (as in Dashboard.tsx). */
+/** The same place the walk stops, said once: under Years to FI. */
+const sameShort = (a: Shortfall, b: Shortfall | null) => b !== null && a.year === b.year && a.kind === b.kind && a.have === b.have && a.need === b.need;
+
 function useLast<T>(value: T | null): T | null {
   const last = useRef<T | null>(value);
   if (value !== null) last.current = value;
@@ -506,6 +511,11 @@ export default function PlanTab({
         : null;
   const plan = shown?.plan ?? basePlan;
   const view = shown?.view ?? figures.view;
+  // Where the walk to the stop age can't go on, which the At age row says:
+  // only a scenario's life events change the walk (a scenario's ages are
+  // parsed, so its path is never longer than a plan can be).
+  const stopWalked = shown !== null && shown.events !== null && hasWalk(shown.events.walk);
+  const stopShort = shown && stopWalked ? (planPath(shown)?.short ?? null) : null;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
   const sim = 'sim' in engine ? engine.sim : null;
   // The Plan's method: a scenario never changes it.
@@ -1108,6 +1118,14 @@ export default function PlanTab({
               walked={shown?.walked ?? false}
               walkedSavings={shown?.walkedSavings ?? null}
               fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
+              stopShort={
+                stopShort && plan.targetAge !== null
+                  ? sameShort(stopShort, shown?.short ?? null)
+                    ? `Nothing is projected at ${plan.targetAge}, for the reason under Years to FI.`
+                    : shortText(stopShort, plan.age, money, `nothing is projected at ${plan.targetAge}`)
+                  : null
+              }
+              stopWalked={stopWalked}
               plan={plan}
               view={view}
               unread={unread}
@@ -1359,6 +1377,8 @@ export function FiCard({
   walked = false,
   walkedSavings = null,
   fiShort = null,
+  stopShort = null,
+  stopWalked = false,
   plan,
   view,
   unread,
@@ -1382,6 +1402,10 @@ export function FiCard({
   walkedSavings?: number | null;
   /** Why there is no FI date: a cost the walk can't pay. */
   fiShort?: string | null;
+  /** Why there is no balance at the stop age: the walk can't get there. */
+  stopShort?: string | null;
+  /** The balance at the stop age is the walk's, with a scenario's life events. */
+  stopWalked?: boolean;
   plan: FirePlan;
   view: FiView;
   /** Institutions whose transactions couldn't all be read. */
@@ -1481,9 +1505,11 @@ export function FiCard({
           />
         )}
         {view.atTargetAge !== null && plan.targetAge !== null && (
-          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
+          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
         )}
-        {view.atTargetAge === null && notWorkedOut && plan.age !== null && plan.targetAge !== null && <Row label={`At age ${plan.targetAge}`} value="--" note={notWorkedOut} />}
+        {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && plan.targetAge !== null && (
+          <Row label={`At age ${plan.targetAge}`} value="--" note={(notWorkedOut ?? stopShort) as string} />
+        )}
       </div>
     </div>
   );
