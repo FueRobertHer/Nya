@@ -520,18 +520,33 @@ Runs after phase 6 and before phase 7. The engine is built (`lib/fire/`); what h
 
 **Fixed in 8a:** a scenario's balance at the stop age ignored its life events when there was no FI number (no spending): a home bought from investments at 42 left "At age 55" where it would be without the home. It now comes from the walk whenever an event changes it. Where the walk can't get there, the At age row says why ("You'd have about $653,750 at 42, less than the $900,000 it takes from your investments, so nothing is projected at 55: change the cost, or when it comes.") instead of going without a word.
 
-**For 8b, from 8a's review:**
+**For 8b, from 8a's review** (each settled in 8b, below):
 
-- **Below zero.** With no life events and savings below zero, the closed form goes below zero ("At age 55" can say -$7,893 today), where the walk stops with words. Decide whether the projection stops there too, or the chart's axis takes negatives.
-- **The path can stop where the FI date doesn't.** A plan already at FI whose savings are below zero for good has an FI date today, and its walk runs out before the stop age: the path ends early with `short`, and `atTargetAge` is null. The chart and the headline say both.
-- **The Plan's own stored ages aren't range-checked** until a repair: a stop age of 2e7 would make `planPath` build that many points. The tab runs it today only for a scenario (its ages are parsed); draw the Plan's path once its stored plan is repaired, or bound it there.
-- **The path ends at the stop age**, as decided; `planPath` takes a length, so a marker after it ("3 years after you stop at 55") can be drawn by asking for more, if 8b decides to.
+- **Below zero.** With no life events and savings below zero, the closed form goes below zero ("At age 55" can say -$7,893 today), where the walk stops with words. Decide whether the projection stops there too, or the chart's axis takes negatives. (It stops there too.)
+- **The path can stop where the FI date doesn't.** A plan already at FI whose savings are below zero for good has an FI date today, and its walk runs out before the stop age: the path ends early with `short`, and `atTargetAge` is null. The chart and the headline say both. (They do.)
+- **The Plan's own stored ages aren't range-checked** until a repair. (They are: the tab works from `repairPlan`'s plan, which `parsePlan` range-checks, so the tab runs `planPath` for the Plan too.)
+- **The path ends at the stop age**, as decided; `planPath` takes a length, so a marker after it ("3 years after you stop at 55") can be drawn by asking for more, if 8b decides to. (It doesn't: the words say it.)
 
 **8b**, the headline and the path chart:
 
 - The headline and progress, with the caveats that sit on the FI number today kept there, critical ones in full.
 - The chart (a new component pattern: design-system.md gains it in this PR), drawn with `useDrawnWidth` and through `lib/format.ts`, added to the hide-amounts render test, with a `role="img"` summary and a table.
 - Home's FI line takes the same words in the same PR, so Home and the Plan agree; the review's FI-line items from 4c land here.
+
+**Built in 8b:** the FI card opens with the answer (`fiHeadline` in `components/plan-text.ts`, one function for the Plan and Home): "Financial independence", then "Around age 53" and "2 years before you stop at 55" ("3 years after", "Right when you stop at 55"); "In about 13 years" without an age; "You're at FI", with "At these savings it runs out at 71" when the steady projection runs out before the stop age; "Not at this savings rate"; "Not before age 100 at this savings rate" past 100 (the row's note still gives the years); "No FI date" when the walk can't pay a cost; "--" when it isn't worked out. While an age is missing, a button under the answer opens the Ages sheet ("Add your age and when you'd like to stop", "Add your age", "Add when you'd like to stop"); focus comes back to it, or to the Ages row once it has gone. Then the meter and "$250,000 of $1,000,000 invested · 25% of the way" ("$2,000,000 invested · 200% of the FI number" past it), the FI number's own line ("FI number $1,000,000: $40,000 a year ÷ 4% withdrawal rate") and the caveats that were on it, in their words and levels. Then `components/PlanPathChart.tsx`: one line from today to the stop age (`planPath`), the FI number dashed, a marker where it is reached, the stop age, its ages spaced by width, a summary through `spoken()`, "At a steady 5% a year after inflation. Real markets don't move steadily; Stress test shows how much that matters." and every year behind Show as a table. Home's FI line: "FI around age 53, 2 years before you stop at 55" over "$250,000 of $1,000,000 invested (25%) · 43% savings rate, last 12 months"; "Plan defaults" on the line with no plan saved; a line when the saved plan can't be read (the store says so, or this release can't take its shape), never for a request that failed.
+
+**Decided in 8b:**
+
+- **The projection never goes below zero.** `projectionShort` (`lib/fire/fi.ts`) finds the first year a steady projection would end below zero (by halving, since it is monotone, so any stored span is cheap), and `fiView`'s `atTargetAge`, `planPath` and `startsWith` all stop there, as the walk does; the At age row says where, for the Plan as for a scenario ("You'd have about $2,007 at 54, and that year takes $10,000 out, more than there is, so nothing is projected at 55."), and a plan started from its FI number at such a stop age "would never get that far". Invested assets below zero grow nowhere: the projection stops at once ("Your invested assets are below zero").
+- **Without an age, the answer is the years**, with the ask right under it (Home says the years too, so the two agree); the ask shows whatever the years are.
+- **Home's title is the whole answer**, since `.list-row-title` wraps.
+- **No marker past the stop age**: the line ends there and the words say "3 years after you stop".
+
+**Kept narrow in 8b:**
+
+- Coast FI and Will it last? stay rows of the FI card and Stress test, not the mockup's rows on Your path.
+- The Years to FI row's note keeps its own words ("Around age 1139") under a headline that says "Not before age 100".
+- No band, no actual history (8e draws it on this chart: it takes points from any first age, with today apart) and no event pins.
 
 **8c**, the What if… card: templates for the kinds that exist (house, child, sabbatical, part-time, spending change) that create a named scenario; the effect shown as you type; the scenarios listed with their FI age. Nothing stored changes shape: a template makes an ordinary scenario.
 

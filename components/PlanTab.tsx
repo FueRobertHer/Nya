@@ -73,6 +73,8 @@ import {
   wholeMoney,
   yearsText,
   yearsToFiText,
+  askAgesText,
+  fiHeadline,
 } from './plan-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -110,7 +112,8 @@ import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './
 import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
 import { planFigures, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
-import { planPath } from '@/lib/fire/path';
+import { planPath, type PlanPath } from '@/lib/fire/path';
+import PlanPathChart from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
 import {
   NO_ANSWER,
@@ -707,7 +710,9 @@ export default function PlanTab({
   useEffect(() => {
     const closed = wasOpen.current && !sheetOpen;
     wasOpen.current = sheetOpen;
-    const row = openedFrom.current === 'mix' ? mixHeading.current : openedFrom.current ? inputRows.current.get(openedFrom.current) : null;
+    let row = openedFrom.current === 'mix' ? mixHeading.current : openedFrom.current ? (inputRows.current.get(openedFrom.current) ?? null) : null;
+    // The FI card's ask goes once the ages are saved: then to the Ages row.
+    if (openedFrom.current === 'ask-about' && !row?.isConnected) row = inputRows.current.get('about') ?? null;
     if (!closed || !row?.isConnected) return;
     let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
@@ -1128,6 +1133,11 @@ export default function PlanTab({
                   : null
               }
               stopWalked={stopWalked}
+              path={path}
+              currency={displayCurrency}
+              onAskAges={() => open({ kind: 'about' }, 'ask-about')}
+              askRef={(el) => inputRowRef('ask-about', el)}
+              held={reloading}
               plan={plan}
               view={view}
               unread={unread}
@@ -1381,6 +1391,11 @@ export function FiCard({
   fiShort = null,
   stopShort = null,
   stopWalked = false,
+  path = null,
+  currency = null,
+  onAskAges,
+  askRef,
+  held = false,
   plan,
   view,
   unread,
@@ -1408,6 +1423,16 @@ export function FiCard({
   stopShort?: string | null;
   /** The balance at the stop age is the walk's, with a scenario's life events. */
   stopWalked?: boolean;
+  /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
+  path?: PlanPath | null;
+  /** The currency the figures are in, for the chart. */
+  currency?: string | null;
+  /** Opens the Ages sheet, from the ask under the answer while an age it
+   *  needs isn't typed; and the ask's ref, for focus to come back to. */
+  onAskAges?: () => void;
+  askRef?: (el: HTMLElement | null) => void;
+  /** The plan is being read again: the ask does nothing meanwhile. */
+  held?: boolean;
   plan: FirePlan;
   view: FiView;
   /** Institutions whose transactions couldn't all be read. */
@@ -1452,34 +1477,61 @@ export function FiCard({
   const notWorkedOut = notWorkedOutText(view, 'below');
 
   const fiSpending = retirementSpending ?? spending.value;
+  // The answer first (rollout phase 8b): when FI comes, against the age you'd
+  // like to stop, in the same words as Home's FI line. At FI already, but
+  // with savings that run the projection out before the stop age, it says so.
+  const runsOutAt = view.yearsToFi === 0 && path?.short && plan.age !== null ? plan.age + path.short.year : null;
+  const head = fiHeadline(view, plan, { noDate: !!fiShort, runsOutAt });
   return (
     <div className="card">
       <ScenarioTag name={scenarioName} />
-      <div className="total-label">FI number</div>
-      <div className="total-value">
-        <Masked>{view.fiNumber !== null ? money(view.fiNumber) : '--'}</Masked>
-      </div>
+      <div className="total-label">Financial independence</div>
+      <div className="total-value plan-answer">{head.headline}</div>
+      {head.against && <div className="as-of">{head.against}</div>}
+      {head.ask && onAskAges && (
+        <div className="btn-row">
+          <button
+            type="button"
+            className="btn secondary"
+            ref={askRef}
+            aria-disabled={held ? 'true' : undefined}
+            onClick={() => {
+              if (!held) onAskAges();
+            }}
+          >
+            {askAgesText(head.ask)}
+          </button>
+        </div>
+      )}
+      {view.progress !== null && view.fiNumber !== null && (
+        <>
+          <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>
+            <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
+          </div>
+          <div className="as-of">
+            {view.progress >= 1 ? (
+              <>
+                <Masked>{money(assets.value ?? 0)}</Masked> invested · {progressText(view.progress)} of the FI number
+              </>
+            ) : (
+              <>
+                <Masked>{`${money(assets.value ?? 0)} of ${money(view.fiNumber)}`}</Masked> invested · {progressText(view.progress)} of the way
+              </>
+            )}
+          </div>
+          {assetsShort && <div className="as-of stale">Invested assets may be low (below).</div>}
+        </>
+      )}
       <div className="as-of">
         <Masked>
           {view.fiNumber !== null && fiSpending !== null
-            ? `${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
+            ? `FI number ${money(view.fiNumber)}: ${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
             : !formulasTake(plan)
               ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
               : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
       {spendingMissing && <div className="as-of stale">{`May be low: spending is missing ${spendingMissing} (below).`}</div>}
-      {view.progress !== null && (
-        <>
-          <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>
-            <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
-          </div>
-          <div className="as-of">
-            <Masked>{money(assets.value ?? 0)}</Masked> invested · {progressText(view.progress)} of the way
-          </div>
-          {assetsShort && <div className="as-of stale">Invested assets may be low (below).</div>}
-        </>
-      )}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
       {convertedNote && <div className="as-of">{convertedNote}</div>}
       {scenarioNotes.map((n) => (
@@ -1487,6 +1539,18 @@ export function FiCard({
           <Masked>{n}</Masked>
         </div>
       ))}
+      {path && path.points.length >= 2 && plan.age !== null && plan.targetAge !== null && (
+        <PlanPathChart
+          points={path.points}
+          today={plan.age}
+          stopAge={plan.targetAge}
+          fiNumber={view.fiNumber}
+          fiAge={view.fiAge}
+          realReturn={plan.realReturn}
+          currency={currency}
+          withEvents={path.fromWalk}
+        />
+      )}
 
       <div className="plan-rows">
         <Row label="Years to FI" value={yearsLine} note={yearsNote} />
@@ -1529,7 +1593,7 @@ export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptio
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Stress test's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix';
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about';
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {
