@@ -192,6 +192,13 @@ h2 {
   color: var(--down);
 }
 
+/* Your path's answer (rollout phase 8b): words, not a figure, so the hero's
+   smaller end, where "Around age 39" fits a phone's line. */
+.total-value.plan-answer {
+  font-size: 32px;
+  line-height: 1.15;
+}
+
 /* Home's Net worth card (components/NetWorthCard.tsx): its title is a real
    heading, drawn as the label it was. */
 h2.total-label {

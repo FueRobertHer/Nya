@@ -29,7 +29,7 @@ const { createRoot } = require('react-dom/client') as typeof import('react-dom/c
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { NO_CHANGES } = await import('@/lib/fire/scenarios');
-const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText } = await import('@/components/plan-what-if');
+const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText, fiWhen } = await import('@/components/plan-what-if');
 const { setAmountsHidden } = await import('@/lib/format');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type Entry = import('@/components/plan-scenarios').ScenarioEntry;
@@ -322,15 +322,26 @@ describe('its words', () => {
     expect(lifeChoiceText({ kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
     expect(lifeChoiceText({ kind: 'age', age: 49 }, plan)).toBe('FI around 49, 3 years sooner');
     expect(lifeChoiceText({ kind: 'age', age: 49 }, { kind: 'none' })).toBe('FI around 49');
-    expect(lifeChoiceText({ kind: 'now' }, plan)).toBe('At FI now');
-    expect(lifeChoiceText({ kind: 'now' }, { kind: 'now' })).toBe('At FI now, as in your plan');
-    expect(lifeChoiceText({ kind: 'never' }, plan)).toBe('No FI at this rate');
+    expect(lifeChoiceText({ kind: 'now' }, plan)).toBe('You’re at FI');
+    expect(lifeChoiceText({ kind: 'now' }, { kind: 'now' })).toBe('You’re at FI, as in your plan');
+    expect(lifeChoiceText({ kind: 'never' }, plan)).toBe('Not reached at this savings rate');
+    expect(lifeChoiceText({ kind: 'age', age: 49 }, { kind: 'never' })).toBe('FI around 49, where your plan isn’t reached at this savings rate');
     expect(lifeChoiceText({ kind: 'none' }, plan)).toBe('No FI age worked out');
+  });
+  test('a plan’s FI age as the FI card’s headline says it', () => {
+    const f = (yearsToFi: number | null, fiAge: number | null, age: number | null = 40) => ({ view: { yearsToFi, fiAge }, plan: { age, targetAge: 55 }, short: null }) as unknown as import('@/lib/fire/plan-figures').PlanFigures;
+    expect(fiWhen(f(11.6, 51.6))).toEqual({ kind: 'age', age: 52 });
+    expect(fiWhen(f(0, 40))).toEqual({ kind: 'now' });
+    expect(fiWhen(f(Infinity, null))).toEqual({ kind: 'never' });
+    expect(fiWhen(f(70, 110))).toEqual({ kind: 'said', text: 'Not before age 100 at this savings rate' });
+    expect(lifeChoiceText(fiWhen(f(70, 110)), plan)).toBe('Not before age 100 at this savings rate');
+    expect(fiWhen(f(null, null))).toEqual({ kind: 'none' });
+    expect(fiWhen(null)).toEqual({ kind: 'not-run' });
   });
   test('the preview', () => {
     const money = (n: number) => `$${n}`;
     expect(previewText({ kind: 'age', age: 52 }, plan, money)).toBe('In this what-if, FI stays around 52, as in your plan.');
-    expect(previewText({ kind: 'never' }, plan, money)).toBe('In this what-if: No FI at this rate.');
+    expect(previewText({ kind: 'never' }, plan, money)).toBe('In this what-if: Not reached at this savings rate.');
   });
   test('a scenario’s name, from the event’s age, and another when it is taken', () => {
     const t = WHAT_IF_TEMPLATES.find((x) => x.id === 'home')!;

@@ -19,7 +19,7 @@
 // upgradePlan fills in a field added since a plan was saved. Imports no data
 // and no storage, so the route and the browser can both use it.
 
-import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, yearsToTarget } from './fi';
+import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, projectionShort, yearsToTarget } from './fi';
 import { vpwExpectedReturn, type RuleKind, type RuleSpec } from './rules';
 import { CASH_REAL_RETURN, MAX_YEARS, type Method, type Rebalance, type SimPlan } from './simulate';
 
@@ -520,7 +520,9 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
     fiAge,
     coast: coastNumber === null || span === null ? null : { number: coastNumber, years: Math.max(0, span), reached: assets.source === 'unmeasured' ? null : a >= coastNumber },
     barista,
-    atTargetAge: from === null ? null : projectBalance(from.assets, from.savings, plan.realReturn, from.years),
+    // None where the projection would go below zero before then (it says
+    // where, lib/fire/path.ts), never a balance below zero.
+    atTargetAge: from === null || projectionShort(from.assets, from.savings, plan.realReturn, from.years) !== null ? null : projectBalance(from.assets, from.savings, plan.realReturn, from.years),
   };
 }
 

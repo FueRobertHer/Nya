@@ -21,7 +21,7 @@
 //
 // Arithmetic only: no engine run, no market history.
 
-import { projectBalance } from './fi';
+import { projectBalance, projectionShort } from './fi';
 import { compileEvents, hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
 
@@ -137,6 +137,10 @@ function startsWith(plan: FirePlan, view: FiView, engine: EnginePlan | { missing
   const c = view.savings.value ?? 0;
   const years = Math.max(0, atAge - plan.age);
   if (!compiled || !hasWalk(compiled.walk)) {
+    // Never a projection below zero: where it would go there, it never gets
+    // that far, as the walk says.
+    const short = projectionShort(a, c, plan.realReturn, years);
+    if (short) return { ...base, short, more: true };
     const projected = projectBalance(a, c, plan.realReturn, years);
     return { ...base, projected, more: balance > projected + 0.5 };
   }
