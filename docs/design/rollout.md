@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices), 6a3 (Budgets' Upcoming), 6a4 (Budgets' charts and the calendar's figures), 6b (the Plan's scenario bar and segments) and 6c (the Plan's inputs as rows) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices), 6a3 (Budgets' Upcoming), 6a4 (Budgets' charts and the calendar's figures), 6b (the Plan's scenario bar and segments), 6c (the Plan's inputs as rows) and 6d (the Plan's assumptions, labels, words and charts) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -321,7 +321,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 
 - **Card titles under the bar**: the month's card keeps "October budgets" and Goals' card its "Goals" title under the bar's heading; 6a2 redraws the month's card ("Spent", as the mockup has it) and can drop Goals' title. (Both built in 6a2.)
 - **The payoff card's summary line** ("Paid off by May 2027", interest) needs the plan worked out on Goals; the row opens the plan as Accounts' did.
-- **Charts still owed a pass before `.at-width` folds into `.chart-tick` and `.chart-xlabel`**: Home's net worth chart and Reports' runway chart, besides the Budgets and Plan charts these phases take. (Budgets' were drawn at their width in 6a4; the Plan's fan chart is 6d's, and the allocation chart has no phase yet.)
+- **Charts still owed a pass before `.at-width` folds into `.chart-tick` and `.chart-xlabel`**: Home's net worth chart and Reports' runway chart, besides the Budgets and Plan charts these phases take. (Budgets' were drawn at their width in 6a4 and the Plan's fan chart in 6d; the allocation chart has no phase yet.)
 
 **Built in 6a2:**
 
@@ -432,7 +432,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 **Kept narrow in 6b:**
 
 - **The open scenario's card sits between the tabs and the panels**, so Tab from the tabs reaches its buttons before the panel, and it isn't pinned: from deep in a segment, Scenarios inside a scenario is a scroll up. A switch of segment lands on the panel, or on the card while it says something is wrong. 6c's per-segment notice and 8c's What if card may move it.
-- **The currency card stays above the bar**: the badge on Your path is still to come, as are the inputs as rows (6c) and the fan chart at its width (6d).
+- **The currency card stays above the bar**: the badge on Your path is still to come. (The inputs as rows were built in 6c, and the fan chart at its width in 6d.)
 
 **6c**, the figures the plan rests on:
 
@@ -454,16 +454,16 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 **Decided in 6c:**
 
 - **The notice opens Stress test only** (Fue's choice). Your path opens with the FI card, whose "May be low: spending is missing … (below)." and "Invested assets may be low (below)." already sit on the number, with every note under the rows below it; Portfolio's allocation reads holdings, not these inputs, and says what it is short of on its own card. The notice names the figure and what the test does with it, since the FI card's lines had the FI number as their subject, and less spending makes a simulation read safer, not lower.
-- **Ages and Assumptions stay two rows** (Fue's choice), each opening its own sheet: 6d makes one Assumptions sheet of every setting the stress test uses, which would redo a merged form now. The mockup's one "Ages and assumptions" row waits for it.
+- **Ages and Assumptions stay two rows** (Fue's choice), each opening its own sheet: 6d makes one Assumptions sheet of every setting the stress test uses, which would redo a merged form now. The mockup's one "Ages and assumptions" row waits for it. (6d kept them two rows: Decided in 6d.)
 - **No caveat changes its level.** Every warning the rows said was amber and is a caution; none is raised to critical, though design-system.md's table would make "couldn't be reached and isn't counted" and "couldn't be shown" critical. The payroll note is a caution here, as it was, and information on Home.
 - **Words that change, and only these**: "Type it under Edit." is "Type your own."; "say so under Edit" is "say so in Annual savings"; "(the FI card on Your path says why)" is "(Your path says why)" (Stress test, Compare) and "(the FI card says where they come from)" is "(Your path says where they come from)" (Compare), since the reason is now under the row; the failed sentence starts with a capital and ends with a period, as each note does; the subtitles, the savings rate line and the Assumptions subtitle are new words, and Ages' "typed by you" and "Not set", the "From" label and the five Edit buttons are gone. The sheets' paused lines and Stress test's notice are new.
 - **The card is called Your figures**: the mockup's "From your last 12 months" is wrong for invested assets and ages.
 
 **Kept narrow in 6c:**
 
-- **No badge on the cards the notice is about** (design-system rule 3 asks for one on each affected card): the notice sits directly above them, and their headers are redrawn in 6d.
+- **No badge on the cards the notice is about** (design-system rule 3 asks for one on each affected card): the notice sits directly above them, and their headers are redrawn in 6d. (Built in 6d.)
 - **Refunds, loan payments and cash are behind Why?** although they were beside the figure so an odd large refund could be seen: it is one tap away, in the sheet where it can be typed over.
-- **The row titles keep today's labels** ("Annual spending", not the mockup's "Spending"): 6d's plain words.
+- **The row titles keep today's labels** ("Annual spending", not the mockup's "Spending"): 6d's plain words. (Kept in 6d: Decided in 6d.)
 - **Known and unchanged**: savings says "Needs a year of transactions" when the transactions couldn't be loaded at all; with every figure typed, Home's "The Plan tab says which" has nothing on the Plan to point to.
 
 **6d**, the assumptions and the words:
@@ -472,6 +472,34 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 - Each result keeps a short label ("Hypothetical, from US history: not a prediction, and not advice."); the full text and the data sources are said once, in About these numbers.
 - Plain words, with the FI terms as labels (see [information-architecture.md](information-architecture.md#vocabulary)): "growth after inflation", "how much you'd draw each year", "you could stop saving now". Never "retire early".
 - The fan chart and the rate grid drawn at their width (`useDrawnWidth`), their text at 12px.
+
+**Built in 6d:**
+
+- **One Assumptions sheet** (`AssumptionsForm` in `components/PlanForms.tsx`, which replaces it and `SimulationForm`): every rate and setting the plan uses, under two headings. **FI number**: the withdrawal rate, growth after inflation until FI, tax on withdrawals, part-time income for Barista FI. **Stress test**: method, withdrawal rule (with floor and ceiling), start with (and the balance typed), length, stocks and bonds, rebalancing, fund fees. Each field has a line under it on what it changes, cut from the old intro paragraph and the old forms' notes; one Save saves the whole plan. The sentences that read the rate say it as typed: the rule at the rate the simulation withdraws at (the withdrawal rate when it starts with the FI number, else what your spending is of the balance it starts with), the start choice's consequence, and the FI number in its option, worked out from the spending at the typed rate and tax (`lib/fire/fi.ts`), only while the plan shown is worked out. With a scenario open the method and the part-time income stay the plan's, disabled with their line.
+- **Opened from**: Your figures' Assumptions row (at the top), Stress test's Assumptions row (scrolled to its Stress test heading), the scenario card's "Change it" (at the part with the field), and Portfolio's **Use my allocation in the plan** (at the mix, filled in with the allocation as it was when pressed). The sheet scrolls its own body there, never the page. The mix is set in one place: the allocation card's confirm sheet (`UseMixForm`), and the savers' `allocationMix` and `method` paths, are gone. The sheet says "Your plan's simulation uses 75% stocks, 25% bonds, 0% cash until you save." while the mix typed differs, and keeps the confirm's "The plan keeps this mix until you change it…". When the plan takes the mix and the button goes, focus comes back to Portfolio's "For your plan" heading.
+- **Will it last?** has a heading and its method as meta ("Historical cycles" or "Monte Carlo"); the History · Monte Carlo switch and Change are gone, both in the sheet. The short label is a line of its own under the definition (`HYPOTHETICAL_LABEL` in `components/plan-text.ts`), the worst starting years are behind a disclosure, and its Assumptions list is gone: method, mix, rule, withdrawals once a year, fee and tax are in the sheet, the data sources in About these numbers. What it takes from Your path (placed income, placed one-offs, a scenario's life events) stays, under "From Your path".
+- **The grid** has a heading; it keeps the label. It runs to the card's edges, as the calendar's days do, its column heads in sentence case at 12px and a flexible rule's "low 85%" at 12px, wrapping after "low" where a cell is narrower than it (a 320px phone, where six columns are 46px).
+- **Badges**: while Stress test's notice is shown, "An input may be low" (or "Inputs may be low" with two notes) on Will it last? and the grid, on a line of its own under the title (at 320px the title, a badge and "Monte Carlo" don't fit one row).
+- **Stress test's last card** (`StressRows`): **Assumptions**, its sub what is set ("Historical cycles · 75/25/0 · Constant · 0.1% fee"), and **About these numbers**, a row opening a sheet with the full statement, the data and what the numbers can't say, in the About card's words. Shown whatever the plan's state, as the About card was. Focus comes back to the row as its sheet closes.
+- **Compare's notes** keep the short label, and say About these numbers, on Stress test, says more.
+- **The fan chart** (`components/PlanFanChart.tsx`) is drawn at its width (`useDrawnWidth`), in its shape (160 to 340), 4px more under its baseline for 12px ages; gridlines widen their step until 20px apart (`MIN_TICK_GAP`), the ages step 5, 10 or 20 years until their labels are apart, and the money gutter is sized from the tick values (never from the figures written, which hide amounts masks).
+- **`.plan-heading`**, a 13px heading for a part of a Plan card or sheet, in sentence case, used by the sheet's two parts, "From Your path" and Portfolio's "For your plan" (where it replaces `.plan-subhead`'s 11px capitals).
+
+**Decided in 6d:**
+
+- **Plain words**, with the FI terms as labels (information-architecture.md's vocabulary). "Real return" is "growth after inflation" everywhere it is said (the FI card's notes, Coast FI, the projection, the sheet's field, Your figures' Assumptions sub "5% growth after inflation", the repair card, a scenario's changes, VPW's rule, and Home's FI line: "a 4% withdrawal rate and 5% growth after inflation"). "Target age" and "retirement age" are "stop age" (the Ages sheet's field and its intro, now "Your stop age is when you would like to stop working: the stress test starts there, and Coast FI counts the years to it.", the Ages sub "40 now, stop at 55", Coast FI's need, scenario changes and problems, life events' notes, the scenario store's one error). "Retire(s)" is "stop(s) working" in the simulation's setup ("Stop working at 65 with…") and the start choice ("Stops working at your stop age…"), and a scenario's name suggestion is "Stop at 50". The withdrawal rate's line says "how much you'd draw each year", and Coast FI's note "With this much invested today you could stop saving now: growing 5% a year after inflation, it reaches your FI number by age 55." Kept: "financial independence", "FI number", "Coast FI", "Barista FI", "withdrawal rate" as labels; "in retirement" (spending in retirement); the rule and method names. Nothing says "retire early".
+- **Ages stays its own row** beside Assumptions (as the mockup draws them): the ages are facts and a goal, not assumptions, and the sheet is long enough.
+- **The row titles keep their labels** ("Annual spending"), as the mockup now draws them.
+- **About these numbers is a row that opens a sheet**, as the mockup draws it, rather than a disclosure on the page: it is read once, and its 461px of prose is what made Stress test long.
+- **The grid stays a card**, not the mockup's "By withdrawal rate and length" row: its figures are the point, and a sheet would hide them a tap away.
+- **One name for a method**: "Historical cycles" on the card, its row and in the sheet, where the switch said "History".
+- **Words that changed because a place did**: "start from your FI number (Change)" and "Type the balance to start with (Change)." say "(Assumptions, below)"; the grid's "everything else as above" is "everything else as your Assumptions set it"; the FI card's "Can't be worked out from the saved withdrawal, tax or return rate" is "…withdrawal rate, tax or growth after inflation". The card's "The method is your plan's: every scenario uses it, so they compare. Change it with your plan open." is gone with the switch: the sheet says "The method is the same in every scenario: change it with your plan open." beside the field. No caveat changed its level.
+
+**Kept narrow in 6d:**
+
+- **The sheet's buttons are at the end of its body**, as every Plan form's are, not in `Sheet`'s footer: on a phone Save is a scroll down. Moving the Plan's forms to the footer is one change to all of them.
+- **A save of one part re-reads the other**: the form keeps every field as text, so a stored value off the forms' precision (a fee of 0.123%) is saved as the field shows it, as the simulation form did. A stored value no field takes is repaired before any sheet can save.
+- **`.at-width` stays**, with the charts' hex gridline colors: Home's net worth, Reports' runway and the Plan's allocation charts are still on a fixed viewBox.
 
 **Risks:** the plan's saved inputs and scenarios are unchanged (layout only); the forecast's threshold and what-if keep their behavior; every caveat the Plan tab shows keeps its words and level, and each PR that moves one says so (diff the rendered text before and after, as 3b did).
 

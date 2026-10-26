@@ -377,7 +377,7 @@ export function ScenariosSheet({
           New scenario
         </button>
         <p className="panel-note">
-          What-ifs beside your plan. Each keeps only what it changes (a retirement age, a spending figure, a life event) and follows your plan for the rest, so a change
+          What-ifs beside your plan. Each keeps only what it changes (a stop age, a spending figure, a life event) and follows your plan for the rest, so a change
           to your plan reaches every scenario.
         </p>
         {whyNot && <p className="panel-note">{whyNot}</p>}
@@ -391,7 +391,7 @@ export function ScenariosSheet({
           </>
         )}
         {ready && list.length === 0 && state.unreadable.length === 0 && state.unrecognised.length === 0 && (
-          <p className="empty-note">No scenarios yet. Make one to try retiring earlier, spending more, or a life event, without changing your plan.</p>
+          <p className="empty-note">No scenarios yet. Make one to try stopping work earlier, spending more, or a life event, without changing your plan.</p>
         )}
         {ready && list.length > 0 && (
           <div className="plan-rows">
@@ -611,7 +611,7 @@ function NameForm({
       <div className="sheet-form">
         <label className="field">
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={SCENARIO_NAME_MAX} disabled={busy} placeholder="Retire at 50" />
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={SCENARIO_NAME_MAX} disabled={busy} placeholder="Stop at 50" />
         </label>
       </div>
       {error && <div className="error">{error}</div>}

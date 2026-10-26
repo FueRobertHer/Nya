@@ -202,7 +202,7 @@ export function FiProgressView({
   const typed = [view.spending.source === 'typed' && 'spending', view.savings.source === 'typed' && 'savings', view.assets.source === 'typed' && 'invested assets'].filter(
     (x): x is string => !!x
   );
-  const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${plan.taxRate > 0 ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and a ${pct(plan.realReturn)} real return`;
+  const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${plan.taxRate > 0 ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and ${pct(plan.realReturn)} growth after inflation`;
   notes.push({
     key: 'estimates',
     severity: 'info',

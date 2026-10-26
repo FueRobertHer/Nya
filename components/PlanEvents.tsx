@@ -20,14 +20,14 @@ type SaveEvents = (events: LifeEvent[]) => Promise<boolean | string>;
 
 const KIND_NOTES: Record<LifeEventKind, string> = {
   house:
-    'What you pay from your investments when you buy (0 if the down payment comes from cash the plan doesn’t count), and how your yearly spending changes from then: the mortgage, taxes and upkeep, less the rent you stop paying. A change for good that is already in effect when you retire is part of your spending in retirement, and so of your FI number.',
+    'What you pay from your investments when you buy (0 if the down payment comes from cash the plan doesn’t count), and how your yearly spending changes from then: the mortgage, taxes and upkeep, less the rent you stop paying. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number.',
   child: 'How much more you would spend a year, and for how many years.',
   sabbatical:
-    'How much less you would save each year of it: what you would have saved, plus anything you would spend from savings. It moves your FI date; once you have retired it changes nothing.',
+    'How much less you would save each year of it: what you would have saved, plus anything you would spend from savings. It moves your FI date; once you have stopped working it changes nothing.',
   'part-time':
-    'Income a year after tax, from an age to the age it stops. It counts from this scenario’s retirement age only: for part-time work in place of full-time work, set the scenario’s retirement age to when full-time work stops. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
+    'Income a year after tax, from an age to the age it stops. It counts from this scenario’s stop age only: for part-time work in place of full-time work, set the scenario’s stop age to when full-time work stops. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
   spending:
-    'How much more (or less) you would spend a year, for some years or for good. It changes what you save in its years too. A change for good that is already in effect when you retire is part of your spending in retirement, and so of your FI number. Typing the scenario’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
+    'How much more (or less) you would spend a year, for some years or for good. It changes what you save in its years too. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number. Typing the scenario’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
 };
 
 export function LifeEventsCard({

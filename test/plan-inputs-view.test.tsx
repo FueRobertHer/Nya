@@ -349,8 +349,8 @@ describe('Your figures, under the FI card', () => {
       ['Invested assets', '1 account, as of Oct 6, 3:12 PM', '$300,000', null],
       ['Annual savings', 'Estimated from a year', '$24,000', '40% savings rate'],
       // Their figures are their subs, with no value beside them.
-      ['Ages', '40 now, 55 target', null, null],
-      ['Assumptions', '4% withdrawal · 5% real return until FI · 0% tax', null, null],
+      ['Ages', '40 now, stop at 55', null, null],
+      ['Assumptions', '4% withdrawal · 5% growth after inflation · 0% tax', null, null],
     ]);
     for (const r of tab.rows()) {
       // Named by its own words, a button that opens a sheet, ending in a chevron.
@@ -367,11 +367,11 @@ describe('Your figures, under the FI card', () => {
     serve({ plan: { plan: { ...PLAN, age: null, targetAge: null, partTimeIncome: 28_000 }, currency: 'USD' } });
     const none = await mount();
     expect(part(none.row('Ages')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place income by age');
-    expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% real return until FI · 0% tax · $28,000 part-time');
+    expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% growth after inflation · 0% tax · $28,000 part-time');
     await none.unmount();
     serve({ plan: { plan: { ...PLAN, age: null }, currency: null } });
     const one = await mount();
-    expect(part(one.row('Ages')!, 'list-row-sub')?.textContent).toBe('? now, 55 target');
+    expect(part(one.row('Ages')!, 'list-row-sub')?.textContent).toBe('? now, stop at 55');
     await one.unmount();
   });
 });
@@ -520,7 +520,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
     await press(button(form, 'Cancel'));
     await settle(400);
     // The plan as it was loaded, its ages kept, and nothing can be saved.
-    expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('40 now, 55 target');
+    expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('40 now, stop at 55');
     expect(await everySheet(tab)).toEqual(sheets(false, "Your saved plan couldn't be read, so this can't be saved yet: try again at the top of the Plan tab."));
     // Read again: every row held, still a button in the tab order, and a press opens nothing.
     await press(button(tab.container, 'Try again'));
@@ -781,7 +781,7 @@ describe('a sheet holds the saved plan it opened on', () => {
       await act(async () => click(button(tab.container, 'Try again')!));
       await settle(100);
       expect(gets).toBe(2);
-      expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('40 now, 55 target');
+      expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('40 now, stop at 55');
       expect(tab.dialog()).toBe(sheet);
       expect([title, button(sheet, 'Save')?.disabled, pausedLine(sheet)]).toEqual([title, true, READ_AGAIN]);
       await press(button(sheet, 'Save'));
@@ -1043,5 +1043,105 @@ describe('the Stress test’s notice', () => {
     // Under the row too, the spending is the scenario's own.
     expect(part(tab.row('Annual spending')!, 'list-row-sub')?.textContent).toBe('Typed by you');
     await tab.unmount();
+  });
+});
+
+// Rollout 6d: every rate and setting in one Assumptions sheet, opened from
+// Your figures and from Stress test's own row; About these numbers said once,
+// in a sheet; and a badge on each Stress test card its notice is about.
+describe('the Assumptions sheet, and Stress test’s rows', () => {
+  const puts = (calls: Call[]) => calls.filter((c) => c.method === 'PUT' && c.url === '/api/fire-plan');
+  /** A sheet's field by the words of its label. */
+  const field = (sheet: FakeElement, label: string) =>
+    sheet.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith(label))[0]?.findAll((e) => e.tagName === 'INPUT' || e.tagName === 'SELECT')[0] ?? null;
+  /** Stress test's rows, by title. */
+  const stressRow = (tab: Tab, title: string) =>
+    tab.panel('stress').findAll((e) => e.tagName === 'BUTTON' && has(e, 'list-row') && part(e, 'list-row-title')?.textContent === title)[0] ?? null;
+
+  test('one sheet of the FI number’s and the stress test’s settings, under their headings; one Save sends them all, and the rest of the plan as it was', async () => {
+    const calls = serve({ answers: { 'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan, currency: c.body.currency }] } });
+    const tab = await mount();
+    await press(tab.row('Assumptions'));
+    const sheet = tab.dialog()!;
+    expect(sheet.getAttribute('aria-label')).toBe('Assumptions');
+    expect(sheet.findAll((e) => e.tagName === 'H3' && has(e, 'plan-heading')).map((e) => e.textContent)).toEqual(['FI number', 'Stress test']);
+    for (const label of ['Withdrawal rate', 'Growth after inflation until FI', 'Tax on withdrawals', 'Part-time income', 'Method', 'Withdrawal rule', 'Start with', 'Length in years', 'Stocks %', 'Bonds %', 'Rebalancing', 'Fund fees']) {
+      expect([label, field(sheet, label) !== null]).toEqual([label, true]);
+    }
+    // Each says what it changes, under it.
+    expect(sheet.textContent).toContain("How much you'd draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests.");
+    // The rule is said at the rate typed, as it is typed.
+    await act(async () => type(field(sheet, 'Withdrawal rate')!, '3.5'));
+    expect(sheet.textContent).toContain("The first year withdraws 3.5% of the starting balance");
+    await act(async () => type(field(sheet, 'Fund fees')!, '0.2'));
+    await act(async () => type(field(sheet, 'Method')!, 'monte-carlo'));
+    await press(button(sheet, 'Save'));
+    await settle(100);
+    expect(puts(calls).length).toBe(1);
+    const sent = puts(calls)[0].body.plan;
+    expect([sent.withdrawalRate, sent.fee, sent.method]).toEqual([0.035, 0.002, 'monte-carlo']);
+    expect({ ...sent, withdrawalRate: PLAN.withdrawalRate, fee: PLAN.fee, method: PLAN.method }).toEqual(PLAN);
+    await settle(400);
+    expect(tab.dialog()).toBeNull();
+    // Said on the card and on its row.
+    expect(tab.panel('stress').textContent).toContain('Will it last?Monte Carlo');
+    expect(part(stressRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
+    expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation · 0% tax');
+    await tab.unmount();
+  });
+
+  test('Stress test’s rows open the sheet and About these numbers, and focus comes back to the row', async () => {
+    serve();
+    const tab = await mount();
+    await act(async () => click(tab.tab('Stress test')));
+    const assumptions = stressRow(tab, 'Assumptions')!;
+    expect(part(assumptions, 'list-row-sub')?.textContent).toBe('Historical cycles · 75/25/0 · Constant · 0.1% fee');
+    // The About card is gone: its words are in the row's sheet.
+    expect(tab.panel('stress').textContent).not.toContain('These results are hypothetical');
+    await tap(stressRow(tab, 'About these numbers'));
+    const about = tab.dialog()!;
+    expect(about.getAttribute('aria-label')).toBe('About these numbers');
+    expect(about.textContent).toContain(
+      "These results are hypothetical. They show how this plan would have fared in US market history from 1871 to 2023, or in sequences resampled from it, in today's dollars. They are not a prediction and not advice."
+    );
+    expect(about.textContent).toContain('the S&P Composite (the S&P 500 since 1957) with dividends reinvested');
+    expect(about.textContent).toContain("What this can't tell you: other countries' markets");
+    await act(async () => click(closeOf(about)!));
+    await settle(400);
+    expect(dom.document.activeElement).toBe(stressRow(tab, 'About these numbers'));
+    await tap(assumptions);
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Assumptions');
+    await act(async () => click(closeOf(tab.dialog()!)!));
+    await settle(400);
+    expect(dom.document.activeElement).toBe(stressRow(tab, 'Assumptions'));
+    await tab.unmount();
+  });
+
+  test('with a scenario open, the method and the part-time income are the plan’s, and say so', async () => {
+    const later = scenario({ id: 's1', name: 'Retire at 50', set: { targetAge: 50 } });
+    serve({ answers: { 'GET /api/plan-scenarios': () => [200, { scenarios: [later], unreadable_ids: [], unrecognised_ids: [] }] } });
+    const tab = await mount();
+    await openScenario(tab, 'Retire at 50');
+    await press(tab.row('Assumptions'));
+    const sheet = tab.dialog()!;
+    expect(sheet.getAttribute('aria-label')).toBe('Assumptions (Retire at 50)');
+    expect(field(sheet, 'Method')?.disabled).toBe(true);
+    expect(field(sheet, 'Part-time income')?.disabled).toBe(true);
+    expect(field(sheet, 'Withdrawal rate')?.disabled).toBe(false);
+    expect(sheet.textContent).toContain('The method is the same in every scenario: change it with your plan open.');
+    expect(sheet.textContent).toContain('Saved to the scenario “Retire at 50”, not your plan.');
+    await tab.unmount();
+  });
+
+  test('a badge on each card Stress test’s notice is about, and none without it', async () => {
+    serve();
+    const badges = (tab: Tab) => tab.panel('stress').findAll((e) => has(e, 'plan-card-badge')).map((e) => e.textContent);
+    const short = await mount({ txnWithout: REFUSED });
+    expect(badges(short)).toEqual(['An input may be low', 'An input may be low']);
+    await short.unmount();
+    serve();
+    const whole = await mount();
+    expect(badges(whole)).toEqual([]);
+    await whole.unmount();
   });
 });

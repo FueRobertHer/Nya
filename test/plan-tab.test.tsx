@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import PlanFanChart from '@/components/PlanFanChart';
+import { DrawnWidth } from '@/components/drawn-width';
 import { FigureForm } from '@/components/PlanForms';
 import PlanGrid from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
@@ -349,13 +350,13 @@ describe('the FI card', () => {
     const t = text(html);
     expect(t).toContain('Needs your annual spending');
     expect(text(figureRow(html, 'Annual spending'))).toContain('Annual spending Not enough transactions yet --');
-    expect(t).toContain('Needs your age and target age.');
+    expect(t).toContain('Needs your age and stop age.');
     expect(t).not.toContain('$0');
   });
 
   test('Coast FI and the years to FI, with ages', () => {
     const t = card(plan({ age: 35, targetAge: 50 }));
-    expect(t).toContain('grows to your FI number by age 50');
+    expect(t).toContain('With this much invested today you could stop saving now: growing 5% a year after inflation, it reaches your FI number by age 50.');
     expect(t).toMatch(/about \d+(\.\d)? years/);
     expect(t).toContain('Around age');
     // The simulation is on another segment (rollout phase 6b).
@@ -388,7 +389,7 @@ describe('the caveat sentences', () => {
 
 describe('the simulation card', () => {
   const us = usMarket();
-  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome } = {}) => {
+  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string } = {}) => {
     const view = fiView(p, m);
     const engine = enginePlan(p, view);
     const outcome = opts.outcome ?? ('sim' in engine && !opts.noOutcome ? { result: simulate(p.method, engine.sim, us) } : null);
@@ -401,33 +402,55 @@ describe('the simulation card', () => {
         pending={opts.pending ?? false}
         money={money}
         currency="USD"
-        editable
-        onMethod={noop}
+        badge={opts.badge ?? null}
         onRetry={noop}
-        open={noop}
       />
     );
   };
-  const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome } = {}) => text(render(p, m, opts));
+  const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string } = {}) => text(render(p, m, opts));
 
-  test('the success rate with its definition, the hypothetical framing, the worst years and the assumptions', () => {
-    const t = read(plan({ targetAge: 65, horizon: 30 }));
-    expect(t).toContain('Retire at 65 with $1,000,000 (your FI number), withdrawing 4% of it, $40,000 a year after tax, your spending now, for 30 years (to age 95)');
+  // Since rollout 6d its settings are the Assumptions sheet's (below), the
+  // full statement and the data are About these numbers', and the card
+  // keeps the short label and what it takes from Your path.
+  test('the success rate with its definition, the short label, the worst years, and its method named', () => {
+    const html = render(plan({ targetAge: 65, horizon: 30 }), measured, {});
+    const t = text(html);
+    expect(html).toContain('<h3>Will it last?</h3><span class="meta">Historical cycles</span>');
+    expect(t).toContain('Stop working at 65 with $1,000,000 (your FI number), withdrawing 4% of it, $40,000 a year after tax, your spending now, for 30 years (to age 95)');
     expect(t).toMatch(/9\d\.\d% of 1,470 historical starts \(Jan 1871 to Jun 1993\) lasted 30 years/);
     expect(t).toContain("Success: the portfolio never ran out. Every year's withdrawal was paid in full for all 30 years.");
-    expect(t).toContain('Hypothetical, from US history: not a prediction, and not advice.');
-    expect(t).toContain('Worst starting years');
+    expect(html).toContain('<p class="plan-definition">Hypothetical, from US history: not a prediction, and not advice.</p>');
+    // Behind its disclosure.
+    expect(html).toMatch(/<details class="why"><summary>Worst starting years<\/summary>/);
     expect(t).toMatch(/(Nov|Oct|Dec|Jan) 196\d ran out in year \d+ \(age \d+\)/);
-    expect(t).toContain('Withdrawals once a year, at the start of the year.');
-    expect(t).toContain('Mix: 75% stocks, 25% bonds, 0% cash');
-    expect(t).toContain('the S&P Composite (the S&P 500 since 1957)');
-    expect(t).toContain('long-term US government bonds (10-year Treasuries since 1953)');
+    // Said once, in the sheet and About these numbers.
+    expect(t).not.toContain('Withdrawals once a year');
+    expect(t).not.toContain('Mix: 75% stocks');
+    expect(t).not.toContain('the S&P Composite');
+    expect(t).not.toContain('From Your path');
+    expect(html).not.toContain('Change');
+  });
+
+  test('what it takes from Your path, in its words; the badge when the notice is about it', () => {
+    const p = plan({
+      age: 40,
+      targetAge: 65,
+      horizon: 30,
+      income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }],
+      expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 70 }],
+    });
+    const html = render(p, measured, { badge: 'Inputs may be low' });
+    const t = text(html);
+    expect(html).toContain('<h4 class="plan-heading">From Your path</h4>');
+    expect(t).toContain('Social Security: $24,000 a year after tax from age 67, rising with inflation.');
+    expect(t).toContain("Roof: $30,000 at age 70, on top of the year's spending.");
+    expect(html).toContain('<div class="plan-card-badge"><span class="badge warn">Inputs may be low</span></div>');
   });
 
   // Starting from what you have, the headline answers "could I stop now?".
   test('starting from your invested assets withdraws your spending, and says the rate that implies', () => {
     const t = read(plan({ age: 45, start: 'assets', horizon: 30 }), { spending: 60_000, savings: 10_000, assets: 600_000 });
-    expect(t).toContain('Retire today, at 45, with $600,000 (your invested assets), spending what you spend now, $60,000 a year after tax');
+    expect(t).toContain('Stop working today, at 45, with $600,000 (your invested assets), spending what you spend now, $60,000 a year after tax');
     expect(t).toContain('That is a 10% withdrawal rate, above the 4% your FI number assumes.');
     // And the success rate is for that spending: a 10% rate rarely lasts 30 years.
     expect(t).toMatch(/\b\d{1,2}(\.\d)?% of 1,470 historical starts/);
@@ -436,9 +459,8 @@ describe('the simulation card', () => {
 
   test('Monte Carlo says how it was made', () => {
     const t = read(plan({ method: 'monte-carlo', horizon: 30 }));
+    expect(t).toContain('Will it last? Monte Carlo');
     expect(t).toContain('of 5,000 Monte Carlo runs lasted 30 years');
-    expect(t).toContain('5,000 runs, each built from 5-year blocks');
-    expect(t).toContain('seed 1');
     expect(t).not.toContain('Worst starting years');
   });
 
@@ -457,10 +479,11 @@ describe('the simulation card', () => {
   });
 
   // The last answer answered other assumptions: while the new one is worked
-  // out it keeps its place (nothing jumps) but is hidden, and so is the
-  // assumptions list beside it, which describes the answer shown.
-  test('a new answer being worked out hides the last one, assumptions and all; the first shows a placeholder', () => {
-    const html = render(plan({ horizon: 30 }), measured, { pending: true });
+  // out it keeps its place (nothing jumps) but is hidden, and so is what it
+  // took from Your path, which describes the answer shown.
+  test('a new answer being worked out hides the last one, what it took and all; the first shows a placeholder', () => {
+    const p = plan({ age: 40, horizon: 30, income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }] });
+    const html = render(p, measured, { pending: true });
     expect(html).toContain('plan-result plan-result-pending');
     expect(html).toContain('role="status">Working out the new answer');
     const start = html.indexOf('plan-result plan-result-pending');
@@ -496,10 +519,7 @@ describe('the simulation card', () => {
           pending={false}
           money={money}
           currency="USD"
-          editable
-          onMethod={noop}
           onRetry={noop}
-          open={noop}
         />
       )
     );
@@ -515,7 +535,7 @@ describe('the simulation card', () => {
     const assets = read(plan({ start: 'assets' }), { spending: 40_000, savings: 30_000, assets: null, unmeasured: ['assets'] });
     // Said on Stress test, of the figures on Your path (rollout phase 6b),
     // whose rows say why (6c).
-    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (Your path says why). Type them on Your path, or start from your FI number (Change).');
+    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (Your path says why). Type them on Your path, or start from your FI number (Assumptions, below).');
     expect(assets).not.toContain('none to count yet');
     const spending = read(plan(), { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] });
     expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
@@ -637,6 +657,38 @@ describe('the fan chart', () => {
     expect(text(html)).toContain('Show as a table');
     expect(html).toContain('<td>62</td>');
   });
+
+  // Drawn at its width (rollout 6d): a viewBox unit to a CSS pixel, so its
+  // 12px figures and ages are 12px, in the shape it had (160 to 340).
+  const forty = (n: number) => Array.from({ length: 41 }, (_, i) => n * (1 + i / 10));
+  const wide = { p10: forty(400_000), p25: forty(600_000), p50: forty(800_000), p75: forty(1_000_000), p90: forty(1_400_000) };
+  const at = (width: number) =>
+    renderToStaticMarkup(
+      <DrawnWidth.Provider value={width}>
+        <PlanFanChart bands={wide} startAge={55} currency="USD" />
+      </DrawnWidth.Provider>
+    );
+  const ys = (html: string) => [...html.matchAll(/<text class="chart-tick" x="[^"]*" y="([^"]*)"/g)].map((m) => Number(m[1]));
+  const ages = (html: string) => [...html.matchAll(/<text class="chart-xlabel"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+
+  test('is drawn at its width, its text at 12px, in its shape', () => {
+    const phone = at(248);
+    expect(phone).toContain('class="chart-svg at-width"');
+    expect(phone).toContain('viewBox="0 0 248 117"');
+    expect(at(600)).toContain('viewBox="0 0 600 282"');
+  });
+
+  test('keeps its gridlines 20px apart and its ages from running into each other', () => {
+    for (const width of [248, 340, 600]) {
+      const y = ys(at(width));
+      expect(y.length).toBeGreaterThanOrEqual(2);
+      for (let k = 1; k < y.length; k++) expect(Math.abs(y[k] - y[k - 1])).toBeGreaterThanOrEqual(20);
+    }
+    // 40 years at a phone's width: every 10 years, the first saying "age".
+    expect(ages(at(248))).toEqual(['age 55', '65', '75', '85', '95']);
+    // On a wide card, every 5.
+    expect(ages(at(600))).toEqual(['age 55', '60', '65', '70', '75', '80', '85', '90', '95']);
+  });
 });
 
 describe('income and one-offs', () => {
@@ -708,7 +760,7 @@ describe('a saved plan this version cannot use as it is', () => {
       )
     );
     expect(t).toContain('FI number --');
-    expect(t).toContain("Can't be worked out from the saved withdrawal, tax or return rate");
+    expect(t).toContain("Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions.");
   });
 });
 

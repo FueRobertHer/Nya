@@ -168,8 +168,7 @@ type SheetState =
   | { kind: 'fund'; key: { ticker: string } | { name: string }; label: string; current: Split | null; listed: FundEntry | null }
   | { kind: 'account'; account_id: string; label: string; current: Split | null }
   | { kind: 'bucket'; account_id: string; label: string; bucket: AccountBucket }
-  | { kind: 'target' }
-  | { kind: 'mix' };
+  | { kind: 'target' };
 
 /** The value, or the last one that wasn't null: what a closing drawer keeps
  *  showing while it slides out (as in Dashboard.tsx). */
@@ -182,36 +181,32 @@ function useLast<T>(value: T | null): T | null {
 export type AllocationCardProps = {
   allocation: AllocationState;
   plan: FirePlan;
-  /** Saves the whole plan; true once the server has it. */
-  onSavePlan: (next: FirePlan) => Promise<boolean>;
-  /** False while the plan is loading, saving or waiting on a repair. */
-  planEditable: boolean;
+  /** "Use my allocation in the plan": opens the Plan's Assumptions sheet at
+   *  its mix, filled in with this one (rollout 6d: the mix is set in one
+   *  place). `returnTo` takes focus when the sheet closes and the button has
+   *  gone (the plan took the mix). */
+  onUseMix: (mix: PlanMix & { ok: true }, returnTo: HTMLElement | null) => void;
   /** The allocation settings (target, splits, buckets) can't be saved here:
    *  a scenario is open, and they are the same for every plan. */
   settingsLocked?: boolean;
-  /** The open scenario's name: "Use my allocation" then saves to it. */
+  /** The open scenario's name, said at the top. */
   scenarioName?: string | null;
   /** Which plan the card is shown for (a scenario's id, or "plan"): its
-   *  drawer closes when that changes, and a drawer opened for one plan
-   *  never saves to another. */
+   *  drawer closes when that changes. */
   planKey?: string;
   /** Every institution, for naming accounts missing from a recorded day. */
   institutions: AllocInstitution[];
   balancesAsOf: string | null;
 };
 
-export default function AllocationCard({ allocation, plan, onSavePlan, planEditable, settingsLocked = false, scenarioName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
+export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, scenarioName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
   const { alloc, mix, settings, withSettings } = allocation;
   const [view, setView] = useState<'class' | 'bucket'>('class');
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [opened, setOpened] = useState(0);
   const shown = useLast(sheet);
-  const keyRef = useRef(planKey);
-  keyRef.current = planKey;
-  const openedFor = useRef(planKey);
   const open = (s: SheetState) => {
     setOpened((n) => n + 1);
-    openedFor.current = planKey;
     setSheet(s);
   };
   const close = () => setSheet(null);
@@ -308,7 +303,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             editable={editable}
             onSet={() => open({ kind: 'target' })}
           />
-          <MixSection mix={mix} plan={plan} ready={withSettings} editable={planEditable && withSettings} onUse={() => open({ kind: 'mix' })} currency={currency} />
+          <MixSection mix={mix} plan={plan} ready={withSettings} onUse={onUseMix} currency={currency} />
         </>
       )}
 
@@ -320,13 +315,9 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
           shown
             ? shown.kind === 'target'
               ? 'Target allocation'
-              : shown.kind === 'mix'
-                ? scenarioName
-                  ? 'Use your allocation in this scenario'
-                  : 'Use your allocation in the plan'
-                : shown.kind === 'bucket'
-                  ? 'Tax bucket'
-                  : `Classify ${shown.label}`
+              : shown.kind === 'bucket'
+                ? 'Tax bucket'
+                : `Classify ${shown.label}`
             : ''
         }
         onClose={close}
@@ -369,23 +360,6 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             canRemove={current.target !== null}
             editable={editable}
             onSave={(split) => saveSettings({ ...current, target: split })}
-            onCancel={close}
-          />
-        )}
-        {shown?.kind === 'mix' && (
-          <UseMixForm
-            key={opened}
-            mix={mix}
-            plan={plan}
-            currency={currency}
-            editable={planEditable && withSettings}
-            onConfirm={async (stocksPct, bondsPct) => {
-              // Opened for another plan than the one shown now: nothing goes.
-              if (openedFor.current !== keyRef.current) return false;
-              const ok = await onSavePlan({ ...plan, stocksPct, bondsPct });
-              if (ok) close();
-              return ok;
-            }}
             onCancel={close}
           />
         )}
@@ -777,22 +751,23 @@ export function MixSection({
   plan,
   ready,
   currency,
-  editable,
   onUse,
 }: {
   mix: PlanMix;
   plan: FirePlan;
   ready: boolean;
   currency: string | null;
-  editable: boolean;
-  onUse: () => void;
+  /** Opens the Plan's Assumptions sheet at its mix, filled in with this one;
+   *  the heading takes focus back if the button has gone when it closes. */
+  onUse: (mix: PlanMix & { ok: true }, returnTo: HTMLElement | null) => void;
 }) {
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
   const plans = mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct });
   if (!ready) return null;
   if (!mix.ok) {
     return (
       <>
-        <div className="plan-subhead">For your plan</div>
+        <h4 className="plan-heading">For your plan</h4>
         <p className="panel-note">
           {noMixText(mix)} Your plan&apos;s simulation uses {plans}.
         </p>
@@ -803,7 +778,9 @@ export function MixSection({
   const left = mixLeftOutText(mix, currency);
   return (
     <>
-      <div className="plan-subhead">For your plan</div>
+      <h4 className="plan-heading" tabIndex={-1} ref={headingRef}>
+        For your plan
+      </h4>
       <p className="panel-note">
         <Masked>{mixBasisText(mix, currency)}</Masked>: <strong>{mixText(mix)}</strong>. {same ? "Your plan's simulation already uses this mix." : `Your plan's simulation uses ${plans}.`}
       </p>
@@ -813,67 +790,12 @@ export function MixSection({
         </p>
       )}
       {!same && (
-        <button className="secondary" style={{ marginTop: 8 }} onClick={onUse} disabled={!editable}>
-          Use my allocation in the plan
-        </button>
+        <div className="btn-row">
+          <button type="button" className="btn secondary" aria-haspopup="dialog" onClick={() => onUse(mix, headingRef.current)}>
+            Use my allocation in the plan
+          </button>
+        </div>
       )}
-    </>
-  );
-}
-
-/** The confirmation before the plan's mix changes: the mix now, the one it
- *  would take, and what that leaves out. Nothing changes until Use it. */
-export function UseMixForm({
-  mix,
-  plan,
-  currency,
-  editable,
-  onConfirm,
-  onCancel,
-}: {
-  mix: PlanMix;
-  plan: FirePlan;
-  currency: string | null;
-  editable: boolean;
-  onConfirm: (stocksPct: number, bondsPct: number) => Promise<boolean>;
-  onCancel: () => void;
-}) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  if (!mix.ok) return <p className="empty-note">{noMixText(mix)}</p>;
-  const left = mixLeftOutText(mix, currency);
-  return (
-    <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        Your plan&apos;s simulation uses <strong>{mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct })}</strong>. <Masked>{mixBasisText(mix, currency)}</Masked>:{' '}
-        <strong>{mixText(mix)}</strong>.
-      </p>
-      {left && (
-        <p className="panel-note">
-          <Masked>{left}</Masked>
-        </p>
-      )}
-      <p className="panel-note">
-        The plan keeps this mix until you change it: it doesn&apos;t follow your accounts. Stocks of every region count as stocks.
-      </p>
-      {error && <div className="error">{error}</div>}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onCancel} disabled={saving}>
-          Cancel
-        </button>
-        <button
-          disabled={!editable || saving}
-          onClick={async () => {
-            setSaving(true);
-            setError('');
-            const ok = await onConfirm(mix.stocksPct, mix.bondsPct);
-            setSaving(false);
-            if (!ok) setError('It was not saved. Try again in a moment.');
-          }}
-        >
-          {saving ? 'Saving…' : `Use ${mix.stocksPct}/${mix.bondsPct}/${mix.cashPct}`}
-        </button>
-      </div>
     </>
   );
 }

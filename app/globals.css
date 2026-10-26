@@ -3531,6 +3531,37 @@ button.plan-edit:disabled {
   color: var(--muted);
 }
 
+/* A heading inside a Plan card or sheet (rollout 6d): the Assumptions
+   sheet's two parts, "From Your path" on Will it last?, and Portfolio's "For
+   your plan". 13px, as a secondary line, in sentence case: .plan-subhead's
+   11px capitals are what it replaces. */
+.plan-heading {
+  margin: var(--sp-4) 0 var(--sp-2);
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+}
+
+.plan-assumptions-form > .plan-heading:first-child {
+  margin-top: 0;
+}
+
+/* Each setting's line on what it changes, under its field (which keeps
+   12px under itself). */
+.plan-assumptions-form .helper {
+  margin: calc(-1 * var(--sp-1)) 0 var(--sp-3);
+}
+
+.plan-assumptions-form .btn-row {
+  margin-bottom: var(--sp-3);
+}
+
+/* A card's badge on a line of its own under its title: at 320px the title,
+   the badge and the method don't fit one row. */
+.plan-card-badge {
+  margin: calc(-1 * var(--sp-1)) 0 var(--sp-3);
+}
+
 .plan-subhead {
   margin-top: 18px;
   color: var(--muted);
@@ -3649,9 +3680,13 @@ button.plan-edit:disabled {
 }
 
 /* The grid: figures centred in single-hue cells two pixels apart (the
-   surface gap), the plan's own outlined. */
+   surface gap), the plan's own outlined. It runs to the card's edges, as
+   the calendar's days do (6d): at 320px six columns inside the card's
+   padding are 39px, too narrow for a column head at 12px. */
 .plan-grid {
   margin-top: 10px;
+  margin-inline: calc(-1 * var(--sp-5));
+  width: calc(100% + 2 * var(--sp-5));
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 2px;
@@ -3664,10 +3699,11 @@ button.plan-edit:disabled {
   border-bottom: none;
 }
 
-/* Column heads wrap ("20 / yrs") rather than run into each other on a
-   narrow phone. */
+/* Column heads in sentence case, wrapping ("20 yrs / to 1993") rather
+   than running into each other on a narrow phone. */
 .plan-grid thead th {
-  font-size: 10px;
+  font-size: var(--fs-1);
+  text-transform: none;
   white-space: normal;
 }
 
@@ -3678,10 +3714,13 @@ button.plan-edit:disabled {
   text-transform: none;
 }
 
-/* A flexible rule's second figure in a cell: the lowest year's spending. */
+/* A flexible rule's second figure in a cell: the lowest year's spending,
+   "low 85%", which wraps after "low" where a cell is narrower than its
+   46px (a 320px phone). */
 .plan-grid-low {
   display: block;
-  font-size: 10px;
+  white-space: normal;
+  font-size: var(--fs-1);
   font-weight: 500;
   color: var(--muted);
 }
@@ -3697,11 +3736,12 @@ button.plan-edit:disabled {
   outline-offset: -2px;
 }
 
+/* Centred, as every cell is: at the card's edge a figure set left would
+   touch it. */
 .plan-grid th.plan-grid-rate {
   color: var(--text);
   font-size: 13px;
   text-transform: none;
-  text-align: left;
 }
 
 .plan-worst,

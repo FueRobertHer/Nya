@@ -782,13 +782,13 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="row"><div class="main"><span class="title">Invested assets</span><span class="sub">3 accounts, as of Oct 6, 3:12 PM</span></div><div class="end money">$1,209,400</div><svg class="chev"><use href="#i-chev"/></svg></div>
               <div class="row"><div class="main"><span class="title">Annual savings</span><span class="sub">Estimated from a year</span></div><div class="end"><span class="money">$64,000</span><span class="xs muted">45% savings rate</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
               <div style="padding:0 14px 10px"><div class="notice warn"><svg><use href="#i-alert"/></svg><span style="flex:1">2 notes: pay before it reaches a bank and transactions that couldn’t be read</span><svg><use href="#i-chev"/></svg></div></div>
-              <div class="row"><div class="main"><span class="title">Ages</span><span class="sub">34 now, 55 target</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Assumptions</span><span class="sub">4% withdrawal · 5% real return until FI · 0% tax</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Ages</span><span class="sub">34 now, stop at 55</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Assumptions</span><span class="sub">4% withdrawal · 5% growth after inflation · 0% tax</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Home's FI line says the same words. With no age typed, this card asks for it first. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c, with Ages and Assumptions two rows until 6d's Assumptions sheet).</figcaption>
+        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Home's FI line says the same words. With no age typed, this card asks for it first. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
       </figure>
 
       <figure class="shot">
@@ -871,7 +871,8 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Your annual spending may be low: it is missing transactions that couldn't be read, and the simulation withdraws it (Your path says which).</span></div>
             <div class="card">
-              <div class="card-header"><h2>Will it last?</h2><span class="meta">History</span></div>
+              <div class="card-header"><h2>Will it last?</h2><span class="meta">Historical cycles</span></div>
+              <div><span class="badge warn">An input may be low</span></div>
               <div class="hero money" style="font-size:30px">94%</div>
               <div class="small muted">of 1871 to 1983 starts lasted 40 years from 55</div>
               <div class="xs t3">Hypothetical, from US history: not a prediction, and not advice.</div>
@@ -879,14 +880,13 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <span class="why">Worst starting years</span>
             </div>
             <div class="card flush">
-              <div class="row"><div class="main"><span class="title">By withdrawal rate and length</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Assumptions</span><span class="sub">History · 75/25 · constant · 0.1% fee</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Assumptions</span><span class="sub">Historical cycles · 75/25/0 · Constant · 0.1% fee</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
               <div class="row"><div class="main"><span class="title">About these numbers</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. Assumptions is one row that opens the sheet holding every setting the test uses. The back arrow returns to your plan; the scenario's card, with what it changes and Scenarios (3), sits under the bar above every segment (scrolled past here). When the spending or the invested assets the test uses may be low, the segment opens with one notice saying so (6c): Your path says it on the FI number and under the rows, and Portfolio's allocation reads holdings and says what it is short of itself.</figcaption>
+        <figcaption><b>STRESS TEST, IN A SCENARIO</b>The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. The grid by withdrawal rate and length is a card under it (scrolled past here). Assumptions is one row that opens the sheet holding every setting the plan uses, at the stress test's part; About these numbers opens the full statement and the data, said once (built in 6d). Each card the notice is about has its badge. The back arrow returns to your plan; the scenario's card, with what it changes and Scenarios (3), sits under the bar above every segment (scrolled past here). When the spending or the invested assets the test uses may be low, the segment opens with one notice saying so (6c): Your path says it on the FI number and under the rows, and Portfolio's allocation reads holdings and says what it is short of itself.</figcaption>
       </figure>
       <div class="note-box">
         <p><b>Left out of the first version, on purpose.</b> Actual history on the path chart (snapshots keep no daily invested total, and they are in nominal dollars while the plan is in today's), the stress band on the path, event pins, a year-by-year sheet, and an FI line that steps with lasting events. Each is in the ProjectionLab track in the master plan.</p>

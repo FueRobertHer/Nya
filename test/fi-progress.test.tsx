@@ -212,7 +212,7 @@ describe('the FI card on Home', () => {
 
   test('labels its figures as estimates, with the Plan’s note about pay that never reaches a bank', () => {
     const t = home(plan());
-    expect(t).toContain('Estimates, from your plan: a 4% withdrawal rate and a 5% real return.');
+    expect(t).toContain('Estimates, from your plan: a 4% withdrawal rate and 5% growth after inflation.');
     expect(t).toContain('savings rate, last 12 months');
     expect(t).toContain(PAYROLL_NOTE);
     // Under the Plan's savings row, amber as it was.
@@ -225,7 +225,7 @@ describe('the FI card on Home', () => {
 
   test('with no plan saved, says the figures come from the defaults and offers the Plan tab', () => {
     const t = home(plan(), inputs(), false);
-    expect(t).toContain("from the Plan's default assumptions: a 4% withdrawal rate and a 5% real return. Set your own on the Plan tab.");
+    expect(t).toContain("from the Plan's default assumptions: a 4% withdrawal rate and 5% growth after inflation. Set your own on the Plan tab.");
     expect(t).toContain('$1,000,000');
     // The whole line opens the Plan tab (its button replaced "Set up your plan"),
     // and its gathered notes say, closed, that these are the defaults.

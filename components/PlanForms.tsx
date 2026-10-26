@@ -13,11 +13,13 @@
 // figures are measured, the method, the part-time income) is shown, but
 // can't be edited there, and the form says where its save goes.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { allocationOf, asText, LIMITS, parsePlan, pctText, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
-import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
+import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
+import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
+import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import { Why } from './Why';
@@ -144,7 +146,7 @@ export function Choice<T extends string>({ value, options, onChange, label, disa
  *  money backwards and the simulation retire before today. */
 function ages(age: number | null, targetAge: number | null): { age: number | null; targetAge: number | null } {
   if (age !== null && targetAge !== null && targetAge < age) {
-    throw new FieldError("Your target age can't be before your age. If you've already stopped working, use your age.");
+    throw new FieldError("Your stop age can't be before your age. If you've already stopped working, use your age.");
   }
   return { age, targetAge };
 }
@@ -158,8 +160,8 @@ export function AboutForm(props: SaveProps) {
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        Your age places Social Security, pensions and one-off expenses in the plan. Your target age is when you would like
-        to be financially independent; Coast FI counts the years to it.
+        Your age places Social Security, pensions and one-off expenses in the plan. Your stop age is when you would like to
+        stop working: the stress test starts there, and Coast FI counts the years to it.
       </p>
       <div className="sheet-form">
         <label className="field">
@@ -168,7 +170,7 @@ export function AboutForm(props: SaveProps) {
         </label>
         {props.scenario && <p className="panel-note">Your age is {SAME_IN_EVERY_PLAN}</p>}
         <label className="field">
-          Target age
+          Stop age
           <input type="number" inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="Not set" disabled={s.saving} />
         </label>
       </div>
@@ -182,7 +184,7 @@ export function AboutForm(props: SaveProps) {
         onSave={() =>
           s.save(() => ({
             ...plan,
-            ...ages(readNumber(age, 'Your age', min, max, { integer: true, optional: true }), readNumber(target, 'Target age', min, max, { integer: true, optional: true })),
+            ...ages(readNumber(age, 'Your age', min, max, { integer: true, optional: true }), readNumber(target, 'Stop age', min, max, { integer: true, optional: true })),
           }))
         }
       />
@@ -373,85 +375,67 @@ export function FigureForm(
   );
 }
 
-export function AssumptionsForm(props: SaveProps) {
-  const { plan } = props;
-  const [rate, setRate] = useState(pctText(plan.withdrawalRate));
-  const [ret, setRet] = useState(pctText(plan.realReturn));
-  const [tax, setTax] = useState(pctText(plan.taxRate));
-  const [partTime, setPartTime] = useState(plan.partTimeIncome ? String(plan.partTimeIncome) : '');
-  const s = useSave(props);
-  return (
-    <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        The withdrawal rate sets the FI number (spending divided by it) and the rate the simulation tests. The real
-        return, after inflation, is only for the years until FI. The tax rate is a flat share of every withdrawal.
-      </p>
-      <div className="sheet-form">
-        <label className="field">
-          Withdrawal rate (% a year)
-          <input type="number" inputMode="decimal" data-percent step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
-        </label>
-        <label className="field">
-          Real return until FI (% a year, after inflation)
-          <input type="number" inputMode="decimal" data-percent step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
-        </label>
-        <label className="field">
-          Tax on withdrawals (% of each withdrawal)
-          <input type="number" inputMode="decimal" data-percent step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
-        </label>
-        <label className="field">
-          Part-time income for Barista FI (a year, after tax)
-          <input type="number" inputMode="decimal" value={partTime} onChange={(e) => setPartTime(e.target.value)} placeholder="None" disabled={s.saving || !!props.scenario} />
-        </label>
-        {props.scenario && <p className="panel-note">The part-time income for Barista FI is your plan’s: {SAME_IN_EVERY_PLAN} Part-time work in this scenario is a life event.</p>}
-      </div>
-      {s.error && <div className="error">{s.error}</div>}
-      <Buttons
-        scenario={props.scenario}
-        paused={props.paused}
-        onDone={props.onDone}
-        disabled={s.disabled}
-        saving={s.saving}
-        onSave={() =>
-          s.save(() => ({
-            ...plan,
-            withdrawalRate: readNumber(rate, 'The withdrawal rate', ...LIMITS.withdrawalRate, { scale: 0.01 }) as number,
-            realReturn: readNumber(ret, 'The real return', ...LIMITS.realReturn, { scale: 0.01 }) as number,
-            taxRate: readNumber(tax, 'The tax rate', ...LIMITS.taxRate, { scale: 0.01 }) as number,
-            partTimeIncome: readNumber(partTime, 'Part-time income', 0, LIMITS.money, { optional: true }) ?? 0,
-          }))
-        }
-      />
-    </>
-  );
-}
-
 const RULE_ORDER: RuleKind[] = ['constant', 'guardrails', 'floor-ceiling', 'percent', 'vpw'];
 
-/** What a start choice means for the plan: when it retires, and what the first
- *  year withdraws. Starting with the FI number withdraws the plan's rate of it
- *  (your spending, by construction); starting from anything else withdraws
- *  your spending, at whatever rate that is of the balance (lib/fire/plan.ts). */
+/** A rate typed as a percent, or `saved` while the field doesn't hold one in
+ *  range: what the sentences beside the fields read as they are typed. */
+function typedRate(text: string, [min, max]: readonly [number, number], saved: number): number {
+  const t = text.trim();
+  const n = t === '' ? NaN : Number(t) / 100;
+  return Number.isFinite(n) && n >= min - 1e-12 && n <= max + 1e-12 ? n : saved;
+}
+
+/** The rate the simulation withdraws at when it doesn't start with the FI
+ *  number: your spending, grossed up for tax, as a share of the balance it
+ *  starts with (lib/fire/plan.ts enginePlan); null when either isn't known. */
+function startRate(start: FirePlan['start'], props: { assets: number | null; spending: number | null }, typed: number, tax: number): number | null {
+  if (start === 'fi-number') return null;
+  const balance = start === 'assets' ? props.assets : Number.isFinite(typed) && typed > 0 ? typed : null;
+  return props.spending !== null && balance ? props.spending / (1 - tax) / balance : null;
+}
+
+/** What a start choice means for the plan: when it stops working, and what
+ *  the first year withdraws. Starting with the FI number withdraws the plan's
+ *  rate of it (your spending, by construction); starting from anything else
+ *  withdraws your spending, at whatever rate that is of the balance
+ *  (lib/fire/plan.ts). `rate` and `tax` are the ones typed. */
 function startConsequence(
   start: FirePlan['start'],
   plan: FirePlan,
-  props: { fiNumber: number | null; assets: number | null; spending: number | null; currency: string | null },
-  typed: number
+  props: { assets: number | null; spending: number | null; currency: string | null },
+  typed: number,
+  rate: number,
+  tax: number
 ): string {
   const money = (n: number) => wholeMoney(n, props.currency);
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
   if (start === 'fi-number') {
-    return `Retires at your target age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''} with your FI number, withdrawing ${pct(plan.withdrawalRate)} of it: ${spend}.`;
+    return `Stops working at your stop age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
   }
-  const balance = start === 'assets' ? props.assets : Number.isFinite(typed) && typed > 0 ? typed : null;
-  const rate = props.spending !== null && balance ? props.spending / (1 - plan.taxRate) / balance : null;
-  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your target age with the balance you type`;
-  return `Retires ${when}, spending ${spend}${rate !== null ? `: a ${pct(rate, 1)} withdrawal rate${rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
+  const actual = startRate(start, props, typed, tax);
+  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your stop age with the balance you type`;
+  return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(actual, 1)} withdrawal rate${actual > rate * 1.001 ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
 
-export function SimulationForm(
+/** Which part of the Assumptions sheet to open at: the stress test's
+ *  settings, or its mix (filled in from your allocation). */
+export type AssumptionsAt = 'stress' | 'mix';
+
+/**
+ * Assumptions (rollout phase 6d): every rate and setting the plan uses, in
+ * one sheet, each with what it changes under it. The FI number's (the
+ * withdrawal rate, growth after inflation, tax, part-time income), then the
+ * stress test's (method, rule, where it starts, length, mix, rebalancing,
+ * fees). One Save saves the whole plan. Opened at the stress test's part
+ * from Stress test's row, and at its mix, filled in from your allocation,
+ * from Portfolio's "Use my allocation in the plan": nothing changes until
+ * Save.
+ */
+export function AssumptionsForm(
   props: SaveProps & {
-    fiNumber: number | null;
+    /** The spending the FI number rests on (in a scenario, its spending in
+     *  retirement); null when the plan shown isn't worked out. */
+    fiSpending: number | null;
     assets: number | null;
     spending: number | null;
     currency: string | null;
@@ -459,16 +443,24 @@ export function SimulationForm(
      *  to fill in, with what it is of and what it leaves out: nothing changes
      *  until Save. Null when there is none. */
     allocationMix?: (PlanMix & { ok: true }) | null;
+    /** The part to open at; null or left out, the top. */
+    at?: AssumptionsAt | null;
   }
 ) {
-  const { plan } = props;
+  const { plan, at = null } = props;
+  const offer = props.allocationMix ?? null;
+  const fill = at === 'mix' && offer !== null;
+  const [rate, setRate] = useState(pctText(plan.withdrawalRate));
+  const [ret, setRet] = useState(pctText(plan.realReturn));
+  const [tax, setTax] = useState(pctText(plan.taxRate));
+  const [partTime, setPartTime] = useState(plan.partTimeIncome ? String(plan.partTimeIncome) : '');
   const [method, setMethod] = useState(plan.method);
   const [rule, setRule] = useState<RuleKind>(plan.rule);
   const [start, setStart] = useState(plan.start);
   const [balance, setBalance] = useState(asText(plan.startBalance));
   const [horizon, setHorizon] = useState(asText(plan.horizon));
-  const [stocks, setStocks] = useState(String(plan.stocksPct));
-  const [bonds, setBonds] = useState(String(plan.bondsPct));
+  const [stocks, setStocks] = useState(String(fill ? offer.stocksPct : plan.stocksPct));
+  const [bonds, setBonds] = useState(String(fill ? offer.bondsPct : plan.bondsPct));
   const [rebalance, setRebalance] = useState(plan.rebalance);
   const [fee, setFee] = useState(pctText(plan.fee));
   const [floor, setFloor] = useState(pctText(plan.floor));
@@ -477,6 +469,29 @@ export function SimulationForm(
   const cash = 100 - (Number(stocks) || 0) - (Number(bonds) || 0);
   const mix = { ...plan, stocksPct: Number(stocks) || 0, bondsPct: Number(bonds) || 0 };
   const expected = cash >= 0 ? vpwExpectedReturn(allocationOf(mix)) : 0;
+  // The rate and tax as typed, for the sentences that read them, and the FI
+  // number at them (lib/fire/fi.ts). The rule is said at the rate the
+  // simulation withdraws at: the withdrawal rate when it starts with the FI
+  // number, else what your spending is of the balance it starts with.
+  const rateNow = typedRate(rate, LIMITS.withdrawalRate, plan.withdrawalRate);
+  const taxNow = typedRate(tax, LIMITS.taxRate, plan.taxRate);
+  const fiNumber = props.fiSpending === null ? null : fiNumberOf(props.fiSpending, rateNow, taxNow);
+  const ruleRate = startRate(start, props, Number(balance), taxNow) ?? rateNow;
+
+  // Opened at a part: the sheet's body is scrolled to it. Set on the body
+  // alone (never scrollIntoView, which would scroll the page behind too, as
+  // the sheet hasn't locked it yet when this runs); the sheet takes focus
+  // without scrolling, so this stays.
+  const stressRef = useRef<HTMLHeadingElement | null>(null);
+  const mixRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = at === 'mix' ? mixRef.current : at === 'stress' ? stressRef.current : null;
+    let body: Element | null = el?.parentElement ?? null;
+    while (body && !(body.getAttribute('class') ?? '').split(' ').includes('sheet-body')) body = body.parentElement;
+    if (el && body) body.scrollTop += el.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    // Only as it opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function build(): FirePlan {
     const stocksPct = readNumber(stocks, 'Stocks', 0, 100, { integer: true }) as number;
@@ -484,6 +499,10 @@ export function SimulationForm(
     if (stocksPct + bondsPct > 100) throw new FieldError('Stocks and bonds add up to more than 100%.');
     return {
       ...plan,
+      withdrawalRate: readNumber(rate, 'The withdrawal rate', ...LIMITS.withdrawalRate, { scale: 0.01 }) as number,
+      realReturn: readNumber(ret, 'Growth after inflation', ...LIMITS.realReturn, { scale: 0.01 }) as number,
+      taxRate: readNumber(tax, 'The tax rate', ...LIMITS.taxRate, { scale: 0.01 }) as number,
+      partTimeIncome: readNumber(partTime, 'Part-time income', 0, LIMITS.money, { optional: true }) ?? 0,
       method,
       rule,
       start,
@@ -499,8 +518,35 @@ export function SimulationForm(
   }
 
   return (
-    <>
-      <div className="sheet-form" style={{ marginTop: 0 }}>
+    <div className="plan-assumptions-form">
+      <h3 className="plan-heading">FI number</h3>
+      <div className="sheet-form">
+        <label className="field">
+          Withdrawal rate (% a year)
+          <input type="number" inputMode="decimal" data-percent step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
+        </label>
+        <p className="helper">How much you&apos;d draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests.</p>
+        <label className="field">
+          Growth after inflation until FI (% a year)
+          <input type="number" inputMode="decimal" data-percent step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
+        </label>
+        <p className="helper">Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The simulation uses market history instead.</p>
+        <label className="field">
+          Tax on withdrawals (% of each withdrawal)
+          <input type="number" inputMode="decimal" data-percent step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
+        </label>
+        <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
+        <label className="field">
+          Part-time income for Barista FI (a year, after tax)
+          <input type="number" inputMode="decimal" value={partTime} onChange={(e) => setPartTime(e.target.value)} placeholder="None" disabled={s.saving || !!props.scenario} />
+        </label>
+        {props.scenario && <p className="helper">The part-time income for Barista FI is your plan’s: {SAME_IN_EVERY_PLAN} Part-time work in this scenario is a life event.</p>}
+      </div>
+
+      <h3 className="plan-heading" ref={stressRef}>
+        Stress test
+      </h3>
+      <div className="sheet-form">
         <label className="field">
           Method
           <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving || !!props.scenario}>
@@ -508,11 +554,11 @@ export function SimulationForm(
             <option value="monte-carlo">{METHOD_NAMES['monte-carlo']}</option>
           </select>
         </label>
-        {props.scenario && <p className="panel-note">The method is {SAME_IN_EVERY_PLAN}</p>}
-        <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
+        {props.scenario && <p className="helper">The method is {SAME_IN_EVERY_PLAN}</p>}
+        <p className="helper">
           {method === 'historical'
             ? 'Starts the plan in every month since 1871 that leaves all of it inside the data, and lives through what followed.'
-            : '5,000 runs, each built from 5-year blocks of months drawn at random from the same history: more sequences than history holds, spread wider.'}
+            : `${plainNumber(DEFAULT_RUNS)} runs, each built from ${BLOCK_MONTHS / 12}-year blocks of months drawn at random from the same history: more sequences than history holds, spread wider. They are drawn the same way each time (seed ${DEFAULT_SEED}), so the same plan gives the same answer.`}
         </p>
         <label className="field">
           Withdrawal rule
@@ -524,9 +570,9 @@ export function SimulationForm(
             ))}
           </select>
         </label>
-        <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-          {ruleText(rule, { rate: plan.withdrawalRate, floor: Number(floor) / 100 || plan.floor, ceiling: Number(ceiling) / 100 || plan.ceiling, expectedReturn: expected })}
-          {rule !== 'vpw' && ` The rate (${pct(plan.withdrawalRate)}) is set with the FI assumptions.`}
+        <p className="helper">
+          {ruleText(rule, { rate: ruleRate, floor: Number(floor) / 100 || plan.floor, ceiling: Number(ceiling) / 100 || plan.ceiling, expectedReturn: expected })} Withdrawals once a
+          year, at the start of the year.
         </p>
         {rule === 'floor-ceiling' && (
           <div className="plan-pair">
@@ -544,7 +590,7 @@ export function SimulationForm(
           Start with
           <select value={start} onChange={(e) => setStart(e.target.value as FirePlan['start'])} disabled={s.saving}>
             {[
-              ['fi-number', `FI number${props.fiNumber !== null ? ` (${wholeMoney(props.fiNumber, props.currency)})` : ''}`],
+              ['fi-number', `FI number${fiNumber !== null ? ` (${wholeMoney(fiNumber, props.currency)})` : ''}`],
               ['assets', `Invested assets${props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}`],
             ].map(([value, text]) => (
               <option key={value} value={value} aria-label={spokenLabel(text)}>
@@ -554,8 +600,8 @@ export function SimulationForm(
             <option value="custom">A balance I type</option>
           </select>
         </label>
-        <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-          <Masked>{startConsequence(start, plan, props, Number(balance))}</Masked>
+        <p className="helper">
+          <Masked>{startConsequence(start, plan, props, Number(balance), rateNow, taxNow)}</Masked>
         </p>
         {start === 'custom' && (
           <label className="field">
@@ -567,7 +613,7 @@ export function SimulationForm(
           Length in years (empty: to age 95, or 30 years without an age)
           <input type="number" inputMode="numeric" value={horizon} onChange={(e) => setHorizon(e.target.value)} placeholder="To age 95" disabled={s.saving} />
         </label>
-        <div className="plan-pair">
+        <div className="plan-pair" ref={mixRef}>
           <label className="field">
             Stocks %
             <input type="number" inputMode="numeric" value={stocks} onChange={(e) => setStocks(e.target.value)} disabled={s.saving} />
@@ -577,34 +623,36 @@ export function SimulationForm(
             <input type="number" inputMode="numeric" value={bonds} onChange={(e) => setBonds(e.target.value)} disabled={s.saving} />
           </label>
         </div>
-        <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-          {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'} Stocks are{' '}
-          {DATA_STOCKS}, bonds {DATA_BONDS}.{' '}
+        <p className="helper">
+          {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'}{' '}
           <Masked>
-            {props.allocationMix
-              ? `${mixBasisText(props.allocationMix, props.currency)}: ${mixText(props.allocationMix)}.`
-              : "Nya doesn't look inside funds it doesn't know, so set the mix you hold, or classify them under Allocation."}
+            {offer ? `${mixBasisText(offer, props.currency)}: ${mixText(offer)}.` : "Nya doesn't look inside funds it doesn't know, so set the mix you hold, or classify them under Allocation."}
           </Masked>
         </p>
         {/* What the mix leaves out, beside the button that fills it in. */}
-        {props.allocationMix && mixLeftOutText(props.allocationMix, props.currency) && (
-          <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-            <Masked>{mixLeftOutText(props.allocationMix, props.currency)}</Masked>
+        {offer && mixLeftOutText(offer, props.currency) && (
+          <p className="helper">
+            <Masked>{mixLeftOutText(offer, props.currency)}</Masked>
           </p>
         )}
-        {props.allocationMix && (props.allocationMix.stocksPct !== Number(stocks) || props.allocationMix.bondsPct !== Number(bonds)) && (
-          <button
-            type="button"
-            className="secondary"
-            style={{ marginTop: -4, marginBottom: 12 }}
-            disabled={s.saving}
-            onClick={() => {
-              setStocks(String(props.allocationMix!.stocksPct));
-              setBonds(String(props.allocationMix!.bondsPct));
-            }}
-          >
-            Fill in my allocation
-          </button>
+        {(Number(stocks) !== plan.stocksPct || Number(bonds) !== plan.bondsPct) && (
+          <p className="helper">Your plan&apos;s simulation uses {mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct })} until you save.</p>
+        )}
+        {offer && <p className="helper">The plan keeps this mix until you change it: it doesn&apos;t follow your accounts. Stocks of every region count as stocks.</p>}
+        {offer && (offer.stocksPct !== Number(stocks) || offer.bondsPct !== Number(bonds)) && (
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={s.saving}
+              onClick={() => {
+                setStocks(String(offer.stocksPct));
+                setBonds(String(offer.bondsPct));
+              }}
+            >
+              Fill in my allocation
+            </button>
+          </div>
         )}
         <label className="field">
           Rebalancing
@@ -621,7 +669,7 @@ export function SimulationForm(
       </div>
       {s.error && <div className="error">{s.error}</div>}
       <Buttons scenario={props.scenario} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
-    </>
+    </div>
   );
 }
 
