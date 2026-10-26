@@ -469,7 +469,8 @@ export type FiView = {
   coast: { number: number; years: number; reached: boolean | null } | null;
   /** Barista FI, when part-time income is set. */
   barista: { number: number; yearsTo: number | null } | null;
-  /** The balance projected at the target age, when both ages are known. */
+  /** The balance projected at the target age, when projectFrom has what to
+   *  project from. */
   atTargetAge: number | null;
 };
 
@@ -508,6 +509,7 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
     const number = baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
     barista = { number, yearsTo: blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, number) };
   }
+  const from = projectFrom(plan, { savings, assets });
   return {
     spending,
     savings,
@@ -518,8 +520,22 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
     fiAge,
     coast: coastNumber === null || span === null ? null : { number: coastNumber, years: Math.max(0, span), reached: assets.source === 'unmeasured' ? null : a >= coastNumber },
     barista,
-    atTargetAge: span !== null && !blocked && !neither ? projectBalance(a, c, plan.realReturn, Math.max(0, span)) : null,
+    atTargetAge: from === null ? null : projectBalance(from.assets, from.savings, plan.realReturn, from.years),
   };
+}
+
+/** What a balance is projected from to the target age: today's invested
+ *  assets and savings, with the years to it (0 when it has passed). Null
+ *  without both ages, for rates the formulas don't take, with neither figure,
+ *  or with either there but not measured (never counted as zero). The one
+ *  gate for fiView's atTargetAge, the walk's balance then (planFigures) and
+ *  the path (lib/fire/path.ts). */
+export function projectFrom(plan: FirePlan, view: Pick<FiView, 'savings' | 'assets'>): { assets: number; savings: number; years: number } | null {
+  if (plan.age === null || plan.targetAge === null || !formulasTake(plan)) return null;
+  const { savings, assets } = view;
+  if (savings.source === 'unmeasured' || assets.source === 'unmeasured') return null;
+  if (assets.value === null && savings.value === null) return null;
+  return { assets: assets.value ?? 0, savings: savings.value ?? 0, years: Math.max(0, plan.targetAge - plan.age) };
 }
 
 /** The rule as the engine takes it, starting at `rate` (VPW has none). */
