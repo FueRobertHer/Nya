@@ -161,7 +161,8 @@ export function AboutForm(props: SaveProps) {
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
         Your age places Social Security, pensions and one-off expenses in the plan. Your stop age is when you would like to
-        stop working: the stress test starts there, and Coast FI counts the years to it.
+        stop working: the stress test starts there (unless it starts with what you have today), and Coast FI counts the years
+        to it.
       </p>
       <div className="sheet-form">
         <label className="field">

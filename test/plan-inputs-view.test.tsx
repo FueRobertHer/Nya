@@ -350,7 +350,7 @@ describe('Your figures, under the FI card', () => {
       ['Annual savings', 'Estimated from a year', '$24,000', '40% savings rate'],
       // Their figures are their subs, with no value beside them.
       ['Ages', '40 now, stop at 55', null, null],
-      ['Assumptions', '4% withdrawal · 5% growth after inflation · 0% tax', null, null],
+      ['Assumptions', '4% withdrawal · 5% growth after inflation until FI · 0% tax', null, null],
     ]);
     for (const r of tab.rows()) {
       // Named by its own words, a button that opens a sheet, ending in a chevron.
@@ -367,7 +367,7 @@ describe('Your figures, under the FI card', () => {
     serve({ plan: { plan: { ...PLAN, age: null, targetAge: null, partTimeIncome: 28_000 }, currency: 'USD' } });
     const none = await mount();
     expect(part(none.row('Ages')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place income by age');
-    expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% growth after inflation · 0% tax · $28,000 part-time');
+    expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% growth after inflation until FI · 0% tax · $28,000 part-time');
     await none.unmount();
     serve({ plan: { plan: { ...PLAN, age: null }, currency: null } });
     const one = await mount();
@@ -1086,7 +1086,7 @@ describe('the Assumptions sheet, and Stress test’s rows', () => {
     // Said on the card and on its row.
     expect(tab.panel('stress').textContent).toContain('Will it last?Monte Carlo');
     expect(part(stressRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
-    expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation · 0% tax');
+    expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation until FI · 0% tax');
     await tab.unmount();
   });
 

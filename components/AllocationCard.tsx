@@ -767,7 +767,7 @@ export function MixSection({
   if (!mix.ok) {
     return (
       <>
-        <h4 className="plan-heading">For your plan</h4>
+        <h3 className="plan-heading">For your plan</h3>
         <p className="panel-note">
           {noMixText(mix)} Your plan&apos;s simulation uses {plans}.
         </p>
@@ -778,9 +778,9 @@ export function MixSection({
   const left = mixLeftOutText(mix, currency);
   return (
     <>
-      <h4 className="plan-heading" tabIndex={-1} ref={headingRef}>
+      <h3 className="plan-heading" tabIndex={-1} ref={headingRef}>
         For your plan
-      </h4>
+      </h3>
       <p className="panel-note">
         <Masked>{mixBasisText(mix, currency)}</Masked>: <strong>{mixText(mix)}</strong>. {same ? "Your plan's simulation already uses this mix." : `Your plan's simulation uses ${plans}.`}
       </p>

@@ -272,7 +272,7 @@ describe('the plan’s mix', () => {
   test('"Use my allocation in the plan" hands the mix on to open the Assumptions sheet, and saves nothing', () => {
     const html = renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready currency="USD" onUse={noop} />);
     expect(html).toContain('aria-haspopup="dialog"');
-    expect(html).toMatch(/<h4 class="plan-heading" tabindex="-1">For your plan<\/h4>/);
+    expect(html).toMatch(/<h3 class="plan-heading" tabindex="-1">For your plan<\/h3>/);
   });
 
   test('checking and savings, other currencies, and classes the simulation can’t hold are named in what it left out', () => {

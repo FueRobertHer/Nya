@@ -3548,7 +3548,7 @@ button.plan-edit:disabled {
 
 /* Each setting's line on what it changes, under its field (which keeps
    12px under itself). */
-.plan-assumptions-form .helper {
+.plan-assumptions-form .sheet-form > .helper {
   margin: calc(-1 * var(--sp-1)) 0 var(--sp-3);
 }
 

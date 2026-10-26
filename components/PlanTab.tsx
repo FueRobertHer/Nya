@@ -1227,7 +1227,7 @@ export default function PlanTab({
             {...formProps}
             fiSpending={shown ? (shown.retirement?.spending ?? view.spending.value) : null}
             assets={view.assets.value}
-            spending={view.spending.value}
+            spending={shown?.retirement?.spending ?? view.spending.value}
             currency={displayCurrency}
             allocationMix={shownSheet.mix ?? mixToOffer(allocation)}
             at={shownSheet.at ?? null}
@@ -1503,7 +1503,7 @@ export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptio
  *  Your figures', Stress test's, and Portfolio's "Use my allocation". */
 type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix';
 
-/** A method's name in a few words, for the Assumptions row. */
+/** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {
   constant: 'Constant',
   percent: 'Percent of portfolio',

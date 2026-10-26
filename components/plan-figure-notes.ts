@@ -290,7 +290,7 @@ export function figureNotes(a: FigureArgs): FigureNotes {
       []
     ),
     assumptions: said(
-      `${pct(a.plan.withdrawalRate)} withdrawal · ${pct(a.plan.realReturn)} growth after inflation · ${pct(a.plan.taxRate)} tax${a.plan.partTimeIncome > 0 ? ` · ${a.money(a.plan.partTimeIncome)} part-time` : ''}`,
+      `${pct(a.plan.withdrawalRate)} withdrawal · ${pct(a.plan.realReturn)} growth after inflation until FI · ${pct(a.plan.taxRate)} tax${a.plan.partTimeIncome > 0 ? ` · ${a.money(a.plan.partTimeIncome)} part-time` : ''}`,
       []
     ),
   };

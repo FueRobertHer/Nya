@@ -372,9 +372,9 @@ describe('ages and assumptions', () => {
   });
 
   test('the assumptions are their sub, with the part-time income when there is one', () => {
-    expect(figureNotes(at()).assumptions).toEqual({ sub: '4% withdrawal · 5% growth after inflation · 0% tax', line: null, why: null, notes: [] });
+    expect(figureNotes(at()).assumptions).toEqual({ sub: '4% withdrawal · 5% growth after inflation until FI · 0% tax', line: null, why: null, notes: [] });
     expect(figureNotes(at({ plan: { withdrawalRate: 0.0425, realReturn: 0.055, taxRate: 0.15, partTimeIncome: 28_000 } })).assumptions.sub).toBe(
-      '4.25% withdrawal · 5.5% growth after inflation · 15% tax · $28,000 part-time'
+      '4.25% withdrawal · 5.5% growth after inflation until FI · 15% tax · $28,000 part-time'
     );
   });
 });
