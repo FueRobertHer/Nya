@@ -28,6 +28,13 @@ const KIND_NOTES: Record<LifeEventKind, string> = {
     'Income a year after tax, from an age to the age it stops. It counts from this scenario’s stop age only: for part-time work in place of full-time work, set the scenario’s stop age to when full-time work stops. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
   spending:
     'How much more (or less) you would spend a year, for some years or for good. It changes what you save in its years too. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number. Typing the scenario’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
+  car: 'What you pay from your investments for each car when you buy it, once or every few years. Payments on a car loan are already in your measured spending, so count only what comes from your investments, never a loan’s payments.',
+  raise:
+    'How much more you would save each year from then, after tax, until FI. It moves your FI date only: it never changes your spending in retirement, or your FI number.',
+  windfall:
+    'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From the stop age on, the simulation takes it as money in that year.',
+  'loan-end':
+    'How much less you would spend a year, for good, once a loan is paid off: its payments, which are in your measured spending until then. You save that much more from then until you stop working. Paid off by the time you stop, it is part of your spending in retirement, and so of your FI number.',
 };
 
 export function LifeEventsCard({
@@ -76,7 +83,7 @@ export function LifeEventsCard({
         <div className="inst-name">Life events</div>
       </div>
       {events.length === 0 ? (
-        <p className="empty-note">Add a home, a child, a sabbatical, part-time work or a change in spending, with your own figures, to see how it changes this scenario.</p>
+        <p className="empty-note">Add a home, a child, a sabbatical, part-time work, a change in spending, a car, a raise, a windfall or a loan paid off, with your own figures, to see how it changes this scenario.</p>
       ) : (
         <div className="plan-rows">
           {events.map((e) => (
@@ -176,6 +183,11 @@ export function EventForm({
   const yearsNow = e?.years as number | null | undefined;
   const [years, setYears] = useState(asText(yearsNow ?? undefined));
   const [forGood, setForGood] = useState(yearsNow === null);
+  const [amount, setAmount] = useState(asText(e?.amount as number | undefined));
+  const everyNow = e?.every as number | null | undefined;
+  const [repeats, setRepeats] = useState(typeof everyNow === 'number');
+  const [every, setEvery] = useState(asText(everyNow ?? undefined));
+  const [times, setTimes] = useState(typeof everyNow === 'number' ? asText(e?.times as number) : '');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -202,6 +214,22 @@ export function EventForm({
         return { id, kind, label, fromAge: need(age, 'the age it starts'), toAge: need(toAge, 'the age it stops'), yearly: need(yearly, 'the income a year') };
       case 'spending':
         return { id, kind, label, fromAge: need(age, 'the age'), yearly: signed(yearly, 'the change a year'), years: span() };
+      case 'car':
+        return {
+          id,
+          kind,
+          label,
+          atAge: need(age, 'the age'),
+          cost: need(cost, 'what each car takes from your investments'),
+          every: repeats ? need(every, 'every how many years') : null,
+          times: repeats ? need(times, 'how many in all') : 1,
+        };
+      case 'raise':
+        return { id, kind, label, fromAge: need(age, 'the age'), yearly: need(yearly, 'how much more you would save a year') };
+      case 'windfall':
+        return { id, kind, label, atAge: need(age, 'the age'), amount: need(amount, 'the amount') };
+      case 'loan-end':
+        return { id, kind, label, atAge: need(age, 'the age'), yearly: need(yearly, 'how much less you would spend a year') };
     }
   }
 
@@ -294,6 +322,46 @@ export function EventForm({
             {field('Change a year', yearly, setYearly, true)}
             {direction}
             {lasting}
+          </>
+        )}
+        {kind === 'car' && (
+          <>
+            {field('At age', age, setAge)}
+            {field('Paid from your investments, each', cost, setCost, true)}
+            <div className="plan-choice-row" role="group" aria-label="How often">
+              <label className="plan-check">
+                <input type="radio" name="repeats" checked={!repeats} onChange={() => setRepeats(false)} disabled={saving} />
+                Once
+              </label>
+              <label className="plan-check">
+                <input type="radio" name="repeats" checked={repeats} onChange={() => setRepeats(true)} disabled={saving} />
+                Every few years
+              </label>
+            </div>
+            {repeats && (
+              <>
+                {field('Every how many years', every, setEvery)}
+                {field('How many in all', times, setTimes)}
+              </>
+            )}
+          </>
+        )}
+        {kind === 'raise' && (
+          <>
+            {field('From age', age, setAge)}
+            {field('Saved more a year', yearly, setYearly, true)}
+          </>
+        )}
+        {kind === 'windfall' && (
+          <>
+            {field('At age', age, setAge)}
+            {field('Amount, after tax', amount, setAmount, true)}
+          </>
+        )}
+        {kind === 'loan-end' && (
+          <>
+            {field('Paid off at age', age, setAge)}
+            {field('Spending less a year', yearly, setYearly, true)}
           </>
         )}
       </div>

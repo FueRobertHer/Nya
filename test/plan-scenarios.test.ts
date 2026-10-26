@@ -176,7 +176,7 @@ describe('the FI walk', () => {
 
   test('a cost after it first gets there that takes it back below moves the date to when it gets there again', () => {
     // Reached at 5.9 years; a home at 47 paying 400,000 from investments.
-    const w = walkToFi(500_000, 50_000, 0.05, 1_000_000, { costs: [{ year: 7, amount: 400_000 }], spans: [] });
+    const w = walkToFi(500_000, 50_000, 0.05, 1_000_000, { moneyIn: [], costs: [{ year: 7, amount: 400_000 }], spans: [] });
     if (!('years' in w)) throw new Error('short');
     expect(w.years).toBeGreaterThan(8);
     // Exactly: the balance after year 7's cost, then the closed form.
@@ -210,17 +210,73 @@ describe('the FI walk', () => {
     expect(f.short).toEqual({ year: 14, have: bal, need: 10_000, kind: 'savings' });
     expect(bal * 1.05 - 10_000).toBeLessThan(0);
     // Saving below zero exactly what it earns: it holds still, and is never there.
-    const still = walkToFi(200_000, -10_000, 0.05, 1_000_000, { costs: [], spans: [] });
+    const still = walkToFi(200_000, -10_000, 0.05, 1_000_000, { moneyIn: [], costs: [], spans: [] });
     expect(still).toEqual({ years: Infinity });
   });
 
   test('its tail uses the savings after the last change, lasting changes included', () => {
-    const w = { costs: [], spans: [{ from: 3, to: null, delta: -10_000 }] };
+    const w = { moneyIn: [], costs: [], spans: [{ from: 3, to: null, delta: -10_000 }] };
     expect(lastChange(w)).toBe(2);
     const r = walkToFi(100_000, 50_000, 0.05, 2_000_000, w);
     let bal = 100_000;
     for (let k = 0; k < 3; k++) bal = bal * 1.05 + 50_000;
     expect('years' in r && r.years).toBeCloseTo(3 + yearsToTarget(bal, 40_000, 0.05, 2_000_000), 9);
+  });
+
+  test('a windfall: in at the start of its year, then the closed form from there', () => {
+    // 500,000, saving 50,000 at 5%: 653,750 at 42, and 300,000 in then.
+    const f = figures(p, measured, [{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 300_000 }]);
+    expect(f.walked).toBe(true);
+    expect(f.view.yearsToFi).toBeCloseTo(2 + yearsToTarget(953_750, 50_000, 0.05, 1_000_000), 9);
+    expect(f.view.yearsToFi).toBeLessThan(3);
+    // Enough to reach the FI number on the day it comes: FI at 42 exactly.
+    const big = figures(p, measured, [{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 }]);
+    expect(big.view.yearsToFi).toBe(2);
+    // The balance at the stop age is the closed form, plus the windfall grown from 42 to 60.
+    expect(f.view.atTargetAge).toBeCloseTo(projectBalance(500_000, 50_000, 0.05, 20) + 300_000 * 1.05 ** 18, 6);
+  });
+
+  test('a windfall pays a cost in its own year: it arrives first', () => {
+    const home = { id: 'h', kind: 'house', label: 'Home', atAge: 42, cost: 900_000, yearly: 0, years: null } as const;
+    expect(figures(p, measured, [home]).short).toEqual({ year: 2, have: 653_750, need: 900_000, kind: 'cost' });
+    const f = figures(p, measured, [home, { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 300_000 }]);
+    expect(f.short).toBeNull();
+    // 953,750 in hand, 900,000 out: 53,750 left, then the closed form.
+    const w = walkToFi(500_000, 50_000, 0.05, 1_000_000, { moneyIn: [{ year: 2, amount: 300_000 }], costs: [{ year: 2, amount: 900_000 }], spans: [] });
+    expect('years' in w && w.years).toBeCloseTo(2 + yearsToTarget(53_750, 50_000, 0.05, 1_000_000), 9);
+    expect(f.view.yearsToFi).toBe((w as { years: number }).years);
+    // Not enough: the shortfall says what there was, the windfall included.
+    const less = figures(p, measured, [home, { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 100_000 }]);
+    expect(less.short).toEqual({ year: 2, have: 753_750, need: 900_000, kind: 'cost' });
+  });
+
+  test('a raise: more saved from its age, for good, and the FI number as it was', () => {
+    const f = figures(p, measured, [{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 }]);
+    expect(f.view.fiNumber).toBe(1_000_000);
+    expect(f.retirement).toBeNull();
+    expect(f.walkedSavings).toBe(60_000);
+    let bal = 500_000;
+    for (let k = 0; k < 2; k++) bal = bal * 1.05 + 50_000;
+    expect(f.view.yearsToFi).toBeCloseTo(2 + yearsToTarget(bal, 60_000, 0.05, 1_000_000), 9);
+    expect(f.view.yearsToFi).toBeLessThan(figures(p, measured).view.yearsToFi as number);
+  });
+
+  test('cars every few years: each comes off the balance at its age', () => {
+    const f = figures(p, measured, [{ id: 'v', kind: 'car', label: 'Cars', atAge: 41, cost: 40_000, every: 3, times: 2 }]);
+    let bal = 500_000;
+    for (let k = 0; k < 20; k++) {
+      if (k === 1 || k === 4) bal -= 40_000;
+      bal = bal * 1.05 + 50_000;
+    }
+    expect(f.view.atTargetAge).toBeCloseTo(bal, 6);
+    expect(f.view.yearsToFi).toBeGreaterThan(figures(p, measured).view.yearsToFi as number);
+  });
+
+  test('a loan paid off before the stop age lowers the FI number and raises savings from then', () => {
+    const f = figures(plan({ age: 40, targetAge: 55 }), measured, [{ id: 'l', kind: 'loan-end', label: 'Car loan', atAge: 45, yearly: 6_000 }]);
+    expect(f.retirement).toEqual({ spending: 34_000, lasting: -6_000 });
+    expect(f.view.fiNumber).toBe(850_000);
+    expect(f.walkedSavings).toBe(56_000);
   });
 });
 
@@ -304,7 +360,7 @@ describe('life events, kind by kind', () => {
 
   test('a home: its cost from investments in the walk and, when in retirement, as a one-off; its yearly change as savings, then in the simulation', () => {
     const c = compileEvents([{ id: 'h', kind: 'house', label: 'Home', atAge: 48, cost: 100_000, yearly: 6_000, years: 5 }], at);
-    expect(c.walk).toEqual({ costs: [{ year: 8, amount: 100_000 }], spans: [{ from: 8, to: 13, delta: -6_000 }] });
+    expect(c.walk).toEqual({ moneyIn: [], costs: [{ year: 8, amount: 100_000 }], spans: [{ from: 8, to: 13, delta: -6_000 }] });
     // Ages 50 to 52 of its five years are in retirement.
     expect(c.sim.oneOffs).toEqual([0, 1, 2].map((year) => ({ amount: 6_000, year })));
     const later = compileEvents([{ id: 'h', kind: 'house', label: 'Home', atAge: 60, cost: 200_000, yearly: -3_000, years: 10 }], at);
@@ -331,7 +387,7 @@ describe('life events, kind by kind', () => {
     const c = compileEvents([{ id: 'p', kind: 'part-time', label: 'Part time', fromAge: 45, toAge: 56, yearly: 25_000 }], at);
     expect(c.sim.income).toEqual([{ amount: 25_000, fromYear: 0, toYear: 6, inflationAdjusted: true }]);
     expect(c.notes).toEqual([{ id: 'p', part: 'before-start' }]);
-    expect(c.walk).toEqual({ costs: [], spans: [] });
+    expect(c.walk).toEqual({ moneyIn: [], costs: [], spans: [] });
   });
 
   test('a change in spending: a lower cost as lowerSpending, never income', () => {
@@ -341,10 +397,92 @@ describe('life events, kind by kind', () => {
     expect(c.later).toEqual([{ id: 'x', amount: -18_000, fromAge: 60 }]);
   });
 
+  test('a car once: its cost from investments in the walk, and a one-off when it comes after the stop age', () => {
+    const before = compileEvents([{ id: 'v', kind: 'car', label: 'Car', atAge: 48, cost: 30_000, every: null, times: 1 }], at);
+    expect(before.walk).toEqual({ moneyIn: [], costs: [{ year: 8, amount: 30_000 }], spans: [] });
+    expect(before.sim).toEqual({ oneOffs: [], income: [], lowerSpending: [] });
+    expect(before.notes).toEqual([]);
+    const after = compileEvents([{ id: 'v', kind: 'car', label: 'Car', atAge: 55, cost: 30_000, every: null, times: 1 }], at);
+    expect(after.sim.oneOffs).toEqual([{ amount: 30_000, year: 5 }]);
+  });
+
+  test('a car every few years: each one a cost at its own age, in the walk from today and in the simulation from the stop age', () => {
+    const c = compileEvents([{ id: 'v', kind: 'car', label: 'Cars', atAge: 46, cost: 30_000, every: 8, times: 4 }], at);
+    // At 46, 54, 62 and 70.
+    expect(c.walk.costs).toEqual([6, 14, 22, 30].map((year) => ({ year, amount: 30_000 })));
+    expect(c.sim.oneOffs).toEqual([4, 12, 20].map((year) => ({ amount: 30_000, year })));
+    expect(c.lasting).toEqual([]);
+    expect(c.later).toEqual([]);
+    // The first before today counts from the next.
+    const past = compileEvents([{ id: 'v', kind: 'car', label: 'Cars', atAge: 34, cost: 30_000, every: 8, times: 3 }], at);
+    expect(past.walk.costs).toEqual([{ year: 2, amount: 30_000 }, { year: 10, amount: 30_000 }]);
+    expect(past.notes).toEqual([{ id: 'v', part: 'past' }]);
+    // Every one before today: already in your figures.
+    const gone = compileEvents([{ id: 'v', kind: 'car', label: 'Cars', atAge: 30, cost: 30_000, every: 4, times: 2 }], at);
+    expect([gone.walk.costs, gone.notes]).toEqual([[], [{ id: 'v', part: 'already' }]]);
+  });
+
+  test('a raise: more saved for good from its age, in the walk only; never retirement spending', () => {
+    const c = compileEvents([{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 }], at);
+    expect(c.walk).toEqual({ moneyIn: [], costs: [], spans: [{ from: 2, to: null, delta: 10_000 }] });
+    expect(c.sim).toEqual({ oneOffs: [], income: [], lowerSpending: [] });
+    expect(c.lasting).toEqual([]);
+    expect(c.later).toEqual([]);
+    expect(c.notes).toEqual([]);
+    // After the stop age, still in the walk (it saves until FI), with nothing to note: it is never in the simulation.
+    const late = compileEvents([{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 52, yearly: 10_000 }], at);
+    expect(late.walk.spans).toEqual([{ from: 12, to: null, delta: 10_000 }]);
+    expect(late.notes).toEqual([]);
+    // Before today: your savings already have it, so it is left out, never counted twice.
+    const past = compileEvents([{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 38, yearly: 10_000 }], at);
+    expect(past.walk).toEqual({ moneyIn: [], costs: [], spans: [] });
+    expect(past.notes).toEqual([{ id: 'r', part: 'already' }]);
+    // Without your age, it can't be placed anywhere it counts.
+    const noAge = compileEvents([{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 }], { ...at, age: null });
+    expect(noAge.walk.spans).toEqual([]);
+    expect(noAge.notes).toEqual([{ id: 'r', part: 'no-today-walk' }]);
+    // The FI number is the plan's, whatever the raise.
+    const p = plan({ age: 40, targetAge: 55 });
+    expect(figures(p, measured, [{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 }]).view.fiNumber).toBe(figures(p, measured).view.fiNumber);
+  });
+
+  test('a windfall: money in, in the walk at its age and in the simulation as income for its one year from the stop age', () => {
+    const before = compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 45, amount: 200_000 }], at);
+    expect(before.walk).toEqual({ moneyIn: [{ year: 5, amount: 200_000 }], costs: [], spans: [] });
+    expect(before.sim).toEqual({ oneOffs: [], income: [], lowerSpending: [] });
+    const after = compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 }], at);
+    expect(after.walk.moneyIn).toEqual([{ year: 20, amount: 200_000 }]);
+    expect(after.sim.income).toEqual([{ amount: 200_000, fromYear: 10, toYear: 11, inflationAdjusted: true }]);
+    expect(after.sim.oneOffs).toEqual([]);
+    const past = compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 38, amount: 200_000 }], at);
+    expect(past.walk.moneyIn).toEqual([]);
+    expect(past.notes).toEqual([{ id: 'w', part: 'already' }]);
+    const late = compileEvents([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 100, amount: 200_000 }], at);
+    expect(late.notes).toEqual([{ id: 'w', part: 'after-end' }]);
+    expect(late.sim.income).toEqual([{ amount: 200_000, fromYear: 50, toYear: 51, inflationAdjusted: true }]);
+  });
+
+  test('a loan paid off: spending lower for good, as a change in spending of the same amount less', () => {
+    for (const atAge of [48, 60]) {
+      const loan = compileEvents([{ id: 'l', kind: 'loan-end', label: 'Loan', atAge, yearly: 18_000 }], at);
+      const spending = compileEvents([{ id: 'l', kind: 'spending', label: 'Loan', fromAge: atAge, yearly: -18_000, years: null }], at);
+      expect(loan).toEqual(spending);
+    }
+    const c = compileEvents([{ id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 }], at);
+    expect(c.walk.spans).toEqual([{ from: 8, to: null, delta: 18_000 }]);
+    expect(c.lasting).toEqual([{ id: 'l', amount: -18_000 }]);
+    const later = compileEvents([{ id: 'l', kind: 'loan-end', label: 'Loan', atAge: 60, yearly: 18_000 }], at);
+    expect(later.sim.lowerSpending).toEqual([{ amount: 18_000, fromYear: 10 }]);
+    expect(later.later).toEqual([{ id: 'l', amount: -18_000, fromAge: 60 }]);
+    // Paid off before today: your measured spending is already without it.
+    const past = compileEvents([{ id: 'l', kind: 'loan-end', label: 'Loan', atAge: 38, yearly: 18_000 }], at);
+    expect([past.walk.spans, past.lasting, past.notes]).toEqual([[], [], [{ id: 'l', part: 'already' }]]);
+  });
+
   test('without an age: no today to walk from, or nothing to place by', () => {
     const e: LifeEvent = { id: 'c', kind: 'child', label: 'Child', fromAge: 45, yearly: 15_000, years: 18 };
     const noToday = compileEvents([e], { age: null, startAge: 50, years: 45 });
-    expect(noToday.walk).toEqual({ costs: [], spans: [] });
+    expect(noToday.walk).toEqual({ moneyIn: [], costs: [], spans: [] });
     expect(noToday.notes).toEqual([{ id: 'c', part: 'no-today' }]);
     expect(noToday.sim.oneOffs.length).toBe(13);
     expect(compileEvents([e], { age: null, startAge: null, years: 30 }).notes).toEqual([{ id: 'c', part: 'no-age' }]);
@@ -369,6 +507,23 @@ describe('life events, kind by kind', () => {
     expect(r.ending.p50).toBeLessThanOrEqual(1_000_000);
     // The first year withdraws 4%; nothing after.
     expect(r.ending.p50).toBeCloseTo(960_000, 6);
+  });
+
+  test('in the simulation a windfall is money in, invested when the year doesn’t need it; a car is a one-off', () => {
+    const z = new Array(12 * 31).fill(0);
+    const flat = makeMarket('1900-01', z, z, z);
+    // 1,000,000 from 60, 40,000 a year by the constant rule, no tax, no returns.
+    const p = plan({ age: 60, targetAge: 60, start: 'custom', startBalance: 1_000_000, horizon: 10, stocksPct: 100, bondsPct: 0, fee: 0 });
+    const end = (events: LifeEvent[]) => historicalCycles(sim(figures(p, measured, events)), flat).ending.p50;
+    expect(end([])).toBeCloseTo(600_000, 6);
+    // 100,000 in at 61: that year takes 40,000 from it and invests 60,000.
+    expect(end([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 61, amount: 100_000 }])).toBeCloseTo(700_000, 6);
+    // One at 60, the first year: the same.
+    expect(end([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 60, amount: 100_000 }])).toBeCloseTo(700_000, 6);
+    // Two cars, at 62 and 66.
+    expect(end([{ id: 'v', kind: 'car', label: 'Cars', atAge: 62, cost: 25_000, every: 4, times: 2 }])).toBeCloseTo(550_000, 6);
+    // A raise in retirement changes nothing.
+    expect(end([{ id: 'r', kind: 'raise', label: 'Raise', fromAge: 62, yearly: 25_000 }])).toBeCloseTo(600_000, 6);
   });
 
   test('the grid’s longer columns count what is past the plan’s end: a 50-year cell equals a 50-year simulation', () => {
@@ -522,6 +677,10 @@ describe('the stored shape', () => {
       { id: 's', kind: 'sabbatical', label: 'Off', fromAge: 45, years: 1, savingsLost: 80_000 },
       { id: 'p', kind: 'part-time', label: 'Part time', fromAge: 50, toAge: 60, yearly: 20_000 },
       { id: 'x', kind: 'spending', label: 'Less', fromAge: 65, yearly: -8_000, years: 10 },
+      { id: 'v', kind: 'car', label: 'Cars', atAge: 46, cost: 30_000, every: 8, times: 4 },
+      { id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 },
+      { id: 'w', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 },
+      { id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 },
     ],
   };
   const stored = (d: ScenarioDraft): PlanScenario => ({ version: 1, ...d, createdAt: '2026-10-20T10:00:00.000Z', savedAt: '2026-10-21T10:00:00.000Z', rev: 'r1' });
@@ -542,8 +701,21 @@ describe('the stored shape', () => {
     expect(isPlanScenario({ ...s, set: { ...s.set, mix: { stocksPct: 80, bondsPct: 20, gold: 0 } } })).toBe(false);
     expect(isPlanScenario({ ...s, income: { ...s.income, note: '' } })).toBe(false);
     expect(isPlanScenario({ ...s, events: [{ ...s.events[0], extra: 1 }] })).toBe(false);
+    // A kind this code doesn't know (a later release's): not understood.
+    expect(isPlanScenario({ ...s, events: [{ ...s.events[0], kind: 'lottery' }] })).toBe(false);
+    // A kind with another kind's fields isn't it.
     expect(isPlanScenario({ ...s, events: [{ ...s.events[0], kind: 'windfall' }] })).toBe(false);
+    expect(isPlanScenario({ ...s, events: [{ ...s.events[5], every: 'often' }] })).toBe(false);
+    expect(isPlanScenario({ ...s, events: [{ ...s.events[8], yearly: null }] })).toBe(false);
     expect(isPlanScenario({ ...s, version: 2 })).toBe(false);
+  });
+
+  test('a car bought once reads with every null; one bought every few years with a number', () => {
+    const once: LifeEvent = { id: 'v', kind: 'car', label: 'Car', atAge: 46, cost: 30_000, every: null, times: 1 };
+    const r = parseScenarioDraft({ ...draft, events: [once] });
+    if (!('ok' in r)) throw new Error(r.error);
+    expect(r.ok.events).toEqual([once]);
+    expect(isPlanScenario(stored(r.ok))).toBe(true);
   });
 
   test('a range narrowed after a save still reads, though a save refuses it', () => {
@@ -569,6 +741,21 @@ describe('the stored shape', () => {
     ['a child costing nothing', { ...draft, events: [{ ...draft.events[1], yearly: 0 }] }],
     ['part-time work ending before it starts', { ...draft, events: [{ ...draft.events[3], toAge: 50 }] }],
     ['a home with no cost and no change', { ...draft, events: [{ ...draft.events[0], cost: 0, yearly: 0 }] }],
+    ['a car costing nothing', { ...draft, events: [{ ...draft.events[5], cost: 0 }] }],
+    ['a car once that is two', { ...draft, events: [{ ...draft.events[5], every: null, times: 2 }] }],
+    ['cars every few years that are one', { ...draft, events: [{ ...draft.events[5], times: 1 }] }],
+    ['cars every year', { ...draft, events: [{ ...draft.events[5], every: 1 }] }],
+    ['twenty-one cars', { ...draft, events: [{ ...draft.events[5], every: 2, times: 21 }] }],
+    ['cars every few years in part-years', { ...draft, events: [{ ...draft.events[5], every: 2.5 }] }],
+    ['a last car after the last age', { ...draft, events: [{ ...draft.events[5], atAge: 90, every: 10, times: 4 }] }],
+    ['a raise of nothing', { ...draft, events: [{ ...draft.events[6], yearly: 0 }] }],
+    ['a raise below zero', { ...draft, events: [{ ...draft.events[6], yearly: -5_000 }] }],
+    ['a windfall of nothing', { ...draft, events: [{ ...draft.events[7], amount: 0 }] }],
+    ['a windfall below zero', { ...draft, events: [{ ...draft.events[7], amount: -1 }] }],
+    ['a windfall at no age a plan takes', { ...draft, events: [{ ...draft.events[7], atAge: 120 }] }],
+    ['a loan paid off saving nothing', { ...draft, events: [{ ...draft.events[8], yearly: 0 }] }],
+    ['a loan paid off spending more', { ...draft, events: [{ ...draft.events[8], yearly: -18_000 }] }],
+    ['an unknown kind', { ...draft, events: [{ ...draft.events[7], kind: 'lottery' }] }],
     ['an extra field', { ...draft, note: 'x' }],
     ['a missing field', { name: 'x', currency: null, set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] } }],
   ];
