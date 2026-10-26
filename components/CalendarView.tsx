@@ -9,18 +9,19 @@
 // expected and what is due, as Activity lists a day (rollout phase 6a3).
 // The two figures are never added together: one is the bank's record, the
 // other an estimate, and the expected one counts what the forecast counts (a
-// card's own charges are listed, not added). A cell's figure is in whole
-// units, a thousand and up shortened, so it fits a phone's narrow column;
-// the day's list has the cents. Its tab names it, so it has no heading of
-// its own; the month's arrows stay focusable at either end (aria-disabled),
-// as Activity's do.
+// card's own charges are listed, not added). A cell's figure is its sign and
+// whole units, from a thousand two figures and K, M, B or T ("+3.5K"), with
+// no currency: the legend names it once, as a 320px phone's column has no
+// room for it at 12px. The day's list has the cents. Its tab names it, so it
+// has no heading of its own; the month's arrows stay focusable at either end
+// (aria-disabled), as Activity's do.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { addMonths, calendarMonth, duePayments, type CalendarEntry } from '@/lib/calendar';
 import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurring';
 import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/lib/planned';
-import { amountsHidden, compactMoney, formatMoney, hiddenMoney, signedMoney, spoken } from '@/lib/format';
+import { amountsHidden, formatMoney, MASK, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
@@ -35,22 +36,32 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 const MONTHS_BACK = 12;
 const MONTHS_AHEAD = 12;
 
-/** "+$1.2K", "-$143": a day's figure in a cell, in whole units (the day's
- *  list has the cents), a thousand and up shortened. */
-function cellFigure(n: number, currency: string | null): string {
-  const abs = Math.abs(n);
-  const sign = Math.round(abs) === 0 ? '' : n < 0 ? '-' : '+';
-  // Hidden amounts (lib/format.ts): the sign and the currency, never a size.
-  if (amountsHidden()) return `${sign}${hiddenMoney(abs, currency)}`;
-  if (abs >= 1000) return `${sign}${compactMoney(abs, currency)}`;
-  if (currency) {
-    try {
-      return `${sign}${new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(Math.round(abs))}`;
-    } catch {
-      return `${sign}${Math.round(abs)} ${currency}`;
-    }
-  }
-  return `${sign}$${Math.round(abs)}`;
+/** What a cell's figure from a thousand ends in: the app's words, English
+ *  as the rest of it is. */
+const SUFFIXES = ['K', 'M', 'B', 'T'];
+
+/** "+3.5K", "-143": a day's figure in a cell, its sign and whole units (the
+ *  day's list has the cents), from a thousand two significant figures and K,
+ *  M, B or T, never a currency (the legend names it once). The digits and
+ *  the decimal sign are the viewer's ("3,5K" in German). Not Intl's compact
+ *  notation: in other languages it writes a thousand in full or as a word
+ *  ("13.000", "13 mil"), too wide for the cell. */
+function cellFigure(n: number): string {
+  // Hidden amounts (lib/format.ts): the sign and the mask, never a size. The
+  // sign is the amount's own, not its rounded figure's: a figure under 0.5
+  // drawn with none would say how small it is.
+  if (amountsHidden()) return `${n > 0 ? '+' : n < 0 ? '-' : ''}${MASK}`;
+  const r = Math.round(Math.abs(n));
+  const sign = r === 0 ? '' : n < 0 ? '-' : '+';
+  if (r < 1000) return `${sign}${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(r)}`;
+  // The suffix is chosen after rounding: at two figures 995 and up is a
+  // thousand, so 999,999 is "1M", never "1000K". Past T the figure grows.
+  let tier = 0;
+  while (tier < SUFFIXES.length - 1 && r >= 995 * 1000 ** (tier + 1)) tier++;
+  // Carried up, it is 0.995 or more of the next suffix: 1, as two figures
+  // round it, not left to how an engine rounds 0.995's binary form ("0.99").
+  const figures = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 2, useGrouping: false }).format(Math.max(1, r / 1000 ** (tier + 1)));
+  return `${sign}${figures}${SUFFIXES[tier]}`;
 }
 
 /** Why an expected amount isn't in its day's figure (lib/calendar.ts). */
@@ -310,7 +321,7 @@ export default function CalendarView({
             >
               <span className="cal-num">{Number(date.slice(8))}</span>
               <span className={`cal-fig${figure === null ? '' : figure > 0 ? ' in' : figure < 0 ? ' out' : ''}${estimated ? ' estimated' : ''}`}>
-                <Masked>{figure === null ? '' : cellFigure(figure, currency)}</Masked>
+                <Masked>{figure === null ? '' : cellFigure(figure)}</Masked>
               </span>
               <span className="cal-dots" aria-hidden="true">
                 {dots.map((k) => (
@@ -337,6 +348,7 @@ export default function CalendarView({
         <span>
           <span className="cal-dot due" /> Payment due
         </span>
+        <span className="cal-legend-note">{currency ? `Day figures in ${currency}, rounded` : 'Day figures rounded'}</span>
       </div>
 
       {day && (

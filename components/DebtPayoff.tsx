@@ -13,9 +13,10 @@
 // Plaid's terms. Keeping it in browser storage would be one more place for
 // financial details to outlive a sign-out, to save retyping a rate.
 
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useState, type PointerEvent, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
 import {
@@ -1112,23 +1113,41 @@ function clippedPath(vals: number[], x: (i: number) => number, y: (v: number) =>
   return d;
 }
 
-function niceTicks(max: number): number[] {
+// Neighbouring gridlines are at least this far apart, in CSS pixels (a
+// viewBox unit at the chart's width): each has its 12px figure over it, the
+// figure's baseline 3 above the line, with room left under the line above.
+const MIN_TICK_GAP = 20;
+
+// Clean tick values (1/2/5 x 10^n steps) from 0 to `max`, on a plot `height`
+// tall. Where they would be closer than MIN_TICK_GAP (a phone's short plot),
+// the step goes on up the same sequence until they aren't.
+function niceTicks(max: number, height: number): number[] {
   const rough = max / 2.5;
-  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  let mag = Math.pow(10, Math.floor(Math.log10(rough)));
   const norm = rough / mag;
-  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
+  let lead = norm >= 5 ? 5 : norm >= 2 ? 2 : 1;
+  // 1 to 2, 2 to 5, 5 to 10.
+  while (height > 0 && ((lead * mag) / max) * height < MIN_TICK_GAP) {
+    if (lead === 5) mag *= 10;
+    lead = lead === 1 ? 2 : lead === 2 ? 5 : 1;
+  }
+  const step = lead * mag;
   const out: number[] = [];
   for (let v = 0; v <= max + 1e-9; v += step) out.push(v);
   return out;
 }
 
-// The chart's frame, in the house style of MonthFlowChart.
-const W = 340;
-const H = 140;
+// The chart's frame, in the house style of MonthFlowChart: drawn at its own
+// width (components/drawn-width.ts), so its text is the 12px it says on a
+// phone and on a wide sheet.
+/** Its height for its width: 140 to 340, the shape it has always had. */
+const ASPECT = 140 / FALLBACK_WIDTH;
 const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
-const PAD_TOP = 12;
-const PAD_BOTTOM = 20;
+// Room over the top tick for its 12px figure.
+const PAD_TOP = 14;
+// Room under the baseline for the 12px dates.
+const PAD_BOTTOM = 24;
 const PLAN_COLOR = 'var(--accent)';
 // The baseline is context, so it is a gray, but darker than --muted: checked
 // against the card surface (over 3:1) and against the accent (far enough apart
@@ -1155,7 +1174,8 @@ function PayoffChart({
   money: (cents: number) => string;
   start: string;
 }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
+  const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
   const geo = useMemo(() => {
     const done = plan.months ?? 0;
@@ -1172,8 +1192,9 @@ function PayoffChart({
     // rather than flattening the plan against the floor.
     const top = Math.max(planTop, Math.min(Math.max(...baseVals), planTop * 1.5)) * 1.06 || 1;
     const plotW = W - PAD_LEFT - PAD_RIGHT;
+    const plotH = H - PAD_TOP - PAD_BOTTOM;
     const x = (i: number) => PAD_LEFT + (i / span) * plotW;
-    const y = (v: number) => PAD_TOP + (1 - v / top) * (H - PAD_TOP - PAD_BOTTOM);
+    const y = (v: number) => PAD_TOP + (1 - v / top) * plotH;
     return {
       done,
       span,
@@ -1186,20 +1207,18 @@ function PayoffChart({
       // The plan's own peak sets the axis, so only the baseline can run off it.
       planPath: clippedPath(planVals, x, y, top),
       basePath: clippedPath(baseVals, x, y, top),
-      ticks: niceTicks(top),
+      ticks: niceTicks(top, plotH),
     };
-  }, [plan, baseline]);
+  }, [plan, baseline, W, H]);
 
   const { done, span, planVals, baseVals, x, y, top, plotW, planPath, basePath, ticks } = geo;
   // Clamped: a pointer left resting on the chart keeps its index while a larger
   // extra shortens the plan under it.
   const i = Math.min(active ?? done, span);
 
-  function scrub(clientX: number) {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
+  function scrub(e: PointerEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
     setActive(Math.max(0, Math.min(span, Math.round(((px - PAD_LEFT) / plotW) * span))));
   }
 
@@ -1233,13 +1252,13 @@ function PayoffChart({
       </div>
 
       <svg
-        ref={svgRef}
-        className="chart-svg"
+        ref={drawnRef}
+        className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
         aria-label={`Total owed from now to ${endLabel}. ${planLabel} reaches zero in ${monthLabel(plan.month!)}; paying only the minimums, ${baseline.month ? `in ${monthLabel(baseline.month)}` : `not within ${HORIZON_YEARS} years`}.`}
-        onPointerMove={(e) => scrub(e.clientX)}
-        onPointerDown={(e) => scrub(e.clientX)}
+        onPointerMove={scrub}
+        onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
         {ticks.map((t) => (
