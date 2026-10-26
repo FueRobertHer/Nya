@@ -401,7 +401,7 @@ export function recordSave(base: FirePlan, s: ScenarioChanges, next: FirePlan): 
   for (const k of SET_FIELDS) {
     if (k === 'mix' || k === 'startBalance') continue;
     if (sameAsForms(k, shown[k], next[k])) continue;
-    if (k === 'targetAge' && next.targetAge === null) return { error: 'A scenario keeps a retirement age. To follow your plan’s, choose Use your plan’s beside it.' };
+    if (k === 'targetAge' && next.targetAge === null) return { error: 'A scenario keeps a stop age. To follow your plan’s, choose Use your plan’s beside it.' };
     assign(k, next[k]);
   }
   if (!sameAsForms('stocksPct', shown.stocksPct, next.stocksPct) || !sameAsForms('bondsPct', shown.bondsPct, next.bondsPct)) {

@@ -172,11 +172,11 @@ describe('a form left open never saves to another plan', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
-    expect(said(tab.row('Ages'))).toEqual(['40 now, 55 target', null]);
+    expect(said(tab.row('Ages'))).toEqual(['40 now, stop at 55', null]);
     await openScenario(tab, 'Retire at 50');
     expect(tab.text()).toContain('Scenario: Retire at 50');
     // Its row says the scenario's ages, as its sheet holds them.
-    expect(said(tab.row('Ages'))).toEqual(['40 now, 50 target', null]);
+    expect(said(tab.row('Ages'))).toEqual(['40 now, stop at 50', null]);
     await press(tab.row('Ages'));
     const dialog = tab.dialog();
     expect(dialog?.textContent).toContain('Saved to the scenario “Retire at 50”, not your plan.');
@@ -254,7 +254,7 @@ describe('a form left open never saves to another plan', () => {
     });
     const tab = await render();
     await openScenario(tab, 'Retire at 50');
-    await press(tab.byLabel('Use your plan’s retirement age'));
+    await press(tab.byLabel('Use your plan’s stop age'));
     expect(calls.filter((c) => c.method === 'PUT').length).toBe(1);
     expect(tab.text().split(stale).length - 1).toBe(1);
     expect(tab.text()).toContain('Nothing of your change was kept');
@@ -419,6 +419,7 @@ describe('each drawer is bound to the plan it was opened for, on its own', () =>
   ];
   const allocated = allocate({ institutions: allocInstitutions, holdings: allocHoldings, settings: null, currency: 'USD' });
   /** The card, saving the plan into `plans` and the settings into `settings`. */
+  const handedTo: (HTMLElement | null)[] = [];
   const card = (over: Partial<AllocationCardProps>, plans: FirePlan[], settings: AllocationSettings[]) => (
     <AllocationCard
       allocation={{
@@ -433,11 +434,10 @@ describe('each drawer is bound to the plan it was opened for, on its own', () =>
         mix: planMix(allocated),
       }}
       plan={PLAN}
-      onSavePlan={async (p) => {
-        plans.push(p);
-        return true;
+      onUseMix={(mix, returnTo) => {
+        plans.push({ ...PLAN, stocksPct: mix.stocksPct, bondsPct: mix.bondsPct });
+        handedTo.push(returnTo);
       }}
-      planEditable
       institutions={allocInstitutions}
       balancesAsOf={null}
       scenarioName="Retire at 50"
@@ -446,25 +446,21 @@ describe('each drawer is bound to the plan it was opened for, on its own', () =>
     />
   );
 
-  test('the allocation card: its drawer closes when another plan is shown, and its confirm, pressed as it slides out, saves nothing', async () => {
+  // Since rollout 6d the card has no drawer of its own for the mix: "Use my
+  // allocation in the plan" hands the mix, as it is when pressed, to the
+  // Plan's Assumptions sheet, whose drawer is bound to the plan it opened
+  // for (above), and never saves a plan itself.
+  test('the allocation card: "Use my allocation in the plan" hands its mix on as pressed, opens nothing of its own, and saves no plan', async () => {
     serve({ 'POST /api/allocation-history': [500, { error: 'not here' }] });
     const plans: FirePlan[] = [];
+    handedTo.length = 0;
     const view = await mount(card({}, plans, []));
-    // Confirmed for the plan it was opened for: saved.
     await press(view.buttons('Use my allocation in the plan')[0] ?? null);
-    await press(button(view.dialog()!, 'Use 60/40/0'));
     expect(plans.map((p) => `${p.stocksPct}/${p.bondsPct}`)).toEqual(['60/40']);
-    await settle(400);
-    // Opened again, and another plan shown before it is confirmed.
-    await press(view.buttons('Use my allocation in the plan')[0] ?? null);
-    const dialog = view.dialog()!;
-    const confirm = button(dialog, 'Use 60/40/0')!;
-    await view.showNow(card({ planKey: 's1@r2' }, plans, []));
-    expect(confirm.disabled).toBe(false);
-    await press(confirm);
-    expect(plans.length).toBe(1);
-    await settle(400);
     expect(view.dialog()).toBeNull();
+    // Focus goes back to the heading over it if the button has gone.
+    expect(handedTo.length).toBe(1);
+    expect(handedTo[0]?.textContent).toBe('For your plan');
     await view.unmount();
   });
 

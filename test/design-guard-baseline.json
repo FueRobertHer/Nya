@@ -4,7 +4,7 @@
   },
   "app/globals.css": {
     "rawColors": 37,
-    "smallFonts": 19
+    "smallFonts": 17
   },
   "app/not-allowed/page.tsx": {
     "inlineLayoutStyles": 1
@@ -17,7 +17,7 @@
   },
   "components/AllocationCard.tsx": {
     "rawColors": 2,
-    "inlineLayoutStyles": 12
+    "inlineLayoutStyles": 9
   },
   "components/ApiChanges.tsx": {
     "inlineLayoutStyles": 2
@@ -108,7 +108,7 @@
     "rawColors": 2
   },
   "components/PlanForms.tsx": {
-    "inlineLayoutStyles": 21
+    "inlineLayoutStyles": 7
   },
   "components/PlanGrid.tsx": {
     "rawColors": 1

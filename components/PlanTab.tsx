@@ -56,19 +56,18 @@ import type { Txn } from './MonthBreakdown';
 import { Sheet } from './Sheet';
 import PlanFanChart from './PlanFanChart';
 import PlanGrid, { type FailedCell } from './PlanGrid';
-import { AboutForm, AssumptionsForm, Choice, ExpenseForm, FigureForm, IncomeForm, SimulationForm, type FigureKind } from './PlanForms';
+import { AboutForm, AssumptionsForm, ExpenseForm, FigureForm, IncomeForm, type AssumptionsAt, type FigureKind } from './PlanForms';
+import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
 import {
   DATA_BONDS,
   DATA_STOCKS,
   HYPOTHETICAL,
+  HYPOTHETICAL_LABEL,
   METHOD_NAMES,
-  REBALANCE_TEXT,
-  RULE_NAMES,
   monthName,
   pct,
   progressText,
-  ruleText,
   successDefinition,
   successText,
   wholeMoney,
@@ -85,9 +84,8 @@ import TotalCaveats from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
-import type { AllocHolding } from '@/lib/allocation/allocation';
+import type { AllocHolding, PlanMix } from '@/lib/allocation/allocation';
 import {
-  allocationOf,
   DEFAULT_PLAN,
   formulasTake,
   isFirePlan,
@@ -100,8 +98,8 @@ import {
   type PlanExpense,
   type PlanIncome,
 } from '@/lib/fire/plan';
-import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED, type GridCell, type SimResult } from '@/lib/fire/simulate';
-import { canRunOut, vpwExpectedReturn } from '@/lib/fire/rules';
+import type { GridCell, SimResult } from '@/lib/fire/simulate';
+import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
 import { ScenarioCard, ScenariosSheet, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
@@ -170,8 +168,11 @@ function useLast<T>(value: T | null): T | null {
 export type SheetState =
   | { kind: 'about' }
   | { kind: 'figure'; figure: FigureKind }
-  | { kind: 'assumptions' }
-  | { kind: 'simulation' }
+  // Every rate and setting, in one sheet (rollout 6d), opened at the stress
+  // test's part or its mix; `mix` is the allocation's, filled in, as it was
+  // when "Use my allocation in the plan" was pressed.
+  | { kind: 'assumptions'; at?: AssumptionsAt; mix?: PlanMix & { ok: true } }
+  | { kind: 'numbers' }
   | { kind: 'income'; item: PlanIncome | null }
   | { kind: 'expense'; item: PlanExpense | null };
 
@@ -179,7 +180,7 @@ const SHEET_TITLES: Record<SheetState['kind'], string> = {
   about: 'Your ages',
   figure: '',
   assumptions: 'Assumptions',
-  simulation: 'Simulation',
+  numbers: 'About these numbers',
   income: 'Other income',
   expense: 'One-off expense',
 };
@@ -651,12 +652,15 @@ export default function PlanTab({
   // one-off's sheet never lands on a figure's row. The rows themselves, by
   // kind, so focus finds the row drawn now when the one pressed has gone
   // (the panel drawn again as the plan loads).
-  const openedFrom = useRef<InputKind | null>(null);
-  const inputRows = useRef(new Map<InputKind, HTMLButtonElement>());
-  const inputRowRef = (kind: InputKind, el: HTMLButtonElement | null) => {
+  const openedFrom = useRef<RowKind | null>(null);
+  const inputRows = useRef(new Map<RowKind, HTMLElement>());
+  const inputRowRef = (kind: RowKind, el: HTMLElement | null) => {
     if (el) inputRows.current.set(kind, el);
     else if (inputRows.current.get(kind)?.isConnected === false) inputRows.current.delete(kind);
   };
+  // Portfolio's "For your plan" heading: where focus goes back when "Use my
+  // allocation in the plan" has gone as its sheet closes (the plan took it).
+  const mixHeading = useRef<HTMLElement | null>(null);
   // The saved plan as a sheet opened on it, and which opening is the sheet's
   // now: a sheet whose plan was read again behind it (Try again, a stale
   // currency record) holds the values it opened with, so it can't save them
@@ -665,7 +669,7 @@ export default function PlanTab({
   const storedKey = JSON.stringify(state.value);
   const openedOn = useRef<string | null>(null);
   const openedNow = useRef(0);
-  const open = (s: SheetState, row: InputKind | null = null) => {
+  const open = (s: SheetState, row: RowKind | null = null) => {
     openedFrom.current = row;
     openedOn.current = storedKey;
     openedNow.current += 1;
@@ -684,12 +688,14 @@ export default function PlanTab({
   // its own effect ends, which runs before this one. When that wasn't the row
   // (pressed without taking focus, as in Safari), focus is lost or still in
   // the sheet: then to the row that opened it (as ForecastCard's Warns below).
+  // Portfolio's "Use my allocation in the plan" goes once the plan takes the
+  // mix: then to the heading over where it was.
   const sheetOpen = !!sheet;
   const wasOpen = useRef(sheetOpen);
   useEffect(() => {
     const closed = wasOpen.current && !sheetOpen;
     wasOpen.current = sheetOpen;
-    const row = openedFrom.current ? inputRows.current.get(openedFrom.current) : null;
+    const row = openedFrom.current === 'mix' ? mixHeading.current : openedFrom.current ? inputRows.current.get(openedFrom.current) : null;
     if (!closed || !row?.isConnected) return;
     let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
@@ -735,7 +741,7 @@ export default function PlanTab({
       }
     : null;
   // Every save the tab makes, from one place (components/plan-savers.ts).
-  const savers = planSavers({ scenario: saveToScenario, savePlan: savePlanIn, plan: basePlan, repaired: repairing ? repair.plan : null });
+  const savers = planSavers({ scenario: saveToScenario, savePlan: savePlanIn, repaired: repairing ? repair.plan : null });
   const formPlan = entry ? applyScenario(basePlan, entry).plan : basePlan;
   const saversRef = useRef(savers);
   saversRef.current = savers;
@@ -796,6 +802,8 @@ export default function PlanTab({
   };
   const figureTexts = figureNotes(figureArgs);
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
+  // Design-system rule 3: a badge on each card the notice is about.
+  const stressBadge = stressNotes.length === 0 ? null : stressNotes.length === 1 ? 'An input may be low' : 'Inputs may be low';
 
   // The bar, its heading and its Scenarios button, the scenario's card (with
   // the life events that fix it, when it is refused) and the panel shown:
@@ -983,7 +991,7 @@ export default function PlanTab({
     />
   );
   const fixForm = (f: Exclude<FixForm, null>) =>
-    open(f === 'about' ? { kind: 'about' } : f === 'assumptions' ? { kind: 'assumptions' } : f === 'simulation' ? { kind: 'simulation' } : { kind: 'figure', figure: f });
+    open(f === 'about' ? { kind: 'about' } : f === 'assumptions' ? { kind: 'assumptions' } : f === 'simulation' ? { kind: 'assumptions', at: 'stress' } : { kind: 'figure', figure: f });
   // Lasting changes below zero: nothing is worked out, and the life events
   // are what to change, so they stay with the card, on every segment.
   const refused = !!openFigures && 'refused' in openFigures;
@@ -1142,7 +1150,7 @@ export default function PlanTab({
         'stress',
         <>
           {/* What may leave the inputs the simulation uses low, once, above
-              the cards it is about. */}
+              the cards it is about, each of which has its badge. */}
           {worked && <FigureCaveats notes={stressNotes} />}
 
           {worked && (
@@ -1158,10 +1166,8 @@ export default function PlanTab({
               pending={pending}
               money={money}
               currency={displayCurrency}
-              editable={editable}
-              onMethod={savers.method}
+              badge={stressBadge}
               onRetry={retry}
-              open={open}
             />
           )}
 
@@ -1178,25 +1184,11 @@ export default function PlanTab({
               current={{ rate: vpw ? null : engine.rate, years: engine.sim.years }}
               startBalance={engine.sim.startBalance}
               money={money}
+              badge={stressBadge}
             />
           )}
 
-          <div className="card">
-            <div className="inst-header">
-              <div className="inst-name">About these numbers</div>
-            </div>
-            <p className="panel-note">{HYPOTHETICAL}</p>
-            <p className="panel-note">
-              Stocks are {DATA_STOCKS} and bonds are {DATA_BONDS}, from Robert Shiller&apos;s monthly data (January 1871 to June
-              2023, so the monthly returns, each from one month to the next, run from January 1871 to May 2023). Everything is in
-              today&apos;s dollars: returns are after inflation, so a constant withdrawal keeps its buying power.
-            </p>
-            <p className="panel-note">
-              What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account
-              types or required withdrawals), or what is inside your funds (the mix is what you set). Spending from bank
-              data misses anything paid outside the accounts you have connected.
-            </p>
-          </div>
+          <StressRows plan={plan} held={reloading} onOpen={(kind) => open(kind === 'stress-assumptions' ? { kind: 'assumptions', at: 'stress' } : { kind: 'numbers' }, kind)} rowRef={inputRowRef} />
         </>
       )}
 
@@ -1206,8 +1198,10 @@ export default function PlanTab({
           <AllocationCard
             allocation={allocation}
             plan={plan}
-            onSavePlan={savers.allocationMix}
-            planEditable={editable}
+            onUseMix={(mix, returnTo) => {
+              mixHeading.current = returnTo;
+              open({ kind: 'assumptions', at: 'mix', mix }, 'mix');
+            }}
             settingsLocked={!savers.allocationSettings}
             scenarioName={scenarioName}
             planKey={shownFor ?? 'plan'}
@@ -1227,18 +1221,19 @@ export default function PlanTab({
         onClose={close}
       >
         {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
-        {shownSheet?.kind === 'assumptions' && <AssumptionsForm key={opened} {...formProps} />}
-        {shownSheet?.kind === 'simulation' && (
-          <SimulationForm
+        {shownSheet?.kind === 'assumptions' && (
+          <AssumptionsForm
             key={opened}
             {...formProps}
-            fiNumber={view.fiNumber}
+            fiSpending={shown ? (shown.retirement?.spending ?? view.spending.value) : null}
             assets={view.assets.value}
-            spending={view.spending.value}
+            spending={shown?.retirement?.spending ?? view.spending.value}
             currency={displayCurrency}
-            allocationMix={mixToOffer(allocation)}
+            allocationMix={shownSheet.mix ?? mixToOffer(allocation)}
+            at={shownSheet.at ?? null}
           />
         )}
+        {shownSheet?.kind === 'numbers' && <AboutNumbers />}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
             key={opened}
@@ -1263,13 +1258,13 @@ export default function PlanTab({
 /** What the repaired values were, for the card that says so. */
 const REPAIR_NAMES: Record<string, string> = {
   age: 'your age',
-  targetAge: 'your target age',
+  targetAge: 'your stop age',
   spending: 'the spending you typed',
   savings: 'the savings you typed',
   assets: 'the invested assets you typed',
   includeCash: 'whether cash counts as invested',
   withdrawalRate: 'the withdrawal rate',
-  realReturn: 'the real return',
+  realReturn: 'the growth after inflation',
   taxRate: 'the tax rate',
   partTimeIncome: 'the part-time income',
   method: 'the method',
@@ -1417,13 +1412,13 @@ export function FiCard({
   if (fiShort) {
     yearsNote = fiShort;
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
-    yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, at` : 'At'} a steady ${pct(plan.realReturn)} real return, with this scenario’s life events changing what is saved in their years.`;
+    yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, growing` : 'Growing'} a steady ${pct(plan.realReturn)} a year after inflation, with this scenario’s life events changing what is saved in their years.`;
   } else if (walked && view.yearsToFi === Infinity) {
-    yearsNote = `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and at ${pct(plan.realReturn)} real that never reaches it.`;
+    yearsNote = `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
-    yearsNote = `Saving ${money(savings.value ?? 0)} a year at ${pct(plan.realReturn)} real never reaches it.`;
+    yearsNote = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
-    yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
+    yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year, growing a steady ${pct(plan.realReturn)} a year after inflation.`;
   } else if (view.yearsToFi === null) {
     // A figure not measured is never taken as zero: what rests on it says why.
     yearsNote = view.fiNumber === null ? (spendingNeed ?? 'Needs your annual spending.') : (notWorkedOutText(view, 'below') ?? 'Needs your invested assets or savings.');
@@ -1443,7 +1438,7 @@ export function FiCard({
           {view.fiNumber !== null && fiSpending !== null
             ? `${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
             : !formulasTake(plan)
-              ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
+              ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
               : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
@@ -1474,8 +1469,8 @@ export function FiCard({
           value={view.coast ? money(view.coast.number) : '--'}
           note={
             view.coast
-              ? `Invested today, this grows to your FI number by age ${plan.targetAge} at ${pct(plan.realReturn)} real with nothing more added. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
-              : 'Needs your age and target age.'
+              ? `With this much invested today you could stop saving now: growing ${pct(plan.realReturn)} a year after inflation, it reaches your FI number by age ${plan.targetAge}. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
+              : 'Needs your age and stop age.'
           }
         />
         {view.barista && (
@@ -1486,7 +1481,7 @@ export function FiCard({
           />
         )}
         {view.atTargetAge !== null && plan.targetAge !== null && (
-          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected at a steady ${pct(plan.realReturn)} real return. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
+          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
         )}
         {view.atTargetAge === null && notWorkedOut && plan.age !== null && plan.targetAge !== null && <Row label={`At age ${plan.targetAge}`} value="--" note={notWorkedOut} />}
       </div>
@@ -1503,6 +1498,88 @@ function FigureCaveats({ notes }: { notes: readonly FigureNote[] }) {
 
 /** Which sheet a figure's row opens. */
 export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptions';
+
+/** Every row a sheet opens from, which focus goes back to as it closes:
+ *  Your figures', Stress test's, and Portfolio's "Use my allocation". */
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix';
+
+/** A rule's name in a few words, for the Assumptions row. */
+const RULE_SHORT: Record<FirePlan['rule'], string> = {
+  constant: 'Constant',
+  percent: 'Percent of portfolio',
+  guardrails: 'Guardrails',
+  vpw: 'VPW',
+  'floor-ceiling': 'Floor and ceiling',
+};
+
+/**
+ * Stress test's last card (rollout 6d): Assumptions, a row opening the sheet
+ * of every setting the test uses at its part, its sub what is set ("Historical
+ * cycles · 75/25/0 · Constant · 0.1% fee"); and About these numbers, a row
+ * opening the full statement and the data sources, said once here where each
+ * result keeps its short label. Shown whatever the plan's state, as the
+ * About card was. Held, a row stays in the tab order and opens nothing.
+ */
+export function StressRows({
+  plan,
+  held = false,
+  onOpen,
+  rowRef,
+}: {
+  plan: FirePlan;
+  held?: boolean;
+  onOpen: (kind: 'stress-assumptions' | 'numbers') => void;
+  rowRef?: (kind: RowKind, el: HTMLElement | null) => void;
+}) {
+  const cash = 100 - plan.stocksPct - plan.bondsPct;
+  const row = (kind: 'stress-assumptions' | 'numbers', title: string, sub: string | null) => (
+    <li>
+      <button
+        ref={rowRef ? (el) => rowRef(kind, el) : undefined}
+        type="button"
+        className="list-row"
+        aria-haspopup="dialog"
+        aria-disabled={held ? 'true' : undefined}
+        onClick={() => {
+          if (!held) onOpen(kind);
+        }}
+      >
+        <span className="list-row-text">
+          <span className="list-row-title">{title}</span>
+          {sub && <span className="list-row-sub">{sub}</span>}
+        </span>
+        {chevron(RIGHT)}
+      </button>
+    </li>
+  );
+  return (
+    <ul className="card list-rows" aria-label="The stress test's settings">
+      {row('stress-assumptions', 'Assumptions', `${METHOD_NAMES[plan.method]} · ${plan.stocksPct}/${plan.bondsPct}/${cash} · ${RULE_SHORT[plan.rule]} · ${pct(plan.fee)} fee`)}
+      {row('numbers', 'About these numbers', null)}
+    </ul>
+  );
+}
+
+/** About these numbers: what every result is, the data and what it can't
+ *  say, once (each result keeps its short label). The words are the card's
+ *  before 6d. */
+export function AboutNumbers() {
+  return (
+    <div className="stack">
+      <p className="helper">{HYPOTHETICAL}</p>
+      <p className="helper">
+        Stocks are {DATA_STOCKS} and bonds are {DATA_BONDS}, from Robert Shiller&apos;s monthly data (January 1871 to June 2023, so the monthly
+        returns, each from one month to the next, run from January 1871 to May 2023). Everything is in today&apos;s dollars: returns are after
+        inflation, so a constant withdrawal keeps its buying power.
+      </p>
+      <p className="helper">
+        What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account types or required
+        withdrawals), or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the
+        accounts you have connected.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Your figures (rollout phase 6c): what the FI card rests on, under it on
@@ -1631,15 +1708,15 @@ function InputRow({
 // Said on Stress test, of the figures on Your path (Your figures).
 const MISSING_TEXT: Record<Missing, string> = {
   spending: 'The simulation withdraws your annual spending, so it needs it. Type it on Your path, or connect accounts with transactions.',
-  assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them on Your path, or start from your FI number (Change).',
-  balance: 'Type the balance to start with (Change).',
+  assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them on Your path, or start from your FI number (Assumptions, below).',
+  balance: 'Type the balance to start with (Assumptions, below).',
 };
 
 /** Why the simulation can't run: what it needs, and when that is there but
  *  isn't measured, said so in compare mode's words (unmeasuredNeed). */
 function missingText(missing: Missing, view: FiView): string {
   const need = unmeasuredNeed(missing, view);
-  if (need && missing === 'assets') return `The simulation starts with ${need} (Your path says why). Type them on Your path, or start from your FI number (Change).`;
+  if (need && missing === 'assets') return `The simulation starts with ${need} (Your path says why). Type them on Your path, or start from your FI number (Assumptions, below).`;
   if (need) return `The simulation withdraws ${need} (Your path says why). Type it on Your path.`;
   return MISSING_TEXT[missing];
 }
@@ -1656,10 +1733,8 @@ export function SimulationCard({
   pending,
   money,
   currency,
-  editable,
-  onMethod,
+  badge = null,
   onRetry,
-  open,
 }: {
   /** The open scenario's name, said at the top; null with the Plan open. */
   scenarioName?: string | null;
@@ -1680,33 +1755,25 @@ export function SimulationCard({
   pending: boolean;
   money: (n: number) => string;
   currency: string | null;
-  editable: boolean;
-  /** Null: the method can't be changed here (a scenario uses the Plan's). */
-  onMethod: ((m: FirePlan['method']) => void) | null;
+  /** Stress test's notice is about this card's inputs: its badge. */
+  badge?: string | null;
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
-  open: (s: SheetState) => void;
 }) {
+  // Its settings are the Assumptions row's, under the cards (rollout 6d):
+  // the method is said here, and set there.
   const header = (
     <>
       <ScenarioTag name={scenarioName} />
-      <div className="inst-header">
-        <div className="inst-name">Will it last?</div>
-        <button className="plan-edit" onClick={() => open({ kind: 'simulation' })} disabled={!editable}>
-          Change
-        </button>
+      <div className="card-header">
+        <h3>Will it last?</h3>
+        <span className="meta">{METHOD_NAMES[plan.method]}</span>
       </div>
-      <Choice
-        label="Method"
-        value={plan.method}
-        disabled={!editable || !onMethod}
-        onChange={(m) => onMethod?.(m)}
-        options={[
-          ['historical', 'History'],
-          ['monte-carlo', 'Monte Carlo'],
-        ]}
-      />
-      {!onMethod && <p className="panel-note">The method is your plan’s: every scenario uses it, so they compare. Change it with your plan open.</p>}
+      {badge && (
+        <div className="plan-card-badge">
+          <span className="badge warn">{badge}</span>
+        </div>
+      )}
     </>
   );
   const retirementNote = retirementLine ? (
@@ -1733,24 +1800,24 @@ export function SimulationCard({
   const placedIncome = plan.income.filter((x) => !left.income.includes(x));
   const placedExpenses = plan.expenses.filter((x) => !left.expenses.includes(x) && !engine.beyond.includes(x));
   const startLabel = plan.start === 'fi-number' ? 'your FI number' : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
-  const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your target age';
+  const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;
   const vpw = plan.rule === 'vpw';
 
   // The setup, and what the starting choice means for it.
   let setup: React.ReactNode;
   if (vpw) {
-    setup = `Retire ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.`;
+    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.`;
   } else if (rateFrom === 'spending') {
     setup = (
       <>
-        Retire {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
+        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
         <Masked>{money(spendingNow ?? 0)}</Masked> a year after tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. That is a{' '}
         <strong>{pct(rate, 1)}</strong> withdrawal rate{rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
   } else {
-    setup = `Retire ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
+    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
   }
 
   if (!outcome) {
@@ -1792,7 +1859,6 @@ export function SimulationCard({
   const r = outcome.result;
   const flexible = plan.rule !== 'constant';
   const nouns = r.method === 'historical' ? 'historical starts' : 'Monte Carlo runs';
-  const alloc = allocationOf(plan);
   const lowShare = r.lowestSpending && r.firstYearSpending > 0 ? r.lowestSpending.amount / r.firstYearSpending : null;
 
   return (
@@ -1838,9 +1904,9 @@ export function SimulationCard({
         </div>
         <p className="plan-definition">
           {successDefinition(sim.years)}
-          {flexible ? ' This rule lasts by cutting spending when markets fall; the second figure is how far.' : ''} Hypothetical, from US
-          history: not a prediction, and not advice.
+          {flexible ? ' This rule lasts by cutting spending when markets fall; the second figure is how far.' : ''}
         </p>
+        <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
 
         <PlanFanChart bands={r.balance} startAge={startAge} currency={currency} />
         <div className="as-of">
@@ -1852,8 +1918,7 @@ export function SimulationCard({
         )}
 
         {r.method === 'historical' && r.worst.length > 0 && (
-          <>
-            <div className="plan-subhead">Worst starting years</div>
+          <Why label="Worst starting years">
             <ul className="plan-worst">
               {r.worst.slice(0, 5).map((w) => (
                 <li key={w.start}>
@@ -1868,25 +1933,15 @@ export function SimulationCard({
                 </li>
               ))}
             </ul>
-          </>
+          </Why>
         )}
 
-        <div className="plan-subhead">Assumptions</div>
-        <ul className="plan-assumptions">
-          <li>
-            {r.method === 'historical'
-              ? `${METHOD_NAMES.historical}: the plan started in every month from ${monthName(r.firstStart!)} to ${monthName(r.lastStart!)}, each living through what followed.`
-              : `${METHOD_NAMES['monte-carlo']}: ${(r.runs ?? DEFAULT_RUNS).toLocaleString()} runs, each built from ${(r.blockMonths ?? BLOCK_MONTHS) / 12}-year blocks of consecutive months drawn at random from the history (seed ${r.seed ?? DEFAULT_SEED}, so the same plan gives the same answer).`}
-          </li>
-          <li>
-            Mix: {pct(alloc.stocks, 0)} stocks, {pct(alloc.bonds, 0)} bonds, {pct(alloc.cash, 0)} cash (cash keeps up with inflation and earns nothing more), {REBALANCE_TEXT[plan.rebalance]}.
-          </li>
-          <li>
-            {RULE_NAMES[plan.rule]}: {ruleText(plan.rule, { rate, floor: plan.floor, ceiling: plan.ceiling, expectedReturn: vpwExpectedReturn(alloc) })}
-          </li>
-          <li>
-            Withdrawals once a year, at the start of the year. Fund fees {pct(plan.fee)} a year. Tax {pct(plan.taxRate)} of every withdrawal.
-          </li>
+        {/* Its settings are in the Assumptions sheet (rollout 6d); what it
+            takes from Your path is said here. */}
+        {(placedIncome.length > 0 || placedExpenses.length > 0 || hasEvents) && (
+          <>
+            <h4 className="plan-heading">From Your path</h4>
+            <ul className="plan-assumptions">
           {placedIncome.map((x) => (
             <li key={x.id}>
               {x.label}: <Masked>{money(x.amount)}</Masked> a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
@@ -1897,11 +1952,10 @@ export function SimulationCard({
               {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
             </li>
           ))}
-          {hasEvents && <li>This scenario’s life events, from the retirement age on, as the Life events card on Your path says.</li>}
-          <li>
-            Returns are after inflation, from US history only: stocks are {DATA_STOCKS}, bonds {DATA_BONDS}.
-          </li>
-        </ul>
+          {hasEvents && <li>This scenario’s life events, from the stop age on, as the Life events card on Your path says.</li>}
+            </ul>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1919,6 +1973,7 @@ export function GridCard({
   current,
   startBalance,
   money,
+  badge = null,
 }: {
   scenarioName?: string | null;
   plan: FirePlan;
@@ -1933,6 +1988,8 @@ export function GridCard({
   current: { rate: number | null; years: number };
   startBalance: number;
   money: (n: number) => string;
+  /** Stress test's notice is about this card's inputs: its badge. */
+  badge?: string | null;
 }) {
   const noun = plan.method === 'historical' ? 'starts' : 'runs';
   const flexible = plan.rule !== 'constant';
@@ -1948,14 +2005,19 @@ export function GridCard({
   return (
     <div className="card">
       <ScenarioTag name={scenarioName} />
-      <div className="inst-header">
-        <div className="inst-name">{plan.rule === 'vpw' ? 'By length' : 'By withdrawal rate and length'}</div>
+      <div className="card-header">
+        <h3>{plan.rule === 'vpw' ? 'By length' : 'By withdrawal rate and length'}</h3>
       </div>
+      {badge && (
+        <div className="plan-card-badge">
+          <span className="badge warn">{badge}</span>
+        </div>
+      )}
       <p className="panel-note">
         <Masked>
           {plan.rule === 'vpw'
             ? `VPW has no withdrawal rate to vary, so this is the plan at each length, starting with ${money(startBalance)}.`
-            : `The share of ${noun} that lasted, each starting with ${money(startBalance)} and everything else as above.`}
+            : `The share of ${noun} that lasted, each starting with ${money(startBalance)} and everything else as your Assumptions set it.`}
         </Masked>
         {flexible ? " This rule lasts by cutting spending, so each cell's second line is the lowest year's spending, as a share of the first year's, in the worst one that lasted." : ''}{' '}
         Your plan is outlined.
@@ -1978,14 +2040,12 @@ export function GridCard({
         <p className="plan-definition">
           Each length starts in every month that leaves all of it inside the data, so a longer one has fewer, earlier starts
           {spans.length ? `: ${spans.join('; ')}` : ''}. A longer column leaves out the latest starts, which is why it can read
-          safer than a shorter one. Hypothetical, from US history: not a prediction, and not advice.
+          safer than a shorter one.
         </p>
       ) : (
-        <p className="plan-definition">
-          Every column uses the same runs, each extended to the longer lengths. Hypothetical, from US history: not a prediction,
-          and not advice.
-        </p>
+        <p className="plan-definition">Every column uses the same runs, each extended to the longer lengths.</p>
       )}
+      <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
     </div>
   );
 }
