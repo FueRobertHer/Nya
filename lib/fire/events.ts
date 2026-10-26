@@ -369,19 +369,30 @@ export function walkToFi(assets: number, savings: number, realReturn: number, ta
   return { years: K + 1 + rest };
 }
 
+/** The walk year by year: `balances[k]` is the balance at the start of year
+ *  k from today (before that year's cost), for k = 0 to `years`; or, where
+ *  it couldn't go on, through the start of that year, with `short` (so
+ *  `balances.length` is `short.year + 1`). */
+export function walkPath(assets: number, savings: number, realReturn: number, w: WalkChanges, years: number): { balances: number[]; short: Shortfall | null } {
+  let bal = assets;
+  const balances = [bal];
+  for (let k = 0; k < years; k++) {
+    const cost = costIn(w, k);
+    if (cost > 0 && cost > bal + 1e-9) return { balances, short: { year: k, have: bal, need: cost, kind: 'cost' } };
+    bal -= cost;
+    const c = savingsIn(w, savings, k);
+    const end = bal * (1 + realReturn) + c;
+    if (end < 0) return { balances, short: { year: k, have: bal, need: -c, kind: 'savings' } };
+    bal = end;
+    balances.push(bal);
+  }
+  return { balances, short: null };
+}
+
 /** The walk's balance at the start of `year` (before that year's cost,
  *  which a simulation starting then takes itself), or where it couldn't go
  *  on before then. */
 export function walkBalanceAt(assets: number, savings: number, realReturn: number, w: WalkChanges, year: number): { balance: number } | { short: Shortfall } {
-  let bal = assets;
-  for (let k = 0; k < year; k++) {
-    const cost = costIn(w, k);
-    if (cost > 0 && cost > bal + 1e-9) return { short: { year: k, have: bal, need: cost, kind: 'cost' } };
-    bal -= cost;
-    const c = savingsIn(w, savings, k);
-    const end = bal * (1 + realReturn) + c;
-    if (end < 0) return { short: { year: k, have: bal, need: -c, kind: 'savings' } };
-    bal = end;
-  }
-  return { balance: bal };
+  const p = walkPath(assets, savings, realReturn, w, year);
+  return p.short ? { short: p.short } : { balance: p.balances[p.balances.length - 1] };
 }

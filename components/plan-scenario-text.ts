@@ -174,12 +174,13 @@ export function startsWithText(sw: StartsWith, money: Money, shortWhere = 'below
   return `${head}: you’d have about ${money(sw.projected)} then, ${money(sw.balance - sw.projected)} less.`;
 }
 
-/** Why the walk stops, with no FI date. */
-export function shortText(short: Shortfall, age: number | null, money: Money): string {
+/** Why the walk stops: with no FI date, or (`what`) with nothing else it
+ *  would have reached. */
+export function shortText(short: Shortfall, age: number | null, money: Money, what = 'there is no FI date'): string {
   const when = age !== null ? `at ${age + short.year}` : `in ${short.year} year${short.year === 1 ? '' : 's'}`;
   return short.kind === 'cost'
-    ? `You’d have about ${money(short.have)} ${when}, less than the ${money(short.need)} it takes from your investments, so there is no FI date: change the cost, or when it comes.`
-    : `You’d have about ${money(short.have)} ${when}, and that year takes ${money(short.need)} out, more than there is, so there is no FI date.`;
+    ? `You’d have about ${money(short.have)} ${when}, less than the ${money(short.need)} it takes from your investments, so ${what}: change the cost, or when it comes.`
+    : `You’d have about ${money(short.have)} ${when}, and that year takes ${money(short.need)} out, more than there is, so ${what}.`;
 }
 
 /** Why a scenario isn't worked out with the Plan as it is now, from the

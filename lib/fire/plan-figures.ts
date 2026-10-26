@@ -12,8 +12,9 @@
 //     withdraws are all worked out from the spending plus them, and the start
 //     balance with it (a start from the FI number); every other change is in
 //     the simulation only, and `later` names what the FI number leaves out;
-//   - the FI date (years to FI, the age then, the balance at the target age)
-//     comes from the walk whenever an event counts in it;
+//   - the FI date (years to FI, the age then) comes from the walk whenever
+//     an event counts in it, and the balance at the target age whenever an
+//     event changes the walk, with an FI number or without one;
 //   - what the plan STARTS WITH, and what the walk says it would have then:
 //     a plan run from its FI number at an age it wouldn't have reached it is
 //     said to start with money it wouldn't have (startsWith.more).
@@ -22,7 +23,7 @@
 
 import { projectBalance } from './fi';
 import { compileEvents, hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
-import { enginePlan, fiView, formulasTake, planYears, startAge, unmeasuredOf, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
+import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
 
 export type StartsWith = {
   balance: number;
@@ -43,8 +44,9 @@ export type PlanFigures = {
   /** The plan as run (the Plan, or a scenario resolved). */
   plan: FirePlan;
   /** For display: the inputs as typed or measured; the FI number and what
-   *  follows from it from retirement spending; years to FI, the age then
-   *  and the balance at the target age from the walk when it counts. */
+   *  follows from it from retirement spending; years to FI and the age then
+   *  from the walk when it counts, and the balance at the target age from it
+   *  whenever an event changes it (null where it can't get there). */
   view: FiView;
   engine: EnginePlan | { missing: Missing };
   events: CompiledEvents | null;
@@ -107,17 +109,19 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
     const c = core.savings.value ?? 0;
     const w = walkToFi(a, c, plan.realReturn, core.fiNumber as number, compiled.walk);
     walkedSavings = savingsIn(compiled.walk, c, lastChange(compiled.walk) + 1);
-    let atTargetAge: number | null = null;
-    if (plan.age !== null && plan.targetAge !== null) {
-      const at = walkBalanceAt(a, c, plan.realReturn, compiled.walk, Math.max(0, plan.targetAge - plan.age));
-      atTargetAge = 'balance' in at ? at.balance : null;
-    }
     if ('short' in w) {
       short = w.short;
-      view = { ...view, yearsToFi: null, fiAge: null, atTargetAge };
+      view = { ...view, yearsToFi: null, fiAge: null };
     } else {
-      view = { ...view, yearsToFi: w.years, fiAge: Number.isFinite(w.years) && plan.age !== null ? plan.age + w.years : null, atTargetAge };
+      view = { ...view, yearsToFi: w.years, fiAge: Number.isFinite(w.years) && plan.age !== null ? plan.age + w.years : null };
     }
+  }
+  // The balance at the target age is the walk's whenever it changes, with an
+  // FI number or without one (the path, lib/fire/path.ts, is the same walk).
+  const from = projectFrom(plan, core);
+  if (from !== null && hasWalk(compiled.walk)) {
+    const at = walkBalanceAt(from.assets, from.savings, plan.realReturn, compiled.walk, from.years);
+    view = { ...view, atTargetAge: 'balance' in at ? at.balance : null };
   }
   return { plan, view, engine, events: compiled, retirement, short, walked, walkedSavings, startsWith: startsWith(plan, core, engine, compiled) };
 }

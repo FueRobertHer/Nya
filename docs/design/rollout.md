@@ -516,6 +516,16 @@ Runs after phase 6 and before phase 7. The engine is built (`lib/fire/`); what h
 
 **8a**, the path as a pure function: the year-by-year balances the walk already computes and discards (`walkBalanceAt` in `lib/fire/events.ts`), returned as a series, with property tests (no value from nowhere, the series meets `view.atTargetAge`). Nothing stored changes.
 
+**Built in 8a:** `planPath` (`lib/fire/path.ts`) gives one plan's invested assets a year a point, from today's age to the stop age (or as many years as asked for), with the stop age, the FI number and the FI age. With life events that change the walk, the points are the walk's (`walkPath` in `lib/fire/events.ts`, which `walkBalanceAt` now reads); otherwise `projectBalance` at each whole year, the closed form `fiView` uses. `projectFrom` (`lib/fire/plan.ts`) is the one gate for what a balance is projected from, which `fiView`, `planFigures` and the path share, so the point at the stop age is `atTargetAge` to the bit. `test/fire-path.test.ts` holds it by hand and over 600 generated plans: no balance from nowhere (each year of the walk is the one before, less its cost, grown, plus its savings; never below zero), the point at the stop age is `atTargetAge` and is there exactly when it is, every point is the walk's or the closed form's, it stops where the FI date's walk stops within it, and it reaches the FI number by the year the FI date says.
+
+**Fixed in 8a:** a scenario's balance at the stop age ignored its life events when there was no FI number (no spending): a home bought from investments at 42 left "At age 55" where it would be without the home. It now comes from the walk whenever an event changes it. Where the walk can't get there, the At age row says why ("You'd have about $653,750 at 42, less than the $900,000 it takes from your investments, so nothing is projected at 55: change the cost, or when it comes.") instead of going without a word.
+
+**For 8b, from 8a's review:**
+
+- **Below zero.** With no life events and savings below zero, the closed form goes below zero ("At age 55" can say -$7,893 today), where the walk stops with words. Decide whether the projection stops there too, or the chart's axis takes negatives.
+- **The path can stop where the FI date doesn't.** A plan already at FI whose savings are below zero for good has an FI date today, and its walk runs out before the stop age: the path ends early with `short`, and `atTargetAge` is null. The chart and the headline say both.
+- **The path ends at the stop age**, as decided; `planPath` takes a length, so a marker after it ("3 years after you stop at 55") can be drawn by asking for more, if 8b decides to.
+
 **8b**, the headline and the path chart:
 
 - The headline and progress, with the caveats that sit on the FI number today kept there, critical ones in full.

@@ -318,6 +318,24 @@ describe('Your figures with a scenario open', () => {
     expect(said(tab.row('Annual spending'))).toEqual(['Not enough transactions yet', '--']);
     await tab.unmount();
   });
+
+  test('the balance at the stop age counts its life events with no FI number, and says why there is none when the walk can’t get there (rollout 8a)', async () => {
+    const home = (cost: number): LifeEvent => ({ id: 'h', kind: 'house', label: 'Home', atAge: 42, cost, yearly: 0, years: null });
+    serve({
+      'GET /api/fire-plan': [200, { plan: { ...PLAN, spending: null, savings: 50_000, assets: 500_000 }, currency: 'USD' }],
+      'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home', set: {}, events: [home(300_000)] }), entry({ id: 's2', name: 'A big home', set: {}, events: [home(900_000)] })),
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render();
+    expect(tab.text()).toContain('At age 55$2,118,392');
+    await openScenario(tab, 'Buy a home');
+    expect(tab.text()).toContain('At age 55$1,552,698');
+    await press(tab.arrow());
+    await openScenario(tab, 'A big home');
+    expect(tab.text()).toContain('At age 55--');
+    expect(tab.text()).toContain('You’d have about $653,750 at 42, less than the $900,000 it takes from your investments, so nothing is projected at 55: change the cost, or when it comes.');
+    await tab.unmount();
+  });
 });
 
 describe('what the tab waits for', () => {
