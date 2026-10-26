@@ -10,29 +10,50 @@
 // point after the first is an estimate. Zero and the low-balance warning are
 // drawn when the line comes near them, and the lowest point is marked. With a
 // what-if, its line is drawn over the forecast's in the warning colour, with a
-// legend, and the readout gives both.
+// legend, and the readout gives both. It is drawn at its own width
+// (components/drawn-width.ts), in the shape it has always had, so its text is
+// the 12px it says on a phone and on a wide card; the card's chart and the
+// what-if sheet's each measure their own.
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState, type PointerEvent } from 'react';
 import type { Forecast } from '@/lib/forecast';
 import { compactMoney, formatMoney, signedMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 
-const W = 340;
-const H = 150;
+/** Its height for its width: 150 to 340, the shape it has always had. */
+const ASPECT = 150 / FALLBACK_WIDTH;
 const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
-const PAD_TOP = 12;
-const PAD_BOTTOM = 20;
+// Room over the top tick for its 12px figure.
+const PAD_TOP = 14;
+// Room under the baseline for the 12px dates.
+const PAD_BOTTOM = 24;
 
-// 2-3 clean tick values (1/2/5 x 10^n steps) inside [min, max].
-function niceTicks(min: number, max: number): number[] {
+// Neighbouring gridlines are at least this far apart, in CSS pixels (a
+// viewBox unit at the chart's width): each has its 12px figure over it, the
+// figure's baseline 3 above the line, with room left under the line above.
+const MIN_TICK_GAP = 20;
+
+// 2-3 clean tick values (1/2/5 x 10^n steps) inside [min, max], on a plot
+// `height` tall. Where they would be closer than MIN_TICK_GAP (a phone's
+// short plot), the step goes on up the same sequence until they aren't.
+function niceTicks(min: number, max: number, height: number): number[] {
   const span = max - min || 1;
   const rough = span / 2.5;
-  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  let mag = Math.pow(10, Math.floor(Math.log10(rough)));
   const norm = rough / mag;
-  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
+  let lead = norm >= 5 ? 5 : norm >= 2 ? 2 : 1;
+  // 1 to 2, 2 to 5, 5 to 10.
+  while (height > 0 && ((lead * mag) / span) * height < MIN_TICK_GAP) {
+    if (lead === 5) mag *= 10;
+    lead = lead === 1 ? 2 : lead === 2 ? 5 : 1;
+  }
+  const step = lead * mag;
   const out: number[] = [];
-  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(v);
+  // `|| 0`: an axis starting just under zero starts at Math.ceil(-0.8), which
+  // is -0, and would be labelled "-$0".
+  for (let v = Math.ceil(min / step) * step || 0; v <= max + 1e-9; v += step) out.push(v);
   return out;
 }
 
@@ -53,7 +74,8 @@ export default function ForecastChart({
   /** The low-balance warning; 0 for none. */
   threshold: number;
 }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
+  const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
 
   // Point 0 is now; day d's low is at d + 0.5 and its end at d + 1, on a scale
@@ -84,21 +106,24 @@ export default function ForecastChart({
     const bottom = lo - pad;
     const top = hi + pad;
     const n = forecast.days.length;
-    const x = (u: number) => PAD_LEFT + (n <= 0 ? 0 : (u / n) * (W - PAD_LEFT - PAD_RIGHT));
-    const y = (v: number) => PAD_TOP + (1 - (v - bottom) / (top - bottom)) * (H - PAD_TOP - PAD_BOTTOM);
+    const plotW = W - PAD_LEFT - PAD_RIGHT;
+    const plotH = H - PAD_TOP - PAD_BOTTOM;
+    const x = (u: number) => PAD_LEFT + (n <= 0 ? 0 : (u / n) * plotW);
+    const y = (v: number) => PAD_TOP + (1 - (v - bottom) / (top - bottom)) * plotH;
     const path = (f: Forecast) => points(f).map((v, k) => `${k === 0 ? 'M' : 'L'}${x(at(k)).toFixed(1)},${y(v).toFixed(1)}`).join('');
     return {
       x,
       y,
-      ticks: niceTicks(bottom, top),
+      plotW,
+      ticks: niceTicks(bottom, top, plotH),
       main: path(forecast),
       alt: whatIf ? path(whatIf) : null,
       showZero,
       showThreshold,
     };
-  }, [forecast, whatIf, threshold]);
+  }, [forecast, whatIf, threshold, W, H]);
 
-  const { x, y, ticks, main, alt, showZero, showThreshold } = geo;
+  const { x, y, plotW, ticks, main, alt, showZero, showThreshold } = geo;
   const shown = whatIf ?? forecast;
   const shownLow = shown.lowest;
   const today = forecast.days[0].date;
@@ -109,13 +134,11 @@ export default function ForecastChart({
   const lowAt = lowNow ? 0 : lowDay + 0.5;
   const lowWhen = lowNow ? 'now' : shownLow.date === today ? 'today' : `around ${fmtDay(shownLow.date)}`;
 
-  function scrub(clientX: number) {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
+  function scrub(e: PointerEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
     const n = forecast.days.length;
-    const i = Math.round(((px - PAD_LEFT) / (W - PAD_LEFT - PAD_RIGHT)) * n);
+    const i = Math.round(((px - PAD_LEFT) / plotW) * n);
     setActive(Math.max(0, Math.min(n, i)));
   }
 
@@ -170,13 +193,13 @@ export default function ForecastChart({
       </div>
 
       <svg
-        ref={svgRef}
-        className="chart-svg"
+        ref={drawnRef}
+        className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
         aria-label={spoken(`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`)}
-        onPointerMove={(e) => scrub(e.clientX)}
-        onPointerDown={(e) => scrub(e.clientX)}
+        onPointerMove={scrub}
+        onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
         {ticks.map((t) => (

@@ -466,14 +466,15 @@ export const FORMATTERS = ['formatMoney', 'signedMoney', 'compactMoney', 'hidden
 export const FIELD_WRITERS = ['fieldAmount'];
 
 /** A number formatted as an amount without lib/format.ts: Intl's (with
- *  `new` or without) or toLocaleString's currency, fraction digits or
- *  compact notation (not a date's or a count's), toFixed, toPrecision or a
- *  toLocaleString given no options (but where the code beside it says it is
- *  something else: saysWhatItIs), or a "$" written before a figure by hand. */
+ *  `new` or without) or toLocaleString's currency, fraction or significant
+ *  digits or compact notation (not a date's or a count's), toFixed,
+ *  toPrecision or a toLocaleString given no options (but where the code
+ *  beside it says it is something else: saysWhatItIs), or a "$" written
+ *  before a figure by hand. */
 const NUMBER_FORMAT = /(?<![\w$.])(?:new\s+)?Intl\.NumberFormat\s*\(/g;
 const LOCALE_STRING = /\.toLocaleString\s*\(/g;
 const TO_FIXED = /\.to(?:Fixed|Precision)\s*\(/g;
-const AMOUNT_OPTIONS = /currency|FractionDigits|notation|style:\s*['"]currency['"]/;
+const AMOUNT_OPTIONS = /currency|FractionDigits|SignificantDigits|notation|style:\s*['"]currency['"]/;
 const DOLLAR_BY_HAND = /`[^`]*?\$\$\{|['"]-?\$['"]\s*\+|\+\s*['"]-?\$['"]|\?\s*['"]-?\$['"]\s*:/g;
 
 /** Where the statement around `at` starts: past the ";", "{" or "}" before
@@ -667,7 +668,7 @@ function numberFormats(lx: Lexed): number[] {
       if (end < 0) continue;
       const args = text.slice(open + 1, end);
       if (rx === NUMBER_FORMAT || args.includes('{')) {
-        // Given options: an amount's when they name a currency, fraction digits or compact notation.
+        // Given options: an amount's when they name a currency, fraction or significant digits, or compact notation.
         if (!AMOUNT_OPTIONS.test(args)) continue;
         // Asked what a currency's minor unit is, not to write one.
         if (/^\s*\.resolvedOptions\(/.test(text.slice(end + 1))) continue;

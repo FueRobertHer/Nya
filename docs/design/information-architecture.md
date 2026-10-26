@@ -280,7 +280,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 
 Components that only serve other components (a picker, a chart, a row, a notice) are listed here in one line each, with what they serve, instead of a row in the table above. A new component goes in one or the other; `test/design-guard.test.ts` fails until it does.
 
-- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets. `useDrawnWidth` (`components/drawn-width.ts`, phase 5d) draws a chart at its own width, so its text is 12px; MonthFlowChart and CashFlowSankey use it, the rest follow with phase 6.
+- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets. `useDrawnWidth` (`components/drawn-width.ts`, phase 5d) draws a chart at its own width, so its text is 12px; MonthFlowChart and CashFlowSankey use it, and since 6a4 ForecastChart and the payoff plan's chart (in DebtPayoff); the rest follow with phase 6.
 - CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
 - Sheet: every form, confirmation and detail view.
 - HeaderIcon: the icons of the header's buttons (Refresh, the Settings gear), for the dashboard's header and the app loading's copy of it.

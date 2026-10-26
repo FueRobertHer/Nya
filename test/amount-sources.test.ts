@@ -142,15 +142,17 @@ describe('a number written as an amount past the formatters', () => {
     expect(found.children).toEqual({});
   });
 
-  test('Intl with `new` or without, toPrecision, a number rounded as one but drawn as it is, and a count’s exemption not taken by an amount’s words', () => {
+  test('Intl with `new` or without, or given only significant digits, toPrecision, a number rounded as one but drawn as it is, and a count’s exemption not taken by an amount’s words', () => {
     const found = scan({
       NoNew: "return <span>{Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n)}</span>;",
+      // A day's figure in the calendar's cell is written so ("+3.5K").
+      Significant: 'return <span>{new Intl.NumberFormat(undefined, { maximumSignificantDigits: 2 }).format(n)}K</span>;',
       Precision: 'return <span>{balance.toPrecision(6)}</span>;',
       RoundedDrawn: 'return <span>{Number(balance.toFixed(2))}</span>;',
       Spent: 'return <p>{balance.toLocaleString()} spent</p>;',
       Monthly: 'return <p>{balance.toLocaleString()} a month</p>;',
     });
-    expect(found.bypasses).toEqual({ NoNew: [7], Precision: [7], RoundedDrawn: [7], Spent: [7], Monthly: [7] });
+    expect(found.bypasses).toEqual({ NoNew: [7], Significant: [7], Precision: [7], RoundedDrawn: [7], Spent: [7], Monthly: [7] });
   });
 
   test('a toLocaleString() is a count only by the words the app writes after one, never by an amount’s', () => {
