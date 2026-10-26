@@ -524,6 +524,7 @@ Runs after phase 6 and before phase 7. The engine is built (`lib/fire/`); what h
 
 - **Below zero.** With no life events and savings below zero, the closed form goes below zero ("At age 55" can say -$7,893 today), where the walk stops with words. Decide whether the projection stops there too, or the chart's axis takes negatives.
 - **The path can stop where the FI date doesn't.** A plan already at FI whose savings are below zero for good has an FI date today, and its walk runs out before the stop age: the path ends early with `short`, and `atTargetAge` is null. The chart and the headline say both.
+- **The Plan's own stored ages aren't range-checked** until a repair: a stop age of 2e7 would make `planPath` build that many points. The tab runs it today only for a scenario (its ages are parsed); draw the Plan's path once its stored plan is repaired, or bound it there.
 - **The path ends at the stop age**, as decided; `planPath` takes a length, so a marker after it ("3 years after you stop at 55") can be drawn by asking for more, if 8b decides to.
 
 **8b**, the headline and the path chart:

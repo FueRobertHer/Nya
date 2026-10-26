@@ -44,8 +44,10 @@ export type PlanPath = {
 };
 
 /** The path from today, `years` whole years long (to the target age by
- *  default); null when there is nothing to project from (projectFrom). */
+ *  default); null when there is nothing to project from (projectFrom).
+ *  Throws on a length that isn't a whole number of years, 0 or more. */
 export function planPath(f: PlanFigures, years?: number): PlanPath | null {
+  if (years !== undefined && !(Number.isInteger(years) && years >= 0)) throw new RangeError(`A path is a whole number of years, 0 or more: ${years}`);
   const from = projectFrom(f.plan, f.view);
   if (from === null) return null;
   const age = f.plan.age as number;

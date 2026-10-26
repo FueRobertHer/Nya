@@ -92,6 +92,12 @@ describe('by hand', () => {
     expect(f.view.atTargetAge).toBe(300_000);
   });
 
+  test('a length that isn’t a whole number of years, 0 or more, is refused', () => {
+    const f = figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [home(300_000)]);
+    for (const years of [2.5, -1, Infinity, NaN]) expect(() => planPath(f, years)).toThrow(RangeError);
+    expect(path(f, 0).points).toEqual([{ age: 40, balance: 500_000 }]);
+  });
+
   test('a longer path when asked for, the same years first', () => {
     const f = figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [home(300_000)]);
     const long = path(f, 20);
@@ -130,9 +136,11 @@ describe('the balance at the stop age counts life events with no FI number (revi
   });
 });
 
-// Generated plans: ages (some missing), rates across their ranges, figures
-// typed, measured, missing or not measured, savings below zero, and up to
-// four life events of every kind, costs larger than the balance included.
+// Generated plans: ages (some missing), rates within the ranges a plan
+// takes (LIMITS), figures typed, measured, missing or not measured, savings
+// below zero, and up to four life events of every kind, costs larger than
+// the balance included. A stop age before today's and rates the formulas
+// don't take are the hand-worked cases above.
 function generate(seed: number) {
   const r = seededRandom(seed);
   const int = (lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));
@@ -253,7 +261,7 @@ describe('generated plans', () => {
     }
   });
 
-  test('it meets the walk and the closed form at every year', () => {
+  test('every point is walkBalanceAt’s for its year with life events, and the closed form’s, a step apart, without', () => {
     for (const { f } of cases) {
       const p = planPath(f, 40);
       if (!p) continue;
@@ -275,15 +283,18 @@ describe('generated plans', () => {
   });
 
   test('where the FI date’s walk stops within the path, the path stops there too', () => {
+    let checked = 0;
     for (const { f } of cases) {
       if (!f.short) continue;
       const p = planPath(f, f.short.year + 1);
       if (!p) continue;
+      checked++;
       expect(p.short).toEqual(f.short);
     }
+    expect(checked).toBeGreaterThan(20);
   });
 
-  test('it meets the FI date: at the FI number by the year it is reached in, and below it before then', () => {
+  test('it meets the FI date: at the FI number by the year it is reached in, and below it in the year before', () => {
     let checked = 0;
     for (const { f } of cases) {
       const y = f.view.yearsToFi;
