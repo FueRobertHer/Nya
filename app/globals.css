@@ -482,14 +482,15 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 /* Cards of rows (Home's Needs attention and This month, Budgets' Debt
-   payoff): the rows run to the card's foot; what qualifies a row (the month's missing transactions, the
-   FI line's notes) follows it, inside its item. */
-:is(.needs-attention, .this-month, .debt-payoff) {
+   payoff, the Plan's Your figures): the rows run to the card's foot; what
+   qualifies a row (the month's missing transactions, the FI line's notes, a
+   figure's notes) follows it, inside its item. */
+:is(.needs-attention, .this-month, .debt-payoff, .plan-inputs) {
   padding-bottom: 0;
   overflow: hidden;
 }
 
-:is(.needs-attention, .this-month, .debt-payoff) > .list-rows {
+:is(.needs-attention, .this-month, .debt-payoff, .plan-inputs) > .list-rows {
   margin-bottom: 0;
 }
 
@@ -3440,6 +3441,29 @@ button.danger-outline {
 
 /* --- Plan tab (components/PlanTab.tsx): FI figures, the simulation and its grid --- */
 
+/* Your figures' rows (InputsCard, rollout phase 6c): the figure as the
+   trailing value and, under measured savings, its savings rate as a second
+   line, laid out as Budgets' amounts are (.budget-value). */
+.plan-input-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-1);
+  max-width: 50%;
+  text-align: right;
+}
+
+.plan-input-line {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+}
+
+/* Why a sheet can't be saved yet (components/PlanForms.tsx Buttons): its
+   own line above Cancel and Save, apart from what comes before it. */
+.plan-paused {
+  margin-top: var(--sp-4);
+}
+
 /* A label and its figure on one line, a note (and an Edit button) under them. */
 .plan-rows {
   margin-top: 12px;
@@ -4127,11 +4151,13 @@ button.plan-edit:disabled {
 }
 
 /* Planned's rows and Add while the items are read again after a refused
-   save, and Warns below while it can't be changed: drawn and in the tab
-   order, so focus can come back to them, and a press opens nothing. */
+   save, Warns below while it can't be changed, and the Plan's figure rows
+   while the saved plan is read again: drawn and in the tab order, so focus
+   can come back to them, and a press opens nothing. */
 .planned-rows .list-row[aria-disabled="true"],
 .planned-add[aria-disabled="true"],
-.forecast-warn[aria-disabled="true"] {
+.forecast-warn[aria-disabled="true"],
+.plan-inputs .list-row[aria-disabled="true"] {
   opacity: 0.6;
   cursor: not-allowed;
 }

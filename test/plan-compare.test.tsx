@@ -5,7 +5,8 @@ import PlanCompare from '@/components/PlanCompare';
 import { compareRows, fiDateText, pointsText, startsLine, type CompareColumn } from '@/components/plan-compare';
 import { ScenarioCard, ScenariosSheet, compareJobs, formFor, rememberResult, scenarioOutcome } from '@/components/PlanScenarios';
 import { LifeEventsCard } from '@/components/PlanEvents';
-import { FiCard, SimulationCard } from '@/components/PlanTab';
+import { FiCard, InputsCard, SimulationCard } from '@/components/PlanTab';
+import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import { INITIAL_SCENARIOS, createScenarioClient, type ScenarioEntry, type ScenariosState } from '@/components/plan-scenarios';
 import { currencyText, startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
 import { wholeMoney } from '@/components/plan-text';
@@ -17,6 +18,7 @@ import { usMarket } from '@/lib/fire/us-market';
 import { HISTORY_COUNT, HISTORY_FIRST, historySpan } from '@/lib/fire/history-span';
 import { simulate, type SimResult } from '@/lib/fire/simulate';
 import { MASK, setAmountsHidden } from '@/lib/format';
+import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 
 // Compare mode (components/plan-compare.ts, PlanCompare.tsx) and the
 // scenario cards: one seed and one dataset, what each cell says, what a plan
@@ -224,8 +226,8 @@ describe('what the cells say (review: retiring before the FI date)', () => {
       TODAY
     ).rows.find((r) => r.key === 'lasted')!.cells;
     expect(cells.slice(1).map((c) => c.value)).toEqual([
-      'needs your invested assets, which aren’t measured (the FI card on Your path says why)',
-      'needs your annual spending, which isn’t measured (the FI card on Your path says why)',
+      'needs your invested assets, which aren’t measured (Your path says why)',
+      'needs your annual spending, which isn’t measured (Your path says why)',
       'needs your annual spending',
     ]);
   });
@@ -464,26 +466,32 @@ describe('the scenario cards', () => {
   test('every card says it is the scenario’s, and the method is the Plan’s', () => {
     const p = plan({ age: 40, targetAge: 55 });
     const f = figs(p);
-    const fi = renderToStaticMarkup(
-      <FiCard
-        scenarioName="Retire at 45"
-        plan={p}
-        view={f.view}
-        flows={null}
-        unread={[]}
-        txnsLoading={false}
-        txnsFailed={false}
-        assets={{ total: 300_000, accounts: [], unknown: 0, caveats: [], currency: 'USD', leftOut: [] }}
-        balancesAsOf={null}
-        workplace={null}
-        workplaceCount={0}
-        currencyNote={null}
-        money={money}
-        editable
-        open={() => {}}
-      />
-    );
+    const a: FigureArgs = {
+      plan: p,
+      view: f.view,
+      flows: null,
+      unread: [],
+      withoutTransactions: NO_CONNECTIONS_WITHOUT,
+      transactionCount: 0,
+      txnsLoading: false,
+      txnsFailed: false,
+      assets: { total: 300_000, accounts: [], unknown: 0, caveats: [], currency: 'USD', leftOut: [] },
+      balancesAsOf: null,
+      workplace: null,
+      workplaceCount: 0,
+      cashOn: [],
+      cashUnmarked: false,
+      money,
+      savingsRate: null,
+      shareRates: null,
+    };
+    const fi = renderToStaticMarkup(<FiCard scenarioName="Retire at 45" {...a} currencyNote={null} />);
     expect(text(fi)).toContain('Scenario: Retire at 45');
+    // The figures the FI card rests on, under it on Your path (rollout phase
+    // 6c), what they say worked out in the render as PlanTab does.
+    const Inputs = () => <InputsCard scenarioName="Retire at 45" figures={figureNotes(a)} view={f.view} money={money} onOpen={() => {}} />;
+    const inputs = renderToStaticMarkup(<Inputs />);
+    expect(text(inputs)).toContain('Scenario: Retire at 45');
     const sim = renderToStaticMarkup(
       <SimulationCard scenarioName="Retire at 45" plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" editable onMethod={null} onRetry={() => {}} open={() => {}} />
     );

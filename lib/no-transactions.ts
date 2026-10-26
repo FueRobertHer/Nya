@@ -255,17 +255,23 @@ export function missingEmptyNotes(view: NoTransactionsView): string[] {
 
 /** The Plan's caveats on a figure measured from transactions, for each bank
  *  account or card missing from it (`uncounted` where there is no figure
- *  yet). */
-export function missingFigureNotes(view: NoTransactionsView, what: 'low' | 'off' | 'uncounted'): string[] {
+ *  yet), with the reason as its kind (for the Plan's figure rows, which
+ *  gather several into one line: components/plan-figure-notes.ts). */
+export function missingFigureItems(view: NoTransactionsView, what: 'low' | 'off' | 'uncounted'): { kind: 'refused' | 'no_consent'; text: string }[] {
   const refused = refusedNames(view);
   const unallowed = unallowedNames(view);
   const consequence = what === 'uncounted' ? "so they aren't counted" : `so this figure may be ${what}`;
-  return [
-    ...(refused.length > 0 ? [`Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}, ${consequence}.`] : []),
-    ...(unallowed.length > 0
-      ? [`You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, ${consequence}. ${ALLOW_THEM}`]
-      : []),
-  ];
+  const items: { kind: 'refused' | 'no_consent'; text: string }[] = [];
+  if (refused.length > 0) items.push({ kind: 'refused', text: `Plaid doesn't provide transactions for the bank or card accounts at ${joinNames(refused)}, ${consequence}.` });
+  if (unallowed.length > 0) {
+    items.push({ kind: 'no_consent', text: `You didn't allow Nya to see transactions from the bank or card accounts at ${joinNames(unallowed)}, ${consequence}. ${ALLOW_THEM}` });
+  }
+  return items;
+}
+
+/** missingFigureItems' words alone, as the read-only API says them. */
+export function missingFigureNotes(view: NoTransactionsView, what: 'low' | 'off' | 'uncounted'): string[] {
+  return missingFigureItems(view, what).map((i) => i.text);
 }
 
 /** What the missing spending is, for "May be low: spending is missing ...";

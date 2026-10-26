@@ -111,7 +111,7 @@ export default function PlanCompare({
         <li>
           US market history, monthly returns from {monthName(span.first)} to {monthName(span.last)}, in today’s dollars.
         </li>
-        <li>The same measured spending, savings and invested assets (the FI card says where they come from), unless a plan types its own.</li>
+        <li>The same measured spending, savings and invested assets (Your path says where they come from), unless a plan types its own.</li>
         <li>{HYPOTHETICAL}</li>
       </ul>
     </div>

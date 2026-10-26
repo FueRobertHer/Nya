@@ -37,6 +37,12 @@ import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { NO_CHANGES } from '@/lib/fire/scenarios';
 import { wholeMoney } from '@/components/plan-text';
+import { InputsCard } from '@/components/PlanTab';
+import { FigureForm } from '@/components/PlanForms';
+import { figureNotes, windowText, type FigureArgs } from '@/components/plan-figure-notes';
+import { fiFigures } from '@/lib/fire/progress';
+import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
+import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import { PreviewView } from '@/components/Sharing';
 import { ReportView } from '@/components/ReportView';
 import { CsvMapping, PreviewView as ImportPreview, type Picked, type Preview } from '@/components/ImportSheet';
@@ -838,6 +844,79 @@ const YOY: YearOverYearReport = {
   caveats: { hidden: false, scope: { investment: false, loans: false }, names_unread: false, notes: [] },
 };
 
+/** What the Plan's figures are worked out from (components/plan-figure-notes.ts):
+ *  a measured year with loan payments, a refund, IOUs from before it and
+ *  loan payments not counted; a workplace plan's contributions added; two
+ *  investment accounts, one more at Vanguard not shown; and part-time income
+ *  among the assumptions. Made as it is drawn, so its amounts are written as
+ *  the switch says. */
+function planFigureArgs(): FigureArgs {
+  const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, partTimeIncome: 28_000 };
+  const flows: TrailingFlows = {
+    spending: 40_000,
+    income: 70_000,
+    savings: 30_000,
+    loanPayments: 1_200,
+    cash: 0,
+    refunds: 200,
+    cashWithdrawn: 0,
+    cashEntered: 0,
+    cashEnteredOn: [],
+    cashIous: 0,
+    unclearLoans: 150,
+    largestRefund: { amount: 200, date: '2026-05-02', name: 'Shop' },
+    from: '2025-10-07',
+    to: '2026-10-06',
+    days: 365,
+    scaled: false,
+    count: 400,
+    excludedCount: 0,
+    currency: 'USD',
+    leftOut: [],
+    iousBefore: { count: 2, amount: 300 },
+  };
+  const workplace: WorkplaceSavings = {
+    total: 12_000,
+    plans: [{ name: 'Fidelity 401(k)', paidFrom: 'payroll', added: 12_000, count: 24, largest: { amount: 900, date: '2026-03-15' }, matched: 0 }],
+    fromBank: [],
+    partial: [],
+    shortHistory: [],
+    problems: [],
+    unmeasured: [],
+  };
+  const assets: InvestedAssets = {
+    total: 250_000,
+    accounts: [
+      { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
+      { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
+    ],
+    unknown: 0,
+    caveats: [{ kind: 'missing', institution: 'Vanguard', count: 1 }],
+    currency: 'USD',
+    leftOut: [],
+  };
+  const figures = fiFigures(plan, { flows, workplace, assets }, 'USD');
+  return {
+    plan,
+    view: figures.view,
+    flows,
+    unread: [],
+    withoutTransactions: NO_CONNECTIONS_WITHOUT,
+    transactionCount: flows.count,
+    txnsLoading: false,
+    txnsFailed: false,
+    assets,
+    balancesAsOf: '2026-10-06T15:12:00Z',
+    workplace,
+    workplaceCount: 1,
+    cashOn: [],
+    cashUnmarked: false,
+    money: (n) => wholeMoney(n, 'USD'),
+    savingsRate: figures.savingsRate,
+    shareRates: null,
+  };
+}
+
 const SCREENS: Record<string, () => React.ReactElement> = {
   'Home: the net worth chart': () => (
     <NetWorthChart
@@ -1084,6 +1163,31 @@ const SCREENS: Record<string, () => React.ReactElement> = {
         method="historical"
         money={(n) => wholeMoney(n, 'USD')}
         today="2026-10-23"
+      />
+    );
+  },
+  // Your figures as rollout 6c draws them: each figure's row, its notes under
+  // it (two gathered into a line, one in full), measured savings' rate as its
+  // second line, and the assumptions, part-time income among them, as a sub.
+  'Plan > Your path: Your figures, their notes, the savings rate and the assumptions': () => {
+    const args = planFigureArgs();
+    return <InputsCard figures={figureNotes(args)} view={args.view} money={args.money} onOpen={() => {}} />;
+  },
+  // A figure's sheet, drawn by itself (the tab opens it only once its row is
+  // pressed): Nya's figure, measured and not typed, and Why?.
+  'Plan > Your path: a figure’s sheet, its measured figure and Why?': () => {
+    const args = planFigureArgs();
+    return (
+      <FigureForm
+        plan={args.plan}
+        onSave={async () => true}
+        onDone={() => {}}
+        editable
+        kind="spending"
+        measured={args.flows!.spending}
+        measuredText={`from ${windowText(args.flows!)}`}
+        why={figureNotes(args).spending.why}
+        currency="USD"
       />
     );
   },

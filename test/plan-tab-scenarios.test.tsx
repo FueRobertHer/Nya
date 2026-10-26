@@ -102,6 +102,10 @@ async function mount(node: React.ReactNode) {
     unmount: () => act(async () => root.unmount()),
     text: () => container.textContent,
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
+    /** One of Your figures' rows on Your path, by its title: each opens its
+     *  sheet (rollout phase 6c). */
+    row: (title: string) =>
+      container.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('class') ?? '').split(' ').includes('list-row') && e.findAll((t) => t.getAttribute('class') === 'list-row-title')[0]?.textContent === title)[0] ?? null,
     buttons: (text: string) => container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === text),
     /** The open drawer: one closing slides out for a third of a second, and
      *  is still on the page meanwhile. */
@@ -136,6 +140,16 @@ async function render(props: Partial<PlanTabProps> = {}) {
 /** A button in an element, by its words. */
 const button = (within: FakeElement, words: string) => within.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null;
 
+/** What a figure's sheet says above its buttons while saving is paused
+ *  (components/PlanForms.tsx), or null while it isn't. */
+const pausedLine = (sheet: FakeElement): string | null => sheet.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('plan-paused'))[0]?.textContent ?? null;
+
+/** What one of Your figures' rows says: where its figure comes from, and the figure. */
+const said = (row: FakeElement | null) => {
+  const of = (cls: string) => row?.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes(cls))[0] ?? null;
+  return [of('list-row-sub')?.textContent ?? null, of('list-row-value')?.childNodes.filter((c): c is FakeElement => c instanceof FakeElement)[0]?.textContent ?? null];
+};
+
 const press = async (el: FakeElement | null) => {
   if (!el) throw new Error('nothing to press');
   await act(async () => click(el));
@@ -158,11 +172,16 @@ describe('a form left open never saves to another plan', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
+    expect(said(tab.row('Ages'))).toEqual(['40 now, 55 target', null]);
     await openScenario(tab, 'Retire at 50');
     expect(tab.text()).toContain('Scenario: Retire at 50');
-    await press(tab.byLabel('Edit your ages'));
+    // Its row says the scenario's ages, as its sheet holds them.
+    expect(said(tab.row('Ages'))).toEqual(['40 now, 50 target', null]);
+    await press(tab.row('Ages'));
     const dialog = tab.dialog();
     expect(dialog?.textContent).toContain('Saved to the scenario “Retire at 50”, not your plan.');
+    // Saving isn't paused: Save is on, and nothing says otherwise.
+    expect([button(dialog!, 'Save')?.disabled, pausedLine(dialog!)]).toEqual([false, null]);
     const [age, target] = dialog!.findAll((e) => e.tagName === 'INPUT');
     expect(age.disabled).toBe(true);
     await act(async () => type(target, '48'));
@@ -190,8 +209,10 @@ describe('a form left open never saves to another plan', () => {
     });
     const tab = await render();
     await openScenario(tab, 'Retire at 50');
-    await press(tab.byLabel('Edit assumptions'));
+    await press(tab.row('Assumptions'));
     const dialog = tab.dialog()!;
+    expect(dialog.getAttribute('aria-label')).toBe('Assumptions (Retire at 50)');
+    expect([button(dialog, 'Save')?.disabled, pausedLine(dialog)]).toEqual([false, null]);
     const [, ret] = dialog.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(ret, '4'));
     const save = button(dialog, 'Save')!;
@@ -252,9 +273,11 @@ describe('a form left open never saves to another plan', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
-    await press(tab.byLabel('Edit your ages'));
+    await press(tab.row('Ages'));
     const dialog = tab.dialog()!;
+    expect(dialog.getAttribute('aria-label')).toBe('Your ages');
     expect(dialog.textContent).not.toContain('Saved to the scenario');
+    expect([button(dialog, 'Save')?.disabled, pausedLine(dialog)]).toEqual([false, null]);
     const [, target] = dialog.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(target, '58'));
     await press(dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
@@ -272,6 +295,27 @@ describe('a form left open never saves to another plan', () => {
     expect(tab.text()).not.toContain('Scenario: Retire at 50');
     const focused = dom.document.activeElement as FakeElement;
     expect([focused.textContent, focused.getAttribute('class')]).toEqual(['Scenarios (1)', 'btn ghost']);
+    await tab.unmount();
+  });
+});
+
+describe('Your figures with a scenario open', () => {
+  test('are the scenario’s: a figure it types is said as typed, at its amount, and the FI number is worked out from it', async () => {
+    serve({
+      'GET /api/fire-plan': [200, { plan: { ...PLAN, spending: null }, currency: 'USD' }],
+      'GET /api/plan-scenarios': listing(entry({ name: 'Spend more', set: { spending: 55_000 } })),
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render();
+    // Your plan measures it, from no transactions yet.
+    expect(said(tab.row('Annual spending'))).toEqual(['Not enough transactions yet', '--']);
+    await openScenario(tab, 'Spend more');
+    expect(tab.text()).toContain('Scenario: Spend more');
+    expect(said(tab.row('Annual spending'))).toEqual(['Typed by you', '$55,000']);
+    expect(tab.text()).toContain('$1,375,000');
+    // Back on your plan: its own again.
+    await press(tab.arrow());
+    expect(said(tab.row('Annual spending'))).toEqual(['Not enough transactions yet', '--']);
     await tab.unmount();
   });
 });
