@@ -3,7 +3,9 @@
 // The Plan tab's forms, each shown in the drawer (components/Sheet.tsx). A
 // form holds what is typed as strings (so "4." or "-" survive typing), checks
 // each field with a message a person can act on, and saves the WHOLE plan
-// through onSave, closing only once the server has it.
+// through onSave, closing only once the server has it. A form opens while
+// saving is paused (the Plan's figure rows always open their sheets), and
+// then says why above its buttons.
 //
 // With a scenario open (lib/fire/scenarios.ts), the plan a form holds is the
 // scenario's, and onSave records what changed in it as the scenario's own
@@ -18,6 +20,7 @@ import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
+import { Why } from './Why';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -30,6 +33,10 @@ type SaveProps = {
   editable: boolean;
   /** The open scenario's name, which the save goes to; null for the Plan. */
   scenario?: string | null;
+  /** Why saving is paused for more than a moment (the saved plan couldn't
+   *  be read, a repair waits, its currency isn't known), said above the
+   *  buttons; null while it isn't, or only for a moment (a save under way). */
+  paused?: string | null;
 };
 
 /** Said beside an input a scenario can't change. */
@@ -93,6 +100,7 @@ function Buttons({
   onSave,
   extra,
   scenario = null,
+  paused = null,
 }: {
   onDone: () => void;
   disabled: boolean;
@@ -100,11 +108,13 @@ function Buttons({
   onSave: () => void;
   extra?: React.ReactNode;
   scenario?: string | null;
+  paused?: string | null;
 }) {
   return (
     <>
       {extra}
       {scenario && <p className="panel-note plan-scenario-saves">Saved to the scenario “{scenario}”, not your plan.</p>}
+      {paused && <p className="helper plan-paused">{paused}</p>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onDone} disabled={saving}>
           Cancel
@@ -165,6 +175,7 @@ export function AboutForm(props: SaveProps) {
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         scenario={props.scenario}
+        paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -206,6 +217,9 @@ export function FigureForm(
     kind: FigureKind;
     measured: number | null;
     measuredText: string;
+    /** How the measured figure was worked out (components/plan-figure-notes.ts),
+     *  behind Why? under it; null when there is nothing more to say. */
+    why?: string | null;
     currency: string | null;
     /** Invested assets with or without cash, so the total follows the box as it is ticked. */
     assetsFor?: (includeCash: boolean) => { total: number | null; accounts: CountedAccount[] };
@@ -237,6 +251,9 @@ export function FigureForm(
   const live = kind === 'assets' && props.assetsFor ? props.assetsFor(includeCash) : null;
   const measured = live ? live.total : props.measured;
   const measuredText = live ? `from ${live.accounts.length} account${live.accounts.length === 1 ? '' : 's'}` : props.measuredText;
+  // Said of the figure as the plan measures it now: for assets, not once the
+  // cash box says otherwise.
+  const why = props.why && (kind !== 'assets' || includeCash === plan.includeCash) ? props.why : null;
   const range = kind === 'savings' ? [-LIMITS.money, LIMITS.money] : kind === 'assets' ? [0, LIMITS.balance] : [0, LIMITS.money];
   return (
     <>
@@ -253,18 +270,25 @@ export function FigureForm(
         ]}
       />
       {mode === 'measured' ? (
-        <p className="panel-note">
-          {measured === null ? (
-            'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
-          ) : (
-            <>
-              <strong>
-                <Masked>{wholeMoney(measured, props.currency)}</Masked>
-              </strong>{' '}
-              {measuredText}
-            </>
+        <>
+          <p className="panel-note">
+            {measured === null ? (
+              'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
+            ) : (
+              <>
+                <strong>
+                  <Masked>{wholeMoney(measured, props.currency)}</Masked>
+                </strong>{' '}
+                {measuredText}
+              </>
+            )}
+          </p>
+          {measured !== null && why && (
+            <Why>
+              <Masked>{why}</Masked>
+            </Why>
           )}
-        </p>
+        </>
       ) : (
         <div className="sheet-form">
           <label className="field">
@@ -332,6 +356,7 @@ export function FigureForm(
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         scenario={props.scenario}
+        paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -383,6 +408,7 @@ export function AssumptionsForm(props: SaveProps) {
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         scenario={props.scenario}
+        paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -594,7 +620,7 @@ export function SimulationForm(
         </label>
       </div>
       {s.error && <div className="error">{s.error}</div>}
-      <Buttons scenario={props.scenario} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons scenario={props.scenario} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </>
   );
 }
@@ -650,6 +676,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         scenario={props.scenario}
+        paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -705,6 +732,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
         scenario={props.scenario}
+        paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}

@@ -107,7 +107,7 @@ export function fiDateText(f: PlanFigures, today: string): string {
   if (f.short) return f.short.kind === 'cost' ? 'none: a cost it can’t pay from its investments (below)' : 'none: a year takes out more than there is (below)';
   // A figure not measured is never taken as zero: said, rather than "--".
   const waits = years === null && f.view.fiNumber !== null ? notMeasuredWhat(f.view) : null;
-  if (waits) return `not worked out: ${waits} measured (the FI card on Your path says why)`;
+  if (waits) return `not worked out: ${waits} measured (Your path says why)`;
   if (years === null || years === 0 || years === Infinity) return yearsToFiText(years);
   const year = Math.floor(Number(today.slice(0, 4)) + (Number(today.slice(5, 7)) - 1) / 12 + years);
   return `${yearsToFiText(years)}${f.view.fiAge !== null ? `, around age ${Math.round(f.view.fiAge)}` : ''} (around ${year})`;
@@ -126,7 +126,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     if (needsResult && r === 'pending') return { ...empty, pending: true };
     if (needsResult && typeof r === 'object' && r !== null && 'missing' in r) {
       const need = unmeasuredNeed(r.missing, c.outcome.figures.view);
-      return { ...empty, value: need ? `needs ${need} (the FI card on Your path says why)` : MISSING_TEXT[r.missing] };
+      return { ...empty, value: need ? `needs ${need} (Your path says why)` : MISSING_TEXT[r.missing] };
     }
     if (needsResult && typeof r === 'object' && r !== null && 'error' in r) return { ...empty, value: 'couldn’t be worked out' };
     const result = resultOf(c);

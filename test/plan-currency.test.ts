@@ -486,7 +486,7 @@ describe('a figure not measured is never counted as zero (review round 2, B10)',
     expect(f.walked).toBe(false);
     expect(f.view.yearsToFi).toBeNull();
     expect(f.startsWith).toMatchObject({ projected: null, more: false });
-    expect(fiDateText(f, '2026-10-23')).toBe('not worked out: your invested assets aren’t measured (the FI card on Your path says why)');
+    expect(fiDateText(f, '2026-10-23')).toBe('not worked out: your invested assets aren’t measured (Your path says why)');
   });
 });
 

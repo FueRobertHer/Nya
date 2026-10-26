@@ -255,8 +255,12 @@ async function mount(props: Partial<PlanTabProps> = {}) {
     sheet: (title: string) => find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true' && e.getAttribute('aria-label') === title)[0] ?? null,
     /** A control in the open sheet, by its name. */
     inSheet: (label: string) => dialog()?.findAll((e) => e.getAttribute('aria-label') === label || (e.tagName === 'BUTTON' && e.textContent.trim() === label))[0] ?? null,
-    /** The card titles in a panel. */
-    titles: (p: FakeElement) => p.findAll((e) => has(e, 'inst-name') || has(e, 'total-label')).map((e) => e.textContent),
+    /** The card titles in a panel: a card's name, its total's label, or the
+     *  heading in its header (Your figures'). */
+    titles: (p: FakeElement) =>
+      p.findAll((e) => has(e, 'inst-name') || has(e, 'total-label') || (/^H\d$/.test(e.tagName) && e.parentNode instanceof FakeElement && has(e.parentNode, 'card-header'))).map((e) => e.textContent),
+    /** One of Your figures' rows, by its title. */
+    row: (title: string) => find((e) => e.tagName === 'BUTTON' && has(e, 'list-row') && e.findAll((t) => has(t, 'list-row-title'))[0]?.textContent === title)[0] ?? null,
     /** Where an element comes in the page, top to bottom. */
     order: (el: FakeElement) => find(() => true).indexOf(el),
   };
@@ -363,7 +367,7 @@ describe('the segments', () => {
     serve();
     const tab = await mount();
     expect(tab.shown()).toEqual(['Your path']);
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Income and one-off expenses']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses']);
     const stress = tab.titles(tab.panelOf('Stress test'));
     expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))[0]).toBe('Allocation');
@@ -580,7 +584,7 @@ describe('what the tab does by itself', () => {
     });
     const tab = await mount();
     // A save of the Plan under way, and a scenario opened meanwhile.
-    await press(tab.container.findAll((e) => e.getAttribute('aria-label') === 'Edit your ages')[0]);
+    await press(tab.row('Ages'));
     const form = tab.sheet('Your ages')!;
     await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '58'));
     await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
@@ -644,7 +648,7 @@ describe('the scenario’s card, on every segment', () => {
     const tab = await mount();
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Income and one-off expenses', 'Life events']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses', 'Life events']);
     expect(tab.panelOf('Stress test').textContent).toContain('as the Life events card on Your path says');
     await tab.unmount();
   });

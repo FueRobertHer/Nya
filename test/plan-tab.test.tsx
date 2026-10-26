@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import PlanTab, { EventsCard, FiCard, GridCard, RepairCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
+import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
+import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import PlanFanChart from '@/components/PlanFanChart';
 import { FigureForm } from '@/components/PlanForms';
 import PlanGrid from '@/components/PlanGrid';
@@ -10,6 +11,7 @@ import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '
 import { simulate, successGrid } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
+import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 
 const noop = () => {};
 const money = (n: number) => wholeMoney(n, 'USD');
@@ -61,6 +63,28 @@ const text = (html: string) =>
     .replace(/&gt;/g, '>')
     .replace(/\s+/g, ' ');
 
+/** One of Your figures' rows, with the notes under it, by its title. */
+const figureRow = (html: string, title: string) => html.match(new RegExp(`<li><button[^>]*><span class="list-row-text"><span class="list-row-title">${title}</span>.*?</li>`))?.[0] ?? '';
+
+/** The level of each notice that says `words`, in the order drawn: a note in
+ *  full, or one inside the line that gathers two or more. */
+const levels = (html: string, words: string) =>
+  [...html.matchAll(/<div class="notice (critical|caution|info)"><svg[^>]*>.*?<\/svg><div><span class="visually-hidden">[^<]*<\/span>(.*?)<\/div><\/div>/g)]
+    .filter((m) => text(m[2]).includes(words))
+    .map((m) => m[1]);
+
+/** Your path's FI card and the figures it rests on under it, what they say
+ *  worked out in the render as PlanTab does, so a render with amounts hidden
+ *  (test/hidden-renders.ts) hides the amounts in it. */
+function YourPath({ a, currencyNote }: { a: FigureArgs; currencyNote: string | null }) {
+  return (
+    <>
+      <FiCard {...a} currencyNote={currencyNote} />
+      <InputsCard figures={figureNotes(a)} view={a.view} money={a.money} onOpen={noop} />
+    </>
+  );
+}
+
 describe('figures', () => {
   test('a success rate never rounds up to 100% or down to 0%', () => {
     expect(successText(1)).toBe('100%');
@@ -100,100 +124,107 @@ describe('figures', () => {
 });
 
 describe('the FI card', () => {
-  const card = (
-    p: FirePlan,
-    opts: {
-      m?: Measured;
-      f?: TrailingFlows | null;
-      unread?: { institution: string | null; reason: string }[];
-      txnsFailed?: boolean;
-      a?: InvestedAssets;
-      workplace?: WorkplaceSavings | null;
-      workplaceCount?: number | null;
-      currencyNote?: string | null;
-      cashOn?: string[];
-      cashUnmarked?: boolean;
-    } = {}
-  ) =>
-    text(
-      renderToStaticMarkup(
-        <FiCard
-          plan={p}
-          view={fiView(p, opts.m ?? measured)}
-          flows={opts.f === undefined ? flows : opts.f}
-          unread={opts.unread ?? []}
-          txnsLoading={false}
-          txnsFailed={opts.txnsFailed ?? false}
-          assets={opts.a ?? assets()}
-          balancesAsOf="2026-10-06T15:12:00Z"
-          workplace={opts.workplace === undefined ? noPlans : opts.workplace}
-          workplaceCount={opts.workplaceCount === undefined ? 0 : opts.workplaceCount}
-          currencyNote={opts.currencyNote ?? null}
-          cashOn={opts.cashOn}
-          cashUnmarked={opts.cashUnmarked}
-          money={money}
-          editable
-          open={noop}
-        />
-      )
-    );
+  type Opts = {
+    m?: Measured;
+    f?: TrailingFlows | null;
+    unread?: { institution: string | null; reason: string }[];
+    txnsFailed?: boolean;
+    a?: InvestedAssets;
+    workplace?: WorkplaceSavings | null;
+    workplaceCount?: number | null;
+    currencyNote?: string | null;
+    cashOn?: string[];
+    cashUnmarked?: boolean;
+  };
+  /** What Your path gives the FI card and the Your figures card under it,
+   *  from the same inputs (components/PlanTab.tsx). */
+  const args = (p: FirePlan, opts: Opts = {}): FigureArgs => ({
+    plan: p,
+    view: fiView(p, opts.m ?? measured),
+    flows: opts.f === undefined ? flows : opts.f,
+    unread: opts.unread ?? [],
+    withoutTransactions: NO_CONNECTIONS_WITHOUT,
+    transactionCount: 0,
+    txnsLoading: false,
+    txnsFailed: opts.txnsFailed ?? false,
+    assets: opts.a ?? assets(),
+    balancesAsOf: '2026-10-06T15:12:00Z',
+    workplace: opts.workplace === undefined ? noPlans : opts.workplace,
+    workplaceCount: opts.workplaceCount === undefined ? 0 : opts.workplaceCount,
+    cashOn: opts.cashOn ?? [],
+    cashUnmarked: opts.cashUnmarked ?? false,
+    money,
+    savingsRate: null,
+    shareRates: null,
+  });
+  /** The FI card with the figures it rests on under it, as Your path draws them. */
+  const cardHtml = (p: FirePlan, opts: Opts = {}) => renderToStaticMarkup(<YourPath a={args(p, opts)} currencyNote={opts.currencyNote ?? null} />);
+  const card = (p: FirePlan, opts: Opts = {}) => text(cardHtml(p, opts));
+  /** How a measured figure was worked out: its sheet's Why?. */
+  const why = (p: FirePlan, opts: Opts, figure: 'spending' | 'savings') => figureNotes(args(p, opts))[figure].why;
 
   test('shows the FI number with the inputs it came from, and where each came from', () => {
-    const t = card(plan());
+    const html = cardHtml(plan());
+    const t = text(html);
     expect(t).toContain('$1,000,000');
     expect(t).toContain('$40,000 a year ÷ 4% withdrawal rate');
-    expect(t).toContain('from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026).');
-    expect(t).toContain('from 2 investment accounts, balances as of');
-    expect(t).toContain('an estimate: income minus spending over the same 12 months.');
-    expect(t).toContain("Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data.");
+    // Where each comes from is its row's sub (rollout phase 6c); how savings
+    // were estimated is behind Why? in its sheet.
+    expect(text(figureRow(html, 'Annual spending'))).toContain('Annual spending A year, from transactions $40,000');
+    expect(text(figureRow(html, 'Invested assets'))).toMatch(/Invested assets 2 accounts, as of [^$]+ \$250,000/);
+    expect(text(figureRow(html, 'Annual savings'))).toContain('Annual savings Estimated from a year $30,000');
+    expect(why(plan(), {}, 'savings')).toBe('An estimate: income minus spending over the same 12 months.');
+    expect(levels(figureRow(html, 'Annual savings'), "Contributions taken from pay before it reaches a bank (a 401(k) Nya can't see, an employer's match) aren't in bank data.")).toEqual([
+      'caution',
+    ]);
     expect(t).toContain('25% of the way');
   });
 
   test('says what the spending includes beyond the Activity tab: loan payments, cash, refunds taken off with the largest', () => {
-    const t = card(plan(), {
+    const opts: Opts = {
       f: { ...flows, loanPayments: 18_000, cash: 1_200, refunds: 1_800, largestRefund: { amount: 1_500, date: '2026-02-01', name: 'Acme Rentals' }, unclearLoans: 400 },
-    });
-    expect(t).toContain(
+    };
+    expect(why(plan(), opts, 'spending')).toBe(
       'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
     );
-    expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
+    expect(levels(figureRow(cardHtml(plan(), opts), 'Annual spending'), "$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan")).toEqual(['caution']);
   });
 
   test('says IOUs you owe from before your transactions begin aren’t counted here, naming the day', () => {
     const scaled = { ...flows, scaled: true, days: 40, from: '2026-08-28' };
-    expect(card(plan(), { f: { ...scaled, iousBefore: { count: 1, amount: 25 } } })).toContain(
-      "An IOU you owe from before Aug 28, 2026 ($25) isn't counted here: your spending is measured from your transactions, which begin then."
-    );
-    expect(card(plan(), { f: { ...scaled, iousBefore: { count: 10, amount: 1_000 } } })).toContain("10 IOUs you owe from before Aug 28, 2026 ($1,000) aren't counted here");
+    expect(levels(figureRow(cardHtml(plan(), { f: { ...scaled, iousBefore: { count: 1, amount: 25 } } }), 'Annual spending'), "An IOU you owe from before Aug 28, 2026 ($25) isn't counted here: your spending is measured from your transactions, which begin then.")).toEqual([
+      'caution',
+    ]);
+    expect(levels(figureRow(cardHtml(plan(), { f: { ...scaled, iousBefore: { count: 10, amount: 1_000 } } }), 'Annual spending'), "10 IOUs you owe from before Aug 28, 2026 ($1,000) aren't counted here")).toEqual(['caution']);
     expect(card(plan(), { f: scaled })).not.toContain('IOU');
   });
 
   test('says loan payments not counted by where they came from: Plaid’s, or entered, imported or categorized', () => {
-    const t = card(plan(), { f: { ...flows, unclearLoans: 600, unclearLoansElsewhere: 200 } });
-    expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
-    expect(t).toContain("$200 of loan payments you entered, imported or categorized isn't counted: nothing says it pays a mortgage, car, student or personal loan rather than a card");
+    const spending = figureRow(cardHtml(plan(), { f: { ...flows, unclearLoans: 600, unclearLoansElsewhere: 200 } }), 'Annual spending');
+    expect(levels(spending, "$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan")).toEqual(['caution']);
+    expect(levels(spending, "$200 of loan payments you entered, imported or categorized isn't counted: nothing says it pays a mortgage, car, student or personal loan rather than a card")).toEqual(['caution']);
     // Only from elsewhere: Plaid isn't blamed.
-    const only = card(plan(), { f: { ...flows, unclearLoans: 200, unclearLoansElsewhere: 200 } });
-    expect(only).not.toContain("Plaid doesn't say");
-    expect(only).toContain('$200 of loan payments you entered, imported or categorized');
+    const only = cardHtml(plan(), { f: { ...flows, unclearLoans: 200, unclearLoansElsewhere: 200 } });
+    expect(text(only)).not.toContain("Plaid doesn't say");
+    expect(levels(figureRow(only, 'Annual spending'), '$200 of loan payments you entered, imported or categorized')).toEqual(['caution']);
   });
 
   test('says which cash counted, withdrawals or the cash spending entered on an account marked cash on hand, never both, and names the account', () => {
     // Withdrawals only.
-    expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } })).toContain('Includes $1,200 of cash withdrawals.');
+    expect(why(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } }, 'spending')).toBe('Includes $1,200 of cash withdrawals.');
     // Some entered by hand on the wallet: the rest of what was withdrawn.
-    expect(card(plan(), { f: { ...flows, cash: 700, cashWithdrawn: 1_200, cashEntered: 500 }, cashOn: ['Wallet'] })).toContain(
+    expect(why(plan(), { f: { ...flows, cash: 700, cashWithdrawn: 1_200, cashEntered: 500 }, cashOn: ['Wallet'] }, 'spending')).toBe(
       'Includes $700 of cash withdrawals beyond the $500 of cash spending you entered on Wallet, taken to be the same money.'
     );
     // All of it entered: the withdrawals aren't counted, and it says so.
-    const t = card(plan(), { f: { ...flows, cash: 0, cashWithdrawn: 1_200, cashEntered: 1_500 }, cashOn: ['Wallet', 'Jar'] });
-    expect(t).toContain("Cash withdrawals ($1,200) aren't counted: the $1,500 of cash spending you entered on Wallet and Jar is taken to be the same money.");
-    expect(t).not.toContain('Includes');
+    const all = why(plan(), { f: { ...flows, cash: 0, cashWithdrawn: 1_200, cashEntered: 1_500 }, cashOn: ['Wallet', 'Jar'] }, 'spending');
+    expect(all).toBe("Cash withdrawals ($1,200) aren't counted: the $1,500 of cash spending you entered on Wallet and Jar is taken to be the same money.");
+    expect(all).not.toContain('Includes');
   });
 
   test('with withdrawals counted beside spending entered on an account not marked as cash, says how to keep them from both counting', () => {
     const hint = 'mark its account as cash on hand (Update the account), so it isn';
-    expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 }, cashUnmarked: true })).toContain(hint);
+    expect(levels(figureRow(cardHtml(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 }, cashUnmarked: true }), 'Annual spending'), hint)).toEqual(['caution']);
     // Not without spending entered by hand, nor once an account is marked.
     expect(card(plan(), { f: { ...flows, cash: 1_200, cashWithdrawn: 1_200 } })).not.toContain(hint);
     expect(card(plan(), { f: { ...flows, cash: 700, cashWithdrawn: 1_200, cashEntered: 500 }, cashOn: ['Wallet'], cashUnmarked: true })).not.toContain(hint);
@@ -202,44 +233,46 @@ describe('the FI card', () => {
   test('names what another currency left out of spending and of assets', () => {
     // Ten accounts counted, one left out: under a tenth, so measured from the rest, and said.
     const ten = Array.from({ length: 10 }, (_, i) => ({ ...assets().accounts[0], account_id: `a${i}`, balance: 25_000 }));
-    const t = card(plan(), {
+    const html = cardHtml(plan(), {
       f: { ...flows, leftOut: [{ currency: 'JPY', count: 2 }] },
       a: assets({ accounts: ten, leftOut: [{ currency: 'EUR', count: 1 }] }),
     });
-    expect(t).toContain("2 transactions in JPY aren't in your spending or savings, which are in USD.");
-    expect(t).toContain("1 account in EUR isn't in this figure, which is in USD.");
+    expect(levels(figureRow(html, 'Annual spending'), "2 transactions in JPY aren't in your spending or savings, which are in USD.")).toEqual(['caution']);
+    expect(levels(figureRow(html, 'Invested assets'), "1 account in EUR isn't in this figure, which is in USD.")).toEqual(['caution']);
     expect(card(plan())).not.toContain("aren't in your spending");
     // More than a tenth (one of three): not measured from the rest, and why (lib/fire/progress.ts assetsGap).
-    const gap = card(plan(), { m: { spending: 40_000, savings: 30_000, assets: null }, a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }) });
-    expect(gap).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (1 account in EUR).');
+    const gap = cardHtml(plan(), { m: { spending: 40_000, savings: 30_000, assets: null }, a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }) });
+    expect(levels(figureRow(gap, 'Invested assets'), 'Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (1 account in EUR).')).toEqual([
+      'caution',
+    ]);
   });
 
   test('says how many transactions the person excluded were left out of spending', () => {
     expect(card(plan())).not.toContain('Leaves out');
-    expect(card(plan(), { f: { ...flows, excludedCount: 1 } })).toContain(
-      'from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026). Leaves out 1 transaction you excluded from budgets and reports.'
-    );
+    // Under the spending's row, as information: nothing is missing.
+    expect(levels(figureRow(cardHtml(plan(), { f: { ...flows, excludedCount: 1 } }), 'Annual spending'), 'Leaves out 1 transaction you excluded from budgets and reports.')).toEqual(['info']);
     expect(card(plan(), { f: { ...flows, excludedCount: 3 } })).toContain('Leaves out 3 transactions you excluded from budgets and reports.');
   });
 
   test('a figure that may be short says so, beside it and on the FI number, naming the institution', () => {
-    const t = card(plan(), { unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] });
-    expect(t).toContain("Transactions from Chase couldn't all be read (the Activity tab says why), so this figure may be low.");
-    expect(t).toContain("May be low: spending is missing transactions that couldn't be read");
+    const html = cardHtml(plan(), { unread: [{ institution: 'Chase', reason: 'needs to be reconnected' }] });
+    expect(levels(figureRow(html, 'Annual spending'), "Transactions from Chase couldn't all be read (the Activity tab says why), so this figure may be low.")).toEqual(['caution']);
+    expect(text(html)).toContain("May be low: spending is missing transactions that couldn't be read");
     // Savings could be off either way: the missing rows could be income too.
-    expect(t).toContain('so this figure may be off.');
+    expect(levels(figureRow(html, 'Annual savings'), "Transactions from Chase couldn't all be read (the Activity tab says why), so this figure may be off.")).toEqual(['caution']);
     // A typed figure is not affected.
     expect(card(plan({ spending: 50_000, savings: 10_000 }), { unread: [{ institution: 'Chase', reason: 'x' }] })).not.toContain('May be low');
   });
 
   test('transactions that failed to load are said so, not "not enough"', () => {
-    const t = card(plan(), { m: { spending: null, savings: null, assets: 250_000 }, f: null, txnsFailed: true });
-    expect(t).toContain("your transactions couldn't be loaded");
-    expect(t).not.toContain('not enough transactions');
+    const html = cardHtml(plan(), { m: { spending: null, savings: null, assets: 250_000 }, f: null, txnsFailed: true });
+    expect(text(figureRow(html, 'Annual spending'))).toContain("Annual spending Couldn't be loaded --");
+    expect(levels(figureRow(html, 'Annual spending'), "Your transactions couldn't be loaded; type your spending, or try again later.")).toEqual(['info']);
+    expect(text(html)).not.toContain('Not enough transactions');
   });
 
   test('balances that are old, missing or unreachable are named with their date', () => {
-    const t = card(plan(), {
+    const html = cardHtml(plan(), {
       a: assets({
         caveats: [
           { kind: 'unreachable', institution: 'Schwab' },
@@ -248,14 +281,22 @@ describe('the FI card', () => {
         ],
       }),
     });
-    expect(t).toContain("Schwab couldn't be reached and isn't counted, so this figure may be low.");
-    expect(t).toContain("Vanguard's balances are from Oct 3, 2026");
-    expect(t).toContain("1 account at Fidelity couldn't be shown, so this figure may be low.");
-    expect(t).toContain('Invested assets may be low');
+    const invested = figureRow(html, 'Invested assets');
+    expect(levels(invested, "Schwab couldn't be reached and isn't counted, so this figure may be low.")).toEqual(['caution']);
+    expect(levels(invested, "Vanguard's balances are from Oct 3, 2026")).toEqual(['caution']);
+    expect(levels(invested, "1 account at Fidelity couldn't be shown, so this figure may be low.")).toEqual(['caution']);
+    expect(text(html)).toContain('Invested assets may be low');
+    // Typed instead: what was typed counts, so nothing says it may be low,
+    // on the number or under the row.
+    const typed = cardHtml(plan({ assets: 300_000 }), { a: assets({ caveats: [{ kind: 'unreachable', institution: 'Schwab' }] }) });
+    expect(text(typed)).toContain('$300,000 invested · 30% of the way');
+    expect(text(typed)).not.toContain('Invested assets may be low');
+    expect(text(figureRow(typed, 'Invested assets'))).toContain('Invested assets Typed by you $300,000');
+    expect(text(typed)).not.toContain("Schwab couldn't be reached");
   });
 
   test('savings say what was added for each workplace plan and what counted, what was not and why, and what could not be measured', () => {
-    const t = card(plan(), {
+    const opts: Opts = {
       workplaceCount: 5,
       workplace: {
         ...noPlans,
@@ -269,20 +310,26 @@ describe('the FI card', () => {
         shortHistory: [{ name: 'Empower 457(b)', from: '2026-03-03' }],
         unmeasured: ['TSP TSP'],
       },
-    });
-    expect(t).toContain('over the same 12 months, plus $14,000 paid into Fidelity 401(k) and Vanguard Solo 401(k).');
-    expect(t).toContain('Fidelity 401(k): 24 contributions added, $12,000, the largest $1,000 on Mar 13, 2026, all of them, as it is set as paid through payroll.');
-    expect(t).toContain('Vanguard Solo 401(k): 1 contribution added, $2,000, the largest $2,000 on Jun 2, 2026.');
-    expect(t).toContain(
-      "$10,000 more paid into Vanguard Solo 401(k) matched transfers from your bank to investment and retirement funds, which already count as saved, so it isn't added again."
-    );
-    expect(t).toContain("How Vanguard Solo 401(k) is paid into isn't set: if you pay into it from your bank account, say so under Edit, or it may count twice.");
-    expect(t).not.toContain("How Fidelity 401(k) is paid into isn't set");
-    expect(t).toContain('Schwab SEP is set as paid from your bank, so nothing paid into it is added again.');
-    expect(t).toContain('Fidelity 401(k) is counted from Apr 1, 2026');
-    expect(t).toContain('Nya has activity for Empower 457(b) from Mar 3, 2026.');
-    expect(t).toContain("Contributions to TSP TSP couldn't be measured, so this figure may be low.");
-    expect(card(plan(), { workplace: null, workplaceCount: null })).toContain('Checking contributions to workplace plans');
+    };
+    const html = cardHtml(plan(), opts);
+    expect(why(plan(), opts, 'savings')).toContain('over the same 12 months, plus $14,000 paid into Fidelity 401(k) and Vanguard Solo 401(k).');
+    const savings = figureRow(html, 'Annual savings');
+    for (const s of [
+      'Fidelity 401(k): 24 contributions added, $12,000, the largest $1,000 on Mar 13, 2026, all of them, as it is set as paid through payroll.',
+      'Vanguard Solo 401(k): 1 contribution added, $2,000, the largest $2,000 on Jun 2, 2026.',
+      "$10,000 more paid into Vanguard Solo 401(k) matched transfers from your bank to investment and retirement funds, which already count as saved, so it isn't added again.",
+      // The sheet it is said in is the row's (rollout phase 6c), not an Edit button's.
+      "How Vanguard Solo 401(k) is paid into isn't set: if you pay into it from your bank account, say so in Annual savings, or it may count twice.",
+      'Schwab SEP is set as paid from your bank, so nothing paid into it is added again.',
+      'Fidelity 401(k) is counted from Apr 1, 2026',
+      'Nya has activity for Empower 457(b) from Mar 3, 2026.',
+      "Contributions to TSP TSP couldn't be measured, so this figure may be low.",
+    ]) {
+      expect(levels(savings, s)).toEqual(['caution']);
+    }
+    expect(text(html)).not.toContain("How Fidelity 401(k) is paid into isn't set");
+    expect(text(html)).not.toContain('under Edit');
+    expect(levels(figureRow(cardHtml(plan(), { workplace: null, workplaceCount: null }), 'Annual savings'), 'Checking contributions to workplace plans')).toEqual(['caution']);
   });
 
   test('a currency mismatch is said beside the figures', () => {
@@ -294,13 +341,14 @@ describe('the FI card', () => {
   });
 
   test('a typed figure says so', () => {
-    expect(card(plan({ spending: 60_000 }))).toContain('typed by you');
+    expect(text(figureRow(cardHtml(plan({ spending: 60_000 })), 'Annual spending'))).toContain('Annual spending Typed by you $60,000');
   });
 
   test('says what is missing instead of showing a zero', () => {
-    const t = card(plan(), { m: { spending: null, savings: null, assets: null }, f: null, a: assets({ total: null, accounts: [] }) });
+    const html = cardHtml(plan(), { m: { spending: null, savings: null, assets: null }, f: null, a: assets({ total: null, accounts: [] }) });
+    const t = text(html);
     expect(t).toContain('Needs your annual spending');
-    expect(t).toContain('not enough transactions to measure from yet');
+    expect(text(figureRow(html, 'Annual spending'))).toContain('Annual spending Not enough transactions yet --');
     expect(t).toContain('Needs your age and target age.');
     expect(t).not.toContain('$0');
   });
@@ -465,11 +513,12 @@ describe('the simulation card', () => {
 
   test('what it needs and isn’t measured is said so, in compare mode’s words, never as none to count (review round 3)', () => {
     const assets = read(plan({ start: 'assets' }), { spending: 40_000, savings: 30_000, assets: null, unmeasured: ['assets'] });
-    // Said on Stress test, of the FI card on Your path (rollout phase 6b).
-    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card on Your path says why). Type them on Your path, or start from your FI number (Change).');
+    // Said on Stress test, of the figures on Your path (rollout phase 6b),
+    // whose rows say why (6c).
+    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (Your path says why). Type them on Your path, or start from your FI number (Change).');
     expect(assets).not.toContain('none to count yet');
     const spending = read(plan(), { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] });
-    expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card on Your path says why). Type it on Your path.');
+    expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
     expect(spending).not.toContain('connect accounts with transactions');
   });
 });
@@ -651,18 +700,10 @@ describe('a saved plan this version cannot use as it is', () => {
         <FiCard
           plan={p}
           view={fiView(p, measured)}
-          flows={flows}
           unread={[]}
-          txnsLoading={false}
-          txnsFailed={false}
           assets={assets()}
-          balancesAsOf={null}
-          workplace={noPlans}
-          workplaceCount={0}
           currencyNote={null}
           money={money}
-          editable
-          open={noop}
         />
       )
     );
