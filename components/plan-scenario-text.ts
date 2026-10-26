@@ -162,12 +162,14 @@ export const EVENT_PART_TEXT: Record<EventPart, string> = {
 
 /** What a plan starts with, and what the walk says it would have then.
  *  `shortWhere` is where the shortfall that stops the walk is said: below,
- *  in compare mode; on Your path, from the simulation's card. */
-export function startsWithText(sw: StartsWith, money: Money, shortWhere = 'below'): string {
+ *  in compare mode; on Your path, from the simulation's card; or null, said
+ *  here, from today's `age`, when nothing else says it. */
+export function startsWithText(sw: StartsWith, money: Money, shortWhere: string | null = 'below', age: number | null = null): string {
   const from = sw.from === 'fi-number' ? 'your FI number' : sw.from === 'assets' ? 'your invested assets today' : 'the balance you typed';
   const at = sw.from === 'assets' ? '' : sw.atAge !== null ? ` at ${sw.atAge}` : ' at the stop age';
   const head = `${money(sw.balance)}, ${from}${at}`;
   if (sw.from === 'assets') return `${head}.`;
+  if (sw.short && shortWhere === null) return `${head}: it would never get that far. ${shortText(sw.short, age, money, `it never gets to ${sw.atAge ?? 'the stop age'}`)}`;
   if (sw.short) return `${head}: it would never get that far (${shortWhere}).`;
   if (sw.projected === null) return `${head}.`;
   if (!sw.more) return `${head}: you’d have about ${money(sw.projected)} then.`;
@@ -178,6 +180,8 @@ export function startsWithText(sw: StartsWith, money: Money, shortWhere = 'below
  *  would have reached. */
 export function shortText(short: Shortfall, age: number | null, money: Money, what = 'there is no FI date'): string {
   const when = age !== null ? `at ${age + short.year}` : `in ${short.year} year${short.year === 1 ? '' : 's'}`;
+  // Nothing grows from below zero: the walk and the projection stop there.
+  if (short.have < 0) return `Your invested assets are below zero (${money(short.have)}) ${when}, so ${what}.`;
   return short.kind === 'cost'
     ? `You’d have about ${money(short.have)} ${when}, less than the ${money(short.need)} it takes from your investments, so ${what}: change the cost, or when it comes.`
     : `You’d have about ${money(short.have)} ${when}, and that year takes ${money(short.need)} out, more than there is, so ${what}.`;

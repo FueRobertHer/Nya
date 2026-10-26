@@ -634,7 +634,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, ECB] });
     const tab = await render({ institutions: dollars, txns: highEarner });
     expect(tab.text()).toMatch(/Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
-    expect(tab.text()).toContain('FI number--Needs your annual spending, which isn’t measured (below).Years to FI--Needs your annual spending, which isn’t measured (below).');
+    expect(tab.text()).toContain('Financial independence--Add your age and when you’d like to stopNeeds your annual spending, which isn’t measured (below).Years to FI--Needs your annual spending, which isn’t measured (below).');
     expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
     expect(tab.text()).not.toContain('connect accounts with transactions');
     expect(tab.text()).not.toContain('$1,097');
@@ -648,7 +648,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     ]);
     serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, ECB] });
     const tab = await render({ institutions: dollars, txns: mirror });
-    expect(tab.text()).toMatch(/FI number\$[\d,]+\$[\d,]+ a year ÷ 4% withdrawal rate/);
+    expect(tab.text()).toMatch(/FI number \$[\d,]+: \$[\d,]+ a year ÷ 4% withdrawal rate/);
     expect(tab.text()).toMatch(/Annual spending\d+ days, scaled up to a year\$[\d,]+/);
     expect(tab.text()).toContain('Years to FI--Not worked out: your savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
     expect(tab.text()).toMatch(/Annual savingsNot measured--Caution: The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);

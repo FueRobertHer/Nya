@@ -19,8 +19,14 @@
 // is a person's own spending over a rate the plan names, which is worth
 // seeing before anything is set, and nothing in it is a guess about them.
 // It shows nothing while what it needs loads, when there is no spending to
-// work from, or when the plan can't be read: Home stays as it was, and the
-// Plan tab says why.
+// work from, or when the plan couldn't be fetched (a request that failed:
+// Home stays as it was). A saved plan that can't be read (the store says
+// so, or this release can't take its shape) gets a row saying so, which
+// opens the Plan tab, where it says why (rollout phase 8b, from 4c's review).
+//
+// THE PLAN'S WORDS. The row's title is the Plan's answer (components/
+// plan-text.ts fiHeadline): when FI comes, against the age you'd like to
+// stop, with FI named, since the line stands on its own.
 //
 // Every figure is an estimate, and says so: savings from bank data miss
 // pre-tax contributions to a plan Nya can't see and an employer's match, in
@@ -35,8 +41,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
-import { PAYROLL_NOTE, dayName, pct, progressText, savingsRateText, wholeMoney, yearsToFiText } from './plan-text';
-import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/plan';
+import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
+import { DEFAULT_PLAN, isFirePlan, projectFrom, repairPlan, type FirePlan } from '@/lib/fire/plan';
+import { projectionShort } from '@/lib/fire/fi';
 import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, shownFrom, unconfirmedText, type CurrencyAnswer } from '@/lib/fire/plan-currency';
 import { assetsGap, assetsLeftOut, fiFigures, gapText, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
@@ -66,8 +73,9 @@ export type FiProgressProps = {
 };
 
 /** What /api/fire-plan answered: the saved plan, or null for none, and the
- *  currency its figures are in. */
-type Loaded = { plan: FirePlan | null; currency: CurrencyAnswer } | 'failed' | null;
+ *  currency its figures are in; a saved plan that can't be read; or a
+ *  request that failed. */
+type Loaded = { plan: FirePlan | null; currency: CurrencyAnswer } | 'unreadable' | 'failed' | null;
 
 export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan }: FiProgressProps) {
   const [loaded, setLoaded] = useState<Loaded>(null);
@@ -77,7 +85,11 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         const plan: unknown = body?.plan;
-        if (live) setLoaded(res.ok && (plan === null || isFirePlan(plan)) ? { plan, currency: readCurrencyAnswer(body) } : 'failed');
+        if (!live) return;
+        if (res.ok && (plan === null || isFirePlan(plan))) setLoaded({ plan, currency: readCurrencyAnswer(body) });
+        // The store says it can't read it, or it holds a plan this release
+        // can't take (a newer one's): said. Anything else failed to arrive.
+        else setLoaded((res.status === 409 && body?.unreadable === true) || (res.ok && plan !== undefined) ? 'unreadable' : 'failed');
       })
       .catch(() => {
         if (live) setLoaded('failed');
@@ -86,8 +98,8 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       live = false;
     };
   }, []);
-  const stored = loaded && loaded !== 'failed' ? loaded.plan : null;
-  const answer = loaded && loaded !== 'failed' ? loaded.currency : NO_ANSWER;
+  const stored = loaded && typeof loaded === 'object' ? loaded.plan : null;
+  const answer = loaded && typeof loaded === 'object' ? loaded.currency : NO_ANSWER;
   // As the Plan tab works from it: a value this release can't take is
   // replaced by its default there too, with the same result.
   const repair = useMemo(() => repairPlan(stored ?? DEFAULT_PLAN), [stored]);
@@ -104,6 +116,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     currency: answer.currency,
   });
   const figures = fiFigures(plan, inputs, currency);
+  if (loaded === 'unreadable') return <FiRow what="FI isn’t worked out" detail="Your saved plan couldn’t be read: the Plan tab says why." onOpenPlan={onOpenPlan} notes={[]} />;
   if (
     !ready({
       plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
@@ -251,23 +264,39 @@ export function FiProgressView({
       body: "Your saved plan has values this version of Nya can't use, so these use the defaults for them. The Plan tab says which.",
     });
 
-  // The row: how far, then the figures the notes speak of (the FI number,
-  // what is invested, the savings rate).
-  const years = view.yearsToFi;
+  // The row: the Plan's answer, then the figures the notes speak of (what
+  // is invested of the FI number, how far, the savings rate). At FI already,
+  // but with savings that run the steady projection out before the stop
+  // age, it says so, as the Plan does.
+  const from = projectFrom(plan, view);
+  const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, plan.realReturn, from.years) : null;
+  const head = fiHeadline(view, plan, { runsOutAt: runsOut && plan.age !== null ? plan.age + runsOut.year : null });
   const there = view.progress !== null ? progressText(view.progress) : null;
   const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
+  const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
   let title: string;
   let withNumber = true;
-  if (years === 0) title = 'You’re at FI';
-  else if (years === Infinity) title = `FI not reached at this savings rate${there ? ` · ${there} there` : ''}`;
-  else if (years !== null) title = `FI in ${yearsToFiText(years)}${there ? ` · ${there} there` : ''}`;
+  if (head.kind === 'age') title = `FI around age ${head.age}${head.against ? `, ${lower(head.against)}` : ''}`;
+  else if (head.kind === 'years' || head.kind === 'later') title = `FI ${lower(head.headline)}`;
+  else if (head.kind === 'there') title = head.against ? `You’re at FI, but ${lower(head.against)}` : 'You’re at FI';
+  else if (head.kind === 'never') title = `FI ${lower(head.headline)}`;
   else if (there) title = `${there} of the way to FI`;
   else {
     title = `FI number ${money(view.fiNumber)}`;
     withNumber = false;
   }
-  const invested = there !== null ? `${money(view.assets.value ?? 0)} invested` : null;
-  const sub = [withNumber ? `FI number ${money(view.fiNumber)}` : null, invested, rate].filter((s): s is string => !!s).join(' · ');
+  // "$942,000 of $1,520,000 invested (62%)", the percent said apart so it
+  // reads while amounts are hidden, and not again when the title says it;
+  // past the FI number, how far past it.
+  const invested =
+    there === null
+      ? withNumber
+        ? `FI number ${money(view.fiNumber)}`
+        : null
+      : (view.progress ?? 0) >= 1
+        ? `${money(view.assets.value ?? 0)} invested · ${there} of the FI number ${money(view.fiNumber)}`
+        : `${money(view.assets.value ?? 0)} of ${money(view.fiNumber)} invested${title.startsWith(there) ? '' : ` (${there})`}`;
+  const sub = [saved ? null : 'Plan defaults', invested, rate].filter((s): s is string => !!s).join(' · ');
   return <FiRow what={title} detail={sub || undefined} onOpenPlan={onOpenPlan} notes={notes} />;
 }
 

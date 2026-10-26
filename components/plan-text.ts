@@ -82,6 +82,69 @@ export function yearsToFiText(years: number | null): string {
   return years === null ? '--' : yearsText(years);
 }
 
+/** The oldest age the answer names (the oldest a plan's ages can be): FI
+ *  later than that isn't said as an age. */
+const OLDEST = 100;
+
+/** The answer at the top of Your path, and Home's FI line from the same
+ *  parts (rollout phase 8b): when FI comes, against the age you'd like to
+ *  stop. The kind, the age and the years before the stop age are there for
+ *  anything that says it another way. */
+export type FiHeadline = {
+  kind: 'age' | 'years' | 'there' | 'never' | 'later' | 'no-date' | 'unknown';
+  /** "Around age 39", "In about 11.4 years", "You’re at FI"... */
+  headline: string;
+  /** Against the stop age ("16 years before you stop at 55"), or what
+   *  follows from being there; null when there is nothing to say. */
+  against: string | null;
+  /** The FI age as the headline says it, rounded. */
+  age: number | null;
+  /** The stop age less that age: above zero before it, below after. */
+  before: number | null;
+  /** Which ages the answer is still missing. */
+  ask: 'both' | 'age' | 'stop' | null;
+  /** Reached, and then the projection runs out before the stop age (a
+   *  scenario's life events can do that): said under it. */
+  runsOut: string | null;
+};
+
+const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
+
+/** `runsOutAt`: the age the steady projection can't go on at, when it can't
+ *  before the stop age (lib/fire/path.ts); `noDate`: the walk can't get to
+ *  FI at all (a cost it can't pay). */
+export function fiHeadline(
+  view: { yearsToFi: number | null; fiAge: number | null },
+  ages: { age: number | null; targetAge: number | null },
+  o: { noDate?: boolean; runsOutAt?: number | null } = {}
+): FiHeadline {
+  const ask: FiHeadline['ask'] = ages.age === null && ages.targetAge === null ? 'both' : ages.age === null ? 'age' : ages.targetAge === null ? 'stop' : null;
+  const base = { against: null, age: null, before: null, ask, runsOut: null };
+  const y = view.yearsToFi;
+  if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
+  if (y === null) return { ...base, kind: 'unknown', headline: '--' };
+  if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
+  if (y === Infinity) return { ...base, kind: 'never', headline: 'Not reached at this savings rate' };
+  const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
+  if (view.fiAge === null) {
+    if (y >= OLDEST) return { ...base, kind: 'later', headline: `Not within ${OLDEST} years at this savings rate` };
+    return { ...base, kind: 'years', headline: `In ${yearsText(y)}`, runsOut };
+  }
+  const age = Math.round(view.fiAge);
+  if (age > OLDEST) return { ...base, kind: 'later', headline: `Not before age ${OLDEST} at this savings rate` };
+  const t = ages.targetAge;
+  const before = t === null ? null : t - age;
+  const against =
+    t === null || before === null ? null : before > 0 ? `${years(before)} before you stop at ${t}` : before < 0 ? `${years(-before)} after you stop at ${t}` : `Right when you stop at ${t}`;
+  return { ...base, kind: 'age', headline: `Around age ${age}`, against, age, before, runsOut };
+}
+
+/** What a headline's missing ages ask for, on a button that opens the Ages
+ *  sheet. */
+export function askAgesText(ask: NonNullable<FiHeadline['ask']>): string {
+  return ask === 'both' ? 'Add your age and when you’d like to stop' : ask === 'age' ? 'Add your age' : 'Add when you’d like to stop';
+}
+
 /** What savings from bank data can't see, said the same way wherever a
  *  savings figure is shown. */
 export const PAYROLL_NOTE =
