@@ -279,7 +279,7 @@ export function FiProgressView({
   if (head.kind === 'age') title = `FI around age ${head.age}${head.against ? `, ${lower(head.against)}` : ''}`;
   else if (head.kind === 'years' || head.kind === 'later') title = `FI ${lower(head.headline)}`;
   else if (head.kind === 'there') title = head.against ? `You’re at FI, but ${lower(head.against)}` : 'You’re at FI';
-  else if (head.kind === 'never') title = 'FI not reached at this savings rate';
+  else if (head.kind === 'never') title = `FI ${lower(head.headline)}`;
   else if (there) title = `${there} of the way to FI`;
   else {
     title = `FI number ${money(view.fiNumber)}`;

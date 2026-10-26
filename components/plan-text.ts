@@ -103,6 +103,9 @@ export type FiHeadline = {
   before: number | null;
   /** Which ages the answer is still missing. */
   ask: 'both' | 'age' | 'stop' | null;
+  /** Reached, and then the projection runs out before the stop age (a
+   *  scenario's life events can do that): said under it. */
+  runsOut: string | null;
 };
 
 const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
@@ -116,15 +119,16 @@ export function fiHeadline(
   o: { noDate?: boolean; runsOutAt?: number | null } = {}
 ): FiHeadline {
   const ask: FiHeadline['ask'] = ages.age === null && ages.targetAge === null ? 'both' : ages.age === null ? 'age' : ages.targetAge === null ? 'stop' : null;
-  const base = { against: null, age: null, before: null, ask };
+  const base = { against: null, age: null, before: null, ask, runsOut: null };
   const y = view.yearsToFi;
   if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
   if (y === null) return { ...base, kind: 'unknown', headline: '--' };
   if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
-  if (y === Infinity) return { ...base, kind: 'never', headline: 'Not at this savings rate' };
+  if (y === Infinity) return { ...base, kind: 'never', headline: 'Not reached at this savings rate' };
+  const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
   if (view.fiAge === null) {
     if (y >= OLDEST) return { ...base, kind: 'later', headline: `Not within ${OLDEST} years at this savings rate` };
-    return { ...base, kind: 'years', headline: `In ${yearsText(y)}` };
+    return { ...base, kind: 'years', headline: `In ${yearsText(y)}`, runsOut };
   }
   const age = Math.round(view.fiAge);
   if (age > OLDEST) return { ...base, kind: 'later', headline: `Not before age ${OLDEST} at this savings rate` };
@@ -132,7 +136,7 @@ export function fiHeadline(
   const before = t === null ? null : t - age;
   const against =
     t === null || before === null ? null : before > 0 ? `${years(before)} before you stop at ${t}` : before < 0 ? `${years(-before)} after you stop at ${t}` : `Right when you stop at ${t}`;
-  return { ...base, kind: 'age', headline: `Around age ${age}`, against, age, before };
+  return { ...base, kind: 'age', headline: `Around age ${age}`, against, age, before, runsOut };
 }
 
 /** What a headline's missing ages ask for, on a button that opens the Ages

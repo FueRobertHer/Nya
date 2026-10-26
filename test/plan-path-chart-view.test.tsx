@@ -4,6 +4,12 @@ import PlanPathChart, { type PathChartProps } from '@/components/PlanPathChart';
 import { DrawnWidth } from '@/components/drawn-width';
 import { projectBalance } from '@/lib/fire/fi';
 import { compactMoney } from '@/lib/format';
+import { FiCard } from '@/components/PlanTab';
+import { wholeMoney } from '@/components/plan-text';
+import { DEFAULT_PLAN } from '@/lib/fire/plan';
+import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import { planPath } from '@/lib/fire/path';
+import type { LifeEvent } from '@/lib/fire/events';
 
 const c = (n: number) => compactMoney(n, 'USD');
 
@@ -90,6 +96,25 @@ describe('the path chart', () => {
     expect(html).toContain('At a steady 5% a year after inflation, with this scenario’s life events.');
   });
 
+  test('the FI number’s name over its line when there is no room under it above the axis (review of 8b)', () => {
+    const y = (html: string) => Number(/y="([\d.]+)" text-anchor="end">FI number</.exec(html)![1]);
+    const base = (html: string) => Number(/<line x1="2" x2="318" y1="([\d.]+)"/.exec(html)![1]);
+    // Low on a long path's scale, and already there with far more.
+    for (const p of [props({ points: steady(250_000, 30_000, 40, 95), stopAge: 95 }), props({ points: steady(8_000_000, 30_000, 40, 60), stopAge: 60, fiAge: 40 })]) {
+      const html = draw(p);
+      expect(y(html)).toBeLessThan(base(html));
+    }
+    // With room, under it, where the line has crossed it.
+    const html = draw(props());
+    const dashed = Number(/y1="([\d.]+)" y2="[\d.]+" stroke="var\(--text-3\)" stroke-width="1" stroke-dasharray/.exec(html)![1]);
+    expect(y(html)).toBeGreaterThan(dashed);
+  });
+
+  test('a line that rises over the FI number and falls back is never said to stay under it', () => {
+    const html = draw(props({ points: [{ age: 40, balance: 900_000 }, { age: 41, balance: 1_100_000 }, { age: 42, balance: 800_000 }], stopAge: 42, fiAge: null }));
+    expect(label(html)).not.toContain('stay under');
+  });
+
   test('every year in the table, the stop age marked', () => {
     const html = draw(props());
     const rows = [...html.matchAll(/<tr><td>([^<]*)<\/td>/g)].map((m) => m[1]);
@@ -101,5 +126,41 @@ describe('the path chart', () => {
 
   test('its shape is its width’s, so its text is 12px on a phone and on a wide card', () => {
     expect(draw(props(), 600)).toContain('viewBox="0 0 600 229"');
+  });
+});
+
+describe('the answer over the chart', () => {
+  const card = (f: PlanFigures) =>
+    renderToStaticMarkup(
+      <FiCard
+        plan={f.plan}
+        view={f.view}
+        unread={[]}
+        assets={{ total: 0, accounts: [], unknown: 0, caveats: [], currency: 'USD', leftOut: [] } as never}
+        currencyNote={null}
+        money={(n) => wholeMoney(n, 'USD')}
+        path={planPath(f)}
+        currency="USD"
+      />
+    )
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ');
+
+  test('a scenario that reaches FI and then runs out before the stop age says both (review of 8b)', () => {
+    // A $250,000 one-year drop in spending at 41 lifts it to FI around 42;
+    // then $50,000 a year out runs it down before 80.
+    const drop: LifeEvent = { id: 'd', kind: 'spending', label: 'Drop', fromAge: 41, yearly: -250_000, years: 1 };
+    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 80, spending: 30_000, assets: 600_000, savings: -50_000 }, { spending: null, savings: null, assets: null }, [drop]) as PlanFigures;
+    const p = planPath(f)!;
+    expect(f.short).toBeNull();
+    expect(p.short).not.toBeNull();
+    const text = card(f);
+    expect(text).toContain(`Financial independence Around age ${Math.round(f.view.fiAge!)}`);
+    expect(text).toContain(`At these savings it runs out at ${40 + p.short!.year} (below).`);
+  });
+
+  test('one that never runs out says nothing of it', () => {
+    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 250_000, savings: 30_000 }, { spending: null, savings: null, assets: null }, []) as PlanFigures;
+    expect(card(f)).not.toContain('runs out');
   });
 });

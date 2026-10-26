@@ -96,7 +96,7 @@ function summary(p: PathChartProps, stopped: boolean): string {
   const parts = [`Invested assets ${end.balance >= start.balance ? 'grow' : 'fall'} from ${compactMoney(start.balance, currency)} at ${start.age}`];
   if (fiNumber !== null && start.balance >= fiNumber) parts.push(`already above the ${compactMoney(fiNumber, currency)} FI number`);
   else if (fiNumber !== null && fiAge !== null && fiAge <= end.age) parts.push(`reach the ${compactMoney(fiNumber, currency)} FI number around ${Math.round(fiAge)}`);
-  else if (fiNumber !== null) parts.push(`stay under the ${compactMoney(fiNumber, currency)} FI number`);
+  else if (fiNumber !== null && points.every((q) => q.balance < fiNumber)) parts.push(`stay under the ${compactMoney(fiNumber, currency)} FI number`);
   parts.push(stopped ? `and the projection stops at ${end.age}, before ${stopAge}` : `and are about ${compactMoney(end.balance, currency)} at ${stopAge}`);
   return `${parts.join(', ')}, growing a steady ${pct(p.realReturn)} a year after inflation${p.withEvents ? ' with this scenario’s life events' : ''}.`;
 }
@@ -115,8 +115,8 @@ export default function PlanPathChart(props: PathChartProps) {
           <>
             <line x1={PAD_X} x2={W - PAD_X} y1={geo.fiY} y2={geo.fiY} stroke="var(--text-3)" strokeWidth={1} strokeDasharray="4 4" />
             {/* Under the line where the path has crossed it (it runs above
-                there), over it where it never does. */}
-            <text className="chart-xlabel" x={W - PAD_X} y={geo.crosses ? geo.fiY + 14 : geo.fiY - 5} textAnchor="end">
+                there) and there is room above the axis, over it otherwise. */}
+            <text className="chart-xlabel" x={W - PAD_X} y={geo.crosses && geo.fiY + 14 <= geo.baseY - 4 ? geo.fiY + 14 : geo.fiY - 5} textAnchor="end">
               FI number
             </text>
           </>

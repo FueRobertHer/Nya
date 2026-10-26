@@ -367,7 +367,21 @@ describe('projectionShort', () => {
     }
     expect(found).toBeGreaterThan(500);
   });
+  test('a balance run down to exactly zero is decided by the figure shown: never a point or a balance at the stop age below zero (review of 8b)', () => {
+    for (const [a, c, g, n] of [
+      [100_000, -105_000, 0.05, 1],
+      [41_000, -22_050, 0.05, 2],
+    ]) {
+      expect(projectionShort(a, c, g, n)).toEqual(byYear(a, c, g, n));
+      const f = figures(plan({ age: 40, targetAge: 40 + n, assets: a, savings: c, realReturn: g }), none);
+      for (const q of path(f).points.slice(1)) expect(q.balance).toBeGreaterThanOrEqual(0);
+      if (f.view.atTargetAge !== null) expect(f.view.atTargetAge).toBeGreaterThanOrEqual(0);
+    }
+  });
+
   test('is cheap for any span a stored plan can hold', () => {
+    expect(projectionShort(100_000, -10_000, 0.05, Infinity)).toEqual(byYear(100_000, -10_000, 0.05, 100));
+    expect(projectionShort(100_000, 10_000, 0.05, Infinity)).toBeNull();
     expect(projectionShort(100_000, -10_000, 0.05, 1e9)).toEqual({ year: 14, have: projectBalance(100_000, -10_000, 0.05, 14), need: 10_000, kind: 'savings' });
     expect(projectionShort(100_000, 10_000, 0.05, 1e9)).toBeNull();
   });

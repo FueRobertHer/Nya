@@ -518,7 +518,7 @@ export default function PlanTab({
   // line, and where it can't go on, which the At age row says. Both plans'
   // ages are parsed (the Plan is repaired, a scenario resolved), so it is
   // never longer than a plan can be.
-  const path = shown ? planPath(shown) : null;
+  const path = useMemo(() => (shown ? planPath(shown) : null), [shown]);
   const stopShort = path?.short ?? null;
   const stopWalked = path?.fromWalk ?? false;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
@@ -1478,16 +1478,30 @@ export function FiCard({
 
   const fiSpending = retirementSpending ?? spending.value;
   // The answer first (rollout phase 8b): when FI comes, against the age you'd
-  // like to stop, in the same words as Home's FI line. At FI already, but
-  // with savings that run the projection out before the stop age, it says so.
-  const runsOutAt = view.yearsToFi === 0 && path?.short && plan.age !== null ? plan.age + path.short.year : null;
+  // like to stop, in the same words as Home's FI line. Where the projection
+  // runs out before the stop age (at FI already, or after a scenario reaches
+  // it), it says so; a walk that never gets there says why under Years to FI.
+  const runsOutAt = !fiShort && path?.short && plan.age !== null ? plan.age + path.short.year : null;
   const head = fiHeadline(view, plan, { noDate: !!fiShort, runsOutAt });
   return (
     <div className="card">
       <ScenarioTag name={scenarioName} />
       <div className="total-label">Financial independence</div>
-      <div className="total-value plan-answer">{head.headline}</div>
-      {head.against && <div className="as-of">{head.against}</div>}
+      {/* Words, not amounts, but from the figures: through Masked, as every
+          line read from them is (test/amount-sources.ts). */}
+      <div className="total-value plan-answer">
+        <Masked>{head.headline}</Masked>
+      </div>
+      {head.against && (
+        <div className="as-of">
+          <Masked>{head.against}</Masked>
+        </div>
+      )}
+      {head.runsOut && (
+        <div className="as-of stale">
+          <Masked>{`${head.runsOut} (below).`}</Masked>
+        </div>
+      )}
       {head.ask && onAskAges && (
         <div className="btn-row">
           <button
@@ -1499,7 +1513,7 @@ export function FiCard({
               if (!held) onAskAges();
             }}
           >
-            {askAgesText(head.ask)}
+            <Masked>{askAgesText(head.ask)}</Masked>
           </button>
         </div>
       )}

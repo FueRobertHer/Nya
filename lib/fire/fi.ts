@@ -54,7 +54,8 @@ export function projectBalance(assets: number, savings: number, realReturn: numb
  * or null when none is. As the FI walk stops (lib/fire/events.ts walkPath):
  * `year` from today, `have` the balance at its start, `need` what the year
  * takes out. Never a negative balance compounding: a projection that starts
- * below zero and climbs out of it stops at once, as the walk does.
+ * below zero stops at once unless the first year's savings lift it over zero,
+ * as the walk does.
  *
  * The projection is monotone in the years (B(n) + C/g = (A + C/g)(1+g)^n,
  * or a straight line with no growth), so it is below zero at some year end
@@ -65,15 +66,21 @@ export function projectBalance(assets: number, savings: number, realReturn: numb
 export function projectionShort(assets: number, savings: number, realReturn: number, years: number): { year: number; have: number; need: number; kind: 'savings' } | null {
   if (!(years > 0)) return null;
   checkRate('real return', realReturn, -0.99, 1);
-  // In the shifted form, whose sign holds where projectBalance's two terms
-  // would both overflow (Infinity less Infinity) over a long span.
+  // By projectBalance's own figure, so it says "below zero" exactly where
+  // what is shown is (a balance run down to zero is not, at -1e-11); by the
+  // shifted form only where its two terms both overflow (Infinity less
+  // Infinity) over a long span, whose sign the shifted form still holds.
   const g = realReturn;
   const k = Math.abs(g) < 1e-12 ? null : savings / g;
-  const below = (n: number) => (k === null ? assets + savings * n : (assets + k) * (1 + g) ** n - k) < 0;
-  // The first year end below zero: `hi`, with every one before it not.
+  const below = (n: number) => {
+    const b = projectBalance(assets, savings, realReturn, n);
+    return (Number.isNaN(b) && k !== null ? (assets + k) * (1 + g) ** n - k : b) < 0;
+  };
+  // The first year end below zero: `hi`, with every one before it not. A
+  // span past any a plan holds is searched as far as halving can go.
   let hi = 1;
   if (!below(1)) {
-    const last = Math.ceil(years);
+    const last = Math.ceil(Math.min(years, 2 ** 52));
     if (!below(last)) return null;
     let lo = 1;
     hi = last;
