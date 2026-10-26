@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices), 6a3 (Budgets' Upcoming) and 6a4 (Budgets' charts and the calendar's figures) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices), 6a3 (Budgets' Upcoming), 6a4 (Budgets' charts and the calendar's figures) and 6b (the Plan's scenario bar and segments) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -411,6 +411,28 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 - The scenario bar pinned at the top ("Your plan" or the open scenario, Scenarios, Back to your plan) and the Scenarios sheet with Compare.
 - Three segments: **Your path** (the first, renamed from FI and timeline), **Stress test**, **Portfolio**. The cards move as they are; nothing is reworded yet.
 - The Plan tab gets a heading for Home's FI line to land on.
+
+**Built in 6b:**
+
+- **The scenario bar** (`components/PlanBar.tsx`), pinned like Activity's and Budgets': "Your plan" with **Scenarios (3)**, or, with a scenario open, a back arrow ("Back to your plan") and "Scenario: Sabbatical 2029", the name wrapping, never cut; under it Your path · Stress test · Portfolio as tabs.
+- **Three panels, all mounted**, the two not shown `hidden`: Your path (the FI card, income and one-off expenses, and an open scenario's life events), Stress test (the simulation, the grid, About these numbers), Portfolio (the allocation). The repair and load-error notices stay above the bar, as the information architecture has them, and so does the currency card until it becomes the badge on Your path. The tab is one tree while the plan loads, so the bar and its heading are never drawn twice.
+- **The Scenarios sheet** (`ScenariosSheet` in `components/PlanScenarios.tsx`): the Scenarios card's list and Compare, with New scenario, Rename, Duplicate and Delete as its second level (a sheet over a sheet isn't a pattern the app has). It opens from the bar on your plan and from the open scenario's card.
+- **The open scenario's card** (`ScenarioCard`) under the bar, above every segment: its heading and Back are the bar's now; it keeps what it changes, why it isn't worked out, a currency mismatch and a save notice, and gains **Scenarios (3)**. While its lasting changes are refused, the life events card that fixes them sits under it.
+- **Home's FI line** opens Your path and lands on the bar's heading, also on a first visit, while the Plan's code is still loading: the tab lands itself, since the dashboard's landing looks only once per dashboard render.
+- The segment is kept by the dashboard, as Activity's and Budgets' are.
+
+**Decided in 6b:**
+
+- **A back arrow, not "Back to plan" in words** (Fue's choice): at 320px the words leave the heading 154px, two lines for "Scenario: Sabbatical 2029"; the arrow leaves it 236px.
+- **Scenarios from inside a scenario too** (Fue's choice), on the scenario's card: switching, renaming or comparing doesn't need going back first.
+- **Words that say where something is changed with the cards**, and only those: a sentence that pointed above or below at a card now on another segment, or at the page behind the sheet, names the place. On Stress test: "Type it on Your path", "(the FI card on Your path says why)", "it would never get that far (on Your path)", "as the Life events card on Your path says", "The figures on Your path and Portfolio don't depend on it". On Your path: "the simulation on Stress test shows how much that matters". On the currency card: "(on Your path)". On the scenario card: "N life events, on Your path." (", below." while the card that fixes them is under it, and no place when none is drawn). In the Scenarios sheet: "(the FI card on Your path says why)", "try again at the top of the Plan tab", "values to fix first (at the top of the Plan tab)", "isn't known yet (at the top of the Plan tab)". Their level is unchanged.
+- **Notices that moved into the sheet**, with what they are about: the scenarios' load error with Try again, a damaged scenario's error with Delete it, the note on scenarios saved by a newer version, and why scenarios can't be opened yet.
+- **Compare runs only once your saved plan has loaded**: before, the card's compare also ran during a load error and while a refused save reloaded the plan.
+
+**Kept narrow in 6b:**
+
+- **The open scenario's card sits between the tabs and the panels**, so Tab from the tabs reaches its buttons before the panel, and it isn't pinned: from deep in a segment, Scenarios inside a scenario is a scroll up. A switch of segment lands on the panel, or on the card while it says something is wrong. 6c's per-segment notice and 8c's What if card may move it.
+- **The currency card stays above the bar**: the badge on Your path is still to come, as are the inputs as rows (6c) and the fan chart at its width (6d).
 
 **6c**, the figures the plan rests on:
 

@@ -241,8 +241,8 @@ describe('what the tab says', () => {
 
   test('kept in its currency, the tab says so when what is measured is in another: converted, or, without a home currency, not counted', () => {
     const eurAccounts = { assets: investedAssets([inst([acct({ currency: 'EUR' })])], false, null, Date.now(), 'USD'), flows: null };
-    expect(keptText('USD', eurAccounts, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Your accounts are in EUR: what is in EUR is converted into USD (below).');
-    expect(keptText('USD', eurAccounts, false)).toContain('Your accounts are in EUR: without a home currency nothing is converted, so what is in EUR isn’t counted (below).');
+    expect(keptText('USD', eurAccounts, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Your accounts are in EUR: what is in EUR is converted into USD (on Your path).');
+    expect(keptText('USD', eurAccounts, false)).toContain('Your accounts are in EUR: without a home currency nothing is converted, so what is in EUR isn’t counted (on Your path).');
     expect(relabelOffer('USD', eurAccounts)).toBe('EUR');
     // Mostly in its own currency, as before: nothing more to say, and nothing to offer.
     const usdAccounts = { assets: investedAssets([inst([acct(), acct(), acct({ currency: 'EUR' })])], false, null, Date.now(), 'USD'), flows: null };
@@ -250,7 +250,7 @@ describe('what the tab says', () => {
     expect(relabelOffer('USD', usdAccounts)).toBeNull();
     // A tie with one other: some are in it, and both are in sight.
     const tied = { assets: investedAssets([inst([acct({ currency: 'EUR' }), acct()])], false, null, Date.now(), 'USD'), flows: null };
-    expect(keptText('USD', tied, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Some of your accounts are in EUR: what is in EUR is converted into USD (below).');
+    expect(keptText('USD', tied, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Some of your accounts are in EUR: what is in EUR is converted into USD (on Your path).');
     expect(relabelOffer('USD', tied)).toBeNull();
   });
 
@@ -486,7 +486,7 @@ describe('a figure not measured is never counted as zero (review round 2, B10)',
     expect(f.walked).toBe(false);
     expect(f.view.yearsToFi).toBeNull();
     expect(f.startsWith).toMatchObject({ projected: null, more: false });
-    expect(fiDateText(f, '2026-10-23')).toBe('not worked out: your invested assets aren’t measured (the FI card above says why)');
+    expect(fiDateText(f, '2026-10-23')).toBe('not worked out: your invested assets aren’t measured (the FI card on Your path says why)');
   });
 });
 

@@ -6,8 +6,11 @@ import { installDom, click, type, outline, holdPress, pressThrough, FakeElement 
 // scenario opens, closes under an open form or is changed on another device;
 // "They're in" held back while the accounts haven't all loaded without a
 // problem; nothing compared while the saved Plan can't be read; a scenario
-// refused for lasting changes below zero still fixable; and focus back on
-// the scenario's row after "Back to your plan". And each drawer's own
+// refused for lasting changes below zero still fixable; and focus on the
+// bar's Scenarios button after its arrow back to your plan. Scenarios are
+// opened as a person opens them since rollout phase 6b: the Scenarios sheet,
+// from the bar's button (or the open scenario's card's), then a row's Open.
+// And each drawer's own
 // binding, by itself: the allocation card's and the life events card's, the
 // allocation settings refused inside a scenario, and the tab's forms refused
 // once another plan is shown, even pressed through a disabled Save. Every
@@ -100,8 +103,28 @@ async function mount(node: React.ReactNode) {
     text: () => container.textContent,
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
     buttons: (text: string) => container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === text),
-    dialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog')[0] ?? null,
+    /** The open drawer: one closing slides out for a third of a second, and
+     *  is still on the page meanwhile. */
+    dialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0] ?? null,
+    /** The pinned bar's arrow back to your plan (the Scenarios sheet's row for
+     *  the open scenario has the same name). */
+    arrow: () => container.findAll((e) => e.getAttribute('class') === 'plan-bar')[0]?.findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0] ?? null,
+    /** "Scenarios (N)", which opens the Scenarios sheet: the bar's on your
+     *  plan, the open scenario's card's inside one. */
+    scenarios: () => container.findAll((e) => e.tagName === 'BUTTON' && /^Scenarios(?: \(\d+\))?$/.test(e.textContent.trim()))[0] ?? null,
+    /** The open scenario's card under the bar, and the place that holds it
+     *  (with its life events, when it is refused): what it says is read there,
+     *  not from the whole tab, where the Scenarios sheet, sliding out for a
+     *  third of a second, says the same in its Compare. */
+    card: () => container.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('plan-scenario-card'))[0] ?? null,
+    slot: () => (container.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('plan-scenario-card'))[0]?.parentNode as FakeElement | null) ?? null,
   };
+}
+
+/** Opens a scenario as a person does: the Scenarios sheet, then its row's Open. */
+async function openScenario(tab: Awaited<ReturnType<typeof mount>>, name: string) {
+  await press(tab.scenarios());
+  await press(tab.dialog()?.findAll((e) => e.getAttribute('aria-label') === `Open ${name}`)[0] ?? null);
 }
 
 async function render(props: Partial<PlanTabProps> = {}) {
@@ -135,7 +158,7 @@ describe('a form left open never saves to another plan', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
-    await press(tab.byLabel('Open Retire at 50'));
+    await openScenario(tab, 'Retire at 50');
     expect(tab.text()).toContain('Scenario: Retire at 50');
     await press(tab.byLabel('Edit your ages'));
     const dialog = tab.dialog();
@@ -166,7 +189,7 @@ describe('a form left open never saves to another plan', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
-    await press(tab.byLabel('Open Retire at 50'));
+    await openScenario(tab, 'Retire at 50');
     await press(tab.byLabel('Edit assumptions'));
     const dialog = tab.dialog()!;
     const [, ret] = dialog.findAll((e) => e.tagName === 'INPUT');
@@ -209,13 +232,13 @@ describe('a form left open never saves to another plan', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
-    await press(tab.byLabel('Open Retire at 50'));
+    await openScenario(tab, 'Retire at 50');
     await press(tab.byLabel('Use your plan’s retirement age'));
     expect(calls.filter((c) => c.method === 'PUT').length).toBe(1);
     expect(tab.text().split(stale).length - 1).toBe(1);
     expect(tab.text()).toContain('Nothing of your change was kept');
-    await press(tab.buttons('Back to your plan').find((b) => b.getAttribute('aria-label') === null) ?? null);
-    await press(tab.byLabel('Open Retire at 50'));
+    await press(tab.arrow());
+    await openScenario(tab, 'Retire at 50');
     expect(tab.text()).toContain('Scenario: Retire at 50');
     expect(tab.text()).not.toContain(stale);
     await tab.unmount();
@@ -240,14 +263,15 @@ describe('a form left open never saves to another plan', () => {
     await tab.unmount();
   });
 
-  test('back to your plan puts focus on the scenario’s row', async () => {
+  test('back to your plan puts focus on the bar’s Scenarios button, where it can be opened again: the arrow and the card are gone', async () => {
     serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/plan-scenarios': listing(entry()), 'GET /api/allocation-settings': [200, { settings: null }] });
     const tab = await render();
-    await press(tab.byLabel('Open Retire at 50'));
+    await openScenario(tab, 'Retire at 50');
     expect((dom.document.activeElement as FakeElement).textContent).toBe('Scenario: Retire at 50');
-    await press(tab.buttons('Back to your plan').find((b) => b.getAttribute('aria-label') === null) ?? null);
+    await press(tab.arrow());
     expect(tab.text()).not.toContain('Scenario: Retire at 50');
-    expect((dom.document.activeElement as FakeElement).getAttribute('aria-label')).toBe('Open Retire at 50');
+    const focused = dom.document.activeElement as FakeElement;
+    expect([focused.textContent, focused.getAttribute('class')]).toEqual(['Scenarios (1)', 'btn ghost']);
     await tab.unmount();
   });
 });
@@ -274,8 +298,8 @@ describe('what the tab waits for', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render({ institutions, balancesAsOf: null, txns: null, txnsLoading: true, txnNotes: ['Chase: needs to be reconnected'] });
-    await press(tab.byLabel('Open Retire at 50'));
-    expect(tab.text()).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
+    await openScenario(tab, 'Retire at 50');
+    expect(tab.card()?.textContent).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
     const confirm = tab.buttons('They’re in USD')[0];
     expect(confirm).toBeDefined();
     await press(confirm);
@@ -293,8 +317,8 @@ describe('what the tab waits for', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render({ institutions, balancesAsOf: '2026-10-23T12:00:00.000Z', txnNotes: ['Chase: needs to be reconnected'] });
-    await press(tab.byLabel('Open Retire at 50'));
-    expect(tab.text()).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
+    await openScenario(tab, 'Retire at 50');
+    expect(tab.card()?.textContent).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
     expect(tab.buttons('They’re in USD').map(outline)).toEqual([]);
     await tab.rerender({ txnNotes: [], txns: null, txnsLoading: true });
     expect(tab.buttons('They’re in USD').map(outline)).toEqual([]);
@@ -314,9 +338,14 @@ describe('what the tab waits for', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
-    expect(tab.text()).toContain('Your saved plan couldn’t be read, so scenarios can’t be worked out against it');
-    expect(tab.text()).not.toContain('Choose two to four plans.');
-    expect(tab.byLabel('Open Retire at 50')?.disabled).toBe(true);
+    // Said, and nothing compared or opened, in the Scenarios sheet, where
+    // the list and Compare are.
+    await press(tab.scenarios());
+    const sheet = tab.dialog()!;
+    expect(sheet.textContent).toContain('Your saved plan couldn’t be read, so scenarios can’t be worked out against it: try again at the top of the Plan tab.');
+    expect(sheet.textContent).toContain('Retire at 50');
+    expect(sheet.textContent).not.toContain('Choose two to four plans.');
+    expect(sheet.findAll((e) => e.getAttribute('aria-label') === 'Open Retire at 50')[0]?.disabled).toBe(true);
     await tab.unmount();
   });
 
@@ -324,10 +353,12 @@ describe('what the tab waits for', () => {
     const below = entry({ set: {}, events: [{ id: 'x', kind: 'spending', label: 'Mortgage paid off', fromAge: 41, yearly: -45_000, years: null }] });
     serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/plan-scenarios': listing(below), 'GET /api/allocation-settings': [200, { settings: null }] });
     const tab = await render();
-    await press(tab.byLabel('Open Retire at 50'));
-    expect(tab.text()).toContain('Its lasting changes in spending take your spending in retirement below zero');
-    expect(tab.text()).toContain('Life events');
-    expect(tab.byLabel('Edit Mortgage paid off')).not.toBeNull();
+    await openScenario(tab, 'Retire at 50');
+    expect(tab.card()?.textContent).toContain('Its lasting changes in spending take your spending in retirement below zero');
+    // Its life events are with the card, above the panels.
+    const slot = tab.slot()!;
+    expect(slot.textContent).toContain('Life events');
+    expect(slot.findAll((e) => e.getAttribute('aria-label') === 'Edit Mortgage paid off').length).toBe(1);
     // Nothing is worked out for it meanwhile.
     expect(tab.text()).not.toContain('Will it last?');
     await tab.unmount();

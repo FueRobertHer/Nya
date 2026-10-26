@@ -116,7 +116,7 @@ Each segment has one time range, which removes today's three competing ranges on
 
 **Job:** where am I, where am I heading, and what changes it?
 
-A pinned **scenario bar**: "Your plan" or the open scenario, a switcher that opens the Scenarios sheet (list, new, rename, duplicate, delete, Compare two to four), and "Back to your plan". Repair and load-error notices sit above it when present. When an input may be incomplete (a month missing from spending, assets short), each segment opens with one amber notice saying so, since every figure on every segment rests on those inputs.
+A pinned **scenario bar**: "Your plan" with **Scenarios (3)**, which opens the Scenarios sheet (list, new, rename, duplicate, delete, Compare two to four), or, with a scenario open, a back arrow ("Back to your plan") and "Scenario: Sabbatical 2029"; under it the segments. With a scenario open, its card sits under the bar on every segment: what it changes, why it isn't worked out when it can't be, and **Scenarios (3)** again, so another can be opened or compared without going back first (decided 2026-10-25). Repair and load-error notices sit above it when present (built in 6b), and so does the currency card until it becomes the badge on Your path. When an input may be incomplete (a month missing from spending, assets short), each segment opens with one amber notice saying so, since every figure on every segment rests on those inputs.
 
 | Segment | Contents |
 |---|---|
@@ -244,6 +244,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
 | ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** (left out on Shared), the ⋯ with Add a transaction and Import a file while there are transactions (buttons in the empty card while there are none), and the segments Transactions · Spending · Shared |
 | BudgetsBar | New (phase 6a1) | Budgets' pinned bar: on Month the month as its heading (**‹ October 2026 ›**, a tap on the name picks any month), on the others the segment's name; under it the segments Month · Upcoming · Goals. Each segment's panel stays mounted, the others hidden |
+| PlanBar | New (phase 6b) | The Plan's pinned scenario bar: "Your plan" with **Scenarios (3)**, or a back arrow and "Scenario: Sabbatical 2029"; under it the segments Your path · Stress test · Portfolio. Its heading is where Home's FI line lands. Each segment's panel stays mounted, the others hidden |
 | MonthBreakdown (list, filters, inline editor) | Activity, under the analysis cards | Activity > Transactions; the rows are list rows that open the Transaction sheet (5e) |
 | TransactionSheet | New (phase 5e), replacing the inline editor | A row's sheet on Activity > Transactions: a transaction, a split's part or a group's transaction |
 | MonthBreakdown (net by month, income vs spend, summary, top spending, online vs in-store, places) | Activity, above the list | Activity > Spending (summary strip also on Transactions) |
@@ -262,13 +263,13 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ForecastCard, ForecastChart | Budgets | Budgets > Upcoming: the range as a radio group, its notes on where it starts under that line, **Warns below** as a row opening the low-balance warning's sheet, and What if I buy… (6a3) |
 | UpcomingList | New (phase 6a3) | Budgets > Upcoming, under the List tab: the bills, income, planned items and payments due from today over the forecast's range, a bar per day, as plain rows |
 | CalendarView, RecurringCard, PlannedCard | Budgets | Budgets > Upcoming: the calendar under the Calendar tab, its day's list as rows; Recurring's bills and income and Planned's items as rows that open their sheets (6a3) |
-| PlanTabLoader, PlanTab (FiCard, RepairCard, EventsCard) | Plan | Plan > Your path |
-| PlanTab (SimulationCard, GridCard, About), PlanFanChart, PlanGrid | Plan | Plan > Stress test |
-| PlanScenarios, PlanCompare, ScenarioTag | Plan, below FiCard; bar at top | Scenario bar and Scenarios sheet |
-| PlanEvents | Plan, near the bottom | Plan > Your path, with a scenario open; its kinds become the What if… card's templates (phase 8c) |
+| PlanTabLoader, PlanTab (FiCard, EventsCard) | Plan | Plan > Your path (6b) |
+| PlanTab (RepairCard), PlanCurrency | Plan | Plan, above the bar (6b); PlanCurrency to become a badge on Your path once confirmed, a notice only while it needs a decision |
+| PlanTab (SimulationCard, GridCard, About), PlanFanChart, PlanGrid | Plan | Plan > Stress test (6b) |
+| PlanScenarios (ScenariosSheet, ScenarioCard), PlanCompare, ScenarioTag | Plan, below FiCard; bar at top | The Scenarios sheet (list, second level for new, rename, duplicate and delete, Compare), opened from the bar or the open scenario's card; ScenarioCard under the bar with a scenario open (6b) |
+| PlanEvents | Plan, near the bottom | Plan > Your path, with a scenario open (under its card, above the segments, while its lasting changes are refused); its kinds become the What if… card's templates (phase 8c) |
 | PlanForms | Plan sheet | Unchanged |
-| PlanCurrency | Plan card | Badge; notice only while it needs a decision |
-| AllocationCard | Plan, between FI and simulation | Plan > Portfolio |
+| AllocationCard | Plan, between FI and simulation | Plan > Portfolio (6b) |
 | Sheet | Every form and confirmation | Unchanged, plus sticky footer and second-level back |
 | CategoryPicker | Editors | Unchanged |
 | InfoPage, OpenProtectedDownload, UnsubscribeForm, ServiceWorkerRegistration | Standalone pages and plumbing | Unchanged |

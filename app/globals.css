@@ -596,13 +596,16 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   }
 }
 
-/* Activity's and Budgets' pinned bars (components/ActivityBar.tsx,
-   components/BudgetsBar.tsx). Activity's: the month switcher and
-   the tab's ⋯ over its segments, kept in view under the status bar while the
-   segment scrolls. Budgets': its heading (the month, with its switcher, on
-   Month) over its segments. */
+/* Activity's, Budgets' and the Plan's pinned bars (components/ActivityBar.tsx,
+   components/BudgetsBar.tsx, components/PlanBar.tsx). Activity's: the month
+   switcher and the tab's ⋯ over its segments, kept in view under the status
+   bar while the segment scrolls. Budgets': its heading (the month, with its
+   switcher, on Month) over its segments. The Plan's: its heading (your plan,
+   with Scenarios, or the scenario open, after the arrow back) over its
+   segments. */
 .activity-bar,
-.budgets-bar {
+.budgets-bar,
+.plan-bar {
   position: sticky;
   top: env(safe-area-inset-top, 0px);
   z-index: 2;
@@ -628,6 +631,29 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   text-align: center;
   font-size: var(--fs-3);
   font-weight: var(--fw-semibold);
+}
+
+/* The Plan's heading: the plan shown, between the arrow back and
+   Scenarios. A scenario's name is up to 40 characters: the heading wraps,
+   never cut, and the button keeps its label on one line. */
+.plan-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--tap);
+}
+
+.plan-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
+}
+
+.plan-heading > .btn {
+  flex: none;
 }
 
 /* An arrow at either end looks as a disabled button does, and keeps focus.
@@ -6943,22 +6969,13 @@ button.review-keys-toggle {
   font-weight: 600;
 }
 
-.plan-scenario-bar {
+.plan-scenario-card {
   border-left: 3px solid var(--accent);
 }
 
-.plan-scenario-heading {
-  margin: 0 0 4px;
-  font-size: 17px;
-}
-
-.plan-scenario-heading:focus {
-  outline: none;
-}
-
-.plan-scenario-heading:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* Its Scenarios button, at its foot, under what it changes. */
+.plan-scenario-card > .btn {
+  margin-top: var(--sp-3);
 }
 
 .plan-scenario-actions {
@@ -6994,17 +7011,13 @@ button.review-keys-toggle {
   font-size: 13px;
 }
 
+/* One column: compare is drawn in the Scenarios sheet, a 440px panel on a
+   wide screen, too narrow for two tables side by side. */
 .plan-compare-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 8px;
-}
-
-@media (min-width: 720px) {
-  .plan-compare-grid {
-    grid-template-columns: 1fr 1fr;
-  }
 }
 
 .plan-compare-table {

@@ -160,13 +160,15 @@ export const EVENT_PART_TEXT: Record<EventPart, string> = {
   'after-end': 'Some of it is after the plan ends: only the grid’s longer columns reach it.',
 };
 
-/** What a plan starts with, and what the walk says it would have then. */
-export function startsWithText(sw: StartsWith, money: Money): string {
+/** What a plan starts with, and what the walk says it would have then.
+ *  `shortWhere` is where the shortfall that stops the walk is said: below,
+ *  in compare mode; on Your path, from the simulation's card. */
+export function startsWithText(sw: StartsWith, money: Money, shortWhere = 'below'): string {
   const from = sw.from === 'fi-number' ? 'your FI number' : sw.from === 'assets' ? 'your invested assets today' : 'the balance you typed';
   const at = sw.from === 'assets' ? '' : sw.atAge !== null ? ` at ${sw.atAge}` : ' at the retirement age';
   const head = `${money(sw.balance)}, ${from}${at}`;
   if (sw.from === 'assets') return `${head}.`;
-  if (sw.short) return `${head}: it would never get that far (below).`;
+  if (sw.short) return `${head}: it would never get that far (${shortWhere}).`;
   if (sw.projected === null) return `${head}.`;
   if (!sw.more) return `${head}: you’d have about ${money(sw.projected)} then.`;
   return `${head}: you’d have about ${money(sw.projected)} then, ${money(sw.balance - sw.projected)} less.`;
@@ -205,6 +207,6 @@ export function laterText(later: { amount: number; fromAge: number }[], money: M
 }
 
 export function currencyText(typedIn: string, planIn: string, known = true): string {
-  if (!known) return `Its amounts were typed in ${typedIn}, and which currency your plan’s figures are in isn’t known yet (above). Nothing is converted, so it isn’t worked out until you have said.`;
+  if (!known) return `Its amounts were typed in ${typedIn}, and which currency your plan’s figures are in isn’t known yet (at the top of the Plan tab). Nothing is converted, so it isn’t worked out until you have said.`;
   return `Its amounts were typed in ${typedIn}, and your plan is now in ${planIn}. Nothing is converted, so it isn’t worked out: check its amounts, then say they are in ${planIn}.`;
 }

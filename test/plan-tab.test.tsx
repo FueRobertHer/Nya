@@ -310,6 +310,8 @@ describe('the FI card', () => {
     expect(t).toContain('grows to your FI number by age 50');
     expect(t).toMatch(/about \d+(\.\d)? years/);
     expect(t).toContain('Around age');
+    // The simulation is on another segment (rollout phase 6b).
+    expect(t).toContain("Real markets don't move steadily; the simulation on Stress test shows how much that matters.");
   });
 });
 
@@ -423,11 +425,37 @@ describe('the simulation card', () => {
   test('a simulation that could not be run says so and offers to try again; a refused plan says why', () => {
     const t = read(plan({ horizon: 30 }), measured, { outcome: { error: 'Failed to load chunk', unavailable: true } });
     expect(t).toContain("The simulation couldn't be loaded. It needs a connection the first time it runs after an update.");
+    // The figures that don't depend on it are on the other segments.
+    expect(t).toContain("The figures on Your path and Portfolio don't depend on it.");
     expect(t).toContain('Try again');
     expect(t).not.toContain("This plan can't be simulated");
     const refused = read(plan({ horizon: 30 }), measured, { outcome: { error: 'a plan runs 1 to 60 years' } });
     expect(refused).toContain("This plan can't be simulated: a plan runs 1 to 60 years.");
     expect(refused).not.toContain('Try again');
+  });
+
+  test('a start the walk never gets to says so, and that the FI card saying why is on Your path', () => {
+    const p = plan({ age: 40, targetAge: 45, horizon: 30 });
+    const view = fiView(p, measured);
+    const t = text(
+      renderToStaticMarkup(
+        <SimulationCard
+          startsWith={{ balance: 1_000_000, from: 'fi-number', atAge: 45, projected: null, short: { year: 3, have: 120_000, need: 200_000, kind: 'cost' }, more: true }}
+          plan={p}
+          view={view}
+          engine={enginePlan(p, view)}
+          outcome={null}
+          pending={false}
+          money={money}
+          currency="USD"
+          editable
+          onMethod={noop}
+          onRetry={noop}
+          open={noop}
+        />
+      )
+    );
+    expect(t).toContain('It starts with $1,000,000, your FI number at 45: it would never get that far (on Your path): it starts with money it wouldn’t have then, so it reads safer than it is.');
   });
 
   test('explains what is missing instead of simulating nothing', () => {
@@ -437,10 +465,11 @@ describe('the simulation card', () => {
 
   test('what it needs and isn’t measured is said so, in compare mode’s words, never as none to count (review round 3)', () => {
     const assets = read(plan({ start: 'assets' }), { spending: 40_000, savings: 30_000, assets: null, unmeasured: ['assets'] });
-    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card above says why). Type them above, or start from your FI number (Change).');
+    // Said on Stress test, of the FI card on Your path (rollout phase 6b).
+    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card on Your path says why). Type them on Your path, or start from your FI number (Change).');
     expect(assets).not.toContain('none to count yet');
     const spending = read(plan(), { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] });
-    expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card above says why). Type it above.');
+    expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card on Your path says why). Type it on Your path.');
     expect(spending).not.toContain('connect accounts with transactions');
   });
 });
@@ -672,10 +701,12 @@ describe('the savings sheet', () => {
 });
 
 describe('the tab', () => {
-  test('shows a spinner until the saved plan has loaded, never the defaults as if they were saved', () => {
+  test('shows a spinner in each segment until the saved plan has loaded, never the defaults as if they were saved, under the bar', () => {
     const html = renderToStaticMarkup(<PlanTab txns={[]} txnsLoading={false} txnNotes={[]} institutions={[]} balancesAsOf={null} currency="USD" holdings={[]} />);
-    expect(html).toContain('role="status"');
+    expect(html.match(/<div class="spinner" role="status"/g)?.length).toBe(3);
     expect(html).not.toContain('FI number');
+    // The bar is there already, its heading for Home's FI line to land on.
+    expect(html).toContain('<h2 id="plan-title" class="plan-title" tabindex="-1">Your plan</h2>');
   });
 });
 

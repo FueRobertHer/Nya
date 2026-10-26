@@ -1,18 +1,20 @@
 'use client';
 
-// The Plan's scenarios on the Plan tab (lib/fire/scenarios.ts): the card that
-// lists them, makes, renames, duplicates and deletes them, opens one, and
-// compares two to four plans side by side (components/PlanCompare.tsx); and
-// the card at the top of an open scenario, which says that what is shown and
-// saved is the scenario's, lists what it changes, each with "Use your
-// plan's", and says why it isn't worked out when it can't be.
+// The Plan's scenarios on the Plan tab (lib/fire/scenarios.ts): the
+// Scenarios sheet, opened from the Plan's bar or the open scenario's card,
+// which lists them, makes, renames, duplicates and deletes them (each a
+// second level of the sheet), opens one, and compares two to four plans side
+// by side (components/PlanCompare.tsx); and the open scenario's card, under
+// the bar on every segment, which says that what is shown and saved is the
+// scenario's, lists what it changes, each with "Use your plan's", and says
+// why it isn't worked out when it can't be.
 //
 // Nothing here saves the Plan. A scenario's figures are worked out on the
 // page (lib/fire/plan-figures.ts) and its simulation in the Plan tab's
 // worker, one job per plan, with the Plan's method and seed; answers are kept
 // for the visit only (rememberResult), never stored.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import PlanCompare from './PlanCompare';
@@ -192,14 +194,22 @@ export function PlanDetails({ entry, base, outcome, money }: { entry: ScenarioEn
   return <ul className="plan-assumptions">{lines}</ul>;
 }
 
-type CardSheet =
+/** The sheet's second level: what one of the list's buttons opened. */
+type Level =
   | { kind: 'new' }
   | { kind: 'rename'; entry: ScenarioEntry }
   | { kind: 'duplicate'; entry: ScenarioEntry }
   | { kind: 'delete'; entry: ScenarioEntry }
   | { kind: 'delete-unreadable'; id: string };
 
-export function ScenariosCard({
+/** The list's button that opened a level, which focus goes back to. */
+const openerOf = (l: Level): string => (l.kind === 'new' ? 'new' : l.kind === 'delete-unreadable' ? `unreadable:${l.id}` : `${l.kind}:${l.entry.id}`);
+
+/** The Scenarios sheet. It stays mounted while closed (only the sheet's body
+ *  goes), so the plans picked for Compare last for the visit. */
+export function ScenariosSheet({
+  open,
+  onClose,
   state,
   client,
   base,
@@ -212,14 +222,15 @@ export function ScenariosCard({
   whyNot,
   openId,
   onOpen,
-  focusId = null,
-  onFocused,
+  onLeave,
   run,
   cache,
   method,
   money,
   today,
 }: {
+  open: boolean;
+  onClose: () => void;
   state: ScenariosState;
   client: ScenarioClient;
   /** The Plan as the tab shows it. */
@@ -233,33 +244,76 @@ export function ScenariosCard({
   canOpen: boolean;
   /** How the saved Plan's load went: until it has loaded, nothing is
    *  compared, since a scenario is its changes to the Plan, and figures over
-   *  the defaults would be about a plan nobody made. */
+   *  the defaults would be about a plan nobody made. While it loads, the
+   *  list is only why, and a spinner. */
   planState: 'loading' | 'ready' | 'error';
   /** Why scenarios can't be opened or changed now, when they can't. */
   whyNot: string | null;
   openId: string | null;
+  /** A scenario opened from its row or made here, or null when the open one
+   *  is deleted. */
   onOpen: (id: string | null) => void;
-  /** A scenario just closed: focus goes to its Open button. */
-  focusId?: string | null;
-  onFocused?: () => void;
+  /** The open scenario's row's "Back to your plan". */
+  onLeave: () => void;
   run: Run;
   cache: Map<string, SimResult>;
   method: Method;
   money: (n: number) => string;
   today: string;
 }) {
-  const [sheet, setSheet] = useState<CardSheet | null>(null);
-  const [shown, setShown] = useState<CardSheet | null>(null);
+  // Null: the list.
+  const [level, setLevel] = useState<Level | null>(null);
   const [opened, setOpened] = useState(0);
   const [error, setError] = useState('');
-  const open = (s: CardSheet) => {
+  const go = (l: Level) => {
     setOpened((n) => n + 1);
-    setSheet(s);
-    setShown(s);
+    setLevel(l);
     setError('');
   };
-  const close = () => setSheet(null);
+  // Opened again: the list, not a level left behind, from its first frame.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setLevel(null);
+  }
+  // Back at the list, focus goes to the first of the buttons given here that
+  // can take it, or stays on the sheet's panel, where the sheet's own effect
+  // (a child's, so it runs first) put it.
+  const listButtons = useRef(new Map<string, HTMLButtonElement | null>());
+  const keep = (key: string) => (el: HTMLButtonElement | null) => {
+    listButtons.current.set(key, el);
+  };
+  const returnTo = useRef<string[] | null>(null);
+  const toList = (focus: string[]) => {
+    returnTo.current = focus;
+    setLevel(null);
+  };
+  useEffect(() => {
+    if (!returnTo.current || (open && level)) return;
+    // Only into an open sheet: a save that ends as it slides out leaves focus
+    // where the sheet gave it back.
+    if (open) {
+      const to = returnTo.current.map((key) => listButtons.current.get(key)).find((b) => b && !b.disabled);
+      to?.focus({ preventScroll: true });
+    }
+    returnTo.current = null;
+  }, [level, open]);
+  const back = () => {
+    if (level) toList([openerOf(level)]);
+  };
   const list = state.list;
+  /** Where focus goes once a row is deleted: the next scenario's Open, else
+   *  the one before's, else that neighbour's Delete (while none can be
+   *  opened), else New scenario. After an unreadable one, the next unreadable
+   *  one's Delete it, else the row before it (another unreadable one's, or the
+   *  last scenario's Open or Delete), else New scenario. */
+  const afterDelete = (gone: string): string[] => {
+    const rows = [...list.map((s) => `open:${s.id}`), ...(gone.startsWith('unreadable:') ? state.unreadable.map((id) => `unreadable:${id}`) : [])];
+    const at = rows.indexOf(gone);
+    if (at < 0) return ['new'];
+    const near = rows[at + 1] ?? rows[at - 1];
+    return [rows[at + 1], rows[at - 1], near?.startsWith('open:') ? `delete:${near.slice(5)}` : undefined, 'new'].filter((k): k is string => !!k);
+  };
   const ready = state.status === 'ready';
   const busy = state.saving;
   const changeable = ready && canOpen && !busy;
@@ -270,14 +324,6 @@ export function ScenariosCard({
   const ids = ['plan', ...list.map((s) => s.id)];
   const picked = (chosen ?? ids.slice(0, 4)).filter((id) => ids.includes(id));
   const selected = picked.length >= 2 ? picked : ids.slice(0, Math.min(4, ids.length));
-  const openButtons = useRef(new Map<string, HTMLButtonElement | null>());
-  useEffect(() => {
-    if (!focusId) return;
-    openButtons.current.get(focusId)?.focus();
-    onFocused?.();
-    // Only when a scenario has just closed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusId]);
   const toggle = (id: string) => {
     const now = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
     setChosen(ids.filter((x) => now.includes(x)));
@@ -298,7 +344,8 @@ export function ScenariosCard({
     columns.map((c) => c.before),
     method
   );
-  const { answers, retry } = useAnswers(list.length > 0 ? wanted : [], run, cache);
+  // Nothing is compared until the Plan has loaded (planState).
+  const { answers, retry } = useAnswers(planState === 'ready' && list.length > 0 ? wanted : [], run, cache);
   const compared: CompareColumn[] = columns.map(({ column, before }) => {
     if (before.kind === 'not-run') return { ...column, outcome: before };
     const f = before.figures;
@@ -310,207 +357,228 @@ export function ScenariosCard({
   const create = async (name: string) => {
     const r = await client.create({ name, currency: planCurrency, ...NO_CHANGES });
     if ('error' in r) return r.error;
-    close();
+    // In one commit, so the sheet's focus going back loses to the Plan's
+    // heading, which takes it as the scenario opens.
+    onClose();
     onOpen(r.ok.id);
     return true;
   };
 
-  return (
-    <div className="card">
-      <div className="inst-header">
-        <div className="inst-name">Scenarios</div>
-        <button className="plan-edit" onClick={() => open({ kind: 'new' })} disabled={!changeable || list.length >= MAX_PLAN_SCENARIOS}>
+  const listBody =
+    planState === 'loading' ? (
+      // Until the Plan has loaded, no row and no summary over the defaults.
+      <>
+        {whyNot && <p className="panel-note">{whyNot}</p>}
+        <div className="spinner" role="status" aria-label="Loading your plan" />
+      </>
+    ) : (
+      <>
+        <button className="btn secondary" ref={keep('new')} onClick={() => go({ kind: 'new' })} disabled={!changeable || list.length >= MAX_PLAN_SCENARIOS}>
           New scenario
         </button>
-      </div>
-      <p className="panel-note">
-        What-ifs beside your plan. Each keeps only what it changes (a retirement age, a spending figure, a life event) and follows your plan for the rest, so a change
-        to your plan reaches every scenario.
-      </p>
-      {whyNot && <p className="panel-note">{whyNot}</p>}
-      {state.status === 'loading' && <div className="spinner" role="status" aria-label="Loading your scenarios" />}
-      {state.status === 'error' && (
-        <>
-          <div className="error">{state.error}</div>
-          <button className="secondary" style={{ marginTop: 8 }} onClick={() => void client.load()}>
-            Try again
-          </button>
-        </>
-      )}
-      {ready && list.length === 0 && state.unreadable.length === 0 && state.unrecognised.length === 0 && (
-        <p className="empty-note">No scenarios yet. Make one to try retiring earlier, spending more, or a life event, without changing your plan.</p>
-      )}
-      {ready && list.length > 0 && (
-        <div className="plan-rows">
-          {list.map((s) => {
-            const changes = scenarioChanges(base, s);
-            const first = changes[0] ? changeText(changes[0], base, s, money) : null;
-            const more = changes.length - 1 + s.events.length;
-            const summary = first
-              ? `${first}${more > 0 ? `, and ${more} more` : ''}`
-              : s.events.length > 0
-                ? `${s.events.length} life event${s.events.length === 1 ? '' : 's'}`
-                : 'No changes yet';
-            return (
-              <div key={s.id} className="plan-row">
-                <div className="plan-row-main">
-                  <span className="plan-row-label">{s.name}</span>
-                  <button
-                    className="plan-edit"
-                    ref={(el) => {
-                      openButtons.current.set(s.id, el);
-                    }}
-                    onClick={() => onOpen(openId === s.id ? null : s.id)}
-                    disabled={!canOpen || busy}
-                    aria-label={openId === s.id ? 'Back to your plan' : `Open ${s.name}`}
-                  >
-                    {openId === s.id ? 'Back to your plan' : 'Open'}
-                  </button>
-                </div>
-                <div className="plan-row-note">
-                  <span>
-                    <Masked>{summary}</Masked>
-                  </span>
-                </div>
-                <div className="plan-scenario-actions">
-                  <button className="plan-edit" onClick={() => open({ kind: 'rename', entry: s })} disabled={!changeable} aria-label={`Rename ${s.name}`}>
-                    Rename
-                  </button>
-                  <button className="plan-edit" onClick={() => open({ kind: 'duplicate', entry: s })} disabled={!changeable || list.length >= MAX_PLAN_SCENARIOS} aria-label={`Duplicate ${s.name}`}>
-                    Duplicate
-                  </button>
-                  <button className="plan-edit" onClick={() => open({ kind: 'delete', entry: s })} disabled={!ready || busy} aria-label={`Delete ${s.name}`}>
-                    Delete
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {ready && list.length >= MAX_PLAN_SCENARIOS && <p className="panel-note">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one to make another.</p>}
-      {state.unreadable.map((id) => (
-        <div key={id} className="plan-row">
-          <div className="error" style={{ marginTop: 0 }}>
-            A saved scenario couldn’t be read: its stored data is damaged.
-          </div>
-          <button className="secondary" style={{ marginTop: 8 }} onClick={() => open({ kind: 'delete-unreadable', id })} disabled={busy}>
-            Delete it
-          </button>
-        </div>
-      ))}
-      {state.unrecognised.length > 0 && (
         <p className="panel-note">
-          {state.unrecognised.length === 1 ? 'A scenario was' : `${state.unrecognised.length} scenarios were`} saved by a newer version of Nya: kept, and not shown here.
+          What-ifs beside your plan. Each keeps only what it changes (a retirement age, a spending figure, a life event) and follows your plan for the rest, so a change
+          to your plan reaches every scenario.
         </p>
-      )}
-
-      {ready && list.length > 0 && planState === 'ready' && (
-        <>
-          <div className="plan-subhead">Compare</div>
-          <p className="panel-note">Choose two to four plans.</p>
-          <div className="chart-ranges plan-choice plan-compare-pick" role="group" aria-label="Plans to compare">
-            {ids.map((id) => {
-              const on = selected.includes(id);
-              const name = id === 'plan' ? 'Your plan' : (list.find((s) => s.id === id)?.name ?? '');
+        {whyNot && <p className="panel-note">{whyNot}</p>}
+        {state.status === 'loading' && <div className="spinner" role="status" aria-label="Loading your scenarios" />}
+        {state.status === 'error' && (
+          <>
+            <div className="error">{state.error}</div>
+            <button className="secondary" style={{ marginTop: 8 }} onClick={() => void client.load()}>
+              Try again
+            </button>
+          </>
+        )}
+        {ready && list.length === 0 && state.unreadable.length === 0 && state.unrecognised.length === 0 && (
+          <p className="empty-note">No scenarios yet. Make one to try retiring earlier, spending more, or a life event, without changing your plan.</p>
+        )}
+        {ready && list.length > 0 && (
+          <div className="plan-rows">
+            {list.map((s) => {
+              const changes = scenarioChanges(base, s);
+              const first = changes[0] ? changeText(changes[0], base, s, money) : null;
+              const more = changes.length - 1 + s.events.length;
+              const summary = first
+                ? `${first}${more > 0 ? `, and ${more} more` : ''}`
+                : s.events.length > 0
+                  ? `${s.events.length} life event${s.events.length === 1 ? '' : 's'}`
+                  : 'No changes yet';
               return (
-                <button key={id} type="button" className="chart-range" aria-pressed={on} disabled={on ? selected.length <= 2 : selected.length >= 4} onClick={() => toggle(id)}>
-                  {name}
-                </button>
+                <div key={s.id} className="plan-row">
+                  <div className="plan-row-main">
+                    <span className="plan-row-label">{s.name}</span>
+                    <button
+                      className="plan-edit"
+                      ref={keep(`open:${s.id}`)}
+                      onClick={() => {
+                        // In one commit with what it opens or leaves, as create's.
+                        onClose();
+                        if (openId === s.id) onLeave();
+                        else onOpen(s.id);
+                      }}
+                      disabled={!canOpen || busy}
+                      aria-label={openId === s.id ? 'Back to your plan' : `Open ${s.name}`}
+                    >
+                      {openId === s.id ? 'Back to your plan' : 'Open'}
+                    </button>
+                  </div>
+                  <div className="plan-row-note">
+                    <span>
+                      <Masked>{summary}</Masked>
+                    </span>
+                  </div>
+                  <div className="plan-scenario-actions">
+                    <button className="plan-edit" ref={keep(`rename:${s.id}`)} onClick={() => go({ kind: 'rename', entry: s })} disabled={!changeable} aria-label={`Rename ${s.name}`}>
+                      Rename
+                    </button>
+                    <button
+                      className="plan-edit"
+                      ref={keep(`duplicate:${s.id}`)}
+                      onClick={() => go({ kind: 'duplicate', entry: s })}
+                      disabled={!changeable || list.length >= MAX_PLAN_SCENARIOS}
+                      aria-label={`Duplicate ${s.name}`}
+                    >
+                      Duplicate
+                    </button>
+                    <button className="plan-edit" ref={keep(`delete:${s.id}`)} onClick={() => go({ kind: 'delete', entry: s })} disabled={!ready || busy} aria-label={`Delete ${s.name}`}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
               );
             })}
           </div>
-          <PlanCompare
-            columns={compared}
-            method={method}
-            money={money}
-            today={today}
-            details={Object.fromEntries(columns.map((c, i) => [c.column.id, <PlanDetails key={c.column.id} entry={c.entry} base={base} outcome={compared[i].outcome} money={money} />]))}
-          />
-          {failed && (
-            <button className="secondary" style={{ marginTop: 12 }} onClick={retry}>
-              Try again
-            </button>
-          )}
-        </>
-      )}
-
-      <Sheet
-        open={!!sheet}
-        title={shown ? (shown.kind === 'new' ? 'New scenario' : shown.kind === 'rename' ? 'Rename' : shown.kind === 'duplicate' ? 'Duplicate' : 'Delete') : ''}
-        onClose={close}
-      >
-        {shown?.kind === 'new' && (
-          <NameForm key={opened} initial="" others={list} exceptId={null} busy={busy} onCancel={close} onSave={create} intro="A scenario starts as your plan: open it, and every change you make there is saved to it, never to your plan." />
         )}
-        {shown?.kind === 'rename' && (
-          <NameForm
-            key={opened}
-            initial={shown.entry.name}
-            others={list}
-            exceptId={shown.entry.id}
-            busy={busy}
-            onCancel={close}
-            onSave={async (name) => {
-              const e = shown.entry;
-              const r = await client.save(e.id, { ...changesOf(e), name, currency: e.currency }, e.rev);
-              if ('error' in r) return r.error;
-              close();
-              return true;
-            }}
-          />
-        )}
-        {shown?.kind === 'duplicate' && (
-          <NameForm
-            key={opened}
-            initial={`${shown.entry.name} (copy)`.slice(0, SCENARIO_NAME_MAX)}
-            others={list}
-            exceptId={null}
-            busy={busy}
-            onCancel={close}
-            intro="A copy of every change and life event, under a new name."
-            onSave={async (name) => {
-              const e = shown.entry;
-              const r = await client.create({ ...changesOf(e), name, currency: e.currency });
-              if ('error' in r) return r.error;
-              close();
-              return true;
-            }}
-          />
-        )}
-        {(shown?.kind === 'delete' || shown?.kind === 'delete-unreadable') && (
-          <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              {shown.kind === 'delete'
-                ? `Delete the scenario “${shown.entry.name}”? Your plan isn’t changed. This can’t be undone.`
-                : 'Delete the scenario that couldn’t be read? What it held can’t be recovered from here, and this can’t be undone.'}
-            </p>
-            {error && <div className="error">{error}</div>}
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={close} disabled={busy}>
-                Cancel
-              </button>
-              <button
-                className="danger"
-                disabled={busy}
-                onClick={async () => {
-                  const id = shown.kind === 'delete' ? shown.entry.id : shown.id;
-                  const r = await client.remove(id, shown.kind === 'delete-unreadable');
-                  if ('error' in r) {
-                    setError(r.error);
-                    return;
-                  }
-                  if (openId === id) onOpen(null);
-                  close();
-                }}
-              >
-                Delete
-              </button>
+        {ready && list.length >= MAX_PLAN_SCENARIOS && <p className="panel-note">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one to make another.</p>}
+        {state.unreadable.map((id) => (
+          <div key={id} className="plan-row">
+            <div className="error" style={{ marginTop: 0 }}>
+              A saved scenario couldn’t be read: its stored data is damaged.
             </div>
+            <button className="secondary" style={{ marginTop: 8 }} ref={keep(`unreadable:${id}`)} onClick={() => go({ kind: 'delete-unreadable', id })} disabled={busy}>
+              Delete it
+            </button>
+          </div>
+        ))}
+        {state.unrecognised.length > 0 && (
+          <p className="panel-note">
+            {state.unrecognised.length === 1 ? 'A scenario was' : `${state.unrecognised.length} scenarios were`} saved by a newer version of Nya: kept, and not shown here.
+          </p>
+        )}
+
+        {ready && list.length > 0 && planState === 'ready' && (
+          <>
+            <div className="plan-subhead">Compare</div>
+            <p className="panel-note">Choose two to four plans.</p>
+            <div className="chart-ranges plan-choice plan-compare-pick" role="group" aria-label="Plans to compare">
+              {ids.map((id) => {
+                const on = selected.includes(id);
+                const name = id === 'plan' ? 'Your plan' : (list.find((s) => s.id === id)?.name ?? '');
+                return (
+                  <button key={id} type="button" className="chart-range" aria-pressed={on} disabled={on ? selected.length <= 2 : selected.length >= 4} onClick={() => toggle(id)}>
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+            <PlanCompare
+              columns={compared}
+              method={method}
+              money={money}
+              today={today}
+              details={Object.fromEntries(columns.map((c, i) => [c.column.id, <PlanDetails key={c.column.id} entry={c.entry} base={base} outcome={compared[i].outcome} money={money} />]))}
+            />
+            {failed && (
+              <button className="secondary" style={{ marginTop: 12 }} onClick={retry}>
+                Try again
+              </button>
+            )}
           </>
         )}
-      </Sheet>
-    </div>
+      </>
+    );
+
+  return (
+    <Sheet
+      open={open}
+      title={level ? (level.kind === 'new' ? 'New scenario' : level.kind === 'rename' ? 'Rename' : level.kind === 'duplicate' ? 'Duplicate' : 'Delete') : 'Scenarios'}
+      onClose={onClose}
+      onBack={level ? back : undefined}
+      level={level ? level.kind : 'list'}
+    >
+      {!level && listBody}
+      {level?.kind === 'new' && (
+        <NameForm key={opened} initial="" others={list} exceptId={null} busy={busy} onCancel={back} onSave={create} intro="A scenario starts as your plan: open it, and every change you make there is saved to it, never to your plan." />
+      )}
+      {level?.kind === 'rename' && (
+        <NameForm
+          key={opened}
+          initial={level.entry.name}
+          others={list}
+          exceptId={level.entry.id}
+          busy={busy}
+          onCancel={back}
+          onSave={async (name) => {
+            const e = level.entry;
+            const r = await client.save(e.id, { ...changesOf(e), name, currency: e.currency }, e.rev);
+            if ('error' in r) return r.error;
+            toList([openerOf(level)]);
+            return true;
+          }}
+        />
+      )}
+      {level?.kind === 'duplicate' && (
+        <NameForm
+          key={opened}
+          initial={`${level.entry.name} (copy)`.slice(0, SCENARIO_NAME_MAX)}
+          others={list}
+          exceptId={null}
+          busy={busy}
+          onCancel={back}
+          intro="A copy of every change and life event, under a new name."
+          onSave={async (name) => {
+            const e = level.entry;
+            const r = await client.create({ ...changesOf(e), name, currency: e.currency });
+            if ('error' in r) return r.error;
+            // The tenth can't be copied again: then its row's Rename.
+            toList([openerOf(level), `rename:${e.id}`]);
+            return true;
+          }}
+        />
+      )}
+      {(level?.kind === 'delete' || level?.kind === 'delete-unreadable') && (
+        <>
+          <p className="panel-note" style={{ marginTop: 0 }}>
+            {level.kind === 'delete'
+              ? `Delete the scenario “${level.entry.name}”? Your plan isn’t changed. This can’t be undone.`
+              : 'Delete the scenario that couldn’t be read? What it held can’t be recovered from here, and this can’t be undone.'}
+          </p>
+          {error && <div className="error">{error}</div>}
+          <div className="button-pair" style={{ marginTop: 16 }}>
+            <button className="secondary" onClick={back} disabled={busy}>
+              Cancel
+            </button>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={async () => {
+                const id = level.kind === 'delete' ? level.entry.id : level.id;
+                const r = await client.remove(id, level.kind === 'delete-unreadable');
+                if ('error' in r) {
+                  setError(r.error);
+                  return;
+                }
+                if (openId === id) onOpen(null);
+                toList(afterDelete(level.kind === 'delete' ? `open:${id}` : `unreadable:${id}`));
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </>
+      )}
+    </Sheet>
   );
 }
 
@@ -579,8 +647,9 @@ export function formFor(field: string): FixForm {
   return 'simulation';
 }
 
-/** The card at the top of an open scenario. */
-export function ScenarioBar({
+/** The open scenario's card, under the Plan's bar on every segment. It has
+ *  no heading of its own: the bar's names the scenario. */
+export function ScenarioCard({
   entry,
   base,
   problem,
@@ -591,12 +660,13 @@ export function ScenarioBar({
   editable,
   money,
   eventsCount,
-  headingRef,
+  eventsWhere,
   onSave,
   onConfirmCurrency,
   onFix,
   notice = null,
-  onBack,
+  scenariosCount,
+  onScenarios,
 }: {
   entry: ScenarioEntry;
   base: FirePlan;
@@ -614,14 +684,20 @@ export function ScenarioBar({
   editable: boolean;
   money: (n: number) => string;
   eventsCount: number;
-  headingRef: RefObject<HTMLHeadingElement | null>;
+  /** Where its Life events card is: on Your path (worked out), just below
+   *  this card (refused for lasting changes below zero), or nowhere. */
+  eventsWhere: 'path' | 'below' | null;
   /** null: not saved, and `notice` says why (so the card doesn't say it twice). */
   onSave: (changes: ScenarioChanges) => Promise<boolean | string | null>;
   onConfirmCurrency: () => Promise<boolean | string | null>;
   onFix: (form: Exclude<FixForm, null>) => void;
   /** What a save said that has no form left to say it in. */
   notice?: string | null;
-  onBack: () => void;
+  /** How many scenarios are listed, once they have loaded, for its
+   *  Scenarios button. */
+  scenariosCount: number | null;
+  /** Opens the Scenarios sheet, to open another, or compare. */
+  onScenarios: () => void;
 }) {
   const [error, setError] = useState('');
   const changes = scenarioChanges(base, entry);
@@ -647,10 +723,7 @@ export function ScenarioBar({
   };
   const fixWith = problem?.field ? formFor(problem.field) : null;
   return (
-    <div className="card plan-scenario-bar">
-      <h2 className="inst-name plan-scenario-heading" tabIndex={-1} ref={headingRef}>
-        Scenario: {entry.name}
-      </h2>
+    <div className="card plan-scenario-card">
       <p className="panel-note">
         Everything below is this scenario, and changes you make here are saved to it, never to your plan. Your age, how your figures are measured, the method and
         the allocation settings are your plan’s, the same in every scenario. Leaving the Plan tab, or reloading, brings back your plan.
@@ -723,7 +796,8 @@ export function ScenarioBar({
             <div className="plan-row">
               <div className="plan-row-note">
                 <span>
-                  {eventsCount} life event{eventsCount === 1 ? '' : 's'}, below.
+                  {eventsCount} life event{eventsCount === 1 ? '' : 's'}
+                  {eventsWhere === 'path' ? ', on Your path.' : eventsWhere === 'below' ? ', below.' : '.'}
                 </span>
               </div>
             </div>
@@ -731,8 +805,8 @@ export function ScenarioBar({
         </div>
       )}
       {error && <div className="error">{error}</div>}
-      <button className="secondary" style={{ marginTop: 12 }} onClick={onBack}>
-        Back to your plan
+      <button className="btn secondary" aria-haspopup="dialog" onClick={onScenarios}>
+        {scenariosCount !== null && scenariosCount > 0 ? `Scenarios (${scenariosCount})` : 'Scenarios'}
       </button>
     </div>
   );
