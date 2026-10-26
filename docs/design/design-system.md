@@ -110,7 +110,7 @@ A surface with an optional header: `<h2>` title on the left, a meta value or one
 
 A card that opens and closes (Hidden, Accounts that ended) has a header whose `<h2>` holds one button, the whole title row (`components/Collapsible.tsx`, `.section-toggle`): the title, then a neutral count badge and at most one status badge, then a chevron that turns when it is open. It is 44px tall and says whether it is open (`aria-expanded`).
 
-Replaces `.inst-header`, `.inst-name`, `.inst-total` used as a generic header (43 files), `.institution-name`, `.holdings-title`, `.plan-subhead`, `.plan-scenario-heading`, `.card-mode-header`, and `.report-page` (a copy of `.card`).
+Replaces `.inst-header`, `.inst-name`, `.inst-total` used as a generic header (43 files), `.institution-name`, `.holdings-title`, `.plan-subhead`, `.plan-scenario-heading` (gone since phase 6b: the open scenario's name is the Plan bar's heading), `.card-mode-header`, and `.report-page` (a copy of `.card`).
 
 ### List row
 

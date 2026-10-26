@@ -120,6 +120,8 @@ import { institutionCash } from '@/lib/cash';
 // The Plan tab carries the projection engine, so its code is loaded only when
 // the tab is opened, and a failure to load or run it stays on that tab.
 import PlanTabLoader from './PlanTabLoader';
+// A type alone: the Plan's code loads only when its tab opens.
+import type { PlanSegment } from './PlanBar';
 // The FI card on Home works its figures out with the Plan's code, so it is
 // loaded the same way, after Home paints.
 import FiProgressLoader from './FiProgressLoader';
@@ -258,6 +260,18 @@ export default function Dashboard({
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>('transactions');
   // Budgets' segment, kept the same way.
   const [budgetsSegment, setBudgetsSegment] = useState<BudgetsSegment>('month');
+  // And the Plan's.
+  const [planSegment, setPlanSegment] = useState<PlanSegment>('path');
+  // When Home's FI line opened the Plan, for its heading to take focus once
+  // drawn. The Plan lands it itself: on a first visit its code is still
+  // loading, and the heading appears in a render of the loader, never of the
+  // dashboard, so focusTarget (below) would never find it. Cleared once
+  // landed, or once the tab is left, and never in the commit that opens the
+  // tab, which would lose it on that first visit.
+  const [planLanding, setPlanLanding] = useState<number | null>(null);
+  useEffect(() => {
+    if (tab !== 'plan' && planLanding !== null) setPlanLanding(null);
+  }, [tab, planLanding]);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   // 'update' re-authenticates or adds a product; 'accounts' is the account
   // picker on an existing Item. Neither creates an Item.
@@ -2378,6 +2392,8 @@ export default function Dashboard({
                       balanceFx={base?.fx ?? null}
                       onOpenPlan={() => {
                         window.scrollTo(0, 0);
+                        setPlanSegment('path');
+                        setPlanLanding(Date.now());
                         setTab('plan');
                       }}
                     />
@@ -2699,6 +2715,10 @@ export default function Dashboard({
                 currency={accountCurrency}
                 txnFx={txnFx}
                 balanceFx={base?.fx ?? null}
+                segment={planSegment}
+                onSegment={setPlanSegment}
+                landing={planLanding}
+                onLanded={() => setPlanLanding(null)}
               />
             )}
           </>

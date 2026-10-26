@@ -6,34 +6,45 @@
 // Web Worker (components/plan-runner.ts) with the market history, so the
 // page stays responsive while 5,000 runs or the grid are worked out.
 //
-// What it shows, top to bottom:
-//   - The FI view (lib/fire/plan.ts fiView): the FI number, years to FI,
-//     Coast and Barista FI, each beside the inputs it came from, where each
-//     input came from (measured by Nya, typed by you, or missing), and what
-//     may be missing from it: an institution whose transactions couldn't be
-//     read, balances that are old or short. A figure that may be short says
-//     so; none is presented as complete when it may not be.
-//   - Allocation (components/AllocationCard.tsx): what the investment
-//     accounts hold by asset class and tax bucket, against a target, over
-//     time, and the mix the simulation can take from it, on the person's word.
-//   - "Will it last?": the plan run through history or Monte Carlo
-//     (lib/fire/simulate.ts), with the success rate and its definition, for a
-//     flexible rule the spending cuts beside it, a fan chart, the worst
-//     starting years, and every assumption listed under it.
-//   - The success grid by withdrawal rate and length.
-//   - Other income and one-off expenses, and what the numbers can't say.
+// What it shows, top to bottom (rollout phase 6b,
+// docs/design/information-architecture.md#plan): what is about the whole
+// plan (its load error, a save's error, a repair waiting, its currency), then
+// a pinned bar (components/PlanBar.tsx) naming the plan shown, your plan or
+// the scenario open, over three segments, and with a scenario open its card
+// under the bar, above every segment. All three segments stay mounted, the
+// others hidden, and the bar is drawn before the plan has loaded, so Home's
+// FI line has its heading to land on:
+//   - Your path: the FI view (lib/fire/plan.ts fiView): the FI number, years
+//     to FI, Coast and Barista FI, each beside the inputs it came from, where
+//     each input came from (measured by Nya, typed by you, or missing), and
+//     what may be missing from it: an institution whose transactions couldn't
+//     be read, balances that are old or short. A figure that may be short
+//     says so; none is presented as complete when it may not be. Then other
+//     income and one-off expenses, and an open scenario's life events.
+//   - Stress test: "Will it last?": the plan run through history or Monte
+//     Carlo (lib/fire/simulate.ts), with the success rate and its
+//     definition, for a flexible rule the spending cuts beside it, a fan
+//     chart, the worst starting years, and every assumption listed under it;
+//     the success grid by withdrawal rate and length; and what the numbers
+//     can't say.
+//   - Portfolio: Allocation (components/AllocationCard.tsx): what the
+//     investment accounts hold by asset class and tax bucket, against a
+//     target, over time, and the mix the simulation can take from it, on the
+//     person's word.
 //
 // Only the plan's assumptions go to the server (/api/fire-plan), saved whole
 // on each change through lib/whole-list-store.ts, which never lets an
 // unloaded plan be saved over the real one.
 //
 // SCENARIOS (lib/fire/scenarios.ts, components/PlanScenarios.tsx): named
-// what-ifs beside the Plan, each only what it changes. Opening one shows the
-// whole tab as that scenario, every card saying so, and every save the tab
-// makes goes through components/plan-savers.ts, which sends the forms' and
-// Use my allocation's saves to the scenario and gives the repair, the method
-// and the allocation settings no saver at all: nothing done with a scenario
-// open can reach the Plan.
+// what-ifs beside the Plan, each only what it changes, listed, made and
+// compared in the Scenarios sheet, which the bar opens on your plan and the
+// scenario's card opens inside one. Opening one shows the whole tab as that
+// scenario, every card saying so, and every save the tab makes goes through
+// components/plan-savers.ts, which sends the forms' and Use my allocation's
+// saves to the scenario and gives the repair, the method and the allocation
+// settings no saver at all: nothing done with a scenario open can reach the
+// Plan.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
@@ -97,7 +108,8 @@ import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED, type GridCell, type SimResult
 import { canRunOut, vpwExpectedReturn } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
-import { ScenarioBar, ScenariosCard, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
+import { ScenarioCard, ScenariosSheet, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
+import PlanBar, { planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { ScenarioTag } from './ScenarioTag';
 import { LifeEventsCard } from './PlanEvents';
 import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
@@ -271,6 +283,15 @@ export type PlanTabProps = {
    *  base.fx), into the Plan's currency (lib/fire/inputs.ts). */
   txnFx?: FxTable | null;
   balanceFx?: PageFx | null;
+  /** The segment shown, kept by the dashboard so the tab comes back on it;
+   *  left out, the tab keeps its own. */
+  segment?: PlanSegment;
+  onSegment?: (s: PlanSegment) => void;
+  /** When Home's FI line opened the tab (Date.now()): the bar's heading takes
+   *  focus once, if that was under ten seconds ago. */
+  landing?: number | null;
+  /** Said once the heading has it, so the dashboard forgets the landing. */
+  onLanded?: () => void;
 };
 
 export default function PlanTab({
@@ -286,7 +307,14 @@ export default function PlanTab({
   balanceFx = null,
   balancesSaved = false,
   balancesFailed = false,
+  segment: segmentShown,
+  onSegment,
+  landing = null,
+  onLanded,
 }: PlanTabProps) {
+  const [ownSegment, setOwnSegment] = useState<PlanSegment>('path');
+  const segment = segmentShown ?? ownSegment;
+  const chooseSegment = onSegment ?? setOwnSegment;
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   // The plan as the server last confirmed it, and the currency its typed
   // figures are in as the route answered with it (lib/fire/plan-currency.ts):
@@ -729,28 +757,117 @@ export default function PlanTab({
       target === shownForRef.current ? saversRef.current.form(next) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: close, editable: editable && !other && sheetFor === shownFor, scenario: entry?.name ?? null };
   const scenarioName = entry?.name ?? null;
-  // Back to the Plan puts focus on that scenario's row, where it can be
-  // opened again, rather than losing it with the card that goes.
-  const [backFrom, setBackFrom] = useState<string | null>(null);
+
+  // The bar, its heading and its Scenarios button, the scenario's card (with
+  // the life events that fix it, when it is refused) and the panel shown:
+  // what a switch scrolls to, and what focus moves to.
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const titleRef = useRef<HTMLHeadingElement | null>(null);
+  const scenariosRef = useRef<HTMLButtonElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  /** Scrolls `el` up when it is behind the pinned bar, to one --sp-2 under
+   *  the bar, where Activity's and Budgets' segments land (their
+   *  scroll-margin-top in app/globals.css). Where nothing is laid out (a
+   *  test's document) every top is the same, and nothing moves. */
+  const underBar = (el: HTMLElement | null) => {
+    const bar = barRef.current;
+    if (!el || !bar) return;
+    const top = el.getBoundingClientRect().top;
+    const bottom = bar.getBoundingClientRect().bottom;
+    if (top >= bottom) return;
+    const gap = parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue('--sp-2')) || 0;
+    window.scrollBy(0, top - bottom - gap);
+  };
+  // The Scenarios sheet, and the button that opened it. Closed, the sheet
+  // gives focus back to that button; when the button went while it was open
+  // (with the scenario's card: the scenario was deleted meanwhile), the
+  // bar's Scenarios takes focus instead (below).
+  const [scenariosOpen, setScenariosOpen] = useState(false);
+  const scenariosFrom = useRef<Element | null>(null);
+  /** `within`: the bar's button, or the card's place. The button pressed is
+   *  the one focused, where a browser focuses what is pressed; where none is
+   *  (Safari), its card stands for it, gone exactly when it is. */
+  const openScenarios = (within: HTMLElement | null) => {
+    const pressed = document.activeElement;
+    scenariosFrom.current = within && pressed && within.contains(pressed) ? pressed : within;
+    setScenariosOpen(true);
+  };
+  const closeScenarios = () => setScenariosOpen(false);
+  // What takes focus once the bar has drawn the plan now shown: its heading
+  // when a scenario opens (from the Scenarios sheet, on your plan or inside
+  // another scenario), with the scenario's card scrolled into view, since
+  // focus in the pinned bar scrolls nothing; its Scenarios button when one is
+  // left, as the arrow, the card and the sheet's row that left it are gone,
+  // or when the sheet closes and the button that opened it has gone. Set by
+  // the handler that opens or leaves, which closes the sheet in the same
+  // commit, so the sheet gives focus back first and loses it to this. Run
+  // only by the commit that changes the plan shown or the sheet: a commit in
+  // between (a simulation's answer, say), its effects still waiting when the
+  // click comes, would otherwise take the request before the bar has drawn
+  // what it is for. A scenario the tab closes itself (deleted elsewhere, a
+  // repair waiting), or one deleted in the sheet, moves nothing.
+  const focusNext = useRef<'title' | 'scenarios' | null>(null);
+  useEffect(() => {
+    const to = focusNext.current;
+    focusNext.current = null;
+    if (to === 'title') {
+      titleRef.current?.focus({ preventScroll: true });
+      underBar(cardRef.current);
+    } else if (to === 'scenarios' || (!scenariosOpen && scenariosFrom.current && !scenariosFrom.current.isConnected)) {
+      scenariosRef.current?.focus({ preventScroll: true });
+    }
+    if (!scenariosOpen) scenariosFrom.current = null;
+    // underBar reads only refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, scenariosOpen]);
   // A notice is about the scenario as it was open: leaving it, or opening
   // one, starts without it.
-  const back = () => {
-    setBackFrom(entry?.id ?? null);
+  const leave = () => {
     setNotice(null);
     setOpenId(null);
+    focusNext.current = 'scenarios';
   };
   const openScenario = (id: string | null) => {
     setNotice(null);
     setOpenId(id);
+    if (id !== null && id !== openId) focusNext.current = 'title';
   };
-  const headingRef = useRef<HTMLHeadingElement | null>(null);
-  // Opening one moves focus to its card's heading, and the status line says
-  // which plan the tab shows, so the switch is never silent.
+  // Home's FI line lands on the bar's heading, which is there from the
+  // tab's first render, the plan loaded or not.
+  useEffect(() => {
+    if (landing === null || Date.now() - landing > 10_000) return;
+    titleRef.current?.focus({ preventScroll: true });
+    onLanded?.();
+    // Only when the dashboard hands it a new landing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landing]);
+
+  // A segment chosen while the bar is pinned opens at its top, just under the
+  // bar, not where the last one was scrolled to; at the scenario's card
+  // instead while that says something about the scenario never to be scrolled
+  // past (its amounts typed in another currency, a rule it breaks, a save's
+  // notice). An error after a change on the card stays where it is.
+  const cardSays = !!entry && (other !== null || problem !== null || (notice !== null && notice.for === entry.id));
+  const landOn = useRef<'panel' | 'card' | null>(null);
+  useEffect(() => {
+    const to = landOn.current;
+    if (to === null) return;
+    landOn.current = null;
+    underBar(to === 'card' ? cardRef.current : panelRef.current);
+    // Only when the segment has just been switched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segment]);
+  const switchSegment = (s: PlanSegment) => {
+    if (s === segment) return;
+    landOn.current = cardSays ? 'card' : 'panel';
+    chooseSegment(s);
+  };
+
+  // The status line says which plan the tab shows, so a switch is never
+  // silent.
   const everOpened = useRef(false);
   if (entry) everOpened.current = true;
-  useEffect(() => {
-    if (openId !== null) headingRef.current?.focus();
-  }, [openId]);
   const shownStatus = entry ? `Showing the scenario ${entry.name}.` : everOpened.current ? 'Showing your plan.' : '';
   // A scenario's "They're in" relabels its amounts into the Plan's currency.
   // Once that is recorded it can't move, so it is offered at once. Before,
@@ -787,8 +904,18 @@ export default function PlanTab({
     if (later) scenarioNotes.push(later);
     if (entry.events.length > 0) scenarioNotes.push('Coast and Barista FI leave this scenario’s life events out, but for lasting changes in spending.');
   }
-  const scenariosCard = (
-    <ScenariosCard
+  // How many scenarios there are, for the bar's and the card's Scenarios:
+  // none said until they are listed (after a failed reload the client keeps
+  // the list it had, but the sheet shows only why it couldn't load).
+  const scenariosCount = scenState.status === 'ready' ? scenState.list.length : null;
+  // Mounted always, closed or open, from its first render: the plans picked
+  // for Compare last for the visit, and the sheet can be opened while the
+  // plan loads (it says why nothing opens yet).
+  const scenariosSheet = (
+    <ScenariosSheet
+      open={scenariosOpen}
+      onClose={closeScenarios}
+      onLeave={leave}
       state={scenState}
       client={scenarios}
       base={basePlan}
@@ -800,17 +927,15 @@ export default function PlanTab({
       planState={state.status}
       whyNot={
         state.status === 'error'
-          ? 'Your saved plan couldn’t be read, so scenarios can’t be worked out against it: try again above.'
+          ? 'Your saved plan couldn’t be read, so scenarios can’t be worked out against it: try again at the top of the Plan tab.'
           : !planLoaded
             ? 'Your plan is still loading: scenarios open, and are compared, once it has.'
             : repairing
-              ? 'Your saved plan has values to fix first (above): scenarios open once it is saved.'
+              ? 'Your saved plan has values to fix first (at the top of the Plan tab): scenarios open once it is saved.'
               : null
       }
       openId={entry ? entry.id : null}
       onOpen={openScenario}
-      focusId={backFrom}
-      onFocused={() => setBackFrom(null)}
       run={(job, signal) => runner().run(job, signal)}
       cache={answers}
       method={basePlan.method}
@@ -820,8 +945,11 @@ export default function PlanTab({
   );
   const fixForm = (f: Exclude<FixForm, null>) =>
     open(f === 'about' ? { kind: 'about' } : f === 'assumptions' ? { kind: 'assumptions' } : f === 'simulation' ? { kind: 'simulation' } : { kind: 'figure', figure: f });
-  const scenarioBar = entry && (
-    <ScenarioBar
+  // Lasting changes below zero: nothing is worked out, and the life events
+  // are what to change, so they stay with the card, on every segment.
+  const refused = !!openFigures && 'refused' in openFigures;
+  const scenarioCard = entry && (
+    <ScenarioCard
       entry={entry}
       base={basePlan}
       problem={problem}
@@ -832,22 +960,36 @@ export default function PlanTab({
       editable={editable}
       money={money}
       eventsCount={entry.events.length}
-      headingRef={headingRef}
+      eventsWhere={shown ? 'path' : refused ? 'below' : null}
       onSave={(c) => persistHere(c)}
       onConfirmCurrency={() => persistHere(changesOf(entry), planCurrency)}
       onFix={fixForm}
       notice={notice && notice.for === entry.id ? notice.text : null}
-      onBack={back}
+      scenariosCount={scenariosCount}
+      onScenarios={() => openScenarios(cardRef.current)}
     />
   );
 
-  if (state.status === 'loading' && state.value === null) {
-    return (
-      <div className="card">
-        <div className="spinner" role="status" aria-label="Loading" />
-      </div>
-    );
-  }
+  // Until the saved plan has first loaded, each segment is a spinner, never
+  // the defaults as if they were saved. Everything else is drawn the same
+  // way loaded or not, so the bar and the sheets stay the same elements when
+  // the plan arrives: its heading keeps focus, an open sheet stays open.
+  const firstLoad = state.status === 'loading' && state.value === null;
+  const panel = (s: PlanSegment, body: React.ReactNode) => (
+    <div className="plan-panel" id={planPanelId(s)} role="tabpanel" aria-labelledby={planTabId(s)} hidden={s !== segment} ref={s === segment ? panelRef : undefined}>
+      {firstLoad ? (
+        <div className="card">
+          <div className="spinner" role="status" aria-label="Loading your plan" />
+        </div>
+      ) : (
+        body
+      )}
+    </div>
+  );
+  // An open scenario with amounts typed in another currency, or one that
+  // breaks a rule of the Plan's, has nothing worked out: its card says why,
+  // on every segment.
+  const worked = shown !== null;
 
   return (
     <>
@@ -871,12 +1013,24 @@ export default function PlanTab({
       <div className="visually-hidden" role="status">
         {currencySaid}
       </div>
-      {scenarioBar}
-      {entry && !shown ? (
-        <>
-          {/* Lasting changes below zero: the life events are what to change,
-              so they stay here to change. */}
-          {openFigures && 'refused' in openFigures && (
+      <PlanBar
+        ref={barRef}
+        titleRef={titleRef}
+        scenariosRef={scenariosRef}
+        segment={segment}
+        onSegment={switchSegment}
+        scenario={scenarioName}
+        scenariosCount={scenariosCount}
+        onScenarios={() => openScenarios(scenariosRef.current)}
+        onBack={leave}
+      />
+      {/* The open scenario's card, under the bar on every segment, and when
+          it is refused for lasting changes below zero, its life events, the
+          ones to change, with it. */}
+      {entry && (
+        <div ref={cardRef}>
+          {scenarioCard}
+          {refused && (
             <LifeEventsCard
               scenarioName={entry.name}
               version={shownFor ?? ''}
@@ -887,120 +1041,134 @@ export default function PlanTab({
               onSave={(events) => persist({ ...changesOf(entry), events })}
             />
           )}
-          {scenariosCard}
-        </>
-      ) : (
-        <>
-      <FiCard
-        scenarioName={scenarioName}
-        scenarioNotes={scenarioNotes}
-        retirementSpending={shown?.retirement?.spending ?? null}
-        walked={shown?.walked ?? false}
-        walkedSavings={shown?.walkedSavings ?? null}
-        fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
-        plan={plan}
-        view={view}
-        flows={flows}
-        unread={unread}
-        withoutTransactions={txnWithout}
-        transactionCount={txns ? historyCount(txns) : 0}
-        txnsLoading={txnsLoading}
-        txnsFailed={txnsFailed}
-        assets={assets}
-        balancesAsOf={balancesAsOf}
-        workplace={workplace}
-        workplaceCount={contributions === null ? null : contributions.length}
-        currencyNote={currencyNote}
-        convertedNote={convertedNote}
-        cashOn={cashOn}
-        cashUnmarked={cashUnmarked}
-        money={money}
-        editable={editable}
-        open={open}
-        savingsRate={figures.savingsRate}
-        shareRates={inputs.rates ?? null}
-      />
-
-      {scenariosCard}
-
-      <AllocationCard
-        allocation={allocation}
-        plan={plan}
-        onSavePlan={savers.allocationMix}
-        planEditable={editable}
-        settingsLocked={!savers.allocationSettings}
-        scenarioName={scenarioName}
-        planKey={shownFor ?? 'plan'}
-        institutions={institutions}
-        balancesAsOf={balancesAsOf}
-      />
-
-      <SimulationCard
-        scenarioName={scenarioName}
-        startsWith={shown?.startsWith ?? null}
-        hasEvents={!!entry && entry.events.length > 0}
-        retirementLine={shown?.retirement && view.spending.value !== null ? `Spending in retirement: ${retirementText(shown.retirement.spending, shown.retirement.lasting, view.spending.value, money)}.` : null}
-        plan={plan}
-        view={shown?.retirement ? { ...view, spending: { ...view.spending, value: shown.retirement.spending } } : view}
-        engine={engine}
-        outcome={outcome}
-        pending={pending}
-        money={money}
-        currency={displayCurrency}
-        editable={editable}
-        onMethod={savers.method}
-        onRetry={retry}
-        open={open}
-      />
-
-      {'sim' in engine && (
-        <GridCard
-          scenarioName={scenarioName}
-          plan={plan}
-          cells={shownGrid?.cells ?? null}
-          failed={shownGrid?.failed ?? []}
-          unavailable={shownGrid?.unavailable ?? false}
-          onRetry={retry}
-          rates={gridRates}
-          years={gridYears}
-          current={{ rate: vpw ? null : engine.rate, years: engine.sim.years }}
-          startBalance={engine.sim.startBalance}
-          money={money}
-        />
-      )}
-
-      <EventsCard plan={plan} engine={engine} money={money} editable={editable} open={open} scenario={scenarioMarks} />
-
-      {entry && shown && (
-        <LifeEventsCard
-          scenarioName={entry.name}
-          version={shownFor ?? ''}
-          events={entry.events}
-          notes={shown.events?.notes ?? []}
-          money={money}
-          editable={editable && !other}
-          onSave={(events) => persist({ ...changesOf(entry), events })}
-        />
-      )}
-        </>
-      )}
-
-      <div className="card">
-        <div className="inst-header">
-          <div className="inst-name">About these numbers</div>
         </div>
-        <p className="panel-note">{HYPOTHETICAL}</p>
-        <p className="panel-note">
-          Stocks are {DATA_STOCKS} and bonds are {DATA_BONDS}, from Robert Shiller&apos;s monthly data (January 1871 to June
-          2023, so the monthly returns, each from one month to the next, run from January 1871 to May 2023). Everything is in
-          today&apos;s dollars: returns are after inflation, so a constant withdrawal keeps its buying power.
-        </p>
-        <p className="panel-note">
-          What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account
-          types or required withdrawals), or what is inside your funds (the mix is what you set). Spending from bank
-          data misses anything paid outside the accounts you have connected.
-        </p>
-      </div>
+      )}
+
+      {panel(
+        'path',
+        worked && (
+          <>
+            <FiCard
+              scenarioName={scenarioName}
+              scenarioNotes={scenarioNotes}
+              retirementSpending={shown?.retirement?.spending ?? null}
+              walked={shown?.walked ?? false}
+              walkedSavings={shown?.walkedSavings ?? null}
+              fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
+              plan={plan}
+              view={view}
+              flows={flows}
+              unread={unread}
+              withoutTransactions={txnWithout}
+              transactionCount={txns ? historyCount(txns) : 0}
+              txnsLoading={txnsLoading}
+              txnsFailed={txnsFailed}
+              assets={assets}
+              balancesAsOf={balancesAsOf}
+              workplace={workplace}
+              workplaceCount={contributions === null ? null : contributions.length}
+              currencyNote={currencyNote}
+              convertedNote={convertedNote}
+              cashOn={cashOn}
+              cashUnmarked={cashUnmarked}
+              money={money}
+              editable={editable}
+              open={open}
+              savingsRate={figures.savingsRate}
+              shareRates={inputs.rates ?? null}
+            />
+
+            <EventsCard plan={plan} engine={engine} money={money} editable={editable} open={open} scenario={scenarioMarks} />
+
+            {entry && shown && (
+              <LifeEventsCard
+                scenarioName={entry.name}
+                version={shownFor ?? ''}
+                events={entry.events}
+                notes={shown.events?.notes ?? []}
+                money={money}
+                editable={editable && !other}
+                onSave={(events) => persist({ ...changesOf(entry), events })}
+              />
+            )}
+          </>
+        )
+      )}
+
+      {panel(
+        'stress',
+        <>
+          {worked && (
+            <SimulationCard
+              scenarioName={scenarioName}
+              startsWith={shown?.startsWith ?? null}
+              hasEvents={!!entry && entry.events.length > 0}
+              retirementLine={shown?.retirement && view.spending.value !== null ? `Spending in retirement: ${retirementText(shown.retirement.spending, shown.retirement.lasting, view.spending.value, money)}.` : null}
+              plan={plan}
+              view={shown?.retirement ? { ...view, spending: { ...view.spending, value: shown.retirement.spending } } : view}
+              engine={engine}
+              outcome={outcome}
+              pending={pending}
+              money={money}
+              currency={displayCurrency}
+              editable={editable}
+              onMethod={savers.method}
+              onRetry={retry}
+              open={open}
+            />
+          )}
+
+          {worked && 'sim' in engine && (
+            <GridCard
+              scenarioName={scenarioName}
+              plan={plan}
+              cells={shownGrid?.cells ?? null}
+              failed={shownGrid?.failed ?? []}
+              unavailable={shownGrid?.unavailable ?? false}
+              onRetry={retry}
+              rates={gridRates}
+              years={gridYears}
+              current={{ rate: vpw ? null : engine.rate, years: engine.sim.years }}
+              startBalance={engine.sim.startBalance}
+              money={money}
+            />
+          )}
+
+          <div className="card">
+            <div className="inst-header">
+              <div className="inst-name">About these numbers</div>
+            </div>
+            <p className="panel-note">{HYPOTHETICAL}</p>
+            <p className="panel-note">
+              Stocks are {DATA_STOCKS} and bonds are {DATA_BONDS}, from Robert Shiller&apos;s monthly data (January 1871 to June
+              2023, so the monthly returns, each from one month to the next, run from January 1871 to May 2023). Everything is in
+              today&apos;s dollars: returns are after inflation, so a constant withdrawal keeps its buying power.
+            </p>
+            <p className="panel-note">
+              What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account
+              types or required withdrawals), or what is inside your funds (the mix is what you set). Spending from bank
+              data misses anything paid outside the accounts you have connected.
+            </p>
+          </div>
+        </>
+      )}
+
+      {panel(
+        'portfolio',
+        worked && (
+          <AllocationCard
+            allocation={allocation}
+            plan={plan}
+            onSavePlan={savers.allocationMix}
+            planEditable={editable}
+            settingsLocked={!savers.allocationSettings}
+            scenarioName={scenarioName}
+            planKey={shownFor ?? 'plan'}
+            institutions={institutions}
+            balancesAsOf={balancesAsOf}
+          />
+        )
+      )}
 
       <Sheet
         open={!!sheet}
@@ -1039,6 +1207,7 @@ export default function PlanTab({
         {shownSheet?.kind === 'income' && <IncomeForm key={opened} {...formProps} item={shownSheet.item} />}
         {shownSheet?.kind === 'expense' && <ExpenseForm key={opened} {...formProps} item={shownSheet.item} />}
       </Sheet>
+      {scenariosSheet}
     </>
   );
 }
@@ -1507,7 +1676,7 @@ export function FiCard({
           />
         )}
         {view.atTargetAge !== null && plan.targetAge !== null && (
-          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected at a steady ${pct(plan.realReturn)} real return. Real markets don't move steadily; the simulation below shows how much that matters.`} />
+          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected at a steady ${pct(plan.realReturn)} real return. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
         )}
         {view.atTargetAge === null && notWorkedOut && plan.age !== null && plan.targetAge !== null && <Row label={`At age ${plan.targetAge}`} value="--" note={notWorkedOut} />}
       </div>
@@ -1549,9 +1718,10 @@ export function FiCard({
   );
 }
 
+// Said on Stress test, of the figures on Your path (the FI card).
 const MISSING_TEXT: Record<Missing, string> = {
-  spending: 'The simulation withdraws your annual spending, so it needs it. Type it above, or connect accounts with transactions.',
-  assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them above, or start from your FI number (Change).',
+  spending: 'The simulation withdraws your annual spending, so it needs it. Type it on Your path, or connect accounts with transactions.',
+  assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them on Your path, or start from your FI number (Change).',
   balance: 'Type the balance to start with (Change).',
 };
 
@@ -1559,8 +1729,8 @@ const MISSING_TEXT: Record<Missing, string> = {
  *  isn't measured, said so in compare mode's words (unmeasuredNeed). */
 function missingText(missing: Missing, view: FiView): string {
   const need = unmeasuredNeed(missing, view);
-  if (need && missing === 'assets') return `The simulation starts with ${need} (the FI card above says why). Type them above, or start from your FI number (Change).`;
-  if (need) return `The simulation withdraws ${need} (the FI card above says why). Type it above.`;
+  if (need && missing === 'assets') return `The simulation starts with ${need} (the FI card on Your path says why). Type them on Your path, or start from your FI number (Change).`;
+  if (need) return `The simulation withdraws ${need} (the FI card on Your path says why). Type it on Your path.`;
   return MISSING_TEXT[missing];
 }
 
@@ -1637,7 +1807,7 @@ export function SimulationCard({
   const startNote =
     startsWith && startsWith.more ? (
       <p className="panel-note plan-warning">
-        <Masked>{`It starts with ${startsWithText(startsWith, money).replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
+        <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
       </p>
     ) : null;
 
@@ -1697,7 +1867,7 @@ export function SimulationCard({
           <>
             <p className="empty-note">
               The simulation couldn&apos;t be loaded. It needs a connection the first time it runs after an update. The figures
-              above don&apos;t depend on it.
+              on Your path and Portfolio don&apos;t depend on it.
             </p>
             <button className="secondary" style={{ marginTop: 12 }} onClick={onRetry}>
               Try again
@@ -1817,7 +1987,7 @@ export function SimulationCard({
               {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
             </li>
           ))}
-          {hasEvents && <li>This scenario’s life events, from the retirement age on, as the Life events card says.</li>}
+          {hasEvents && <li>This scenario’s life events, from the retirement age on, as the Life events card on Your path says.</li>}
           <li>
             Returns are after inflation, from US history only: stocks are {DATA_STOCKS}, bonds {DATA_BONDS}.
           </li>

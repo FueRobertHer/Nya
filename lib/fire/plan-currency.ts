@@ -345,8 +345,8 @@ export function keptText(currency: string, inputs: { assets: InvestedAssets; flo
   const others = [...new Set([...otherAccounts, ...(!m.spendingIn && m.spending ? [m.spending] : [])])];
   const what = join(parts);
   const then = converts
-    ? `what is in ${join(others)} is converted into ${currency} (below).`
-    : `without a home currency nothing is converted, so what is in ${join(others)} isn’t counted (below). Choose one on the Currency card in Settings, Preferences to convert it.`;
+    ? `what is in ${join(others)} is converted into ${currency} (on Your path).`
+    : `without a home currency nothing is converted, so what is in ${join(others)} isn’t counted (on Your path). Choose one on the Currency card in Settings, Preferences to convert it.`;
   return `Your plan’s figures are in ${currency}, the currency they were typed in, and stay in it. ${what[0].toUpperCase()}${what.slice(1)}: ${then}`;
 }
 
