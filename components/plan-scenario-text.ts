@@ -178,6 +178,8 @@ export function startsWithText(sw: StartsWith, money: Money, shortWhere = 'below
  *  would have reached. */
 export function shortText(short: Shortfall, age: number | null, money: Money, what = 'there is no FI date'): string {
   const when = age !== null ? `at ${age + short.year}` : `in ${short.year} year${short.year === 1 ? '' : 's'}`;
+  // Nothing grows from below zero: the walk and the projection stop there.
+  if (short.have < 0) return `Your invested assets are below zero (${money(short.have)}) ${when}, so ${what}.`;
   return short.kind === 'cost'
     ? `You’d have about ${money(short.have)} ${when}, less than the ${money(short.need)} it takes from your investments, so ${what}: change the cost, or when it comes.`
     : `You’d have about ${money(short.have)} ${when}, and that year takes ${money(short.need)} out, more than there is, so ${what}.`;

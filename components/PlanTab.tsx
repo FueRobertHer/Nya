@@ -511,11 +511,13 @@ export default function PlanTab({
         : null;
   const plan = shown?.plan ?? basePlan;
   const view = shown?.view ?? figures.view;
-  // Where the walk to the stop age can't go on, which the At age row says:
-  // only a scenario's life events change the walk (a scenario's ages are
-  // parsed, so its path is never longer than a plan can be).
-  const stopWalked = shown !== null && shown.events !== null && hasWalk(shown.events.walk);
-  const stopShort = shown && stopWalked ? (planPath(shown)?.short ?? null) : null;
+  // The path from today to the stop age (lib/fire/path.ts), the chart's
+  // line, and where it can't go on, which the At age row says. Both plans'
+  // ages are parsed (the Plan is repaired, a scenario resolved), so it is
+  // never longer than a plan can be.
+  const path = shown ? planPath(shown) : null;
+  const stopShort = path?.short ?? null;
+  const stopWalked = path?.fromWalk ?? false;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
   const sim = 'sim' in engine ? engine.sim : null;
   // The Plan's method: a scenario never changes it.
