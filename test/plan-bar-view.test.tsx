@@ -192,6 +192,10 @@ const key = (el: FakeElement, k: string) =>
 
 const has = (e: FakeElement, cls: string) => (e.getAttribute('class') ?? '').split(' ').includes(cls);
 
+/** Stress test's rows, by their titles (rollout 6d). */
+const stressRows = (tab: { panelOf: (label: string) => FakeElement }) =>
+  tab.panelOf('Stress test').findAll((e) => has(e, 'list-row-title')).map((e) => e.textContent);
+
 async function mount(props: Partial<PlanTabProps> = {}) {
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
@@ -369,7 +373,9 @@ describe('the segments', () => {
     expect(tab.shown()).toEqual(['Your path']);
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses']);
     const stress = tab.titles(tab.panelOf('Stress test'));
-    expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length', 'About these numbers']);
+    expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length']);
+    // Then its settings and About these numbers, as rows (rollout 6d).
+    expect(stressRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))[0]).toBe('Allocation');
     for (const label of ['Stress test', 'Portfolio']) expect(tab.panelOf(label).hasAttribute('hidden')).toBe(true);
     await act(async () => click(tab.tab('Stress test')));
@@ -533,7 +539,7 @@ describe('what the tab does by itself', () => {
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
     expect(tab.cardScenarios()?.textContent).toBe('Scenarios (2)');
-    await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s retirement age')[0]);
+    await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0]);
     expect(loads).toBe(2);
     // The scenario stays open on the list the client kept, its count unsaid.
     expect(tab.title().textContent).toBe('Scenario: Retire at 50');
@@ -562,7 +568,7 @@ describe('what the tab does by itself', () => {
     });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    const pressed = tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s retirement age')[0];
+    const pressed = tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0];
     await press(pressed);
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.card()).toBeNull();
@@ -611,7 +617,7 @@ describe('the scenario’s card, on every segment', () => {
     const tab = await mount();
     await openFromBar(tab, 'Retire at 30');
     const card = tab.card()!;
-    expect(card.textContent).toContain('It retires at 30, before your age now (40).');
+    expect(card.textContent).toContain('It stops working at 30, before your age now (40).');
     // Its life event is on no card: the line says where neither is.
     expect(card.textContent).toContain('1 life event.');
     expect(card.textContent).not.toContain('1 life event, below.');
@@ -622,7 +628,8 @@ describe('the scenario’s card, on every segment', () => {
       expect(tab.order(card)).toBeLessThan(tab.order(tab.panelOf(label)));
     }
     expect(tab.titles(tab.panelOf('Your path'))).toEqual([]);
-    expect(tab.titles(tab.panelOf('Stress test'))).toEqual(['About these numbers']);
+    expect(tab.titles(tab.panelOf('Stress test'))).toEqual([]);
+    expect(stressRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))).toEqual([]);
     // No life events card to point to.
     expect(tab.text()).not.toContain('Life events');
@@ -705,7 +712,7 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     serve({ scenarios: [RETIRE], answers: { 'PUT /api/plan-scenarios': () => [409, { error: stale, stale: true, scenario: newer }] } });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s retirement age')[0]);
+    await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0]);
     // Worked out still, its notice on the card.
     expect(tab.card()!.textContent).toContain(stale);
     expect(tab.titles(tab.panelOf('Stress test'))[0]).toBe('Will it last?');

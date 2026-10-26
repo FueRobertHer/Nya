@@ -16,12 +16,12 @@ import { RULE_NAMES, REBALANCE_TEXT, pct } from './plan-text';
 type Money = (n: number) => string;
 
 export const SETTING_NAMES: Record<SetField, string> = {
-  targetAge: 'Retirement age',
+  targetAge: 'Stop age',
   spending: 'Annual spending',
   savings: 'Annual savings',
   assets: 'Invested assets',
   withdrawalRate: 'Withdrawal rate',
-  realReturn: 'Real return until FI',
+  realReturn: 'Growth after inflation until FI',
   taxRate: 'Tax on withdrawals',
   rule: 'Withdrawal rule',
   floor: 'Floor',
@@ -35,9 +35,9 @@ export const SETTING_NAMES: Record<SetField, string> = {
 };
 
 export const START_NAMES: Record<FirePlan['start'], string> = {
-  'fi-number': 'your FI number, at the retirement age',
+  'fi-number': 'your FI number, at the stop age',
   assets: 'your invested assets, today',
-  custom: 'a balance you typed, at the retirement age',
+  custom: 'a balance you typed, at the stop age',
 };
 
 export const EVENT_NAMES: Record<LifeEventKind, string> = {
@@ -142,21 +142,21 @@ export function eventText(e: LifeEvent, money: Money): string {
 
 /** Where an event counts, in a sentence. */
 export function eventCountsText(e: LifeEvent): string {
-  if (e.kind === 'part-time') return 'In the simulation from the retirement age, as income for its years. Not in the FI date, which assumes full-time work until FI.';
+  if (e.kind === 'part-time') return 'In the simulation from the stop age, as income for its years. Not in the FI date, which assumes full-time work until FI.';
   if (e.kind === 'sabbatical') return 'In the FI date: it lowers what is saved in its years.';
   if ((e.kind === 'house' || e.kind === 'spending') && e.years === null) {
-    return 'In the FI date from its age, and in the simulation: in effect at the retirement age, it is part of your spending in retirement, and so of your FI number.';
+    return 'In the FI date from its age, and in the simulation: in effect at the stop age, it is part of your spending in retirement, and so of your FI number.';
   }
-  return 'In the FI date in every year it covers, and in the simulation for its years from the retirement age.';
+  return 'In the FI date in every year it covers, and in the simulation for its years from the stop age.';
 }
 
 export const EVENT_PART_TEXT: Record<EventPart, string> = {
   past: 'Some of it is before today: it counts from today, and your measured figures may already count what has begun.',
-  'no-today': 'Without your age there is no today to count from, so the FI date leaves it out; the simulation places it from the retirement age.',
-  'no-age': 'Without your age or a target age it can’t be placed, so it is left out.',
-  retired: 'Its years from the retirement age change nothing: by then you have stopped working.',
+  'no-today': 'Without your age there is no today to count from, so the FI date leaves it out; the simulation places it from the stop age.',
+  'no-age': 'Without your age or a stop age it can’t be placed, so it is left out.',
+  retired: 'Its years from the stop age change nothing: by then you have stopped working.',
   'before-start':
-    'Its years before the retirement age are left out: in this plan you work full time until then. For part-time work in place of full-time work, set this scenario’s retirement age to when full-time work stops.',
+    'Its years before the stop age are left out: in this plan you work full time until then. For part-time work in place of full-time work, set this scenario’s stop age to when full-time work stops.',
   'after-end': 'Some of it is after the plan ends: only the grid’s longer columns reach it.',
 };
 
@@ -165,7 +165,7 @@ export const EVENT_PART_TEXT: Record<EventPart, string> = {
  *  in compare mode; on Your path, from the simulation's card. */
 export function startsWithText(sw: StartsWith, money: Money, shortWhere = 'below'): string {
   const from = sw.from === 'fi-number' ? 'your FI number' : sw.from === 'assets' ? 'your invested assets today' : 'the balance you typed';
-  const at = sw.from === 'assets' ? '' : sw.atAge !== null ? ` at ${sw.atAge}` : ' at the retirement age';
+  const at = sw.from === 'assets' ? '' : sw.atAge !== null ? ` at ${sw.atAge}` : ' at the stop age';
   const head = `${money(sw.balance)}, ${from}${at}`;
   if (sw.from === 'assets') return `${head}.`;
   if (sw.short) return `${head}: it would never get that far (${shortWhere}).`;
@@ -186,7 +186,7 @@ export function shortText(short: Shortfall, age: number | null, money: Money): s
  *  rule parsePlan says it breaks. */
 export function resolveErrorText(field: string, error: string, base: FirePlan, s: ScenarioChanges): string {
   if (field === 'targetAge' && base.age !== null) {
-    return `It retires at ${s.set.targetAge ?? base.targetAge}, before your age now (${base.age}). Change its retirement age, or use your plan’s.`;
+    return `It stops working at ${s.set.targetAge ?? base.targetAge}, before your age now (${base.age}). Change its stop age, or use your plan’s.`;
   }
   if (field === 'income' || field.startsWith('income[')) return 'With your plan’s other income, it has more than a plan takes (5). Leave one out, or remove one it adds.';
   if (field === 'expenses' || field.startsWith('expenses[')) return 'With your plan’s one-off expenses, it has more than a plan takes (10). Leave one out, or remove one it adds.';

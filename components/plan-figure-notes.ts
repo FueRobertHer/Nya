@@ -286,11 +286,11 @@ export function figureNotes(a: FigureArgs): FigureNotes {
     savings: savingsText(a, coverage, flowsGap),
     assets: assetsText(a),
     ages: said(
-      a.plan.age !== null || a.plan.targetAge !== null ? `${a.plan.age ?? '?'} now, ${a.plan.targetAge ?? '?'} target` : 'Add them for Coast FI and to place income by age',
+      a.plan.age !== null || a.plan.targetAge !== null ? `${a.plan.age ?? '?'} now, stop at ${a.plan.targetAge ?? '?'}` : 'Add them for Coast FI and to place income by age',
       []
     ),
     assumptions: said(
-      `${pct(a.plan.withdrawalRate)} withdrawal · ${pct(a.plan.realReturn)} real return until FI · ${pct(a.plan.taxRate)} tax${a.plan.partTimeIncome > 0 ? ` · ${a.money(a.plan.partTimeIncome)} part-time` : ''}`,
+      `${pct(a.plan.withdrawalRate)} withdrawal · ${pct(a.plan.realReturn)} growth after inflation until FI · ${pct(a.plan.taxRate)} tax${a.plan.partTimeIncome > 0 ? ` · ${a.money(a.plan.partTimeIncome)} part-time` : ''}`,
       []
     ),
   };

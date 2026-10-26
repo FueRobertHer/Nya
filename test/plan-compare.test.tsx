@@ -322,7 +322,7 @@ describe('the words', () => {
     const base = plan({ age: 40, targetAge: 55, income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }] });
     const s = entry({ set: { targetAge: 45, spending: null }, income: { leaveOut: ['ss'], add: [{ id: 'ss', label: 'Social Security', amount: 18_000, fromAge: 62, inflationAdjusted: true }] } });
     expect(scenarioChanges(base, s).map((c) => changeText(c, base, s, money))).toEqual([
-      'Retirement age: 45 (your plan: 55)',
+      'Stop age: 45 (your plan: 55)',
       'Annual spending: Nya’s measured figure (the same as your plan now)',
       '“Social Security”: $18,000 a year from age 62, rising with inflation, instead of $24,000 a year from age 67, rising with inflation',
     ]);
@@ -365,7 +365,7 @@ describe('the scenario cards', () => {
     );
 
   test('the open scenario’s card says that saves go to it, lists its changes, and says why it isn’t worked out; its name is the bar’s, and so is the way back', () => {
-    const html = card({ problem: { text: 'It retires at 50, before your age now (52). Change its retirement age, or use your plan’s.', field: 'targetAge' }, eventsCount: 2 });
+    const html = card({ problem: { text: 'It stops working at 50, before your age now (52). Change its stop age, or use your plan’s.', field: 'targetAge' }, eventsCount: 2 });
     const t = text(html);
     // No heading of its own, and no Back: the Plan's bar has both (test/plan-bar-view.test.tsx).
     expect(html).not.toContain('<h2');
@@ -374,9 +374,9 @@ describe('the scenario cards', () => {
     expect(t).not.toContain('Back to your plan');
     expect(html).toContain('class="card plan-scenario-card"');
     expect(t).toContain('changes you make here are saved to it, never to your plan');
-    expect(t).toContain('It retires at 50, before your age now (52).');
+    expect(t).toContain('It stops working at 50, before your age now (52).');
     expect(t).toContain('Change it');
-    expect(t).toContain('Retirement age: 50 (your plan: 55)');
+    expect(t).toContain('Stop age: 50 (your plan: 55)');
     expect(t).toContain('Use your plan’s');
     expect(t).toContain('2 life events, on Your path.');
   });
@@ -445,7 +445,7 @@ describe('the scenario cards', () => {
     expect(t.indexOf('New scenario')).toBeLessThan(t.indexOf('What-ifs beside your plan.'));
     expect(html).toContain('aria-label="Open Retire at 45"');
     expect(html).toContain('aria-label="Rename Part time"');
-    expect(t).toContain('Retirement age: 45 (your plan: 55)');
+    expect(t).toContain('Stop age: 45 (your plan: 55)');
     expect(t).toContain('No changes yet');
     expect(t).toContain('A scenario was saved by a newer version of Nya: kept, and not shown here.');
     expect(t).toContain('Choose two to four plans.');
@@ -493,12 +493,14 @@ describe('the scenario cards', () => {
     const inputs = renderToStaticMarkup(<Inputs />);
     expect(text(inputs)).toContain('Scenario: Retire at 45');
     const sim = renderToStaticMarkup(
-      <SimulationCard scenarioName="Retire at 45" plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" editable onMethod={null} onRetry={() => {}} open={() => {}} />
+      <SimulationCard scenarioName="Retire at 45" plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />
     );
     const st = text(sim);
     expect(st).toContain('Scenario: Retire at 45');
-    expect(st).toContain('The method is your plan’s: every scenario uses it, so they compare.');
-    expect(sim).toMatch(/<button[^>]*aria-pressed="true"[^>]*disabled=""|<button[^>]*disabled=""[^>]*aria-pressed="true"/);
+    // The method is named, and set in the Assumptions sheet, which says there
+    // that a scenario can't change it (rollout 6d).
+    expect(st).toContain('Will it last? Historical cycles');
+    expect(sim).not.toContain('<button');
     const events = renderToStaticMarkup(<LifeEventsCard scenarioName="Retire at 45" version="s1@r1" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
     const et = text(events);
     expect(et).toContain('Scenario: Retire at 45');
@@ -509,7 +511,7 @@ describe('the scenario cards', () => {
   test('a plan run from money it wouldn’t have says so on its simulation card', () => {
     const p = plan({ age: 40, targetAge: 45 });
     const f = figs(p);
-    const t = text(renderToStaticMarkup(<SimulationCard startsWith={f.startsWith} plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" editable onMethod={() => {}} onRetry={() => {}} open={() => {}} />));
+    const t = text(renderToStaticMarkup(<SimulationCard startsWith={f.startsWith} plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />));
     expect(t).toContain('It starts with $1,000,000, your FI number at 45: you’d have about $548,653 then, $451,347 less: it starts with money it wouldn’t have then, so it reads safer than it is.');
   });
 });

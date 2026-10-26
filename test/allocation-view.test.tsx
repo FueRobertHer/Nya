@@ -12,14 +12,13 @@ import AllocationCard, {
   HistoryBody,
   MixSection,
   ShareTable,
-  UseMixForm,
   dayMixText,
   dayShares,
   readSplit,
   type AllocationState,
 } from '@/components/AllocationCard';
 import { CLASS_COLORS, mixBasisText, mixLeftOutText, mixText, noMixText, pointsText, tenthPct } from '@/components/allocation-text';
-import { SimulationForm } from '@/components/PlanForms';
+import { AssumptionsForm } from '@/components/PlanForms';
 import { allocate, planMix, type AllocAccount, type AllocHolding, type AllocInstitution } from '@/lib/allocation/allocation';
 import { CLASS_NAMES, SLOTS } from '@/lib/allocation/classes';
 import { EMPTY_SETTINGS, type AllocationSettings } from '@/lib/allocation/settings';
@@ -241,7 +240,7 @@ describe('the plan’s mix', () => {
   const m = () => planMix(alloc());
 
   test('offers the mix of what is classified, says what it left out and how much of the whole that is, and changes nothing by itself', () => {
-    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready currency="USD" editable onUse={noop} />));
+    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready currency="USD" onUse={noop} />));
     // Never "your accounts hold" a mix of part of them.
     expect(t).not.toContain('Your accounts hold');
     expect(t).toContain('Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds or cash: 72% stocks, 20% bonds, 8% cash.');
@@ -254,44 +253,26 @@ describe('the plan’s mix', () => {
   });
 
   test('says when the plan already uses it, and offers nothing then', () => {
-    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan({ stocksPct: 72, bondsPct: 20 })} ready currency="USD" editable onUse={noop} />));
+    const t = text(renderToStaticMarkup(<MixSection mix={m()} plan={plan({ stocksPct: 72, bondsPct: 20 })} ready currency="USD" onUse={noop} />));
     expect(t).toContain("Your plan's simulation already uses this mix.");
     expect(t).not.toContain('Use my allocation');
   });
 
   test('offers nothing while the person’s settings aren’t in the figures, or when there is no mix to take', () => {
-    expect(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready={false} currency="USD" editable onUse={noop} />)).toBe('');
+    expect(renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready={false} currency="USD" onUse={noop} />)).toBe('');
     const none = planMix(allocate({ institutions: [inst('X', [acct('s', { balance: 5 })])], holdings: [hold('s', 'VFIFX', 5, { security_type: 'mutual fund' })], settings: null, currency: 'USD' }));
-    const t = text(renderToStaticMarkup(<MixSection mix={none} plan={plan()} ready currency="USD" editable onUse={noop} />));
+    const t = text(renderToStaticMarkup(<MixSection mix={none} plan={plan()} ready currency="USD" onUse={noop} />));
     expect(t).toContain('Nothing is classified as stocks, bonds or cash yet');
     expect(t).not.toContain('Use my allocation');
   });
 
-  test('the confirmation shows the mix now, the mix it would take and what that leaves out, and nothing is saved on showing it', () => {
-    let confirmed = 0;
-    const t = text(
-      renderToStaticMarkup(
-        <UseMixForm
-          mix={m()}
-          plan={plan()}
-          currency="USD"
-          editable
-          onConfirm={async () => {
-            confirmed++;
-            return true;
-          }}
-          onCancel={noop}
-        />
-      )
-    );
-    expect(confirmed).toBe(0);
-    expect(t).toContain(
-      "Your plan's simulation uses 75% stocks, 25% bonds, 0% cash. Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds or cash: 72% stocks, 20% bonds, 8% cash."
-    );
-    expect(t).toContain('Left out: $60,000 unclassified, 37% of the $160,000');
-    expect(t).toContain("The plan keeps this mix until you change it: it doesn't follow your accounts.");
-    expect(t).toContain('Use 72/20/8');
-    expect(t).toContain('Cancel');
+  // Since rollout 6d the mix is set in one place, the Plan's Assumptions
+  // sheet: the button opens it at the mix with this one filled in, and
+  // nothing is saved until its Save (below, and test/plan-tab.test.tsx).
+  test('"Use my allocation in the plan" hands the mix on to open the Assumptions sheet, and saves nothing', () => {
+    const html = renderToStaticMarkup(<MixSection mix={m()} plan={plan()} ready currency="USD" onUse={noop} />);
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toMatch(/<h3 class="plan-heading" tabindex="-1">For your plan<\/h3>/);
   });
 
   test('checking and savings, other currencies, and classes the simulation can’t hold are named in what it left out', () => {
@@ -306,7 +287,7 @@ describe('the plan’s mix', () => {
     expect(mixLeftOutText(mix, 'USD')).toBe(
       "Left out: $10,000 of real estate and $10,000 of crypto, 19% of the $105,000, which the simulation's stocks, bonds and cash can't stand for. CA$1,000 in another currency is left out too: the allocation doesn't convert currencies."
     );
-    const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready currency="USD" editable onUse={noop} />));
+    const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready currency="USD" onUse={noop} />));
     expect(t).toContain(
       'Of the $105,000 your accounts hold in USD, $85,000 is classified as stocks, bonds or cash (with $5,000 of checking and savings as cash, as your plan counts them): 94% stocks, 0% bonds, 6% cash.'
     );
@@ -347,21 +328,30 @@ describe('the plan’s mix', () => {
     );
   });
 
-  test('the simulation’s form offers to fill in the allocation’s mix, saying what it is of and what it left out, and saves only with Save', () => {
+  test('the Assumptions sheet offers the allocation’s mix beside its own fields, and fills them in only when opened at it', () => {
     const offered = planMix(alloc());
     if (!offered.ok) throw new Error('a mix was expected');
-    const html = renderToStaticMarkup(
-      <SimulationForm plan={plan()} onSave={async () => true} onDone={noop} editable fiNumber={1} assets={1} spending={1} currency="USD" allocationMix={offered} />
-    );
+    const sheet = (at: 'mix' | null) =>
+      renderToStaticMarkup(<AssumptionsForm plan={plan()} onSave={async () => true} onDone={noop} editable fiSpending={1} assets={1} spending={1} currency="USD" allocationMix={offered} at={at} />);
+    const html = sheet(null);
     const t = text(html);
     expect(t).not.toContain('Your accounts hold');
     expect(t).toContain('Of the $160,000 in your accounts, $100,000 is classified as stocks, bonds or cash: 72% stocks, 20% bonds, 8% cash.');
     expect(t).toContain("Left out: $60,000 unclassified, 37% of the $160,000, which can't be counted as stocks or bonds without knowing what it is.");
+    expect(t).toContain("The plan keeps this mix until you change it: it doesn't follow your accounts. Stocks of every region count as stocks.");
     expect(t).toContain('Fill in my allocation');
-    // The fields still hold what the plan has: nothing is filled in by itself.
+    // Opened from its row the fields hold what the plan has: nothing is
+    // filled in by itself.
     expect(html).toContain('value="75"');
     expect(html).toContain('value="25"');
-    const without = text(renderToStaticMarkup(<SimulationForm plan={plan()} onSave={async () => true} onDone={noop} editable fiNumber={1} assets={1} spending={1} currency="USD" />));
+    // Opened from "Use my allocation in the plan": filled in, and the plan's
+    // own said until it is saved.
+    const filled = sheet('mix');
+    expect(filled).toContain('value="72"');
+    expect(filled).toContain('value="20"');
+    expect(text(filled)).toContain("Your plan's simulation uses 75% stocks, 25% bonds, 0% cash until you save.");
+    expect(text(filled)).not.toContain('Fill in my allocation');
+    const without = text(renderToStaticMarkup(<AssumptionsForm plan={plan()} onSave={async () => true} onDone={noop} editable fiSpending={1} assets={1} spending={1} currency="USD" />));
     expect(without).not.toContain('Fill in my allocation');
     expect(without).toContain('classify them under Allocation');
   });
@@ -587,7 +577,7 @@ describe('the card', () => {
     // When the balances were loaded is said where the person is: 3:04 PM on
     // Oct 9 in the machine's time zone, so the same words in any.
     const asOf = new Date('2026-10-09T15:04:00').toISOString();
-    const t = text(renderToStaticMarkup(<AllocationCard allocation={state()} plan={plan()} onSavePlan={async () => true} planEditable institutions={institutions} balancesAsOf={asOf} />));
+    const t = text(renderToStaticMarkup(<AllocationCard allocation={state()} plan={plan()} onUseMix={noop} institutions={institutions} balancesAsOf={asOf} />));
     expect(t).toContain('Allocation');
     expect(t).toMatch(/Your investment accounts, as loaded Oct 9, 3:04\sPM, in USD\./);
     expect(t).toContain('Set a target');
@@ -596,7 +586,7 @@ describe('the card', () => {
 
   test('with a scenario open: says so, and its own settings, the same for every plan, can’t be changed there', () => {
     const html = renderToStaticMarkup(
-      <AllocationCard allocation={state()} plan={plan()} onSavePlan={async () => true} planEditable settingsLocked scenarioName="Retire at 50" institutions={institutions} balancesAsOf={null} />
+      <AllocationCard allocation={state()} plan={plan()} onUseMix={noop} settingsLocked scenarioName="Retire at 50" institutions={institutions} balancesAsOf={null} />
     );
     const t = text(html);
     expect(t).toContain('Scenario: Retire at 50');
@@ -607,7 +597,7 @@ describe('the card', () => {
   test('while the settings can’t be read, says the figures leave them out, and pauses editing', () => {
     const settings = { ...initialListState<AllocationSettings | null>(null), status: 'error' as const, error: 'Your saved allocation settings could not be read, so they have been left untouched and editing is paused.' };
     const html = renderToStaticMarkup(
-      <AllocationCard allocation={state({ settings, withSettings: false })} plan={plan()} onSavePlan={async () => true} planEditable institutions={institutions} balancesAsOf={null} />
+      <AllocationCard allocation={state({ settings, withSettings: false })} plan={plan()} onUseMix={noop} institutions={institutions} balancesAsOf={null} />
     );
     const t = text(html);
     expect(t).toContain('could not be read');
@@ -618,7 +608,7 @@ describe('the card', () => {
 
   test('with no investment account, says so', () => {
     const empty = allocate({ institutions: [], holdings: [], settings: null, currency: 'USD' });
-    const t = text(renderToStaticMarkup(<AllocationCard allocation={state({ alloc: empty, mix: planMix(empty) })} plan={plan()} onSavePlan={async () => true} planEditable institutions={[]} balancesAsOf={null} />));
+    const t = text(renderToStaticMarkup(<AllocationCard allocation={state({ alloc: empty, mix: planMix(empty) })} plan={plan()} onUseMix={noop} institutions={[]} balancesAsOf={null} />));
     expect(t).toContain('No investment accounts to show.');
   });
 });

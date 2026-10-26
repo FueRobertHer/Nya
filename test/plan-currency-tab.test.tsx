@@ -671,7 +671,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     const year = months.flatMap((m) => [row({ date: day(m, 5), amount: 4_000, iso_currency_code: 'EUR' }), row({ date: day(m, 5), amount: -6_000, category: 'income', iso_currency_code: 'EUR' })]);
     serve(planServer({ plan: { ...DEFAULT_PLAN, age: 40, targetAge: 55, start: 'assets' } }).answers);
     const tab = await render({ institutions: euros, txns: year, currency: 'EUR' });
-    expect(tab.text()).toContain('The simulation starts with your invested assets, which aren’t measured (Your path says why). Type them on Your path, or start from your FI number (Change).');
+    expect(tab.text()).toContain('The simulation starts with your invested assets, which aren’t measured (Your path says why). Type them on Your path, or start from your FI number (Assumptions, below).');
     expect(tab.text()).not.toContain('none to count yet');
     await tab.unmount();
   });

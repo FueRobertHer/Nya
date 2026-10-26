@@ -13,7 +13,7 @@ import { Masked } from './HideAmounts';
 import { compareRows, startsLine, type CompareColumn } from './plan-compare';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED, type Method } from '@/lib/fire/simulate';
 import { historySpan } from '@/lib/fire/history-span';
-import { HYPOTHETICAL, METHOD_NAMES, monthName } from './plan-text';
+import { HYPOTHETICAL_LABEL, METHOD_NAMES, monthName } from './plan-text';
 import { plainNumber } from '@/lib/format';
 
 export default function PlanCompare({
@@ -112,7 +112,7 @@ export default function PlanCompare({
           US market history, monthly returns from {monthName(span.first)} to {monthName(span.last)}, in today’s dollars.
         </li>
         <li>The same measured spending, savings and invested assets (Your path says where they come from), unless a plan types its own.</li>
-        <li>{HYPOTHETICAL}</li>
+        <li>{HYPOTHETICAL_LABEL} About these numbers, on Stress test, says more.</li>
       </ul>
     </div>
   );

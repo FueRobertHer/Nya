@@ -112,7 +112,7 @@ export function ruleText(kind: RuleKind, opts: { rate: number; floor: number; ce
     case 'guardrails':
       return `Starts at ${r}, then keeps the amount steady in today's dollars, except: after a losing year it skips the raise for inflation while the withdrawal is above ${r} of the balance; above 120% of that rate it cuts 10% (not in the last 15 years); below 80% it raises 10%.`;
     case 'vpw':
-      return `Each year withdraws the share an annuity would pay over the years left, at a ${pct(opts.expectedReturn)} expected real return (from your mix). Spending moves with the market, and the balance ends near zero by design.`;
+      return `Each year withdraws the share an annuity would pay over the years left, at ${pct(opts.expectedReturn)} expected growth after inflation (from your mix). Spending moves with the market, and the balance ends near zero by design.`;
     case 'floor-ceiling':
       return `Every year withdraws ${r} of the balance, but never less than ${pct(opts.floor, 0)} or more than ${pct(opts.ceiling, 0)} of the first year's amount, in today's dollars.`;
   }
@@ -134,6 +134,10 @@ export function successDefinition(years: number): string {
   return `Success: the portfolio never ran out. Every year's withdrawal was paid in full for all ${years} years.`;
 }
 
-/** The statement that goes with every result. */
+/** The short label every result keeps (rollout 6d); the full statement,
+ *  HYPOTHETICAL, is said once, in About these numbers. */
+export const HYPOTHETICAL_LABEL = 'Hypothetical, from US history: not a prediction, and not advice.';
+
+/** The statement about every result, said once, in About these numbers. */
 export const HYPOTHETICAL =
   "These results are hypothetical. They show how this plan would have fared in US market history from 1871 to 2023, or in sequences resampled from it, in today's dollars. They are not a prediction and not advice.";
