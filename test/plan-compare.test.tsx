@@ -126,6 +126,15 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(row('start').cells[1].value).toBe('$1,000,000, your FI number at 45: you’d have about $548,653 then, $451,347 less.');
   });
 
+  test('a start the steady projection never gets to says why in its own cell, since no row below does (review of 8b)', () => {
+    const f = figs(plan({ age: 40, targetAge: 55, assets: 100_000, savings: -10_000 }));
+    expect(f.short).toBeNull();
+    const { rows: own } = compareRows([{ id: 'plan', name: 'Your plan', isPlan: true, outcome: { kind: 'figures', figures: f, result: run(f) } }], money, TODAY);
+    expect(own.find((r) => r.key === 'start')!.cells[0].value).toBe(
+      '$1,000,000, your FI number at 55: it would never get that far. You’d have about $2,007 at 54, and that year takes $10,000 out, more than there is, so it never gets to 55.'
+    );
+  });
+
   test('a plan that starts with money it wouldn’t have says so in its own success cell', () => {
     const cell = row('lasted').cells[1];
     expect(cell.caveat).toBe('It starts with money it wouldn’t have then, so this is too high.');

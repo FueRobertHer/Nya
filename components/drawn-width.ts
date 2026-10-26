@@ -23,6 +23,18 @@ import { createContext, useCallback, useContext, useLayoutEffect, useState } fro
 /** The width charts are drawn at where none can be measured. */
 export const FALLBACK_WIDTH = 340;
 
+/** A 12px label's width, roughly: tabular digits and currency signs about
+ *  7px, a space 3px, a letter 6.5px ("age 55" is about 36px). For spacing a
+ *  chart's labels so none overlap. */
+export function labelWidth(text: string): number {
+  let w = 0;
+  for (const c of text) w += /[0-9$]/.test(c) ? 7 : c === ' ' ? 3 : 6.5;
+  return w;
+}
+
+/** A chart's labels along its axis are at least this far apart, edge to edge. */
+export const MIN_LABEL_GAP = 6;
+
 /** The width to draw at until one is measured, for what is below it. */
 export const DrawnWidth = createContext(FALLBACK_WIDTH);
 

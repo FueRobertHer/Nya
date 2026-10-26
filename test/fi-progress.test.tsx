@@ -6,7 +6,7 @@ import { FiCard, InputsCard } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import { FiProgressView, ready } from '@/components/FiProgressCard';
 import { loadFiProgress } from '@/components/FiProgressLoader';
-import { PAYROLL_NOTE, wholeMoney, yearsToFiText } from '@/components/plan-text';
+import { PAYROLL_NOTE, fiHeadline, wholeMoney, yearsToFiText } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type FirePlan } from '@/lib/fire/plan';
 import { currencyNote, fiFigures, measuredInputs, planCurrency, savingsRate, transactionCoverage, type FiInputs } from '@/lib/fire/progress';
 import { trailingFlows, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
@@ -179,13 +179,18 @@ describe('the FI card on Home', () => {
         const years = yearsToFiText(f.view.yearsToFi);
         const progress = `${Math.round(f.view.progress! * 100)}%`;
         const rate = `${Math.round(f.savingsRate! * 100)}%`;
-        for (const s of [fi, years, progress, rate]) {
+        for (const s of [fi, progress, rate]) {
           expect(h).toContain(s);
           expect(t).toContain(s);
         }
-        // Home's one line (rollout phase 4c): years and how far, then the FI
-        // number and the savings rate under it.
-        expect(h).toContain(`FI in ${years} · ${progress} there FI number ${fi} · ${wholeMoney(f.view.assets.value!, 'USD')} invested · ${rate} savings rate, last 12 months`);
+        expect(t).toContain(years);
+        // Home's one line (rollout phase 8b): the Plan's answer in the Plan's
+        // words, then what is invested of the FI number, how far, and the
+        // savings rate under it.
+        const head = fiHeadline(f.view, p);
+        expect(t).toContain(`Financial independence ${head.headline}`);
+        const answer = head.kind === 'age' ? `FI around age ${head.age}` : `FI in ${years}`;
+        expect(h).toContain(`${answer} ${wholeMoney(f.view.assets.value!, 'USD')} of ${fi} invested (${progress}) · ${rate} savings rate, last 12 months`);
         expect(t).toContain(`${progress} of the way`);
         // On the Plan, the savings row's second line, in Home's words, which
         // no gathered line folds away (rollout phase 6c).
@@ -398,23 +403,58 @@ describe('the FI card on Home', () => {
 
 describe('the FI line’s title, for every case (rollout phase 4c)', () => {
   // The figures as worked out, with years to FI and progress set to each case.
-  const title = (yearsToFi: number | null, progress: number | null) => {
-    const f = fiFigures(plan(), inputs(), 'USD');
-    const figures = { ...f, view: { ...f.view, yearsToFi, progress } };
-    const html = renderToStaticMarkup(<FiProgressView figures={figures} plan={plan()} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} />);
-    return text(html.slice(html.indexOf('<span class="list-row-title">'), html.indexOf('</span>', html.indexOf('<span class="list-row-title">')))).trim();
+  const row = (yearsToFi: number | null, progress: number | null, p = plan()) => {
+    const f = fiFigures(p, inputs(), 'USD');
+    const fiAge = yearsToFi !== null && Number.isFinite(yearsToFi) && p.age !== null ? p.age + yearsToFi : null;
+    const figures = { ...f, view: { ...f.view, yearsToFi, progress, fiAge } };
+    return renderToStaticMarkup(<FiProgressView figures={figures} plan={p} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} />);
   };
+  const part = (html: string, cls: string) => text(html.slice(html.indexOf(`<span class="${cls}">`), html.indexOf('</span>', html.indexOf(`<span class="${cls}">`)))).trim();
+  const title = (yearsToFi: number | null, progress: number | null, p = plan()) => part(row(yearsToFi, progress, p), 'list-row-title');
 
-  test('years and how far, each as the Plan says them', () => {
-    expect(title(11.4, 0.62)).toBe('FI in about 11.4 years · 62% there');
-    expect(title(0.5, 0.97)).toBe('FI in under a year · 97% there');
+  test('the Plan’s answer, against the stop age, in the Plan’s words (rollout phase 8b)', () => {
+    const ages = plan({ age: 40, targetAge: 55 });
+    expect(title(11.4, 0.62, ages)).toBe('FI around age 51, 4 years before you stop at 55');
+    expect(title(18, 0.4, ages)).toBe('FI around age 58, 3 years after you stop at 55');
+    expect(title(15, 0.5, ages)).toBe('FI around age 55, right when you stop at 55');
+    expect(title(11.4, 0.62, plan({ age: 40 }))).toBe('FI around age 51');
+    expect(title(70, 0.01, ages)).toBe('FI not before age 100 at this savings rate');
+  });
+
+  test('without an age, the years, each as the Plan says them', () => {
+    expect(title(11.4, 0.62)).toBe('FI in about 11.4 years');
+    expect(title(0.5, 0.97)).toBe('FI in under a year');
     expect(title(11.4, null)).toBe('FI in about 11.4 years');
+    expect(title(140, 0.01)).toBe('FI not within 100 years at this savings rate');
+  });
+
+  test('how far is said under it, apart from the amounts, so it reads while they are hidden', () => {
+    expect(part(row(11.4, 0.62), 'list-row-sub')).toBe('$250,000 of $1,000,000 invested (62%) · 43% savings rate, last 12 months');
+    expect(part(row(0, 1.2), 'list-row-sub')).toBe('$250,000 invested · 120% of the FI number $1,000,000 · 43% savings rate, last 12 months');
+    // Not twice, when the title says it.
+    expect(part(row(null, 0.36), 'list-row-sub')).toBe('$250,000 of $1,000,000 invested · 43% savings rate, last 12 months');
   });
 
   test('there already, never reached at this rate, or years not worked out', () => {
     expect(title(0, 1.2)).toBe('You’re at FI');
-    expect(title(Infinity, 0.1)).toBe('FI not reached at this savings rate · 10% there');
+    expect(title(Infinity, 0.1)).toBe('FI not reached at this savings rate');
     expect(title(null, 0.36)).toBe('36% of the way to FI');
+  });
+
+  test('there already, with savings that run the steady projection out before the stop age: said, as the Plan says it', () => {
+    // $1,100,000 at 5%, taking $70,000 a year: $1,400,000 less $300,000 grown,
+    // below zero at the end of its 32nd year, the year it turns 71.
+    const p = plan({ age: 40, targetAge: 75, assets: 1_100_000, savings: -70_000 });
+    const f = fiFigures(p, inputs(), 'USD');
+    expect(f.view.yearsToFi).toBe(0);
+    const html = renderToStaticMarkup(<FiProgressView figures={f} plan={p} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} />);
+    expect(part(html, 'list-row-title')).toBe('You’re at FI, but at these savings it runs out at 71');
+  });
+
+  test('with no plan saved, the line says it is the Plan’s defaults (4c’s review)', () => {
+    const f = fiFigures(plan(), inputs(), 'USD');
+    const html = renderToStaticMarkup(<FiProgressView figures={f} plan={plan()} saved={false} repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} />);
+    expect(part(html, 'list-row-sub')).toStartWith('Plan defaults · ');
   });
 
   test('neither: the FI number leads, and the line under it has only the savings rate', () => {
