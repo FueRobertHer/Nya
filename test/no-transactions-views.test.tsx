@@ -7,7 +7,8 @@ import MonthBreakdown from '@/components/MonthBreakdown';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { HomeAttention } from './home-attention';
-import { FiCard } from '@/components/PlanTab';
+import { FiCard, InputsCard } from '@/components/PlanTab';
+import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import { RedirectChoices, madeTheOtherWay, type RedirectItem } from '@/components/ConnectRedirect';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type Measured } from '@/lib/fire/plan';
@@ -676,91 +677,114 @@ describe('the Plan', () => {
   };
   const noPlans: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
   const card = (f: TrailingFlows | null, without: NoTransactionsView, transactionCount = f ? f.count : 0) => text(cardHtml(f, without, transactionCount));
+  /** The FI card and the figures under it (Your figures), what they say
+   *  worked out in the render as components/PlanTab.tsx does, so a render
+   *  with amounts hidden (test/hidden-renders.ts) hides the amounts in it. */
+  function YourPath({ a }: { a: FigureArgs }) {
+    return (
+      <>
+        <FiCard {...a} currencyNote={null} />
+        <InputsCard figures={figureNotes(a)} view={a.view} money={a.money} onOpen={noop} />
+      </>
+    );
+  }
+  /** Your path, from the same inputs for both cards. */
   const cardHtml = (f: TrailingFlows | null, without: NoTransactionsView, transactionCount: number) => {
     const m: Measured = f ? { spending: f.spending, savings: f.savings, assets: 250_000 } : { spending: null, savings: null, assets: 250_000 };
-    return (
-      renderToStaticMarkup(
-        <FiCard
-          plan={DEFAULT_PLAN}
-          view={fiView(DEFAULT_PLAN, m)}
-          flows={f}
-          unread={[]}
-          withoutTransactions={without}
-          transactionCount={transactionCount}
-          txnsLoading={false}
-          txnsFailed={false}
-          assets={assets}
-          balancesAsOf="2026-10-06T15:12:00Z"
-          workplace={noPlans}
-          workplaceCount={0}
-          currencyNote={null}
-          money={money}
-          editable
-          open={noop}
-        />
-      )
-    );
+    const a: FigureArgs = {
+      plan: DEFAULT_PLAN,
+      view: fiView(DEFAULT_PLAN, m),
+      flows: f,
+      unread: [],
+      withoutTransactions: without,
+      transactionCount,
+      txnsLoading: false,
+      txnsFailed: false,
+      assets,
+      balancesAsOf: '2026-10-06T15:12:00Z',
+      workplace: noPlans,
+      workplaceCount: 0,
+      cashOn: [],
+      cashUnmarked: false,
+      money,
+      savingsRate: null,
+      shareRates: null,
+    };
+    return renderToStaticMarkup(<YourPath a={a} />);
   };
+  /** One of Your figures' rows, with the notes under it, by its title. */
+  const figureRow = (html: string, title: string) => html.match(new RegExp(`<li><button[^>]*><span class="list-row-text"><span class="list-row-title">${title}</span>.*?</li>`))?.[0] ?? '';
+  /** The level of each notice that says `words`, in the order drawn. */
+  const levels = (html: string, words: string) =>
+    [...html.matchAll(/<div class="notice (critical|caution|info)"><svg[^>]*>.*?<\/svg><div><span class="visually-hidden">[^<]*<\/span>(.*?)<\/div><\/div>/g)]
+      .filter((m) => text(m[2]).includes(words))
+      .map((m) => m[1]);
 
   test('investment connections only: spending and savings say why, not "yet"', () => {
-    const t = card(null, investmentsOnly);
-    expect(t).toContain(`${INVESTMENTS_LEAD}, so there are no bank or card transactions to measure spending from. Type it under Edit.`);
-    expect(t).toContain(`${INVESTMENTS_LEAD}, so there are no bank or card transactions to measure income and spending from. Type it under Edit.`);
-    expect(t).not.toContain('not enough transactions to measure from yet');
-    expect(t).not.toContain('needs a year of transactions');
+    const html = cardHtml(null, investmentsOnly, 0);
+    // Under the rows that open their sheets, where "My own" types one (rollout phase 6c).
+    expect(levels(figureRow(html, 'Annual spending'), `${INVESTMENTS_LEAD}, so there are no bank or card transactions to measure spending from. Type your own.`)).toEqual(['info']);
+    expect(levels(figureRow(html, 'Annual savings'), `${INVESTMENTS_LEAD}, so there are no bank or card transactions to measure income and spending from. Type your own.`)).toEqual(['info']);
+    expect(text(html)).not.toContain('Not enough transactions yet');
+    expect(text(html)).not.toContain('Needs a year of transactions');
   });
 
   test('a refused bank account beside others keeps "may be low" on spending and the FI number, and "may be off" on savings', () => {
-    const t = card(flows, refusedBeside);
-    expect(t).toContain("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be low.");
-    expect(t).toContain("May be low: spending is missing transactions Plaid doesn't provide (below).");
-    expect(t).toContain("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be off.");
+    const html = cardHtml(flows, refusedBeside, flows.count);
+    expect(levels(figureRow(html, 'Annual spending'), "Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be low.")).toEqual(['caution']);
+    expect(text(html)).toContain("May be low: spending is missing transactions Plaid doesn't provide (below).");
+    expect(levels(figureRow(html, 'Annual savings'), "Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so this figure may be off.")).toEqual(['caution']);
     expect(card(flows, investmentsOnly)).not.toContain('May be low');
   });
 
   test("transactions that weren't allowed keep the caveats, said as what they are", () => {
-    const t = card(flows, unallowedBeside);
-    expect(t).toContain(`You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be low. ${ALLOW}`);
-    expect(t).toContain("May be low: spending is missing transactions you didn't allow (below).");
-    expect(t).toContain(`You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be off. ${ALLOW}`);
-    expect(t).not.toContain("Plaid doesn't provide");
+    const html = cardHtml(flows, unallowedBeside, flows.count);
+    expect(levels(figureRow(html, 'Annual spending'), `You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be low. ${ALLOW}`)).toEqual(['caution']);
+    expect(text(html)).toContain("May be low: spending is missing transactions you didn't allow (below).");
+    expect(levels(figureRow(html, 'Annual savings'), `You didn't allow Nya to see transactions from the bank or card accounts at Fidelity, so this figure may be off. ${ALLOW}`)).toEqual(['caution']);
+    expect(text(html)).not.toContain("Plaid doesn't provide");
   });
 
   test('too few transactions yet, beside a refused bank account, says that one is not counted', () => {
-    const t = card(null, refusedBeside);
-    expect(t).toContain('not enough transactions to measure from yet');
-    expect(t).toContain("Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they aren't counted.");
+    const spending = figureRow(cardHtml(null, refusedBeside, 0), 'Annual spending');
+    expect(text(spending)).toContain('Annual spending Not enough transactions yet --');
+    expect(levels(spending, "Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they aren't counted.")).toEqual(['caution']);
   });
 
   test('spending entered by hand beside investment connections only: measured, or waited for, never "type it in"', () => {
     // A few rows, not yet enough to measure from.
-    const few = card(null, investmentsOnly, 3);
-    expect(few).toContain('not enough transactions to measure from yet');
-    expect(few).toContain('needs a year of transactions');
-    expect(few).not.toContain('Type it under Edit');
+    const fewHtml = cardHtml(null, investmentsOnly, 3);
+    const few = text(fewHtml);
+    expect(text(figureRow(fewHtml, 'Annual spending'))).toContain('Annual spending Not enough transactions yet --');
+    expect(text(figureRow(fewHtml, 'Annual savings'))).toContain('Annual savings Needs a year of transactions --');
+    expect(few).not.toContain('Type your own');
     expect(few).not.toContain(INVESTMENTS_LEAD);
     expect(few).toContain(NAMED);
     // A year of them: measured from them, with the connections named.
-    const year = card(flows, investmentsOnly);
-    expect(year).toContain('from your last 12 months of transactions');
-    expect(year).not.toContain('Type it under Edit');
+    const yearHtml = cardHtml(flows, investmentsOnly, flows.count);
+    const year = text(yearHtml);
+    expect(text(figureRow(yearHtml, 'Annual spending'))).toContain('Annual spending A year, from transactions $40,000');
+    expect(year).not.toContain('Type your own');
     expect(year).toContain(NAMED);
     expect(year).not.toContain('May be low');
-    // Said with where the figure comes from, never as a warning.
-    for (const html of [cardHtml(null, investmentsOnly, 3), cardHtml(flows, investmentsOnly, flows.count)]) {
-      expect(html).not.toMatch(/plan-warning">[^<]*hold no bank account or card/);
+    // Said with where the figure comes from, never as a warning: information,
+    // under the spending's row and the savings'.
+    for (const html of [fewHtml, yearHtml]) {
+      expect(levels(html, NAMED)).toEqual(['info', 'info']);
     }
-    // The tab tells the card how many transactions there are.
+    // The tab tells the rows how many transactions there are, and the card
+    // the same count.
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'PlanTab.tsx'), 'utf8');
-    expect(source).toContain('transactionCount={txns ? historyCount(txns) : 0}');
+    expect(source).toContain('transactionCount: txns ? historyCount(txns) : 0,');
+    expect(source).toContain('transactionCount={figureArgs.transactionCount}');
   });
 
   test('a refused bank account and nothing else: no "yet" either', () => {
-    const t = card(null, refusedOnly);
-    expect(t).toContain(
-      "Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so there are no bank or card transactions to measure spending from. Type it under Edit."
-    );
-    expect(t).not.toContain('measure from yet');
+    const html = cardHtml(null, refusedOnly, 0);
+    expect(levels(figureRow(html, 'Annual spending'), "Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so there are no bank or card transactions to measure spending from. Type your own.")).toEqual([
+      'info',
+    ]);
+    expect(text(html)).not.toContain('Not enough transactions yet');
   });
 });
 
