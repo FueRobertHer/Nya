@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices) and 6a3 (Budgets' Upcoming) are built; the rest is not started. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phases 1 (`components/Settings.tsx`), 2 (the tokens and primitives in `app/globals.css`), 3 (Accounts, in three pull requests), 4 (Home, in four), 5a (Activity's bar and segments), 5b (its filter chips), 5c (Spending's one period), 5d (its charts' text), 5e (the Transaction sheet), 6a1 (Budgets' bar and segments), 6a2 (Budgets' sheets and notices), 6a3 (Budgets' Upcoming) and 6a4 (Budgets' charts and the calendar's figures) are built; the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -266,7 +266,7 @@ Split like phases 3 and 4, since `components/MonthBreakdown.tsx` (about 1,400 li
 
 **Kept narrow in 5d:**
 
-- **The other charts** (net worth, forecast, runway, the plan's fan, debt payoff, allocation) keep their fixed viewBox and 10px text: phase 6 moves them to `useDrawnWidth`, after which `.at-width` folds into `.chart-tick` and `.chart-xlabel`. So do `.chart-note` (11px, under many charts) and the gridlines' two hex colors in Income vs spend.
+- **The other charts** (net worth, forecast, runway, the plan's fan, debt payoff, allocation) keep their fixed viewBox and 10px text: phase 6 moves them to `useDrawnWidth`, after which `.at-width` folds into `.chart-tick` and `.chart-xlabel`. So do `.chart-note` (11px, under many charts) and the gridlines' two hex colors in Income vs spend. (The forecast and debt payoff: built in 6a4.)
 - **The cash flow's In / Out / Net row** runs past a 320px phone when the figures reach six digits ($259,080.00), as it does on `main`: its own fix.
 - **Income vs spend's lowest tick** ("$0") sits on the lines where they start, as its ticks always have, now at 12px.
 
@@ -300,7 +300,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 - **6a1**: Month, Upcoming (forecast, calendar, recurring, planned) and Goals as segments under a pinned bar. Debt payoff moves from Accounts to Budgets > Goals in the same PR, so it is never without a home.
 - **6a2**: add and edit a budget in a sheet, and "My income is irregular" as a row that opens its setting; one completeness notice per segment.
 - **6a3**: Upcoming's bills, income, planned items and card payments as one dated list, or a calendar of the same, with one notice at the top for what they may be missing (moved from 6a2); the forecast's "Warns below" in a sheet.
-- **6a4**: the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures and weekday letters at 12px (an HTML grid, so its figures have to fit a 34px cell at 320px: "+$3.5K" is about 40px at 12px), and the payoff plan's chart at its width. Its day cells are 34px wide there, under the 44px target. Split from 6a3 (decided 2026-10-25).
+- **6a4**: the forecast's chart drawn at its width (`useDrawnWidth`), the calendar's figures and weekday letters at 12px (an HTML grid, so its figures have to fit a 34px cell at 320px: "+$3.5K" is 37px at 12px), and the payoff plan's chart at its width. Its day cells were 34px wide there (39px since 6a4), under the 44px target. Split from 6a3 (decided 2026-10-25).
 
 **Built in 6a1:**
 
@@ -321,7 +321,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 
 - **Card titles under the bar**: the month's card keeps "October budgets" and Goals' card its "Goals" title under the bar's heading; 6a2 redraws the month's card ("Spent", as the mockup has it) and can drop Goals' title. (Both built in 6a2.)
 - **The payoff card's summary line** ("Paid off by May 2027", interest) needs the plan worked out on Goals; the row opens the plan as Accounts' did.
-- **Charts still owed a pass before `.at-width` folds into `.chart-tick` and `.chart-xlabel`**: Home's net worth chart and Reports' runway chart, besides the Budgets and Plan charts these phases take.
+- **Charts still owed a pass before `.at-width` folds into `.chart-tick` and `.chart-xlabel`**: Home's net worth chart and Reports' runway chart, besides the Budgets and Plan charts these phases take. (Budgets' were drawn at their width in 6a4; the Plan's fan chart is 6d's, and the allocation chart has no phase yet.)
 
 **Built in 6a2:**
 
@@ -381,8 +381,30 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 - **The range and the List · Calendar choice** start afresh when the Budgets tab mounts again, as the forecast's range did.
 - **`Sheet` has no focus trap** (5e's note).
 - **A sheet open on what a reload took away**, as before: a planned item's sheet stays open on an item another device deleted meanwhile (Save then saves the list unchanged and closes), and a series' sheet keeps the series as it was when it opened if transactions are read again under it.
-- **The charts** (the forecast's and the payoff plan's at their width, the calendar's figures at 12px): 6a4.
+- **The charts** (the forecast's and the payoff plan's at their width, the calendar's figures at 12px): 6a4. (Built in 6a4.)
 - **Recurring's subtitle** (where, how often, how many times, when next) runs to three or four lines at 320px, and the list's to three where it says why an entry isn't in the day's figure: the design system's one subtitle line, shortened when those rows are next redrawn.
+
+**Built in 6a4:**
+
+- **The cash forecast's chart** (`components/ForecastChart.tsx`) is drawn at its width (`useDrawnWidth`), on its card and in What if I buy…, in the shape it had (150 to 340), with 2px more over its top tick and 4px more under its baseline for the 12px figures and dates, as Income vs spend took in 5d. Its ticks, "Now" and its last day are 12px at every width.
+- **The payoff plan's chart** (`PayoffChart` in `components/DebtPayoff.tsx`) the same, in its shape (140 to 340).
+- **Fewer gridlines where a chart is short.** At 12px on a phone's plot (71px tall on the forecast's card at 320px), five to seven ticks drew their figures 10 to 17px apart, a gridline cutting into the figure over the one below. Both charts now widen the step through 1, 2 and 5 until gridlines are at least 20px apart (`MIN_TICK_GAP`): two or three on a phone, and on a wide card what they drew.
+- **The calendar's figures, weekday letters and legend are 12px.** A cell's figure keeps its sign and drops the currency, which the legend names once on a line of its own ("Day figures in USD, rounded"): whole units under a thousand ("-143"), then two significant figures and K, M, B or T ("+3.5K", "+13K", "+890K", "+1.3M"), in the viewer's digits. With amounts hidden it is the sign and the mask ("+•••"), the sign taken before rounding, so a few cents don't read as "•••" beside the others' "+•••". Each cell's label still says its amounts in full, with the currency, and the day's list has the cents.
+- **The calendar's grid runs to the card's edges**, as the day's list's rows do, with no padding at a cell's sides: a cell is 39px wide at 320px (it was 34px) and 44px or more from a 360px phone. Its focus ring is drawn inside, so the outer columns' ring stays on the card.
+- **The source scan** (`test/amount-sources.ts`) reads a number written with significant digits as an amount, as it reads one written with fraction digits or compact notation.
+
+**Decided in 6a4:**
+
+- **No currency in the calendar's cells, and a wider grid** (decided 2026-10-25). At 12px "+$3.5K" takes 37px, "-$12.5K" 40px and "+CA$3.5K" 52px, where a cell had 30px inside its padding. Keeping the symbol on the wider grid fits a 320px phone only for dollars, euros, pounds and yen under a hundred thousand, and never a code such as CA$; dots alone on phones would show figures only from about 430px.
+- **K and M, not Intl's compact notation**: in other locales it doesn't shorten thousands or writes a word ("13.000" in German, "13 mil" in Spanish), so a figure under a million would fit only in English. The app's words are English; the digits and the decimal sign are the viewer's.
+- **Two significant figures from a thousand**, rounded before the suffix is chosen, so 999,999 is "1M" and the widest figures under a million are three digits and K, as "+890K" (36px). "-$12.5K" becomes "-13K"; the day's list has the cents.
+
+**Kept narrow in 6a4:**
+
+- **A day of a hundred million or more** ("+890M" is 39px at 12px, as wide as a cell at 320px) can be cut with an ellipsis on a face wider than Segoe UI, at 320px only; such days are ordinary in rupiah, dong or won. Its cell's label and the day's list say it in full.
+- **A chart in a panel hidden as it mounts** (Upcoming's forecast while Budgets opens on Month) draws at 340 until it is shown, then at its width on the next frame: the same shape, its text scaled for that frame. A `flushSync` in `useDrawnWidth`'s observer was weighed and not taken: the hook is shared, and a redraw inside the observer that changes what it watches (the rounded height, the cash flow's height) raises the ResizeObserver loop error.
+- **`.at-width` stays, and so do the charts' hex colors** (`#262a33`, `#3a4150`, the payoff baseline's `#6b7080`). Home's net worth, Reports' runway and the Plan's fan and allocation charts are still on a fixed viewBox, and the colors move to tokens in one pass over every chart. The baseline's gray was chosen for its contrast with the surface and the accent, which its token has to keep.
+- **The calendar's cells are under the 44px target on the narrowest phones** (39px at 320px).
 
 **6b**, the Plan tab's segments:
 

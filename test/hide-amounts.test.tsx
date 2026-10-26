@@ -1182,6 +1182,26 @@ describe('the main screens with amounts hidden', () => {
     for (const s of amountSamples('USD')) expect(s).toMatch(/^\$[\d.,]+[KMBT]?$/);
   });
 
+  test('the forecast and the payoff plan, drawn at a phone’s width and a wide card’s, are drawn the same hidden as shown', () => {
+    // Each screen with its chart's shape: its height to 340 wide.
+    const charts: [string, number][] = [
+      ['Budgets: the cash forecast', 150],
+      ['Budgets > Goals: the payoff plan', 140],
+    ];
+    const boxes = (html: string) => [...html.matchAll(/<svg[^>]*\srole="img"[^>]*>/g)].map((m) => m[0].match(/\sviewBox="([^"]*)"/)?.[1]);
+    for (const width of [248, 600]) {
+      for (const [name, shape] of charts) {
+        const screen = SCREENS[name];
+        const { hidden, shown } = both(() => <DrawnWidth.Provider value={width}>{screen()}</DrawnWidth.Provider>);
+        // Drawn at that width, in its shape, either way.
+        expect([name, width, boxes(hidden)]).toEqual([name, width, [`0 0 ${width} ${Math.round((width * shape) / 340)}`]]);
+        expect(boxes(shown)).toEqual(boxes(hidden));
+        expectNoAmounts(hidden);
+        expect(shapes(hidden)).toEqual(shapes(shown));
+      }
+    }
+  });
+
   test('percentages stay: they say no amount', () => {
     const groceries = taxonomy.categories.find((c) => c.name === 'groceries')!.id;
     const { hidden } = both(() => (

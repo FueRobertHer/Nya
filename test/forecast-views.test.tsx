@@ -15,6 +15,7 @@ import type { ForecastInstitution } from '@/lib/forecast';
 import { localDate } from '@/lib/local-date';
 import { EMPTY_BUDGETS } from '@/lib/budget-set';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
+import { DrawnWidth } from '@/components/drawn-width';
 
 // The forecast, the calendar, the recurring list and the planned items as the
 // Budgets tab renders them, and Home's upcoming bills: what each says, and
@@ -126,6 +127,19 @@ describe('the forecast', () => {
         />
       )
     );
+
+  test('its zero tick reads "$0", never "-$0", where its axis starts just under zero', () => {
+    // At a phone's width the ticks step in thousands (rollout 6a4), so an
+    // axis from about -$800 starts at Math.ceil(-0.8) thousand, which is -0.
+    const html = renderToStaticMarkup(
+      <DrawnWidth.Provider value={248}>
+        <ForecastCard institutions={[chase()]} series={series()} planned={EMPTY_PLANNED} today={TODAY} />
+      </DrawnWidth.Provider>
+    );
+    const ticks = [...html.matchAll(/<text class="chart-tick"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+    expect(ticks).toContain('$0');
+    expect(ticks.filter((t) => /^-\D*0$/.test(t))).toEqual([]);
+  });
 
   test('is labelled an estimate, starts from the cash accounts it names, and gives its lowest point', () => {
     const t = card();
@@ -294,10 +308,108 @@ describe('the calendar', () => {
     expect(html).toContain('aria-label="Monday, October 5, posted -$30.00"');
     expect(html).toContain('aria-label="Thursday, October 15, expected -$1,500.00"');
     expect(html).toContain('aria-label="Sunday, October 25, expected +$2,000.00"');
-    // In the cell, whole units and a thousand shortened, to fit a phone's column.
-    expect(html).toContain('>-$30</span>');
-    expect(html).toContain('>-$1.5K</span>');
-    expect(html).toContain('>+$2K</span>');
+    // In the cell, its sign and whole units, a thousand shortened, and no
+    // currency (the legend names it), to fit a phone's column at 12px.
+    expect(html).toContain('<span class="cal-fig out">-30</span>');
+    expect(html).toContain('<span class="cal-fig out estimated">-1.5K</span>');
+    expect(html).toContain('<span class="cal-fig in estimated">+2K</span>');
+  });
+
+  /** October gone by (today its last day), with what posted on each day
+   *  given: money in as Plaid writes it, a negative amount. */
+  const posted = (amounts: Record<number, number[]>, currency: string | null = 'USD') =>
+    renderToStaticMarkup(
+      <CalendarView
+        txns={Object.entries(amounts).flatMap(([day, list]) =>
+          list.map((amount, i) => txn({ transaction_id: `${day}-${i}`, date: `2026-10-${day.padStart(2, '0')}`, amount, iso_currency_code: currency ?? 'USD' }))
+        )}
+        series={[]}
+        planned={[]}
+        dismissed={new Set()}
+        institutions={[]}
+        today="2026-10-31"
+        currency={currency}
+      />
+    );
+  /** Each figure drawn in a day's cell, by the day of the month. */
+  const cellFigures = (html: string) =>
+    Object.fromEntries(
+      [...html.matchAll(/<span class="cal-num">(\d+)<\/span><span class="cal-fig[^"]*">(.*?)<\/span><span class="cal-dots"/g)].filter((m) => m[2] !== '').map((m) => [Number(m[1]), m[2]])
+    );
+  const FORMS: Record<number, number[]> = {
+    1: [-999.6],
+    2: [-12_500],
+    3: [-888_888],
+    4: [-999_999],
+    5: [-1_250_000],
+    6: [50, -50],
+    7: [143],
+    8: [-999.4],
+    9: [0.4],
+    10: [2_400_000_000],
+    11: [-1e15],
+    12: [-994_999],
+    13: [-995_000],
+  };
+  const FIGURES = { 1: '+1K', 2: '+13K', 3: '+890K', 4: '+1M', 5: '+1.3M', 6: '0', 7: '-143', 8: '+999', 9: '0', 10: '-2.4B', 11: '+1000T', 12: '+990K', 13: '+1M' };
+
+  /** `fn` run with Intl.NumberFormat as `make` makes it of the real one,
+   *  put back after. */
+  function withNumberFormat<T>(make: (real: typeof Intl.NumberFormat) => typeof Intl.NumberFormat, fn: () => T): T {
+    const real = Intl.NumberFormat;
+    Intl.NumberFormat = make(real);
+    try {
+      return fn();
+    } finally {
+      Intl.NumberFormat = real;
+    }
+  }
+
+  test("a cell's figure: whole units under a thousand, then two figures and K, M, B or T, chosen once it is rounded; a zero has no sign", () => {
+    // 999.6 rounds to a thousand, "1K", and 999,999 to a million, "1M",
+    // never "1000K"; 994,999 stays under it, 995,000 doesn't. Past T the
+    // figure grows.
+    expect(cellFigures(posted(FORMS))).toEqual(FIGURES);
+  });
+
+  test("in the viewer's digits and decimal sign, the suffix the app's own", () => {
+    // A browser in German: a formatter given no locale writes German.
+    const german = (real: typeof Intl.NumberFormat) =>
+      class extends real {
+        constructor(locales?: Intl.LocalesArgument, options?: Intl.NumberFormatOptions) {
+          super(locales ?? 'de-DE', options);
+        }
+      } as unknown as typeof Intl.NumberFormat;
+    expect(withNumberFormat(german, () => cellFigures(posted({ 1: [-3_500], 2: [-1_250_000], 3: [143] })))).toEqual({ 1: '+3,5K', 2: '+1,3M', 3: '-143' });
+  });
+
+  test('a figure carried up is 1 of the next suffix, on an engine that rounds a number by its binary value too', () => {
+    // 995,000 is 0.995 of a million, held as just under it: rounded as it is
+    // held (a strict reading of ECMA-402), it would be "0.99M".
+    const exact = (real: typeof Intl.NumberFormat) =>
+      class extends real {
+        format(x: number | bigint | Intl.StringNumericLiteral) {
+          return super.format(typeof x === 'number' ? (x.toPrecision(20) as Intl.StringNumericLiteral) : x);
+        }
+      } as unknown as typeof Intl.NumberFormat;
+    expect(withNumberFormat(exact, () => cellFigures(posted({ 1: [-995_000], 2: [-994_999], 3: [-1_250_000] })))).toEqual({ 1: '+1M', 2: '+990K', 3: '+1.3M' });
+  });
+
+  test('no currency in a cell, whatever the currency, and none without one', () => {
+    for (const currency of ['USD', 'EUR', 'JPY', 'CAD', null]) {
+      const figures = cellFigures(posted(FORMS, currency));
+      expect([currency, figures]).toEqual([currency, FIGURES]);
+      // No symbol ("$", "CA$", "¥") and no code ("EUR").
+      for (const f of Object.values(figures)) expect(f).not.toMatch(/\p{Sc}|[A-Z]{2}/u);
+    }
+  });
+
+  test('the legend names the currency once, on a line of its own, and is not read out (each cell says its amounts in full)', () => {
+    expect(posted({}, 'EUR')).toContain(
+      '<span class="cal-dot due"></span> Payment due</span><span class="cal-legend-note">Day figures in EUR, rounded</span></div>'
+    );
+    expect(posted({}, null)).toContain('<span class="cal-dot due"></span> Payment due</span><span class="cal-legend-note">Day figures rounded</span></div>');
+    expect(posted({}, 'EUR')).toContain('<div class="cal-legend" aria-hidden="true">');
   });
 });
 

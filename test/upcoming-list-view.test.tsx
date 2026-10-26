@@ -264,6 +264,41 @@ describe('the calendar, redrawn', () => {
     for (const m of html.matchAll(/aria-label="([^"]*)"/g)) expect(m[1]).not.toContain(MASK);
   });
 
+  /** What a person sees in each day's cell, by the day of the month: the
+   *  words a screen reader is given left out. */
+  const cellFigures = (html: string): Record<number, string> =>
+    Object.fromEntries(
+      [...html.matchAll(/<span class="cal-num">(\d+)<\/span><span class="cal-fig[^"]*">(.*?)<\/span><span class="cal-dots"/g)].map((m) => [
+        Number(m[1]),
+        text(m[2].replace(/<span class="visually-hidden">[^<]*<\/span>/g, '')).trim(),
+      ])
+    );
+
+  // A cell's figure has no currency ("-143", "+13K"), and the backstop over
+  // every view (test/hide-amounts.test.tsx AMOUNT) knows an amount by its
+  // currency, so it can't see one shown while hidden: these two tests are
+  // the cells' guard.
+  test("hide amounts leaves a cell's figure its sign and the mask, or nothing, never a size", () => {
+    // Shown: its sign, whole units, a thousand shortened, no currency.
+    expect(Object.values(cellFigures(calendar())).filter(Boolean)).toEqual(['-30', '-1.5K', '-213', '+2K', '+1.2K']);
+    const masked = Object.values(cellFigures(hidden(calendar)));
+    expect(masked.filter(Boolean)).toEqual(['-•••', '-•••', '-•••', '+•••', '+•••']);
+    for (const f of masked) expect(f).toMatch(/^(?:[+-]?•••)?$/);
+  });
+
+  test('hidden, a figure under 0.5 keeps its sign, so the mask never says it is that small; a zero has none', () => {
+    const draw = () =>
+      calendar({
+        txns: [
+          txn({ transaction_id: 'a', date: '2026-10-06', name: 'Refund', amount: -0.3 }),
+          txn({ transaction_id: 'b', date: '2026-10-07', name: 'Corner shop', amount: 20 }),
+          txn({ transaction_id: 'c', date: '2026-10-07', name: 'Corner shop refund', amount: -20 }),
+        ],
+      });
+    expect(cellFigures(draw())).toMatchObject({ 6: '0', 7: '0' });
+    expect(cellFigures(hidden(draw))).toMatchObject({ 6: '+•••', 7: '•••' });
+  });
+
   describe('used as a person would', () => {
     const mount = (over: Partial<CalendarProps> = {}) => {
       const host = dom.document.createElement('div');

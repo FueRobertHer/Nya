@@ -118,6 +118,7 @@ Nya shows its gaps on purpose ([features.md](../features.md)). A new feature tha
 
 - Write every amount through `lib/format.ts` (`formatMoney`, `signedMoney`, `compactMoney`), so hide amounts masks it. `test/hide-amounts.test.tsx` fails otherwise.
 - Show an amount in its own currency. A total that mixes currencies says what it left out.
+- The one exception to both is the calendar's day cells (since 6a4): too narrow at 12px for a symbol, they keep the sign and the legend under them names the currency once. Their figure is written in `components/CalendarView.tsx` (`cellFigure`) behind an `amountsHidden()` guard, which the source scan checks.
 - A negative balance shows a minus sign, and a debt reads as a debt.
 
 ## Sheets, menus and forms

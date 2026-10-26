@@ -4176,16 +4176,20 @@ button.plan-edit:disabled {
   text-align: center;
 }
 
+/* The grid runs to the card's edges, as the day's list's rows do, and a
+   day has no side padding: at 320px a day was 34px wide, too narrow for
+   a figure at 12px, and is 39px, room for "+890K" (36px). */
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px;
+  margin-inline: calc(-1 * var(--sp-5));
 }
 
 .cal-dow {
   padding: 4px 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-1);
   text-align: center;
 }
 
@@ -4193,7 +4197,7 @@ button.plan-edit:disabled {
   width: auto;
   min-width: 0;
   min-height: 52px;
-  padding: 4px 2px;
+  padding: var(--sp-1) 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4202,6 +4206,12 @@ button.plan-edit:disabled {
   background: transparent;
   color: var(--text);
   font-weight: 500;
+}
+
+/* The Sunday and Saturday days meet the card's edges: the focus ring is
+   drawn inside a day, as on a card's rows, not past the card. */
+.cal-day:focus-visible {
+  outline-offset: -2px;
 }
 
 .cal-day.selected {
@@ -4221,14 +4231,22 @@ button.plan-edit:disabled {
   font-weight: 700;
 }
 
-/* A day's figure: what posted, or what is expected, in italics as an estimate. */
+/* A day's figure: what posted, or what is expected, in italics as an
+   estimate, with no currency (CalendarView.tsx cellFigure). Every figure
+   under 100 million fits a 320px phone's day; one past it may not on a
+   wider face, and shows an ellipsis where it is cut rather than reading
+   as a smaller number. Its line is set, and a day with no figure keeps
+   that height, so a day's dots sit level with a figure or without (at
+   the face's own line height a figure's line is taller than 12px). */
 .cal-fig {
   max-width: 100%;
-  min-height: 12px;
+  min-height: calc(var(--fs-1) * var(--lh-tight));
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-1);
   font-variant-numeric: tabular-nums;
+  line-height: var(--lh-tight);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -4242,15 +4260,6 @@ button.plan-edit:disabled {
 
 .cal-fig.estimated {
   font-style: italic;
-}
-
-/* The narrowest phones (320 px wide): a day's cell is 34 px, so its figure
-   is set a size smaller and tighter to fit, as "-$143" or "+$3.5K". */
-@media (max-width: 340px) {
-  .cal-fig {
-    font-size: 9px;
-    letter-spacing: -0.03em;
-  }
 }
 
 .cal-dots {
@@ -4288,12 +4297,18 @@ button.plan-edit:disabled {
   gap: 12px;
   margin-top: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-1);
 }
 
 .cal-legend .cal-dot {
   margin-right: 4px;
   vertical-align: middle;
+}
+
+/* What the day figures are in, said once for the cells, on a line of its
+   own: at 320px it would break among the dot keys. */
+.cal-legend-note {
+  flex-basis: 100%;
 }
 
 /* The selected day's list, under a hairline: its rows run to the card's
