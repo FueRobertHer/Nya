@@ -31,6 +31,11 @@ import { CAR as UPCOMING_CAR, REFUND as UPCOMING_REFUND, SCENES as UPCOMING_SCEN
 import { IncomePoolHeader } from '@/components/IncomePool';
 import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
+import { ScenariosSheet } from '@/components/PlanScenarios';
+import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
+import { DEFAULT_PLAN } from '@/lib/fire/plan';
+import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import { NO_CHANGES } from '@/lib/fire/scenarios';
 import { wholeMoney } from '@/components/plan-text';
 import { PreviewView } from '@/components/Sharing';
 import { ReportView } from '@/components/ReportView';
@@ -1040,6 +1045,48 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Plan: the simulation’s fan chart': () => (
     <PlanFanChart bands={{ p10: [100_000, 80_000, 0], p25: [100_000, 90_000, 50_000], p50: [100_000, 105_000, 110_000], p75: [100_000, 120_000, 150_000], p90: [100_000, 140_000, 200_000] }} startAge={60} currency="USD" />
   ),
+  // Since rollout phase 6b the scenarios are listed and compared in a sheet
+  // (the Plan's bar, which opens it, has no amounts, and is left to the
+  // source scans): a scenario's change, and Compare's figures beside your
+  // plan's.
+  'Plan: the Scenarios sheet, a scenario’s change and Compare': () => {
+    const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
+    const measured = { spending: 40_000, savings: 30_000, assets: 300_000 };
+    const scenario = {
+      id: 's1',
+      version: 1 as const,
+      name: 'Spend more',
+      currency: 'USD',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      savedAt: '2026-10-01T00:00:00.000Z',
+      rev: 'r1',
+      ...NO_CHANGES,
+      set: { spending: 52_000 },
+    };
+    return (
+      <ScenariosSheet
+        open
+        onClose={() => {}}
+        onLeave={() => {}}
+        state={{ ...INITIAL_SCENARIOS, status: 'ready', list: [scenario] }}
+        client={createScenarioClient(() => {})}
+        base={plan}
+        baseFigures={planFigures(plan, measured) as PlanFigures}
+        measured={measured}
+        planCurrency="USD"
+        canOpen
+        planState="ready"
+        whyNot={null}
+        openId={null}
+        onOpen={() => {}}
+        run={() => new Promise(() => {})}
+        cache={new Map()}
+        method="historical"
+        money={(n) => wholeMoney(n, 'USD')}
+        today="2026-10-23"
+      />
+    );
+  },
   'Reports: the report on screen': () => <ReportView report={report()} />,
   'Reports: the runway, its chart, inputs and what it can’t see': () => <RunwayView runway={RUNWAY} projection={projectRunway(RUNWAY, { ...DEFAULT_WHAT_IF, months: 3 })} />,
   'Reports: year over year, by month and by group': () => <YearOverYearView report={YOY} />,

@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PlanCompare from '@/components/PlanCompare';
 import { compareRows, fiDateText, pointsText, startsLine, type CompareColumn } from '@/components/plan-compare';
-import { ScenarioBar, ScenariosCard, compareJobs, formFor, rememberResult, scenarioOutcome } from '@/components/PlanScenarios';
+import { ScenarioCard, ScenariosSheet, compareJobs, formFor, rememberResult, scenarioOutcome } from '@/components/PlanScenarios';
 import { LifeEventsCard } from '@/components/PlanEvents';
 import { FiCard, SimulationCard } from '@/components/PlanTab';
 import { INITIAL_SCENARIOS, createScenarioClient, type ScenarioEntry, type ScenariosState } from '@/components/plan-scenarios';
-import { startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
+import { currencyText, startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -223,8 +224,8 @@ describe('what the cells say (review: retiring before the FI date)', () => {
       TODAY
     ).rows.find((r) => r.key === 'lasted')!.cells;
     expect(cells.slice(1).map((c) => c.value)).toEqual([
-      'needs your invested assets, which aren’t measured (the FI card above says why)',
-      'needs your annual spending, which isn’t measured (the FI card above says why)',
+      'needs your invested assets, which aren’t measured (the FI card on Your path says why)',
+      'needs your annual spending, which isn’t measured (the FI card on Your path says why)',
       'needs your annual spending',
     ]);
   });
@@ -294,6 +295,21 @@ describe('the words', () => {
     expect(startsWithText({ ...sw, from: 'assets', balance: 300_000 }, money)).toBe('$300,000, your invested assets today.');
   });
 
+  test('a start the walk never reaches says where the shortfall is: below it, in compare mode, by default', () => {
+    const house = figs(plan({ age: 40, targetAge: 60 }), [{ id: 'h', kind: 'house', label: 'Our home', atAge: 42, cost: 800_000, yearly: 0, years: null }]);
+    expect(house.startsWith?.short?.kind).toBe('cost');
+    const start = compareRows([{ id: 'plan', name: 'Your plan', isPlan: true, outcome: { kind: 'figures', figures: house, result: 'pending' } }], money, TODAY).rows.find((r) => r.key === 'start')!;
+    expect(start.cells[0].value).toMatch(/^\$[\d,]+, your FI number at 60: it would never get that far \(below\)\.$/);
+    // The simulation's card names its place (PlanTab).
+    expect(startsWithText(house.startsWith!, money, 'on Your path')).toEndWith(': it would never get that far (on Your path).');
+  });
+
+  test('typed in another currency while the Plan’s isn’t known: it points at the question at the top of the Plan tab, on the card and in compare mode', () => {
+    const said = 'Its amounts were typed in EUR, and which currency your plan’s figures are in isn’t known yet (at the top of the Plan tab). Nothing is converted, so it isn’t worked out until you have said.';
+    expect(currencyText('EUR', 'USD', false)).toBe(said);
+    expect(scenarioOutcome(plan({ age: 40, targetAge: 55 }), entry({ currency: 'EUR', set: { spending: 45_000 } }), measured, 'USD', false)).toEqual({ kind: 'not-run', reason: said });
+  });
+
   test('a cost the walk can’t pay', () => {
     expect(shortText({ year: 2, have: 653_750, need: 800_000, kind: 'cost' }, 40, money)).toBe(
       'You’d have about $653,750 at 42, less than the $800,000 it takes from your investments, so there is no FI date: change the cost, or when it comes.'
@@ -323,64 +339,77 @@ describe('the scenario cards', () => {
   const base = plan({ age: 52, targetAge: 55 });
   const noop = async () => true as const;
 
-  test('the top card says whose it is and that saves go to it, lists its changes, and says why it isn’t worked out', () => {
-    const s = entry({ set: { targetAge: 50 } });
-    const html = renderToStaticMarkup(
-      <ScenarioBar
-        entry={s}
+  /** The open scenario's card, as PlanTab draws it. */
+  const card = (over: Partial<ComponentProps<typeof ScenarioCard>> = {}) =>
+    renderToStaticMarkup(
+      <ScenarioCard
+        entry={entry({ set: { targetAge: 50 } })}
         base={base}
-        problem={{ text: 'It retires at 50, before your age now (52). Change its retirement age, or use your plan’s.', field: 'targetAge' }}
+        problem={null}
         other={null}
         planCurrency="USD"
         confirmWhyNot={null}
         editable
         money={money}
-        eventsCount={2}
-        headingRef={{ current: null }}
+        eventsCount={0}
+        eventsWhere="path"
         onSave={noop}
         onConfirmCurrency={noop}
         onFix={() => {}}
-        onBack={() => {}}
+        scenariosCount={2}
+        onScenarios={() => {}}
+        {...over}
       />
     );
+
+  test('the open scenario’s card says that saves go to it, lists its changes, and says why it isn’t worked out; its name is the bar’s, and so is the way back', () => {
+    const html = card({ problem: { text: 'It retires at 50, before your age now (52). Change its retirement age, or use your plan’s.', field: 'targetAge' }, eventsCount: 2 });
     const t = text(html);
-    expect(html).toContain('tabindex="-1"');
-    expect(t).toContain('Scenario: Retire at 45');
+    // No heading of its own, and no Back: the Plan's bar has both (test/plan-bar-view.test.tsx).
+    expect(html).not.toContain('<h2');
+    expect(html).not.toContain('tabindex="-1"');
+    expect(t).not.toContain('Scenario: Retire at 45');
+    expect(t).not.toContain('Back to your plan');
+    expect(html).toContain('class="card plan-scenario-card"');
     expect(t).toContain('changes you make here are saved to it, never to your plan');
     expect(t).toContain('It retires at 50, before your age now (52).');
     expect(t).toContain('Change it');
     expect(t).toContain('Retirement age: 50 (your plan: 55)');
     expect(t).toContain('Use your plan’s');
-    expect(t).toContain('2 life events, below.');
-    expect(t).toContain('Back to your plan');
+    expect(t).toContain('2 life events, on Your path.');
+  });
+
+  test('its Scenarios button opens the sheet, and counts the scenarios once there are some', () => {
+    const scenarios = (html: string) => html.match(/<button[^>]*class="btn secondary"[^>]*>([^<]*)<\/button>/g) ?? [];
+    expect(scenarios(card())).toEqual(['<button class="btn secondary" aria-haspopup="dialog">Scenarios (2)</button>']);
+    // Not loaded yet, or none: no count.
+    expect(scenarios(card({ scenariosCount: null }))).toEqual(['<button class="btn secondary" aria-haspopup="dialog">Scenarios</button>']);
+    expect(scenarios(card({ scenariosCount: 0 }))).toEqual(['<button class="btn secondary" aria-haspopup="dialog">Scenarios</button>']);
+  });
+
+  test('its life events line says where their card is: on Your path, just below it (refused), or nowhere', () => {
+    expect(text(card({ eventsCount: 2, eventsWhere: 'path' }))).toContain('2 life events, on Your path.');
+    expect(text(card({ eventsCount: 1, eventsWhere: 'below' }))).toContain('1 life event, below.');
+    const none = text(card({ eventsCount: 3, eventsWhere: null }));
+    expect(none).toContain('3 life events.');
+    expect(none).not.toMatch(/3 life events, /);
   });
 
   test('“They’re in” is offered only once the accounts have loaded without a problem', () => {
-    const props = {
-      entry: entry({ currency: 'USD', set: { spending: 45_000 } }),
-      base,
-      problem: null,
-      other: 'USD',
-      planCurrency: 'EUR',
-      editable: true,
-      money,
-      eventsCount: 0,
-      headingRef: { current: null },
-      onSave: noop,
-      onConfirmCurrency: noop,
-      onFix: () => {},
-      onBack: () => {},
-    };
-    expect(text(renderToStaticMarkup(<ScenarioBar {...props} confirmWhyNot={null} />))).toContain('They’re in EUR');
-    const waiting = text(renderToStaticMarkup(<ScenarioBar {...props} confirmWhyNot="Your accounts haven’t all loaded." />));
+    const props = { entry: entry({ currency: 'USD', set: { spending: 45_000 } }), other: 'USD', planCurrency: 'EUR' };
+    expect(text(card({ ...props, confirmWhyNot: null }))).toContain('They’re in EUR');
+    const waiting = text(card({ ...props, confirmWhyNot: 'Your accounts haven’t all loaded.' }));
     expect(waiting).not.toContain('They’re in EUR');
     expect(waiting).toContain('Its amounts were typed in USD, and your plan is now in EUR.');
   });
 
-  test('the list card: each scenario with what it changes, and the limit', () => {
+  /** The Scenarios sheet, as PlanTab draws it, open at its list. */
+  const sheet = (over: Partial<ComponentProps<typeof ScenariosSheet>> = {}) => {
     const state: ScenariosState = { ...INITIAL_SCENARIOS, status: 'ready', list: [entry(), entry({ id: 's2', name: 'Part time', set: {} })], unrecognised: ['later'] };
-    const html = renderToStaticMarkup(
-      <ScenariosCard
+    return renderToStaticMarkup(
+      <ScenariosSheet
+        open
+        onClose={() => {}}
         state={state}
         client={createScenarioClient(() => {})}
         base={base}
@@ -392,20 +421,44 @@ describe('the scenario cards', () => {
         whyNot={null}
         openId={null}
         onOpen={() => {}}
+        onLeave={() => {}}
         run={async () => ({ ok: false, error: 'cancelled' })}
         cache={new Map()}
         method="historical"
         money={money}
         today={TODAY}
+        {...over}
       />
     );
+  };
+
+  test('the Scenarios sheet: titled Scenarios, New scenario first, each scenario with what it changes, the newer-version note, and Compare with its picks', () => {
+    const html = sheet();
     const t = text(html);
-    expect(t).toContain('Retire at 45');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-label="Scenarios"');
+    expect(html).toContain('<h2>Scenarios</h2>');
+    // The card's title row is gone: the sheet's title says it.
+    expect(html).not.toContain('inst-header');
+    expect(t.indexOf('New scenario')).toBeLessThan(t.indexOf('What-ifs beside your plan.'));
+    expect(html).toContain('aria-label="Open Retire at 45"');
+    expect(html).toContain('aria-label="Rename Part time"');
     expect(t).toContain('Retirement age: 45 (your plan: 55)');
     expect(t).toContain('No changes yet');
     expect(t).toContain('A scenario was saved by a newer version of Nya: kept, and not shown here.');
     expect(t).toContain('Choose two to four plans.');
-    expect(html).toContain('aria-pressed="true"');
+    // The Plan and both scenarios are picked: the first four, until the person chooses.
+    expect(html.match(/aria-pressed="true"/g)?.length).toBe(3);
+    expect(html).toContain('class="plan-compare"');
+  });
+
+  test('closed, the sheet draws nothing; while the Plan loads, its list is only why and a spinner, with nothing over the defaults', () => {
+    expect(sheet({ open: false })).toBe('');
+    const html = sheet({ planState: 'loading', whyNot: 'Your plan is still loading: scenarios open, and are compared, once it has.' });
+    const t = text(html);
+    expect(t).toContain('Your plan is still loading: scenarios open, and are compared, once it has.');
+    expect(html).toContain('aria-label="Loading your plan"');
+    for (const absent of ['New scenario', 'What-ifs beside your plan', 'Retire at 45', 'Retirement age: 45', 'No changes yet', 'Choose two to four plans.', 'newer version']) expect(t).not.toContain(absent);
   });
 
   test('every card says it is the scenario’s, and the method is the Plan’s', () => {

@@ -120,6 +120,9 @@ async function render(props: Partial<PlanTabProps> = {}) {
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
     buttons: (text: string) => container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === text),
     dialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog')[0] ?? null,
+    /** The drawer open now, not one sliding out (for a third of a second). */
+    openDialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0] ?? null,
+    container,
     region,
     /** The card's words, without the list of every currency's name. */
     said: () => {
@@ -472,14 +475,22 @@ describe('scenarios against the Plan’s currency', () => {
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render({ institutions: broker([EUR()]) });
-    await press(tab.byLabel('Open In dollars'));
+    // Opened from the Scenarios sheet: the bar's button, then the row's Open.
+    await press(tab.buttons('Scenarios (2)')[0]);
+    await press(tab.openDialog()?.findAll((e) => e.getAttribute('aria-label') === 'Open In dollars')[0]);
     expect(tab.text()).toContain('Scenario: In dollars');
     expect(tab.buttons('They’re in USD').length).toBe(0);
     expect(tab.text()).toContain('Will it last?');
-    // The other is listed with why it isn't worked out.
-    expect(tab.text()).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
-    await press(tab.buttons('Back to your plan').find((b) => b.getAttribute('aria-label') === null));
-    await press(tab.byLabel('Open In euros'));
+    // The other is listed with why it isn't worked out, in the sheet's
+    // Compare, opened from the open scenario's card.
+    await press(tab.buttons('Scenarios (2)')[0]);
+    const sheet = tab.openDialog()!;
+    expect(sheet.textContent).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
+    await press(sheet.findAll((e) => e.getAttribute('aria-label') === 'Close')[0]);
+    // Back to your plan by the bar's arrow, and the other opened.
+    await press(tab.container.findAll((e) => e.getAttribute('class') === 'plan-bar')[0].findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0]);
+    await press(tab.buttons('Scenarios (2)')[0]);
+    await press(tab.openDialog()?.findAll((e) => e.getAttribute('aria-label') === 'Open In euros')[0]);
     expect(tab.text()).toContain('Scenario: In euros');
     expect(tab.text()).not.toContain('Will it last?');
     // Offered at once: the Plan's currency is recorded, so it can't move.
@@ -596,7 +607,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     const tab = await render({ institutions: dollars, txns: highEarner });
     expect(tab.text()).toMatch(/Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
     expect(tab.text()).toContain('FI number--Needs your annual spending, which isn’t measured (below).Years to FI--Needs your annual spending, which isn’t measured (below).');
-    expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card above says why). Type it above.');
+    expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card on Your path says why). Type it on Your path.');
     expect(tab.text()).not.toContain('connect accounts with transactions');
     expect(tab.text()).not.toContain('$1,097');
     await tab.unmount();
@@ -632,7 +643,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     const year = months.flatMap((m) => [row({ date: day(m, 5), amount: 4_000, iso_currency_code: 'EUR' }), row({ date: day(m, 5), amount: -6_000, category: 'income', iso_currency_code: 'EUR' })]);
     serve(planServer({ plan: { ...DEFAULT_PLAN, age: 40, targetAge: 55, start: 'assets' } }).answers);
     const tab = await render({ institutions: euros, txns: year, currency: 'EUR' });
-    expect(tab.text()).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card above says why). Type them above, or start from your FI number (Change).');
+    expect(tab.text()).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card on Your path says why). Type them on Your path, or start from your FI number (Change).');
     expect(tab.text()).not.toContain('none to count yet');
     await tab.unmount();
   });
