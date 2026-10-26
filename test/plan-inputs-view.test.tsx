@@ -327,7 +327,7 @@ describe('Your figures, under the FI card', () => {
     const card = tab.card()!;
     // A card of its own on Your path, between the FI card and the income.
     expect(tab.panel('path').contains(card)).toBe(true);
-    expect(tab.titles(tab.panel('path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses']);
+    expect(tab.titles(tab.panel('path'))).toEqual(['FI number', 'Your figures', 'Income and one-off expenses', 'Progress']);
     const heading = card.findAll((e) => e.tagName === 'H3')[0];
     expect([heading.textContent, heading.getAttribute('id'), card.getAttribute('aria-labelledby')]).toEqual(['Your figures', 'plan-inputs-title', 'plan-inputs-title']);
     expect(has(heading.parentNode, 'card-header')).toBe(true);

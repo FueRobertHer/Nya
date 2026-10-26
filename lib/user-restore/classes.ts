@@ -141,6 +141,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'expense-shares': 'data',
   'fire-plan': 'setting',
   'fire-plan-currency': 'setting',
+  // The plan the person said is theirs: kept by them, as their scenarios are.
+  'fire-plan-saved': 'data',
   'goal-plans': 'data',
   'history-import-summaries': 'data',
   'history-imports': 'data',

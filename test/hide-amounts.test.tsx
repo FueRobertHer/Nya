@@ -32,6 +32,7 @@ import { IncomePoolHeader } from '@/components/IncomePool';
 import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
 import { ScenariosSheet } from '@/components/PlanScenarios';
+import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanProgress';
 import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -1256,6 +1257,11 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Card Mode: a transaction standing for one imported from the bank’s file, approved at the file’s amount': () => (
     <CardMode open txns={[TWIN]} taxonomy={taxonomy} tags={[]} currency="USD" review={REVIEW} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />
   ),
+  // Progress against your plan (rollout 8e): where you are and where the plan has you, and the save sheet's savings.
+  'Plan: progress against the plan saved as your plan, a newer day short, and an account added since': () => <ProgressView {...PROGRESS} />,
+  'Plan: saying this is my plan, with the savings it keeps': () => (
+    <ProgressSheetBody sheet="save" saved={null} savings={18_000} money={(n) => wholeMoney(n, 'USD')} inflation="3" onInflation={() => {}} error={null} />
+  ),
   // Shared expenses (#49): the card and every sheet with a figure to hide.
   'Shared expenses: who owes what, a payment that may be one, and one gone with where it could move': () => (
     <SharedExpensesCard
@@ -1288,6 +1294,38 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Shared expenses: settled outside your accounts, or let go': () => <SettleSheet person="alex" currency="USD" shared={sharedState(sharedCard())} onClose={() => {}} />,
   'Shared expenses: someone you split costs with, and what is between you': () => <PersonSheet id="alex" open tags={[]} shared={sharedState(sharedCard())} onClose={() => {}} />,
   'Shared expenses: asking for it, and the message to send': () => <HandoffSheet person="alex" currency="USD" shared={sharedState(sharedCard())} onClose={() => {}} />,
+};
+
+/** A plan saved on Jan 2, 2026, set against Oct 1's balances. */
+const PROGRESS_DAY = (date: string, total: number, over: Record<string, unknown> = {}) => ({ date, total, counted: 2, missing: [] as string[], otherCurrencies: {}, unrated: [], ...over });
+const PROGRESS = {
+  savedState: {
+    kind: 'ready' as const,
+    problem: null,
+    saved: { version: 1 as const, plan: { ...DEFAULT_PLAN, age: 35, targetAge: 55 }, savings: 18_000, currency: 'USD', inflation: 0.03, day: '2026-01-02', savedAt: '2026-01-02T12:00:00.000Z', rev: 'r1' },
+  },
+  series: {
+    kind: 'ready' as const,
+    answer: {
+      currency: 'USD',
+      saved_day: '2026-01-02',
+      anchor: PROGRESS_DAY('2026-01-02', 150_000),
+      latest: PROGRESS_DAY('2026-10-02', 171_000, { missing: ['ira'] }),
+      months: [{ date: '2026-01-31', total: 152_000 }, { date: '2026-10-01', total: 181_000 }],
+      accounts: [{ account_id: 'newira', first: '2026-05-01', last: '2026-10-02', ended: null, label: 'New IRA at Broker' }],
+      unreadable_days: [],
+    },
+  },
+  plan: { ...DEFAULT_PLAN, age: 35, targetAge: 55, realReturn: 0.04 },
+  blocked: null,
+  scenarioOpen: false,
+  savings: { value: 18_000, source: 'measured' as const },
+  money: (n: number) => wholeMoney(n, 'USD'),
+  nameOf: (id: string) => (id === 'ira' ? 'IRA at Broker' : 'New IRA at Broker'),
+  busy: false,
+  error: null,
+  onSheet: () => {},
+  onRetry: () => {},
 };
 
 describe('the main screens with amounts hidden', () => {
