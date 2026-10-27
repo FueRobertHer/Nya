@@ -106,7 +106,7 @@ import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
 import { ScenarioCard, ScenariosSheet, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
 import PlanBar, { planPanelId, planTabId, type PlanSegment } from './PlanBar';
-import PlanProgress from './PlanProgress';
+import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { ScenarioTag } from './ScenarioTag';
 import { LifeEventsCard } from './PlanEvents';
 import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
@@ -792,6 +792,26 @@ export default function PlanTab({
             : replaced && editable && !other && sheetFor === shownFor
               ? "Your saved plan was read again since this opened, so this can't be saved: close it and open it again."
               : null;
+  // The plan saved as your plan and what was recorded since (rollout 8e), for
+  // the Progress card and, with the Plan shown, the chart's lines before today.
+  const progress = useProgress(institutions);
+  const progressSaved = progress.savedState.kind === 'ready' ? progress.savedState.saved : null;
+  // Only where both are of one thing: the saved plan's currency and include
+  // cash are the path's (the Progress card says when they changed).
+  const progressSeries = progress.series;
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const overlay = useMemo(
+    () =>
+      entry === null &&
+      progressSaved &&
+      progressSeries?.kind === 'ready' &&
+      basePlan.age !== null &&
+      progressSeries.answer.currency === displayCurrency &&
+      progressSaved.plan.includeCash === basePlan.includeCash
+        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc)
+        : null,
+    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc]
+  );
   // Why "This is my plan" can't save now: as the Plan's own saves wait.
   const progressBlocked =
     state.status === 'error'
@@ -1149,6 +1169,7 @@ export default function PlanTab({
               }
               stopWalked={stopWalked}
               path={path}
+              recorded={overlay}
               currency={displayCurrency}
               onAskAges={() => open({ kind: 'about' }, 'ask-about')}
               askRef={(el) => inputRowRef('ask-about', el)}
@@ -1192,7 +1213,7 @@ export default function PlanTab({
         {/* Progress against the plan saved as your plan (rollout 8e): the
             Plan's, whatever is open, so outside what a scenario can refuse. */}
         {planLoaded && (
-          <PlanProgress plan={basePlan} savings={baseFigures.view.savings} currency={figures.currency} institutions={institutions} blocked={progressBlocked} scenarioOpen={entry !== null} />
+          <PlanProgress progress={progress} plan={basePlan} savings={baseFigures.view.savings} currency={figures.currency} institutions={institutions} blocked={progressBlocked} scenarioOpen={entry !== null} />
         )}
         </>
       )}
@@ -1413,6 +1434,7 @@ export function FiCard({
   stopShort = null,
   stopWalked = false,
   path = null,
+  recorded = null,
   currency = null,
   onAskAges,
   askRef,
@@ -1446,6 +1468,9 @@ export function FiCard({
   stopWalked?: boolean;
   /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
   path?: PlanPath | null;
+  /** What was recorded since the plan saved as your plan, and where it had
+   *  you, drawn before today on the chart (rollout 8e). */
+  recorded?: ProgressOverlay | null;
   /** The currency the figures are in, for the chart. */
   currency?: string | null;
   /** Opens the Ages sheet, from the ask under the answer while an age it
@@ -1584,6 +1609,7 @@ export function FiCard({
           realReturn={plan.realReturn}
           currency={currency}
           withEvents={path.fromWalk}
+          recorded={recorded}
         />
       )}
 

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ProgressView, SheetBody, readInflation, shortWhy, type ProgressAnswer, type ProgressViewProps } from '@/components/PlanProgress';
+import { ProgressView, SheetBody, progressOverlay, readInflation, shortWhy, type ProgressAnswer, type ProgressViewProps } from '@/components/PlanProgress';
+import PlanPathChart from '@/components/PlanPathChart';
+import { DrawnWidth } from '@/components/drawn-width';
+import { compactMoney } from '@/lib/format';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import type { SavedPlan } from '@/lib/fire/saved-plan';
@@ -221,5 +224,53 @@ describe('the sheets', () => {
     expect(readInflation(' 2.5 % ')).toBe(0.025);
     expect(readInflation('0')).toBe(0);
     for (const t of ['', 'abc', '-1', '21']) expect(typeof readInflation(t)).toBe('string');
+  });
+});
+
+describe('the lines before today on Your path’s chart', () => {
+  // Started Jan 1, 2024 at 100,000, whole on Jan 31, 2024 at 101,000 and on
+  // Jan 1, 2028 at 190,000; today is Jan 1, 2028 and you are 39.
+  test('the start and each month’s last whole day, at the age it was, with where the plan had you, by hand', () => {
+    const o = progressOverlay(SAVED, answer(190_000), 39, '2028-01-01')!;
+    expect(o.days).toEqual(['2024-01-01', '2024-01-31', '2028-01-01']);
+    expect(o.recorded.map((q) => q.balance)).toEqual([100_000, 101_000, 190_000]);
+    // Four years before today is 35; 30 days later, 35 and 30/365.25.
+    expect(o.recorded.map((q) => q.age)).toEqual([35, 35 + 30 / 365.25, 39]);
+    expect(o.planned[0].balance).toBe(100_000);
+    expect(o.planned[2].balance).toBeCloseTo(185_317.14, 2);
+    expect(o.planned.map((q) => q.age)).toEqual(o.recorded.map((q) => q.age));
+    expect([o.from, o.savedDay]).toEqual(['2024-01-01', '2024-01-01']);
+  });
+
+  test('nothing to draw without a start, with one day, or with a growth the formula doesn’t take; nothing after today', () => {
+    expect(progressOverlay(SAVED, answer(0, { anchor: null, months: [] }), 39, '2028-01-01')).toBeNull();
+    expect(progressOverlay(SAVED, answer(0, { months: [{ date: '2024-01-01', total: 100_000 }] }), 39, '2028-01-01')).toBeNull();
+    expect(progressOverlay({ ...SAVED, plan: { ...PLAN, realReturn: -1 } }, answer(190_000), 39, '2028-01-01')).toBeNull();
+    expect(progressOverlay(SAVED, answer(190_000), 35, '2024-02-15')!.days).toEqual(['2024-01-01', '2024-01-31']);
+  });
+
+  test('not before the card sets you against the plan: less than a month after the start draws nothing', () => {
+    const early = answer(101_000, { months: [{ date: '2024-01-20', total: 101_000 }] });
+    expect(progressOverlay(SAVED, early, 35, '2024-01-26')).toBeNull();
+  });
+
+  test('drawn before today: a solid line and a dotted one, said in words, in the summary and in a table', () => {
+    const recorded = progressOverlay(SAVED, answer(190_000), 39, '2028-01-01')!;
+    const points = Array.from({ length: 17 }, (_, k) => ({ age: 39 + k, balance: 190_000 + k * 20_000 }));
+    const html = renderToStaticMarkup(
+      <DrawnWidth.Provider value={320}>
+        <PlanPathChart points={points} today={39} stopAge={55} fiNumber={1_000_000} fiAge={null} realReturn={0.05} currency="USD" recorded={recorded} />
+      </DrawnWidth.Provider>
+    );
+    expect(html).toContain('stroke="var(--text-1)"');
+    expect(html).toContain('stroke-dasharray="2 4"');
+    const t = text(html);
+    expect(t).toContain('Before today: your invested assets as recorded since Jan 1, 2024 (the solid line), and where your plan from Jan 1, 2024 had them (the dotted line), in each day’s money.');
+    expect(t).toContain('Since your plan Recorded Your plan Jan 1, 2024 $100,000 $100,000 Jan 31, 2024 $101,000');
+    expect(t).toContain('Jan 1, 2028 $190,000 $185,317');
+    const label = /role="img" aria-label="([^"]*)"/.exec(html)![1].replace(/&#x27;/g, "'");
+    expect(label.startsWith(`Since Jan 1, 2024, invested assets as recorded went from ${compactMoney(100_000, 'USD')} to ${compactMoney(190_000, 'USD')} on Jan 1, 2028, where your plan from Jan 1, 2024 had ${compactMoney(185_317.14, 'USD')}. Invested assets grow`)).toBe(true);
+    // The axis starts at the start's age, today is marked.
+    expect([...html.matchAll(/<text class="chart-xlabel"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1])).toEqual(['FI number', '35', 'stop 55', 'today 39']);
   });
 });

@@ -1142,6 +1142,35 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       currency="USD"
     />
   ),
+  // With what was recorded since a plan saved as your plan (rollout 8e): its words, summary and table.
+  'Plan: Your path’s chart, with what was recorded since your plan': () => (
+    <PlanPathChart
+      points={[
+        { age: 40, balance: 250_000 },
+        { age: 41, balance: 292_500 },
+        { age: 42, balance: 1_100_000 },
+      ]}
+      today={40}
+      stopAge={42}
+      fiNumber={1_000_000}
+      fiAge={41.8}
+      realReturn={0.05}
+      currency="USD"
+      recorded={{
+        from: '2026-01-02',
+        savedDay: '2026-01-02',
+        recorded: [
+          { age: 39.2, balance: 200_000 },
+          { age: 40, balance: 250_000 },
+        ],
+        planned: [
+          { age: 39.2, balance: 200_000 },
+          { age: 40, balance: 236_000 },
+        ],
+        days: ['2026-01-02', '2026-10-01'],
+      }}
+    />
+  ),
   // Since rollout phase 6b the scenarios are listed and compared in a sheet
   // (the Plan's bar, which opens it, has no amounts, and is left to the
   // source scans): a scenario's change, and Compare's figures beside your

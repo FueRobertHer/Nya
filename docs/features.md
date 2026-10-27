@@ -1461,7 +1461,7 @@ The last card on Your path, **Progress**, sets your invested assets as they are 
 - **What it says.** A newer day that wasn't whole isn't counted, and a caution says why (an account not recorded that day, accounts in another currency without a home currency, a currency with no rate that day). An account first recorded after the start is named: what it held then counts as progress. So is one counted in the start that ended since: what it held is in the start and not after. Days whose balances couldn't be read are said. With no whole day yet, it says what the newest day misses.
 - **When your Plan changes**, the saved one stays as it was. A change to what the comparison rests on (growth after inflation, include cash, the savings you typed) is said, with **Save the Plan as it is now**, confirmed in a sheet since the comparison starts again from that day. **Stop comparing**, in the card's ⋯ menu and confirmed, forgets it; your Plan stays.
 
-It is the `fire-plan-saved` store, in your [download](data-export.md#fire-plan-saved), deleted with your account, and brought back by a restore as your data. The line of what was recorded goes on Your path's chart once that chart is in (rollout 8b).
+It is the `fire-plan-saved` store, in your [download](data-export.md#fire-plan-saved), deleted with your account, and brought back by a restore as your data. With your Plan shown (not a scenario), Your path's chart draws both before today, where its path starts: what was recorded, a point a month (the last whole day of each), as a solid line, and where the saved plan had you on those days as a dotted one, said under the chart and in its table.
 
 ### FI progress on Home
 

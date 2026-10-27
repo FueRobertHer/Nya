@@ -22,8 +22,9 @@ import { Masked } from './HideAmounts';
 import { dayName, pct, wholeMoney } from './plan-text';
 import type { FirePlan, Input } from '@/lib/fire/plan';
 import type { AssetInstitution } from '@/lib/fire/inputs';
-import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, yearsBetween, type SavedPlan } from '@/lib/fire/saved-plan';
+import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, yearsBetween, YEAR_DAYS, type SavedPlan } from '@/lib/fire/saved-plan';
 import { isComplete, progressAccountsOf, type InvestedDay } from '@/lib/fire/invested-series';
+import type { PathPoint } from '@/lib/fire/path';
 
 /** The days after the start before where you are is set against the plan:
  *  less than this is mostly a day's noise. */
@@ -312,29 +313,63 @@ export function readInflation(typed: string): number | string {
   return Math.round(n * 100) / 10_000;
 }
 
-export type PlanProgressProps = {
-  plan: FirePlan;
-  savings: Input;
-  /** The Plan's currency, which a save keeps. */
-  currency: string | null;
-  institutions: AssetInstitution[];
-  blocked: string | null;
-  scenarioOpen: boolean;
+/** The lines before today on Your path's chart (components/PlanPathChart.tsx):
+ *  invested assets as recorded since the start, and where the saved plan had
+ *  them on the same days, by age. */
+export type ProgressOverlay = {
+  /** The start's day. */
+  from: string;
+  /** The saved plan's own day. */
+  savedDay: string;
+  recorded: PathPoint[];
+  planned: PathPoint[];
+  /** The same points' days, for the table. */
+  days: string[];
 };
+
+/** The chart's lines before today, from the same answer the card reads: the
+ *  start and the last whole day of each month after it, each set at the age
+ *  it was (today's `age` less the years since), with where the plan had you
+ *  then (plannedAt). Null with no start, fewer than two such days, or less
+ *  than MIN_DAYS between them, as the card sets nothing against the plan
+ *  before then. Both in each day's own money, as balances are, which today's
+ *  dollars are on today. */
+export function progressOverlay(saved: SavedPlan, answer: ProgressAnswer, age: number, today: string): ProgressOverlay | null {
+  const { anchor } = answer;
+  if (!anchor || anchor.total === null) return null;
+  const start = { day: anchor.date, total: anchor.total };
+  const days = [start, ...answer.months.filter((m) => m.date > anchor.date).map((m) => ({ day: m.date, total: m.total }))].filter((d) => d.day <= today);
+  if (days.length < 2 || yearsBetween(start.day, days[days.length - 1].day) * YEAR_DAYS < MIN_DAYS) return null;
+  const ageOn = (day: string) => age - yearsBetween(day, today);
+  const recorded: PathPoint[] = [];
+  const planned: PathPoint[] = [];
+  for (const d of days) {
+    const p = plannedAt(saved, start, d.day);
+    if (p === null) return null;
+    recorded.push({ age: ageOn(d.day), balance: d.total });
+    planned.push({ age: ageOn(d.day), balance: p });
+  }
+  return { from: anchor.date, savedDay: saved.day, recorded, planned, days: days.map((d) => d.day) };
+}
 
 async function json(res: Response): Promise<any> {
   return res.json().catch(() => null);
 }
 
-export default function PlanProgress({ plan, savings, currency, institutions, blocked, scenarioOpen }: PlanProgressProps) {
+/** The saved plan and the days recorded since, read once for the card and
+ *  the chart. */
+export type Progress = {
+  savedState: SavedState;
+  series: SeriesState | null;
+  setSaved: (s: SavedState) => void;
+  setSeries: (s: SeriesState | null) => void;
+  retry: () => void;
+};
+
+export function useProgress(institutions: AssetInstitution[]): Progress {
   const [savedState, setSaved] = useState<SavedState>({ kind: 'loading' });
   const [series, setSeries] = useState<SeriesState | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [sheet, setSheet] = useState<ProgressSheet>(null);
-  const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ text: string; kind: 'critical' | 'info' } | null>(null);
-  const [sheetError, setSheetError] = useState<string | null>(null);
   const saved = savedState.kind === 'ready' ? savedState.saved : null;
 
   useEffect(() => {
@@ -371,6 +406,28 @@ export default function PlanProgress({ plan, savings, currency, institutions, bl
       live = false;
     };
   }, [rev, question, attempt]);
+  return { savedState, series, setSaved, setSeries, retry: () => setAttempt((n) => n + 1) };
+}
+
+export type PlanProgressProps = {
+  progress: Progress;
+  plan: FirePlan;
+  savings: Input;
+  /** The Plan's currency, which a save keeps. */
+  currency: string | null;
+  institutions: AssetInstitution[];
+  blocked: string | null;
+  scenarioOpen: boolean;
+};
+
+export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, scenarioOpen }: PlanProgressProps) {
+  const { savedState, series, setSaved, setSeries, retry } = progress;
+  const [sheet, setSheet] = useState<ProgressSheet>(null);
+  const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ text: string; kind: 'critical' | 'info' } | null>(null);
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  const saved = savedState.kind === 'ready' ? savedState.saved : null;
 
   const nameOf = useMemo(() => {
     const known = new Map<string, string>();
@@ -422,6 +479,8 @@ export default function PlanProgress({ plan, savings, currency, institutions, bl
       });
       const body = await json(res);
       if (res.ok && body?.saved) {
+        // The days recorded since the one replaced are not this one's.
+        setSeries(null);
         setSaved({ kind: 'ready', saved: body.saved, problem: null });
         setSheet(null);
       } else if (res.status === 409) stale(body);
@@ -471,7 +530,7 @@ export default function PlanProgress({ plan, savings, currency, institutions, bl
         busy={busy}
         error={error}
         onSheet={open}
-        onRetry={() => setAttempt((n) => n + 1)}
+        onRetry={retry}
       />
       <Sheet
         open={sheet !== null}
