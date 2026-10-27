@@ -212,7 +212,7 @@ export default function MonthFlowChart({
         <path d={inPath} fill="none" stroke="var(--up)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {active !== null && (
-          <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-input)" strokeWidth={1} />
+          <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />
         )}
 
         <circle cx={xs[i]} cy={y(cumOut[i])} r={4} fill="var(--down)" stroke="var(--card)" strokeWidth={2} />

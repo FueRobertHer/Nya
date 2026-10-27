@@ -553,7 +553,7 @@ export default function NetWorthChart({
 
         {/* crosshairs: one while scrubbing, two while measuring */}
         {(measure ?? (active !== null ? [active] : [])).map((i) => (
-          <line key={i} x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-input)" strokeWidth={1} />
+          <line key={i} x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />
         ))}
 
         {/* end-dot (or the active or measured dots) with a 2px surface ring */}

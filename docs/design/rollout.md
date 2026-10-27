@@ -604,11 +604,12 @@ Ship each kind's shape once: an older release reads a scenario with a kind it do
 - The light theme in `app/globals.css`: `tokens.css`'s two light blocks, after the dark one (both light selectors outrank dark's `:root`). Dark when the device is dark or says nothing, light when it is light.
 - **Settings > Preferences > Theme** (`components/ThemeCard.tsx`, first in the section): System, Dark or Light, a radio group drawn as a segmented control. The choice is a cookie (`nya-theme`, `components/theme.ts`) that the root layout reads, so a page is sent in it: `data-theme` on `<html>`, the chrome color, `color-scheme` and iOS's status bar style (`lib/theme.ts`). No script runs before paint, and nothing changes under the nonce-based policy. A change applies at once; other open tabs follow on their next load.
 - Every dark-only color in the app's CSS and charts is a token now, and the guard's raw-color baseline is empty:
-  - borders and dividers went to `--border-subtle` and `--border-strong`, and a text field's edge to `--border-input`, which also brings it to 3:1 in dark;
+  - borders and dividers went to `--border-subtle` and `--border-strong`, and a text field's edge to `--border-input`, which also brings it to 3:1 in dark (the one change dark shows);
   - accent washes went to `--accent-tint`;
   - the backdrop went to `--scrim`, and the sheet's shadow to the new `--shadow`;
   - the attachment viewer is on `--canvas`;
-  - the chart gridlines are `--border-subtle`, their crosshairs `--border-input`, and the comparison lines `--text-3`;
+  - the chart gridlines are `--border-subtle`, their crosshairs `--border-strong`, and the comparison lines `--text-3`;
+  - the idle-cash chip's and the danger outline's softer edges are `--warn` and `--neg` at 45% and 35%, through `color-mix`;
   - the Plan grid's heat map is `--accent` through `color-mix`;
   - hide amounts' dots in a field are drawn in `--text-1`;
   - the select chevron is one gray at 3:1 on every surface in both themes.

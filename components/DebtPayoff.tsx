@@ -1274,7 +1274,7 @@ function PayoffChart({
         <path d={planPath} fill="none" stroke={PLAN_COLOR} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {active !== null && (
-          <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-input)" strokeWidth={1} />
+          <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-strong)" strokeWidth={1} />
         )}
         {/* Off the top, the readout above still has its figure. */}
         {baseVals[i] <= top && (

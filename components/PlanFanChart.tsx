@@ -199,7 +199,7 @@ export default function PlanFanChart({
         <path d={inner} fill="var(--accent)" opacity={0.22} />
         <path d={median} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
-        {active !== null && <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-input)" strokeWidth={1} />}
+        {active !== null && <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />}
         <circle cx={xs[i]} cy={yv(bands.p50[i])} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
 
         {xTicks.map((t) => (

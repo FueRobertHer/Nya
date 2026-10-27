@@ -27,12 +27,16 @@ export function themeChoice(value: string | null | undefined): ThemeChoice | nul
   return value === 'light' || value === 'dark' ? value : null;
 }
 
-/** The browser's chrome color, as two entries whatever the choice, so a
+/** The browser's chrome color, as three entries whatever the choice, so a
  *  change can rewrite them in place: each theme's canvas by the system's
- *  setting, or the chosen one's for both. */
-export function themeColors(choice: ThemeChoice | null): { media: string; color: string }[] {
+ *  setting, then dark's for a browser that states none (the first that
+ *  matches applies); or the chosen one's for all three. */
+export function themeColors(choice: ThemeChoice | null): { media?: string; color: string }[] {
   const canvas = (t: ThemeChoice) => (t === 'light' ? LIGHT : DARK).canvas;
-  return (['light', 'dark'] as const).map((t) => ({ media: `(prefers-color-scheme: ${t})`, color: canvas(choice ?? t) }));
+  return [
+    ...(['light', 'dark'] as const).map((t) => ({ media: `(prefers-color-scheme: ${t})`, color: canvas(choice ?? t) })),
+    { color: canvas(choice ?? 'dark') },
+  ];
 }
 
 /** What the page tells the browser it draws in, for its own controls and

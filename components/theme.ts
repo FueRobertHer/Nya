@@ -13,8 +13,9 @@
 // Where cookies are blocked a choice lasts as long as the page.
 //
 // A CHANGE applies at once: the root's data-theme, which the layout set from
-// the cookie, and the chrome color and color-scheme it sent. Other tabs open
-// on this device follow on their next load.
+// the cookie, and the chrome color and color-scheme it sent. iOS's status bar
+// style is read when a home-screen app starts, so it follows on the next
+// start. Other tabs open on this device follow on their next load.
 
 import { useSyncExternalStore } from 'react';
 import { THEME_COOKIE, colorScheme, themeChoice, themeColors, type ThemeChoice } from '@/lib/theme';
@@ -39,7 +40,7 @@ export function setTheme(choice: ThemeChoice | null) {
   // What the layout sent for the old choice (lib/theme.ts), in place.
   const metas = document.head.querySelectorAll('meta[name="theme-color"]');
   for (const { media, color } of themeColors(choice)) {
-    for (const m of metas) if (m.getAttribute('media') === media) m.setAttribute('content', color);
+    for (const m of metas) if ((m.getAttribute('media') ?? undefined) === media) m.setAttribute('content', color);
   }
   for (const m of document.head.querySelectorAll('meta[name="color-scheme"]')) m.setAttribute('content', colorScheme(choice));
   for (const l of listeners) l();

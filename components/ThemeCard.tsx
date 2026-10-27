@@ -3,7 +3,7 @@
 // The Theme card, first in Settings > Preferences (mounted in
 // components/Dashboard.tsx): System, Dark or Light for this device
 // (components/theme.ts). A radio group drawn as a segmented control, as the
-// design system has a setting.
+// design system has a setting. `onChanged` runs after a choice is applied.
 
 import { useRef, type KeyboardEvent } from 'react';
 import { segmentKey } from './ActivityBar';
@@ -16,17 +16,21 @@ const CHOICES: { value: ThemeChoice | null; label: string }[] = [
   { value: 'light', label: 'Light' },
 ];
 
-export function ThemeCard() {
+export function ThemeCard({ onChanged }: { onChanged?: () => void }) {
   const theme = useTheme();
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const at = CHOICES.findIndex((c) => c.value === theme);
+  const choose = (choice: ThemeChoice | null) => {
+    setTheme(choice);
+    onChanged?.();
+  };
 
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     // A radio group's arrows go either way, up and left back, down and right on.
     const to = segmentKey(e.key === 'ArrowUp' ? 'ArrowLeft' : e.key === 'ArrowDown' ? 'ArrowRight' : e.key, at, CHOICES.length);
     if (to === null) return;
     e.preventDefault();
-    setTheme(CHOICES[to].value);
+    choose(CHOICES[to].value);
     buttons.current[to]?.focus();
   };
 
@@ -45,7 +49,7 @@ export function ThemeCard() {
             type="button"
             role="radio"
             tabIndex={i === at ? 0 : -1}
-            onClick={() => setTheme(c.value)}
+            onClick={() => choose(c.value)}
             aria-checked={i === at}
           >
             {c.label}

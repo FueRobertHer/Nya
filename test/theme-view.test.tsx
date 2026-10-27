@@ -15,13 +15,14 @@ describe('what the layout sends for a choice (lib/theme.ts)', () => {
     for (const v of [undefined, null, '', 'Light', 'system', 'blue']) expect(themeChoice(v)).toBeNull();
   });
 
-  test("the chrome color: each theme's canvas by the system's setting, or the choice's for both", () => {
+  test("the chrome color: each theme's canvas by the system's setting, then dark's where it states none; or the choice's for all", () => {
     expect(themeColors(null)).toEqual([
       { media: '(prefers-color-scheme: light)', color: '#f6f7f9' },
       { media: '(prefers-color-scheme: dark)', color: '#0d0f14' },
+      { color: '#0d0f14' },
     ]);
-    expect(themeColors('light').map((t) => t.color)).toEqual(['#f6f7f9', '#f6f7f9']);
-    expect(themeColors('dark').map((t) => t.color)).toEqual(['#0d0f14', '#0d0f14']);
+    expect(themeColors('light').map((t) => t.color)).toEqual(['#f6f7f9', '#f6f7f9', '#f6f7f9']);
+    expect(themeColors('dark').map((t) => t.color)).toEqual(['#0d0f14', '#0d0f14', '#0d0f14']);
   });
 
   test("color-scheme and iOS's status bar follow a choice; with none, both themes and dark's bar", () => {
@@ -63,13 +64,17 @@ const meta = (attrs: Record<string, string>) => {
 };
 const lightColor = meta({ name: 'theme-color', media: '(prefers-color-scheme: light)', content: '#f6f7f9' });
 const darkColor = meta({ name: 'theme-color', media: '(prefers-color-scheme: dark)', content: '#0d0f14' });
+const anyColor = meta({ name: 'theme-color', content: '#0d0f14' });
 const scheme = meta({ name: 'color-scheme', content: 'dark light' });
+
+// Each choice applied, the dashboard is told (it refreshes the page's server parts).
+let changed = 0;
 
 function mount() {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
-  act(() => root.render(<ThemeCard />));
+  act(() => root.render(<ThemeCard onChanged={() => changed++} />));
   const radios = () => host.querySelectorAll('button') as FakeElement[];
   const checked = () => radios().find((b) => b.getAttribute('aria-checked') === 'true')?.textContent;
   return { host, radios, checked, unmount: () => act(() => root.unmount()) };
@@ -100,12 +105,15 @@ describe('the Theme card', () => {
   test('Light: kept in the cookie for a year, drawn at once, and the chrome told', () => {
     const v = mount();
     written.length = 0;
+    changed = 0;
     act(() => click(v.radios()[2]));
     expect(written).toEqual([`nya-theme=light; Path=/; Max-Age=${365 * 24 * 60 * 60}; SameSite=Lax`]);
     expect(dom.document.documentElement.dataset.theme).toBe('light');
     expect(v.checked()).toBe('Light');
+    expect(changed).toBe(1);
     expect(lightColor.getAttribute('content')).toBe('#f6f7f9');
     expect(darkColor.getAttribute('content')).toBe('#f6f7f9');
+    expect(anyColor.getAttribute('content')).toBe('#f6f7f9');
     expect(scheme.getAttribute('content')).toBe('light');
     v.unmount();
   });
@@ -120,6 +128,7 @@ describe('the Theme card', () => {
     expect(v.checked()).toBe('System');
     expect(lightColor.getAttribute('content')).toBe('#f6f7f9');
     expect(darkColor.getAttribute('content')).toBe('#0d0f14');
+    expect(anyColor.getAttribute('content')).toBe('#0d0f14');
     expect(scheme.getAttribute('content')).toBe('dark light');
     v.unmount();
   });
@@ -127,8 +136,10 @@ describe('the Theme card', () => {
   test('the arrows choose, either way round, and Home and End', () => {
     const v = mount();
     const group = v.host.querySelectorAll('div[role="radiogroup"]')[0];
+    changed = 0;
     key(group, 'ArrowRight');
     expect(v.checked()).toBe('Dark');
+    expect(changed).toBe(1);
     expect(dom.document.documentElement.dataset.theme).toBe('dark');
     expect(darkColor.getAttribute('content')).toBe('#0d0f14');
     expect(lightColor.getAttribute('content')).toBe('#0d0f14');

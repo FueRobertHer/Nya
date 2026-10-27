@@ -223,7 +223,7 @@ export default function ForecastChart({
         )}
         {i !== null && value !== null && (
           <>
-            <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-input)" strokeWidth={1} />
+            <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-strong)" strokeWidth={1} />
             <circle cx={x(i)} cy={y(value)} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
             {altValue !== null && <circle cx={x(i)} cy={y(altValue)} r={4} fill="var(--warn)" stroke="var(--card)" strokeWidth={2} />}
           </>

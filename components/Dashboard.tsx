@@ -1,6 +1,7 @@
 'use client';
 
 import ClerkAccount from './ClerkAccount';
+import { useRouter } from 'next/navigation';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
@@ -481,6 +482,7 @@ export default function Dashboard({
   // The Settings screen (components/Settings.tsx), in place of the tabs while
   // it is open: null when closed, else its list or one section.
   const [settings, setSettings] = useState<SettingsView | null>(null);
+  const router = useRouter();
   // What opened it (the avatar's button, or the gear), for focus to go back
   // to when Settings closes.
   const settingsOpener = useRef<HTMLElement | null>(null);
@@ -1846,8 +1848,11 @@ export default function Dashboard({
       sub: 'Theme, home currency and rates, weekly summary email',
       content: (
         <>
-          {/* System, Dark or Light, for this device (components/ThemeCard.tsx). */}
-          <ThemeCard />
+          {/* System, Dark or Light, for this device (components/ThemeCard.tsx).
+              Then the page's server parts again, from the new cookie: the
+              router keeps each page's head (its chrome color) for Back and
+              Forward, which would otherwise bring the old theme's back. */}
+          <ThemeCard onChanged={() => router.refresh()} />
           {/* The home currency and your own rates (components/CurrencyCard.tsx):
               applied after the server's cache, so a change shows on the
               next load of net worth, which it asks for. */}

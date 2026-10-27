@@ -2282,7 +2282,7 @@ span.meter-fill {
 }
 
 .cash-chip.idle {
-  border-color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
   color: var(--warn);
 }
 
@@ -2855,7 +2855,7 @@ span.meter-fill {
 
 button.danger-outline {
   background: transparent;
-  border: 1px solid var(--neg);
+  border: 1px solid color-mix(in srgb, var(--neg) 35%, transparent);
   color: var(--down);
 }
 
@@ -6308,7 +6308,8 @@ button.cash-flow-show {
   color: transparent;
   -webkit-text-fill-color: transparent;
   text-shadow: none;
-  /* Three dots in the text's color, where the text starts, sized to it. */
+  /* Three dots in --text-1 (the text itself is transparent here), where the
+     text starts, sized to it. */
   background-image:
     radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
     radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
