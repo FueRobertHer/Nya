@@ -52,6 +52,9 @@ export function statusBarStyle(choice: ThemeChoice | null): 'default' | 'black-t
   return choice === 'light' ? 'default' : 'black-translucent';
 }
 
+// A row of Nya's own menus (.menu-item in app/globals.css), for Clerk's.
+const MENU_ROW = { minHeight: 'var(--tap)', padding: 'var(--sp-2) var(--sp-3)', fontSize: 'var(--fs-3)' };
+
 // Clerk's sign-in, menu and account window in the app's tokens: CSS
 // variables, which Clerk's appearance takes, so it follows the theme as the
 // app does, whichever selects it.
@@ -71,7 +74,8 @@ export const CLERK_APPEARANCE = {
     colorSuccess: 'var(--pos)',
     colorWarning: 'var(--warn)',
     colorModalBackdrop: 'var(--scrim)',
-    borderRadius: '10px',
+    // --r-sm, Nya's own inputs and small buttons (look and feel, step 2c).
+    borderRadius: '8px',
     fontFamily: FONT_UI,
   },
   elements: {
@@ -89,5 +93,10 @@ export const CLERK_APPEARANCE = {
     badge: {
       '&[data-color="primary"]': { color: 'var(--text-2)', borderColor: 'var(--border-strong)' },
     },
+    // The account menu's rows as Nya's own menus' (.menu-item): a 44px row,
+    // its padding and body type. Clerk's rows (Sign out) and the ones Nya
+    // adds (Settings, Sharing) take separate keys.
+    userButtonPopoverActionButton: MENU_ROW,
+    userButtonPopoverCustomItemButton: MENU_ROW,
   },
 };
