@@ -86,6 +86,11 @@ const now: Record<string, () => string> = {
  *  budgets (the sheet's own scenes hold them). */
 const IN_THE_SETTING = new Set([...recorded['income on'], ...recorded['income off']].map((n) => n.text));
 
+/** Loading words that are now a skeleton's status (components/LoadingSkeletons.tsx):
+ *  no longer a line on screen, said once to a screen reader instead. Not a
+ *  warning, so not a note whose words must stay on screen. */
+const NOW_A_STATUS: Record<string, string> = { 'Loading budgets…': 'Loading budgets' };
+
 describe('every note the month said is still said, in its words and at its level', () => {
   test('the recording covers every scene drawn now', () => {
     expect(Object.keys(recorded).sort()).toEqual(Object.keys(now).sort());
@@ -93,9 +98,11 @@ describe('every note the month said is still said, in its words and at its level
 
   for (const [scene, notes] of Object.entries(recorded)) {
     test(scene, () => {
-      const said = notesIn(now[scene]());
+      const html = now[scene]();
+      const said = notesIn(html);
       const missing = notes
         .filter((n) => !(scene.startsWith('tab:') && IN_THE_SETTING.has(n.text)))
+        .filter((n) => !(n.text in NOW_A_STATUS && html.includes(`role="status">${NOW_A_STATUS[n.text]}</p>`)))
         .map((n) => ({ text: filled(n.text), level: n.level }))
         .filter((n) => !said.some((s) => s.level === n.level && s.text.includes(n.text)));
       expect(missing).toEqual([]);

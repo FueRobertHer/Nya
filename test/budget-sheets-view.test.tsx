@@ -708,7 +708,7 @@ describe('a save that fails, through the store and the month as the dashboard wi
     dom.document.body.appendChild(host);
     const root = createRoot(host as unknown as HTMLElement);
     act(() => root.render(<Page />));
-    expect(host.textContent).toContain('Loading budgets…');
+    expect(host.textContent).toContain('Loading budgets');
     await act(async () => store.load());
     await settle();
     const v = harness(host as unknown as FakeElement);
@@ -733,7 +733,7 @@ describe('a save that fails, through the store and the month as the dashboard wi
     await settle();
     // The store reading the budgets again: the card still drawn, read only,
     // and the sheet open on what was typed, its suggestion and rollover kept.
-    expect(host.textContent).not.toContain('Loading budgets…');
+    expect(host.textContent).not.toContain('Loading budgets');
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Groceries');
     expect(v.field('Monthly budget for Groceries')!.value).toBe('450');
     expect(v.button(`Use ${money(SUGGESTED)}`, v.dialog()!)).not.toBeNull();

@@ -45,6 +45,14 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      // Offline, the page kept for this address, or for a page whose
+      // address differs only in its query: the dashboard keeps its tab in
+      // ?tab= (lib/dashboard-tab.ts), and a tab never opened online is
+      // still the same page, which reads its tab from the address.
+      .catch(() =>
+        caches
+          .match(event.request)
+          .then((hit) => hit ?? (event.request.mode === 'navigate' ? caches.match(event.request, { ignoreSearch: true }) : undefined))
+      )
   );
 });

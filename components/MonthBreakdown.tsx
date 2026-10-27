@@ -20,6 +20,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivitySegment } from "./ActivityBar";
 import ReportsEntry from "./ReportsEntry";
+import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
 import { amountSamples, compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
@@ -728,6 +729,7 @@ export default function MonthBreakdown({
   const bar = (withMenu: boolean) => (
     <ActivityBar
       month={segment !== "shared" && selected ? monthName(selected) : null}
+      monthPending={segment !== "shared" && !selected && loading}
       onEarlier={at >= 0 && at < months.length - 1 ? () => goMonth(months[at + 1]) : undefined}
       onLater={at > 0 ? () => goMonth(months[at - 1]) : undefined}
       segment={segment}
@@ -761,13 +763,9 @@ export default function MonthBreakdown({
         {bar(false)}
         {panel(
           <>
-            <div className="card">
-              <div
-                className="spinner"
-                role="status"
-                aria-label="Loading transactions"
-              />
-            </div>
+            {/* The list's cards as they will be, figures still to come
+                (components/LoadingSkeletons.tsx). */}
+            <ActivityListSkeleton segment={segment} />
             {/* Reports read their own, so they don't wait for the list. */}
             {segment === "spending" && <ReportsEntry />}
           </>
