@@ -101,6 +101,34 @@ They work on every environment but production: Vercel's Preview and Development 
 
 Before making Preview public (turning off Vercel's protection for it), give it its own database and `MASTER_KEY`, as described in [deployment.md](deployment.md#what-preview-runs-against).
 
+### Seeding the demo accounts
+
+Linked by hand, a demo account holds only what Plaid's default sandbox user has (one bank, a few transactions). `scripts/seed-demo.ts` resets Alex and Sam to a year of realistic data instead, so every tab has something to show:
+
+- **Alex**, 31, single, rents: checking and high-yield savings, a rewards card, a student loan, a brokerage account, a Roth IRA and a 401(k) with holdings, an HSA entered by hand, five budgets, two goals, and a Plan to retire at 45.
+- **Sam**, 38, a two-income household with a child: joint checking and savings, a family card, a mortgage and a car loan, two workplace plans, two Roth IRAs, a joint brokerage account and a 529, the home's value entered by hand, five budgets, two goals, and a Plan to retire at 52 with Social Security from 67.
+
+Each bank is a Plaid sandbox custom user (`user_custom`, with the accounts, balances, transactions, holdings and card details as JSON), linked and stored as linking one in the app stores it, and Plaid categorizes the transactions from their descriptions as it does a real bank's. Budgets, goals, the manual accounts and the Plan go through their own stores. The profiles are in `lib/demo-seed/profiles.ts`, and the same day always gives the same data.
+
+A run **replaces everything** in the demo account: it disconnects each linked bank (removing it at Plaid), empties the account as Settings' "Empty my account" does, and seeds it again with the dates moved up to today. Run it again whenever the demo has drifted or its history has aged. It writes only where demo accounts exist, and refuses otherwise (`lib/demo-seed/guard.ts`):
+
+- **Never Production.** Only with `VERCEL_ENV` set to `preview` or `development` (the demo sign-in's own rule, `lib/demo.ts`), never with `production`, and never into the `production` prefix.
+- **The prefix named twice**, as a restore asks: `--target` must match the prefix the environment writes to (`REDIS_PREFIX`, else `VERCEL_ENV`).
+- **Plaid's sandbox only** (`PLAID_ENV=sandbox`).
+- **Only the containers the demo accounts own.** Each must have signed in there once (press its button on the sign-in page); a container another sign-in also owns, or the environment's primary one, is refused.
+
+To seed Preview, pull its variables into a file of their own and point Bun at it with `--env-file`, so Bun reads that file and none of the others (without the flag Bun loads `.env.development.local`, which is the development environment's):
+
+```bash
+vercel env pull .env.preview.local --environment=preview
+bun --env-file=.env.preview.local scripts/seed-demo.ts --target preview --dry-run
+bun --env-file=.env.preview.local scripts/seed-demo.ts --target preview
+```
+
+The dry run checks everything and says what each account would lose, writing nothing. `--only Alex` (or `Sam`) seeds one. If the pulled file has no `VERCEL_ENV`, add `VERCEL_ENV=preview` to it. A run takes about a minute: it syncs each bank as a page load does (through the app's own sync, after its billing check) until the bank's whole year is stored, so the first visit after it sees all of it; if Plaid is slow, it says which bank's history is still coming, which then appears within minutes. Anyone using a demo account while it runs may see it half seeded.
+
+Two sandbox quirks shape the profiles. Plaid puts each investment transaction of a custom user on every investment account in it, so each investment account is linked from its own brokerage. And Plaid runs its own payment schedule on a `student` loan, replacing its balance and rows, so Alex's student loan is linked as a plain loan with no repayment details.
+
 ## API tokens
 
 A personal API token lets a program its owner chooses (a script, a dashboard, an AI assistant) read their data through the API (`/api/v1`) and the MCP server (`/api/mcp`), which the public Developers page (`/developers`) documents. It works without a session, and changes nothing, unless writing is turned on and it was made to (below). Tokens are made, listed and revoked in the **API tokens** card, in **Settings**, Your data and privacy (`components/ApiTokens.tsx`, `app/api/api-tokens`, `lib/api-tokens.ts`).
