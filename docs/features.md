@@ -8,6 +8,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Debt payoff plan](#debt-payoff-plan)
 - [Hiding accounts](#hiding-accounts)
 - [Hiding amounts](#hiding-amounts)
+- [Light and dark](#light-and-dark)
 - [A home currency](#a-home-currency)
 - [Accounts that end](#accounts-that-end)
   - [When Nya asks](#when-nya-asks)
@@ -176,6 +177,14 @@ What shows proportions stays: meters and bars keep their lengths, the charts the
 It is remembered on this device, in the browser's own storage (beside the dashboard's last-known snapshot), and never stored on the server: it follows you to another tab on the device, not to another device. Where the browser keeps nothing (a private window, blocked site data), it lasts as long as the page is open, and a page that can't read the choice shows amounts.
 
 It never changes what leaves Nya: the read-only API and the MCP server, the data download (JSON, CSV and OFX), a report's CSV and every answer from the server carry the figures. A report printed, or saved as a PDF, has its figures too: printing is a deliberate act, so the Reports page shows them while the browser prints and hides them again after. Printing any other page prints what is on screen. Where it applies in the code is in [architecture.md](architecture.md#hiding-amounts).
+
+## Light and dark
+
+Nya follows the device: dark when the device is set to dark or says nothing, light when it is set to light, and it changes when the device does. **Settings > Preferences > Theme** can keep it on **Dark** or **Light** instead, or go back to **System**. The choice applies at once.
+
+It is this device's choice, like hiding amounts: a phone and a laptop can differ, and nothing is stored with the account. It is kept in a cookie the browser sends with each page, so a page opens in it with nothing drawn in the other theme first. Other tabs already open on the device change on their next load, and so does a page the app shows from its offline copy. Where cookies are blocked, a choice lasts as long as the page is open, and Nya follows the device after.
+
+Clerk's sign-in and account windows follow the theme, since they are drawn in the app's own colors. Printing is always black on white, whichever theme is on. On an iPhone or iPad with Nya added to the home screen, the status bar's clock and battery stay white with **System**, as before, which is hard to read when the device is light; choosing **Light** gives the light status bar. The app's icon and its install splash stay dark.
 
 ## A home currency
 

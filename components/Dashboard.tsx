@@ -19,6 +19,7 @@ import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import ApiTokens from './ApiTokens';
 import WeeklySummaryCard from './WeeklySummaryCard';
+import { ThemeCard } from './ThemeCard';
 import { localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
@@ -1842,9 +1843,11 @@ export default function Dashboard({
     {
       id: 'preferences',
       title: 'Preferences',
-      sub: 'Home currency and rates, weekly summary email',
+      sub: 'Theme, home currency and rates, weekly summary email',
       content: (
         <>
+          {/* System, Dark or Light, for this device (components/ThemeCard.tsx). */}
+          <ThemeCard />
           {/* The home currency and your own rates (components/CurrencyCard.tsx):
               applied after the server's cache, so a change shows on the
               next load of net worth, which it asks for. */}

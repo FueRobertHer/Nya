@@ -1,22 +1,81 @@
-// The dark theme's colors for what can't read a CSS variable: Clerk's
-// appearance and the viewport's themeColor (app/layout.tsx), and the web
-// manifest (public/manifest.json). The tokens themselves are in
-// app/globals.css; test/design-guard.test.ts fails if a value here, or the
-// manifest's, differs from the token it names.
+// The themes' colors for what can't read a CSS variable: the viewport's
+// themeColor (app/layout.tsx, and components/theme.ts after a change) and the
+// web manifest (public/manifest.json, dark: it is the install splash). The
+// tokens themselves are in app/globals.css; test/design-guard.test.ts fails
+// if a value here, or the manifest's, differs from the token it names.
 
 export const DARK = {
   canvas: '#0d0f14',
-  surface: '#151821',
-  elevated: '#1c202b',
-  'border-strong': '#2b3140',
-  'text-1': '#eceef2',
-  'text-2': '#9499a6',
-  accent: '#5b8def',
-  pos: '#34d399',
-  neg: '#f87171',
-  warn: '#fbbf24',
-  'on-fill': '#ffffff',
-  scrim: 'rgba(0, 0, 0, 0.55)',
+} as const;
+
+export const LIGHT = {
+  canvas: '#f6f7f9',
 } as const;
 
 export const FONT_UI = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+/** A theme chosen in Settings > Preferences. None follows the system: dark
+ *  when it is dark or says nothing, light when it is light (the CSS decides). */
+export type ThemeChoice = 'light' | 'dark';
+
+/** The cookie that keeps the choice on this device, which the root layout
+ *  reads so the first paint is already in it (components/theme.ts sets it). */
+export const THEME_COOKIE = 'nya-theme';
+
+/** The choice a cookie holds; anything else is the system's. */
+export function themeChoice(value: string | null | undefined): ThemeChoice | null {
+  return value === 'light' || value === 'dark' ? value : null;
+}
+
+/** The browser's chrome color, as two entries whatever the choice, so a
+ *  change can rewrite them in place: each theme's canvas by the system's
+ *  setting, or the chosen one's for both. */
+export function themeColors(choice: ThemeChoice | null): { media: string; color: string }[] {
+  const canvas = (t: ThemeChoice) => (t === 'light' ? LIGHT : DARK).canvas;
+  return (['light', 'dark'] as const).map((t) => ({ media: `(prefers-color-scheme: ${t})`, color: canvas(choice ?? t) }));
+}
+
+/** What the page tells the browser it draws in, for its own controls and
+ *  the canvas before the styles load. */
+export function colorScheme(choice: ThemeChoice | null): 'light' | 'dark' | 'dark light' {
+  return choice ?? 'dark light';
+}
+
+/** iOS home-screen apps: white status text over the page, which only reads
+ *  on dark, or the light bar with dark text. With no choice the system's
+ *  setting isn't known here, so dark's, as before (docs/features.md). */
+export function statusBarStyle(choice: ThemeChoice | null): 'default' | 'black-translucent' {
+  return choice === 'light' ? 'default' : 'black-translucent';
+}
+
+// Clerk's sign-in, menu and account window in the app's tokens: CSS
+// variables, which Clerk's appearance takes, so it follows the theme as the
+// app does, whichever selects it.
+export const CLERK_APPEARANCE = {
+  variables: {
+    colorPrimary: 'var(--accent)',
+    colorPrimaryForeground: 'var(--on-fill)',
+    colorBackground: 'var(--surface)',
+    colorForeground: 'var(--text-1)',
+    colorMutedForeground: 'var(--text-2)',
+    colorMuted: 'var(--elevated)',
+    colorNeutral: 'var(--text-1)',
+    colorInput: 'var(--canvas)',
+    colorInputForeground: 'var(--text-1)',
+    colorBorder: 'var(--border-strong)',
+    colorDanger: 'var(--neg)',
+    colorSuccess: 'var(--pos)',
+    colorWarning: 'var(--warn)',
+    colorModalBackdrop: 'var(--scrim)',
+    borderRadius: '10px',
+    fontFamily: FONT_UI,
+  },
+  elements: {
+    // Clerk draws its plain badge ("Primary" beside an address) in its border
+    // color, which on this border is unreadable; secondary text instead, as
+    // the app's own labels.
+    badge: {
+      '&[data-color="primary"]': { color: 'var(--text-2)', borderColor: 'var(--border-strong)' },
+    },
+  },
+};

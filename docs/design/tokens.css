@@ -1,10 +1,10 @@
 /*
  * Nya design tokens: reference file for the UI reorganization.
  *
- * Rollout phase 2 copied the scales, the dark theme and the aliases into
- * app/globals.css; the light theme waits here for phase 7. Contrast ratios are
- * listed in docs/design/design-system.md and checked, with the copies kept
- * equal, by test/design-guard.test.ts.
+ * Copied into app/globals.css: the scales, both themes and the aliases (the
+ * scales, the dark theme and the aliases in rollout phase 2, the light theme in
+ * phase 7). Contrast ratios are listed in docs/design/design-system.md and
+ * checked, with the copies kept equal, by test/design-guard.test.ts.
  *
  * Theme selection: follows the system. Dark when the system is dark or states
  * no preference, light when it is light. A choice in Settings sets
@@ -107,6 +107,27 @@
 
   --focus: #5b8def;
   --scrim: rgba(0, 0, 0, 0.55);
+  --shadow: rgba(0, 0, 0, 0.45); /* under a sheet */
+
+  /* Tags: the colors a tag can have (lib/tags.ts), text on its tint */
+  --tag-gray: #c3c6cd;
+  --tag-gray-tint: #2a2d36;
+  --tag-red: #f49a9a;
+  --tag-red-tint: #3c242b;
+  --tag-orange: #f5b27c;
+  --tag-orange-tint: #3c2d26;
+  --tag-yellow: #ead77f;
+  --tag-yellow-tint: #3a3726;
+  --tag-green: #8ae2b9;
+  --tag-green-tint: #1c3935;
+  --tag-teal: #86dede;
+  --tag-teal-tint: #1a373e;
+  --tag-blue: #a3bff6;
+  --tag-blue-tint: #232f4a;
+  --tag-purple: #c8aaf4;
+  --tag-purple-tint: #312949;
+  --tag-pink: #f0a6cd;
+  --tag-pink-tint: #3b263a;
 }
 
 /* ---------- Light ---------- */
@@ -137,6 +158,25 @@
     --on-fill: #ffffff;
     --focus: #2563eb;
     --scrim: rgba(17, 20, 28, 0.4);
+    --shadow: rgba(17, 20, 28, 0.16);
+    --tag-gray: #4b5262;
+    --tag-gray-tint: #eef0f3;
+    --tag-red: #b42323;
+    --tag-red-tint: #fcebeb;
+    --tag-orange: #b2470f;
+    --tag-orange-tint: #fcefe6;
+    --tag-yellow: #835200;
+    --tag-yellow-tint: #faf3da;
+    --tag-green: #0f7448;
+    --tag-green-tint: #e7f4ec;
+    --tag-teal: #0c6f6f;
+    --tag-teal-tint: #e3f3f3;
+    --tag-blue: #1f4fc9;
+    --tag-blue-tint: #eaf0fc;
+    --tag-purple: #7333c4;
+    --tag-purple-tint: #f2ebfc;
+    --tag-pink: #b3195f;
+    --tag-pink-tint: #fbeaf2;
   }
 }
 
@@ -166,6 +206,25 @@
   --on-fill: #ffffff;
   --focus: #2563eb;
   --scrim: rgba(17, 20, 28, 0.4);
+  --shadow: rgba(17, 20, 28, 0.16);
+  --tag-gray: #4b5262;
+  --tag-gray-tint: #eef0f3;
+  --tag-red: #b42323;
+  --tag-red-tint: #fcebeb;
+  --tag-orange: #b2470f;
+  --tag-orange-tint: #fcefe6;
+  --tag-yellow: #835200;
+  --tag-yellow-tint: #faf3da;
+  --tag-green: #0f7448;
+  --tag-green-tint: #e7f4ec;
+  --tag-teal: #0c6f6f;
+  --tag-teal-tint: #e3f3f3;
+  --tag-blue: #1f4fc9;
+  --tag-blue-tint: #eaf0fc;
+  --tag-purple: #7333c4;
+  --tag-purple-tint: #f2ebfc;
+  --tag-pink: #b3195f;
+  --tag-pink-tint: #fbeaf2;
 }
 
 /* ---------- Aliases for today's names ----------

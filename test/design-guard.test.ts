@@ -9,7 +9,8 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DARK, FONT_UI } from '@/lib/theme';
+import { BUCKET_COLORS, CLASS_COLORS } from '@/components/allocation-text';
+import { DARK, FONT_UI, LIGHT } from '@/lib/theme';
 import baselineJson from './design-guard-baseline.json';
 import {
   ROOT,
@@ -118,20 +119,29 @@ describe('design guard: copy', () => {
   });
 });
 
-describe('design guard: the tokens (app/globals.css, and docs/design/tokens.css for light)', () => {
+describe('design guard: the tokens (app/globals.css and docs/design/tokens.css)', () => {
   const t = themes(read('docs/design/tokens.css'));
   const app = appTheme(read('app/globals.css'));
 
-  test("the app's scales and dark theme are the ones in docs/design/tokens.css", () => {
+  test("the app's scales and both themes are the ones in docs/design/tokens.css", () => {
     const ref = referenceVars(read('docs/design/tokens.css'));
     expect(app.scales).toEqual(ref.scales);
     expect(app.darkVars).toEqual(ref.darkVars);
+    expect(app.lightVars).toEqual(ref.lightVars);
+  });
+
+  test("the app's light theme is the same whether the system, a choice or print selects it", () => {
+    expect(app.lightBySystemVars).toEqual(app.lightVars);
+    expect(app.printVars).toEqual(app.lightVars);
   });
 
   test('lib/theme.ts and the web manifest hold the same values as the tokens', () => {
     const drift: string[] = [];
     for (const [k, v] of Object.entries(DARK)) {
       if (app.darkVars[k] !== v) drift.push(`lib/theme.ts ${k} is ${v}, --${k} is ${app.darkVars[k]}`);
+    }
+    for (const [k, v] of Object.entries(LIGHT)) {
+      if (app.lightVars[k] !== v) drift.push(`lib/theme.ts LIGHT ${k} is ${v}, light --${k} is ${app.lightVars[k]}`);
     }
     if (FONT_UI !== app.scales['font-ui']) drift.push(`lib/theme.ts FONT_UI is ${FONT_UI}, --font-ui is ${app.scales['font-ui']}`);
     const manifest = JSON.parse(read('public/manifest.json'));
@@ -141,7 +151,7 @@ describe('design guard: the tokens (app/globals.css, and docs/design/tokens.css 
     expect(drift).toEqual([]);
   });
 
-  for (const [name, theme] of [['dark', app.dark], ['light', t.light]] as const) {
+  for (const [name, theme] of [['dark', app.dark], ['light', app.light]] as const) {
     test(`every allowed pairing passes AA in ${name}`, () => {
       const failing: string[] = [];
       for (const [fg, bg, min] of contrastPairs()) {
@@ -158,5 +168,18 @@ describe('design guard: the tokens (app/globals.css, and docs/design/tokens.css 
 
   test('the light theme is the same whether the system or a choice selects it', () => {
     expect(t.lightBySystem).toEqual(t.light);
+  });
+
+  // The allocation views draw each class and tax bucket in one color in both
+  // themes (components/allocation-text.ts), on a card.
+  test('the allocation colors pass 3:1 on a card in both themes', () => {
+    const failing: string[] = [];
+    for (const [name, theme] of [['dark', app.dark], ['light', app.light]] as const) {
+      for (const color of new Set([...Object.values(CLASS_COLORS), ...Object.values(BUCKET_COLORS)])) {
+        const ratio = contrast(color, theme.surface);
+        if (ratio < 3) failing.push(`${color} on ${name} --surface is ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failing).toEqual([]);
   });
 });

@@ -132,7 +132,7 @@ A full screen with a list of sections; each opens its own view with a back butto
 
 | Section | Contents | From today |
 |---|---|---|
-| **Preferences** | Home currency and rates; theme (System, Dark, Light); weekly summary email | CurrencyCard, WeeklySummaryCard (Manage); theme is new |
+| **Preferences** | Theme (System, Dark, Light); home currency and rates; weekly summary email | ThemeCard (new in phase 7), CurrencyCard, WeeklySummaryCard (Manage) |
 | **Transactions** | Categories and groups (with starter sets); tags; rules; merchant defaults; review queue | CategoriesCard, CategoryManager, TagsCard, RulesCard, VendorDefaultsCard, ReviewSettingsCard (Manage) |
 | **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget; for the admin, unused connections and "Check all accounts now" | AccountLinks, AdminUnusedItems, the all-hidden filter (Manage) |
 | **Sharing** | Invite, people, what each sees and for how long, blocked | SharingDrawer (avatar menu, Accounts button) |
@@ -232,6 +232,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ReportsEntry | Activity foot; Manage | Activity > Spending |
 | ReportsPage, ReportView, RunwayReport, RunwayChart, YearOverYearReport | `/reports` | Unchanged |
 | WeeklySummaryCard | Manage | Settings > Preferences |
+| ThemeCard | New (phase 7) | Settings > Preferences, first |
 | CurrencyCard, CurrencyChoiceSheet | Manage; Home offer | Settings > Preferences; Needs attention |
 | CategoriesCard, CategoryManager, CategoryTemplates | Manage | Settings > Transactions |
 | TemplateOffer | Top of Budgets | Budgets > Month (dismissible notice) |

@@ -204,7 +204,7 @@ export default function ForecastChart({
       >
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
+            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
               {compactMoney(t, currency)}
             </text>
@@ -223,7 +223,7 @@ export default function ForecastChart({
         )}
         {i !== null && value !== null && (
           <>
-            <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="#3a4150" strokeWidth={1} />
+            <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-input)" strokeWidth={1} />
             <circle cx={x(i)} cy={y(value)} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
             {altValue !== null && <circle cx={x(i)} cy={y(altValue)} r={4} fill="var(--warn)" stroke="var(--card)" strokeWidth={2} />}
           </>

@@ -42,7 +42,8 @@ Also:
 - Use only `var(--…)` colors: the tokens on `:root` in `app/globals.css` (`--canvas`, `--surface`, `--elevated`, `--border-subtle`, `--text-1`, `--accent`, `--neg-tint`, `--accent-fill`, ...; the table is in [design-system.md](design-system.md#color)).
 - New rules use the token names. Today's names (`--bg`, `--card`, `--raised`, `--border`, `--line`, `--text`, `--muted`, `--up`, `--down`) are aliases kept so older rules keep working; don't add new uses of them.
 - **No color literals** (`#hex`, `rgb()`, `hsl()`) in components or in new CSS rules. Charts pass `var(--…)` strings to `fill` and `stroke`.
-- The app is dark only until rollout phase 7. Code that can't read a CSS variable (Clerk, `themeColor`) imports `lib/theme.ts`.
+- The app is light or dark (rollout phase 7), so a color that only reads in one of them is a bug. Code that can't read a CSS variable (`themeColor`, the web manifest) imports `lib/theme.ts`; Clerk takes the variables themselves.
+- A token at an alpha is `color-mix(in srgb, var(--token) N%, transparent)`, never the token's color restated as `rgba()`.
 - **Meaning, not decoration.** Blue is for actions and the current selection. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Amber is only for something that needs the person. Red is for a number that is wrong or short.
 - **Never color alone**: a state shown in color also has a word or an icon.
 
@@ -160,7 +161,7 @@ A new token, component pattern, color or size is a change to the design system, 
 - When a count falls, the test asks you to lower that file's number in the baseline. Do it in the same pull request; the baseline only ever goes down.
 - Every component in `components/` is placed in the information architecture doc.
 - Every class in the table above exists.
-- `docs/design/tokens.css` passes AA contrast in both themes, and its two light blocks match.
+- Both themes, as `app/globals.css` has them, pass AA contrast (tag colors included); the app's copies of the tokens (the light theme's three, print's among them) match `docs/design/tokens.css`, and `lib/theme.ts` and the manifest match the app.
 
 When it fails, fix the code. Don't raise a baseline number to make it pass.
 

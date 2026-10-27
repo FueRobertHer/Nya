@@ -205,10 +205,10 @@ function mount(node: React.ReactNode) {
     // warning), as its stroke and where it ends.
     across: () => lines((e) => e.getAttribute('x1') === '8').map((e) => [e.getAttribute('stroke'), e.getAttribute('x2')]),
     // Each gridline's height, top first.
-    gridlines: () => lines((e) => e.getAttribute('stroke') === '#262a33').map((e) => Number(e.getAttribute('y1'))).sort((a, b) => a - b),
+    gridlines: () => lines((e) => e.getAttribute('stroke') === 'var(--border-subtle)').map((e) => Number(e.getAttribute('y1'))).sort((a, b) => a - b),
     ticks: () => svg()!.findAll((e) => e.getAttribute('class') === 'chart-tick').map((e) => e.textContent),
     // The crosshair's top and bottom.
-    crosshair: () => lines((e) => e.getAttribute('stroke') === '#3a4150').map((e) => [e.getAttribute('y1'), e.getAttribute('y2')]),
+    crosshair: () => lines((e) => e.getAttribute('stroke') === 'var(--border-input)').map((e) => [e.getAttribute('y1'), e.getAttribute('y2')]),
     // Where the last date is written.
     endLabel: () => svg()!.findAll((e) => e.getAttribute('class') === 'chart-xlabel' && e.getAttribute('text-anchor') === 'end').map((e) => [e.getAttribute('x'), e.getAttribute('y')]),
     unmount,

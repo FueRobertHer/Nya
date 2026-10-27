@@ -183,7 +183,7 @@ describe('the payoff planner', () => {
     // Its line leaves through the top of the chart, where the axis stops,
     // rather than running flat along the edge (the plot's top, 14 under the
     // svg's own, room for the top tick's 12px figure since 6a4).
-    const baseline = /<path d="([^"]+)"[^>]*stroke="#6b7080"/.exec(withExtra)![1];
+    const baseline = /<path d="([^"]+)"[^>]*stroke="var\(--text-3\)"/.exec(withExtra)![1];
     expect(baseline.endsWith(',14.0')).toBe(true);
     expect(baseline.split('L').length).toBeLessThan(200);
   });

@@ -1,8 +1,9 @@
 /* ---------- Design tokens (docs/design/design-system.md) ----------
- * Copied from docs/design/tokens.css: the scales and the dark theme. The
- * light theme stays in that file until rollout phase 7 turns it on.
- * test/design-guard.test.ts fails if the two copies of the dark theme, or
- * lib/theme.ts (Clerk and themeColor), drift apart.
+ * Copied from docs/design/tokens.css: the scales and both themes. Dark when
+ * the system is dark or says nothing, light when it is light; a choice in
+ * Settings > Preferences (components/theme.ts) sets data-theme on <html>,
+ * which wins either way. test/design-guard.test.ts fails if the copies, or
+ * lib/theme.ts and the web manifest, drift apart.
  */
 :root {
   /* Type. Nothing on screen goes under --fs-1. */
@@ -98,6 +99,124 @@
 
   --focus: #5b8def;
   --scrim: rgba(0, 0, 0, 0.55);
+  --shadow: rgba(0, 0, 0, 0.45); /* under a sheet */
+
+  /* Tags: the colors a tag can have (lib/tags.ts), text on its tint */
+  --tag-gray: #c3c6cd;
+  --tag-gray-tint: #2a2d36;
+  --tag-red: #f49a9a;
+  --tag-red-tint: #3c242b;
+  --tag-orange: #f5b27c;
+  --tag-orange-tint: #3c2d26;
+  --tag-yellow: #ead77f;
+  --tag-yellow-tint: #3a3726;
+  --tag-green: #8ae2b9;
+  --tag-green-tint: #1c3935;
+  --tag-teal: #86dede;
+  --tag-teal-tint: #1a373e;
+  --tag-blue: #a3bff6;
+  --tag-blue-tint: #232f4a;
+  --tag-purple: #c8aaf4;
+  --tag-purple-tint: #312949;
+  --tag-pink: #f0a6cd;
+  --tag-pink-tint: #3b263a;
+}
+
+/* ---------- Light ---------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --canvas: #f6f7f9;
+    --surface: #ffffff;
+    --elevated: #f0f2f6;
+    --glass: rgba(255, 255, 255, 0.88);
+    --border-subtle: #e6e8ef;
+    --border-strong: #d5d9e2;
+    --border-input: #757c8a;
+    --text-1: #11141c;
+    --text-2: #525866;
+    --text-3: #636a77;
+    --accent: #2563eb;
+    --pos: #047857;
+    --neg: #b91c1c;
+    --warn: #92400e;
+    --accent-tint: #eef3fd;
+    --pos-tint: #ebf4f2;
+    --neg-tint: #fceeee;
+    --warn-tint: #fcf4eb;
+    --caveat-surface: #f1f3f8;
+    --accent-fill: #2563eb;
+    --danger-fill: #dc2626;
+    --on-fill: #ffffff;
+    --focus: #2563eb;
+    --scrim: rgba(17, 20, 28, 0.4);
+    --shadow: rgba(17, 20, 28, 0.16);
+    --tag-gray: #4b5262;
+    --tag-gray-tint: #eef0f3;
+    --tag-red: #b42323;
+    --tag-red-tint: #fcebeb;
+    --tag-orange: #b2470f;
+    --tag-orange-tint: #fcefe6;
+    --tag-yellow: #835200;
+    --tag-yellow-tint: #faf3da;
+    --tag-green: #0f7448;
+    --tag-green-tint: #e7f4ec;
+    --tag-teal: #0c6f6f;
+    --tag-teal-tint: #e3f3f3;
+    --tag-blue: #1f4fc9;
+    --tag-blue-tint: #eaf0fc;
+    --tag-purple: #7333c4;
+    --tag-purple-tint: #f2ebfc;
+    --tag-pink: #b3195f;
+    --tag-pink-tint: #fbeaf2;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --elevated: #f0f2f6;
+  --glass: rgba(255, 255, 255, 0.88);
+  --border-subtle: #e6e8ef;
+  --border-strong: #d5d9e2;
+  --border-input: #757c8a;
+  --text-1: #11141c;
+  --text-2: #525866;
+  --text-3: #636a77;
+  --accent: #2563eb;
+  --pos: #047857;
+  --neg: #b91c1c;
+  --warn: #92400e;
+  --accent-tint: #eef3fd;
+  --pos-tint: #ebf4f2;
+  --neg-tint: #fceeee;
+  --warn-tint: #fcf4eb;
+  --caveat-surface: #f1f3f8;
+  --accent-fill: #2563eb;
+  --danger-fill: #dc2626;
+  --on-fill: #ffffff;
+  --focus: #2563eb;
+  --scrim: rgba(17, 20, 28, 0.4);
+  --shadow: rgba(17, 20, 28, 0.16);
+  --tag-gray: #4b5262;
+  --tag-gray-tint: #eef0f3;
+  --tag-red: #b42323;
+  --tag-red-tint: #fcebeb;
+  --tag-orange: #b2470f;
+  --tag-orange-tint: #fcefe6;
+  --tag-yellow: #835200;
+  --tag-yellow-tint: #faf3da;
+  --tag-green: #0f7448;
+  --tag-green-tint: #e7f4ec;
+  --tag-teal: #0c6f6f;
+  --tag-teal-tint: #e3f3f3;
+  --tag-blue: #1f4fc9;
+  --tag-blue-tint: #eaf0fc;
+  --tag-purple: #7333c4;
+  --tag-purple-tint: #f2ebfc;
+  --tag-pink: #b3195f;
+  --tag-pink-tint: #fbeaf2;
 }
 
 /* Today's names, so existing rules keep working. Each alias goes once nothing
@@ -1100,7 +1219,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8f98' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d8391' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
 }
@@ -1130,7 +1249,7 @@ td {
   text-align: left;
   padding: 9px 8px;
   font-size: 14px;
-  border-bottom: 1px solid #262a33;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 th {
@@ -1262,7 +1381,7 @@ button.danger {
   display: inline-block;
   margin-left: 8px;
   padding: 2px 7px;
-  border: 1px solid #2a2f3a;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   color: var(--muted);
   font-size: 10px;
@@ -1305,7 +1424,7 @@ button.danger {
   width: 100%;
   padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid #2a2f3a;
+  border: 1px solid var(--border-input);
   /* The colour only: a select keeps its chevron (background-image). */
   background-color: var(--bg);
   color: var(--text);
@@ -1326,7 +1445,7 @@ button:disabled:where(:not([class*="cl-"])) {
 .spinner {
   width: 28px;
   height: 28px;
-  border: 3px solid #2a2f3a;
+  border: 3px solid var(--border-strong);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -1699,7 +1818,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .chart-range[aria-pressed="true"] {
-  background: rgba(91, 141, 239, 0.14);
+  background: var(--accent-tint);
   color: var(--accent);
 }
 
@@ -1964,7 +2083,7 @@ span.meter-fill {
   height: 28px;
   border-radius: 6px;
   object-fit: contain;
-  background: var(--card, #fff);
+  background: var(--surface);
 }
 
 .txn-logo-fallback {
@@ -1974,7 +2093,7 @@ span.meter-fill {
   font-size: 13px;
   font-weight: 600;
   color: var(--muted);
-  background: var(--track, rgba(127, 127, 127, 0.15));
+  background: var(--elevated);
   text-transform: uppercase;
 }
 
@@ -2032,7 +2151,7 @@ span.meter-fill {
 }
 
 .txn-detail-row a {
-  color: var(--accent, #6ea8fe);
+  color: var(--accent);
 }
 
 /* Account last-4 and credit-utilization meter on the Accounts tab. */
@@ -2153,7 +2272,7 @@ span.meter-fill {
   display: inline-block;
   margin-left: 8px;
   padding: 2px 7px;
-  border: 1px solid #2a2f3a;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
@@ -2163,7 +2282,7 @@ span.meter-fill {
 }
 
 .cash-chip.idle {
-  border-color: rgba(224, 168, 60, 0.45);
+  border-color: var(--warn);
   color: var(--warn);
 }
 
@@ -2228,7 +2347,7 @@ span.meter-fill {
    transaction table since they sit nested two levels deep. */
 .inv-activity {
   margin-top: 14px;
-  border-top: 1px solid #262a33;
+  border-top: 1px solid var(--border-subtle);
   padding-top: 12px;
 }
 
@@ -2240,7 +2359,7 @@ span.meter-fill {
    separated by a hairline so a suggestion and its preview read as a unit. */
 .account-link-row {
   padding: 10px 0;
-  border-top: 1px solid var(--border, #262a33);
+  border-top: 1px solid var(--border-strong);
 }
 .account-link-row:first-of-type {
   border-top: none;
@@ -2393,7 +2512,7 @@ span.meter-fill {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   opacity: 0;
@@ -2425,7 +2544,7 @@ span.meter-fill {
   border: 1px solid var(--line);
   border-bottom: none;
   border-radius: 20px 20px 0 0;
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 -12px 40px var(--shadow);
   transform: translateY(100%);
   transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
   padding-bottom: env(safe-area-inset-bottom);
@@ -2511,7 +2630,7 @@ span.meter-fill {
     border-radius: 20px 0 0 20px;
     border: 1px solid var(--line);
     border-right: none;
-    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+    box-shadow: -12px 0 40px var(--shadow);
     transform: translateX(100%);
     padding-top: env(safe-area-inset-top);
   }
@@ -2678,7 +2797,7 @@ span.meter-fill {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  background: rgba(91, 141, 239, 0.16);
+  background: var(--accent-tint);
   color: var(--accent);
   font-size: 15px;
   font-weight: 700;
@@ -2736,7 +2855,7 @@ span.meter-fill {
 
 button.danger-outline {
   background: transparent;
-  border: 1px solid rgba(239, 91, 91, 0.35);
+  border: 1px solid var(--neg);
   color: var(--down);
 }
 
@@ -4326,7 +4445,7 @@ button.plan-edit:disabled {
 }
 
 .cal-day.selected {
-  background: rgba(91, 141, 239, 0.14);
+  background: var(--accent-tint);
 }
 
 .cal-num {
@@ -4901,12 +5020,61 @@ button.import-choice {
     }
   }
 
-  /* The tokens, so today's names (their aliases) follow. [data-theme] matches
-     the theme blocks' specificity, so a chosen theme never prints dark. The
-     meaning colors and tints stay the dark theme's until phase 7 rebuilds
-     print on the light tokens; no printed part uses a notice or badge yet. */
-  :root[data-theme],
-  :root {
+  /* The light theme, then black and white over it, so today's names (their
+     aliases) follow. Both selectors are as specific as the light theme's own
+     (0,2,0) whether data-theme is set or not, and come after it, so the
+     screen's theme never prints. test/design-guard.test.ts keeps this copy
+     equal to the light theme. */
+  :root:not([data-theme]),
+  :root[data-theme] {
+    color-scheme: light;
+    --canvas: #f6f7f9;
+    --surface: #ffffff;
+    --elevated: #f0f2f6;
+    --glass: rgba(255, 255, 255, 0.88);
+    --border-subtle: #e6e8ef;
+    --border-strong: #d5d9e2;
+    --border-input: #757c8a;
+    --text-1: #11141c;
+    --text-2: #525866;
+    --text-3: #636a77;
+    --accent: #2563eb;
+    --pos: #047857;
+    --neg: #b91c1c;
+    --warn: #92400e;
+    --accent-tint: #eef3fd;
+    --pos-tint: #ebf4f2;
+    --neg-tint: #fceeee;
+    --warn-tint: #fcf4eb;
+    --caveat-surface: #f1f3f8;
+    --accent-fill: #2563eb;
+    --danger-fill: #dc2626;
+    --on-fill: #ffffff;
+    --focus: #2563eb;
+    --scrim: rgba(17, 20, 28, 0.4);
+    --shadow: rgba(17, 20, 28, 0.16);
+    --tag-gray: #4b5262;
+    --tag-gray-tint: #eef0f3;
+    --tag-red: #b42323;
+    --tag-red-tint: #fcebeb;
+    --tag-orange: #b2470f;
+    --tag-orange-tint: #fcefe6;
+    --tag-yellow: #835200;
+    --tag-yellow-tint: #faf3da;
+    --tag-green: #0f7448;
+    --tag-green-tint: #e7f4ec;
+    --tag-teal: #0c6f6f;
+    --tag-teal-tint: #e3f3f3;
+    --tag-blue: #1f4fc9;
+    --tag-blue-tint: #eaf0fc;
+    --tag-purple: #7333c4;
+    --tag-purple-tint: #f2ebfc;
+    --tag-pink: #b3195f;
+    --tag-pink-tint: #fbeaf2;
+  }
+
+  :root:not([data-theme]),
+  :root[data-theme] {
     color-scheme: light;
     --text-1: #000;
     --text-2: #333;
@@ -5208,8 +5376,8 @@ button.cat-manage-row.archived {
 
 /* --- tags and notes (#40): tag chips on a transaction's row and in its
    detail, the field to put a tag on, a note, the filter by tag, and the
-   colors a tag can have (lib/tags.ts TAG_COLORS), each a tint with text
-   that keeps its contrast on the dark cards --- */
+   colors a tag can have (lib/tags.ts TAG_COLORS), each its text on its
+   tint (the --tag-* tokens, checked by test/design-guard.test.ts) --- */
 
 .tag-chips {
   display: inline-flex;
@@ -5232,15 +5400,20 @@ button.cat-manage-row.archived {
   overflow-wrap: anywhere;
 }
 
-.tag-gray { background: rgba(139, 143, 152, 0.18); color: #c3c6cd; }
-.tag-red { background: rgba(239, 91, 91, 0.18); color: #f49a9a; }
-.tag-orange { background: rgba(240, 140, 60, 0.18); color: #f5b27c; }
-.tag-yellow { background: rgba(224, 196, 60, 0.18); color: #ead77f; }
-.tag-green { background: rgba(62, 207, 142, 0.18); color: #8ae2b9; }
-.tag-teal { background: rgba(48, 196, 196, 0.18); color: #86dede; }
-.tag-blue { background: rgba(91, 141, 239, 0.2); color: #a3bff6; }
-.tag-purple { background: rgba(160, 110, 235, 0.2); color: #c8aaf4; }
-.tag-pink { background: rgba(232, 100, 170, 0.18); color: #f0a6cd; }
+.tag-gray { --tag: var(--tag-gray); --tag-tint: var(--tag-gray-tint); }
+.tag-red { --tag: var(--tag-red); --tag-tint: var(--tag-red-tint); }
+.tag-orange { --tag: var(--tag-orange); --tag-tint: var(--tag-orange-tint); }
+.tag-yellow { --tag: var(--tag-yellow); --tag-tint: var(--tag-yellow-tint); }
+.tag-green { --tag: var(--tag-green); --tag-tint: var(--tag-green-tint); }
+.tag-teal { --tag: var(--tag-teal); --tag-tint: var(--tag-teal-tint); }
+.tag-blue { --tag: var(--tag-blue); --tag-tint: var(--tag-blue-tint); }
+.tag-purple { --tag: var(--tag-purple); --tag-tint: var(--tag-purple-tint); }
+.tag-pink { --tag: var(--tag-pink); --tag-tint: var(--tag-pink-tint); }
+
+:is(.tag-gray, .tag-red, .tag-orange, .tag-yellow, .tag-green, .tag-teal, .tag-blue, .tag-purple, .tag-pink) {
+  background: var(--tag-tint);
+  color: var(--tag);
+}
 
 /* The x that takes a tag off, inside its chip: a 24px target on a 16px chip. */
 .tag-chip-remove {
@@ -5297,6 +5470,7 @@ button.tag-suggestion {
   margin: 8px 0;
 }
 
+/* The swatch is the text step: a tint alone is too faint to tell apart. */
 button.tag-color {
   width: 32px;
   height: 32px;
@@ -5304,6 +5478,7 @@ button.tag-color {
   padding: 0;
   border-radius: 50%;
   border: 2px solid transparent;
+  background: var(--tag);
 }
 
 button.tag-color.chosen {
@@ -6134,11 +6309,14 @@ button.cash-flow-show {
   -webkit-text-fill-color: transparent;
   text-shadow: none;
   /* Three dots in the text's color, where the text starts, sized to it. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 8'%3E%3Cg fill='%23e8e9ec'%3E%3Ccircle cx='4' cy='4' r='3'/%3E%3Ccircle cx='13' cy='4' r='3'/%3E%3Ccircle cx='22' cy='4' r='3'/%3E%3C/g%3E%3C/svg%3E");
+  background-image:
+    radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
+    radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
+    radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em);
   background-repeat: no-repeat;
   background-origin: content-box;
-  background-position: left center;
-  background-size: 1.3em 0.4em;
+  background-position: 0 center, 0.45em center, 0.9em center;
+  background-size: 0.4em 0.4em;
 }
 
 /* --- starter category templates (components/CategoryTemplates.tsx,
@@ -7364,7 +7542,7 @@ button.attach-thumb {
   z-index: 60;
   display: flex;
   flex-direction: column;
-  background: #000;
+  background: var(--canvas);
   color: var(--text);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   overscroll-behavior: contain;
