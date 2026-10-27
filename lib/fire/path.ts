@@ -9,9 +9,10 @@
 //   - otherwise projectBalance at each whole year (lib/fire/fi.ts), the
 //     closed form fiView projects the target age's balance with, stopping
 //     where a year would end below zero (projectionShort), as the walk does.
-// Nothing from nowhere: no point the figures couldn't also give, and none
-// where the walk can't go on (a cost larger than the balance, or a year
-// taking out more than there is).
+// Nothing from nowhere: no point the figures couldn't also give, no money in
+// but a windfall's, and none where the walk can't go on (a cost larger than
+// the balance, or a year taking out more than there is). A point is the
+// balance at the start of its year, before that year's money in and costs.
 //
 // Arithmetic only, and nothing that touches storage: the Plan tab runs this
 // in the browser.
@@ -21,7 +22,11 @@ import { hasWalk, walkPath, type Shortfall } from './events';
 import { projectFrom } from './plan';
 import type { PlanFigures } from './plan-figures';
 
-export type PathPoint = { age: number; balance: number };
+/** `inHand`, only in a year with money in (a windfall): the balance once it
+ *  has come in and that year's costs are paid, which the chart steps up to
+ *  at that age, so a windfall that reaches the FI number reaches it on the
+ *  line. Left out where that year's costs are more than there is. */
+export type PathPoint = { age: number; balance: number; inHand?: number };
 
 export type PlanPath = {
   /** From today's age, one a year, to the end asked for (the target age by
@@ -63,8 +68,17 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
     balances = [];
     for (let k = 0; k <= (short ? short.year : n); k++) balances.push(projectBalance(from.assets, from.savings, g, k));
   }
+  const sum = (xs: readonly { year: number; amount: number }[], k: number) => xs.reduce((s, x) => (x.year === k ? s + x.amount : s), 0);
+  const point = (balance: number, k: number): PathPoint => {
+    const moneyIn = walk ? sum(walk.moneyIn, k) : 0;
+    if (!walk || moneyIn <= 0) return { age: age + k, balance };
+    // In the walk's own order: money in, then the year's costs.
+    const cost = sum(walk.costs, k);
+    const inHand = balance + moneyIn;
+    return cost > 0 && cost > inHand + 1e-9 ? { age: age + k, balance } : { age: age + k, balance, inHand: inHand - cost };
+  };
   return {
-    points: balances.map((balance, k) => ({ age: age + k, balance })),
+    points: balances.map(point),
     stopAge: f.plan.targetAge as number,
     fiNumber: f.view.fiNumber,
     fiAge: f.view.fiAge,

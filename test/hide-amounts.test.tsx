@@ -33,6 +33,7 @@ import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
 import PlanPathChart from '@/components/PlanPathChart';
 import { ScenariosSheet } from '@/components/PlanScenarios';
+import { LifeEventsCard } from '@/components/PlanEvents';
 import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -1183,6 +1184,31 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       />
     );
   },
+  // An open scenario's life events, a row each with its figures in words:
+  // every kind, rollout 8d's car (once and every few years), raise, windfall
+  // and loan paid off among them.
+  'Plan > Your path: a scenario’s life events, of every kind': () => (
+    <LifeEventsCard
+      scenarioName="Retire at 50"
+      version="s1@r1"
+      events={[
+        { id: 'h', kind: 'house', label: 'Home', atAge: 44, cost: 100_000, yearly: 6_000, years: null },
+        { id: 'c', kind: 'child', label: 'Child', fromAge: 42, yearly: 15_000, years: 18 },
+        { id: 's', kind: 'sabbatical', label: 'Off', fromAge: 45, years: 1, savingsLost: 80_000 },
+        { id: 'p', kind: 'part-time', label: 'Part time', fromAge: 50, toAge: 60, yearly: 20_000 },
+        { id: 'x', kind: 'spending', label: 'Less', fromAge: 65, yearly: -8_000, years: 10 },
+        { id: 'v', kind: 'car', label: 'Car', atAge: 46, cost: 30_000, every: null, times: 1 },
+        { id: 'w', kind: 'car', label: 'Cars', atAge: 50, cost: 35_000, every: 8, times: 4 },
+        { id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 },
+        { id: 'g', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 },
+        { id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 },
+      ]}
+      notes={[]}
+      money={(n) => wholeMoney(n, 'USD')}
+      editable
+      onSave={async () => true}
+    />
+  ),
   // Your figures as rollout 6c draws them: each figure's row, its notes under
   // it (two gathered into a line, one in full), measured savings' rate as its
   // second line, and the assumptions, part-time income among them, as a sub.

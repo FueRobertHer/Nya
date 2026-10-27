@@ -35,6 +35,11 @@ export const WHAT_IF_TEMPLATES: readonly WhatIfTemplate[] = [
   { id: 'career-break', kind: 'sabbatical', label: 'A career break', name: 'A career break', scenarioName: (age) => `A career break at ${age}` },
   { id: 'part-time', kind: 'part-time', label: 'Part-time work', name: 'Part-time work', scenarioName: (age) => `Part-time work from ${age}` },
   { id: 'spending', kind: 'spending', label: 'A change in spending', name: 'A change in spending', scenarioName: (age) => `A change in spending at ${age}` },
+  // Rollout 8d's kinds.
+  { id: 'car', kind: 'car', label: 'Buy a car', name: 'A car', scenarioName: (age) => `Buy a car at ${age}` },
+  { id: 'raise', kind: 'raise', label: 'A raise', name: 'A raise', scenarioName: (age) => `A raise at ${age}` },
+  { id: 'windfall', kind: 'windfall', label: 'A windfall', name: 'A windfall', scenarioName: (age) => `A windfall at ${age}` },
+  { id: 'loan-end', kind: 'loan-end', label: 'Pay off a loan', name: 'A loan paid off', scenarioName: (age) => `Pay off a loan at ${age}` },
 ];
 
 /** The scenario's name for an event from a template: its own, or with
