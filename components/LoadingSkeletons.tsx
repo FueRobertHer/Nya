@@ -122,7 +122,7 @@ export function RowsSkeleton({ count, className = 'list-rows', logo = false }: {
         <li key={i}>
           <div className={logo ? 'list-row txn-row' : 'list-row'}>
             {logo && (
-              <span className="txn-logo">
+              <span className="txn-logo txn-logo-fallback">
                 <span className="skeleton block rows-skeleton-logo" />
               </span>
             )}

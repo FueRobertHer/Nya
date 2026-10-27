@@ -20,6 +20,7 @@ import { displayName, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { isFileImportedId } from '@/lib/history-import/view';
+import { shownName } from '@/lib/merchant-name';
 
 /** What a row of the list says in place of its category: a split
  *  transaction's parts, a group's size; null for any other. */
@@ -255,7 +256,7 @@ export function MemberRows({ group, onOpen }: { group: Txn; onOpen: (target: She
             onClick={() => onOpen({ kind: 'member', group: group.transaction_id, id: m.transaction_id })}
           >
             <span className="list-row-text">
-              <span className="list-row-title">{m.name}</span>
+              <span className="list-row-title">{shownName(m)}</span>
               <span className="list-row-sub">
                 {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {m.institution_name} · {m.account_name}
               </span>

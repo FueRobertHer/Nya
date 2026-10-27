@@ -40,6 +40,7 @@ import { MIN_MEMBERS, PART_PREFIX } from '@/lib/split-rows';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { IMPORTED_TXN_PREFIX, importedChangedNote } from '@/lib/history-import/view';
 import { sourceLabel } from '@/lib/manual-txn-input';
+import { shownName } from '@/lib/merchant-name';
 import type { Tag } from '@/lib/tags';
 
 /** What a row opens: a transaction, by its id in the list; a part of a split
@@ -351,7 +352,7 @@ function TxnSheet({
     );
 
   return (
-    <Sheet open={open} title={t.name} onClose={onClose} footer={more.length > 0 ? <Menu label={`More for ${t.name}`} items={more} /> : undefined}>
+    <Sheet open={open} title={shownName(t)} onClose={onClose} footer={more.length > 0 ? <Menu label={`More for ${shownName(t)}`} items={more} /> : undefined}>
       <div className="stack">
         {said}
         <div className="txn-sheet-hero">
@@ -500,7 +501,7 @@ function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsCha
   return (
     <Sheet
       open={open}
-      title={`Part of ${parent.name}`}
+      title={`Part of ${shownName(parent)}`}
       onClose={onClose}
       footer={
         <button
@@ -563,7 +564,7 @@ function MemberSheet({ open, onClose, said, group, member: m, onSplitsChanged, o
   return (
     <Sheet
       open={open}
-      title={m.name}
+      title={shownName(m)}
       onClose={onClose}
       footer={
         members.length > MIN_MEMBERS ? (

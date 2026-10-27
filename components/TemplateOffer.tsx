@@ -66,23 +66,23 @@ export default function TemplateOffer({ taxonomy, onTaxonomy }: { taxonomy: Taxo
   );
 }
 
-/** The offer itself. */
+/** The offer itself: a title, one line, and its two answers. The sets
+ *  themselves are described in the sheet See starter sets opens. */
 export function TemplateOfferCard({ onKeep, onSee }: { onKeep: () => void; onSee: () => void }) {
   return (
-    <div className="card template-offer">
-      <div className="inst-header">
-        <div className="inst-name">Categories that fit you</div>
+    <section className="card stack" aria-labelledby="template-offer-title">
+      <div className="card-header">
+        <h3 id="template-offer-title">Categories that fit you</h3>
       </div>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        Your categories are the ones Nya started you with, one for each of Plaid’s. A starter set may suit you better: Simple, with about a dozen broad
-        ones, or Freelancer, with your business income and expenses apart. You see what one changes before it does.
-      </p>
-      <div className="button-pair">
-        <button className="secondary" onClick={onKeep}>
+      <p className="helper">A starter set, Simple or Freelancer, may suit you better than the categories Nya started you with. You see what one changes before it does.</p>
+      <div className="btn-row">
+        <button type="button" className="btn secondary" onClick={onKeep}>
           Keep mine
         </button>
-        <button onClick={onSee}>See starter sets</button>
+        <button type="button" className="btn" onClick={onSee}>
+          See starter sets
+        </button>
       </div>
-    </div>
+    </section>
   );
 }

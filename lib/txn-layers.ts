@@ -215,6 +215,7 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     if (outcome.name && renamable(t)) {
       if (listed) t.name_before_rules = t.name;
       t.name = outcome.name.value;
+      delete t.name_from_bank;
     }
     // A merchant's default, under the person's own and a rule's, and what the
     // person approved, which nothing but the person moves (lib/review-layer.ts).

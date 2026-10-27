@@ -100,8 +100,10 @@ export function PlanCurrencyCard({
     return r === true;
   };
   if (mode.kind === 'none') return null;
-  const region = (body: ReactNode) => (
-    <div className="card" role="region" aria-label="Your plan’s currency" tabIndex={-1} ref={regionRef}>
+  // One element in every mode, so focus moved to it survives a change of
+  // mode; quiet when nothing about the currency needs the person.
+  const region = (body: ReactNode, quiet = false) => (
+    <div className={quiet ? 'plan-currency-quiet' : 'card'} role="region" aria-label="Your plan’s currency" tabIndex={-1} ref={regionRef}>
       {body}
     </div>
   );
@@ -173,14 +175,28 @@ export function PlanCurrencyCard({
     );
   }
 
-  // Recorded.
+  // Recorded. Said always; one line when the accounts, the spending and the
+  // last answer all agree with it, so the tab doesn't open on a notice.
   const others = mode.offer.filter((c) => c !== mode.currency);
   const to = changing?.to ?? null;
+  const quiet = !mode.kept && !(mode.previous && mode.previous !== mode.currency) && !(mode.relabelTo && mode.relabelTo !== mode.currency);
+  const change = (
+    <button className={quiet ? 'btn ghost' : 'plan-edit'} disabled={off} onClick={() => setChanging({ to: null })} aria-label="Change the currency your plan’s figures are in">
+      Change
+    </button>
+  );
   return region(
     <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        {mode.kept ?? recordedText(mode.currency)}
-      </p>
+      {quiet ? (
+        <p className="plan-currency-line">
+          <span>{recordedText(mode.currency)}</span>
+          {change}
+        </p>
+      ) : (
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          {mode.kept ?? recordedText(mode.currency)}
+        </p>
+      )}
       {mode.previous && mode.previous !== mode.currency && (
         <p className="panel-note">
           Changed from {mode.previous}. If that was a mistake, say so and they’re read in {mode.previous} again.{' '}
@@ -189,16 +205,16 @@ export function PlanCurrencyCard({
           </button>
         </p>
       )}
-      <div className="action-row" style={{ marginTop: 8 }}>
-        {mode.relabelTo && mode.relabelTo !== mode.currency && (
-          <button className="secondary" disabled={off} onClick={() => setChanging({ to: mode.relabelTo })}>
-            They’re in {mode.relabelTo}
-          </button>
-        )}
-        <button className="plan-edit" disabled={off} onClick={() => setChanging({ to: null })} aria-label="Change the currency your plan’s figures are in">
-          Change
-        </button>
-      </div>
+      {!quiet && (
+        <div className="action-row" style={{ marginTop: 8 }}>
+          {mode.relabelTo && mode.relabelTo !== mode.currency && (
+            <button className="secondary" disabled={off} onClick={() => setChanging({ to: mode.relabelTo })}>
+              They’re in {mode.relabelTo}
+            </button>
+          )}
+          {change}
+        </div>
+      )}
       {!changing && <Alert text={error} />}
       <Sheet open={!!changing} title="The currency your plan’s figures are in" onClose={() => setChanging(null)}>
         {changing && to === null && (
@@ -241,6 +257,7 @@ export function PlanCurrencyCard({
           </>
         )}
       </Sheet>
-    </>
+    </>,
+    quiet
   );
 }

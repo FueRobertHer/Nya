@@ -238,3 +238,20 @@ describe('emptyListWords', () => {
     expect(emptyListWords({ ...none, tag: true, receipt: 'with' })).toBe('No transactions match these filters.');
   });
 });
+
+describe('names on the list', () => {
+  test("the bank's own text in capitals reads readably; a merchant's name or the person's stays as given", () => {
+    const m = mount({
+      txns: [
+        row('CREDIT CARD 3333 PAYMENT *//', 25, { name_from_bank: true }),
+        row('IKEA', 80),
+        row('MY LANDLORD', 1200),
+      ],
+    });
+    const titles = m.all((e) => e.getAttribute('class') === 'list-row-title').map((e) => e.textContent);
+    expect(titles).toContain('Credit Card 3333 Payment');
+    expect(titles).toContain('IKEA');
+    expect(titles).toContain('MY LANDLORD');
+    m.unmount();
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { groupOf, summarize } from '@/components/account-groups';
-import { signedBalance, type Account, type Institution } from '@/components/accounts-format';
+import { accountKind, signedBalance, type Account, type Institution } from '@/components/accounts-format';
 import type { PageFx } from '@/lib/fx/view';
 import type { ConnectionHealth } from '@/lib/connection-state';
 import type { ConnectorIssue } from '@/lib/connectors/types';
@@ -263,5 +263,22 @@ describe('currencies', () => {
       [-5, 'EUR'],
     ]);
     expect(s.currencyNote).toBeNull();
+  });
+});
+
+describe('what kind of account it is', () => {
+  const inst = { manual: false } as Institution;
+  const acct = (over: Partial<Account>) => ({ name: 'Plaid Checking', official_name: null, type: 'depository', subtype: 'checking', currency: null, ...over }) as Account;
+
+  test("the bank's own name, without the type it already says", () => {
+    expect(accountKind(acct({ official_name: 'Plaid Gold Standard 0% Interest Checking' }), inst, 'USD')).toBe('Plaid Gold Standard 0% Interest Checking');
+    expect(accountKind(acct({ official_name: 'Everyday Money Market Account', subtype: 'money market' }), inst, 'USD')).toBe('Everyday Money Market Account');
+  });
+
+  test('the type when the name doesn’t say it, or a word only contains it', () => {
+    expect(accountKind(acct({ official_name: 'Plaid Silver Standard 0.1% Interest Saving', subtype: 'savings' }), inst, 'USD')).toBe('Plaid Silver Standard 0.1% Interest Saving · savings');
+    expect(accountKind(acct({ official_name: 'Checkingplus Rewards' }), inst, 'USD')).toBe('Checkingplus Rewards · checking');
+    expect(accountKind(acct({}), inst, 'USD')).toBe('checking');
+    expect(accountKind(acct({ subtype: null }), inst, 'USD')).toBe('depository');
   });
 });

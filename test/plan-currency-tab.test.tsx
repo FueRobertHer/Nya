@@ -199,6 +199,8 @@ describe('a plan saved before its currency was recorded', () => {
     expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN) }]);
     expect(tab.said()).toContain('Your plan’s figures are in USD, the currency they were typed in.');
     expect(tab.status()).toContain('Your plan’s figures are recorded as USD.');
+    // Nothing about it needs the person: one line, not a card, still the same region.
+    expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
     expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
     expect(tab.text()).toContain('$1,000,000');
     await tab.unmount();
@@ -278,9 +280,14 @@ describe('a plan saved before its currency was recorded', () => {
     // Not recorded on its own, even though USD can be told: the bytes there aren't the tab's to replace.
     expect(posts(calls).length).toBe(0);
     expect(tab.said()).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
+    expect(tab.region()!.getAttribute('class')).toBe('card');
+    const asked = tab.region();
     await press(tab.buttons('They’re in USD')[0]);
     expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN), answered: true }]);
     expect(tab.said()).toContain('Your plan’s figures are in USD');
+    // Answered, it becomes one line, in the same element, so focus moved to it stays.
+    expect(tab.region()).toBe(asked);
+    expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
     await tab.unmount();
   });
 

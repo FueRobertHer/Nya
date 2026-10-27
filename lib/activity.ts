@@ -386,6 +386,7 @@ export async function assembleBankRows(
     if (renamed) {
       t.renamed_from = t.name;
       t.name = renamed;
+      delete t.name_from_bank;
     }
     const stands = imported.represents.get(t.transaction_id);
     if (stands) t.stands_for = stands;

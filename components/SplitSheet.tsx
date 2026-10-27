@@ -25,6 +25,7 @@ import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
 import { bankKept, splitAtBanksAmount, splitKeptUnder } from './SplitRows';
+import { shownName } from '@/lib/merchant-name';
 
 /** "Oct 5": a transaction's day as the list shows it. */
 function shownDay(iso: string): string {
@@ -193,7 +194,7 @@ export default function SplitSheet({
   return (
     <Sheet open title={split ? 'Edit split' : 'Split transaction'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {t.name}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, on {shownDay(t.date)}. Give each part its own category: the parts
+        {shownName(t)}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, on {shownDay(t.date)}. Give each part its own category: the parts
         count in budgets and reports, and the transaction stays one, as the bank has it.
       </p>
       {changed && changed.split_remainder && (
@@ -298,7 +299,7 @@ export default function SplitSheet({
       {split && confirming && (
         <>
           <p className="panel-note">
-            Unsplit {t.name}? Its parts go, and it counts whole again, under {own ? displayName(own.name) : 'its own category'}.
+            Unsplit {shownName(t)}? Its parts go, and it counts whole again, under {own ? displayName(own.name) : 'its own category'}.
           </p>
           <div className="button-pair">
             <button className="danger" onClick={() => send('DELETE', { transaction_id: kept, ...(seen !== undefined ? { updated_at: seen } : {}) })} disabled={saving}>

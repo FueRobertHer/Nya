@@ -68,6 +68,10 @@ export type Txn = {
   transaction_id: string;
   date: string; // YYYY-MM-DD
   name: string;
+  // `name` is the bank's own descriptor (no merchant name from Plaid), so
+  // the app shows it readably (lib/merchant-name.ts). Taken off when a rename
+  // or a rule's name replaces it (lib/activity.ts, lib/txn-layers.ts).
+  name_from_bank?: true;
   amount: number; // Plaid convention: positive = money leaving the account
   pending: boolean;
   account_name: string;
@@ -282,6 +286,7 @@ export type OlderTxn = Pick<
   | 'transaction_id'
   | 'date'
   | 'name'
+  | 'name_from_bank'
   | 'amount'
   | 'account_name'
   | 'account_type'
@@ -1389,6 +1394,7 @@ export function bankRowDisplay(t: StoredTxn, c: BankRowContext): Txn {
     transaction_id: t.transaction_id,
     date: t.date,
     name: t.merchant_name || t.name,
+    ...(t.merchant_name ? {} : { name_from_bank: true as const }),
     amount: t.amount,
     pending: t.pending,
     account_name: c.account_name,
@@ -1469,6 +1475,7 @@ export function bankRowOlder(t: StoredTxn, c: BankRowContext): OlderTxn {
     transaction_id: t.transaction_id,
     date: t.date,
     name: t.merchant_name || t.name,
+    ...(t.merchant_name ? {} : { name_from_bank: true as const }),
     amount: t.amount,
     account_name: c.account_name,
     account_type: c.account_type,
