@@ -137,7 +137,7 @@ A full screen with a list of sections; each opens its own view with a back butto
 | **Transactions** | Categories and groups (with starter sets); tags; rules; merchant defaults; review queue | CategoriesCard, CategoryManager, TagsCard, RulesCard, VendorDefaultsCard, ReviewSettingsCard (Manage) |
 | **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget; for the admin, unused connections and "Check all accounts now" | AccountLinks, AdminUnusedItems, the all-hidden filter (Manage) |
 | **Sharing** | Invite, people, what each sees and for how long, blocked | SharingDrawer (avatar menu, Accounts button) |
-| **Your data and privacy** | Download my data; Your data (what Nya keeps); Bring back a download; Receipts and documents; API tokens and their changes | DownloadMyData, InventoryEntry, RestoreCard, ReceiptsCard, ApiTokens (Manage) |
+| **Your data and privacy** | Download my data; Your data (what Nya keeps); Bring back a download (a demo account: reset to a scenario instead); Receipts and documents; API tokens and their changes | DownloadMyData, InventoryEntry, RestoreCard (DemoDataCard on a demo account), ReceiptsCard, ApiTokens (Manage) |
 | **Account** | Profile (Clerk), Forget this device, Delete my account, the admin's Storage across accounts; Sign out and Sign out everywhere in password mode (with Clerk, Sign out is the avatar menu's alone, and this section points to it) | ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
 
 Settings is a screen inside the app, not a sheet: thirteen-plus cards in a bottom sheet would mean long scrolling sheets and sheets opened from sheets. Whether it is an in-app view or a `/settings` route is an implementation choice for the rollout (a route gives real URLs; it also remounts the dashboard).
@@ -228,6 +228,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | DownloadMyData, DownloadOptions | Manage | Settings > Your data |
 | InventoryEntry, DataInventory | Manage, `/your-data` | Settings > Your data, `/your-data` |
 | RestoreCard, RestoreAnswers | Manage; empty state | Settings > Your data; empty state |
+| DemoDataCard | New | Settings > Your data, for a demo account only, where Bring back a download would be: reset it to a scenario |
 | ReceiptsCard | Manage (when files are on) | Settings > Your data |
 | ApiTokens, ApiChanges | Manage | Settings > Your data |
 | ReportsEntry | Activity foot; Manage | Activity > Spending |

@@ -88,16 +88,28 @@ export async function seedTargets(only: DemoName[] = []): Promise<SeedTarget[]> 
   for (const name of wanted) {
     const user = users.find((u) => u.label === name);
     if (!user) throw new SeedRefused(`DEMO_USER_IDS doesn't name ${name}.`);
-    const container = await ownedContainer(user.id);
-    if (!container) throw new SeedRefused(`${name} hasn't signed in on this environment yet: sign in once with the demo button, then run this again.`);
-    const others = (await ownersOf(container)).filter((o) => o !== user.id);
-    if (others.length > 0) throw new SeedRefused(`${name}'s data belongs to another sign-in too, so it isn't replaced.`);
-    const rec = await getContainer(container);
-    if (!rec || rec.status !== 'active') throw new SeedRefused(`${name}'s container is ${rec ? rec.status : 'not in the registry'}.`);
-    if (rec.primary) throw new SeedRefused(`${name}'s container is this environment's primary one, which holds the data from before accounts, so it isn't replaced.`);
-    const ctx: Ctx = { container };
-    await checkContainerKey(ctx);
-    out.push({ name, userId: user.id, ctx });
+    const target = await demoTarget(user.id);
+    if (!target) throw new SeedRefused(`${name} hasn't signed in on this environment yet: sign in once with the demo button, then run this again.`);
+    out.push(target);
   }
   return out;
+}
+
+/** The demo account `userId` is, with the container it owns, once that
+ *  container may be replaced: what the Demo data card resets
+ *  (app/api/demo/seed), and each of the CLI's. Null when it isn't a demo
+ *  account here or owns no container yet. Reads only. */
+export async function demoTarget(userId: string): Promise<SeedTarget | null> {
+  const user = demoUsers().find((u) => u.id === userId);
+  if (!user) return null;
+  const container = await ownedContainer(user.id);
+  if (!container) return null;
+  const others = (await ownersOf(container)).filter((o) => o !== user.id);
+  if (others.length > 0) throw new SeedRefused(`${user.label}'s data belongs to another sign-in too, so it isn't replaced.`);
+  const rec = await getContainer(container);
+  if (!rec || rec.status !== 'active') throw new SeedRefused(`${user.label}'s data is ${rec ? rec.status : 'not in the registry'}, so it isn't replaced.`);
+  if (rec.primary) throw new SeedRefused(`${user.label}'s data is this environment's primary container, which holds the data from before accounts, so it isn't replaced.`);
+  const ctx: Ctx = { container };
+  await checkContainerKey(ctx);
+  return { name: user.label as DemoName, userId: user.id, ctx };
 }

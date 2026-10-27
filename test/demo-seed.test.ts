@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys, TEST_CTX } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -95,6 +96,12 @@ const { readTaxonomy } = await import('@/lib/category-store');
 const { firePlanStore } = await import('@/lib/fire-plan');
 const { readStoredTxns } = await import('@/lib/transactions');
 const { secretsStore } = await import('@/lib/connectors/store');
+const { demoTarget } = await import('@/lib/demo-seed/guard');
+const { SCENARIOS, scenarioById, DEFAULT_SCENARIO } = await import('@/lib/demo-seed/scenarios');
+const { resetDemoAccount, resetState, ResetLimited, SEED_VERSION } = await import('@/lib/demo-seed/reset');
+const { seedRecordStore } = await import('@/lib/demo-seed/store');
+const { createInvite, acceptInvite, myConnections } = await import('@/lib/sharing');
+const { keptWhenEmptied, classOfKey } = await import('@/lib/user-restore/classes');
 
 const TODAY = '2026-10-26';
 const NAMES = ['Alex', 'Sam'] as const;
@@ -225,6 +232,7 @@ beforeEach(async () => {
   fake.reset();
   items.clear();
   removed.length = 0;
+  made = 0;
   syncsBeforeReady = 0;
   await registerTestContainer(fake);
   env({
@@ -294,7 +302,7 @@ describe('where it may write', () => {
 
   test('never the primary container, nor one another sign-in owns too', async () => {
     await ownerContainer('user_alex'); // Alex signed in first, taking the primary container
-    await expect(seedTargets(['Alex'])).rejects.toThrow(/primary one/);
+    await expect(seedTargets(['Alex'])).rejects.toThrow(/primary container/);
     const sam = await ownerContainer('user_sam');
     await fake.hset('test:owners', { user_partner: sam });
     await expect(seedTargets(['Sam'])).rejects.toThrow(/another sign-in too/);
@@ -309,6 +317,8 @@ describe('where it may write', () => {
 
   test('the arguments', () => {
     expect(parseArgs(['--target', 'preview', '--only', 'sam', '--dry-run'])).toEqual({ target: 'preview', only: ['Sam'], dryRun: true });
+    expect(parseArgs(['--target', 'preview', '--scenario', 'household']).scenario).toBe('household');
+    expect(() => parseArgs(['--scenario', 'nope'])).toThrow(SeedRefused);
     expect(() => parseArgs(['--only', 'Jordan'])).toThrow(SeedRefused);
     expect(() => parseArgs(['--force'])).toThrow(SeedRefused);
   });
@@ -394,5 +404,197 @@ describe('seeding', () => {
     expect(slept).toBe(2);
     expect((await readStoredTxns(TEST_CTX, 'item-w')).map((r) => r.name).sort()).toEqual(['ROW 1', 'ROW 2', 'ROW 3']);
     expect(await waitForHistory(TEST_CTX, item, 4, { historyTimeoutMs: 0, sleep: async () => {} })).toBe(false);
+  });
+});
+
+describe('scenarios', () => {
+  test('each has a title, a line about it and its own id, and every demo account starts on one', () => {
+    expect(new Set(SCENARIOS.map((x) => x.id)).size).toBe(SCENARIOS.length);
+    for (const x of SCENARIOS) expect(x.title && x.description).toBeTruthy();
+    for (const name of NAMES) expect(scenarioById(DEFAULT_SCENARIO[name])).not.toBeNull();
+    expect(scenarioById('nope')).toBeNull();
+  });
+
+  test('the reset’s record and count survive the emptying it does part way', () => {
+    expect(keptWhenEmptied(`c:${TEST_CTX.container}:demo-seed`)).toBe(true);
+    expect(keptWhenEmptied(`c:${TEST_CTX.container}:demo-reset`)).toBe(true);
+    expect(classOfKey(`c:${TEST_CTX.container}:demo-seed`).cls).toBe('machinery');
+  });
+});
+
+describe('resetting a demo account', () => {
+  const quick = { historyTimeoutMs: 1_000, pollMs: 1, sleep: async () => {} };
+  const alexTarget = async () => {
+    await ownerContainer('user_owner');
+    await ownerContainer('user_alex');
+    return (await demoTarget('user_alex'))!;
+  };
+  const plaid = async () => (await import('@/lib/plaid')).plaidClient as any;
+
+  test('runs the scenario chosen, records it, and refuses another inside the window', async () => {
+    const t = await alexTarget();
+    await resetDemoAccount(t, scenarioById('household')!, TODAY, quick);
+    expect((await getManualAccounts(t.ctx)).map((m) => m.name)).toEqual(['Home (estimated value)']);
+    const record = await seedRecordStore.get(t.ctx);
+    expect(record).toMatchObject({ version: SEED_VERSION, scenario: 'household' });
+    expect(record?.finished_at).not.toBeNull();
+    const before = (await getItems(t.ctx)).length;
+    await expect(resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick)).rejects.toBeInstanceOf(ResetLimited);
+    expect(await getItems(t.ctx)).toHaveLength(before);
+    expect((await resetState(t.ctx)).secondsLeft).toBeGreaterThan(0);
+  });
+
+  test('a reset that stops part way is recorded as unfinished', async () => {
+    const t = await alexTarget();
+    const client = await plaid();
+    const create = client.sandboxPublicTokenCreate;
+    client.sandboxPublicTokenCreate = async () => {
+      throw new Error('sandbox down');
+    };
+    try {
+      await expect(resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick)).rejects.toThrow('sandbox down');
+    } finally {
+      client.sandboxPublicTokenCreate = create;
+    }
+    expect((await seedRecordStore.get(t.ctx))?.finished_at).toBeNull();
+  });
+
+  test('leaves alone an account a newer version reset, and checks what would stop it before counting', async () => {
+    const t = await alexTarget();
+    await seedRecordStore.set(t.ctx, { version: SEED_VERSION + 1, scenario: 'household', started_at: 'x', finished_at: 'y' });
+    await expect(resetDemoAccount(t, scenarioById('household')!, TODAY, quick)).rejects.toThrow(/newer version/);
+    await seedRecordStore.remove(t.ctx);
+    await secretsStore.set(t.ctx, 'conn-1', { connector: 'simplefin', secret: 'https://example.invalid/access' });
+    await expect(resetDemoAccount(t, scenarioById('household')!, TODAY, quick)).rejects.toThrow(/SimpleFIN or Lunch Flow/);
+    expect((await resetState(t.ctx)).secondsLeft).toBe(0);
+  });
+
+  test('ends what the account shared', async () => {
+    const t = await alexTarget();
+    const { token } = await createInvite('user_alex', {});
+    await acceptInvite('user_owner', token, 'Alex');
+    expect((await myConnections('user_alex')).connections).toHaveLength(1);
+    await resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick);
+    expect((await myConnections('user_alex')).connections).toHaveLength(0);
+    expect((await myConnections('user_owner')).connections).toHaveLength(0);
+  });
+
+  test('takes the last visitor’s files with the rest', async () => {
+    const t = await alexTarget();
+    await fake.hset(`test:c:${t.ctx.container}:attachments`, { 'att-1': 'a receipt' });
+    await resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick);
+    expect(await fake.hgetall(`test:c:${t.ctx.container}:attachments`)).toBeNull();
+  });
+
+  test('clears balance history a page load wrote while it ran', async () => {
+    const t = await alexTarget();
+    const client = await plaid();
+    const get = client.accountsGet;
+    client.accountsGet = async (req: any) => {
+      await fake.hset(`test:c:${t.ctx.container}:history:net-worth`, { [TODAY]: 'partial' });
+      return get(req);
+    };
+    try {
+      await resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick);
+    } finally {
+      client.accountsGet = get;
+    }
+    expect(await fake.hgetall(`test:c:${t.ctx.container}:history:net-worth`)).toBeNull();
+  });
+});
+
+describe('the route', () => {
+  const SAME = { 'content-type': 'application/json', origin: 'http://x', 'sec-fetch-site': 'same-origin' };
+  const route = async (method: 'GET' | 'POST', body?: unknown, headers: Record<string, string> = SAME) => {
+    const mod: any = await import('@/app/api/demo/seed/route');
+    const res = await mod[method](
+      new Request('http://x/api/demo/seed', { method, headers: method === 'POST' ? headers : {}, body: body === undefined ? undefined : JSON.stringify(body) })
+    );
+    return { status: res.status, body: await res.json(), headers: res.headers as Headers };
+  };
+  beforeEach(async () => {
+    clerk.signedIn = null;
+    await ownerContainer('user_owner');
+    await ownerContainer('user_alex');
+  });
+  afterEach(() => {
+    clerk.signedIn = null;
+  });
+
+  test('says nothing of it to anyone but a demo account', async () => {
+    clerk.signedIn = 'user_owner';
+    expect((await route('GET')).body).toEqual({ demo: false });
+    expect((await route('POST', { scenario: 'household' })).status).toBe(403);
+    expect(made).toBe(0);
+  });
+
+  test('tells a demo account its scenarios, where it starts, and when it may reset again', async () => {
+    clerk.signedIn = 'user_alex';
+    const got = (await route('GET')).body;
+    expect(got).toMatchObject({ demo: true, default: 'single-renter', last: null, next_in_seconds: 0, window_minutes: 10 });
+    expect(got.scenarios.map((x: any) => x.id)).toEqual(SCENARIOS.map((x) => x.id));
+  });
+
+  test('resets it from its own page, once in the window', async () => {
+    clerk.signedIn = 'user_alex';
+    const done = await route('POST', { scenario: 'household' });
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject({ ok: true, scenario: 'household' });
+    const t = (await demoTarget('user_alex'))!;
+    expect((await getItems(t.ctx)).length).toBe(scenarioById('household')!.build(TODAY).institutions.length);
+    expect((await route('GET')).body.last).toMatchObject({ scenario: 'household', phase: 'finished' });
+    const again = await route('POST', { scenario: 'household' });
+    expect(again.status).toBe(429);
+    expect(Number(again.headers.get('retry-after'))).toBeGreaterThan(0);
+  });
+
+  test('refuses another site, a form, and a scenario it doesn’t know', async () => {
+    clerk.signedIn = 'user_alex';
+    expect((await route('POST', { scenario: 'household' }, { 'content-type': 'application/json', origin: 'https://elsewhere.example' })).status).toBe(403);
+    expect((await route('POST', { scenario: 'household' }, { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    expect((await route('POST', { scenario: 'household' }, { 'content-type': 'text/plain', origin: 'http://x' })).status).toBe(403);
+    expect((await route('POST', { scenario: 'nope' })).status).toBe(400);
+    expect(made).toBe(0);
+  });
+
+  test('takes its own page at any of its addresses, and a request that names no site at all', async () => {
+    clerk.signedIn = 'user_alex';
+    env({ APP_URL: 'https://nya-preview.example' });
+    // At the deployment's own address, though the configured one is another.
+    expect((await route('POST', { scenario: 'household' }, { 'content-type': 'application/json', origin: 'http://x', 'sec-fetch-site': 'same-origin' })).status).toBe(200);
+    const t = (await demoTarget('user_alex'))!;
+    await fake.del(`test:c:${t.ctx.container}:demo-reset`);
+    // At the configured address.
+    expect((await route('POST', { scenario: 'household' }, { 'content-type': 'application/json', origin: 'https://nya-preview.example' })).status).toBe(200);
+    await fake.del(`test:c:${t.ctx.container}:demo-reset`);
+    // Neither header (not a browser, or an old one): JSON alone, which a page on another site can't send unasked.
+    expect((await route('POST', { scenario: 'household' }, { 'content-type': 'application/json' })).status).toBe(200);
+  });
+
+  test('says a reset is running while it runs, and one that stopped as stopped', async () => {
+    clerk.signedIn = 'user_alex';
+    const t = (await demoTarget('user_alex'))!;
+    await seedRecordStore.set(t.ctx, { version: SEED_VERSION, scenario: 'household', started_at: new Date().toISOString(), finished_at: null });
+    expect((await route('GET')).body.last).toMatchObject({ phase: 'running' });
+    await seedRecordStore.set(t.ctx, { version: SEED_VERSION, scenario: 'household', started_at: new Date(Date.now() - 7 * 60_000).toISOString(), finished_at: null });
+    expect((await route('GET')).body.last).toMatchObject({ phase: 'stopped' });
+  });
+
+  test('says why a demo account can’t be reset, rather than nothing', async () => {
+    clerk.signedIn = 'user_alex';
+    const t = (await demoTarget('user_alex'))!;
+    await fake.hset('test:owners', { user_partner: t.ctx.container });
+    const got = (await route('GET')).body;
+    expect(got).toMatchObject({ demo: true, default: 'single-renter' });
+    expect(got.refused).toMatch(/another sign-in too/);
+    expect((await route('POST', { scenario: 'household' })).status).toBe(409);
+    expect(made).toBe(0);
+  });
+
+  test('refuses beyond Plaid’s sandbox', async () => {
+    clerk.signedIn = 'user_alex';
+    env({ PLAID_ENV: 'production' });
+    expect((await route('POST', { scenario: 'household' })).status).toBe(403);
+    expect(made).toBe(0);
   });
 });

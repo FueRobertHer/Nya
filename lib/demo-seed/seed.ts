@@ -11,7 +11,9 @@
 //    (lib/disconnect-item.ts, removing the Item at Plaid), then the container
 //    is emptied as Settings' "Empty my account" does it (lib/user-restore/
 //    undo.ts emptyAccount): everything but the machinery goes, and the
-//    container, its key and the sign-in stay.
+//    container, its key and the sign-in stay. Receipts and documents, which
+//    emptying keeps for a real person, go too: the last visitor's files are
+//    not the next one's.
 // 2. LINK. Each institution becomes a Plaid sandbox Item made from a custom
 //    user (/sandbox/public_token/create with `user_custom`), exchanged and
 //    stored as linking one in the app stores it (app/api/exchange-public-
@@ -29,6 +31,7 @@ import { encrypt } from '../crypto';
 import { getItems, saveItem, type StoredItem } from '../storage';
 import { disconnectItem } from '../disconnect-item';
 import { emptyAccount } from '../user-restore/undo';
+import { sweepContainerExcept } from '../account-deletion';
 import { userRestoreStore } from '../user-restore/store';
 import { unfinished } from '../user-restore/restored';
 import { secretsStore } from '../connectors/store';
@@ -73,7 +76,8 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
     await disconnectItem(ctx, item.item_id, item);
   }
   const { deleted } = await emptyAccount(ctx, { userId });
-  log(`  emptied (${deleted} keys)`);
+  const files = await sweepContainerExcept(ctx, (key) => !key.startsWith('attachment'));
+  log(`  emptied (${deleted + files} keys)`);
 
   // 2. Link.
   const accountIds = new Map<string, string>();
@@ -119,8 +123,9 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
   if ('error' in plan) throw new Error(`The profile's plan is refused: ${plan.error}`);
   await firePlanStore.set(ctx, plan.plan);
 
-  // 4. Wait. The caches and the estimated history are cleared after, so
-  //    nothing built from a part of the year while it was coming in stays.
+  // 4. Wait. Then the balance history, the caches and the estimated history
+  //    are cleared, so nothing a visitor's page load built from part of the
+  //    year while it came in stays: the history was empty when it began.
   const waiting: string[] = [];
   await Promise.all(
     pendingHistory.map(async (p) => {
@@ -128,6 +133,7 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
       if (!ready) waiting.push(p.item.institution_name);
     })
   );
+  await sweepContainerExcept(ctx, (key) => !key.startsWith('history:'));
   await clearCaches(ctx);
   await clearBackfillDone(ctx);
   return { removed: before.map((i) => i.institution_name), linked, waiting };
@@ -136,14 +142,14 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
 /** Refuses, changing nothing, what emptyAccount would refuse once the banks
  *  were already disconnected. (Another sign-in owning the container is
  *  refused before this, lib/demo-seed/guard.ts.) */
-async function checkEmptiable(ctx: Ctx): Promise<void> {
+export async function checkEmptiable(ctx: Ctx): Promise<void> {
   const secrets = await secretsStore.getAllReport(ctx);
   if (secrets.entries.size + secrets.unreadable.length + secrets.unrecognised.length > 0) {
-    throw new SeedRefused('This demo account has a connection to SimpleFIN or Lunch Flow: disconnect it in the app (its card on the Accounts tab), then run this again.');
+    throw new SeedRefused('This demo account has a connection to SimpleFIN or Lunch Flow: disconnect it on its card on the Accounts tab first, so it isn’t left running there.');
   }
   const restore = await userRestoreStore.getReport(ctx);
   if (restore.value && unfinished(restore.value)) {
-    throw new SeedRefused('A restore is under way in this demo account: undo it in the app (Settings, Your data and privacy, Bring back a download), then run this again.');
+    throw new SeedRefused('A restore is under way in this demo account: undo it first (Settings, Your data and privacy, Bring back a download).');
   }
 }
 
