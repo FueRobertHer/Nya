@@ -28,6 +28,7 @@ import './budget-store';
 import './category-store';
 import './connection-records';
 import './connectors/store';
+import './demo-seed/store';
 import './fire-plan';
 import './fx/ecb-store';
 import './fx/settings';

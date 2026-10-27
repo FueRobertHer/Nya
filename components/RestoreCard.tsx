@@ -360,6 +360,9 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
   // Not offered here, unless a restore is recorded (its undo stays).
   const notes = unreadableNotes(state, listedDay);
   if (!state.enabled && !record && notes.length === 0) return null;
+  // A demo account is told why on the Demo data card, beside this one
+  // (components/DemoDataCard.tsx), which offers its reset instead.
+  if (state.demo && !record && notes.length === 0) return null;
 
   const scan = state.scan;
   const banks = waitingBanks(state.waiting);

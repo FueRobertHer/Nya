@@ -259,6 +259,8 @@ Nothing here is inherited from production. A preview with no variables set build
 
 Visitors get in without credentials through the two demo accounts, **Alex** and **Sam**: one-click buttons on the Clerk sign-in page, on Plaid's sandbox, on every environment but Production. They are the only one-click sign-in; the shared-password login always asks for the password. See [authentication.md](authentication.md#demo-accounts).
 
+To give one a year of realistic data (several banks, a card, investments, loans, budgets, goals and a Plan), sign in as it and use the Demo data card in Settings, which replaces whatever it holds with the scenario chosen; `scripts/seed-demo.ts` does the same from a terminal. Neither works on Production. See [authentication.md](authentication.md#resetting-the-demo-accounts).
+
 ### Gotchas
 
 - Deploys fire on a push of a *new commit*. A branch pointing at a commit that has already been deployed will not rebuild; use **Redeploy** in the dashboard to force one.
