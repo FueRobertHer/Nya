@@ -333,7 +333,7 @@ describe('the calendar, redrawn', () => {
       const { root, host, button, cell, title, press } = mount();
       const next = button('Next month')!;
       const previous = button('Previous month')!;
-      for (const arrow of [next, previous]) expect(arrow.getAttribute('class')).toBe('secondary icon-btn');
+      for (const arrow of [next, previous]) expect(arrow.getAttribute('class')).toBe('icon-btn');
       // .icon-btn is a 44px square (app/globals.css), the size of a touch target.
       const css = readFileSync(join(import.meta.dir, '../app/globals.css'), 'utf8');
       expect(css).toMatch(/\.icon-btn \{[^}]*min-width: var\(--tap\);[^}]*min-height: var\(--tap\);/);

@@ -60,8 +60,7 @@ describe("the dashboard's header", () => {
 
   test('the markup is the one the rules are written for: the brand first, then the buttons', () => {
     const row = dashboard.slice(dashboard.indexOf('<div className="top-row">'));
-    expect(row).toMatch(/^<div className="top-row">\s*<div>\s*<div className="brand">/);
-    expect(row.indexOf('<div className="top-actions">')).toBeGreaterThan(row.indexOf('<p className="sub">'));
+    expect(row).toMatch(/^<div className="top-row">\s*<Brand \/>\s*<div className="top-actions">/);
   });
 });
 

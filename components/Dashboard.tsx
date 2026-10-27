@@ -1,7 +1,7 @@
 'use client';
 
 import ClerkAccount from './ClerkAccount';
-import { BrandLogo } from './Brand';
+import { Brand } from './Brand';
 import { useRouter } from 'next/navigation';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
@@ -111,7 +111,7 @@ import { withAccountEnds } from '@/lib/goal-view';
 import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import { accruedCaveats } from './AccruedInterestNote';
 import NetWorthCard from './NetWorthCard';
-import type { Caveat } from './TotalCaveats';
+import { allHiddenCaveats, type Caveat } from './TotalCaveats';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
@@ -1844,17 +1844,6 @@ export default function Dashboard({
   // Every position, with its account, for the Plan's allocation.
   const planHoldings = useMemo(() => institutions.flatMap((i) => i.holdings), [institutions]);
 
-  // Counts what's rendering, so hiding an institution's last account doesn't
-  // leave "3 institutions connected" above two cards, and a fully hidden set
-  // doesn't read "0 institutions connected" as if nothing were linked.
-  const shownInstitutionCount = sortedInstitutions.length;
-  const subtitle = loading
-    ? 'Loading your accounts…'
-    : !connected
-      ? 'Connect your bank, credit card, and brokerage accounts'
-      : shownInstitutionCount === 0 && hiddenAccounts.length > 0
-        ? `All ${hiddenAccounts.length} account${hiddenAccounts.length === 1 ? '' : 's'} hidden`
-        : `${shownInstitutionCount} institution${shownInstitutionCount === 1 ? '' : 's'} connected`;
 
   const startDisconnect = (inst: Institution) => {
     setDisconnectInput('');
@@ -2238,19 +2227,14 @@ export default function Dashboard({
         : mixedAccountCurrency
           ? [{ key: 'currency-mixed', severity: 'caution' as const, summary: 'currencies not converted', body: "Accounts use multiple currencies; totals aren't converted." }]
           : []),
+    ...allHiddenCaveats(sortedInstitutions.length, hiddenAccounts.length),
   ];
 
   return (
     <>
       <main className="wrap">
         <div className="top-row">
-          <div>
-            <div className="brand">
-              <BrandLogo />
-              <h1>Nya</h1>
-            </div>
-            <p className="sub">{subtitle}</p>
-          </div>
+          <Brand />
           <div className="top-actions">
             <HideAmountsToggle />
             {/* Always there, unavailable and turning while the first load
@@ -2259,7 +2243,7 @@ export default function Dashboard({
                 loading (components/LoadingSkeletons.tsx), which draws the
                 same. */}
             <button
-              className="secondary icon-btn"
+              className="icon-btn"
               onClick={refreshAll}
               disabled={refreshing || loading}
               aria-label="Refresh"
@@ -2272,7 +2256,7 @@ export default function Dashboard({
             ) : (
               // Password mode has no account menu: Sign out and Sign out
               // everywhere are in Settings > Account.
-              <button className="secondary icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
+              <button className="icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
                 <HeaderIcon d={GEAR} />
               </button>
             )}

@@ -35,6 +35,7 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import { formatMoney, compactMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import { Segmented } from './Segmented';
 import {
   availableRanges,
   axisTicks,
@@ -570,19 +571,7 @@ export default function NetWorthChart({
       </svg>
 
       {ranges.length > 1 && (
-        <div className="chart-ranges" role="group" aria-label="Time range">
-          {ranges.map((key) => (
-            <button
-              key={key}
-              type="button"
-              className="chart-range"
-              aria-pressed={key === range}
-              onClick={() => pickRange(key)}
-            >
-              {RANGE_TEXT[key]}
-            </button>
-          ))}
-        </div>
+        <Segmented compact className="chart-range-switch" label="Time range" value={range} onChange={pickRange} options={ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
       )}
 
       {/* The notes in the range, for a keyboard and a screen reader: each

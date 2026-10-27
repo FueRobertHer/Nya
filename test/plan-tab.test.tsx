@@ -787,8 +787,8 @@ describe('the savings sheet', () => {
     expect(t).toContain('My bank : none is, since the transfers that paid for them already count as saved');
     expect(t).toContain('Not set : a contribution is added unless a transfer from your bank to investment and retirement funds paid for it.');
     expect(html).toContain('aria-label="How Fidelity 401(k) is paid into"');
-    // Which choice is pressed for each: not set for the 401(k), the bank for the Solo 401(k).
-    const pressed = [...html.matchAll(/aria-pressed="true"[^>]*>([^<]+)</g)].map((m) => m[1]);
+    // Which choice is checked for each: not set for the 401(k), the bank for the Solo 401(k).
+    const pressed = [...html.matchAll(/aria-checked="true"[^>]*>([^<]+)</g)].map((m) => m[1]);
     expect(pressed).toEqual(['Nya’s figure', 'Not set', 'My bank']);
   });
 });

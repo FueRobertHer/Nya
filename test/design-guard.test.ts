@@ -98,9 +98,12 @@ describe('design guard: the guidelines name real classes', () => {
   });
 });
 
-// What the token check can't see: which token a rule uses. A control is
+// What the token check can't see: which token a rule uses. A field or chip is
 // marked by an edge that meets 3:1 (--border-input; --border-strong is about
-// 1.4:1), and a state is never shown by color alone.
+// 1.4:1), and a state is never shown by color alone. A button is named by its
+// label or its icon and aria-label, so it needs no edge (WCAG 1.4.11): it is
+// tonal or bare (look and feel, step 2), with a transparent edge that forced
+// colors draw, and keeps a 3:1 edge only on a fill of its own.
 describe('design guard: controls and states read without color', () => {
   const css = read('app/globals.css');
   // The bodies of the rules whose selector has a line starting with `start`.
@@ -113,11 +116,13 @@ describe('design guard: controls and states read without color', () => {
     [':where(input:not(', 'var(--border-input)', 'a plain field is edged in --border-input'],
     ['.text-input {', 'var(--border-input)', 'a .text-input is edged in --border-input'],
     ['.invite-link {', 'var(--border-input)', 'the invite link field is edged in --border-input'],
-    ['button.secondary {', 'var(--border-input)', 'a secondary button is edged in --border-input'],
-    ['.btn.secondary {', 'var(--border-input)', 'a .btn.secondary is edged in --border-input'],
+    ['button.secondary {', '1px solid transparent', 'a secondary button has an edge forced colors draw'],
+    ['.btn.secondary {', '1px solid transparent', 'a .btn.secondary has an edge forced colors draw'],
+    [':is(.notice, .rule-offer, .rule-preview) :is(button.secondary, .btn.secondary) {', 'var(--border-input)', 'a secondary on a fill of its own is edged in --border-input'],
+    ['.icon-btn {', '1px solid transparent', 'an icon button has an edge forced colors draw'],
     ['.chip {', 'var(--border-input)', 'a chip is edged in --border-input'],
-    ['.menu-anchor > .icon-btn {', 'var(--border-input)', 'the ⋯ button is edged in --border-input'],
-    ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'var(--border-input)', 'the selected segment has an edge'],
+    ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'border-bottom: 3px solid var(--accent)', 'the current item of a switch has a bar'],
+    ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-semibold)', 'the current item of a switch is heavier'],
     ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],
     ['.tab-bar button.active::before {', 'var(--accent)', 'the current tab has a bar'],
     ['.notice.critical {', 'border-color: currentColor', 'a critical notice has an edge'],
@@ -125,6 +130,30 @@ describe('design guard: controls and states read without color', () => {
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);
     expect(missing).toEqual([]);
+  });
+
+  // A bare icon button has nothing but its icon, so its aria-label is its
+  // name (WCAG 4.1.2). Each element whose class has icon-btn (not the sheet's
+  // own .sheet-icon-btn) carries one.
+  test('each icon button has an aria-label', () => {
+    const unnamed: string[] = [];
+    for (const file of sourceFiles()) {
+      const src = read(file);
+      for (const m of src.matchAll(/className=["{][^>]*?(?<![\w-])icon-btn(?![\w-])/g)) {
+        const open = src.lastIndexOf('<', m.index!);
+        // The tag runs to the first > outside braces (an arrow's => is inside).
+        let depth = 0;
+        let end = open;
+        for (; end < src.length; end++) {
+          const ch = src[end];
+          if (ch === '{') depth++;
+          else if (ch === '}') depth--;
+          else if (ch === '>' && depth === 0) break;
+        }
+        if (!src.slice(open, end).includes('aria-label=')) unnamed.push(`${file}:${src.slice(0, open).split('\n').length}`);
+      }
+    }
+    expect(unnamed).toEqual([]);
   });
 
   test('a caution notice has the clock, not the critical triangle', () => {
