@@ -8,7 +8,7 @@
 // stay hidden. No engine, no data.
 
 import { allocationOf, type FirePlan, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
-import type { EventPart, LifeEvent, LifeEventKind, Shortfall } from '@/lib/fire/events';
+import { carAges, type EventPart, type LifeEvent, type LifeEventKind, type Shortfall } from '@/lib/fire/events';
 import type { StartsWith } from '@/lib/fire/plan-figures';
 import { settingOf, type ScenarioChange, type ScenarioChanges, type SetField } from '@/lib/fire/scenarios';
 import { RULE_NAMES, REBALANCE_TEXT, pct } from './plan-text';
@@ -46,6 +46,10 @@ export const EVENT_NAMES: Record<LifeEventKind, string> = {
   sabbatical: 'A sabbatical',
   'part-time': 'Part-time work',
   spending: 'A change in spending',
+  car: 'A car',
+  raise: 'A raise',
+  windfall: 'A windfall',
+  'loan-end': 'A loan paid off',
 };
 
 /** A setting's value in words. */
@@ -137,6 +141,17 @@ export function eventText(e: LifeEvent, money: Money): string {
       return `From ${e.fromAge} to ${e.toAge}: ${money(e.yearly)} a year after tax.`;
     case 'spending':
       return `From ${e.fromAge}: spending ${moreOrLess(e.yearly, money)}, ${span(e.years)}.`;
+    case 'car': {
+      if (e.every === null) return `At ${e.atAge}: ${money(e.cost)} from your investments.`;
+      const ages = carAges(e);
+      return `From ${e.atAge}, every ${e.every} years, ${e.times} in all (the last at ${ages[ages.length - 1]}): ${money(e.cost)} each from your investments.`;
+    }
+    case 'raise':
+      return `From ${e.fromAge}: saving ${money(e.yearly)} a year more.`;
+    case 'windfall':
+      return `At ${e.atAge}: ${money(e.amount)} in, after tax.`;
+    case 'loan-end':
+      return `From ${e.atAge}: spending ${money(e.yearly)} a year less, for good.`;
   }
 }
 
@@ -144,7 +159,10 @@ export function eventText(e: LifeEvent, money: Money): string {
 export function eventCountsText(e: LifeEvent): string {
   if (e.kind === 'part-time') return 'In the simulation from the stop age, as income for its years. Not in the FI date, which assumes full-time work until FI.';
   if (e.kind === 'sabbatical') return 'In the FI date: it lowers what is saved in its years.';
-  if ((e.kind === 'house' || e.kind === 'spending') && e.years === null) {
+  if (e.kind === 'raise') return 'In the FI date: more is saved each year from its age. Not in the simulation: it changes what you save, never what you spend once you stop.';
+  if (e.kind === 'windfall') return 'In the FI date, added to your investments at its age, and in the simulation as money in that year when it comes from the stop age on.';
+  if (e.kind === 'car') return `In the FI date, from your investments at ${e.every === null ? 'its age' : 'each one’s age'}, and in the simulation as a one-off for each one from the stop age.`;
+  if (((e.kind === 'house' || e.kind === 'spending') && e.years === null) || e.kind === 'loan-end') {
     return 'In the FI date from its age, and in the simulation: in effect at the stop age, it is part of your spending in retirement, and so of your FI number.';
   }
   return 'In the FI date in every year it covers, and in the simulation for its years from the stop age.';
@@ -152,7 +170,9 @@ export function eventCountsText(e: LifeEvent): string {
 
 export const EVENT_PART_TEXT: Record<EventPart, string> = {
   past: 'Some of it is before today: it counts from today, and your measured figures may already count what has begun.',
+  already: 'It is before today, so it is left out: your measured figures may already count it.',
   'no-today': 'Without your age there is no today to count from, so the FI date leaves it out; the simulation places it from the stop age.',
+  'no-today-walk': 'Without your age there is no today to count from, so it is left out: it counts only in the FI date.',
   'no-age': 'Without your age or a stop age it can’t be placed, so it is left out.',
   retired: 'Its years from the stop age change nothing: by then you have stopped working.',
   'before-start':

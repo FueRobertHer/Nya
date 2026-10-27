@@ -131,7 +131,7 @@ describe('saved plan scenarios, on the storage seam', () => {
       [{ scenario: draft({ set: { age: 50 } }) }, 'isn’t a setting a scenario can change'],
       [{ scenario: draft({ set: { withdrawalRate: 0.5 } }) }, 'withdrawalRate must be a number'],
       [{ scenario: draft({ set: { start: 'custom' } }) }, 'starts from a balance you typed needs that balance'],
-      [{ scenario: draft({ events: [{ id: 'x', kind: 'windfall', label: 'Gift', atAge: 50, amount: 1 }] }) }, 'not a kind of life event'],
+      [{ scenario: draft({ events: [{ id: 'x', kind: 'lottery', label: 'Gift', atAge: 50, amount: 1 }] }) }, 'not a kind of life event'],
       [{ scenario: draft({ events: [{ id: 'x', kind: 'child', label: 'A child', fromAge: 42, yearly: 0, years: 18 }] }) }, 'extra spending a year'],
       [{ scenario: { ...draft(), result: 0.93 } }, 'result isn’t part of a scenario'],
     ];
@@ -248,6 +248,16 @@ describe('saved plan scenarios, on the storage seam', () => {
     const damaged = await quiet(() => call('PUT', { id: 'broken', based_on: 'r', scenario: draft() }));
     expect([damaged.res.status, damaged.body.unreadable]).toEqual([409, true]);
     expect((await fake.hget(ctxKey('plan-scenarios'), 'broken')) as unknown).toBe('damaged-bytes-not-ciphertext-at-all');
+  });
+
+  test('one holding a life event of a kind this release doesn’t know (a later release’s) is not understood, never damaged', async () => {
+    const event = { id: 'x', kind: 'lottery', label: 'Prize', atAge: 50, amount: 1 };
+    await fake.hset(ctxKey('plan-scenarios'), { later: await encrypt(TEST_CTX, JSON.stringify(stored('Later', { currency: 'USD', events: [event] }))) });
+    const listed = await quiet(() => call('GET'));
+    expect([listed.body.scenarios, listed.body.unreadable_ids, listed.body.unrecognised_ids]).toEqual([[], [], ['later']]);
+    // The kinds this release added read as any other.
+    await fake.hset(ctxKey('plan-scenarios'), { later: await encrypt(TEST_CTX, JSON.stringify(stored('Later', { currency: 'USD', events: [{ ...event, kind: 'windfall' }] }))) });
+    expect((await quiet(() => call('GET'))).body.scenarios.map((s: any) => s.id)).toEqual(['later']);
   });
 
   test('each person’s own: another’s are never listed, edited or deleted from here', async () => {

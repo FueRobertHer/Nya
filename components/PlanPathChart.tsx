@@ -64,13 +64,19 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
   const before = recorded ? [...recorded.recorded, ...recorded.planned] : [];
   const first = Math.min(today, points[0].age, ...before.map((q) => q.age));
   const last = Math.max(stopAge, points[points.length - 1].age);
-  const top = Math.max(fiNumber ?? 0, ...points.map((q) => q.balance), ...before.map((q) => q.balance), 1) * 1.08;
+  const top = Math.max(fiNumber ?? 0, ...points.map((q) => Math.max(q.balance, q.inHand ?? 0)), ...before.map((q) => q.balance), 1) * 1.08;
   const plotW = W - PAD_X * 2;
   const plotH = H - PAD_TOP - PAD_BOTTOM;
   const x = (age: number) => PAD_X + ((age - first) / Math.max(last - first, 1)) * plotW;
   const y = (v: number) => PAD_TOP + (1 - Math.max(0, v) / top) * plotH;
   const baseY = H - PAD_BOTTOM;
-  const lineOf = (qs: readonly PathPoint[]) => qs.map((q, i) => `${i === 0 ? 'M' : 'L'}${x(q.age).toFixed(1)},${y(q.balance).toFixed(1)}`).join('');
+  // A year with money in (a windfall) steps straight up at its age, to what
+  // is in hand once it has come in (lib/fire/path.ts). The lines before
+  // today have none: what was recorded, and where the saved plan had it.
+  const lineOf = (qs: readonly PathPoint[]) =>
+    qs
+      .map((q, i) => `${i === 0 ? 'M' : 'L'}${x(q.age).toFixed(1)},${y(q.balance).toFixed(1)}${q.inHand !== undefined ? `L${x(q.age).toFixed(1)},${y(q.inHand).toFixed(1)}` : ''}`)
+      .join('');
   const line = lineOf(points);
   const recordedLine = recorded ? lineOf(recorded.recorded) : null;
   const plannedLine = recorded ? lineOf(recorded.planned) : null;
@@ -80,7 +86,8 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
   // balance when it is there already.
   let marker: { x: number; y: number } | null = null;
   if (fiNumber !== null && fiAge !== null && fiAge >= points[0].age && fiAge <= end.age) {
-    marker = fiAge <= points[0].age ? { x: x(points[0].age), y: y(points[0].balance) } : { x: x(fiAge), y: y(fiNumber) };
+    // Today's balance below the FI number with money in today: on its step.
+    marker = fiAge <= points[0].age && points[0].balance >= fiNumber ? { x: x(points[0].age), y: y(points[0].balance) } : { x: x(Math.max(fiAge, points[0].age)), y: y(fiNumber) };
   }
   // Ages: today's at the start, the stop age at its line, the FI age at the
   // marker when there is room for it between them.
@@ -185,7 +192,7 @@ export default function PlanPathChart(props: PathChartProps) {
               <tr key={q.age}>
                 <td>{q.age === stopAge ? `${q.age} (stop)` : q.age}</td>
                 <td className="num">
-                  <Masked>{wholeMoney(q.balance, currency)}</Masked>
+                  <Masked>{q.inHand === undefined ? wholeMoney(q.balance, currency) : `${wholeMoney(q.balance, currency)}, then ${wholeMoney(q.inHand, currency)} once that year’s windfall is in and its costs are paid`}</Masked>
                 </td>
               </tr>
             ))}

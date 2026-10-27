@@ -1,24 +1,31 @@
 // lib/fire/events.ts
 //
 // A scenario's life events (lib/fire/scenarios.ts): buying a home, a child, a
-// sabbatical, part-time work and a change in spending, each with the
-// person's own figures, never a default. Their shape and checks, where each
-// counts, and the FI walk that dates financial independence with them.
+// sabbatical, part-time work, a change in spending, a car (once or every few
+// years), a raise, a windfall and a loan paid off, each with the person's
+// own figures, never a default. Their shape and checks, where each counts,
+// and the FI walk that dates financial independence with them.
 //
 // TWO MODELS OF THE SAME YEARS, as the Plan already has two:
 //
 //   - THE FI WALK keeps saving until the FI number is reached, however long
 //     that takes, as fiView does (lib/fire/plan.ts). So an event counts in
-//     every year from today it covers, whatever the retirement age: a cost
-//     paid from investments leaves the balance at the start of its year, and
-//     a change in yearly spending (or a sabbatical's lost savings) changes
-//     that year's savings, which arrive at its end (the Plan's convention).
-//     Part-time work is not in it: the walk assumes full-time work until FI.
+//     every year from today it covers, whatever the retirement age: money in
+//     (a windfall) arrives at the start of its year, a cost paid from
+//     investments (a home, each car) then leaves it, and a change in yearly
+//     spending, a sabbatical's lost savings or a raise's added savings
+//     changes that year's savings, which arrive at its end (the Plan's
+//     convention). A loan paid off is spending lower for good, so savings
+//     higher. Part-time work is not in it: the walk assumes full-time work
+//     until FI.
 //   - THE SIMULATION retires at the start age (lib/fire/plan.ts startAge) and
 //     counts each event's years from then on: a cost as a one-off, a higher
 //     cost as a one-off in each of its years, a lower one as lowerSpending
 //     (never money coming in, lib/fire/simulate.ts), part-time work as income
-//     for its years (toYear). A sabbatical after the start changes nothing.
+//     for its years (toYear), and a windfall as income for its one year,
+//     which the engine invests when the year doesn't need it. A sabbatical or
+//     a raise after the start changes nothing: a raise is what is saved,
+//     never spending in retirement.
 //
 // An event that covers years before and after the start is in both, which
 // is not counting it twice: the walk and the simulation answer different
@@ -49,10 +56,22 @@ export type LifeEvent =
   /** Income a year, after tax, from fromAge to the age it stops at. */
   | { id: string; kind: 'part-time'; label: string; fromAge: number; toAge: number; yearly: number }
   /** More (or, below zero, less) spent a year, for some years or for good. */
-  | { id: string; kind: 'spending'; label: string; fromAge: number; yearly: number; years: number | null };
+  | { id: string; kind: 'spending'; label: string; fromAge: number; yearly: number; years: number | null }
+  /** What each car takes from investments when it is bought: once (`every`
+   *  null, `times` 1), or `times` cars `every` so many years from atAge. A
+   *  car loan's payments are in measured spending, never here. */
+  | { id: string; kind: 'car'; label: string; atAge: number; cost: number; every: number | null; times: number }
+  /** How much more is saved a year from fromAge, until FI. Never a change
+   *  to spending in retirement. */
+  | { id: string; kind: 'raise'; label: string; fromAge: number; yearly: number }
+  /** Money in once, after tax, at an age: added to investments. */
+  | { id: string; kind: 'windfall'; label: string; atAge: number; amount: number }
+  /** How much less is spent a year, for good, once a loan is paid off at
+   *  atAge: its payments, in measured spending until then. */
+  | { id: string; kind: 'loan-end'; label: string; atAge: number; yearly: number };
 
 export type LifeEventKind = LifeEvent['kind'];
-export const EVENT_KINDS: readonly LifeEventKind[] = ['house', 'child', 'sabbatical', 'part-time', 'spending'];
+export const EVENT_KINDS: readonly LifeEventKind[] = ['house', 'child', 'sabbatical', 'part-time', 'spending', 'car', 'raise', 'windfall', 'loan-end'];
 
 export const EVENT_LIMITS = {
   events: 10,
@@ -63,6 +82,9 @@ export const EVENT_LIMITS = {
   childYears: [1, 40],
   sabbaticalYears: [1, 10],
   spanYears: [1, MAX_YEARS],
+  /** Years between cars, and how many in all, when there is more than one. */
+  carEvery: [2, 30],
+  carTimes: [2, 20],
 } as const;
 
 const KEYS: Record<LifeEventKind, readonly string[]> = {
@@ -71,7 +93,16 @@ const KEYS: Record<LifeEventKind, readonly string[]> = {
   sabbatical: ['id', 'kind', 'label', 'fromAge', 'years', 'savingsLost'],
   'part-time': ['id', 'kind', 'label', 'fromAge', 'toAge', 'yearly'],
   spending: ['id', 'kind', 'label', 'fromAge', 'yearly', 'years'],
+  car: ['id', 'kind', 'label', 'atAge', 'cost', 'every', 'times'],
+  raise: ['id', 'kind', 'label', 'fromAge', 'yearly'],
+  windfall: ['id', 'kind', 'label', 'atAge', 'amount'],
+  'loan-end': ['id', 'kind', 'label', 'atAge', 'yearly'],
 };
+
+/** The ages a car is bought at: atAge, then every so many years. */
+export function carAges(e: Extract<LifeEvent, { kind: 'car' }>): number[] {
+  return Array.from({ length: e.times }, (_, i) => e.atAge + i * (e.every ?? 0));
+}
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -89,6 +120,7 @@ export function isLifeEvent(v: unknown): v is LifeEvent {
   for (const k of keys) {
     if (k === 'id' || k === 'kind' || k === 'label') continue;
     if (k === 'years' && e.years === null && (e.kind === 'house' || e.kind === 'spending')) continue;
+    if (k === 'every' && e.every === null && e.kind === 'car') continue;
     if (!finite(e[k])) return false;
   }
   return true;
@@ -139,6 +171,27 @@ export function parseLifeEvent(raw: unknown, at: string): { ok: LifeEvent } | { 
         (e.yearly !== 0 && Math.abs(e.yearly) <= EVENT_LIMITS.yearly ? null : `${at}: the change a year is an amount other than 0, up to ${EVENT_LIMITS.yearly} either way`) ??
         (e.years === null ? null : whole(e.years, EVENT_LIMITS.spanYears, 'how long the change lasts'));
       break;
+    case 'car':
+      error =
+        age(e.atAge, 'the age') ??
+        (e.cost > 0 && e.cost <= EVENT_LIMITS.cost ? null : `${at}: what each car takes from investments is an amount above 0, up to ${EVENT_LIMITS.cost}`) ??
+        (e.every === null
+          ? e.times === 1
+            ? null
+            : `${at}: a car bought once is 1 in all`
+          : (whole(e.every, EVENT_LIMITS.carEvery, 'the time between cars') ??
+            (Number.isInteger(e.times) && e.times >= EVENT_LIMITS.carTimes[0] && e.times <= EVENT_LIMITS.carTimes[1] ? null : `${at}: cars every few years are ${EVENT_LIMITS.carTimes[0]} to ${EVENT_LIMITS.carTimes[1]} in all`) ??
+            (e.atAge + e.every * (e.times - 1) <= ageMax ? null : `${at}: the last car would come after age ${ageMax}`)));
+      break;
+    case 'raise':
+      error = age(e.fromAge, 'the age') ?? positive(e.yearly, 'how much more is saved a year');
+      break;
+    case 'windfall':
+      error = age(e.atAge, 'the age') ?? (e.amount > 0 && e.amount <= EVENT_LIMITS.cost ? null : `${at}: the amount is above 0, up to ${EVENT_LIMITS.cost}`);
+      break;
+    case 'loan-end':
+      error = age(e.atAge, 'the age') ?? positive(e.yearly, 'how much less is spent a year');
+      break;
   }
   if (error) return { error };
   return { ok: { ...e, label } };
@@ -156,12 +209,22 @@ export function eventSpan(e: LifeEvent): { from: number; to: number | null } {
       return { from: e.fromAge, to: e.toAge };
     case 'spending':
       return { from: e.fromAge, to: e.years === null ? null : e.fromAge + e.years };
+    case 'car':
+      return { from: e.atAge, to: e.atAge + (e.every ?? 0) * (e.times - 1) + 1 };
+    case 'windfall':
+      return { from: e.atAge, to: e.atAge + 1 };
+    case 'raise':
+      return { from: e.fromAge, to: null };
+    case 'loan-end':
+      return { from: e.atAge, to: null };
   }
 }
 
-/** What the walk counts: costs at the start of a year, and changes to a
- *  year's savings, by years from today (0 is the year starting today). */
+/** What the walk counts: money in and costs at the start of a year, and
+ *  changes to a year's savings, by years from today (0 is the year starting
+ *  today). Money in is its own list: a cost is never below zero. */
 export type WalkChanges = {
+  moneyIn: { year: number; amount: number }[];
   costs: { year: number; amount: number }[];
   /** [from, to) in years from today; `to` null for good. */
   spans: { from: number; to: number | null; delta: number }[];
@@ -170,15 +233,22 @@ export type WalkChanges = {
 /** Why part of an event isn't counted somewhere, for the words beside it:
  *  - past: some of its years are before today (they count from today;
  *    your measured figures may already count what has begun);
+ *  - already: a change that happens once (money in, a car, a raise, a loan
+ *    paid off) is before today, so your figures may already count it, and
+ *    it is left out: counting a raise or a paid-off loan from today would
+ *    count it twice;
  *  - no-today: without your age, its years can't be placed from today, so
  *    the FI date leaves it out (the simulation still places it from the
  *    retirement age);
+ *  - no-today-walk: the same for a raise, which is only in the FI date, or
+ *    a windfall or cars all before the retirement age, which the simulation
+ *    doesn't reach: so it is left out altogether;
  *  - no-age: without either age it can't be placed at all;
  *  - retired: a sabbatical's years from the retirement age change nothing;
  *  - before-start: part-time work before the retirement age is left out;
  *  - after-end: some of it is after the plan ends, which only the grid's
  *    longer columns reach. */
-export type EventPart = 'past' | 'no-today' | 'no-age' | 'retired' | 'before-start' | 'after-end';
+export type EventPart = 'past' | 'already' | 'no-today' | 'no-today-walk' | 'no-age' | 'retired' | 'before-start' | 'after-end';
 export type EventNote = { id: string; part: EventPart };
 
 export type CompiledEvents = {
@@ -199,7 +269,7 @@ export type CompiledEvents = {
  * unknown; then that part is left out, and noted.
  */
 export function compileEvents(events: readonly LifeEvent[], at: { age: number | null; startAge: number | null; years: number }): CompiledEvents {
-  const out: CompiledEvents = { walk: { costs: [], spans: [] }, lasting: [], later: [], sim: { oneOffs: [], income: [], lowerSpending: [] }, notes: [] };
+  const out: CompiledEvents = { walk: { moneyIn: [], costs: [], spans: [] }, lasting: [], later: [], sim: { oneOffs: [], income: [], lowerSpending: [] }, notes: [] };
   const { age: a, startAge: S, years: Y } = at;
   for (const e of events) {
     const noted = new Set<EventPart>();
@@ -212,7 +282,17 @@ export function compileEvents(events: readonly LifeEvent[], at: { age: number | 
       note('no-age');
       continue;
     }
-    if (a === null) note('no-today');
+    // A change that happens once, before today, is in today's figures.
+    const start = e.kind === 'car' ? Math.max(...carAges(e)) : e.kind === 'raise' ? e.fromAge : e.kind === 'windfall' || e.kind === 'loan-end' ? e.atAge : null;
+    if (a !== null && start !== null && start < a) {
+      note('already');
+      continue;
+    }
+    // Without your age, a raise (only ever in the walk), or money in or cars
+    // all before the start age (which the simulation doesn't reach), count
+    // nowhere.
+    const walkOnly = e.kind === 'raise' || (S !== null && start !== null && start < S);
+    if (a === null) note(walkOnly ? 'no-today-walk' : 'no-today');
 
     /** A cost paid once, at age x. */
     const cost = (x: number, amount: number) => {
@@ -223,6 +303,20 @@ export function compileEvents(events: readonly LifeEvent[], at: { age: number | 
       if (S !== null && x >= S) {
         out.sim.oneOffs.push({ amount, year: x - S });
         if (x - S >= Y) note('after-end');
+      }
+    };
+    /** Money in once, at age x: in the walk before that year's costs; in the
+     *  simulation as income for that one year, which the engine invests
+     *  when the year doesn't need it (never a lower cost). */
+    const moneyIn = (x: number, amount: number) => {
+      if (a !== null) {
+        if (x >= a) out.walk.moneyIn.push({ year: x - a, amount });
+        else note('past');
+      }
+      if (S !== null && x >= S) {
+        const y = x - S;
+        if (y >= Y) note('after-end');
+        if (y < MAX_YEARS) out.sim.income.push({ amount, fromYear: y, toYear: y + 1, inflationAdjusted: true });
       }
     };
     /** A change in yearly spending over ages [x0, x1), x1 null for good. */
@@ -288,12 +382,27 @@ export function compileEvents(events: readonly LifeEvent[], at: { age: number | 
         }
         break;
       }
+      case 'car':
+        for (const x of carAges(e)) cost(x, e.cost);
+        break;
+      case 'windfall':
+        moneyIn(e.atAge, e.amount);
+        break;
+      case 'loan-end':
+        change(e.atAge, null, -e.yearly);
+        break;
+      case 'raise':
+        // More saved from its age, for good: the walk saves until FI. Never
+        // in the simulation, which spends (its words say so, wherever the
+        // start age is).
+        if (a !== null) out.walk.spans.push({ from: e.fromAge - a, to: null, delta: e.yearly });
+        break;
     }
   }
   return out;
 }
 
-export const hasWalk = (w: WalkChanges) => w.costs.length > 0 || w.spans.length > 0;
+export const hasWalk = (w: WalkChanges) => w.moneyIn.length > 0 || w.costs.length > 0 || w.spans.length > 0;
 
 /** A year's savings in the walk: the plan's, plus every change covering it. */
 export function savingsIn(w: WalkChanges, base: number, year: number): number {
@@ -307,18 +416,21 @@ export function savingsIn(w: WalkChanges, base: number, year: number): number {
  *  form. -1 when nothing changes after today's first year. */
 export function lastChange(w: WalkChanges): number {
   let k = -1;
+  for (const m of w.moneyIn) k = Math.max(k, m.year);
   for (const c of w.costs) k = Math.max(k, c.year);
   for (const s of w.spans) k = Math.max(k, s.to === null ? s.from - 1 : s.to - 1);
   return k;
 }
 
 const costIn = (w: WalkChanges, year: number) => w.costs.reduce((sum, c) => (c.year === year ? sum + c.amount : sum), 0);
+const moneyInAt = (w: WalkChanges, year: number) => w.moneyIn.reduce((sum, m) => (m.year === year ? sum + m.amount : sum), 0);
 
 /** Where the walk can't go on: a cost from investments larger than what it
  *  has then, or a year's savings below zero taking it below zero. `year` is
- *  from today; `have` is the balance at its start; `need` the cost, or what
- *  the year takes out. Never a negative balance compounding, or a cost paid
- *  from nowhere. */
+ *  from today; `have` is the balance at its start, with that year's money in
+ *  (which arrives before its costs are paid); `need` the cost, or what the
+ *  year takes out. Never a negative balance compounding, or a cost paid from
+ *  nowhere. */
 export type Shortfall = { year: number; have: number; need: number; kind: 'cost' | 'savings' };
 
 /**
@@ -334,6 +446,7 @@ export function walkToFi(assets: number, savings: number, realReturn: number, ta
   let bal = assets;
   let reached: number | null = null;
   for (let k = 0; k <= K; k++) {
+    bal += moneyInAt(w, k);
     const cost = costIn(w, k);
     if (cost > 0 && cost > bal + 1e-9) return { short: { year: k, have: bal, need: cost, kind: 'cost' } };
     bal -= cost;
@@ -370,13 +483,14 @@ export function walkToFi(assets: number, savings: number, realReturn: number, ta
 }
 
 /** The walk year by year: `balances[k]` is the balance at the start of year
- *  k from today (before that year's cost), for k = 0 to `years`; or, where
- *  it couldn't go on, through the start of that year, with `short` (so
- *  `balances.length` is `short.year + 1`). */
+ *  k from today (before that year's money in and cost), for k = 0 to
+ *  `years`; or, where it couldn't go on, through the start of that year,
+ *  with `short` (so `balances.length` is `short.year + 1`). */
 export function walkPath(assets: number, savings: number, realReturn: number, w: WalkChanges, years: number): { balances: number[]; short: Shortfall | null } {
   let bal = assets;
   const balances = [bal];
   for (let k = 0; k < years; k++) {
+    bal += moneyInAt(w, k);
     const cost = costIn(w, k);
     if (cost > 0 && cost > bal + 1e-9) return { balances, short: { year: k, have: bal, need: cost, kind: 'cost' } };
     bal -= cost;
@@ -389,9 +503,9 @@ export function walkPath(assets: number, savings: number, realReturn: number, w:
   return { balances, short: null };
 }
 
-/** The walk's balance at the start of `year` (before that year's cost,
- *  which a simulation starting then takes itself), or where it couldn't go
- *  on before then. */
+/** The walk's balance at the start of `year` (before that year's money in
+ *  and cost, which a simulation starting then takes itself), or where it
+ *  couldn't go on before then. */
 export function walkBalanceAt(assets: number, savings: number, realReturn: number, w: WalkChanges, year: number): { balance: number } | { short: Shortfall } {
   const p = walkPath(assets, savings, realReturn, w, year);
   return p.short ? { short: p.short } : { balance: p.balances[p.balances.length - 1] };

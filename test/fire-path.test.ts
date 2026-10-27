@@ -24,6 +24,7 @@ const path = (f: PlanFigures, years?: number): PlanPath => {
 };
 const balances = (p: PlanPath) => p.points.map((x) => x.balance);
 const costIn = (w: WalkChanges, year: number) => w.costs.reduce((s, c) => (c.year === year ? s + c.amount : s), 0);
+const inAt = (w: WalkChanges, year: number) => w.moneyIn.reduce((s, m) => (m.year === year ? s + m.amount : s), 0);
 const none: Measured = { spending: null, savings: null, assets: null };
 const home = (cost: number, atAge = 42): LifeEvent => ({ id: 'h', kind: 'house', label: 'Home', atAge, cost, yearly: 0, years: null });
 
@@ -53,6 +54,40 @@ describe('by hand', () => {
     expect(balances(p)).toEqual([500_000, 575_000, 653_750]);
     expect(p.short).toEqual({ year: 2, have: 653_750, need: 900_000, kind: 'cost' });
     expect(f.view.atTargetAge).toBeNull();
+  });
+
+  test('a windfall pays a home bought in its own year: in first, then the cost, and the path goes on (8d)', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 300_000 };
+    const f = figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [home(900_000), gift]);
+    const p = path(f);
+    expect(p.short).toBeNull();
+    // 653,750 at 42, before the windfall and the home; 53,750 left after both.
+    const want = [500_000, 575_000, 653_750, 106_437.5, 161_759.375, 219_847.34375];
+    balances(p).forEach((b, k) => expect(b).toBeCloseTo(want[k], 6));
+    expect(balances(p)[5]).toBe(f.view.atTargetAge as number);
+    // Less than the home takes, with the windfall: it stops, and says what there was.
+    const less = path(figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [home(900_000), { ...gift, amount: 100_000 }]));
+    expect(less.short).toEqual({ year: 2, have: 753_750, need: 900_000, kind: 'cost' });
+  });
+
+  test('a windfall that reaches the FI number on the day it comes: FI that year, and the point says what is in hand then (8d, with 8b’s chart)', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
+    const f = figures(plan({ age: 40, targetAge: 45, spending: 40_000, assets: 500_000, savings: 50_000 }), none, [gift]);
+    expect(f.view.fiNumber).toBe(1_000_000);
+    expect(f.view.yearsToFi).toBe(2);
+    expect(f.view.fiAge).toBe(42);
+    const p = path(f);
+    // The point is the balance before the windfall, as before a cost; what
+    // is in hand once it is in is at the FI number or over it.
+    expect(p.points[2]).toEqual({ age: 42, balance: 653_750, inHand: 1_053_750 });
+    expect(p.points.filter((q) => q.inHand !== undefined).length).toBe(1);
+    expect(balances(p)[5]).toBe(f.view.atTargetAge as number);
+    // With a home the same year, in hand is after it; with one it can't pay, none.
+    const both = path(figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [gift, home(1_000_000)]));
+    expect(both.points[2].inHand).toBeCloseTo(53_750, 6);
+    const short = path(figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [gift, home(2_000_000)]));
+    expect(short.points[2]).toEqual({ age: 42, balance: 653_750 });
+    expect(short.short?.kind).toBe('cost');
   });
 
   test('savings below zero in the walk: it stops the year that would take it below zero, never a negative balance', () => {
@@ -156,9 +191,10 @@ describe('the balance at the stop age counts life events with no FI number (revi
 
 // Generated plans: ages (some missing), rates within the ranges a plan
 // takes (LIMITS), figures typed, measured, missing or not measured, savings
-// below zero, and up to four life events of every kind, costs larger than
-// the balance included. A stop age before today's and rates the formulas
-// don't take are the hand-worked cases above.
+// below zero, and up to four life events of every kind (8d's car, raise,
+// windfall and loan paid off among them), costs larger than the balance
+// included. A stop age before today's and rates the formulas don't take are
+// the hand-worked cases above.
 function generate(seed: number) {
   const r = seededRandom(seed);
   const int = (lo: number, hi: number) => lo + Math.floor(r() * (hi - lo + 1));
@@ -189,7 +225,7 @@ function generate(seed: number) {
   const n = pick([0, 0, 1, 2, 3, 4]);
   for (let i = 0; i < n; i++) {
     const id = `e${i}`;
-    const kind = pick(['house', 'child', 'sabbatical', 'part-time', 'spending'] as const);
+    const kind = pick(['house', 'child', 'sabbatical', 'part-time', 'spending', 'car', 'raise', 'windfall', 'loan-end'] as const);
     if (kind === 'house') events.push({ id, kind, label: 'Home', atAge: at(), cost: int(0, 900) * 1000, yearly: int(-20, 30) * 1000, years: maybe(0.5, () => int(1, 30)) });
     if (kind === 'child') events.push({ id, kind, label: 'Child', fromAge: at(), yearly: int(5, 30) * 1000, years: int(1, 25) });
     if (kind === 'sabbatical') events.push({ id, kind, label: 'Break', fromAge: at(), years: int(1, 3), savingsLost: int(10, 80) * 1000 });
@@ -198,8 +234,27 @@ function generate(seed: number) {
       events.push({ id, kind, label: 'Part-time', fromAge, toAge: fromAge + int(1, 10), yearly: int(10, 40) * 1000 });
     }
     if (kind === 'spending') events.push({ id, kind, label: 'Spending', fromAge: at(), yearly: int(-30, 40) * 1000, years: maybe(0.5, () => int(1, 20)) });
+    if (kind === 'car' || kind === 'raise' || kind === 'windfall' || kind === 'loan-end') events.push(extra(kind, id));
   }
-  return { p, m, events };
+  /** One event of a kind 8d added, with figures of its own. Loans paid off
+   *  are kept small against spending, so few plans are refused for spending
+   *  below zero in retirement. */
+  function extra(kind: 'car' | 'raise' | 'windfall' | 'loan-end', id: string): LifeEvent {
+    switch (kind) {
+      case 'car': {
+        const atAge = at();
+        const every = maybe(0.5, () => int(2, 10));
+        return { id, kind, label: 'Car', atAge, cost: int(5, 900) * 1000, every, times: every === null ? 1 : Math.min(int(2, 6), 1 + Math.floor((110 - atAge) / every)) };
+      }
+      case 'raise':
+        return { id, kind, label: 'Raise', fromAge: at(), yearly: int(1, 30) * 1000 };
+      case 'windfall':
+        return { id, kind, label: 'Gift', atAge: at(), amount: int(10, 900) * 1000 };
+      case 'loan-end':
+        return { id, kind, label: 'Loan', atAge: at(), yearly: int(1, 10) * 1000 };
+    }
+  }
+  return { p, m, events, extra };
 }
 
 describe('generated plans', () => {
@@ -224,7 +279,7 @@ describe('generated plans', () => {
       const p = planPath(f);
       expect(p === null).toBe(from === null);
       if (!p || !from) continue;
-      expect(p.points[0]).toEqual({ age: f.plan.age as number, balance: from.assets });
+      expect([p.points[0].age, p.points[0].balance]).toEqual([f.plan.age as number, from.assets]);
       p.points.forEach((x, k) => expect(x.age).toBe((f.plan.age as number) + k));
       expect(p.stopAge).toBe(f.plan.targetAge as number);
       expect(p.fiNumber).toBe(f.view.fiNumber);
@@ -251,7 +306,11 @@ describe('generated plans', () => {
     }
   });
 
-  test('no value from nowhere: each year of the walk is the year before, less its cost, grown, plus its savings; never below zero, never a cost paid from more than is there', () => {
+  // Money in (8d's windfall) changes this property, and only by its own
+  // amount: a year's money in arrives at its start, before its costs, so a
+  // year is the one before plus its money in, less its cost, grown, plus its
+  // savings, and what a shortfall says there was includes it.
+  test('no value from nowhere: each year of the walk is the year before, plus its money in, less its cost, grown, plus its savings; never below zero, never a cost paid from more than is there', () => {
     for (const { f } of cases) {
       const p = planPath(f, 60);
       if (!p?.fromWalk) continue;
@@ -263,21 +322,50 @@ describe('generated plans', () => {
         // Today's assets are what they are; nothing after them is below zero.
         if (k > 0) expect(b[k]).toBeGreaterThanOrEqual(0);
         if (k + 1 < b.length) {
-          if (costIn(w, k) > 0) expect(costIn(w, k)).toBeLessThanOrEqual(b[k] + 1e-9);
-          expect(b[k + 1]).toBe((b[k] - costIn(w, k)) * (1 + g) + savingsIn(w, from.savings, k));
+          if (costIn(w, k) > 0) expect(costIn(w, k)).toBeLessThanOrEqual(b[k] + inAt(w, k) + 1e-9);
+          expect(b[k + 1]).toBe((b[k] + inAt(w, k) - costIn(w, k)) * (1 + g) + savingsIn(w, from.savings, k));
         }
       }
       const at = walkBalanceAt(from.assets, from.savings, g, w, 60);
       if ('short' in at) {
         expect(p.short).toEqual(at.short);
         const s = at.short;
-        if (s.kind === 'cost') expect(s.have).toBe(b[s.year]);
-        else expect(s.have).toBe(b[s.year] - costIn(w, s.year));
+        if (s.kind === 'cost') expect(s.have).toBe(b[s.year] + inAt(w, s.year));
+        else expect(s.have).toBe(b[s.year] + inAt(w, s.year) - costIn(w, s.year));
       } else {
         expect(p.short).toBeNull();
         expect(b[60]).toBe(at.balance);
       }
     }
+  });
+
+  test('a point says what is in hand exactly in a year with money in whose costs are paid: the balance, plus the money in, less the costs, in the walk’s order', () => {
+    let checked = 0;
+    for (const { f } of cases) {
+      const p = planPath(f, 60);
+      if (!p) continue;
+      const w = p.fromWalk ? (f.events as NonNullable<PlanFigures['events']>).walk : null;
+      p.points.forEach((q, k) => {
+        const paid = w !== null && !(costIn(w, k) > 0 && costIn(w, k) > q.balance + inAt(w, k) + 1e-9);
+        if (w !== null && inAt(w, k) > 0 && paid) {
+          checked++;
+          expect(q.inHand).toBe(q.balance + inAt(w, k) - costIn(w, k));
+        } else expect(q.inHand).toBeUndefined();
+      });
+    }
+    expect(checked).toBeGreaterThan(30);
+  });
+
+  test('the only money in is the windfalls’, each once, at its own age from today', () => {
+    let checked = 0;
+    for (const { f, events } of cases) {
+      if (!f.events || f.plan.age === null) continue;
+      const age = f.plan.age;
+      const windfalls = events.flatMap((e) => (e.kind === 'windfall' && e.atAge >= age ? [{ year: e.atAge - age, amount: e.amount }] : []));
+      expect(f.events.walk.moneyIn).toEqual(windfalls);
+      checked += windfalls.length;
+    }
+    expect(checked).toBeGreaterThan(30);
   });
 
   test('every point is walkBalanceAt’s for its year with life events, and the closed form’s, a step apart, without', () => {
@@ -314,8 +402,15 @@ describe('generated plans', () => {
     expect(checked).toBeGreaterThan(20);
   });
 
+  // Money in changes this property where it is reached on the day money
+  // comes in: the FI date is then that whole year, and the path's point for
+  // it is the balance at the start of the year before its money in (as
+  // before its cost), so it is that point plus the money in, less the cost,
+  // that is at the FI number. 8b's chart draws the point; the marker is the
+  // FI age.
   test('it meets the FI date: at the FI number by the year it is reached in, and below it in the year before', () => {
     let checked = 0;
+    let onTheDay = 0;
     for (const { f } of cases) {
       const y = f.view.yearsToFi;
       const fi = f.view.fiNumber;
@@ -324,21 +419,60 @@ describe('generated plans', () => {
       if (!p) continue;
       checked++;
       const b = balances(p);
+      const w = p.fromWalk ? (f.events as NonNullable<PlanFigures['events']>).walk : null;
+      const inHand = (k: number) => b[k] + (w ? inAt(w, k) - costIn(w, k) : 0);
       expect(p.short).toBeNull();
-      expect(b[Math.ceil(y)]).toBeGreaterThanOrEqual(fi * (1 - 1e-9));
-      if (!Number.isInteger(y)) {
-        const k = Math.floor(y);
-        const cost = p.fromWalk ? costIn((f.events as NonNullable<PlanFigures['events']>).walk, k) : 0;
-        expect(b[k] - cost).toBeLessThan(fi * (1 + 1e-9));
+      if (Number.isInteger(y)) {
+        expect(inHand(y)).toBeGreaterThanOrEqual(fi * (1 - 1e-9));
+        if (b[y] < fi * (1 - 1e-9)) {
+          // Reached the day money comes in: the point's in hand says so, for
+          // the chart to step up to the FI number at the FI age.
+          onTheDay++;
+          expect(p.points[y].inHand).toBe(inHand(y));
+        }
+      } else {
+        expect(b[Math.ceil(y)]).toBeGreaterThanOrEqual(fi * (1 - 1e-9));
+        expect(inHand(Math.floor(y))).toBeLessThan(fi * (1 + 1e-9));
       }
     }
     expect(checked).toBeGreaterThan(100);
+    expect(onTheDay).toBeGreaterThan(0);
+  });
+
+  // 8d's kinds each move the FI date one way only, against the same plan
+  // with one more of them: money in, a raise and a loan paid off never make
+  // it later or add a shortfall; a car never makes it sooner or takes one
+  // away. Compared only where the plan already walks, so the walk's own
+  // shortfalls (which the closed form doesn't look for) are on both sides.
+  test('each new kind moves the FI date one way only', () => {
+    const later = (a: number | null, b: number | null) => (a ?? Infinity) > (b ?? Infinity) * (1 + 1e-9) + 1e-9;
+    let compared = 0;
+    for (let i = 0; i < 400; i++) {
+      const c = generate(5000 + i);
+      const base = planFigures(c.p, c.m, c.events);
+      if ('refused' in base || !base.walked) continue;
+      for (const kind of ['car', 'raise', 'windfall', 'loan-end'] as const) {
+        const more = planFigures(c.p, c.m, [...c.events, c.extra(kind, 'x')]);
+        if ('refused' in more) continue;
+        expect(more.walked).toBe(true);
+        compared++;
+        const [y0, y1] = [base.short ? null : base.view.yearsToFi, more.short ? null : more.view.yearsToFi];
+        if (kind === 'car') {
+          if (base.short) expect(more.short).not.toBeNull();
+          expect(later(y0, y1)).toBe(false);
+        } else {
+          if (!base.short) expect(more.short).toBeNull();
+          expect(later(y1, y0)).toBe(false);
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(200);
   });
 });
 
 describe('walkPath', () => {
   test('is what walkBalanceAt reads: its last balance, or its short', () => {
-    const w: WalkChanges = { costs: [{ year: 3, amount: 200_000 }], spans: [{ from: 1, to: 4, delta: -20_000 }] };
+    const w: WalkChanges = { moneyIn: [], costs: [{ year: 3, amount: 200_000 }], spans: [{ from: 1, to: 4, delta: -20_000 }] };
     for (let years = 0; years <= 10; years++) {
       const p = walkPath(150_000, 30_000, 0.04, w, years);
       const at = walkBalanceAt(150_000, 30_000, 0.04, w, years);

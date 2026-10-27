@@ -115,6 +115,28 @@ describe('the path chart', () => {
     expect(label(html)).not.toContain('stay under');
   });
 
+  test('a windfall that reaches the FI number the day it comes: the line steps up at that age, and the marker is on the step (8d)', () => {
+    // FI number $1,000,000; $653,750 at 42, and $400,000 in then.
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
+    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 500_000, savings: 50_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
+    expect(f.view.fiAge).toBe(42);
+    const p = planPath(f)!;
+    const html = draw(props({ points: p.points, stopAge: 55, fiNumber: f.view.fiNumber, fiAge: f.view.fiAge, withEvents: true }));
+    const [cx, cy] = /<circle cx="([\d.]+)" cy="([\d.]+)"/.exec(html)!.slice(1).map(Number);
+    const fiY = Number(/<line [^>]*y1="([\d.]+)"[^>]*stroke-dasharray="4 4"/.exec(html)![1]);
+    // On the FI number's line.
+    expect(cy).toBeCloseTo(fiY, 6);
+    // The line's points at that age: one at the balance before the windfall,
+    // straight up to what is in hand, past the FI number (y grows down).
+    const d = /<path d="(M[^"]+)" fill="none"/.exec(html)![1];
+    const at = [...d.matchAll(/[ML]([\d.]+),([\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])]).filter(([x]) => Math.abs(x - cx) < 0.06);
+    expect(at).toHaveLength(2);
+    expect(at[0][1]).toBeGreaterThan(fiY);
+    expect(at[1][1]).toBeLessThan(fiY);
+    // The table says both.
+    expect(html).toContain(`${wholeMoney(653_750, 'USD')}, then ${wholeMoney(1_053_750, 'USD')} once that year’s windfall is in and its costs are paid`);
+  });
+
   test('every year in the table, the stop age marked', () => {
     const html = draw(props());
     const rows = [...html.matchAll(/<tr><td>([^<]*)<\/td>/g)].map((m) => m[1]);
@@ -156,6 +178,18 @@ describe('the answer over the chart', () => {
     expect(p.short).not.toBeNull();
     const text = card(f);
     expect(text).toContain(`Financial independence Around age ${Math.round(f.view.fiAge!)}`);
+    expect(text).toContain(`At these savings it runs out at ${40 + p.short!.year} (below).`);
+  });
+
+  test('a windfall that takes it to FI, then savings below zero that run it out, says both (8d)', () => {
+    // FI number $750,000; $207,750 at 42, $600,000 in then, $60,000 a year out.
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 600_000 };
+    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 80, spending: 30_000, assets: 300_000, savings: -60_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
+    const p = planPath(f)!;
+    expect([f.short, f.view.yearsToFi]).toEqual([null, 2]);
+    expect(p.short?.kind).toBe('savings');
+    const text = card(f);
+    expect(text).toContain('Financial independence Around age 42');
     expect(text).toContain(`At these savings it runs out at ${40 + p.short!.year} (below).`);
   });
 
