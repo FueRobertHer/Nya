@@ -60,6 +60,25 @@ export class FakeNode {
     const p = this.parentNode;
     return p ? (p.childNodes[p.childNodes.indexOf(this) - 1] ?? null) : null;
   }
+  /** The elements under this node matching a tag and `[name="value"]`
+   *  attributes: how React finds the rest of a radio's group when one is
+   *  chosen. Any other selector throws, so nothing passes by not matching. */
+  querySelectorAll(selector: string): FakeElement[] {
+    const m = selector.match(/^([a-z]*)((?:\[[\w-]+="[^"]*"\])*)$/i);
+    if (!m) throw new Error(`mini-dom: no selector like ${selector}`);
+    const tag = m[1].toUpperCase();
+    const attrs = [...m[2].matchAll(/\[([\w-]+)="([^"]*)"\]/g)].map(([, k, v]) => [k, v] as const);
+    const out: FakeElement[] = [];
+    const walk = (n: FakeNode) => {
+      for (const c of n.childNodes) {
+        if (!(c instanceof FakeElement)) continue;
+        if ((!tag || c.tagName === tag) && attrs.every(([k, v]) => c.getAttribute(k) === v)) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
   get previousElementSibling(): FakeElement | null {
     const p = this.parentNode;
     if (!p) return null;

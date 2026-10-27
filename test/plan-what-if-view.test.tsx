@@ -217,6 +217,65 @@ describe('the What if… card', () => {
     await tab.unmount();
   });
 
+  test('8d’s kinds as templates: a windfall, a raise and a loan paid off move FI sooner; one before today is left out, and says so', async () => {
+    const tab = await render({ 'GET /api/plan-scenarios': listing() });
+    await press(tab.chip('A windfall'));
+    let sheet = tab.dialog() as FakeElement;
+    expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A windfall');
+    expect(preview(sheet)).toBe('Fill in the figures to see how it moves your FI age.');
+    await fill(sheet, 'At age', '45');
+    await fill(sheet, 'Amount, after tax', '200000');
+    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 49 (3 years sooner).', 'Try it makes this the scenario “A windfall at 45”, and opens it.']);
+    await press(button(sheet, 'Cancel'));
+    await press(tab.chip('A raise'));
+    sheet = tab.dialog() as FakeElement;
+    await fill(sheet, 'From age', '42');
+    await fill(sheet, 'Saved more a year', '10000');
+    expect(preview(sheet)).toBe('In this what-if, FI moves from around 52 to around 50 (2 years sooner).');
+    // From before today: your savings may already have it.
+    await fill(sheet, 'From age', '38');
+    expect(previewLines(sheet)[0]).toBe('In this what-if, FI stays around 52, as in your plan.');
+    expect(previewLines(sheet)).toContain('It is before today, so it is left out: your measured figures may already count it.');
+    await press(button(sheet, 'Cancel'));
+    await press(tab.chip('Pay off a loan'));
+    sheet = tab.dialog() as FakeElement;
+    expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A loan paid off');
+    await fill(sheet, 'Paid off at age', '45');
+    await fill(sheet, 'Spending less a year', '12000');
+    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 47 (5 years sooner).', 'Try it makes this the scenario “Pay off a loan at 45”, and opens it.']);
+    await tab.unmount();
+  });
+
+  test('“Buy a car” every few years: Try it makes the scenario with that car, named after its first', async () => {
+    let made: { events: LifeEvent[]; name: string } | null = null;
+    const tab = await render({
+      'GET /api/plan-scenarios': listing(),
+      'POST /api/plan-scenarios': (call) => {
+        made = call.body.scenario;
+        return [200, { scenario: { ...call.body.scenario, id: 'new1', version: 1, createdAt: '2026-10-26T00:00:00.000Z', savedAt: '2026-10-26T00:00:00.000Z', rev: 'r1' } }];
+      },
+    });
+    await press(tab.chip('Buy a car'));
+    const sheet = tab.dialog() as FakeElement;
+    await fill(sheet, 'At age', '45');
+    await fill(sheet, 'Paid from your investments, each', '80000');
+    const repeats = sheet.findAll((e) => e.tagName === 'LABEL' && e.textContent.trim() === 'Every few years')[0].findAll((e) => e.tagName === 'INPUT')[0];
+    await act(async () => {
+      repeats.checked = true;
+      click(repeats);
+    });
+    await settle();
+    expect(preview(sheet)).toBe('Fill in the figures to see how it moves your FI age.');
+    await fill(sheet, 'Every how many years', '4');
+    await fill(sheet, 'How many in all', '3');
+    expect(preview(sheet)).toBe('In this what-if, FI moves from around 52 to around 56 (4 years later).');
+    await press(button(sheet, 'Try it'));
+    const { id: _, ...event } = made!.events[0];
+    expect([made!.name, made!.events.length, event]).toEqual(['Buy a car at 45', 1, { kind: 'car', label: 'A car', atAge: 45, cost: 80_000, every: 4, times: 3 }]);
+    expect(tab.bar()?.textContent).toContain('Scenario: Buy a car at 45');
+    await tab.unmount();
+  });
+
   test('a child wholly before today leaves the FI age where it is, and says why, without the part-time words', async () => {
     const tab = await render({ 'GET /api/plan-scenarios': listing() });
     await press(tab.chip('A child'));
@@ -351,6 +410,14 @@ describe('its words', () => {
     expect(whatIfName(t, e, [{ id: 'a', name: 'Buy a home at 38' }, { id: 'b', name: 'Buy a home at 38 (2)' }])).toBe('Buy a home at 38 (3)');
     const part = WHAT_IF_TEMPLATES.find((x) => x.id === 'part-time')!;
     expect(whatIfName(part, { id: 'p', kind: 'part-time', label: 'P', fromAge: 50, toAge: 60, yearly: 1 }, [])).toBe('Part-time work from 50');
+    // 8d's kinds, from their first age.
+    const of = (id: string) => WHAT_IF_TEMPLATES.find((x) => x.id === id)!;
+    expect([
+      whatIfName(of('car'), { id: 'v', kind: 'car', label: 'C', atAge: 45, cost: 1, every: 4, times: 3 }, []),
+      whatIfName(of('raise'), { id: 'r', kind: 'raise', label: 'R', fromAge: 42, yearly: 1 }, []),
+      whatIfName(of('windfall'), { id: 'w', kind: 'windfall', label: 'W', atAge: 60, amount: 1 }, []),
+      whatIfName(of('loan-end'), { id: 'l', kind: 'loan-end', label: 'L', atAge: 48, yearly: 1 }, []),
+    ]).toEqual(['Buy a car at 45', 'A raise at 42', 'A windfall at 60', 'Pay off a loan at 48']);
   });
   test('no template suggests an amount', () => {
     for (const t of WHAT_IF_TEMPLATES) expect(`${t.label} ${t.name}`).not.toMatch(/\d|\$/);
