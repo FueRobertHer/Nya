@@ -4,11 +4,11 @@
 // its heading over its three segments, Month, Upcoming and Goals. On Month
 // the heading is the month (components/MonthStepper.tsx): its arrows, its
 // name with the list of months laid over it (back to the first month with
-// transactions, ten years at most: a step at a time would read each month
-// from the server), and This month when another month shows. Only the
-// month's name is announced as it changes; a segment's own name isn't, since
-// choosing the segment already says it. The segments are tabs, as
-// Activity's are (components/ActivityBar.tsx).
+// transactions, ten years at most, or to the month Activity brought: a step
+// at a time would read each month from the server), and This month when
+// another month shows. Only the month's name is announced as it changes; a
+// segment's own name isn't, since choosing the segment already says it. The
+// segments are tabs, as Activity's are (components/ActivityBar.tsx).
 
 import { useRef, type KeyboardEvent, type Ref } from 'react';
 import { segmentKey } from './ActivityBar';
