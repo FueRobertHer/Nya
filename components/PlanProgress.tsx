@@ -19,6 +19,7 @@ import { Sheet } from './Sheet';
 import { Menu } from './Menu';
 import { Why } from './Why';
 import { Masked } from './HideAmounts';
+import { Notice } from './TotalCaveats';
 import { dayName, pct, wholeMoney } from './plan-text';
 import type { FirePlan, Input } from '@/lib/fire/plan';
 import type { AssetInstitution } from '@/lib/fire/inputs';
@@ -152,11 +153,11 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
         {menu.length > 0 && <Menu label="Progress options" items={menu} />}
       </div>
       <div className="stack">
-        {error && <p className={`notice ${error.kind}`}>{error.text}</p>}
+        {error && <Notice level={error.kind}>{error.text}</Notice>}
         {savedState.kind === 'loading' && <p className="skeleton">Loading your saved plan</p>}
         {savedState.kind === 'failed' && (
           <>
-            <p className="notice caution">{savedState.message ?? 'Your saved plan couldn’t be loaded.'}</p>
+            <Notice level="caution">{savedState.message ?? 'Your saved plan couldn’t be loaded.'}</Notice>
             <div className="btn-row">
               <button type="button" className="btn ghost" onClick={onRetry}>
                 Try again
@@ -166,7 +167,7 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
         )}
         {savedState.kind === 'ready' && savedState.problem === 'unreadable' && (
           <>
-            <p className="notice critical">The plan you saved as your plan couldn’t be read, so nothing is set against it.</p>
+            <Notice level="critical">The plan you saved as your plan couldn’t be read, so nothing is set against it.</Notice>
             <div className="btn-row">
               <button type="button" className="btn secondary" disabled={busy} onClick={() => onSheet('forget-unreadable')}>
                 Delete it
@@ -238,7 +239,7 @@ function SavedBody({
       {(series === null || series.kind === 'loading') && <p className="skeleton">Loading your invested assets since then</p>}
       {series?.kind === 'failed' && (
         <>
-          <p className="notice caution">{series.message ?? 'Your invested assets since then couldn’t be loaded.'}</p>
+          <Notice level="caution">{series.message ?? 'Your invested assets since then couldn’t be loaded.'}</Notice>
           <div className="btn-row">
             <button type="button" className="btn ghost" onClick={onRetry}>
               Try again
@@ -295,13 +296,13 @@ function Compared({ saved, answer, money, nameOf }: { saved: SavedPlan; answer: 
         </p>
       )}
       {l.waiting && <p className="helper">{l.waiting}</p>}
-      {l.caution && <p className="notice caution">{l.caution}</p>}
-      {l.added && <p className="notice caution">{l.added}</p>}
-      {l.ended && <p className="notice caution">{l.ended}</p>}
+      {l.caution && <Notice level="caution">{l.caution}</Notice>}
+      {l.added && <Notice level="caution">{l.added}</Notice>}
+      {l.ended && <Notice level="caution">{l.ended}</Notice>}
       {answer.unreadable_days.length > 0 && (
-        <p className="notice caution">
+        <Notice level="caution">
           The balances of {answer.unreadable_days.length === 1 ? `${dayName(answer.unreadable_days[0])} couldn’t be read, so that day is` : `${answer.unreadable_days.length} days couldn’t be read, so they are`} left out.
-        </p>
+        </Notice>
       )}
     </>
   );
@@ -592,7 +593,7 @@ export function SheetBody({
           <input type="text" inputMode="decimal" placeholder="3" value={inflation} onChange={(e) => onInflation(e.target.value)} />
         </label>
         <p className="helper">Balances are in each day’s money and your plan in today’s, so your plan is raised by this much a year to compare them.</p>
-        {error && <p className="notice critical">{error}</p>}
+        {error && <Notice level="critical">{error}</Notice>}
       </div>
     );
   }
@@ -600,7 +601,7 @@ export function SheetBody({
     return (
       <div className="stack">
         <p>Nya forgets the plan you saved{saved ? ` on ${dayName(saved.day)}` : ''}. Your Plan and its figures stay as they are. This can’t be undone.</p>
-        {error && <p className="notice critical">{error}</p>}
+        {error && <Notice level="critical">{error}</Notice>}
       </div>
     );
   }
@@ -608,7 +609,7 @@ export function SheetBody({
     return (
       <div className="stack">
         <p>The saved plan that couldn’t be read is deleted. Your Plan and its figures stay as they are. This can’t be undone.</p>
-        {error && <p className="notice critical">{error}</p>}
+        {error && <Notice level="critical">{error}</Notice>}
       </div>
     );
   }

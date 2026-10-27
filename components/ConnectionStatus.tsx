@@ -28,12 +28,25 @@ import type { ConnectionView } from '@/lib/connectors/view';
 import { severityOf, type Severity } from '@/lib/accounts-status';
 import { fmtStaleDay, type Account, type Institution } from './accounts-format';
 
-/** A notice's icon: never color alone. */
+/** A critical notice's icon: never color alone. */
 export const ALERT = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
   </svg>
 );
+
+/** A caution notice's icon, the clock Needs attention's rows use: in light,
+ *  red and amber are too close to tell apart by color, so the shape does. */
+export const CAUTION = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+  </svg>
+);
+
+/** The icon for a notice whose level is decided at run time. */
+export function levelIcon(level: Severity): ReactNode {
+  return level === 'critical' ? ALERT : CAUTION;
+}
 
 const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 const localDay = (iso: string) => instantDay(iso) ?? iso.slice(0, 10);
@@ -274,7 +287,7 @@ export function ConnectionStatus({
     <>
       {severity && (lines.length > 0 || behind.length > 0) && (
         <div className={`notice ${severity}`}>
-          {ALERT}
+          {levelIcon(severity)}
           <div className="stack tight">
             {lines.map((line, i) => (
               <p key={i}>{line}</p>
@@ -303,7 +316,7 @@ export function ConnectionStatus({
         <div key={c.account_id} className="stack tight">
           {c.warn ? (
             <div className="notice caution">
-              {ALERT}
+              {CAUTION}
               <p>{c.text}</p>
             </div>
           ) : (
