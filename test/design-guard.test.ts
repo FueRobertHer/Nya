@@ -98,6 +98,44 @@ describe('design guard: the guidelines name real classes', () => {
   });
 });
 
+// What the token check can't see: which token a rule uses. A control is
+// marked by an edge that meets 3:1 (--border-input; --border-strong is about
+// 1.4:1), and a state is never shown by color alone.
+describe('design guard: controls and states read without color', () => {
+  const css = read('app/globals.css');
+  // The bodies of the rules whose selector has a line starting with `start`.
+  const rules = (start: string) =>
+    [...css.matchAll(new RegExp(`(^|\\n)${start.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'))].map((m) => {
+      const open = css.indexOf('{', m.index!);
+      return css.slice(open + 1, css.indexOf('}', open));
+    });
+  const NEEDS: [string, string, string][] = [
+    [':where(input:not(', 'var(--border-input)', 'a plain field is edged in --border-input'],
+    ['.text-input {', 'var(--border-input)', 'a .text-input is edged in --border-input'],
+    ['.invite-link {', 'var(--border-input)', 'the invite link field is edged in --border-input'],
+    ['button.secondary {', 'var(--border-input)', 'a secondary button is edged in --border-input'],
+    ['.btn.secondary {', 'var(--border-input)', 'a .btn.secondary is edged in --border-input'],
+    ['.chip {', 'var(--border-input)', 'a chip is edged in --border-input'],
+    ['.menu-anchor > .icon-btn {', 'var(--border-input)', 'the ⋯ button is edged in --border-input'],
+    ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'var(--border-input)', 'the selected segment has an edge'],
+    ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],
+    ['.tab-bar button.active::before {', 'var(--accent)', 'the current tab has a bar'],
+    ['.notice.critical {', 'border-color: currentColor', 'a critical notice has an edge'],
+  ];
+  test('each control has its edge and each state more than a color', () => {
+    const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);
+    expect(missing).toEqual([]);
+  });
+
+  test('a caution notice has the clock, not the critical triangle', () => {
+    const found: string[] = [];
+    for (const file of sourceFiles()) {
+      if (/className="notice caution[^"]*"[^>]*>\s*\{ALERT\}/.test(read(file))) found.push(file);
+    }
+    expect(found).toEqual([]);
+  });
+});
+
 describe('design guard: copy', () => {
   test('no em or en dash in UI source or the design docs (guidelines.md, Copy)', () => {
     const files = [

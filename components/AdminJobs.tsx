@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { AttachmentSweepProblem, BackupProblem, JobView } from '@/lib/backup';
-import { ALERT } from './ConnectionStatus';
+import { CAUTION } from './ConnectionStatus';
 import { backupWords, filesWords } from './NetWorthCard';
 
 type Job = JobView['job'];
@@ -61,7 +61,7 @@ export function JobCard({ view, running, said, onRun }: { view: JobView; running
         </p>
         {problem ? (
           <div className="notice caution">
-            {ALERT}
+            {CAUTION}
             <div>{problem}</div>
           </div>
         ) : view.last_ok ? (
@@ -169,7 +169,7 @@ export default function AdminJobs() {
       <div className="stack">
         {error && (
           <div className="notice caution">
-            {ALERT}
+            {CAUTION}
             <div>{error}</div>
           </div>
         )}

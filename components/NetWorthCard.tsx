@@ -11,7 +11,7 @@
 import type { ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import { fmt, fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
-import { ALERT } from './ConnectionStatus';
+import { CAUTION } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
 
@@ -38,7 +38,7 @@ export function filesWords(p: AttachmentSweepProblem): string {
 function Caution({ children }: { children: ReactNode }) {
   return (
     <div className="notice caution">
-      {ALERT}
+      {CAUTION}
       <div>
         <LevelWord level="caution" />
         {children}

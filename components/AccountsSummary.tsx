@@ -10,7 +10,7 @@ import type { PageFx } from '@/lib/fx/view';
 import type { Institution } from './accounts-format';
 import { fmt } from './accounts-format';
 import { summarize } from './account-groups';
-import { ALERT } from './ConnectionStatus';
+import { ALERT, CAUTION } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 
 export default function AccountsSummary({
@@ -51,7 +51,7 @@ export default function AccountsSummary({
       )}
       {s.dated.length > 0 && (
         <div className="notice caution">
-          {ALERT}
+          {CAUTION}
           <p>{`Some figures at ${joinNames(s.dated)} aren’t current or complete yet; ${s.dated.length === 1 ? 'its card says' : 'their cards say'} what.`}</p>
         </div>
       )}

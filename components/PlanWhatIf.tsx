@@ -13,6 +13,8 @@
 import { useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import { CAUTION } from './ConnectionStatus';
+import { LevelWord } from './TotalCaveats';
 import { EventForm, type Checked } from './PlanEvents';
 import { scenarioOutcome } from './PlanScenarios';
 import { chevron, RIGHT } from './ActivityBar';
@@ -171,8 +173,12 @@ export function WhatIfCard({
             {state.status === 'loading' && <p className="helper">Your scenarios are still loading.</p>}
             {state.status === 'error' && (
               <div className="notice caution">
+                {CAUTION}
                 <div className="stack tight">
-                  <p>{state.error}</p>
+                  <p>
+                    <LevelWord level="caution" />
+                    {state.error}
+                  </p>
                   <button type="button" className="btn secondary" onClick={() => void client.load()}>
                     Try again
                   </button>

@@ -12,7 +12,7 @@
 import type { ReactNode } from 'react';
 import type { Severity } from '@/lib/accounts-status';
 import { joinNames } from '@/lib/month-coverage';
-import { ALERT } from './ConnectionStatus';
+import { CAUTION, levelIcon } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 
 export type CaveatSeverity = Severity | 'info';
@@ -56,7 +56,7 @@ export function LevelWord({ level }: { level: CaveatSeverity }) {
 export function Notice({ level, children }: { level: CaveatSeverity; children: ReactNode }) {
   return (
     <div className={`notice ${level}`}>
-      {level === 'info' ? INFO : ALERT}
+      {level === 'info' ? INFO : levelIcon(level)}
       <div>
         <LevelWord level={level} />
         {children}
@@ -83,7 +83,7 @@ export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {
       {lesser.length > 1 && (
         <details className="notice-summary">
           <summary className={`notice ${worst}`}>
-            {worst === 'info' ? INFO : ALERT}
+            {worst === 'info' ? INFO : CAUTION}
             <span>
               <LevelWord level={worst} />
               {/* Never an amount, but drawn as the notes are, so the switch

@@ -11,7 +11,7 @@
 import type { ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import type { AttentionItem, AttentionSeverity, Go } from './attention';
-import { ALERT } from './ConnectionStatus';
+import { ALERT, CAUTION } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import { fmtInstantDay } from './accounts-format';
 import { LevelWord } from './TotalCaveats';
@@ -62,7 +62,7 @@ export function SpendingNotes({ leftOut, missing }: { leftOut: string | null; mi
     <div className="stack tight row-notes">
       {missing.map((n) => (
         <div className="notice caution" key={n}>
-          {ALERT}
+          {CAUTION}
           <div>
             <LevelWord level="caution" />
             {n}
