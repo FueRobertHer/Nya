@@ -140,6 +140,7 @@ const BROUGHT: readonly (readonly [part: string, words: (n: number) => string])[
   ['goals', () => 'your goals'],
   ['store:goal-plans', (n) => `the plans of ${plural(n, 'goal')}`],
   ['store:planned-items', () => 'your planned bills and income'],
+  ['store:fire-plan-saved', () => 'the plan you saved as your plan'],
   ['store:holdings:history', (n) => `${plural(n, 'month')} of holdings history`],
   ['store:timeline-notes', (n) => plural(n, 'note on the timeline', 'notes on the timeline')],
   ['store:account-lifecycle', (n) => plural(n, 'account you marked closed or stopped following', 'accounts you marked closed or stopped following')],

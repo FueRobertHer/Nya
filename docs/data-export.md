@@ -145,7 +145,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `attachments` | The receipts and documents you attached: what each is and which transaction it is on, never the file ([below](#attachments)). |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `fire-plan-currency`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-scenarios`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-scenarios`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -159,7 +159,7 @@ Empty when the file has everything. Otherwise one entry for each part of the fil
 | --- | --- |
 | `section` | The part of the file: its field, such as `manual_accounts`, `account_history` or `holdings:history`. |
 | `problem` | `unreadable`: the stored data is damaged, so nothing in it can be read, by this version of Nya or any other. `unrecognised`: it looks intact, but was saved in a form this version of Nya doesn't know (a later version may have written it); it is kept as it is, and a version that knows it reads it. In `sharing`, also `unavailable` and `record_id_unreadable` ([below](#sharing)). |
-| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan`, `fire-plan-currency`, `income-carryover`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
+| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `income-carryover`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
 | `count` | How many are missing, in place of `ids`, for a part whose ids are kept out of the file: `api_tokens`, since a token's id is part of the token. |
 
 A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
@@ -639,6 +639,21 @@ The currency the amounts you typed in your [plan](#fire-plan) are in (`lib/fire/
 | `version` | The shape's version: 1. |
 | `currency` | The currency's three-letter code. |
 | `amounts` | The plan's typed amounts as the save that recorded the currency left them: `spending`, `savings`, `assets` and `startBalance` (each a number or `null`), `partTimeIncome`, and `income[]` and `expenses[]`, each `id` and `amount`. |
+
+#### `fire-plan-saved`
+
+The plan you said is your plan, with **This is my plan** on the Plan tab ([progress against your plan](features.md#progress-against-your-plan), `lib/fire/saved-plan.ts`), or `null` if you never did or stopped comparing. It holds your [plan](#fire-plan)'s assumptions as they were that day, the savings it used and an inflation rate, never a figure worked out from them: no FI number, no FI age, and no balance on any day, not even the one it starts from, which the Plan tab adds up again from your recorded balances (in `account_history`) each time it is shown.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `plan` | Your plan's assumptions as they were, in the shape of [`fire-plan`](#fire-plan). |
+| `savings` | The annual savings your plan used that day, in today's dollars then: the figure you typed, or Nya's measurement if you hadn't. |
+| `currency` | The currency your plan's amounts were in, and the one your invested assets are added up in; `null` when no account named one. |
+| `inflation` | Inflation a year, as a fraction (`0.03` is 3%): your plan is raised by it to compare with balances, which are in each day's money. |
+| `day` | The UTC day you saved it (`YYYY-MM-DD`), the days balances are recorded by. |
+| `savedAt` | When you saved it. |
+| `rev` | A random id, new on every save: the version a change is made to. |
 
 #### `goal-plans`
 

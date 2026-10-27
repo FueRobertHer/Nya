@@ -510,6 +510,12 @@ The currency the Plan's typed figures are in is a value store beside the plan, `
 
 **What a rollback sees.** The release before never reads the store, and the plan's own shape is unchanged, so its Plan tab and Home's FI card work as before, in the accounts' currency as they always were. A save there writes the plan alone. Back on this release, a save that left every typed amount as it was keeps the record. One that changed an amount leaves the record apart from the plan, so the tab asks which currency the figures are in rather than read them in the old one. A download from the release before has no `fire-plan-currency` part. The release before refuses a download from this one, as it refuses any part it doesn't know.
 
+## The saved plan, and rolling back
+
+**This is my plan** on the Plan tab keeps a value store of its own, `fire-plan-saved` ([architecture.md](architecture.md#storage-seam)), beside the plan. Nothing to run: it is empty until someone saves one.
+
+**What a rollback sees.** The release before never reads the store: its Plan tab has no Progress card, and nothing else changes. A download from the release before has no `fire-plan-saved` part. The release before refuses a download from this one that holds a saved plan, as it refuses any part it doesn't know. Rolling forward again, the saved plan is where it was, and its comparison is worked out again from the balances recorded meanwhile.
+
 ## Turning on restores
 
 Bringing a download back into an account ([data-export.md](data-export.md#bringing-it-back)) is off unless `RESTORE_ENABLED=1` ([deployment.md](deployment.md#3-environment-variables)). The release that has it reads everything a restore writes whether it is on or not: the restore's record, the accounts and bank transactions it brought back (`user-restore`, `restored-accounts`, `restored-transactions`, `restored-investment-transactions`), which it holds and doesn't count until linked, the hold on net worth totals and the backfill while a restored bank waits, and the checks that keep the API, the MCP server, shares and the weekly summary from answering out of a restore that hasn't finished. With it off, the card isn't offered and the routes refuse to start, send to, finish or empty; a restore already recorded is still shown, and can still be undone.

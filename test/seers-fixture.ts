@@ -108,6 +108,7 @@ export async function seedEveryKind(
       scenario: { name: 'Retire at 50', currency: 'USD', set: { targetAge: 50 }, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [{ id: 'c1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15000, years: 18 }] },
     })
   );
+  ok('a plan saved as your plan', await route('saved-plan', 'PUT', { saved: { plan: { ...(await import('@/lib/fire/plan')).DEFAULT_PLAN, age: 35, targetAge: 55 }, savings: 20000, currency: 'USD', inflation: 0.03 }, based_on: null }));
 
   // ---- Settings, each as the app keeps it.
   const { allocationSettingsStore } = await import('@/lib/allocation-settings');

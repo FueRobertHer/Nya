@@ -22,6 +22,7 @@ const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { currencyRecord } = await import('@/lib/fire/plan-currency');
 const { planScenariosStore } = await import('@/lib/plan-scenarios');
+const { savedPlanStore } = await import('@/lib/saved-plan');
 const { runwayScenariosStore } = await import('@/lib/report/runway-scenario-store');
 const { changeStore } = await import('@/lib/api-changes');
 const { apiTokenStore } = await import('@/lib/api-token-store');
@@ -43,6 +44,8 @@ beforeEach(async () => {
 });
 
 const PLAN = { ...DEFAULT_PLAN, spending: 40_000 };
+/** The plan saved as their plan (lib/fire/saved-plan.ts). */
+const SAVED = { version: 1 as const, plan: { ...PLAN, age: 35, targetAge: 55 }, savings: 18_000, currency: 'EUR', inflation: 0.03, day: '2026-09-01', savedAt: '2026-09-01T10:00:00.000Z', rev: 'rev-1' };
 const SCENARIO = {
   version: 1 as const,
   name: 'Retire at 50',
@@ -75,16 +78,18 @@ describe('Plan scenarios, runway scenarios and the Plan’s currency', () => {
     await firePlanStore.set(OTHER, PLAN);
     await planCurrencyStore.set(OTHER, currencyRecord(PLAN, 'EUR'));
     await planScenariosStore.set(OTHER, 'sc1', SCENARIO);
+    await savedPlanStore.set(OTHER, SAVED);
     await runwayScenariosStore.set(OTHER, 'rw1', RUNWAY);
     const text = await downloadText(new Date(), OTHER);
     expect((await restoreAll(text)).status).toBe('finished');
     expect(await firePlanStore.get(ctx)).toEqual(PLAN);
     expect(await planCurrencyStore.get(ctx)).toEqual(currencyRecord(PLAN, 'EUR'));
     expect(await planScenariosStore.get(ctx, 'sc1')).toEqual(SCENARIO);
+    expect(await savedPlanStore.get(ctx)).toEqual(SAVED);
     expect(await runwayScenariosStore.get(ctx, 'rw1')).toEqual(RUNWAY);
     const was = JSON.parse(text);
     const again = JSON.parse(await downloadText(new Date()));
-    for (const part of ['fire-plan', 'fire-plan-currency', 'plan-scenarios', 'runway-scenarios']) expect([part, again[part]]).toEqual([part, was[part]]);
+    for (const part of ['fire-plan', 'fire-plan-currency', 'fire-plan-saved', 'plan-scenarios', 'runway-scenarios']) expect([part, again[part]]).toEqual([part, was[part]]);
   });
 });
 
