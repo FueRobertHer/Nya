@@ -803,11 +803,12 @@ export default function Dashboard({
     async (vendor_key: string, name: string) => {
       // Optimistically relabel every transaction from this vendor. An empty
       // name clears the rename; we can't reconstruct the original Plaid name
-      // locally, so reload to pick the reverted names back up.
+      // locally, so reload to pick the reverted names back up. The person's
+      // name is shown as typed, never reworded as the bank's text would be.
       if (name) {
         setTxns((prev) =>
           prev
-            ? prev.map((t) => (t.vendor_key === vendor_key ? { ...t, name } : t))
+            ? prev.map((t) => (t.vendor_key === vendor_key ? { ...t, name, name_from_bank: undefined } : t))
             : prev
         );
       }

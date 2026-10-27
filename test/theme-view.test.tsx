@@ -38,6 +38,12 @@ describe('what the layout sends for a choice (lib/theme.ts)', () => {
       if (k.startsWith('color')) expect(v).toMatch(/^var\(--[a-z0-9-]+\)$/);
     }
   });
+
+  test("Clerk's primary button takes the deeper fill, so its white label passes; its links keep the accent", () => {
+    expect(CLERK_APPEARANCE.variables.colorPrimary).toBe('var(--accent)');
+    expect(CLERK_APPEARANCE.variables.colorPrimaryForeground).toBe('var(--on-fill)');
+    expect(CLERK_APPEARANCE.elements.formButtonPrimary.backgroundColor).toBe('var(--accent-fill)');
+  });
 });
 
 const dom = installDom();

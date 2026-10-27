@@ -21,6 +21,7 @@ import { MAX_ENTRIES, REMOVED_NAME, WHAT_MAX, type SplitHow } from '@/lib/shared
 import type { CardAnswer } from '@/lib/shared-expenses/read';
 import { partUnits } from './SplitSheet';
 import { splitUnits } from './shared-expenses-text';
+import { shownName } from '@/lib/merchant-name';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
 
 type Mode = 'half' | 'even' | 'amount';
@@ -170,7 +171,7 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   return (
     <Sheet open title={stored ? 'Who owes what' : 'Share the cost'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {t.name}: <Masked>{formatMoney(target.amount, currency)}</Masked> on {shownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
+        {shownName(t)}: <Masked>{formatMoney(target.amount, currency)}</Masked> on {shownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
         budgets and reports on this day, and theirs is what they owe you. Nya never asks them for it on its own.
       </p>
       {targets.length > 1 && (

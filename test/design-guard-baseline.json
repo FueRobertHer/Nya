@@ -128,9 +128,6 @@
   "components/TagsCard.tsx": {
     "inlineLayoutStyles": 6
   },
-  "components/TemplateOffer.tsx": {
-    "inlineLayoutStyles": 1
-  },
   "components/VendorDefaultsCard.tsx": {
     "inlineLayoutStyles": 1
   }

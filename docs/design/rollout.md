@@ -61,7 +61,7 @@ Phase 8, the Plan track, comes before phase 7: the Plan tab was the screen peopl
 - Migrate the shell and Settings to the primitives; delete replaced classes as each last user goes.
 - Optional, once stable: split `globals.css` into layers (tokens, base, primitives, features, print).
 
-**Built:** the scales and the dark theme at the top of `app/globals.css`, with the aliases; `lib/theme.ts` for Clerk and `themeColor`; the guard test holds it, the web manifest and the app's copy of the tokens to `tokens.css`, and checks contrast on the app's own dark tokens. The app's bare buttons fill with `--accent-fill` and danger with `--danger-fill`, so their white labels pass AA. Clerk's own primary button keeps `--accent` (white on it is 3.23:1), since Clerk uses one color for its buttons and its links and `--accent-fill` as link text would fail (3.43:1); that waits for Clerk's own styling to be split, or a darker label. One `:focus-visible` ring in `--focus` and one reduced-motion rule for everything. The primitives as CSS: `.money`, `.card-header`, `.list-rows` and `.list-row`, `.btn` (secondary, ghost, danger, block) and `.btn-row`, `.segmented`, `.badge`, `.chip`, `.notice` (critical, caution, info, done), `.helper`. The header's icon buttons are 44px with 20px icons; the tab bar is on `--glass` with 12px labels; the Settings list is `.list-rows` of `.list-row`, and the `.settings-row` and `.settings-list` classes are gone.
+**Built:** the scales and the dark theme at the top of `app/globals.css`, with the aliases; `lib/theme.ts` for Clerk and `themeColor`; the guard test holds it, the web manifest and the app's copy of the tokens to `tokens.css`, and checks contrast on the app's own dark tokens. The app's bare buttons fill with `--accent-fill` and danger with `--danger-fill`, so their white labels pass AA. Clerk's own primary button keeps `--accent` (white on it is 3.23:1), since Clerk uses one color for its buttons and its links and `--accent-fill` as link text would fail (3.43:1); since the look and feel's step 1 its primary button alone takes `--accent-fill` through `elements.formButtonPrimary` (below). One `:focus-visible` ring in `--focus` and one reduced-motion rule for everything. The primitives as CSS: `.money`, `.card-header`, `.list-rows` and `.list-row`, `.btn` (secondary, ghost, danger, block) and `.btn-row`, `.segmented`, `.badge`, `.chip`, `.notice` (critical, caution, info, done), `.helper`. The header's icon buttons are 44px with 20px icons; the tab bar is on `--glass` with 12px labels; the Settings list is `.list-rows` of `.list-row`, and the `.settings-row` and `.settings-list` classes are gone.
 
 **Kept narrow, and where each piece went:**
 
@@ -615,7 +615,7 @@ Ship each kind's shape once: an older release reads a scenario with a kind it do
   - the select chevron is one gray at 3:1 on every surface in both themes.
 - **Tag colors** are tokens (`--tag-<color>`, `--tag-<color>-tint`): dark keeps its colors, with each tint made solid, and light has a deep step on a pale tint. The Tags screen's swatch is the text step.
 - **Print** is the light theme with black and white over it, whichever theme is on screen, under `:root:not([data-theme]), :root[data-theme]` (as specific as the light blocks, after them).
-- **Clerk** is styled with the tokens (`var(--accent)`, ...), so it follows the theme.
+- **Clerk** is styled with the tokens (`var(--accent)`, ...), so it follows the theme; its primary button takes `--accent-fill` (look and feel, step 1).
 - **The contrast check** runs on both themes as the app has them, tags included. The guard also holds the app's three light copies (system, chosen, print) to `tokens.css`, `lib/theme.ts`'s `LIGHT` to the app, and the allocation colors at 3:1 on a card in both themes.
 
 **Checked in light**, on a static page with `app/globals.css` at 320px, with the device set to light and to dark:
@@ -660,6 +660,34 @@ An audit of the primitives against the design system found what the token check 
 - Card padding stays `--sp-5` on phones: rows run to a card's edges by a `--sp-5` margin, so `--sp-4` would move with them.
 - Empty states keep `.empty-note`: a title and an action for each needs its own words.
 - The select chevron stays one gray in a data URI: it passes 3:1 on every surface in both themes.
+
+## After the rollout: look and feel
+
+A look and feel review (2026-10-26) found that Nya read like a starter template, and its direction, ink and brass, was approved and recorded in the design system artifact (its `audit.md`, findings L1 to L11). The app takes it in five steps, one pull request each, in this order:
+
+1. **Details**: logo tiles, readable bank names, the repeated account type, the two notices the Budgets and Plan tabs opened on, and Clerk's primary button. No palette change.
+2. **Fewer boxes**: bare icon buttons, tonal secondary buttons, one underline view switch, no header subtitle, one month control shared by Activity and Budgets, and Clerk's profile in a sheet.
+3. **Type**: Red Hat Text and Display through `next/font`, and the hero's small cents.
+4. **Ink and brass**: the new token values in `tokens.css`, `app/globals.css`, `lib/theme.ts`, the manifest and Clerk; the guard's pairs; the header logo as a two-ink mark; underlined links.
+5. **The hero**: net worth out of its card, a full-width chart without money ticks, scrubbing.
+
+### Step 1: details
+
+**Built:**
+
+- **Logo tiles.** A merchant's logo (`.txn-logo`) sits on `--logo-tile`, white in both themes, with an inset `--border-strong` hairline, 32px at `--r-sm`: it sat on `--surface`, so a black logo vanished in dark. Its letter fallback stays on `--elevated` in `--text-2`. Split parts and group members are set in past the 32px tile.
+- **Readable bank names.** A row whose name is the bank's own descriptor (Plaid gave no merchant name) carries `name_from_bank` (`lib/transactions.ts`, taken off when a rename or a rule's name replaces it), and Activity's rows, a group's members, a transaction's sheet and its menu, the split, group and shared cost sheets, and Card Mode (its card and what it announces) show it through `shownName` (`lib/merchant-name.ts`): "CREDIT CARD 3333 PAYMENT *//" reads "Credit Card 3333 Payment". Search, rules, the rename field, the API and exports keep the bank's text.
+- **No repeated account type.** An account's subtitle leaves out its type when the bank's own name already says it ("Plaid Gold Standard 0% Interest Checking", not "... Checking · checking"; `accountKind`, `components/accounts-format.ts`).
+- **Budgets' starter-sets offer** is a card of primitives: an `<h3>` in its `.card-header`, one `.helper` line and a `.btn-row` (`components/TemplateOffer.tsx`), in place of five lines of text and bare buttons.
+- **The Plan's currency** is one line (`.plan-currency-quiet`) while the accounts, the spending and the last answer all agree with it, and the card otherwise. It is the same element in every mode, so focus moved to it after an answer stays (`components/PlanCurrency.tsx`).
+- **Clerk's primary button** takes `--accent-fill` through `elements.formButtonPrimary`, so its white label passes (5.17:1); `colorPrimary` stays `--accent`, which Clerk also uses for its links (phase 2's reason, above).
+
+**Kept narrow:**
+
+- The net worth chart's money ticks, drawn over its plot at the left, stay until step 5 takes them off the plot.
+- Recurring bills, the calendar, Upcoming and Home's This month still show the bank's text: their rows don't say whether a name is the bank's or one the person typed.
+- "1 institution connected" under the header waits for step 2.
+- A row stored before Plaid's merchant name was kept apart from its descriptor holds the two merged, with no merchant name, so an all-capitals merchant name there (IKEA) shows in title case. Only old rows are stored that way.
 
 ## The contrast check
 

@@ -75,6 +75,14 @@ export const CLERK_APPEARANCE = {
     fontFamily: FONT_UI,
   },
   elements: {
+    // Clerk takes one color for its buttons and its links (colorPrimary), so
+    // that stays --accent, which passes as link text; its primary button alone
+    // takes the deeper --accent-fill, as Nya's own primary does, so its white
+    // label passes too (5.17:1, where white on --accent is 3.23:1 in dark).
+    formButtonPrimary: {
+      backgroundColor: 'var(--accent-fill)',
+      '&:hover, &:active': { backgroundColor: 'var(--accent-fill)', filter: 'brightness(0.92)' },
+    },
     // Clerk draws its plain badge ("Primary" beside an address) in its border
     // color, which on this border is unreadable; secondary text instead, as
     // the app's own labels.

@@ -41,6 +41,7 @@ import { cardKey, pickerKey, CARD_KEYS } from './review-keys';
 import { swipeMove, swipeOffset, swipeRelease, swipeStart, type Point, type Swipe } from './swipe';
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, pickerOn, undoStep, withoutStep, withStep, type Cards, type Picker } from './card-mode-state';
 import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords, suggestionWords } from './review-text';
+import { shownName } from '@/lib/merchant-name';
 
 /** What undoes a card's step: the approval's request, or the recategorize's. */
 type StepUndo = Promise<ApprovalTicket | null> | Promise<CardUndo | null>;
@@ -229,13 +230,13 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     if (kind === 'skip') {
       const step = { id: row.transaction_id, kind: 'skipped' as const };
       setCards((c) => withStep(c, step));
-      setSaid(doneWords('skipped', row.name, left(withStep(cards, step))));
+      setSaid(doneWords('skipped', shownName(row), left(withStep(cards, step))));
       return;
     }
     const approval = review.approve([row]);
     const step = { id: row.transaction_id, kind: 'approved' as const, undo: approval as StepUndo };
     setCards((c) => withStep(c, step));
-    setSaid(doneWords('approved', row.name, left(withStep(cards, step))));
+    setSaid(doneWords('approved', shownName(row), left(withStep(cards, step))));
     // Not saved: dealt again, with the error showing.
     void approval.then((ticket) => {
       if (!ticket) setCards((c) => withoutStep(c, row.transaction_id));
@@ -252,7 +253,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     const undo = review.recategorizeAndApprove(row, category_id, taxonomy);
     const step = { id: row.transaction_id, kind: 'recategorized' as const, undo: undo as StepUndo };
     setCards((c) => withStep(c, step));
-    setSaid(doneWords('recategorized', row.name, left(withStep(cards, step))));
+    setSaid(doneWords('recategorized', shownName(row), left(withStep(cards, step))));
     void undo.then((u) => {
       if (!u) setCards((c) => withoutStep(c, row.transaction_id));
     });
@@ -264,7 +265,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     setCards(next);
     setPicker(null);
     // An approved one counts again once it is back; a skipped one never left.
-    setSaid(doneWords('undone', byId.get(step.id)?.name ?? 'it', left(next) + (step.kind === 'skipped' ? 0 : 1)));
+    setSaid(doneWords('undone', ((r) => (r ? shownName(r) : 'it'))(byId.get(step.id)), left(next) + (step.kind === 'skipped' ? 0 : 1)));
     if (step.kind === 'approved') {
       const ticket = await (step.undo as Promise<ApprovalTicket | null>);
       if (ticket) await review.undo(ticket);
@@ -381,7 +382,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             aria-roledescription="card"
             // What is approved, before Enter approves it: the merchant, the
             // amount (said as "hidden" while amounts are hidden) and the category.
-            aria-label={spoken(`${t.name}, ${signedMoney(-t.amount, currencyOf(t) ?? currency, { always: true })}, ${categoryText(t)}. Transaction ${position.at} of ${position.of}. Enter approves it.`)}
+            aria-label={spoken(`${shownName(t)}, ${signedMoney(-t.amount, currencyOf(t) ?? currency, { always: true })}, ${categoryText(t)}. Transaction ${position.at} of ${position.of}. Enter approves it.`)}
             style={style}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -394,7 +395,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             <span className="card-mode-lean recategorize" aria-hidden="true">
               Recategorize
             </span>
-            <div className="card-mode-merchant">{t.name}</div>
+            <div className="card-mode-merchant">{shownName(t)}</div>
             <div className={`card-mode-amount${t.amount < 0 ? ' inflow' : ''}`}>
               <Masked>{signedMoney(-t.amount, currencyOf(t) ?? currency, { always: true })}</Masked>
             </div>
@@ -405,7 +406,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             {picking ? (
               <CardCategoryPicker
                 taxonomy={taxonomy}
-                merchant={t.name}
+                merchant={shownName(t)}
                 value={draft}
                 useLabel={nameOf(draft)}
                 onDraft={setDraft}
@@ -417,8 +418,8 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             )}
             {/* A split transaction's parts are filed by their own categories:
                 what a default or a rule would do to the whole files nothing. */}
-            {t.filed_by_default && !t.split_parts && <div className="card-mode-hint">{defaultWords(t.name, t.filed_by_default.agree, t.filed_by_default.earlier === true)}</div>}
-            {t.review_suggestion && !t.split_parts && <div className="card-mode-hint">{suggestionWords(t.review_suggestion, nameOf(t.review_suggestion.category_id), t.name)}</div>}
+            {t.filed_by_default && !t.split_parts && <div className="card-mode-hint">{defaultWords(shownName(t), t.filed_by_default.agree, t.filed_by_default.earlier === true)}</div>}
+            {t.review_suggestion && !t.split_parts && <div className="card-mode-hint">{suggestionWords(t.review_suggestion, nameOf(t.review_suggestion.category_id), shownName(t))}</div>}
             {t.review_changed && (
               <div className="card-mode-hint">
                 <Masked>{changedSinceWords(t.review_changed, t, false)}</Masked>

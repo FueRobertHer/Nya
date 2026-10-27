@@ -96,6 +96,7 @@
   --accent-fill: #2563eb;
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
+  --logo-tile: #ffffff;
 
   --focus: #5b8def;
   --scrim: rgba(0, 0, 0, 0.55);
@@ -148,6 +149,7 @@
     --accent-fill: #2563eb;
     --danger-fill: #dc2626;
     --on-fill: #ffffff;
+    --logo-tile: #ffffff;
     --focus: #2563eb;
     --scrim: rgba(17, 20, 28, 0.4);
     --shadow: rgba(17, 20, 28, 0.16);
@@ -196,6 +198,7 @@
   --accent-fill: #2563eb;
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
+  --logo-tile: #ffffff;
   --focus: #2563eb;
   --scrim: rgba(17, 20, 28, 0.4);
   --shadow: rgba(17, 20, 28, 0.16);
@@ -1605,7 +1608,7 @@ button:disabled:where(:not([class*="cl-"])) {
 /* A split transaction's parts and a group's transactions, each a row under
    its transaction's, set in past its logo. */
 .txn-part-row {
-  padding-left: calc(var(--sp-5) + 28px + var(--sp-3));
+  padding-left: calc(var(--sp-5) + 32px + var(--sp-3));
 }
 
 .txn-part-row .list-row-title {
@@ -2116,24 +2119,29 @@ span.meter-fill {
   appearance: none;
 }
 
-/* A merchant's logo, or its first letter. */
+/* A merchant's logo, or its first letter. A logo sits on a white tile in
+   both themes with a hairline edge, so a dark mark shows on a dark card. */
 .txn-logo {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 32px; /* .txn-part-row sets its rows in past this */
+  height: 32px;
+  padding: 2px;
+  border-radius: var(--r-sm);
   object-fit: contain;
-  background: var(--surface);
+  background: var(--logo-tile);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .txn-logo-fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
+  padding: 0;
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
   background: var(--elevated);
+  box-shadow: none;
   text-transform: uppercase;
 }
 
@@ -3126,7 +3134,7 @@ button.danger-outline {
 
 /* A list's rows (RowsSkeleton): the title, the line under it and the figure,
    each about as wide as what it stands for; a transaction's logo fills its
-   own 28px place. */
+   own 32px place, as the letter in place of a logo does. */
 .rows-skeleton-title {
   width: 9em;
   max-width: 100%;
@@ -3832,6 +3840,28 @@ button.plan-edit {
 
 button.plan-edit:disabled {
   color: var(--muted);
+}
+
+/* The Plan's currency when nothing about it needs the person: one line,
+   not a card, so the tab doesn't open on a notice (components/PlanCurrency.tsx). */
+.plan-currency-quiet {
+  margin-bottom: var(--sp-4);
+  padding-inline: var(--sp-1);
+}
+
+.plan-currency-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--sp-2);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+}
+
+.plan-currency-line .btn.ghost {
+  font-size: var(--fs-2);
 }
 
 /* A heading inside a Plan card or sheet (rollout 6d): the Assumptions
@@ -5215,6 +5245,7 @@ button.import-choice {
     --accent-fill: #2563eb;
     --danger-fill: #dc2626;
     --on-fill: #ffffff;
+    --logo-tile: #ffffff;
     --focus: #2563eb;
     --scrim: rgba(17, 20, 28, 0.4);
     --shadow: rgba(17, 20, 28, 0.16);
