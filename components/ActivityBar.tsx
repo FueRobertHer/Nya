@@ -1,15 +1,14 @@
 'use client';
 
 // Activity's pinned bar (docs/design/information-architecture.md#activity):
-// the month switcher, the tab's ⋯ (adding or importing transactions, when a
-// manual account takes them), and its three segments. The segments follow
-// the WAI-ARIA tabs pattern: one tab stop, the arrow keys, Home and End move
-// between them and choose as they go. The month's arrows stay focusable at
-// either end (aria-disabled, not disabled), so a press that reaches the end
-// doesn't drop focus, and the month is announced as it changes.
+// the month (components/MonthStepper.tsx), the tab's ⋯ (adding or importing
+// transactions, when a manual account takes them), and its three segments.
+// The segments follow the WAI-ARIA tabs pattern: one tab stop, the arrow
+// keys, Home and End move between them and choose as they go.
 
 import { useRef, type KeyboardEvent } from 'react';
 import { Menu, type MenuItem } from './Menu';
+import MonthStepper, { chevron, LEFT, RIGHT } from './MonthStepper';
 
 export type ActivitySegment = 'transactions' | 'spending' | 'shared';
 
@@ -33,34 +32,36 @@ export function segmentKey(key: string, at: number, count: number): number | nul
   return null;
 }
 
-/** An arrow's icon, by its path; Budgets' bar draws the same ones. */
-export const chevron = (d: string) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d={d} />
-  </svg>
-);
-export const LEFT = 'm15 18-6-6 6-6';
-export const RIGHT = 'm9 18 6-6-6-6';
+/** The arrows' icons, drawn by MonthStepper, which the app's other arrows use. */
+export { chevron, LEFT, RIGHT };
+
+/** Activity's month: what it shows, the months with transactions it steps
+ *  through and lists, and where its return button goes. */
+export type ActivityMonth = {
+  /** YYYY-MM. */
+  value: string;
+  /** Newest first. */
+  months: readonly string[];
+  label: (m: string) => string;
+  optionLabel: (m: string) => string;
+  onMonth: (m: string) => void;
+  back: { label: string; onBack: () => void } | null;
+};
 
 export default function ActivityBar({
   month,
-  onEarlier,
-  onLater,
   segment,
   onSegment,
   menu,
   monthPending = false,
 }: {
-  /** The month shown ("October 2026"), or null to leave the switcher out:
-   *  on Shared, whose balances aren't by month, and before there is one. */
-  month: string | null;
-  /** With no month yet, while the transactions load: the switcher drawn
+  /** The month shown, or null to leave the stepper out: on Shared, whose
+   *  balances aren't by month, and before there is one. */
+  month: ActivityMonth | null;
+  /** With no month yet, while the transactions load: the stepper drawn
    *  with a placeholder for its name, so it doesn't push the list down when
    *  the month arrives (components/LoadingSkeletons.tsx). */
   monthPending?: boolean;
-  /** Steps to the month before or after; left out at either end. */
-  onEarlier?: () => void;
-  onLater?: () => void;
   segment: ActivitySegment;
   onSegment: (s: ActivitySegment) => void;
   /** The ⋯'s items; none leaves it out. */
@@ -77,39 +78,24 @@ export default function ActivityBar({
     tabs.current[to]?.focus();
   };
 
+  const dots = menu.length > 0 ? <Menu label="Activity options" items={menu} /> : null;
   return (
     <div className="activity-bar">
-      {(month !== null || monthPending || menu.length > 0) && (
-        <div className="activity-month">
-          {/* The same elements pending or not, so focus on an arrow
-              survives the month arriving. */}
-          {(month !== null || monthPending) && (
-            <>
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Earlier month"
-                aria-disabled={month === null || !onEarlier}
-                onClick={month === null ? undefined : onEarlier}
-              >
-                {chevron(LEFT)}
-              </button>
-              <h2 className="activity-month-name" aria-live="polite">
-                {month ?? <span className="skeleton activity-skeleton-month" aria-hidden="true" />}
-              </h2>
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Later month"
-                aria-disabled={month === null || !onLater}
-                onClick={month === null ? undefined : onLater}
-              >
-                {chevron(RIGHT)}
-              </button>
-            </>
-          )}
-          {menu.length > 0 && <Menu label="Activity options" items={menu} />}
-        </div>
+      {month !== null || monthPending ? (
+        // The same elements pending or not, so focus on an arrow survives
+        // the month arriving.
+        <MonthStepper
+          month={month?.value ?? null}
+          months={month?.months ?? []}
+          label={month?.label ?? String}
+          optionLabel={month?.optionLabel}
+          onMonth={month?.onMonth ?? (() => {})}
+          back={month?.back ?? null}
+          skeleton="activity-skeleton-month"
+          end={dots}
+        />
+      ) : (
+        dots && <div className="activity-month">{dots}</div>
       )}
       <div className="segmented" role="tablist" aria-label="Activity" onKeyDown={onKeyDown}>
         {ACTIVITY_SEGMENTS.map((s, i) => (

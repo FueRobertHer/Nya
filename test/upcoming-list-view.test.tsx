@@ -329,29 +329,32 @@ describe('the calendar, redrawn', () => {
       return { host, root, button, cell, title, press };
     };
 
-    test('the month arrows are 44px icon buttons, and Today brings back this month with focus on today', () => {
+    test('the month arrows are 44px icon buttons, and This month brings back this month with focus on today', () => {
       const { root, host, button, cell, title, press } = mount();
-      const next = button('Next month')!;
-      const previous = button('Previous month')!;
+      const next = button('Later month')!;
+      const previous = button('Earlier month')!;
       for (const arrow of [next, previous]) expect(arrow.getAttribute('class')).toBe('icon-btn');
       // .icon-btn is a 44px square (app/globals.css), the size of a touch target.
       const css = readFileSync(join(import.meta.dir, '../app/globals.css'), 'utf8');
       expect(css).toMatch(/\.icon-btn \{[^}]*min-width: var\(--tap\);[^}]*min-height: var\(--tap\);/);
       expect(css).toMatch(/--tap: 44px;/);
       expect(title()).toBe('October 2026');
-      expect(button('Today')).toBeNull();
+      expect(button('This month')).toBeNull();
+      // Its own list of months, named apart from Budgets' bar, which is on the page too.
+      expect(host.findAll((e) => e.tagName === 'SELECT')[0]?.getAttribute('aria-label')).toBe('Calendar month: October 2026');
 
       press(next);
       expect(title()).toBe('November 2026');
-      const today = button('Today')!;
-      expect(today.getAttribute('class')).toBe('btn ghost');
-      // Beside the month's name, outside what is announced as it changes.
+      const today = button('This month')!;
+      expect(today.getAttribute('class')).toBe('btn ghost month-stepper-back');
+      // After the month's name, outside what is announced as it changes and
+      // outside the list laid over the name.
       const live = host.findAll((e) => e.getAttribute('aria-live') === 'polite')[0]!;
-      expect(today.parentElement).toBe(live.parentElement);
+      expect(today.parentElement).toBe(live.parentElement!.parentElement);
       expect(live.textContent).toBe('November 2026');
       press(today);
       expect(title()).toBe('October 2026');
-      expect(button('Today')).toBeNull();
+      expect(button('This month')).toBeNull();
       // Focus goes to today's cell, chosen, not to nothing.
       expect(dom.document.activeElement).toBe(cell('Friday, October 9')!);
       expect(cell('Friday, October 9')!.getAttribute('aria-pressed')).toBe('true');
@@ -360,7 +363,7 @@ describe('the calendar, redrawn', () => {
 
     test('at the furthest month, the arrow says it is off and keeps focus', () => {
       const { root, button, title, press } = mount();
-      const next = button('Next month')!;
+      const next = button('Later month')!;
       expect(next.getAttribute('aria-disabled')).toBe('false');
       for (let i = 0; i < 12; i++) press(next);
       expect(title()).toBe('October 2027');

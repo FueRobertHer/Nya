@@ -113,13 +113,15 @@ function mount(props: Props = {}) {
     tabs,
     tab,
     panelOf,
-    button: (label: string) => all((e) => e.getAttribute('aria-label') === label)[0],
+    // The bar's own (the calendar, mounted in Upcoming's hidden panel, has arrows of the same names).
+    button: (label: string) => all((e) => e.getAttribute('class') === 'budgets-bar')[0].findAll((e) => e.getAttribute('aria-label') === label)[0],
     // The month's pick, named by the month it lies over.
     pick: () => all((e) => e.tagName === 'SELECT' && (e.getAttribute('aria-label') ?? '').startsWith('Month to show'))[0],
     selected: () => tabs().filter((e) => e.getAttribute('aria-selected') === 'true').map((e) => e.textContent),
     // The panels a person can see.
     shown: () => panels().filter((p) => !p.hasAttribute('hidden')),
-    heading: () => all((e) => e.tagName === 'H2' && e.getAttribute('class') === 'budgets-title')[0],
+    // The bar's heading: the month's name on Month (components/MonthStepper.tsx), the segment's on the others.
+    heading: () => all((e) => e.tagName === 'H2' && ['budgets-title', 'month-stepper-title'].includes(e.getAttribute('class') ?? ''))[0],
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -202,6 +204,19 @@ describe('Budgets: the bar and its segments', () => {
     act(() => click(v.button('Later month')));
     act(() => click(v.button('Later month')));
     expect(v.heading().textContent).toBe(monthName(NOW));
+    v.unmount();
+  });
+
+  test('away from this month, This month returns to it, and focus stays on the month', () => {
+    const v = mount();
+    const back = () => v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'This month')[0];
+    expect(back()).toBeUndefined();
+    act(() => type(v.pick(), addMonths(NOW, -1)));
+    expect(v.heading().textContent).toBe(monthName(addMonths(NOW, -1)));
+    act(() => click(back()));
+    expect(v.heading().textContent).toBe(monthName(NOW));
+    expect(back()).toBeUndefined();
+    expect(dom.document.activeElement).toBe(v.pick());
     v.unmount();
   });
 

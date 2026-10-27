@@ -25,7 +25,7 @@ import { amountsHidden, formatMoney, MASK, signedMoney, spoken } from '@/lib/for
 import type { ForecastInstitution } from '@/lib/forecast';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
-import { chevron, LEFT, RIGHT } from './ActivityBar';
+import MonthStepper from './MonthStepper';
 import { NoticeBadge, type UpcomingBadge } from './upcoming-notes';
 import type { FxTable } from '@/lib/fx/rates';
 
@@ -227,8 +227,8 @@ export default function CalendarView({
   const thisMonth = today.slice(0, 7);
   const [month, setMonth] = useState(thisMonth);
   const [selected, setSelected] = useState<string | null>(today);
-  // Today goes once pressed: focus moves to today's cell, where it took you,
-  // rather than to nothing.
+  // This month goes once pressed: focus moves to today's cell, where it took
+  // you, rather than to nothing.
   const todayCell = useRef<HTMLButtonElement | null>(null);
   const toToday = useRef(false);
   useEffect(() => {
@@ -246,11 +246,12 @@ export default function CalendarView({
   const unknownPast = txns === null;
   const pastNote = failed ? "Transactions couldn't be loaded, so what posted isn't shown." : 'Transactions are still loading.';
 
-  const first = addMonths(thisMonth, -MONTHS_BACK);
-  const last = addMonths(thisMonth, MONTHS_AHEAD);
-  const go = (n: number) => {
-    const next = addMonths(month, n);
-    if (next < first || next > last) return;
+  // Its months, newest first: a few back, a few ahead.
+  const months = useMemo(
+    () => Array.from({ length: MONTHS_BACK + MONTHS_AHEAD + 1 }, (_, i) => addMonths(thisMonth, MONTHS_AHEAD - i)),
+    [thisMonth]
+  );
+  const go = (next: string) => {
     setMonth(next);
     setSelected(next === thisMonth ? today : null);
   };
@@ -264,30 +265,29 @@ export default function CalendarView({
     <div className="card stack">
       {badge && <NoticeBadge tone={badge} />}
 
-      <div className="cal-head">
-        <button type="button" className="icon-btn" onClick={() => go(-1)} aria-disabled={month <= first} aria-label="Previous month">
-          {chevron(LEFT)}
-        </button>
-        <div className="cal-title">
-          <span aria-live="polite">{monthTitle(month)}</span>
-          {month !== thisMonth && (
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => {
-                toToday.current = true;
-                setMonth(thisMonth);
-                setSelected(today);
-              }}
-            >
-              Today
-            </button>
-          )}
-        </div>
-        <button type="button" className="icon-btn" onClick={() => go(1)} aria-disabled={month >= last} aria-label="Next month">
-          {chevron(RIGHT)}
-        </button>
-      </div>
+      {/* Its own month, not the tabs': it runs ahead into months to come.
+          Its list is named apart from Budgets' bar, which is on the page too. */}
+      <MonthStepper
+        month={month}
+        months={months}
+        label={monthTitle}
+        optionLabel={(m) => (m === thisMonth ? `${monthTitle(m)} (this month)` : monthTitle(m))}
+        onMonth={go}
+        heading="span"
+        listLabel="Calendar month"
+        back={
+          month !== thisMonth
+            ? {
+                label: 'This month',
+                onBack: () => {
+                  toToday.current = true;
+                  setMonth(thisMonth);
+                  setSelected(today);
+                },
+              }
+            : null
+        }
+      />
 
       <div className="cal-grid">
         {WEEKDAYS.map((w, i) => (

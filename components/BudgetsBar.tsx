@@ -1,17 +1,18 @@
 'use client';
 
 // The Budgets tab's pinned bar (docs/design/information-architecture.md#budgets):
-// its heading over its three segments, Month, Upcoming and Goals. On Month the
-// heading is the month shown, with arrows to the month either side and, when
-// there are earlier months, a native select laid unseen over the name to jump
-// further back (up to ten years: a step at a time would read each month from
-// the server). The select's name holds the month it lies over (WCAG 2.5.3), so
-// "October 2026" spoken or clicked by voice reaches it. Only the month's name is announced as it changes; a segment's
-// own name isn't, since choosing the segment already says it. The segments
-// are tabs, as Activity's are (components/ActivityBar.tsx).
+// its heading over its three segments, Month, Upcoming and Goals. On Month
+// the heading is the month (components/MonthStepper.tsx): its arrows, its
+// name with the list of months laid over it (back to the first month with
+// transactions, ten years at most: a step at a time would read each month
+// from the server), and This month when another month shows. Only the
+// month's name is announced as it changes; a segment's own name isn't, since
+// choosing the segment already says it. The segments are tabs, as
+// Activity's are (components/ActivityBar.tsx).
 
 import { useRef, type KeyboardEvent, type Ref } from 'react';
-import { chevron, LEFT, RIGHT, segmentKey } from './ActivityBar';
+import { segmentKey } from './ActivityBar';
+import MonthStepper from './MonthStepper';
 
 export type BudgetsSegment = 'month' | 'upcoming' | 'goals';
 
@@ -29,14 +30,19 @@ export const budgetsPanelId = (s: BudgetsSegment) => `budgets-panel-${s}`;
 /** The month's heading: where Home's budget alerts land (components/attention.ts). */
 export const BUDGETS_MONTH_TITLE = 'budgets-month-title';
 
-const DOWN = 'm6 9 6 6 6-6';
-
-export type MonthPick = {
-  /** The month shown, YYYY-MM. */
+/** The month on Month: the one shown, the months to step through and list,
+ *  and This month while another shows. */
+export type BudgetsMonth = {
+  /** YYYY-MM. */
   value: string;
-  /** The months to choose from, newest first, each with its words. */
-  options: readonly { value: string; label: string }[];
-  onChange: (month: string) => void;
+  /** Newest first. */
+  months: readonly string[];
+  label: (m: string) => string;
+  optionLabel: (m: string) => string;
+  onMonth: (m: string) => void;
+  /** Until the budgets are there to show: the arrows say so, and the list waits. */
+  disabled: boolean;
+  back: { label: string; onBack: () => void } | null;
 };
 
 export default function BudgetsBar({
@@ -44,21 +50,13 @@ export default function BudgetsBar({
   segment,
   onSegment,
   month,
-  onEarlier,
-  onLater,
-  pick,
 }: {
   ref?: Ref<HTMLDivElement>;
   segment: BudgetsSegment;
   onSegment: (s: BudgetsSegment) => void;
-  /** The month shown, in words ("October 2026"); null while the dashboard
-   *  loads, drawn as a placeholder (components/LoadingSkeletons.tsx). */
-  month: string | null;
-  /** Steps to the month before or after; left out at either end. */
-  onEarlier?: () => void;
-  onLater?: () => void;
-  /** Every month to choose from, when there is more than one. */
-  pick?: MonthPick | null;
+  /** The month on Month; null while the dashboard loads, drawn with a
+   *  placeholder for its name (components/LoadingSkeletons.tsx). */
+  month: BudgetsMonth | null;
 }) {
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const at = BUDGETS_SEGMENTS.findIndex((s) => s.key === segment);
@@ -73,39 +71,26 @@ export default function BudgetsBar({
 
   return (
     <div className="budgets-bar" ref={ref}>
-      <div className="budgets-heading">
-        {segment === 'month' ? (
-          <>
-            <button type="button" className="icon-btn" aria-label="Earlier month" aria-disabled={!onEarlier} onClick={onEarlier}>
-              {chevron(LEFT)}
-            </button>
-            <div className="budgets-month-pick">
-              <h2 key="month" id={BUDGETS_MONTH_TITLE} className="budgets-title" tabIndex={-1} aria-live="polite">
-                {month ?? <span className="skeleton budgets-skeleton-month" aria-hidden="true" />}
-              </h2>
-              {pick && month !== null && (
-                <>
-                  {chevron(DOWN)}
-                  <select value={pick.value} onChange={(e) => pick.onChange(e.target.value)} aria-label={`Month to show: ${month}`}>
-                    {pick.options.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-            </div>
-            <button type="button" className="icon-btn" aria-label="Later month" aria-disabled={!onLater} onClick={onLater}>
-              {chevron(RIGHT)}
-            </button>
-          </>
-        ) : (
+      {segment === 'month' ? (
+        <MonthStepper
+          key="month"
+          month={month?.value ?? null}
+          months={month?.months ?? []}
+          label={month?.label ?? String}
+          optionLabel={month?.optionLabel}
+          onMonth={month?.onMonth ?? (() => {})}
+          disabled={month?.disabled ?? true}
+          back={month?.back ?? null}
+          titleId={BUDGETS_MONTH_TITLE}
+          skeleton="budgets-skeleton-month"
+        />
+      ) : (
+        <div className="budgets-heading">
           <h2 key={segment} className="budgets-title">
             {BUDGETS_SEGMENTS[at].label}
           </h2>
-        )}
-      </div>
+        </div>
+      )}
       <div className="segmented" role="tablist" aria-label="Budgets" onKeyDown={onKeyDown}>
         {BUDGETS_SEGMENTS.map((s, i) => (
           <button

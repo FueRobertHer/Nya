@@ -84,7 +84,7 @@ import type { GoalPlansDamage } from './GoalPlansRepair';
 import UpcomingPanel from './UpcomingPanel';
 import { Masked } from './HideAmounts';
 import TemplateOffer from './TemplateOffer';
-import BudgetsBar, { budgetsPanelId, budgetsTabId, type BudgetsSegment } from './BudgetsBar';
+import BudgetsBar, { budgetsPanelId, budgetsTabId, type BudgetsMonth, type BudgetsSegment } from './BudgetsBar';
 import { chevron, RIGHT } from './ActivityBar';
 
 // Stable empty defaults, as in Insights.
@@ -416,26 +416,21 @@ export default function BudgetsTab({
   const plannedCurrency = useMemo(() => cashPosition(institutions).currency ?? displayCurrency, [institutions, displayCurrency]);
   const today = localDate();
 
-  // The months either side of the one shown, and every month to choose
-  // from, once the budgets are there to show.
-  const canPick = budgetsStatus === 'ready' && !loading;
-  const at = pickable.indexOf(shownMonth);
-  const onEarlier = canPick && at >= 0 && at < pickable.length - 1 ? () => setPicked(pickable[at + 1]) : undefined;
-  const onLater = canPick && at > 0 ? () => setPicked(pickable[at - 1]) : undefined;
-  const pick =
-    canPick && pickable.length > 1
-      ? {
-          value: shownMonth,
-          options: pickable.map((m) => ({ value: m, label: m === thisMonth ? `${nameOfMonth(m, thisMonth)} (this month)` : nameOfMonth(m, thisMonth) })),
-          onChange: setPicked,
-        }
-      : null;
+  // The month shown, the months to step through and choose from once the
+  // budgets are there to show, and the way back to this month.
+  const shownBar: BudgetsMonth = {
+    value: shownMonth,
+    months: pickable,
+    label: (m) => nameOfMonth(m),
+    optionLabel: (m) => (m === thisMonth ? `${nameOfMonth(m, thisMonth)} (this month)` : nameOfMonth(m, thisMonth)),
+    onMonth: setPicked,
+    disabled: budgetsStatus !== 'ready' || loading,
+    back: past ? { label: 'This month', onBack: () => setPicked(null) } : null,
+  };
 
   // The bar is drawn before anything has loaded, so the month's heading is
   // there for Home's budget alerts to land on.
-  const bar = (
-    <BudgetsBar ref={barRef} segment={segment} onSegment={switchSegment} month={nameOfMonth(shownMonth)} onEarlier={onEarlier} onLater={onLater} pick={pick} />
-  );
+  const bar = <BudgetsBar ref={barRef} segment={segment} onSegment={switchSegment} month={shownBar} />;
   const panel = (s: BudgetsSegment, body: ReactNode) => (
     <div className="budgets-panel" id={budgetsPanelId(s)} role="tabpanel" aria-labelledby={budgetsTabId(s)} hidden={s !== segment} ref={s === segment ? panelRef : undefined}>
       {body}
