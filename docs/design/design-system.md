@@ -158,6 +158,10 @@ Two to four mutually exclusive views of the same thing (Transactions / Spending 
 
 A **range control** (1M ... All) looks the same but is a labelled radio group. `.segmented.compact` (12px labels) holds up to eight, each 44px tall and narrower than 44px (24px or more) so the net worth chart's eight fit 320px; a set whose labels don't fit becomes chips. Spending's period lengths (since phase 5c) are chips in a labelled radio group (`role="radio"`, `aria-checked`, arrows, Home and End), as the mockup draws them: four labels as long as "Year to date" don't fit one segmented row at 320px. The cash forecast's 30, 60 and 90 days (since phase 6a3) are the first range control drawn as `.segmented`. Budgets > Upcoming's **List · Calendar** is a tablist of two, held to the mockup's width (`.upcoming-views`). Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
 
+### Month stepper
+
+The one control that changes the month (since the look and feel's step 2b1), `components/MonthStepper.tsx`: Activity's bar, Budgets' bar on Month and Upcoming's calendar. Bare `.icon-btn` arrows labelled **Earlier month** and **Later month**, focusable at either end (`aria-disabled`); the month's name (`--fs-3`, weight 600, `aria-live="polite"`, `tabIndex={-1}` so a jump can land on it) with a 16px chevron and a native select laid unseen over the two alone, named for the month it lies over ("Month to show: October 2026"; the calendar's "Calendar month: ..."); and a `.btn.ghost` return button after the name while another month shows: **This month**, or **Latest month** on Activity while this month has no transactions yet. Pressing it moves focus to the list (or the name) before it goes. At 320px it doesn't fit beside the name and wraps under it; the arrows and Activity's ⋯ keep to the first line. Each place keeps its own month until step 2b2 shares Activity's and Budgets'.
+
 ### Badge and chip
 
 One family, `--r-xs`, `--fs-1`, weight 500, sentence case.

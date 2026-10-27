@@ -179,8 +179,9 @@ describe('every tab while it loads', () => {
     expect(activity).toStartWith('<div inert=""><div class="activity-bar">');
     expect(activity).toContain('aria-selected="true" aria-controls="activity-panel" tabindex="0">Spending</button>');
     // The month's row held, its name still to come.
-    expect(activity).toContain('<h2 class="activity-month-name" aria-live="polite"><span class="skeleton activity-skeleton-month" aria-hidden="true"></span></h2>');
-    expect(renderToStaticMarkup(<ActivitySkeleton segment="shared" />)).not.toContain('activity-month');
+    expect(activity).toContain('<h2 class="month-stepper-title" tabindex="-1" aria-live="polite"><span class="skeleton activity-skeleton-month" aria-hidden="true"></span></h2>');
+    expect(activity).not.toContain('<select');
+    expect(renderToStaticMarkup(<ActivitySkeleton segment="shared" />)).not.toContain('month-stepper');
     const budgets = renderToStaticMarkup(<BudgetsSkeleton segment="month" />);
     expect(budgets).toStartWith('<div inert=""><div class="budgets-bar">');
     expect(budgets).toContain('<span class="skeleton budgets-skeleton-month" aria-hidden="true"></span>');

@@ -18,7 +18,7 @@
 // (lib/categories.ts), so renaming a category renames it here at once.
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivitySegment } from "./ActivityBar";
+import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivityMonth, type ActivitySegment } from "./ActivityBar";
 import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
@@ -722,19 +722,40 @@ export default function MonthBreakdown({
   }, [loading]);
 
   // The pinned bar: the month (none on Shared, whose balances aren't by
-  // month, or before there is one), stepping through the months listed, and
-  // the ⋯ to add or import a transaction where a manual account takes one.
-  const at = selected ? months.indexOf(selected) : -1;
+  // month, or before there is one), stepping through and listing the months
+  // with transactions, with a way back to the one the tab opens on; and the
+  // ⋯ to add or import a transaction where a manual account takes one.
   const goMonth = (m: string) => {
     setMonth(m);
     setFlowPick(null);
   };
+  // Where the tab opens: this month, or the latest with transactions while
+  // this one has none yet, which the way back says.
+  const opensOn = months.find((m) => m <= thisMonth) ?? months[0] ?? null;
+  const shownMonth: ActivityMonth | null =
+    segment !== "shared" && selected
+      ? {
+          value: selected,
+          months,
+          label: monthName,
+          optionLabel: (m) => (m === thisMonth ? `${monthName(m)} (this month)` : monthName(m)),
+          onMonth: goMonth,
+          back:
+            opensOn && selected !== opensOn
+              ? {
+                  label: opensOn === thisMonth ? "This month" : "Latest month",
+                  onBack: () => {
+                    setMonth(null);
+                    setFlowPick(null);
+                  },
+                }
+              : null,
+        }
+      : null;
   const bar = (withMenu: boolean) => (
     <ActivityBar
-      month={segment !== "shared" && selected ? monthName(selected) : null}
+      month={shownMonth}
       monthPending={segment !== "shared" && !selected && loading}
-      onEarlier={at >= 0 && at < months.length - 1 ? () => goMonth(months[at + 1]) : undefined}
-      onLater={at > 0 ? () => goMonth(months[at - 1]) : undefined}
       segment={segment}
       onSegment={switchSegment}
       menu={

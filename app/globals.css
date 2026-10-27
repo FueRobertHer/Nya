@@ -775,9 +775,9 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 /* Activity's, Budgets' and the Plan's pinned bars (components/ActivityBar.tsx,
    components/BudgetsBar.tsx, components/PlanBar.tsx). Activity's: the month
-   switcher and the tab's ⋯ over its segments, kept in view under the status
-   bar while the segment scrolls. Budgets': its heading (the month, with its
-   switcher, on Month) over its segments. The Plan's: its heading (your plan,
+   (.month-stepper) and the tab's ⋯ over its segments, kept in view under the
+   status bar while the segment scrolls. Budgets': its heading (the month on
+   Month) over its segments. The Plan's: its heading (your plan,
    with Scenarios, or the scenario open, after the arrow back) over its
    segments. */
 .activity-bar,
@@ -793,6 +793,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   background: var(--canvas);
 }
 
+/* Activity's row with only its ⋯ (on Shared, which has no month), and
+   Budgets' heading on Upcoming and Goals: as tall as the month's row. */
 .activity-month,
 .budgets-heading {
   display: flex;
@@ -801,13 +803,79 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   min-height: var(--tap);
 }
 
-.activity-month-name,
 .budgets-title {
   flex: 1;
   margin: 0;
   text-align: center;
   font-size: var(--fs-3);
   font-weight: var(--fw-semibold);
+}
+
+/* The month (components/MonthStepper.tsx): Activity's, Budgets' on Month
+   and the calendar's. Its arrows either side of the name, which the list of
+   months lies over, and This month after the name when another month shows.
+   At 320px that doesn't fit beside the name and wraps under it; the arrows
+   and Activity's ⋯ keep to the first line, where a second tap finds them. */
+.month-stepper {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  min-height: var(--tap);
+}
+
+.month-stepper-mid {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  column-gap: var(--sp-1);
+  min-width: 0;
+}
+
+/* The name and its chevron, with the native select laid unseen over them
+   alone (never over This month), so a tap on the name picks any month. */
+.month-stepper-name {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  min-height: var(--tap);
+}
+
+.month-stepper-title {
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  text-align: center;
+}
+
+.month-stepper-name > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.month-stepper-name > select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.month-stepper-name:has(> select:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
 }
 
 /* The Plan's heading: the plan shown, between the arrow back and
@@ -836,58 +904,15 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 /* An arrow at either end looks as a disabled button does, and keeps focus.
    A control that is aria-disabled is never raised or pressed on hover
    (the hover and press rules above leave it out). */
-:is(.activity-month, .budgets-heading, .cal-head) > .icon-btn[aria-disabled="true"] {
+.month-stepper > .icon-btn[aria-disabled="true"] {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-/* Budgets' month, with a native select laid unseen over its name (and the
-   chevron that says it opens), so a tap on the name picks any month. */
-.budgets-month-pick {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  min-height: var(--tap);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-1);
-}
-
-.budgets-month-pick > .budgets-title {
-  flex: none;
 }
 
 /* Home's budget alerts scroll the month's heading into view: it stops where
    the pinned bar holds it, so the panel's top isn't left under the bar. */
 #budgets-month-title {
   scroll-margin-top: calc(env(safe-area-inset-top, 0px) + var(--sp-2));
-}
-
-.budgets-month-pick > svg {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  color: var(--text-2);
-}
-
-.budgets-month-pick > select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.budgets-month-pick:has(> select:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
-  border-radius: var(--r-sm);
 }
 
 /* Shared has no month: its ⋯ keeps to the right. */
@@ -904,6 +929,15 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 .budgets-panel,
 .budgets-panel .card {
   scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 2 * var(--tap) + 4 * var(--sp-2));
+}
+
+/* Away from the month the tab opens on, This month may wrap under the
+   month's name (a narrow screen), and the bar is a 44px row taller. Where
+   it doesn't wrap, the jump stops that much lower: a gap, never hidden. */
+:is(.activity-bar, .budgets-bar):has(.month-stepper-back) ~ :is(.activity-panel, .budgets-panel),
+:is(.activity-bar, .budgets-bar):has(.month-stepper-back) ~ .activity-panel :is(.card, .flow-shown, .review-count),
+:is(.activity-bar, .budgets-bar):has(.month-stepper-back) ~ .budgets-panel .card {
+  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 3 * var(--tap) + 4 * var(--sp-2));
 }
 
 /* Badge: a status or source label, not clickable. Chip: clickable, 32px
@@ -4592,30 +4626,8 @@ button.plan-edit:disabled {
   color: var(--down);
 }
 
-/* The calendar: seven columns that fit a phone, a figure and dots a day. */
-/* The month's arrows (44px .icon-btn) either side of its name, with Today
-   beside the name when another month is shown. */
-.cal-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-/* On the narrowest phones (320px), "September 2026" and Today don't fit
-   between the arrows: Today goes under the name. */
-.cal-title {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  column-gap: var(--sp-1);
-  min-width: 0;
-  font-size: var(--fs-3);
-  font-weight: var(--fw-semibold);
-  text-align: center;
-}
-
+/* The calendar: seven columns that fit a phone, a figure and dots a day,
+   under its month (.month-stepper). */
 /* The grid runs to the card's edges, as the day's list's rows do, and a
    day has no side padding: at 320px a day was 34px wide, too narrow for
    a figure at 12px, and is 39px, room for "+890K" (36px). */
