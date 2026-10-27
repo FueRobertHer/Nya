@@ -233,12 +233,16 @@ export function fmtAsOf(iso: string): string {
 }
 
 /** What kind of account it is: its bank's own name for it when that differs,
- *  its type, and the currency chosen for a typed balance when it isn't the
- *  one shown. */
+ *  its type (left out when that name already says it: "Gold Standard 0%
+ *  Interest Checking", not "... Checking · checking"), and the currency
+ *  chosen for a typed balance when it isn't the one shown. */
 export function accountKind(a: Account, inst: Institution, shownCurrency: string | null): string {
-  const official = a.official_name && a.official_name !== a.name ? `${a.official_name} · ` : '';
+  const official = a.official_name && a.official_name !== a.name ? a.official_name : null;
+  const kind = a.subtype || a.type;
+  const words = (s: string) => ` ${s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join(' ')} `;
+  const said = official !== null && words(official).includes(words(kind));
   const currency = inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : '';
-  return `${official}${a.subtype || a.type}${currency}`;
+  return `${[official, said ? null : kind].filter(Boolean).join(' · ')}${currency}`;
 }
 
 /** When a balance that isn't fetched now was set: typed by hand, or as a

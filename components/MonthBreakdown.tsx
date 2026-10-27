@@ -57,6 +57,7 @@ import CardMode from "./CardMode";
 import type { SharedRowHooks } from "./SharedRows";
 import TransactionSheet, { findTarget, TxnNotes, type SheetTarget } from "./TransactionSheet";
 import { isLowConfidence } from "./txn-words";
+import { shownName } from "@/lib/merchant-name";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 
 // What a row and its sheet say of a transaction (components/txn-words.ts),
@@ -74,6 +75,8 @@ export type Txn = {
   transaction_id: string;
   date: string;
   name: string;
+  // The bank's own text, shown readably (lib/merchant-name.ts, lib/transactions.ts).
+  name_from_bank?: true;
   amount: number;
   pending: boolean;
   account_name: string;
@@ -1226,7 +1229,7 @@ export default function MonthBreakdown({
                             )}
                             <span className="list-row-text">
                               <span className="list-row-title">
-                                {t.name}
+                                {shownName(t)}
                                 <TagChips ids={t.tags} tags={tags} />
                               </span>
                               {/* Where it came from as chips (design-system.md#list-row). */}

@@ -104,6 +104,7 @@
   --accent-fill: #2563eb;
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
+  --logo-tile: #ffffff;
 
   --focus: #5b8def;
   --scrim: rgba(0, 0, 0, 0.55);
@@ -156,6 +157,7 @@
     --accent-fill: #2563eb;
     --danger-fill: #dc2626;
     --on-fill: #ffffff;
+    --logo-tile: #ffffff;
     --focus: #2563eb;
     --scrim: rgba(17, 20, 28, 0.4);
     --shadow: rgba(17, 20, 28, 0.16);
@@ -204,6 +206,7 @@
   --accent-fill: #2563eb;
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
+  --logo-tile: #ffffff;
   --focus: #2563eb;
   --scrim: rgba(17, 20, 28, 0.4);
   --shadow: rgba(17, 20, 28, 0.16);

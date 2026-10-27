@@ -20,6 +20,7 @@ import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS, toUnits, unitScale } from '@/lib/split-rows';
 import { groupGoneText, heldInGroupAs } from './SplitRows';
+import { shownName } from '@/lib/merchant-name';
 
 /** How many transactions the list offers at once; the search finds the rest. */
 const OFFERED = 60;
@@ -217,7 +218,7 @@ export default function GroupSheet({
     <label className="group-member" key={t.transaction_id}>
       <input type="checkbox" checked={chosen.has(t.transaction_id)} onChange={() => toggle(t.transaction_id)} disabled={saving} />
       <span className="group-member-text">
-        <span>{t.name}</span>
+        <span>{shownName(t)}</span>
         <span className="type-tag">
           {shownDay(t.date)} · {t.account_name}
         </span>
