@@ -267,8 +267,13 @@ describe('Budgets: the bar and its segments', () => {
   test('while transactions load, the bar and the month’s heading are there, and Goals doesn’t wait', () => {
     const v = mount({ loading: true });
     expect(v.heading().getAttribute('id')).toBe(BUDGETS_MONTH_TITLE);
-    expect(v.panelOf('Month').findAll((e) => e.getAttribute('aria-label') === 'Loading budgets')).toHaveLength(1);
-    expect(v.panelOf('Upcoming').findAll((e) => e.getAttribute('aria-label') === 'Loading what is coming')).toHaveLength(1);
+    // Each segment as it will be, said once (components/LoadingSkeletons.tsx), not a spinner.
+    expect(v.panelOf('Month').findAll((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading budgets')).toHaveLength(1);
+    expect(v.panelOf('Upcoming').findAll((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading what is coming')).toHaveLength(1);
+    for (const s of ['Month', 'Upcoming']) {
+      expect(v.panelOf(s).findAll((e) => e.getAttribute('aria-busy') === 'true')).toHaveLength(1);
+      expect(v.panelOf(s).findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('spinner'))).toHaveLength(0);
+    }
     expect(v.panelOf('Goals').findAll((e) => e.getAttribute('role') === 'status')).toHaveLength(0);
     expect(v.panelOf('Goals').textContent).toContain('No goals yet');
     // Nothing to step to or pick until the month's budgets are there.

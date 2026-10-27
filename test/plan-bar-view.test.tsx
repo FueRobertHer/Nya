@@ -291,7 +291,7 @@ function layout(rects: { card?: number; panel?: number }) {
 }
 
 describe('the bar, before and after the plan loads', () => {
-  test('before the saved plan has loaded: the bar with "Your plan", three segments, each a spinner, and no figure', async () => {
+  test('before the saved plan has loaded: the bar with "Your plan", three segments, each its skeleton, and no figure', async () => {
     serve({ plan: new Promise(() => {}), scenarios: [RETIRE] });
     const tab = await mount();
     expect(tab.title().textContent).toBe('Your plan');
@@ -300,7 +300,10 @@ describe('the bar, before and after the plan loads', () => {
     expect(tab.title().getAttribute('tabindex')).toBe('-1');
     expect(tab.tabs().map((e) => e.textContent)).toEqual(['Your path', 'Stress test', 'Portfolio']);
     expect(tab.panels().length).toBe(3);
-    for (const p of tab.panels()) expect(p.findAll((e) => e.getAttribute('role') === 'status' && e.getAttribute('aria-label') === 'Loading your plan').length).toBe(1);
+    for (const p of tab.panels()) {
+      expect(p.findAll((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading your plan').length).toBe(1);
+      expect(p.findAll((e) => e.getAttribute('aria-busy') === 'true').length).toBe(1);
+    }
     expect(tab.text()).not.toContain('FI number');
     // The sheet can be opened meanwhile: it says why nothing opens yet.
     expect(tab.scenarios()?.textContent).toBe('Scenarios (1)');

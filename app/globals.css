@@ -3060,6 +3060,107 @@ button.danger-outline {
   width: 5.5em;
 }
 
+/* A list's rows (RowsSkeleton): the title, the line under it and the figure,
+   each about as wide as what it stands for; a transaction's logo fills its
+   own 28px place. */
+.rows-skeleton-title {
+  width: 9em;
+  max-width: 100%;
+}
+
+.rows-skeleton-sub {
+  width: 13em;
+  max-width: 100%;
+}
+
+.rows-skeleton-value {
+  width: 4.5em;
+}
+
+.rows-skeleton-logo {
+  width: 100%;
+  height: 100%;
+}
+
+/* Lines of words inside a card (LinesSkeleton), the last one shorter. */
+.lines-skeleton-line {
+  width: 100%;
+}
+
+.lines-skeleton-last {
+  width: 60%;
+}
+
+/* The Accounts tab: the line by kind, and each institution's name and total. */
+.accounts-skeleton-summary {
+  width: 16em;
+  max-width: 100%;
+}
+
+.accounts-skeleton-name {
+  width: 8em;
+}
+
+.accounts-skeleton-total {
+  width: 5em;
+}
+
+/* Activity: the month in its bar, and the In and out card's caption and
+   three figures. */
+.activity-skeleton-month,
+.budgets-skeleton-month {
+  width: 8em;
+}
+
+.activity-skeleton-caption {
+  width: 7em;
+}
+
+.activity-skeleton-figure {
+  width: 4.5em;
+  max-width: 100%;
+}
+
+/* The line under In, Out and Net, and the Cash flow chart (its width, at
+   about the height it draws a few nodes). */
+.activity-skeleton-note {
+  width: 14em;
+  max-width: 100%;
+}
+
+.activity-skeleton-chart {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 340 / 200;
+  border-radius: var(--r-md);
+}
+
+/* Budgets: the Spent card's figure and its meter (.meter-track's height and
+   radius). */
+.budgets-skeleton-spent {
+  width: 7em;
+}
+
+.budgets-skeleton-meter {
+  height: 10px;
+  border-radius: 5px;
+}
+
+/* Upcoming's Cash forecast and a Plan segment's chart, at the proportions
+   of Home's (components/NetWorthChart.tsx W and H). */
+.upcoming-skeleton-chart,
+.plan-skeleton-chart {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 340 / 150;
+  border-radius: var(--r-md);
+}
+
+/* Shared with me: a sharer's name in their card's head. */
+.shared-skeleton-name {
+  width: 10em;
+}
+
 /* The account menu's avatar until Clerk draws it (components/ClerkAccount.tsx,
    and AppLoading's copy of the header). */
 .user-button-skeleton {

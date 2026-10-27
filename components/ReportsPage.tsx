@@ -236,7 +236,8 @@ export default function ReportsPage() {
     <main className="wrap report-wrap">
       <div className="report-top no-print">
         <nav className="report-nav" aria-label="Back to Nya">
-          <a href="/">← Nya</a>
+          {/* Back to Activity, where Reports is opened from (lib/dashboard-tab.ts). */}
+          <a href="/?tab=activity">← Nya</a>
         </nav>
         <HideAmountsToggle />
       </div>

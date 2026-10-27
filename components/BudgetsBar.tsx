@@ -51,8 +51,9 @@ export default function BudgetsBar({
   ref?: Ref<HTMLDivElement>;
   segment: BudgetsSegment;
   onSegment: (s: BudgetsSegment) => void;
-  /** The month shown, in words ("October 2026"). */
-  month: string;
+  /** The month shown, in words ("October 2026"); null while the dashboard
+   *  loads, drawn as a placeholder (components/LoadingSkeletons.tsx). */
+  month: string | null;
   /** Steps to the month before or after; left out at either end. */
   onEarlier?: () => void;
   onLater?: () => void;
@@ -80,9 +81,9 @@ export default function BudgetsBar({
             </button>
             <div className="budgets-month-pick">
               <h2 key="month" id={BUDGETS_MONTH_TITLE} className="budgets-title" tabIndex={-1} aria-live="polite">
-                {month}
+                {month ?? <span className="skeleton budgets-skeleton-month" aria-hidden="true" />}
               </h2>
-              {pick && (
+              {pick && month !== null && (
                 <>
                   {chevron(DOWN)}
                   <select value={pick.value} onChange={(e) => pick.onChange(e.target.value)} aria-label={`Month to show: ${month}`}>

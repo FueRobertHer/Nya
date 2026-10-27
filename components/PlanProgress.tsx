@@ -19,6 +19,7 @@ import { Sheet } from './Sheet';
 import { Menu } from './Menu';
 import { Why } from './Why';
 import { Masked } from './HideAmounts';
+import { LinesSkeleton } from './LoadingSkeletons';
 import { dayName, pct, wholeMoney } from './plan-text';
 import type { FirePlan, Input } from '@/lib/fire/plan';
 import type { AssetInstitution } from '@/lib/fire/inputs';
@@ -153,7 +154,7 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
       </div>
       <div className="stack">
         {error && <p className={`notice ${error.kind}`}>{error.text}</p>}
-        {savedState.kind === 'loading' && <p className="skeleton">Loading your saved plan</p>}
+        {savedState.kind === 'loading' && <LinesSkeleton status="Loading your saved plan" lines={2} />}
         {savedState.kind === 'failed' && (
           <>
             <p className="notice caution">{savedState.message ?? 'Your saved plan couldn’t be loaded.'}</p>
@@ -235,7 +236,7 @@ function SavedBody({
   return (
     <>
       <p>Your plan from {dayName(saved.day)}.</p>
-      {(series === null || series.kind === 'loading') && <p className="skeleton">Loading your invested assets since then</p>}
+      {(series === null || series.kind === 'loading') && <LinesSkeleton status="Loading your invested assets since then" lines={3} />}
       {series?.kind === 'failed' && (
         <>
           <p className="notice caution">{series.message ?? 'Your invested assets since then couldn’t be loaded.'}</p>

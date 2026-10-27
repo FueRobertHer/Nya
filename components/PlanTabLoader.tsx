@@ -14,6 +14,7 @@
 
 import { Component, Fragment, useEffect, useState, type ReactNode } from 'react';
 import type { PlanTabProps } from './PlanTab';
+import { PlanSkeleton } from './LoadingSkeletons';
 
 type PlanTabModule = typeof import('./PlanTab');
 
@@ -109,13 +110,9 @@ export default function PlanTabLoader(props: PlanTabProps) {
       />
     );
   }
-  if (!mod) {
-    return (
-      <div className="card">
-        <div className="spinner" role="status" aria-label="Loading" />
-      </div>
-    );
-  }
+  // The tab as it will be while its code is on its way: the bar on the
+  // segment it opens on, unavailable until then, over the segment's card.
+  if (!mod) return <PlanSkeleton segment={props.segment} />;
   const Plan = mod.default;
   return (
     <PlanBoundary>

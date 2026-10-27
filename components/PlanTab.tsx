@@ -106,6 +106,7 @@ import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
 import { ScenarioCard, ScenariosSheet, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
 import PlanBar, { planPanelId, planTabId, type PlanSegment } from './PlanBar';
+import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { ScenarioTag } from './ScenarioTag';
 import { LifeEventsCard } from './PlanEvents';
@@ -1069,7 +1070,7 @@ export default function PlanTab({
     />
   );
 
-  // Until the saved plan has first loaded, each segment is a spinner, never
+  // Until the saved plan has first loaded, each segment is its skeleton, never
   // the defaults as if they were saved. Everything else is drawn the same
   // way loaded or not, so the bar and the sheets stay the same elements when
   // the plan arrives: its heading keeps focus, an open sheet stays open.
@@ -1079,9 +1080,7 @@ export default function PlanTab({
   const panel = (s: PlanSegment, body: React.ReactNode) => (
     <div className="plan-panel" id={planPanelId(s)} role="tabpanel" aria-labelledby={planTabId(s)} hidden={s !== segment} ref={s === segment ? panelRef : undefined}>
       {firstLoad ? (
-        <div className="card">
-          <div className="spinner" role="status" aria-label="Loading your plan" />
-        </div>
+        <PlanPanelSkeleton />
       ) : (
         <div className="stack loose">{body}</div>
       )}

@@ -67,6 +67,7 @@ import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals, NoBudgets, type RolloverChange, type Target } from './BudgetsCard';
 import { changeRollover, useBudgetMonth, NOT_LOADED as NOT_LOADED_TEXT, type BudgetMonthState } from './budget-month-state';
 import { IncomePoolHeader, IncomeSetting } from './IncomePool';
+import { BudgetsMonthSkeleton, RowsSkeleton, UpcomingSkeleton } from './LoadingSkeletons';
 import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { monthNotice, pastMonthNotes, thisMonthNotes } from './budget-notes';
 import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type IncomeCarryover, type MonthGap } from '@/lib/rollover';
@@ -474,17 +475,14 @@ export default function BudgetsTab({
     </>
   );
 
+  // Each segment as it will be, its figures still to come
+  // (components/LoadingSkeletons.tsx), rather than a spinner it grows from.
   if (loading) {
-    const spinner = (label: string) => (
-      <div className="card">
-        <div className="spinner" role="status" aria-label={label} />
-      </div>
-    );
     return (
       <>
         {bar}
-        {panel('month', spinner('Loading budgets'))}
-        {panel('upcoming', spinner('Loading what is coming'))}
+        {panel('month', <BudgetsMonthSkeleton />)}
+        {panel('upcoming', <UpcomingSkeleton />)}
         {goalsPanel}
       </>
     );
@@ -570,7 +568,14 @@ export default function BudgetsTab({
             {budgetsStatus === 'error' ? (
               <Notice level="caution">{budgetsError}</Notice>
             ) : !drawn ? (
-              <p className="empty-note">Loading budgets…</p>
+              // The meter's place, and the budgets' rows under the card
+              // (below), as they will be.
+              <>
+                <span className="skeleton block budgets-skeleton-meter" aria-hidden="true" />
+                <p className="visually-hidden" role="status">
+                  Loading budgets
+                </p>
+              </>
             ) : (
               <>
                 {budgetsSaveError && <Notice level="caution">{budgetsSaveError}</Notice>}
@@ -595,6 +600,7 @@ export default function BudgetsTab({
             {/* What the figure counts, after what went wrong with it. */}
             <TotalCaveats items={spentNotes} />
           </section>
+          {!drawn && budgetsStatus !== 'error' && <RowsSkeleton count={4} className="card list-rows budget-rows" />}
           {drawn && taxonomy && shownBudgets && shownSpent && (
             <BudgetsCard
               key={shownMonth}
