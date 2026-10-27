@@ -550,6 +550,24 @@ Runs after phase 6 and before phase 7. The engine is built (`lib/fire/`); what h
 
 **8c**, the What if… card: templates for the kinds that exist (house, child, sabbatical, part-time, spending change) that create a named scenario; the effect shown as you type; the scenarios listed with their FI age. Nothing stored changes shape: a template makes an ordinary scenario.
 
+**Built in 8c:** `components/PlanWhatIf.tsx`, a What if… card on Your path under Your figures, with its words in `components/plan-what-if.ts`. A chip per template (Buy a home, Travel or a big expense, A child, A career break, Part-time work, A change in spending) opens the life event's own form (`EventForm` in `components/PlanEvents.tsx`) in a sheet, with nothing filled in but the event's name. As it is typed, an info notice says how it moves the FI age, from the same `planFigures` the scenario opens with ("In this what-if, FI moves from around 52 to around 56 (4 years later).", the one line announced as it changes), what of the event is left out and why (the Life events card's words), and the scenario Try it makes. **Try it** creates your plan with that one event as an ordinary scenario, named after it ("Buy a home at 45", "Part-time work from 55", " (2)" when the name is taken), and opens it, focus on the bar's heading. Under the chips, every scenario is a row with its FI age against your plan's ("FI around 47, 5 years sooner", "No FI date: a cost it can't pay from its investments", "Not worked out: open it to see why"); a row opens it. `EventForm` gained optional props for this (the starting name, the button's words, where it saves, and a preview drawn from the event as it would be saved); the Life events card passes none and is unchanged. `test/plan-what-if-view.test.tsx` holds it in the tab.
+
+**Decided in 8c:**
+
+- **On your plan only.** A template makes a scenario of your plan, and each row's "later" or "sooner" is against your plan, so inside a scenario the card would read as changes to the open one, whose Life events card is already there. Opening a scenario hides it; Back to your plan brings it back.
+- **The ages as the FI card says them.** Each FI age is rounded as "Around age 52" is, and the difference is between the rounded ages, so "FI around 56, 4 years later" adds up on its face. Compare mode keeps its tenths of a year. A plan with no age to set against another says the FI card's own headline (8b's `fiHeadline`: "You're at FI", "Not reached at this savings rate", "Not before age 100 at this savings rate"); the move itself is against your plan, not the stop age, so the headline's "before you stop at 55" isn't reused.
+- **What the preview can't say as a move.** Part-time work counts from the stop age, never in the FI date: the preview says it stays, and why. A cost the walk can't pay says so with its amounts, masked when amounts are hidden. Lasting changes below zero say that nothing is worked out.
+- **Two templates for one kind.** Travel or a big expense and A change in spending are both the spending kind: the first a cost for a while, the second the lasting or lower change, as the rollout named it.
+- **The home template is the home kind's form**: one change in yearly spending, for some years or for good, not the mockup's two (costs that end and a lasting change), which no kind holds yet. The mockup's template phone now draws the form as built.
+- **Nothing to place without an age.** With no age typed the chips are off, and the card says to type it first, as it does while your plan has no currency for a scenario's amounts; with ten scenarios stored (unreadable ones count, as the server counts them) they are off and it says why. The card is drawn only once your saved plan has loaded, never over the defaults.
+
+**Kept narrow in 8c:**
+
+- **No More… sheet.** Six chips wrap at 320px; the mockup's More… sheet, every template as a row with a line under it, arrives when 8d's four templates (a car, a raise, a windfall, a loan ends) make them too many.
+- **`EventForm` keeps its classes.** Its note (`.panel-note` with an inline margin) and its buttons (`.button-pair` in the body, not the sheet's footer) are as the Life events card has them; the form moves to the primitives with the next change that takes the whole of it, so 8d's edits to the same file stay small.
+- **No icons on the rows.** The mockup's letter in a circle beside each scenario stands for its kind, and a scenario can hold several kinds or none: the rows are name, FI age and chevron.
+- **No record of the template.** A scenario made from one is an ordinary scenario; nothing stored says which template made it.
+
 **8d**, new kinds, each a new shape in the scenario store:
 
 - A car, once or every few years, saying that car loan payments are already in measured spending.
