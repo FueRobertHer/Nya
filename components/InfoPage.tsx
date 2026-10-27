@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { TrustLinks } from './TrustLinks';
+import { BrandLogo } from './Brand';
 
 // The frame of the public pages (app/security, app/privacy, app/developers,
 // app/open-download, app/unsubscribe): the logo back into the app, a title,
@@ -19,8 +20,7 @@ export function InfoPage({
   return (
     <main className="wrap info-page">
       <a className="brand info-brand" href="/">
-        {/* eslint-disable-next-line @next/next/no-img-element -- the app icon, already a static SVG */}
-        <img className="brand-logo" src="/icon.svg" alt="" width={34} height={34} />
+        <BrandLogo />
         <span>Nya</span>
       </a>
       <h1>{title}</h1>
