@@ -35,6 +35,7 @@ import { formatMoney } from '@/lib/format';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
+import { SharedWithMeSkeleton } from './LoadingSkeletons';
 import { Masked } from './HideAmounts';
 import { cacheKeyFor } from './device-cache';
 import { InferenceNotes, KindsEditor, sameViews, seenText, viewsToSave, type ShareableGoal } from './ShareKinds';
@@ -910,6 +911,13 @@ export function SharedWithMe({ refreshKey, viewer }: { refreshKey?: unknown; vie
   // remembered when a read fails (rememberedShares).
   const [hadShares, setHadShares] = useState(false);
   const [onScreen, setOnScreen] = useState(false);
+  // Whether the last good read on this device had anything shared: until
+  // this one answers, the section's place is held with its skeleton, so it
+  // doesn't appear only once scrolled to. Nothing is held for someone with
+  // nothing shared, who would see it come and go. Read after the first
+  // render, which the server's must match.
+  const [expected, setExpected] = useState(false);
+  useEffect(() => setExpected(rememberedShares(viewer)), [viewer]);
   const spot = useRef<HTMLDivElement>(null);
   const loadedFor = useRef<{ key: unknown } | null>(null);
   useEffect(() => {
@@ -941,7 +949,7 @@ export function SharedWithMe({ refreshKey, viewer }: { refreshKey?: unknown; vie
   }, [onScreen, refreshKey, viewer]);
   return (
     <div ref={spot} className="incoming-spot">
-      <SharedWithMeView data={data} problem={problem} hadShares={hadShares} />
+      {data === null && !problem && expected ? <SharedWithMeSkeleton /> : <SharedWithMeView data={data} problem={problem} hadShares={hadShares} />}
     </div>
   );
 }

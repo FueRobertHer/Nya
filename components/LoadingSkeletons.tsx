@@ -11,6 +11,12 @@ import { useLayoutEffect } from 'react';
 import { Brand } from './Brand';
 import { HideAmountsToggle } from './HideAmounts';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
+import ActivityBar, { type ActivitySegment } from './ActivityBar';
+import BudgetsBar, { type BudgetsSegment } from './BudgetsBar';
+import PlanBar, { type PlanSegment } from './PlanBar';
+import { CollapsibleHeader } from './Collapsible';
+import type { Tab } from '@/lib/dashboard-tab';
+import { SPANS } from '@/lib/cash-flow';
 
 // The animations kept in step: the placeholders' pulse, and Refresh turning.
 const IN_STEP = new Set(['skeleton-pulse', 'spin']);
@@ -95,6 +101,360 @@ export function HomeSkeleton() {
   );
 }
 
+/** What a skeleton view says to a screen reader, once: the rest is hidden. */
+function Status({ label }: { label: string }) {
+  return (
+    <p className="visually-hidden" role="status">
+      {label}
+    </p>
+  );
+}
+
+const nothing = () => {};
+
+/** A list's rows while they load (`.list-rows` of `.list-row`): each row's
+ *  title, the line under it and its figure as placeholders, and with `logo`
+ *  the place of a transaction's logo. */
+export function RowsSkeleton({ count, className = 'list-rows', logo = false }: { count: number; className?: string; logo?: boolean }) {
+  return (
+    <ul className={className} aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => (
+        <li key={i}>
+          <div className={logo ? 'list-row txn-row' : 'list-row'}>
+            {logo && (
+              <span className="txn-logo">
+                <span className="skeleton block rows-skeleton-logo" />
+              </span>
+            )}
+            <span className="list-row-text">
+              <span className="list-row-title">
+                <span className="skeleton rows-skeleton-title" />
+              </span>
+              <span className="list-row-sub">
+                <span className="skeleton rows-skeleton-sub" />
+              </span>
+            </span>
+            <span className="list-row-value">
+              <span className="skeleton rows-skeleton-value" />
+            </span>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Lines of words still to come inside a card (Plan > Your path's Progress,
+ *  components/PlanProgress.tsx), each a placeholder in a line of its own,
+ *  with `status` said once. */
+export function LinesSkeleton({ status, lines }: { status: string; lines: number }) {
+  useInStep();
+  return (
+    <div className="stack tight" aria-busy="true">
+      {Array.from({ length: lines }, (_, i) => (
+        <p key={i} aria-hidden="true">
+          <span className={`skeleton ${i === lines - 1 ? 'lines-skeleton-last' : 'lines-skeleton-line'}`} />
+        </p>
+      ))}
+      <Status label={status} />
+    </div>
+  );
+}
+
+/** A card of rows while they load, its title still to come: what a segment
+ *  without a skeleton of its own shows (Budgets' Goals, Activity's Shared). */
+function CardSkeleton({ label }: { label: string }) {
+  useInStep();
+  return (
+    <div aria-busy="true">
+      <section className="card stack" aria-hidden="true">
+        <div className="card-header">
+          <h3>
+            <span className="skeleton rows-skeleton-title" />
+          </h3>
+        </div>
+        <RowsSkeleton count={3} />
+      </section>
+      <Status label={label} />
+    </div>
+  );
+}
+
+/** Shared with me while what is shared is read (components/Sharing.tsx
+ *  SharedWithMe), when this device's last read had something: its header,
+ *  open as it opens, over a sharer's card with its rows. */
+export function SharedWithMeSkeleton() {
+  useInStep();
+  return (
+    <section aria-busy="true">
+      <div inert>
+        <CollapsibleHeader title="Shared with me" open onToggle={nothing} controls="shared-with-me-loading" />
+      </div>
+      <div id="shared-with-me-loading" className="card" aria-hidden="true">
+        <div className="incoming-head">
+          <span className="skeleton block avatar small" />
+          <h3>
+            <span className="skeleton shared-skeleton-name" />
+          </h3>
+          <span className="pill">Read-only</span>
+        </div>
+        {[0, 1].map((i) => (
+          <div className="incoming-account" key={i}>
+            <div className="peer-row">
+              <span>
+                <span className="skeleton rows-skeleton-title" />
+              </span>
+              <span className="incoming-account-value">
+                <span className="skeleton rows-skeleton-value" />
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Status label="Loading what is shared with you" />
+    </section>
+  );
+}
+
+/** The Accounts tab while the accounts are on their way: its bar with Add
+ *  account (unavailable until they are in), the line by kind, and two
+ *  institution cards (components/InstitutionCard.tsx) with their rows. */
+export function AccountsSkeleton() {
+  useInStep();
+  return (
+    <div aria-busy="true">
+      <div className="accounts-bar" inert>
+        <span className="btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add account
+        </span>
+      </div>
+      <div className="accounts-summary stack tight" aria-hidden="true">
+        <ul className="accounts-summary-line">
+          <li>
+            <span className="skeleton accounts-skeleton-summary" />
+          </li>
+        </ul>
+      </div>
+      {[3, 2].map((rows, i) => (
+        <section key={i} className="card stack" aria-hidden="true">
+          <div className="card-header">
+            <h2>
+              <span className="skeleton accounts-skeleton-name" />
+            </h2>
+            <span className="money">
+              <span className="skeleton accounts-skeleton-total" />
+            </span>
+          </div>
+          <RowsSkeleton count={rows} />
+        </section>
+      ))}
+      <Status label="Loading" />
+    </div>
+  );
+}
+
+/** Activity's list while the transactions load, under its bar
+ *  (components/MonthBreakdown.tsx), in the order the segment draws it. On
+ *  Transactions: the month's In, Out and Net with the line under them, then
+ *  the list's card with its search field and rows. On Spending: the period's
+ *  chips (on Month, its first), the Cash flow card with its chart, and In
+ *  and out. Known words and controls show as themselves, unavailable. */
+export function ActivityListSkeleton({ segment }: { segment: ActivitySegment }) {
+  useInStep();
+  const spending = segment === 'spending';
+  const summary = (
+    <div className="card" aria-hidden="true">
+      {spending && (
+        <div className="inst-header">
+          <div className="inst-name">In and out</div>
+          <div className="inst-total">
+            <span className="skeleton activity-skeleton-caption" />
+          </div>
+        </div>
+      )}
+      <div className="summary-row">
+        {['In', 'Out', 'Net'].map((label) => (
+          <div key={label}>
+            <div className="total-label">{label}</div>
+            <div className="summary-value">
+              <span className="skeleton activity-skeleton-figure" />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="chart-note">
+        <span className="skeleton activity-skeleton-note" />
+      </div>
+    </div>
+  );
+  return (
+    <div aria-busy="true">
+      {spending ? (
+        <>
+          <div className="chip-row" inert>
+            {SPANS.map((s, i) => (
+              <span key={s.key} className="chip" role="radio" aria-checked={i === 0}>
+                {s.label}
+              </span>
+            ))}
+          </div>
+          <div className="card" aria-hidden="true">
+            <div className="inst-header">
+              <div className="inst-name">Cash flow</div>
+              <div className="inst-total">
+                <span className="skeleton activity-skeleton-caption" />
+              </div>
+            </div>
+            <span className="skeleton block activity-skeleton-chart" />
+          </div>
+          {summary}
+        </>
+      ) : (
+        <>
+          {summary}
+          <div className="card" inert>
+            <div className="card-header">
+              <h2>Transactions</h2>
+              <span className="meta">
+                <span className="skeleton rows-skeleton-value" />
+              </span>
+            </div>
+            <input className="text-input search-input" type="search" placeholder="Search transactions" readOnly />
+            <RowsSkeleton count={6} className="list-rows txn-list" logo />
+          </div>
+        </>
+      )}
+      <Status label="Loading transactions" />
+    </div>
+  );
+}
+
+/** The Activity tab while the dashboard loads: its bar (unavailable until
+ *  then, the month still to come) over the list's skeleton. */
+export function ActivitySkeleton({ segment = 'transactions' }: { segment?: ActivitySegment }) {
+  return (
+    <>
+      <div inert>
+        <ActivityBar month={null} monthPending={segment !== 'shared'} segment={segment} onSegment={nothing} menu={[]} />
+      </div>
+      {segment === 'shared' ? <CardSkeleton label="Loading" /> : <ActivityListSkeleton segment={segment} />}
+    </>
+  );
+}
+
+/** Budgets' Month while it loads (components/BudgetsTab.tsx): the Spent card
+ *  with its figure and meter, and the budgets' rows under it. */
+export function BudgetsMonthSkeleton() {
+  useInStep();
+  return (
+    <div className="stack loose" aria-busy="true">
+      <section className="card stack" aria-hidden="true">
+        <div className="card-header">
+          <h3>Spent</h3>
+          <span className="meta money">
+            <span className="skeleton budgets-skeleton-spent" />
+          </span>
+        </div>
+        <span className="skeleton block budgets-skeleton-meter" />
+      </section>
+      <RowsSkeleton count={4} className="card list-rows budget-rows" />
+      <Status label="Loading budgets" />
+    </div>
+  );
+}
+
+/** Budgets' Upcoming while it loads (components/UpcomingPanel.tsx): the Cash
+ *  forecast card with its chart, and the rows of what is coming. */
+export function UpcomingSkeleton() {
+  useInStep();
+  return (
+    <div className="stack loose" aria-busy="true">
+      <section className="card stack" aria-hidden="true">
+        <div className="card-header">
+          <h3>Cash forecast</h3>
+          <span className="badge">Estimate</span>
+        </div>
+        <span className="skeleton block upcoming-skeleton-chart" />
+      </section>
+      <RowsSkeleton count={4} className="card list-rows" />
+      <Status label="Loading what is coming" />
+    </div>
+  );
+}
+
+/** The Budgets tab while the dashboard loads: its bar (unavailable until
+ *  then, the month still to come) over the segment's skeleton. */
+export function BudgetsSkeleton({ segment = 'month' }: { segment?: BudgetsSegment }) {
+  return (
+    <>
+      <div inert>
+        <BudgetsBar segment={segment} onSegment={nothing} month={null} />
+      </div>
+      {segment === 'month' ? <BudgetsMonthSkeleton /> : segment === 'upcoming' ? <UpcomingSkeleton /> : <CardSkeleton label="Loading goals" />}
+    </>
+  );
+}
+
+/** A Plan segment while the saved plan loads (components/PlanTab.tsx): a
+ *  card with its title, its chart and its figures' rows still to come. */
+export function PlanPanelSkeleton() {
+  useInStep();
+  return (
+    <div aria-busy="true">
+      <section className="card stack" aria-hidden="true">
+        <div className="card-header">
+          <h3>
+            <span className="skeleton rows-skeleton-title" />
+          </h3>
+        </div>
+        <span className="skeleton block plan-skeleton-chart" />
+        <RowsSkeleton count={3} />
+      </section>
+      <Status label="Loading your plan" />
+    </div>
+  );
+}
+
+/** The Plan tab before its code is in (components/PlanTabLoader.tsx) or while
+ *  the dashboard loads: its bar, unavailable until then, over a segment's
+ *  skeleton. */
+export function PlanSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
+  return (
+    <>
+      <div inert>
+        <PlanBar segment={segment} onSegment={nothing} scenario={null} scenariosCount={null} onScenarios={nothing} onBack={nothing} />
+      </div>
+      <PlanPanelSkeleton />
+    </>
+  );
+}
+
+/** The open tab while the dashboard's first load is on its way, on the
+ *  segment it will open on. */
+export function TabSkeleton({
+  tab,
+  segments = {},
+}: {
+  tab: Tab;
+  segments?: { activity?: ActivitySegment; budgets?: BudgetsSegment; plan?: PlanSegment };
+}) {
+  switch (tab) {
+    case 'accounts':
+      return <AccountsSkeleton />;
+    case 'activity':
+      return <ActivitySkeleton segment={segments.activity} />;
+    case 'budgets':
+      return <BudgetsSkeleton segment={segments.budgets} />;
+    case 'plan':
+      return <PlanSkeleton segment={segments.plan} />;
+    default:
+      return <HomeSkeleton />;
+  }
+}
+
 /** The app loading, as a whole page: what Home streams while the server
  *  reads who is signed in (app/page.tsx), which a sign-in's move there shows
  *  at once; the sign-in page while a demo sign-in is on its way
@@ -105,7 +465,7 @@ export function HomeSkeleton() {
  *  unavailable, and the account menu's place holds the circle the
  *  dashboard's own keeps until Clerk draws the avatar (ClerkAccount). The
  *  Settings gear of password mode does nothing until the dashboard is in. */
-export function AppLoading({ account }: { account: 'clerk' | 'password' }) {
+export function AppLoading({ account, tab = 'home' }: { account: 'clerk' | 'password'; tab?: Tab }) {
   return (
     <main className="wrap">
       <div className="top-row">
@@ -129,7 +489,7 @@ export function AppLoading({ account }: { account: 'clerk' | 'password' }) {
           )}
         </div>
       </div>
-      <HomeSkeleton />
+      <TabSkeleton tab={tab} />
     </main>
   );
 }

@@ -245,17 +245,37 @@ describe('Activity: the bar and its segments', () => {
   test('the bar shows while the transactions load, and Shared doesn’t wait for them', () => {
     const v = mount({ txns: null, loading: true });
     expect(v.all((e) => e.getAttribute('role') === 'tablist')).toHaveLength(1);
-    expect(v.all((e) => e.getAttribute('aria-label') === 'Loading transactions')).toHaveLength(1);
-    // No month yet to show.
-    expect(v.month()).toBeNull();
-    // No row of the bar without a month or a ⋯.
-    expect(v.all((e) => e.getAttribute('class') === 'activity-month')).toHaveLength(0);
+    // The list as it will be, said once (components/LoadingSkeletons.tsx), not a spinner.
+    expect(v.all((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading transactions')).toHaveLength(1);
+    expect(v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('spinner'))).toHaveLength(0);
+    expect(v.all((e) => e.getAttribute('aria-busy') === 'true')).toHaveLength(1);
+    // No month yet to show: its row is held with a placeholder for its name,
+    // its arrows unavailable, so the list doesn't move down when it comes.
+    expect(v.month()).toBe('');
+    expect(v.all((e) => e.getAttribute('class') === 'activity-month')).toHaveLength(1);
+    expect(v.button('Earlier month').getAttribute('aria-disabled')).toBe('true');
+    expect(v.button('Later month').getAttribute('aria-disabled')).toBe('true');
     // Reports doesn't wait for the list either.
     act(() => click(v.tab('Spending')));
     expect(v.text()).toContain('Open reports');
     act(() => click(v.tab('Shared')));
     expect(v.all((e) => e.getAttribute('class') === 'shared-here')).toHaveLength(1);
-    expect(v.all((e) => e.getAttribute('aria-label') === 'Loading transactions')).toHaveLength(0);
+    expect(v.all((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading transactions')).toHaveLength(0);
+    // Shared isn't by month: no row for one.
+    expect(v.all((e) => e.getAttribute('class') === 'activity-month')).toHaveLength(0);
+    v.unmount();
+  });
+
+  test('the month arriving fills its held row: the same arrows and heading, now working', () => {
+    const v = mount({ txns: null, loading: true });
+    const [earlier, heading, later] = [v.button('Earlier month'), v.all((e) => e.getAttribute('class') === 'activity-month-name')[0], v.button('Later month')];
+    v.render({ txns: ROWS, loading: false });
+    // The same elements, so focus on an arrow survives the month arriving.
+    expect(v.button('Earlier month')).toBe(earlier);
+    expect(v.button('Later month')).toBe(later);
+    expect(v.all((e) => e.getAttribute('class') === 'activity-month-name')[0]).toBe(heading);
+    expect(v.month()).toBe(longName(month));
+    expect(earlier.getAttribute('aria-disabled')).toBe('false');
     v.unmount();
   });
 

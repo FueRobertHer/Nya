@@ -28,7 +28,8 @@ import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
-import { HomeSkeleton } from './LoadingSkeletons';
+import { TabSkeleton } from './LoadingSkeletons';
+import { TABS, parseTab, tabHref, type Tab } from '@/lib/dashboard-tab';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
@@ -165,8 +166,6 @@ const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
   { value: 'other', label: 'Other (property, crypto)' },
 ];
 
-type Tab = 'home' | 'accounts' | 'activity' | 'budgets' | 'plan';
-
 // Last-known dashboard snapshot, kept on-device so the app paints instantly on
 // open (and shows something useful offline) while fresh data loads. Cleared on
 // logout; keyed per account (device-cache.ts).
@@ -240,6 +239,7 @@ export default function Dashboard({
   admin = false,
   brokerageLink = false,
   lunchFlow = false,
+  initialTab = 'home',
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -252,12 +252,15 @@ export default function Dashboard({
    *  (LUNCHFLOW_ENABLED, lib/connectors/switch.ts). Connections made before it
    *  was turned off are still shown and work. */
   lunchFlow?: boolean;
+  /** The tab the address asks for (lib/dashboard-tab.ts), read by the server
+   *  (app/page.tsx): a reload comes back to the tab it left. */
+  initialTab?: Tab;
 }) {
   const cacheKey = cacheKeyFor(viewer);
   // Hiding amounts (components/hide-amounts.ts) changes what every formatter
   // writes, so the whole dashboard draws again when the switch changes.
   const amountsHidden = useAmountsHidden();
-  const [tab, setTab] = useState<Tab>('home');
+  const [tab, setTab] = useState<Tab>(initialTab);
   // Activity's segment: the tab comes back on the last one chosen while the
   // app is open (docs/design/information-architecture.md#navigation-model).
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>('transactions');
@@ -613,6 +616,9 @@ export default function Dashboard({
       setHealthUnavailable(!!data.health_unavailable);
       setLinkOffer(Array.isArray(data.link_offer) ? data.link_offer.filter((n: unknown): n is string => typeof n === 'string') : []);
       setConnected(data.institutions.length > 0);
+      // Nothing connected has no tabs: a first connection then opens on
+      // Home, not on a tab the address held from before.
+      if (data.institutions.length === 0) setTab('home');
 
       // First open with a near-empty chart: backfill estimated history from
       // transactions in the background.
@@ -748,6 +754,9 @@ export default function Dashboard({
           setAsOf(snap.as_of ?? null);
           setBalancesSaved(true);
           setConnected(snap.institutions.length > 0);
+          // As after a load with nothing connected (loadNetWorth), should
+          // that load not come.
+          if (snap.institutions.length === 0) setTab('home');
           setLoading(false);
         }
       }
@@ -757,15 +766,27 @@ export default function Dashboard({
     loadNetWorth();
   }, [loadNetWorth]);
 
-  // A notice email links to /?view=connections: open the Accounts tab and go
-  // to what needs attention once the accounts are in (healthFocus, below),
-  // then drop the query, so a reload doesn't jump there.
+  // The tab the address asks for is the server's initialTab, but a page
+  // the service worker kept offline (public/service-worker.js) may have been
+  // drawn for another address: the address wins.
+  // A notice email links to /?view=connections: the server opens the
+  // Accounts tab for it (lib/dashboard-tab.ts), and this goes to what needs
+  // attention once the accounts are in (healthFocus, below). The effect
+  // after it then leaves ?tab=accounts in its place, so a reload stays on the
+  // tab without jumping there again.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('view') !== 'connections') return;
-    setTab('accounts');
-    setHealthFocus(true);
-    window.history.replaceState(null, '', window.location.pathname);
+    const query = new URLSearchParams(window.location.search);
+    setTab(parseTab(query));
+    if (query.get('view') === 'connections') setHealthFocus(true);
   }, []);
+
+  // The open tab, kept in the address so a reload comes back to it: replaced,
+  // never pushed, so Back leaves the page as it always did. Settings isn't a
+  // tab and isn't kept: a reload there comes back to the tab under it.
+  useEffect(() => {
+    const href = tabHref(tab, window.location.href);
+    if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, '', href);
+  }, [tab]);
 
   // Everything else loads in parallel with net worth (no waterfall): transactions
   // feed Activity and insights, budgets/goals feed the Budgets tab. All are cheap
@@ -2253,10 +2274,10 @@ export default function Dashboard({
         </div>
 
         {loading ? (
-          // Home's Net worth card as it will be, its figures still to come
+          // The open tab as it will be, its figures still to come
           // (components/LoadingSkeletons.tsx), rather than a spinner the
           // whole page then grows from.
-          <HomeSkeleton />
+          <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
         ) : settings ? (
           <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
         ) : !connected ? (
@@ -2769,7 +2790,7 @@ export default function Dashboard({
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">
-          {(['home', 'accounts', 'activity', 'budgets', 'plan'] as const).map((t) => (
+          {TABS.map((t) => (
             <button
               key={t}
               className={tab === t && !settings ? 'active' : ''}

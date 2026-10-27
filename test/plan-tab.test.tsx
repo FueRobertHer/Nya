@@ -794,9 +794,10 @@ describe('the savings sheet', () => {
 });
 
 describe('the tab', () => {
-  test('shows a spinner in each segment until the saved plan has loaded, never the defaults as if they were saved, under the bar', () => {
+  test('shows its skeleton in each segment until the saved plan has loaded, never the defaults as if they were saved, under the bar', () => {
     const html = renderToStaticMarkup(<PlanTab txns={[]} txnsLoading={false} txnNotes={[]} institutions={[]} balancesAsOf={null} currency="USD" holdings={[]} />);
-    expect(html.match(/<div class="spinner" role="status"/g)?.length).toBe(3);
+    expect(html.match(/<p class="visually-hidden" role="status">Loading your plan<\/p>/g)?.length).toBe(3);
+    expect(html).not.toContain('class="spinner"');
     expect(html).not.toContain('FI number');
     // The bar is there already, its heading for Home's FI line to land on.
     expect(html).toContain('<h2 id="plan-title" class="plan-title" tabindex="-1">Your plan</h2>');

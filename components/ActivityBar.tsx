@@ -49,10 +49,15 @@ export default function ActivityBar({
   segment,
   onSegment,
   menu,
+  monthPending = false,
 }: {
   /** The month shown ("October 2026"), or null to leave the switcher out:
    *  on Shared, whose balances aren't by month, and before there is one. */
   month: string | null;
+  /** With no month yet, while the transactions load: the switcher drawn
+   *  with a placeholder for its name, so it doesn't push the list down when
+   *  the month arrives (components/LoadingSkeletons.tsx). */
+  monthPending?: boolean;
   /** Steps to the month before or after; left out at either end. */
   onEarlier?: () => void;
   onLater?: () => void;
@@ -74,17 +79,31 @@ export default function ActivityBar({
 
   return (
     <div className="activity-bar">
-      {(month !== null || menu.length > 0) && (
+      {(month !== null || monthPending || menu.length > 0) && (
         <div className="activity-month">
-          {month !== null && (
+          {/* The same elements pending or not, so focus on an arrow
+              survives the month arriving. */}
+          {(month !== null || monthPending) && (
             <>
-              <button type="button" className="secondary icon-btn" aria-label="Earlier month" aria-disabled={!onEarlier} onClick={onEarlier}>
+              <button
+                type="button"
+                className="secondary icon-btn"
+                aria-label="Earlier month"
+                aria-disabled={month === null || !onEarlier}
+                onClick={month === null ? undefined : onEarlier}
+              >
                 {chevron(LEFT)}
               </button>
               <h2 className="activity-month-name" aria-live="polite">
-                {month}
+                {month ?? <span className="skeleton activity-skeleton-month" aria-hidden="true" />}
               </h2>
-              <button type="button" className="secondary icon-btn" aria-label="Later month" aria-disabled={!onLater} onClick={onLater}>
+              <button
+                type="button"
+                className="secondary icon-btn"
+                aria-label="Later month"
+                aria-disabled={month === null || !onLater}
+                onClick={month === null ? undefined : onLater}
+              >
                 {chevron(RIGHT)}
               </button>
             </>
