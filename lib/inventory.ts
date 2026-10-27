@@ -760,6 +760,13 @@ const STORES: Readonly<Record<string, Entry>> = {
     unit: VALUE,
     kept: 'Your data',
   },
+  'fire-plan-saved': {
+    group: 'plans',
+    name: 'The plan you saved as your plan',
+    about: 'Your plan’s assumptions on the day you said this is my plan, the annual savings it used that day, its currency and the inflation rate you chose, never a figure worked out from them: the Plan tab sets your invested assets against it.',
+    unit: VALUE,
+    kept: 'Your data',
+  },
   'goal-plans': {
     group: 'plans',
     name: 'How each goal is funded, and when it is due',

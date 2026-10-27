@@ -371,7 +371,7 @@ describe('the segments', () => {
     serve();
     const tab = await mount();
     expect(tab.shown()).toEqual(['Your path']);
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'What if…', 'Income and one-off expenses']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'What if…', 'Income and one-off expenses', 'Progress']);
     const stress = tab.titles(tab.panelOf('Stress test'));
     expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length']);
     // Then its settings and About these numbers, as rows (rollout 6d).
@@ -627,7 +627,8 @@ describe('the scenario’s card, on every segment', () => {
       expect(tab.card()).toBe(card);
       expect(tab.order(card)).toBeLessThan(tab.order(tab.panelOf(label)));
     }
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual([]);
+    // Only the Progress card, which is about the plan saved as your plan, never the scenario.
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Progress']);
     expect(tab.titles(tab.panelOf('Stress test'))).toEqual([]);
     expect(stressRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))).toEqual([]);
@@ -655,7 +656,7 @@ describe('the scenario’s card, on every segment', () => {
     const tab = await mount();
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses', 'Life events']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses', 'Life events', 'Progress']);
     expect(tab.panelOf('Stress test').textContent).toContain('as the Life events card on Your path says');
     await tab.unmount();
   });

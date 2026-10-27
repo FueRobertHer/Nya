@@ -33,6 +33,7 @@ import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
 import PlanPathChart from '@/components/PlanPathChart';
 import { ScenariosSheet } from '@/components/PlanScenarios';
+import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanProgress';
 import { LifeEventsCard } from '@/components/PlanEvents';
 import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
@@ -1142,6 +1143,35 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       currency="USD"
     />
   ),
+  // With what was recorded since a plan saved as your plan (rollout 8e): its words, summary and table.
+  'Plan: Your path’s chart, with what was recorded since your plan': () => (
+    <PlanPathChart
+      points={[
+        { age: 40, balance: 250_000 },
+        { age: 41, balance: 292_500 },
+        { age: 42, balance: 1_100_000 },
+      ]}
+      today={40}
+      stopAge={42}
+      fiNumber={1_000_000}
+      fiAge={41.8}
+      realReturn={0.05}
+      currency="USD"
+      recorded={{
+        from: '2026-01-02',
+        savedDay: '2026-01-02',
+        recorded: [
+          { age: 39.2, balance: 200_000 },
+          { age: 40, balance: 250_000 },
+        ],
+        planned: [
+          { age: 39.2, balance: 200_000 },
+          { age: 40, balance: 236_000 },
+        ],
+        days: ['2026-01-02', '2026-10-01'],
+      }}
+    />
+  ),
   // Since rollout phase 6b the scenarios are listed and compared in a sheet
   // (the Plan's bar, which opens it, has no amounts, and is left to the
   // source scans): a scenario's change, and Compare's figures beside your
@@ -1299,6 +1329,11 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Card Mode: a transaction standing for one imported from the bank’s file, approved at the file’s amount': () => (
     <CardMode open txns={[TWIN]} taxonomy={taxonomy} tags={[]} currency="USD" review={REVIEW} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />
   ),
+  // Progress against your plan (rollout 8e): where you are and where the plan has you, and the save sheet's savings.
+  'Plan: progress against the plan saved as your plan, a newer day short, and an account added since': () => <ProgressView {...PROGRESS} />,
+  'Plan: saying this is my plan, with the savings it keeps': () => (
+    <ProgressSheetBody sheet="save" saved={null} savings={18_000} money={(n) => wholeMoney(n, 'USD')} inflation="3" onInflation={() => {}} error={null} />
+  ),
   // Shared expenses (#49): the card and every sheet with a figure to hide.
   'Shared expenses: who owes what, a payment that may be one, and one gone with where it could move': () => (
     <SharedExpensesCard
@@ -1331,6 +1366,38 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Shared expenses: settled outside your accounts, or let go': () => <SettleSheet person="alex" currency="USD" shared={sharedState(sharedCard())} onClose={() => {}} />,
   'Shared expenses: someone you split costs with, and what is between you': () => <PersonSheet id="alex" open tags={[]} shared={sharedState(sharedCard())} onClose={() => {}} />,
   'Shared expenses: asking for it, and the message to send': () => <HandoffSheet person="alex" currency="USD" shared={sharedState(sharedCard())} onClose={() => {}} />,
+};
+
+/** A plan saved on Jan 2, 2026, set against Oct 1's balances. */
+const PROGRESS_DAY = (date: string, total: number, over: Record<string, unknown> = {}) => ({ date, total, counted: 2, missing: [] as string[], otherCurrencies: {}, unrated: [], ...over });
+const PROGRESS = {
+  savedState: {
+    kind: 'ready' as const,
+    problem: null,
+    saved: { version: 1 as const, plan: { ...DEFAULT_PLAN, age: 35, targetAge: 55 }, savings: 18_000, currency: 'USD', inflation: 0.03, day: '2026-01-02', savedAt: '2026-01-02T12:00:00.000Z', rev: 'r1' },
+  },
+  series: {
+    kind: 'ready' as const,
+    answer: {
+      currency: 'USD',
+      saved_day: '2026-01-02',
+      anchor: PROGRESS_DAY('2026-01-02', 150_000),
+      latest: PROGRESS_DAY('2026-10-02', 171_000, { missing: ['ira'] }),
+      months: [{ date: '2026-01-31', total: 152_000 }, { date: '2026-10-01', total: 181_000 }],
+      accounts: [{ account_id: 'newira', first: '2026-05-01', last: '2026-10-02', ended: null, label: 'New IRA at Broker' }],
+      unreadable_days: [],
+    },
+  },
+  plan: { ...DEFAULT_PLAN, age: 35, targetAge: 55, realReturn: 0.04 },
+  blocked: null,
+  scenarioOpen: false,
+  savings: { value: 18_000, source: 'measured' as const },
+  money: (n: number) => wholeMoney(n, 'USD'),
+  nameOf: (id: string) => (id === 'ira' ? 'IRA at Broker' : 'New IRA at Broker'),
+  busy: false,
+  error: null,
+  onSheet: () => {},
+  onRetry: () => {},
 };
 
 describe('the main screens with amounts hidden', () => {
