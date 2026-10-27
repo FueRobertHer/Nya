@@ -7,7 +7,7 @@ A plan to make Nya easier to use: less on each screen, everything in one obvious
 | [Guidelines](guidelines.md) | **Start here when building UI.** Where a new feature goes, which classes and colors to use, the honesty rules, and the checklist each pull request is reviewed against. `test/design-guard.test.ts` enforces the checkable parts. |
 | [Information architecture](information-architecture.md) | What each tab is for, what moves where, the Settings screen, the end of Manage mode, Needs attention, deep links, and a table placing every component. |
 | [Design system](design-system.md) | The visual direction, color in light and dark with contrast ratios, type, spacing, components and the classes each replaces, status and honesty rules, copy, accessibility. |
-| [Tokens](tokens.css) | The design tokens as CSS, with aliases for today's names. The scales and dark theme are copied into `app/globals.css`; the light theme waits for phase 7. |
+| [Tokens](tokens.css) | The design tokens as CSS, with aliases for today's names. Copied into `app/globals.css`: the scales and the dark theme in phase 2, the light theme in phase 7. |
 | [Rollout](rollout.md) | Seven pull-request-sized phases, effort and risks for each. |
 | [Mockups](mockups/index.html) | Phone screens of every surface, in dark and light, and the two visual directions side by side. |
 

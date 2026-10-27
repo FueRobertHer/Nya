@@ -1,59 +1,48 @@
 import type { Metadata, Viewport } from 'next';
 import { connection } from 'next/server';
+import { cookies } from 'next/headers';
 import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 import { clerkEnabled } from '@/lib/auth-mode';
-import { DARK, FONT_UI } from '@/lib/theme';
+import { CLERK_APPEARANCE, THEME_COOKIE, colorScheme, statusBarStyle, themeChoice, themeColors } from '@/lib/theme';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
 
-export const metadata: Metadata = {
+// Next takes metadata or generateMetadata, not both: this is the part that
+// doesn't depend on the theme.
+const METADATA: Metadata = {
   title: 'Nya',
   description: 'Combined balance sheet across all your connected accounts',
   manifest: '/manifest.json',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'black-translucent',
-    title: 'Nya',
-  },
 };
 
-export const viewport: Viewport = {
-  themeColor: DARK.canvas,
-  width: 'device-width',
-  initialScale: 1,
-  viewportFit: 'cover',
-};
+// The theme chosen on this device (components/theme.ts keeps it in a cookie),
+// or none to follow the system: the page, its chrome color and iOS's status
+// bar are sent in it, so nothing flashes and no script runs before paint.
+async function chosenTheme() {
+  return themeChoice((await cookies()).get(THEME_COOKIE)?.value);
+}
 
-// Clerk's sign-in, menu and account window in the app's own dark palette
-// (lib/theme.ts, the tokens in app/globals.css).
-const CLERK_APPEARANCE = {
-  variables: {
-    colorPrimary: DARK.accent,
-    colorPrimaryForeground: DARK['on-fill'],
-    colorBackground: DARK.surface,
-    colorForeground: DARK['text-1'],
-    colorMutedForeground: DARK['text-2'],
-    colorMuted: DARK.elevated,
-    colorNeutral: DARK['text-1'],
-    colorInput: DARK.canvas,
-    colorInputForeground: DARK['text-1'],
-    colorBorder: DARK['border-strong'],
-    colorDanger: DARK.neg,
-    colorSuccess: DARK.pos,
-    colorWarning: DARK.warn,
-    colorModalBackdrop: DARK.scrim,
-    borderRadius: '10px',
-    fontFamily: FONT_UI,
-  },
-  elements: {
-    // Clerk draws its plain badge ("Primary" beside an address) in its border
-    // color, which on this border is unreadable; secondary text instead, as
-    // the app's own labels.
-    badge: {
-      '&[data-color="primary"]': { color: DARK['text-2'], borderColor: DARK['border-strong'] },
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    ...METADATA,
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: statusBarStyle(await chosenTheme()),
+      title: 'Nya',
     },
-  },
-};
+  };
+}
+
+export async function generateViewport(): Promise<Viewport> {
+  const choice = await chosenTheme();
+  return {
+    themeColor: themeColors(choice),
+    colorScheme: colorScheme(choice),
+    width: 'device-width',
+    initialScale: 1,
+    viewportFit: 'cover',
+  };
+}
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Clerk only when its keys are set (lib/auth-mode.ts): without them its
@@ -64,7 +53,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // (lib/security-headers.ts).
   await connection();
   const page = (
-    <html lang="en">
+    <html lang="en" data-theme={(await chosenTheme()) ?? undefined}>
       <body>
         {children}
         <ServiceWorkerRegistration />

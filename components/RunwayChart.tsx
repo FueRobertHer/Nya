@@ -133,7 +133,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
       >
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--line, #262a33)" strokeWidth={1} />
+            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
               {compactMoney(t, currency)}
             </text>
@@ -146,7 +146,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
           const p = points.find((q) => q.date === m.date)!;
           return <circle key={m.key} cx={x(days(m.date))} cy={y(p[m.key])} r={4} fill={m.color} stroke="var(--card)" strokeWidth={2} />;
         })}
-        {shown && <line x1={x(days(shown.date))} x2={x(days(shown.date))} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="#3a4150" strokeWidth={1} />}
+        {shown && <line x1={x(days(shown.date))} x2={x(days(shown.date))} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-strong)" strokeWidth={1} />}
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 6}>
           Now
         </text>

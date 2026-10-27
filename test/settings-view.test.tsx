@@ -10,7 +10,7 @@ import { CAUSES } from '@/lib/connection-state';
 // tab's Manage mode, and how the dashboard fills it.
 
 const sections: SettingsSection[] = [
-  { id: 'preferences', title: 'Preferences', sub: 'Home currency and rates, weekly summary email', content: <p>Currency card</p> },
+  { id: 'preferences', title: 'Preferences', sub: 'Theme, home currency and rates, weekly summary email', content: <p>Currency card</p> },
   { id: 'data', title: 'Your data and privacy', sub: 'Download, bring back a download, API tokens', content: <div id="bring-back">Restore card</div> },
 ];
 const noop = () => {};
