@@ -15,7 +15,8 @@
 // Demo accounts are allowed in without being on CLERK_ALLOWED_USER_IDS
 // (lib/auth-mode.ts), and behave like any account (linking sandbox banks,
 // connecting, sharing), except that they can't be deleted: the next visitor
-// would find the demo gone.
+// would find the demo gone. Instead each can be reset to a scenario, from
+// Settings' Demo data card or a terminal (lib/demo-seed/reset.ts).
 
 export type DemoUser = { id: string; label: string };
 

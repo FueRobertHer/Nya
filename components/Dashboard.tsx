@@ -17,6 +17,7 @@ import DownloadMyData from './DownloadMyData';
 import ReceiptsCard from './ReceiptsCard';
 import InventoryEntry from './InventoryEntry';
 import RestoreCard from './RestoreCard';
+import DemoDataCard from './DemoDataCard';
 import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import ApiTokens from './ApiTokens';
@@ -2047,6 +2048,10 @@ export default function Dashboard({
               beside the download; for the admin, also storage
               across accounts (/admin/storage). */}
           <InventoryEntry admin={admin} />
+          {/* A demo account's reset to a scenario, in place of bringing a
+              download back, which a demo account can't
+              (components/DemoDataCard.tsx). Nothing for anyone else. */}
+          <DemoDataCard onChanged={restoreChanged} />
           {/* Bringing a download back, and its undo, beside the download
               (components/RestoreCard.tsx). The restore banner moves focus
               here. */}

@@ -128,6 +128,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'connector-connections': 'data',
   'connector-ended': 'data',
   'connector-secrets': 'data',
+  // The record of a demo account's last reset (lib/demo-seed/store.ts):
+  // kept when emptied, since the reset empties the account part way through.
+  'demo-seed': 'machinery',
   // The home currency and own rates (lib/fx/settings.ts): one value the
   // rest is shown through, never referred to by what is stored.
   'currency-settings': 'setting',
@@ -219,6 +222,7 @@ const KEPT_WHEN_EMPTIED: ReadonlySet<string> = new Set([
   'api-tokens',
   'sharing-access-log',
   'weekly-summary-state',
+  'demo-seed',
   // Receipts and documents, and what is kept about them (see STORE_CLASSES).
   'attachments',
   'attachment-sweep',

@@ -686,6 +686,22 @@ const STORES: Readonly<Record<string, Entry>> = {
     kept: 'Your home currency and your own exchange rates',
     seen: ['shared', 'api', 'email'],
   },
+  // A demo account's resets (lib/demo-seed/store.ts): only ever on a demo
+  // account, on Preview. The count is the reset's lock as much as its limit.
+  'demo-reset': {
+    group: 'machinery',
+    name: 'Resets of this demo account in the last 10 minutes',
+    unit: COUNT,
+    kept: 'The app’s own records about your data',
+    plain: COUNT_PLAIN,
+  },
+  'demo-seed': {
+    group: 'machinery',
+    name: 'The last reset of this demo account',
+    about: 'Which scenario it was reset to, when, and whether it finished. Only ever on a demo account.',
+    unit: VALUE,
+    kept: 'The app’s own records about your data',
+  },
   'download-count': {
     group: 'machinery',
     name: 'Downloads of your data this hour',
