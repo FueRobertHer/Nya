@@ -1318,7 +1318,7 @@ export function AllocationHistoryChart({
       >
         {[0, 0.5, 1].map((t) => (
           <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={PAD_TOP + (1 - t) * plotH} y2={PAD_TOP + (1 - t) * plotH} stroke="#262a33" strokeWidth={1} />
+            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={PAD_TOP + (1 - t) * plotH} y2={PAD_TOP + (1 - t) * plotH} stroke="var(--border-subtle)" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT - 6} y={PAD_TOP + (1 - t) * plotH} textAnchor="end" dominantBaseline="middle">
               {t * 100}%
             </text>
@@ -1341,7 +1341,7 @@ export function AllocationHistoryChart({
             </g>
           );
         })}
-        {active !== null && <rect x={xs[i] - 1} y={PAD_TOP - 2} width={width + 2} height={plotH + 4} fill="none" stroke="#8b8f98" strokeWidth={1} />}
+        {active !== null && <rect x={xs[i] - 1} y={PAD_TOP - 2} width={width + 2} height={plotH + 4} fill="none" stroke="var(--text-3)" strokeWidth={1} />}
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 4} textAnchor="start">
           {dayName(days[0].date)}
         </text>

@@ -1149,10 +1149,10 @@ const PAD_TOP = 14;
 // Room under the baseline for the 12px dates.
 const PAD_BOTTOM = 24;
 const PLAN_COLOR = 'var(--accent)';
-// The baseline is context, so it is a gray, but darker than --muted: checked
-// against the card surface (over 3:1) and against the accent (far enough apart
-// for colour-blind readers too).
-const BASELINE_COLOR = '#6b7080';
+// The baseline is context, so it is the meta gray, --text-3: over 3:1 on a
+// card in both themes, and far enough from the accent for colour-blind
+// readers too.
+const BASELINE_COLOR = 'var(--text-3)';
 
 /**
  * What is owed in total, month by month: the chosen order against paying only
@@ -1263,7 +1263,7 @@ function PayoffChart({
       >
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
+            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
               {compactIn(currency, t)}
             </text>
@@ -1274,7 +1274,7 @@ function PayoffChart({
         <path d={planPath} fill="none" stroke={PLAN_COLOR} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {active !== null && (
-          <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="#3a4150" strokeWidth={1} />
+          <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-strong)" strokeWidth={1} />
         )}
         {/* Off the top, the readout above still has its figure. */}
         {baseVals[i] <= top && (

@@ -201,7 +201,7 @@ export default function MonthFlowChart({
       >
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
+            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
               {compactMoney(t, currency)}
             </text>
@@ -212,7 +212,7 @@ export default function MonthFlowChart({
         <path d={inPath} fill="none" stroke="var(--up)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {active !== null && (
-          <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="#3a4150" strokeWidth={1} />
+          <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />
         )}
 
         <circle cx={xs[i]} cy={y(cumOut[i])} r={4} fill="var(--down)" stroke="var(--card)" strokeWidth={2} />

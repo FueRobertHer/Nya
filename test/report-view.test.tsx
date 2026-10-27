@@ -284,15 +284,20 @@ describe('review: the page says what it can’t show', () => {
   });
 });
 
-/** The rules of a selector inside `@media print` in app/globals.css. */
-function printRule(selector: string): string {
+/** The rules of a selector inside `@media print` in app/globals.css, in
+ *  order (the last one wins where they set the same thing). */
+function printRules(selector: string): string[] {
   const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const at = css.indexOf('@media print');
   expect(at).toBeGreaterThan(-1);
-  const block = css.slice(at);
-  const m = new RegExp(`(?:^|[}\\s])${selector.replace(/[.+*()[\]]/g, '\\$&')}\\s*\\{([^}]*)\\}`).exec(block);
-  return m?.[1].replace(/\s+/g, ' ').trim() ?? '';
+  // One space for any run of them, so a selector list can span lines.
+  const block = css.slice(at).replace(/\s+/g, ' ');
+  const re = new RegExp(`(?:^|[}\\s])${selector.replace(/[.+*()[\]]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'g');
+  return [...block.matchAll(re)].map((m) => m[1].replace(/\s+/g, ' ').trim());
 }
+
+/** The first rule of a selector inside `@media print`. */
+const printRule = (selector: string): string => printRules(selector)[0] ?? '';
 
 describe('the print styles', () => {
   test('page breaks between parts, never inside a row; the header of a long table on every page', () => {
@@ -305,7 +310,10 @@ describe('the print styles', () => {
   test('the report alone, black on white, at the paper’s own size', () => {
     expect(printRule('.sheet-backdrop')).toContain('display: none !important');
     expect(printRule('body')).toContain('background: #fff');
-    const root = printRule(':root');
+    // The light theme, then black and white over it, for the root with a
+    // theme chosen or without (phase 7).
+    const [light, root] = printRules(':root:not([data-theme]), :root[data-theme]');
+    expect(light).toContain('--canvas: #f6f7f9');
     for (const d of ['--text-1: #000', '--canvas: #fff', '--surface: #fff', '--warn: #000']) expect(root).toContain(d);
     // No fixed paper size: A4 or Letter, as the print window says.
     expect(printRule('@page')).not.toMatch(/(^|;)\s*size\s*:/);

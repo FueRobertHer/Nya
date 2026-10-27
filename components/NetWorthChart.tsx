@@ -494,7 +494,7 @@ export default function NetWorthChart({
         {/* recessive hairline gridlines with clean tick values */}
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="#262a33" strokeWidth={1} />
+            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
             <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
               {compactMoney(t, currency)}
             </text>
@@ -553,7 +553,7 @@ export default function NetWorthChart({
 
         {/* crosshairs: one while scrubbing, two while measuring */}
         {(measure ?? (active !== null ? [active] : [])).map((i) => (
-          <line key={i} x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="#3a4150" strokeWidth={1} />
+          <line key={i} x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />
         ))}
 
         {/* end-dot (or the active or measured dots) with a 2px surface ring */}

@@ -347,7 +347,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ['Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
   [
     'What your device keeps',
-    'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere.',
+    'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere. If you choose a light or dark theme, that choice, in a cookie your browser sends with each page so it opens in that theme, for a year or until you choose System.',
   ],
 ];
 

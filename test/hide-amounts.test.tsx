@@ -1507,7 +1507,8 @@ describe('the main screens with amounts hidden', () => {
     const rule = css.slice(css.indexOf(hook), css.indexOf('}', css.indexOf(hook)));
     expect(rule).toContain('color: transparent;');
     expect(rule).toContain('-webkit-text-fill-color: transparent;');
-    expect(rule).toContain('background-image: url("data:image/svg+xml,');
+    // Three dots, drawn in the text's color so they read in either theme.
+    expect(rule.match(/radial-gradient\(circle, var\(--text-1\) /g)).toHaveLength(3);
     expect(css).not.toContain('-webkit-text-security');
   });
 });

@@ -86,7 +86,7 @@ export default function PlanGrid({
       <td
         key={years}
         className={`num plan-grid-cell${own ? ' own' : ''}`}
-        style={{ background: `rgba(91, 141, 239, ${shade.toFixed(3)})` }}
+        style={{ background: `color-mix(in srgb, var(--accent) ${(shade * 100).toFixed(1)}%, transparent)` }}
         title={title}
         aria-label={title}
       >

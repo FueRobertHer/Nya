@@ -70,7 +70,7 @@ Phase 8, the Plan track, comes before phase 7: the Plan tab was the screen peopl
 - The menu popover, the "Why?" disclosure and the sheet's footer arrive in phase 3 with their first users (the account sheet's ⋯, the coverage disclosure, the account sheet), not as unused code. Built in 3a.
 - The cards inside the Settings sections keep their classes; each moves to the primitives when it is next changed.
 - The 27 `tabular-nums` declarations in feature rules stay until their rules move to `.money`.
-- The tag colors stay as they are until phase 7 gives them light values.
+- The tag colors stay as they are until phase 7 gives them light values. (Done in phase 7.)
 
 **Risks:** the global `button { width: 100% }` change touches every button; land it with the `.btn-block` audit in the same PR. Print reports and hide amounts (`data-amounts="hidden"`) must be checked on every changed component. Check widths 320, 375, 390 and 1280px.
 
@@ -599,9 +599,47 @@ Ship each kind's shape once: an older release reads a scenario with a kind it do
 - Charts, tag colors, the Sankey and print checked in light.
 - Rerun the contrast check on the final tokens.
 
+**Built:**
+
+- The light theme in `app/globals.css`: `tokens.css`'s two light blocks, after the dark one (both light selectors outrank dark's `:root`). Dark when the device is dark or says nothing, light when it is light.
+- **Settings > Preferences > Theme** (`components/ThemeCard.tsx`, first in the section): System, Dark or Light, a radio group drawn as a segmented control. The choice is a cookie (`nya-theme`, `components/theme.ts`) that the root layout reads, so a page is sent in it: `data-theme` on `<html>`, the chrome color, `color-scheme` and iOS's status bar style (`lib/theme.ts`). No script runs before paint, and nothing changes under the nonce-based policy. A change applies at once; other open tabs follow on their next load.
+- Every dark-only color in the app's CSS and charts is a token now, and the guard's raw-color baseline is empty:
+  - borders and dividers went to `--border-subtle` and `--border-strong`, and a text field's edge to `--border-input`, which also brings it to 3:1 in dark (the one change dark shows);
+  - accent washes went to `--accent-tint`;
+  - the backdrop went to `--scrim`, and the sheet's shadow to the new `--shadow`;
+  - the attachment viewer is on `--canvas`;
+  - the chart gridlines are `--border-subtle`, their crosshairs `--border-strong`, and the comparison lines `--text-3`;
+  - the idle-cash chip's and the danger outline's softer edges are `--warn` and `--neg` at 45% and 35%, through `color-mix`;
+  - the Plan grid's heat map is `--accent` through `color-mix`;
+  - hide amounts' dots in a field are drawn in `--text-1`;
+  - the select chevron is one gray at 3:1 on every surface in both themes.
+- **Tag colors** are tokens (`--tag-<color>`, `--tag-<color>-tint`): dark keeps its colors, with each tint made solid, and light has a deep step on a pale tint. The Tags screen's swatch is the text step.
+- **Print** is the light theme with black and white over it, whichever theme is on screen, under `:root:not([data-theme]), :root[data-theme]` (as specific as the light blocks, after them).
+- **Clerk** is styled with the tokens (`var(--accent)`, ...), so it follows the theme.
+- **The contrast check** runs on both themes as the app has them, tags included. The guard also holds the app's three light copies (system, chosen, print) to `tokens.css`, `lib/theme.ts`'s `LIGHT` to the app, and the allocation colors at 3:1 on a card in both themes.
+
+**Checked in light**, on a static page with `app/globals.css` at 320px, with the device set to light and to dark:
+
+- the theme card (44px choices), buttons, fields, the select, hide amounts' dots, chips and badges, notices of all four levels, tags and swatches, the sheet and backdrop, and the attachment viewer;
+- the cash-flow Sankey: its labels are 11.8:1 on a ribbon; the ribbons are 1.6:1 on a card, against 1.9:1 in dark, and are left as they are, since each node's bar carries it at full strength;
+- the path chart;
+- print, with the print rules forced on, with no theme, Dark and Light: black on white, with light's meaning colors, in every case.
+
+**Decided:**
+
+- A cookie, not an account setting or localStorage. A theme is a device's display, like hide amounts. The layout already renders per request, so a cookie needs no script before paint.
+- The allocation views keep their class colors: each already passes 3:1 on a card in both themes, so there are no light copies to keep in step.
+- Clerk takes `var()` in every theme, not hex palettes per choice. Clerk's docs advise direct values for older browsers, which a pinned palette would only have helped those who pin a theme.
+
+**Kept narrow:**
+
+- No light app icon or install splash: the manifest stays dark.
+- With System, an iOS home-screen app keeps the white status bar text. iOS has no setting that follows the device's mode, so on a light device the clock reads poorly until you choose Light, which sends the light bar. This needs checking on a device.
+- No sync of the choice across devices or open tabs.
+
 ## The contrast check
 
-`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1): dark from `app/globals.css`, light from `tokens.css` until phase 7 moves it into the app. It also fails if the light theme's two copies (system setting and explicit choice) drift apart, or if the app's dark theme, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
+`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
 
 ## Done means
 

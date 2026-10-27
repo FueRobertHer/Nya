@@ -3,7 +3,6 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "rawColors": 37,
     "smallFonts": 17
   },
   "app/not-allowed/page.tsx": {
@@ -16,7 +15,6 @@
     "inlineLayoutStyles": 3
   },
   "components/AllocationCard.tsx": {
-    "rawColors": 2,
     "inlineLayoutStyles": 9
   },
   "components/ApiChanges.tsx": {
@@ -47,11 +45,7 @@
     "inlineLayoutStyles": 7
   },
   "components/DebtPayoff.tsx": {
-    "rawColors": 3,
     "inlineLayoutStyles": 1
-  },
-  "components/ForecastChart.tsx": {
-    "rawColors": 2
   },
   "components/GoalSheet.tsx": {
     "inlineLayoutStyles": 2
@@ -86,12 +80,6 @@
   "components/MonthBreakdown.tsx": {
     "inlineLayoutStyles": 1
   },
-  "components/MonthFlowChart.tsx": {
-    "rawColors": 2
-  },
-  "components/NetWorthChart.tsx": {
-    "rawColors": 2
-  },
   "components/OwedFlipNote.tsx": {
     "inlineLayoutStyles": 4
   },
@@ -104,14 +92,8 @@
   "components/PlanEvents.tsx": {
     "inlineLayoutStyles": 3
   },
-  "components/PlanFanChart.tsx": {
-    "rawColors": 2
-  },
   "components/PlanForms.tsx": {
     "inlineLayoutStyles": 7
-  },
-  "components/PlanGrid.tsx": {
-    "rawColors": 1
   },
   "components/PlanScenarios.tsx": {
     "inlineLayoutStyles": 10
@@ -127,9 +109,6 @@
   },
   "components/RulesCard.tsx": {
     "inlineLayoutStyles": 3
-  },
-  "components/RunwayChart.tsx": {
-    "rawColors": 2
   },
   "components/ShareCostSheet.tsx": {
     "inlineLayoutStyles": 2

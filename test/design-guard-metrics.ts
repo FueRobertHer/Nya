@@ -4,6 +4,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { TAG_COLORS } from '@/lib/tags';
 import { lex } from './amount-sources';
 
 export const ROOT = join(import.meta.dir, '..');
@@ -187,6 +188,11 @@ function tokenBlock(css: string, opener: RegExp): Record<string, string> {
 }
 
 const DARK_BLOCK = /:root,\s*:root\[data-theme="dark"\]\s*\{/;
+const LIGHT_BLOCK = /^:root\[data-theme="light"\]\s*\{/m;
+const LIGHT_BY_SYSTEM = /:root:not\(\[data-theme="dark"\]\)\s*\{/;
+// Print's copy of the light theme: the first of its two blocks (the second
+// is black and white over it).
+const PRINT_BLOCK = /:root:not\(\[data-theme\]\),\s*:root\[data-theme\]\s*\{/;
 const SCALES_BLOCK = /:root\s*\{\s*\/\*\s*Type\./;
 
 /** Every custom property a block declares, as written (rgba and the scales
@@ -203,24 +209,33 @@ export function declaredVars(css: string, opener: RegExp): Record<string, string
   return vars;
 }
 
-/** The app's theme in app/globals.css (dark only until rollout phase 7): its
- *  hex colors for the contrast check, and every token of the scales and the
- *  dark block for comparing with docs/design/tokens.css. */
+/** The app's themes in app/globals.css: their hex colors for the contrast
+ *  check, and every token of the scales and of each theme block (the system's
+ *  light, the chosen light, print's light) for comparing with
+ *  docs/design/tokens.css. */
 export function appTheme(css: string) {
-  return { dark: tokenBlock(css, DARK_BLOCK), darkVars: declaredVars(css, DARK_BLOCK), scales: declaredVars(css, SCALES_BLOCK) };
+  return {
+    dark: tokenBlock(css, DARK_BLOCK),
+    light: tokenBlock(css, LIGHT_BLOCK),
+    darkVars: declaredVars(css, DARK_BLOCK),
+    lightVars: declaredVars(css, LIGHT_BLOCK),
+    lightBySystemVars: declaredVars(css, LIGHT_BY_SYSTEM),
+    printVars: declaredVars(css, PRINT_BLOCK),
+    scales: declaredVars(css, SCALES_BLOCK),
+  };
 }
 
 /** The same blocks in docs/design/tokens.css. */
 export function referenceVars(css: string) {
-  return { darkVars: declaredVars(css, DARK_BLOCK), scales: declaredVars(css, SCALES_BLOCK) };
+  return { darkVars: declaredVars(css, DARK_BLOCK), lightVars: declaredVars(css, LIGHT_BLOCK), scales: declaredVars(css, SCALES_BLOCK) };
 }
 
 /** The two themes' colors, plus the light block the system setting selects (it must match the explicit one). */
 export function themes(css: string) {
   return {
     dark: tokenBlock(css, DARK_BLOCK),
-    light: tokenBlock(css, /^:root\[data-theme="light"\]\s*\{/m),
-    lightBySystem: tokenBlock(css, /:root:not\(\[data-theme="dark"\]\)\s*\{/),
+    light: tokenBlock(css, LIGHT_BLOCK),
+    lightBySystem: tokenBlock(css, LIGHT_BY_SYSTEM),
   };
 }
 
@@ -239,5 +254,7 @@ export function contrastPairs(): [string, string, number][] {
   pairs.push(['text-2', 'warn-tint', TEXT], ['text-2', 'neg-tint', TEXT]);
   pairs.push(['on-fill', 'accent-fill', TEXT], ['on-fill', 'danger-fill', TEXT]);
   pairs.push(['focus', 'surface', UI], ['focus', 'canvas', UI]);
+  // A tag's text on its tint, and its swatch (the text step) on a card.
+  for (const tag of TAG_COLORS) pairs.push([`tag-${tag}`, `tag-${tag}-tint`, TEXT], [`tag-${tag}`, 'surface', UI]);
   return pairs;
 }
