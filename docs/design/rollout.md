@@ -172,7 +172,7 @@ Split in three pull requests, as phase 3 was: **4a** the Net worth card (its fir
 
 **Kept narrow in 4c:**
 
-- **The FI line, as reviewed.** The review asked for "Plan defaults" on the line itself when no plan is saved, a shorter line under it ("$942,000 of $1,520,000 invested"), a row that says why when the plan can't be read, and focus after its jump. The FI part is likely to change, so these wait for that (phase 8b, which gives the line the Plan tab's new words).
+- **The FI line, as reviewed.** The review asked for "Plan defaults" on the line itself when no plan is saved, a shorter line under it ("$942,000 of $1,520,000 invested"), a row that says why when the plan can't be read, and focus after its jump. The FI part is likely to change, so these wait for that (phase 8b, which gives the line the Plan tab's new words). (Landed in 8b; focus after the jump was already built in 6b.)
 - **From the same review, for later:** Needs attention can sit below the fold at 320px under the chart (a "2 things need you" jump under the delta); caution's clock fits "due soon" but not "over budget" (one caution shape for rows and notices); a low balance smaller than a bill due within the week belongs in Needs attention; the month's missing transactions said once, gathered, rather than twice; tab jumps pushed to history, so back returns to Home.
 
 - **Focus after the FI line's jump.** The Plan tab has no heading to land on until phase 6 gives it one; the line scrolls to its top, as it did.
