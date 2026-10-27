@@ -1,7 +1,8 @@
 'use client';
 
 // Deleting my account and all its data (lib/account-deletion.ts), on the
-// "Data & privacy" page of Clerk's account window (components/ClerkAccount.tsx).
+// "Data & privacy" page of Clerk's account window (components/ProfileWindow.tsx),
+// from the account menu or Settings > Account.
 // Only with Clerk on. Asks for DELETE typed out;
 // the primary account is told why it can't be deleted here.
 //
