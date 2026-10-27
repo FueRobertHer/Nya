@@ -72,7 +72,7 @@
   /* Lines */
   --border-subtle: #232834; /* dividers between rows */
   --border-strong: #2b3140; /* card and sheet edges */
-  --border-input: #707889; /* field outlines: 3:1 on canvas, surface and elevated */
+  --border-input: #707889; /* every control's edge (fields, secondary buttons, chips, the selected segment): 3:1 on canvas, surface and elevated */
 
   /* Text */
   --text-1: #eceef2;
@@ -288,10 +288,13 @@ h2 {
   margin-bottom: 24px;
 }
 
+/* The edge sets a card apart: --surface is about 1.07:1 from --canvas in both
+   themes. Padding stays --sp-5, which the rows' edge-to-edge margin assumes. */
 .card {
   background: var(--card);
-  border-radius: 14px;
-  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  padding: var(--sp-5);
   margin-bottom: 16px;
 }
 
@@ -351,8 +354,8 @@ h2.total-label {
   background: var(--accent-fill);
   color: var(--on-fill);
   border: none;
-  padding: 12px 20px;
-  border-radius: 10px;
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-md);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
@@ -367,9 +370,11 @@ h2.total-label {
     border-color 0.15s;
 }
 
+/* Every control's edge is --border-input (3:1 on every surface); --border-strong
+   is about 1.4:1 and reads as no edge at all. */
 button.secondary {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   color: var(--text);
 }
 
@@ -664,7 +669,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 .btn.secondary {
-  border-color: var(--border-strong);
+  border-color: var(--border-input);
   background: transparent;
   color: var(--text-1);
 }
@@ -723,9 +728,13 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   font-weight: var(--fw-medium);
 }
 
+/* Set apart by an edge and weight, not only by its shade (--surface is about
+   1.1:1 from the track). Inset, so the label doesn't move. */
 .segmented > button:is([aria-selected="true"], [aria-checked="true"]) {
   background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-input);
   color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
 /* Touch screens get the full 44px per item. */
@@ -913,7 +922,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   width: auto;
   min-height: 32px;
   padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-input);
   background: transparent;
   color: var(--text-2);
 }
@@ -927,9 +936,21 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 .chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on]) {
-  border-color: transparent;
+  border-color: var(--accent);
   background: var(--accent-tint);
   color: var(--accent);
+}
+
+/* A chip that is on leads with a check, so its state is never color alone.
+   Drawn in the text's color through a mask: no markup in the components. */
+.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {
+  content: "";
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 /* A chip that jumps to what it counts (the Accounts status pill), in its
@@ -1003,6 +1024,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   align-items: flex-start;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
   font-size: var(--fs-2);
   line-height: var(--lh-body);
@@ -1015,7 +1037,10 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   margin-top: 2px;
 }
 
+/* Critical is told from caution by its edge and its triangle (caution has a
+   clock), not by color: in light --neg and --warn are about 1.1:1 apart. */
 .notice.critical {
+  border-color: currentColor;
   background: var(--neg-tint);
   color: var(--neg);
 }
@@ -1133,7 +1158,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 /* Its ⋯: outlined, as a secondary action, not filled. */
 .menu-anchor > .icon-btn {
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-input);
   border-radius: var(--r-md);
   background: transparent;
   color: var(--text-1);
@@ -1198,8 +1223,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   font: inherit;
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--r-sm);
   padding: 10px 12px;
   min-width: 0;
 }
@@ -1255,8 +1280,7 @@ td {
 th {
   color: var(--muted);
   font-weight: 500;
-  font-size: 11px;
-  text-transform: uppercase;
+  font-size: var(--fs-1);
 }
 
 td.num,
@@ -1423,7 +1447,7 @@ button.danger {
 .text-input {
   width: 100%;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border-input);
   /* The colour only: a select keeps its chevron (background-image). */
   background-color: var(--bg);
@@ -1639,6 +1663,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .tab-bar button {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1654,8 +1679,23 @@ button:disabled:where(:not([class*="cl-"])) {
   padding: var(--sp-2) 0;
 }
 
+/* The current tab: a bar over it and a heavier label as well as the color
+   (--accent is about 1.1:1 from --text-2 in dark). */
 .tab-bar button.active {
   color: var(--accent);
+  font-weight: var(--fw-bold);
+}
+
+.tab-bar button.active::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  width: 32px;
+  height: 3px;
+  margin-left: -16px;
+  border-radius: 0 0 var(--r-pill) var(--r-pill);
+  background: var(--accent);
 }
 
 .tab-bar svg {
@@ -2543,7 +2583,7 @@ span.meter-fill {
   background: var(--card);
   border: 1px solid var(--line);
   border-bottom: none;
-  border-radius: 20px 20px 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   box-shadow: 0 -12px 40px var(--shadow);
   transform: translateY(100%);
   transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
@@ -2572,13 +2612,13 @@ span.meter-fill {
   flex-shrink: 0;
 }
 
+/* A long title (a scenario's name, up to 40 characters) wraps, never cut. */
 .sheet-header h2 {
   flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 17px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .sheet-icon-btn {
@@ -2627,7 +2667,7 @@ span.meter-fill {
     max-height: none;
     height: 100vh;
     height: 100dvh;
-    border-radius: 20px 0 0 20px;
+    border-radius: var(--r-lg) 0 0 var(--r-lg);
     border: 1px solid var(--line);
     border-right: none;
     box-shadow: -12px 0 40px var(--shadow);
@@ -2703,7 +2743,7 @@ span.meter-fill {
   gap: 8px;
   margin-top: 12px;
   padding: 6px 6px 6px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-input);
   border-radius: 12px;
   background: var(--bg);
 }

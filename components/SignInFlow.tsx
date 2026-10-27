@@ -70,7 +70,7 @@ export function SignInPlaceholder() {
       <SignInSkeleton status={late ? FORM_LATE : 'Loading the sign-in form'} />
       {late && (
         <div className="notice caution auth-notice" aria-hidden="true">
-          {ALERT}
+          {CAUTION}
           <div>{FORM_LATE}</div>
         </div>
       )}
@@ -78,10 +78,10 @@ export function SignInPlaceholder() {
   );
 }
 
-// As components/ConnectionStatus.tsx's ALERT, which brings too much with it
+// As components/ConnectionStatus.tsx's CAUTION, which brings too much with it
 // for this page.
-const ALERT = (
+const CAUTION = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+    <path d="M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
   </svg>
 );

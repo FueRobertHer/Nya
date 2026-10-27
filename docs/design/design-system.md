@@ -35,8 +35,8 @@ Defined in `tokens.css` and copied into `app/globals.css`; Clerk's appearance an
 | Raised | `--elevated` | `#1c202b` | `#f0f2f6` | Pressed rows, inputs on a card, segmented track |
 | Chrome | `--glass` | 88% surface | 88% white | Header and tab bar over a blur |
 | Divider | `--border-subtle` | `#232834` | `#e6e8ef` | Between rows |
-| Edge | `--border-strong` | `#2b3140` | `#d5d9e2` | Card and sheet edges |
-| Field | `--border-input` | `#707889` | `#757c8a` | Input outlines (3:1 on canvas, card and raised) |
+| Edge | `--border-strong` | `#2b3140` | `#d5d9e2` | Card, sheet and menu edges. About 1.4:1, so it never marks a control on its own |
+| Control | `--border-input` | `#707889` | `#757c8a` | Every control's edge: fields, secondary buttons, chips, the ⋯ button, the selected segment (3:1 on canvas, card and raised) |
 | Text | `--text-1/2/3` | `#eceef2` / `#9499a6` / `#868c9b` | `#11141c` / `#525866` / `#636a77` | Primary, secondary, meta |
 | Action | `--accent` | `#5b8def` | `#2563eb` | Links, selection, focus |
 | Money in | `--pos` | `#34d399` | `#047857` | Inflows, gains |
@@ -153,7 +153,7 @@ Two to four labelled figures in a row (In, Out, Net). Label `--fs-1` in `--text-
 
 ### Segmented control
 
-Two to four mutually exclusive views of the same thing (Transactions / Spending / Shared; History / Monte Carlo). A track in `--elevated`, the selected item on `--surface` with `--text-1`, each item 44px tall on touch. `role="tablist"` when it switches views, a radio group when it switches a setting.
+Two to four mutually exclusive views of the same thing (Transactions / Spending / Shared; History / Monte Carlo). A track in `--elevated`, the selected item on `--surface` with `--text-1` at weight 600 and an inset `--border-input` edge (its shade alone is about 1.1:1 from the track), each item 44px tall on touch. `role="tablist"` when it switches views, a radio group when it switches a setting.
 
 A **range control** (1M ... All) looks the same but is a labelled radio group, and may hold up to six options; more than that become chips. Spending's period lengths (since phase 5c) are chips in a labelled radio group (`role="radio"`, `aria-checked`, arrows, Home and End), as the mockup draws them: four labels as long as "Year to date" don't fit one segmented row at 320px. The cash forecast's 30, 60 and 90 days (since phase 6a3) are the first range control drawn as `.segmented`. Budgets > Upcoming's **List · Calendar** is a tablist of two, held to the mockup's width (`.upcoming-views`). Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
 
@@ -162,7 +162,7 @@ A **range control** (1M ... All) looks the same but is a labelled radio group, a
 One family, `--r-xs`, `--fs-1`, weight 500, sentence case.
 
 - **Badge**: a status or source label that isn't clickable (Manual, via SimpleFIN, Pending, Overdue). Tones: neutral, accent, pos, neg, warn, each on its tint.
-- **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area. Tones `neg` and `warn` (since phase 3c) for a status that jumps to what it counts, the Accounts status pill: its severity's tint, with the edge kept in the text's color and a trailing chevron, so it never reads as a badge.
+- **Chip**: clickable (a filter, a tag, a selectable option), 32px tall inside a 44px hit area, edged in `--border-input` so it reads as a control. One that is on takes an `--accent` edge on `--accent-tint` and leads with a check, so its state is never color alone. Tones `neg` and `warn` (since phase 3c) for a status that jumps to what it counts, the Accounts status pill: its severity's tint, with the edge kept in the text's color and a trailing chevron, so it never reads as a badge.
 - **Filter chips** (since phase 5b) sit in a `.chip-row`, which wraps with 12px between rows so each chip's 44px hit area ends where the next row's begins. A filter that is on or off is a `button.chip` with `aria-pressed` (To review). One that chooses among a few options is a **select chip** (`ChipSelect`, `.chip-select`): a native select laid unseen over the whole hit area, so a phone opens its own picker, with a trailing down chevron. It shows its word and the choice ("Tag", "Tag: Groceries"), so its state is never color alone, and takes the "on" look (`data-on`) while a choice is made. The select is named by the chip's word, which the shown text starts with.
 - **Tag colors**: the nine tag colors (`.tag-gray` to `.tag-pink`) are tokens since phase 7 (`--tag-<color>` on `--tag-<color>-tint`): in dark a pastel on a solid tint, in light a deep step on a pale one, each in the contrast check. A color's swatch on the Tags screen is its text step, since a tint alone is too faint to tell apart.
 
@@ -174,14 +174,14 @@ The only way to say something is wrong or worth knowing. See [Status and honesty
 
 | Level | Look | Example |
 |---|---|---|
-| Critical | `--neg` text on `--neg-tint`, icon | "Chase needs reconnecting. Its balances are from Aug 7." / "This total is short by 2 accounts." |
-| Caution | `--warn` text on `--warn-tint`, icon | "Couldn't refresh Ally; balances are from yesterday." / "History paused since Oct 3." |
+| Critical | `--neg` text on `--neg-tint`, an edge in `--neg`, the alert triangle | "Chase needs reconnecting. Its balances are from Aug 7." / "This total is short by 2 accounts." |
+| Caution | `--warn` text on `--warn-tint`, the clock | "Couldn't refresh Ally; balances are from yesterday." / "History paused since Oct 3." |
 | Information | `--text-2` on `--caveat-surface` | "Converted to USD at ECB rates." |
 | Done | `--pos` text on `--pos-tint` | "Saved. 14 transactions now use this rule." |
 
 - Two forms: **inline** (one line under the number it qualifies) and **block** (inside a card or sheet, with an optional action button).
 - **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: old exchange rates and accrued interest left out" (the worst kinds first, so an amber line names what made it amber; past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
-- Never color alone: every notice has an icon and words, and starts with its level for a screen reader ("Critical:", "Caution:", "Note:", visually hidden), as Needs attention's rows do.
+- Never color alone: every notice has an icon and words, and starts with its level for a screen reader ("Critical:", "Caution:", "Note:", visually hidden), as Needs attention's rows do. Critical and caution differ by shape as well as color (in light, `--neg` and `--warn` are about 1.1:1 apart): critical has the alert triangle and an edge, caution the clock, the same shapes as Needs attention's rows.
 
 Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`, `.plan-warning`, `.forecast-warning`, `.api-access-warning`, `.restore-banner`, and the feature-scoped notes (`.lifecycle-note`, `.review-note`, `.split-note`, `.goal-note`, `.budget-note`, `.currency-note`, `.imported-history-note`, `.kind-warnings`, `.plan-save-error`, `.payoff-field-error`, `.card-mode-error`).
 
@@ -194,7 +194,7 @@ Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`
 
 The existing sheet (`Sheet.tsx`, bottom on phones, side panel from 720px) is the one coherent family today and stays. Additions: a footer for its primary and secondary buttons, 44px close and back buttons, and a back button for a sheet that opens a second level (instead of stacking a sheet on a sheet, which loses focus).
 
-The footer is `Sheet`'s `footer` prop, drawn as `.sheet-footer` after the scrolling body (the sheet is a flex column, so it stays in view without `position: sticky`): a hairline above, the buttons wrapping like a `.btn-row`. The close and back buttons are 44px with 20px icons.
+The footer is `Sheet`'s `footer` prop, drawn as `.sheet-footer` after the scrolling body (the sheet is a flex column, so it stays in view without `position: sticky`): a hairline above, the buttons wrapping like a `.btn-row`. The close and back buttons are 44px with 20px icons. The title wraps rather than being cut with an ellipsis (a scenario's name is up to 40 characters).
 
 ### Menu
 
@@ -225,7 +225,7 @@ What a screen shows while what fills it is on its way: the screen itself, with p
 ### Header and tab bar
 
 - **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention.
-- **Tab bar**: five tabs, icons with `--fs-1` labels (12px, up from 11px), `--glass` with a blur.
+- **Tab bar**: five tabs, icons with `--fs-1` labels (12px, up from 11px), `--glass` with a blur. The current tab (`aria-current="page"`) has a 3px `--accent` bar over it and a bold label, not only its color (`--accent` is about 1.1:1 from `--text-2` in dark).
 
 ## Status and honesty
 
@@ -269,6 +269,7 @@ Nya shows its gaps on purpose (see [features.md](../features.md)): a missing row
 - Sheets trap focus and return it to the control that opened them; a second level replaces the content with a back button instead of stacking.
 - Reduced motion respected everywhere through the motion tokens.
 - AA contrast for every token pair in both themes (see [Color](#color)).
+- Every control is edged in `--border-input` (3:1), and every selected or current state shows by an edge, a mark or weight as well as its color. The guard checks the rules that carry these.
 
 ## What this replaces
 
