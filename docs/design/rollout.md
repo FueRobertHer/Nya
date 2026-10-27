@@ -667,7 +667,7 @@ An audit of the primitives against the design system found what the token check 
 A look and feel review (2026-10-26) found that Nya read like a starter template, and its direction, ink and brass, was approved and recorded in the design system artifact (its `audit.md`, findings L1 to L11). The app takes it in five steps, one pull request each, in this order:
 
 1. **Details**: logo tiles, readable bank names, the repeated account type, the two notices the Budgets and Plan tabs opened on, and Clerk's primary button. No palette change.
-2. **Fewer boxes**, in three pull requests: 2a, bare icon buttons, tonal secondary buttons, one underline view switch and no header subtitle; 2b, one month control shared by Activity and Budgets; 2c, Clerk's profile in a sheet.
+2. **Fewer boxes**, in three pull requests: 2a, bare icon buttons, tonal secondary buttons, one underline view switch and no header subtitle; 2b, one month control (2b1) shared by Activity and Budgets (2b2); 2c, Clerk's profile in a sheet.
 3. **Type**: Red Hat Text and Display through `next/font`, and the hero's small cents.
 4. **Ink and brass**: the new token values in `tokens.css`, `app/globals.css`, `lib/theme.ts`, the manifest and Clerk; the guard's pairs; the header logo as a two-ink mark; underlined links.
 5. **The hero**: net worth out of its card, a full-width chart without money ticks, scrubbing.
@@ -704,9 +704,28 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 
 **Kept narrow:**
 
-- Month controls stay as they are until 2b; the calendar still says Previous month, Next month and Today.
+- Month controls stay as they are until 2b (2b1 gave them one control).
 - `.link-btn` stays, as before.
 - Spending's period chips stay chips: four labels as long as "Year to date" don't fit one row at 320px.
+
+### Step 2b1: one month control
+
+2b is two pull requests: 2b1 gives the three places that change a month one control, each keeping its own month; 2b2 has Activity and Budgets share the month.
+
+**Built:**
+
+- **`MonthStepper`** (`components/MonthStepper.tsx`, `.month-stepper`): bare arrows labelled Earlier month and Later month that stay focusable at either end, the month's name with a native select laid over it and its chevron alone (the return button is never under it), and a ghost return button after the name while another month shows. Pressing that moves focus to the list (or the name, which takes `tabIndex={-1}`) before it goes.
+- **Activity** gains the list of its months, the newest 12 with transactions, and **This month**; while this month has no transactions yet, the tab opens on the latest month with transactions and the button says **Latest month**.
+- **Budgets** keeps its months, back to the first with transactions, ten years at most, and gains **This month**. `#budgets-month-title` stays the name's id, for Home's alerts.
+- **The calendar** says Earlier month and Later month (it said Previous and Next), **This month** (it said Today, and still takes focus to today's cell), and gains a list of its months, named "Calendar month" apart from Budgets' bar.
+- **At 320px** the return button doesn't fit beside the name (on Activity, beside the ⋯, the name would get 45px of the 132px "September 2026" needs) and wraps under it, as the calendar's Today did; the arrows and the ⋯ keep to the first line. While the button shows, the panels' jump offset is one 44px row more (`:has(.month-stepper-back)`), a gap where it doesn't wrap, never a target hidden under the bar.
+- `.budgets-month-pick`, `.activity-month-name`, `.cal-head` and `.cal-title` are gone; `chevron`, `LEFT` and `RIGHT` move to MonthStepper, and ActivityBar passes them on.
+
+**Kept narrow:**
+
+- Each tab keeps its own month, and loses it on leaving the tab, until 2b2.
+- The select's own name and the name's live region both say a month chosen from the list.
+- The fit at 320px has 12px to spare on Activity at the month the tab opens on: measure again after step 3's font change.
 
 ## The contrast check
 

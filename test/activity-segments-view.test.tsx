@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { installDom, click, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, click, type, FakeElement, FakeEvent } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 
 // Activity's pinned bar and segments (rollout phase 5a,
@@ -108,7 +108,7 @@ function mount(props: Props = {}) {
     button,
     text: () => host.textContent,
     selected: () => all((e) => e.getAttribute('role') === 'tab' && e.getAttribute('aria-selected') === 'true').map((e) => e.textContent),
-    month: () => all((e) => e.getAttribute('class') === 'activity-month-name')[0]?.textContent ?? null,
+    month: () => all((e) => e.getAttribute('class') === 'month-stepper-title')[0]?.textContent ?? null,
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -183,6 +183,39 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
+  // One month control (look and feel, step 2b1): the list of the months with
+  // transactions over the name, and the way back to the month the tab opens on.
+  test('the list picks any month with transactions, and This month returns', () => {
+    const v = mount();
+    const list = () => v.all((e) => e.tagName === 'SELECT')[0];
+    expect(list().getAttribute('aria-label')).toBe(`Month to show: ${longName(month)}`);
+    expect(list().findAll((e) => e.tagName === 'OPTION').map((o) => o.textContent)).toEqual([`${longName(month)} (this month)`, longName(lastMonth)]);
+    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'This month')).toHaveLength(0);
+    act(() => type(list(), lastMonth));
+    expect(v.month()).toBe(longName(lastMonth));
+    expect(v.text()).toContain('Trader Joes');
+    const back = v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'This month')[0];
+    act(() => click(back));
+    expect(v.month()).toBe(longName(month));
+    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'This month')).toHaveLength(0);
+    expect(dom.document.activeElement).toBe(list());
+    v.unmount();
+  });
+
+  test('while this month has no transactions, the tab opens on the latest, and the way back says Latest month', () => {
+    const older = addMonths(month, -2);
+    const v = mount({ txns: [row(`${lastMonth}-10`, 'Trader Joes', 188, 'groceries'), row(`${older}-10`, 'Safeway', 50, 'groceries')] });
+    expect(v.month()).toBe(longName(lastMonth));
+    act(() => click(v.button('Earlier month')));
+    expect(v.month()).toBe(longName(older));
+    const back = v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Latest month')[0];
+    expect(back).toBeDefined();
+    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'This month')).toHaveLength(0);
+    act(() => click(back));
+    expect(v.month()).toBe(longName(lastMonth));
+    v.unmount();
+  });
+
   test('the arrows step through the months listed, and stop at either end', () => {
     const v = mount();
     // At either end the arrow says so but stays focusable, so a press that
@@ -201,7 +234,7 @@ describe('Activity: the bar and its segments', () => {
     act(() => click(v.button('Later month')));
     expect(v.month()).toBe(longName(month));
     // Said as it changes.
-    expect(v.all((e) => e.getAttribute('class') === 'activity-month-name')[0].getAttribute('aria-live')).toBe('polite');
+    expect(v.all((e) => e.getAttribute('class') === 'month-stepper-title')[0].getAttribute('aria-live')).toBe('polite');
     v.unmount();
   });
 
@@ -252,7 +285,7 @@ describe('Activity: the bar and its segments', () => {
     // No month yet to show: its row is held with a placeholder for its name,
     // its arrows unavailable, so the list doesn't move down when it comes.
     expect(v.month()).toBe('');
-    expect(v.all((e) => e.getAttribute('class') === 'activity-month')).toHaveLength(1);
+    expect(v.all((e) => e.getAttribute('class') === 'month-stepper')).toHaveLength(1);
     expect(v.button('Earlier month').getAttribute('aria-disabled')).toBe('true');
     expect(v.button('Later month').getAttribute('aria-disabled')).toBe('true');
     // Reports doesn't wait for the list either.
@@ -262,18 +295,18 @@ describe('Activity: the bar and its segments', () => {
     expect(v.all((e) => e.getAttribute('class') === 'shared-here')).toHaveLength(1);
     expect(v.all((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading transactions')).toHaveLength(0);
     // Shared isn't by month: no row for one.
-    expect(v.all((e) => e.getAttribute('class') === 'activity-month')).toHaveLength(0);
+    expect(v.all((e) => e.getAttribute('class') === 'month-stepper')).toHaveLength(0);
     v.unmount();
   });
 
   test('the month arriving fills its held row: the same arrows and heading, now working', () => {
     const v = mount({ txns: null, loading: true });
-    const [earlier, heading, later] = [v.button('Earlier month'), v.all((e) => e.getAttribute('class') === 'activity-month-name')[0], v.button('Later month')];
+    const [earlier, heading, later] = [v.button('Earlier month'), v.all((e) => e.getAttribute('class') === 'month-stepper-title')[0], v.button('Later month')];
     v.render({ txns: ROWS, loading: false });
     // The same elements, so focus on an arrow survives the month arriving.
     expect(v.button('Earlier month')).toBe(earlier);
     expect(v.button('Later month')).toBe(later);
-    expect(v.all((e) => e.getAttribute('class') === 'activity-month-name')[0]).toBe(heading);
+    expect(v.all((e) => e.getAttribute('class') === 'month-stepper-title')[0]).toBe(heading);
     expect(v.month()).toBe(longName(month));
     expect(earlier.getAttribute('aria-disabled')).toBe('false');
     v.unmount();

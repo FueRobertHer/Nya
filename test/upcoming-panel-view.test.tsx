@@ -167,7 +167,7 @@ describe('List or Calendar', () => {
     // The calendar keeps the month it was moved to across a switch.
     const month = () => calendar.findAll((e) => e.getAttribute('aria-live') === 'polite')[0].textContent;
     const first = month();
-    act(() => click(v.button('Next month', calendar)!));
+    act(() => click(v.button('Later month', calendar)!));
     const next = month();
     expect(next).not.toBe(first);
     act(() => click(v.viewTab('List')));

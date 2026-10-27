@@ -122,7 +122,8 @@ describe('Spending’s period', () => {
     const longName = new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     expect(v.group()!.getAttribute('aria-label')).toBe(`Period ending ${longName}`);
     expect(v.radios().map((e) => e.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1']);
-    expect(v.all((e) => e.tagName === 'SELECT')).toHaveLength(0);
+    // The only list is the bar's month (components/MonthStepper.tsx).
+    expect(v.all((e) => e.tagName === 'SELECT' && (e.parentNode as FakeElement | null)?.getAttribute('class') !== 'month-stepper-name')).toHaveLength(0);
     v.unmount();
   });
 

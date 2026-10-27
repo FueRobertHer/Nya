@@ -91,7 +91,7 @@ ConnectionHealth and ConnectorCards stop being separate cards: their per-connect
 
 **Job:** what came in and went out, and is each transaction right?
 
-A pinned bar at the top: **‹ October ›** month switcher and the segments **Transactions · Spending · Shared**. "Add a transaction" and "Import a file" sit in the bar's ⋯ when a manual account exists.
+A pinned bar at the top: the month (**‹ October 2026 ⌄ ›**, `MonthStepper`: its arrows, its name opening the list of months with transactions, and This month away from the month the tab opens on) and the segments **Transactions · Spending · Shared**. "Add a transaction" and "Import a file" sit in the bar's ⋯ when a manual account exists.
 
 | Segment | Contents |
 |---|---|
@@ -293,6 +293,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - Sheet: every form, confirmation and detail view.
 - HeaderIcon: the icons of the header's buttons (Refresh, the Settings gear), for the dashboard's header and the app loading's copy of it.
 - Menu: an object's ⋯ menu of rare actions (the account sheet's, the transaction sheet's, the institution card's).
+- MonthStepper: the one month control (step 2b1): Activity's bar, Budgets' bar on Month and the calendar, each with its own months and its own month.
 - Segmented: the underline switch for a value (a radio group: the net worth chart's range, Runway's window, the Plan's choices, the kind of report) or a few views (tabs over one panel: Allocation's two views, which report). Activity's, Budgets' and the Plan's bars, Budgets > Upcoming's List or Calendar, the forecast, Planned and Theme draw `.segmented` themselves.
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).

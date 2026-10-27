@@ -38,7 +38,7 @@ Two plans were drawn up independently from the code on `origin/main` and from th
 | Add account sheet; institution ⋯ menu; account sheet | Adopted | Removes the onboarding block and Manage's row buttons; fixes buttons nested in clickable rows. |
 | A Connections pill plus a Connections section | Adopted with a rule | A problem shows on its card and is counted on Home; the pill only scrolls to it. Otherwise status would be in four places. |
 | Home: needs attention plus a monthly pulse | Adopted and extended | Also one Net worth card (total and chart together) and the currency offer as an attention item: three blocks instead of five to seven. |
-| Activity: pinned month strip | Changed to a compact month switcher | The strip is a 187px bar chart; it moves to Spending. |
+| Activity: pinned month strip | Changed to a compact month switcher, since step 2b1 the one month control (`MonthStepper`) | The strip is a 187px bar chart; it moves to Spending. |
 | An Activity segment called "Insights" | Renamed "Spending" | Home already has Insights. |
 | Tie the cash-flow chart to the selected month | Changed: one shared period control | Keeps the chart's multi-month ranges. |
 | Reports in settings | Changed: Activity > Spending | Reports are analysis, not settings. |
