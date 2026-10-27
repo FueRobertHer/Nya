@@ -1,6 +1,6 @@
 <title>Nya Redesign Mockups</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Red+Hat+Display:wght@500..700&family=Red+Hat+Text:wght@400..700&display=swap">
 <style>
 /* Layout: a spec sheet. Page chrome is a quiet document; the phones carry Nya's proposed tokens. */
 :root {
@@ -13,7 +13,8 @@
   --pg-chip: #e6e9f0;
   --f-doc: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
   --f-label: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
-  --f-app: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --f-app: "Red Hat Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --f-app-display: "Red Hat Display", var(--f-app);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -88,14 +89,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .ibtn svg, .app .row-ico svg, .app .tab svg { width: 18px; height: 18px; }
 .app .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #6d5dfc, #a77bf3); position: relative; }
 .app .dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); border: 2px solid var(--canvas); }
-.app h1.screen-title { font-size: 20px; font-weight: 700; margin: 4px 2px 0; }
+.app h1.screen-title { font-family: var(--f-app-display); font-size: 20px; font-weight: 700; margin: 4px 2px 0; }
 
 /* Components */
 .app .card { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .app .card.flush { padding: 4px 0; gap: 0; }
 .app .card-header { display: flex; align-items: center; gap: 8px; }
 .app .card.flush .card-header { padding: 8px 14px 4px; }
-.app .card-header h2 { font-size: 15px; font-weight: 600; margin: 0; flex: 1; display: flex; align-items: center; gap: 6px; }
+.app .card-header h2 { font-family: var(--f-app-display); font-size: 15px; font-weight: 600; margin: 0; flex: 1; display: flex; align-items: center; gap: 6px; }
 .app .card-header .meta { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .app .money { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .app .muted { color: var(--text-2); }
@@ -105,7 +106,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .pos { color: var(--pos); }
 .app .neg { color: var(--neg); }
 .app .hero-label { font-size: 13px; color: var(--text-2); }
-.app .hero { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.app .hero { font-family: var(--f-app-display); font-size: 34px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
 .app .row { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 14px; border-top: 1px solid var(--border-subtle); }
 .app .card.flush .row:first-of-type, .app .card-header + .row { border-top: 0; }
 .app .row .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -205,7 +206,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface); border-radius: 20px 20px 0 0; padding: 8px 14px 16px; display: flex; flex-direction: column; gap: 10px; max-height: 92%; overflow: hidden; border-top: 1px solid var(--border-strong); }
 .app .sheet .handle { width: 36px; height: 4px; border-radius: 99px; background: var(--border-strong); margin: 0 auto 2px; }
 .app .sheet-head { display: flex; align-items: center; gap: 8px; }
-.app .sheet-head h2 { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+.app .sheet-head h2 { margin: 0; font-family: var(--f-app-display); font-size: 17px; font-weight: 600; flex: 1; }
 .app .sheet .row { padding-left: 0; padding-right: 0; }
 .app .sheet-foot { margin-top: auto; display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
 .app .sheet-foot .btn { flex: 1; }

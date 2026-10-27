@@ -73,7 +73,9 @@ Today white on the accent button is 3.23:1 and white on the danger button 3.32:1
 
 ## Type
 
-System UI font, as today: fast, native, and no font file to host or put in the Content-Security-Policy. (A self-hosted Inter with tabular figures is an option if the system font's figures disappoint on Windows; not proposed now.)
+Red Hat (since the look and feel's step 3), taken with the ink and brass direction: **Red Hat Text** (`--font-ui`) for reading, and **Red Hat Display** (`--font-display`) for titles and figures. `app/layout.tsx` loads both through `next/font/google`, which fetches the files when the app is built and serves them from the app itself, so no page asks Google for anything, and the Content-Security-Policy's `font-src 'self'` covers them. Latin is preloaded; other scripts come from their own files when a page uses them, and anything Red Hat lacks falls to the system stack after it. Each token names its family after next/font's variable, so a page that loads the font some other way (a static check page) still gets it rather than a serif.
+
+**Display** goes to `h1`, card titles (`.card-header` `h2` and `h3`), sheet titles, the bars' headings and the month's name, and the figures that stand alone: Home's total, In / Out / Net (and Debt payoff's summary, which shares its class), the Plan's stat figures and its answer in words ("Around age 39"), Card Mode's amount, a transaction's amount in its sheet, an account's balance, and a merchant's letter tile. A heading drawn as a label (Home's "Net worth") keeps Text. Clerk takes `var(--font-ui)`.
 
 | Token | Size | Weight | Use |
 |---|---|---|---|
@@ -86,7 +88,8 @@ System UI font, as today: fast, native, and no font file to host or put in the C
 | `--fs-1` | 12px | 500 | Meta: dates, chips, chart ticks |
 
 - **Nothing on screen under 12px.** Today 38 declarations are 9 to 11px, including the tab bar labels; they move to `--fs-1`.
-- **Money is tabular** everywhere it is in a column or can change in place: one rule on a `.money` class (and `.num` cells) instead of 27 separate `tabular-nums` declarations. The hero keeps proportional figures, as now.
+- **Money is tabular** everywhere it is in a column or can change in place: one rule on a `.money` class (and `.num` cells) instead of 27 separate `tabular-nums` declarations. Both Red Hat families carry true tabular figures. The hero keeps proportional figures, as now.
+- **The hero's cents** are half its size (`--fs-5` of its 40px) in `--text-2`, on Home's net worth alone (`moneyRuns` in `lib/format.ts` marks them, wherever the locale puts them; with amounts hidden there are none). It is drawn in runs a screen reader would pause between, so the whole figure is said apart, as `Masked` does.
 - **No uppercase micro-labels.** Fourteen uppercase styles today (`th`, `.type-tag`, `.section-label`, `.health-badge` and more) become sentence-case `--fs-1` or `--fs-2` in `--text-2`. Uppercase at 10 to 11px is the hardest text in the app to read.
 - **Headings are headings.** Card titles are `<h2>`, sections inside a card `<h3>`. Today 65 card titles are `<div class="inst-name">`.
 

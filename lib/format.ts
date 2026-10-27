@@ -140,17 +140,54 @@ export function formatMoney(amount: number, currency?: string | null): string {
 /** formatMoney's figures, whatever the switch says: only for what is
  *  measured here, never drawn (amountSamples). */
 function fullMoney(amount: number, currency?: string | null): string {
-  if (currency) {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency,
-      }).format(amount);
-    } catch {
-      return withCode(amount, currency, amount < 0 ? '-' : '');
-    }
+  return joined(fullMoneyRuns(amount, currency));
+}
+
+/** A run of a written amount: its cents (the decimal separator and the
+ *  figures after it, wherever the locale puts them: "1.234,56 €") or not. */
+export type MoneyRun = { text: string; cents: boolean };
+
+const joined = (runs: readonly MoneyRun[]) => runs.map((r) => r.text).join('');
+
+/** Runs of a number's parts as Intl writes them, the cents marked. */
+export function centsRuns(parts: readonly { type: string; value: string }[]): MoneyRun[] {
+  const runs: MoneyRun[] = [];
+  for (const p of parts) {
+    const cents = p.type === 'decimal' || p.type === 'fraction';
+    const last = runs[runs.length - 1];
+    if (last && last.cents === cents) last.text += p.value;
+    else runs.push({ text: p.value, cents });
   }
-  return (amount < 0 ? '-$' : '$') + plain(Math.abs(amount));
+  return runs;
+}
+
+/** fullMoney's three ways (a currency Intl takes, one it refuses, none), as
+ *  runs, which fullMoney joins. `plain` is toLocaleString with these
+ *  options, which Intl's parts make up exactly. */
+function fullMoneyRuns(amount: number, currency?: string | null): MoneyRun[] {
+  const plainRuns = (abs: number) => centsRuns(new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).formatToParts(abs));
+  const sign = amount < 0 ? '-' : '';
+  if (currency) {
+    let format: Intl.NumberFormat | null = null;
+    try {
+      format = new Intl.NumberFormat(undefined, { style: 'currency', currency });
+    } catch {
+      // A code Intl refuses: "-12.50 DOGE", as withCode writes it.
+    }
+    if (format) return centsRuns(format.formatToParts(amount));
+    return merged([{ text: sign, cents: false }, ...plainRuns(Math.abs(amount)), { text: ` ${currency}`, cents: false }]);
+  }
+  return merged([{ text: `${sign}$`, cents: false }, ...plainRuns(Math.abs(amount))]);
+}
+
+/** Next runs of the same kind made one, and empty ones dropped. */
+const merged = (runs: MoneyRun[]): MoneyRun[] => centsRuns(runs.filter((r) => r.text).map((r) => ({ type: r.cents ? 'fraction' : 'literal', value: r.text })));
+
+/** formatMoney as runs, so a figure can draw its cents apart (Home's net
+ *  worth). While amounts are hidden it is one run, the masked amount, with
+ *  no cents to draw. */
+export function moneyRuns(amount: number, currency?: string | null): MoneyRun[] {
+  return hidden ? [{ text: hiddenMoney(amount, currency), cents: false }] : fullMoneyRuns(amount, currency);
 }
 
 /** With its sign shown: "+$12.00", "-¥3,200". `always` signs zero too
