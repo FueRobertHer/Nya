@@ -723,9 +723,25 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 
 **Kept narrow:**
 
-- Each tab keeps its own month, and loses it on leaving the tab, until 2b2.
+- Each tab keeps its own month, and loses it on leaving the tab, until 2b2 (built: below).
 - The select's own name and the name's live region both say a month chosen from the list.
 - The fit at 320px has 12px to spare on Activity at the month the tab opens on: measure again after step 3's font change.
+
+### Step 2b2: one month
+
+**Built:**
+
+- **The shared month** (`components/view-month-state.ts`): the dashboard holds the month Activity and Budgets show for the session, as it holds their segments, never in the address. Null is each tab's own default; a tab writes null when it lands on its default (Activity's month it opens on, Budgets' this month), so a stored month never goes stale on the 1st, and the return button and the arrows agree. Only navigation writes it: the arrows, the list, the return button and Activity's Net by month.
+- **Activity** shows the month asked for when it has transactions, else the latest month with transactions before it (never a later one, which could be its default while a past month is shared), else its oldest. A cash-flow pick holds its month locally, so a pick never moves Budgets.
+- **Budgets** shows the month asked for, this month for a later one, ten years back at most. It is never moved to the first month with transactions: a bank's stored rows that couldn't be read make that later than months Activity lists. The list runs from the earlier of the two, so the month shown is always on it.
+- **A past month says it is read only**, at the top of the Month panel (not the pinned bar, whose height sets the jump offsets): "September is shown as it was. To change a budget, go to this month." (`.helper`).
+- **Home's links reset it**: `resetsMonth` in `view-month-state.ts` says, for every kind of link, whether it does (budget alerts and the review count do), so a new kind doesn't typecheck until someone decides.
+
+**Kept narrow:**
+
+- The calendar on Upcoming keeps its own month: it runs a year ahead.
+- Each Activity-to-Budgets visit on a past month reads that month from the server, as picking it on Budgets does.
+- The two tabs can name different months for one shared month (Activity's nearest with transactions, Budgets' this month for a later one).
 
 ## The contrast check
 

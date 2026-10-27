@@ -60,6 +60,7 @@ import { REMOVED_NAME } from '@/lib/shared-expenses/model';
 import Insights, { budgetAlerts, paymentAlerts, spendingNotes, type IdleCashAccount, type PaymentAccount } from './Insights';
 import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAttention';
 import { attentionItems, type Go } from './attention';
+import { resetsMonth, useViewMonth } from './view-month-state';
 import ConnectionDetails from './ConnectionDetails';
 import { ALERT, CAUTION, ConnectionStatus, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
 import { Menu } from './Menu';
@@ -269,6 +270,9 @@ export default function Dashboard({
   const [budgetsSegment, setBudgetsSegment] = useState<BudgetsSegment>('month');
   // And the Plan's.
   const [planSegment, setPlanSegment] = useState<PlanSegment>('path');
+  // The month Activity and Budgets show, shared between them and kept the
+  // same way (components/view-month-state.ts); Home's links reset it.
+  const viewMonth = useViewMonth();
   // When Home's FI line opened the Plan, for its heading to take focus once
   // drawn. The Plan lands it itself: on a first visit its code is still
   // loading, and the heading appears in a render of the loader, never of the
@@ -2145,9 +2149,11 @@ export default function Dashboard({
     target.scrollIntoView({ block: 'start' });
     target.focus({ preventScroll: true });
   });
+  const resetViewMonth = viewMonth.reset;
   const goTo = useCallback(
     (go: Go) => {
       const focus = (id: string, t: Tab, s: SettingsView | null) => setFocusTarget({ id, tab: t, settings: s, at: Date.now() });
+      if (resetsMonth[go.to]) resetViewMonth();
       switch (go.to) {
         case 'accounts':
           window.scrollTo(0, 0);
@@ -2189,7 +2195,7 @@ export default function Dashboard({
           return;
       }
     },
-    [tab, openConnections, openRestore]
+    [tab, openConnections, openRestore, resetViewMonth]
   );
 
   // What qualifies the Home total, under it (components/TotalCaveats.tsx),
@@ -2635,6 +2641,8 @@ export default function Dashboard({
                 withoutTransactions={txnWithout}
                 segment={activitySegment}
                 onSegment={setActivitySegment}
+                viewMonth={viewMonth.month}
+                onViewMonth={viewMonth.set}
                 // Shared expenses (#49): who owes what, on its own segment.
                 sharedSegment={
                   <SharedExpensesCard
@@ -2714,6 +2722,8 @@ export default function Dashboard({
                 }}
                 segment={budgetsSegment}
                 onSegment={setBudgetsSegment}
+                viewMonth={viewMonth.month}
+                onViewMonth={viewMonth.set}
                 // Whenever there is a card or loan on screen to plan: hidden
                 // accounts left out, as everywhere the accounts are listed.
                 onPayoff={allAccounts.some((a) => isOwedType(a.type)) ? () => setPayoffOpen(true) : undefined}

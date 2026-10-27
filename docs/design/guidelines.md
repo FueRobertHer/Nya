@@ -90,7 +90,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Done, saved | `.notice.done` | `.status-note` |
 | Badge (not clickable) | `.badge`, toned `.accent`, `.pos`, `.neg` or `.warn` | `.pill` |
 | Chip (clickable, a filter or a tag) | `.chip`; toned `.neg` or `.warn` for a status that jumps to what it counts; a row of filters in `.chip-row`; one that chooses among options is `ChipSelect` (`.chip-select`) | `.tag-chip`, a filter `<select>` in a `.text-input` |
-| Change the month | `.month-stepper`, drawn by `MonthStepper` | arrows and a name of your own |
+| Change the month | `.month-stepper`, drawn by `MonthStepper` | arrows and a name of your own; on Activity or Budgets, a month apart from the shared one |
 | Range or view switch | `.segmented` (`.compact` for a chart's range), drawn by `Segmented` | a boxed track, buttons with `aria-pressed` |
 | Money that lines up | `.money` | `font-variant-numeric` in a feature rule |
 | A meter | `.meter-track` with `.meter-fill` | |

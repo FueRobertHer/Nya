@@ -18,10 +18,11 @@
 // which months may be incomplete; and the income pool, when "My income is
 // irregular" is on, above the month's spending (components/IncomePool.tsx). A
 // month picker shows a past month as it was: its budgets then, its spending,
-// and what rolled into it. Until the month has loaded, or when it can't be,
-// this month shows as it always has, with a note. This month's answer
-// carries the budget suggestions from history a budget's sheet offers
-// (lib/budget-suggestions.ts).
+// and what rolled into it, read only and saying so. The month is shared with
+// the Activity tab (components/view-month-state.ts). Until the month has
+// loaded, or when it can't be, this month shows as it always has, with a
+// note. This month's answer carries the budget suggestions from history a
+// budget's sheet offers (lib/budget-suggestions.ts).
 //
 // THE MONTH, TOP TO BOTTOM (rollout phase 6a2): one notice for what may leave
 // the month short (components/budget-notes.ts, design-system.md "Status and
@@ -70,7 +71,7 @@ import { IncomePoolHeader, IncomeSetting } from './IncomePool';
 import { BudgetsMonthSkeleton, RowsSkeleton, UpcomingSkeleton } from './LoadingSkeletons';
 import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { monthNotice, pastMonthNotes, thisMonthNotes } from './budget-notes';
-import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type IncomeCarryover, type MonthGap } from '@/lib/rollover';
+import { gapText, monthName as nameOfMonth, monthsText, type IncomeCarryover, type MonthGap } from '@/lib/rollover';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
@@ -86,6 +87,7 @@ import { Masked } from './HideAmounts';
 import TemplateOffer from './TemplateOffer';
 import BudgetsBar, { budgetsPanelId, budgetsTabId, type BudgetsMonth, type BudgetsSegment } from './BudgetsBar';
 import { chevron, RIGHT } from './ActivityBar';
+import { budgetsRange, budgetsShown, writeMonth, type ViewMonth } from './view-month-state';
 
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
@@ -173,6 +175,8 @@ export default function BudgetsTab({
   onCategories,
   segment: segmentShown,
   onSegment,
+  viewMonth,
+  onViewMonth,
   onPayoff,
 }: {
   txns: Txn[] | null;
@@ -247,6 +251,10 @@ export default function BudgetsTab({
    *  left out, the tab keeps its own. */
   segment?: BudgetsSegment;
   onSegment?: (s: BudgetsSegment) => void;
+  /** The month shared with Activity (components/view-month-state.ts), and
+   *  its writer; without them the tab keeps its own. */
+  viewMonth?: ViewMonth;
+  onViewMonth?: (m: ViewMonth) => void;
   /** Opens the debt payoff plan (components/DebtPayoff.tsx), when there is a
    *  card or loan on screen to plan; left out, Goals doesn't offer it. */
   onPayoff?: () => void;
@@ -273,9 +281,12 @@ export default function BudgetsTab({
   };
 
   const thisMonth = localMonth();
-  // The month shown: this month, or one picked to look back on.
-  const [picked, setPicked] = useState<string | null>(null);
-  const shownMonth = picked && picked < thisMonth ? picked : thisMonth;
+  // The month shown: this month, or one picked to look back on, here or on
+  // Activity (the month is shared when the dashboard passes it).
+  const [ownMonth, setOwnMonth] = useState<ViewMonth>(null);
+  const wantMonth = onViewMonth ? (viewMonth ?? null) : ownMonth;
+  const writeViewMonth = onViewMonth ?? setOwnMonth;
+  const shownMonth = budgetsShown(wantMonth, thisMonth);
   const past = shownMonth !== thisMonth;
   const pastMonth = useBudgetMonth(past && budgetsStatus === 'ready' ? shownMonth : null, [budgets, txns, taxonomy]);
   const month = past ? pastMonth : budgetMonth;
@@ -362,12 +373,11 @@ export default function BudgetsTab({
   }, [view, shownMonth, thisMonth]);
   // A past month's own gaps, said in the month's notice as this month's are.
   const shownGaps = useMemo(() => (view && past ? (view.gaps.find((g) => g.month === shownMonth)?.gaps ?? []) : []), [view, past, shownMonth]);
-  // Months to look back on: back to the first with transactions, ten years at most.
+  // Months to look back on: back to the first with transactions, ten years
+  // at most, or to the month shown when Activity brought an earlier one, or
+  // one before the first is known.
   const earliest = budgetMonth.view?.earliest ?? null;
-  const pickable = useMemo(() => {
-    const floor = addMonths(thisMonth, -MAX_MONTHS_BACK);
-    return earliest && earliest < thisMonth ? monthsFrom(earliest > floor ? earliest : floor, thisMonth).reverse() : [thisMonth];
-  }, [earliest, thisMonth]);
+  const pickable = useMemo(() => budgetsRange(shownMonth, thisMonth, earliest), [shownMonth, thisMonth, earliest]);
   // Carries or amounts from before budgets were kept by month are assumed.
   const assumedNote =
     view &&
@@ -423,9 +433,9 @@ export default function BudgetsTab({
     months: pickable,
     label: (m) => nameOfMonth(m),
     optionLabel: (m) => (m === thisMonth ? `${nameOfMonth(m, thisMonth)} (this month)` : nameOfMonth(m, thisMonth)),
-    onMonth: setPicked,
+    onMonth: (m) => writeViewMonth(writeMonth(m, thisMonth)),
     disabled: budgetsStatus !== 'ready' || loading,
-    back: past ? { label: 'This month', onBack: () => setPicked(null) } : null,
+    back: past ? { label: 'This month', onBack: () => writeViewMonth(null) } : null,
   };
 
   // The bar is drawn before anything has loaded, so the month's heading is
@@ -533,6 +543,9 @@ export default function BudgetsTab({
       {panel(
         'month',
         <div className="stack loose">
+          {/* A past month's rows open nothing: why, and where to go instead,
+              once there are rows (Activity can bring one while they load). */}
+          {past && drawn && <p className="helper">{monthName} is shown as it was. To change a budget, go to this month.</p>}
           <TotalCaveats items={notice} />
           {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
           {drawn && view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}

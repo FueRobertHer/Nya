@@ -59,6 +59,7 @@ import TransactionSheet, { findTarget, TxnNotes, type SheetTarget } from "./Tran
 import { isLowConfidence } from "./txn-words";
 import { shownName } from "@/lib/merchant-name";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
+import { activityMonth, activityOpensOn, writeMonth, type ViewMonth } from "./view-month-state";
 
 // What a row and its sheet say of a transaction (components/txn-words.ts),
 // re-exported for code that imported them from here.
@@ -324,6 +325,8 @@ export default function MonthBreakdown({
   segment: segmentShown,
   onSegment,
   sharedSegment = null,
+  viewMonth,
+  onViewMonth,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -398,11 +401,21 @@ export default function MonthBreakdown({
   onSegment?: (s: ActivitySegment) => void;
   /** What the Shared segment shows: the Shared expenses card. */
   sharedSegment?: ReactNode;
+  /** The month shared with Budgets (components/view-month-state.ts), and
+   *  its writer; without them the tab keeps its own. */
+  viewMonth?: ViewMonth;
+  onViewMonth?: (m: ViewMonth) => void;
 }) {
   const [ownSegment, setOwnSegment] = useState<ActivitySegment>("transactions");
   const segment = segmentShown ?? ownSegment;
   const chooseSegment = onSegment ?? setOwnSegment;
-  const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
+  // The month asked for (null: the one the tab opens on), shared with Budgets
+  // when the dashboard passes it; and the month a cash-flow pick holds, here
+  // alone, so a pick never moves Budgets.
+  const [ownMonth, setOwnMonth] = useState<ViewMonth>(null);
+  const wantMonth = onViewMonth ? (viewMonth ?? null) : ownMonth;
+  const writeViewMonth = onViewMonth ?? setOwnMonth;
+  const [pin, setPin] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   // The row whose sheet is open (components/TransactionSheet.tsx), kept
   // while it slides out, with the errors already said when it opened, so
@@ -445,10 +458,10 @@ export default function MonthBreakdown({
     return [...set].sort().reverse().slice(0, 12);
   }, [txns]);
 
-  // The latest month not after this one: a row dated tomorrow, on the last
-  // day of a month, doesn't open the tab on the next.
+  // The month asked for when it is listed, else the nearest before it
+  // (components/view-month-state.ts activityMonth).
   const thisMonth = localMonth();
-  const selected = month ?? months.find((m) => m <= thisMonth) ?? months[0] ?? null;
+  const selected = activityMonth(pin ?? wantMonth, months, thisMonth);
 
   const monthTxns = useMemo(
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
@@ -725,13 +738,15 @@ export default function MonthBreakdown({
   // month, or before there is one), stepping through and listing the months
   // with transactions, with a way back to the one the tab opens on; and the
   // ⋯ to add or import a transaction where a manual account takes one.
-  const goMonth = (m: string) => {
-    setMonth(m);
+  // Where the tab opens: this month, or the latest with transactions while
+  // this one has none yet, which the way back says. Landing on it writes
+  // null, as the way back does.
+  const opensOn = activityOpensOn(months, thisMonth);
+  const goMonth = (m: string | null) => {
+    writeViewMonth(m === null ? null : writeMonth(m, opensOn));
+    setPin(null);
     setFlowPick(null);
   };
-  // Where the tab opens: this month, or the latest with transactions while
-  // this one has none yet, which the way back says.
-  const opensOn = months.find((m) => m <= thisMonth) ?? months[0] ?? null;
   const shownMonth: ActivityMonth | null =
     segment !== "shared" && selected
       ? {
@@ -744,10 +759,7 @@ export default function MonthBreakdown({
             opensOn && selected !== opensOn
               ? {
                   label: opensOn === thisMonth ? "This month" : "Latest month",
-                  onBack: () => {
-                    setMonth(null);
-                    setFlowPick(null);
-                  },
+                  onBack: () => goMonth(null),
                 }
               : null,
         }
@@ -998,9 +1010,10 @@ export default function MonthBreakdown({
                 onPick={(p) => {
                   pickedNow.current = p !== null;
                   setFlowPick(p);
-                  // The bar keeps the month the pick's period ends with, so a
-                  // reload that brings a later month doesn't move it.
-                  if (p && month === null && selected) setMonth(selected);
+                  // The bar holds the month the pick's period ends with, so a
+                  // reload that brings a later month doesn't move it; held
+                  // here alone, so Budgets doesn't follow a pick.
+                  if (p && selected) setPin(selected);
                   if (p) chooseSegment("transactions");
                 }}
                 period={span}
@@ -1020,10 +1033,7 @@ export default function MonthBreakdown({
                       <button
                         key={m}
                         className={`trend-col${m === selected ? " active" : period?.months.includes(m) ? " in-period" : ""}`}
-                        onClick={() => {
-                          setMonth(m);
-                          setFlowPick(null);
-                        }}
+                        onClick={() => goMonth(m)}
                         aria-pressed={m === selected}
                         aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
                       >
