@@ -7,7 +7,7 @@
 // no field holds an example, and nothing suggests what something "usually"
 // costs.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { EVENT_KINDS, EVENT_LIMITS, parseLifeEvent, type EventNote, type LifeEvent, type LifeEventKind } from '@/lib/fire/events';
@@ -144,6 +144,10 @@ export function LifeEventsCard({
 
 class Missing extends Error {}
 
+/** A form's event as it would be saved, or why it can't be: `missing` when
+ *  a field is empty, else one is out of range. */
+export type Checked = { ok: LifeEvent } | { error: string; missing?: true };
+
 const asText = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v));
 
 /** A number typed in a field: null when empty, NaN when not a number. */
@@ -156,6 +160,11 @@ export function EventForm({
   onSave,
   onRemove,
   onCancel,
+  name,
+  saveText = 'Save',
+  savingText = 'Saving…',
+  whereText = 'Saved to this scenario, not your plan.',
+  preview,
 }: {
   kind: LifeEventKind;
   event: LifeEvent | null;
@@ -163,9 +172,20 @@ export function EventForm({
   onSave: (e: LifeEvent) => Promise<boolean | string>;
   onRemove: (() => Promise<boolean | string>) | null;
   onCancel: () => void;
+  /** The name a new event starts with: its kind's, unless given. */
+  name?: string;
+  saveText?: string;
+  savingText?: string;
+  /** Where Save puts it, said after the kind's note. */
+  whereText?: string;
+  /** Shown above the buttons, from the event as it would be saved now, or
+   *  why it can't be yet (the What if… card's, components/PlanWhatIf.tsx). */
+  preview?: (draft: Checked) => ReactNode;
 }) {
   const e = event as Record<string, unknown> | null;
-  const [label, setLabel] = useState(event?.label ?? EVENT_NAMES[kind]);
+  const [label, setLabel] = useState(event?.label ?? name ?? EVENT_NAMES[kind]);
+  // The event's id for the form's life, so every draft is the same event.
+  const [id] = useState(() => event?.id ?? crypto.randomUUID());
   const [age, setAge] = useState(asText((e?.atAge ?? e?.fromAge) as number | undefined));
   const [toAge, setToAge] = useState(asText(e?.toAge as number | undefined));
   const [cost, setCost] = useState(asText(e?.cost as number | undefined));
@@ -189,7 +209,6 @@ export function EventForm({
   const signed = (t: string, what: string) => (less ? -need(t, what) : need(t, what));
 
   function build(): LifeEvent {
-    const id = event?.id ?? crypto.randomUUID();
     const span = () => (forGood ? null : need(years, 'for how many years'));
     switch (kind) {
       case 'house':
@@ -205,6 +224,19 @@ export function EventForm({
     }
   }
 
+  /** The event as it would be saved, or why it can't be. */
+  function check(): Checked {
+    let built: LifeEvent;
+    try {
+      built = build();
+    } catch (err) {
+      if (!(err instanceof Missing)) throw err;
+      return { error: err.message, missing: true };
+    }
+    const parsed = parseLifeEvent(built, 'This event');
+    return 'error' in parsed ? { error: parsed.error.replace(/^This event: /, '').replace(/^./, (c) => c.toUpperCase()) + '.' } : parsed;
+  }
+
   async function save(run: () => Promise<boolean | string>) {
     setSaving(true);
     const ok = await run();
@@ -213,6 +245,7 @@ export function EventForm({
   }
 
   const disabled = saving || !editable;
+  const draft = preview ? check() : null;
   const field = (text: string, value: string, set: (v: string) => void, amount = false) => (
     <label className="field">
       {text}
@@ -251,7 +284,7 @@ export function EventForm({
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {KIND_NOTES[kind]} Every amount is a year (or once), after tax, in today’s money. Saved to this scenario, not your plan.
+        {KIND_NOTES[kind]} Every amount is a year (or once), after tax, in today’s money. {whereText}
       </p>
       <div className="sheet-form">
         <label className="field">
@@ -297,6 +330,7 @@ export function EventForm({
           </>
         )}
       </div>
+      {preview && draft && preview(draft)}
       {error && <div className="error">{error}</div>}
       {onRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={disabled} onClick={() => void save(onRemove)}>
@@ -310,24 +344,16 @@ export function EventForm({
         <button
           disabled={disabled}
           onClick={() => {
-            let built: LifeEvent;
-            try {
-              built = build();
-            } catch (err) {
-              if (!(err instanceof Missing)) throw err;
-              setError(err.message);
-              return;
-            }
-            const parsed = parseLifeEvent(built, 'This event');
+            const parsed = check();
             if ('error' in parsed) {
-              setError(parsed.error.replace(/^This event: /, '').replace(/^./, (c) => c.toUpperCase()) + '.');
+              setError(parsed.error);
               return;
             }
             setError('');
             void save(() => onSave(parsed.ok));
           }}
         >
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? savingText : saveText}
         </button>
       </div>
     </>

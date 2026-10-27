@@ -109,6 +109,7 @@ import PlanBar, { planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { ScenarioTag } from './ScenarioTag';
 import { LifeEventsCard } from './PlanEvents';
+import { WhatIfCard } from './PlanWhatIf';
 import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
 import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
@@ -1194,6 +1195,25 @@ export default function PlanTab({
               onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' ? { kind } : { kind: 'figure', figure: kind }, kind)}
               rowRef={inputRowRef}
             />
+
+            {/* Only over your saved plan, never the defaults; the card is
+                drawn with your plan shown, and its sheet stays mounted. */}
+            {planLoaded && (
+              <WhatIfCard
+                shown={!entry}
+                base={basePlan}
+                baseFigures={baseFigures}
+                measured={measured}
+                state={scenState}
+                client={scenarios}
+                planCurrency={planCurrency}
+                planCurrencyKnown={currencyKnown}
+                editable={editable}
+                canOpen={canOpen}
+                money={money}
+                onOpen={openScenario}
+              />
+            )}
 
             <EventsCard plan={plan} engine={engine} money={money} editable={editable} open={open} scenario={scenarioMarks} />
 

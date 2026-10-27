@@ -371,7 +371,7 @@ describe('the segments', () => {
     serve();
     const tab = await mount();
     expect(tab.shown()).toEqual(['Your path']);
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses', 'Progress']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'What if…', 'Income and one-off expenses', 'Progress']);
     const stress = tab.titles(tab.panelOf('Stress test'));
     expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length']);
     // Then its settings and About these numbers, as rows (rollout 6d).
