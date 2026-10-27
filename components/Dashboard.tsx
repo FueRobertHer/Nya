@@ -1,6 +1,7 @@
 'use client';
 
 import ClerkAccount from './ClerkAccount';
+import { BrandLogo } from './Brand';
 import { useRouter } from 'next/navigation';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
@@ -2218,8 +2219,7 @@ export default function Dashboard({
         <div className="top-row">
           <div>
             <div className="brand">
-              {/* eslint-disable-next-line @next/next/no-img-element -- the app icon, already a static SVG */}
-              <img className="brand-logo" src="/icon.svg" alt="" width={34} height={34} />
+              <BrandLogo />
               <h1>Nya</h1>
             </div>
             <p className="sub">{subtitle}</p>

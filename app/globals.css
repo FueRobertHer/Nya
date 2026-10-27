@@ -2434,6 +2434,30 @@ span.meter-fill {
   display: block;
 }
 
+/* The light theme's logo (components/Brand.tsx BrandLogo): the dark one
+   until the theme is light, by the theme's own selectors, and on paper. */
+.brand-logo.light {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .brand-logo.dark {
+    display: none;
+  }
+
+  :root:not([data-theme="dark"]) .brand-logo.light {
+    display: block;
+  }
+}
+
+:root[data-theme="light"] .brand-logo.dark {
+  display: none;
+}
+
+:root[data-theme="light"] .brand-logo.light {
+  display: block;
+}
+
 .brand h1 {
   margin: 0;
   font-size: 22px;
@@ -5111,6 +5135,15 @@ button.import-choice {
     --tag-purple-tint: #f2ebfc;
     --tag-pink: #b3195f;
     --tag-pink-tint: #fbeaf2;
+  }
+
+  /* The light theme's logo, as on a light screen (.brand-logo.light). */
+  .brand-logo.dark {
+    display: none;
+  }
+
+  .brand-logo.light {
+    display: block;
   }
 
   :root:not([data-theme]),
