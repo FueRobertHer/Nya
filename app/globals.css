@@ -7,7 +7,10 @@
  */
 :root {
   /* Type. Nothing on screen goes under --fs-1. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Red Hat Text and Display from next/font (app/layout.tsx), named after it
+     for a page that loads them some other way (a static check page). */
+  --font-ui: var(--font-red-hat-text, "Red Hat Text"), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-red-hat-display, "Red Hat Display"), var(--font-ui);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
   --fs-2: 13px; /* secondary lines, notices, helper text */
@@ -285,6 +288,25 @@ h2 {
   margin: 16px 0 10px;
 }
 
+/* Titles and figures in Red Hat Display (look and feel, step 3); the rest
+   reads in Red Hat Text. A heading drawn as a label (Home's "Net worth")
+   keeps Text. */
+h1,
+.card-header > :is(h2, h3),
+.sheet-header h2,
+.month-stepper-title,
+.budgets-title,
+.plan-title,
+.total-value,
+.summary-value,
+.plan-stat-value,
+.card-mode-amount,
+.txn-sheet-amount,
+.account-balance,
+.txn-logo-fallback {
+  font-family: var(--font-display);
+}
+
 .sub {
   color: var(--muted);
   font-size: 14px;
@@ -315,6 +337,19 @@ h2 {
 
 .total-value.negative {
   color: var(--down);
+}
+
+/* Home's net worth: its cents at half the figure, quieter (look and feel,
+   step 3), in a negative total too. */
+.total-value .cents {
+  font-size: var(--fs-5);
+  color: var(--text-2);
+}
+
+/* The figure drawn in runs is the screen reader's to skip and a copy's too:
+   the whole figure beside it is what a selection copies, once. */
+.total-value > [aria-hidden="true"] {
+  user-select: none;
 }
 
 /* Your path's answer (rollout phase 8b): words, not a figure, so the hero's
@@ -958,6 +993,13 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   padding: var(--sp-1) var(--sp-2);
   background: var(--elevated);
   color: var(--text-2);
+}
+
+/* In a row's narrow second line (an account's "$12,461.24 uninvested" at
+   320px), a badge wraps rather than being cut off at the row's edge. */
+.list-row-sub .badge {
+  max-width: 100%;
+  white-space: normal;
 }
 
 .badge.accent {
@@ -1938,10 +1980,13 @@ button:disabled:where(:not([class*="cl-"])) {
 
 /* --- monthly breakdown (Activity tab) --- */
 
+/* In / Out / Net: on one line at any phone's width; past that (a very large
+   month) the last wraps under, never past the card's edge. */
 .summary-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-2) 12px;
 }
 
 .summary-row > div {
@@ -1949,7 +1994,9 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .summary-value {
-  font-size: 17px;
+  /* 17px from a 370px screen, 15px at 320px, where three figures in Red Hat
+     Display don't fit at 17. */
+  font-size: clamp(15px, 4.6vw, 17px);
   font-weight: 600;
   margin-top: 2px;
   font-variant-numeric: tabular-nums;

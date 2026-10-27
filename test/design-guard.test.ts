@@ -10,7 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUCKET_COLORS, CLASS_COLORS } from '@/components/allocation-text';
-import { DARK, FONT_UI, LIGHT } from '@/lib/theme';
+import { CLERK_APPEARANCE, DARK, LIGHT } from '@/lib/theme';
 import baselineJson from './design-guard-baseline.json';
 import {
   ROOT,
@@ -121,6 +121,7 @@ describe('design guard: controls and states read without color', () => {
     [':is(.notice, .rule-offer, .rule-preview) :is(button.secondary, .btn.secondary) {', 'var(--border-input)', 'a secondary on a fill of its own is edged in --border-input'],
     ['.icon-btn {', '1px solid transparent', 'an icon button has an edge forced colors draw'],
     ['.chip {', 'var(--border-input)', 'a chip is edged in --border-input'],
+    ['h1,', 'font-family: var(--font-display)', 'titles and figures are in Red Hat Display (look and feel, step 3)'],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'border-bottom: 3px solid var(--accent)', 'the current item of a switch has a bar'],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-semibold)', 'the current item of a switch is heavier'],
     ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],
@@ -130,6 +131,17 @@ describe('design guard: controls and states read without color', () => {
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);
     expect(missing).toEqual([]);
+  });
+
+  // Look and feel, step 3: each title and figure the design draws in Red Hat
+  // Display is named in the one rule that gives it (the entry above holds the
+  // rule itself), and a heading drawn as a label isn't.
+  test('each title and figure is in the Display rule', () => {
+    const at = css.indexOf('h1,', css.indexOf('Titles and figures in Red Hat Display'));
+    const head = css.slice(at, css.indexOf('{', at));
+    const roles = ['.card-header > :is(h2, h3)', '.sheet-header h2', '.month-stepper-title', '.budgets-title', '.plan-title', '.total-value', '.summary-value', '.plan-stat-value', '.card-mode-amount', '.txn-sheet-amount', '.account-balance', '.txn-logo-fallback'];
+    expect(roles.filter((r) => !head.includes(r))).toEqual([]);
+    expect(head).not.toContain('total-label');
   });
 
   // A bare icon button has nothing but its icon, so its aria-label is its
@@ -210,7 +222,8 @@ describe('design guard: the tokens (app/globals.css and docs/design/tokens.css)'
     for (const [k, v] of Object.entries(LIGHT)) {
       if (app.lightVars[k] !== v) drift.push(`lib/theme.ts LIGHT ${k} is ${v}, light --${k} is ${app.lightVars[k]}`);
     }
-    if (FONT_UI !== app.scales['font-ui']) drift.push(`lib/theme.ts FONT_UI is ${FONT_UI}, --font-ui is ${app.scales['font-ui']}`);
+    // Clerk reads the app's own font token, so it can't drift from it.
+    if (CLERK_APPEARANCE.variables.fontFamily !== 'var(--font-ui)') drift.push(`lib/theme.ts Clerk's fontFamily is ${CLERK_APPEARANCE.variables.fontFamily}, not var(--font-ui)`);
     const manifest = JSON.parse(read('public/manifest.json'));
     for (const k of ['background_color', 'theme_color']) {
       if (manifest[k] !== app.dark.canvas) drift.push(`public/manifest.json ${k} is ${manifest[k]}, --canvas is ${app.dark.canvas}`);

@@ -14,7 +14,10 @@
 /* ---------- Theme-independent scales ---------- */
 :root {
   /* Type. Nothing on screen goes under --fs-1. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Red Hat Text and Display from next/font (app/layout.tsx), named after it
+     for a page that loads them some other way (a static check page). */
+  --font-ui: var(--font-red-hat-text, "Red Hat Text"), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-red-hat-display, "Red Hat Display"), var(--font-ui);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
   --fs-2: 13px; /* secondary lines, notices, helper text */
