@@ -234,6 +234,10 @@ beforeEach(async () => {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk_test_x',
     CLERK_SECRET_KEY: 'sk_test_x',
     DEMO_USER_IDS: 'user_alex:Alex, user_sam:Sam',
+    UPSTASH_REDIS_REST_URL: 'https://redis.example.invalid',
+    UPSTASH_REDIS_REST_TOKEN: 'token',
+    PLAID_CLIENT_ID: 'client',
+    PLAID_SECRET: 'secret',
   });
 });
 afterEach(() => {
@@ -261,6 +265,13 @@ describe('where it may write', () => {
     expect(() => checkSeedEnvironment('test')).toThrow(/only on Vercel Preview and Development/);
     env({ NODE_ENV: undefined });
     expect(() => checkSeedEnvironment('test')).toThrow(/only on Vercel Preview and Development/);
+  });
+
+  test('says which settings are empty, as Vercel pulls Sensitive ones', () => {
+    env({ CLERK_SECRET_KEY: '', PLAID_SECRET: '', UPSTASH_REDIS_REST_URL: '', KV_REST_API_URL: 'https://kv.example.invalid' });
+    expect(() => checkSeedEnvironment('test')).toThrow('These are empty here: PLAID_SECRET, CLERK_SECRET_KEY.');
+    env({ PLAID_ENCRYPTION_KEY: '', MASTER_KEY: undefined, PLAID_SECRET: 's', CLERK_SECRET_KEY: 'k' });
+    expect(() => checkSeedEnvironment('test')).toThrow('These are empty here: PLAID_ENCRYPTION_KEY.');
   });
 
   test('not Plaid beyond the sandbox', () => {

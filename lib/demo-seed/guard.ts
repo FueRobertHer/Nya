@@ -31,6 +31,26 @@ export class SeedRefused extends Error {
   }
 }
 
+/** What the seed reads from the environment, each as the alternatives that
+ *  can stand for it (lib/storage.ts, lib/plaid.ts, lib/crypto.ts, lib/demo.ts). */
+const NEEDED: readonly (readonly string[])[] = [
+  ['UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL'],
+  ['UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN'],
+  ['PLAID_CLIENT_ID'],
+  ['PLAID_SECRET'],
+  ['PLAID_ENCRYPTION_KEY', 'MASTER_KEY'],
+  ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'],
+  ['CLERK_SECRET_KEY'],
+  ['DEMO_USER_IDS'],
+];
+
+/** The settings the environment leaves empty, by their first name. Vercel
+ *  pulls a variable marked Sensitive as an empty one, so a pulled file has
+ *  these blank until they are filled in. */
+export function missingSettings(): string[] {
+  return NEEDED.filter((names) => !names.some((n) => process.env[n])).map((names) => names[0]);
+}
+
 /** The environment's own prefix, without its colon. */
 const prefixName = () => envPrefix().slice(0, -1);
 
@@ -46,6 +66,10 @@ export function checkSeedEnvironment(target: string | undefined): void {
   }
   if (!demoEnvironment()) {
     throw new SeedRefused('Demo accounts exist only on Vercel Preview and Development: run this with the environment pulled from one (VERCEL_ENV=preview or development).');
+  }
+  const missing = missingSettings();
+  if (missing.length > 0) {
+    throw new SeedRefused(`These are empty here: ${missing.join(', ')}. Vercel pulls variables marked Sensitive as empty, so fill them in the env file with Preview's own values.`);
   }
   if ((process.env.PLAID_ENV || 'sandbox') !== 'sandbox') throw new SeedRefused('The demo seed links Plaid sandbox banks only: PLAID_ENV must be sandbox.');
 }
