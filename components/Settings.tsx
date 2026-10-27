@@ -60,7 +60,7 @@ export function SettingsScreen({
     <section className="settings" aria-labelledby="settings-title">
       <div className="settings-bar">
         <button
-          className="secondary icon-btn"
+          className="icon-btn"
           onClick={() => (section ? go('list') : onClose())}
           aria-label={section ? 'Back to Settings' : 'Close Settings'}
         >

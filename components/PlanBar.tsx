@@ -74,7 +74,7 @@ export default function PlanBar({
           focus on it survives a switch. */}
       <div className="plan-heading">
         {scenario !== null && (
-          <button type="button" className="secondary icon-btn" aria-label="Back to your plan" onClick={onBack}>
+          <button type="button" className="icon-btn" aria-label="Back to your plan" onClick={onBack}>
             {chevron(LEFT)}
           </button>
         )}

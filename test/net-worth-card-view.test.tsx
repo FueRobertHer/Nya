@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthCard from '@/components/NetWorthCard';
-import type { Caveat } from '@/components/TotalCaveats';
+import { allHiddenCaveats, type Caveat } from '@/components/TotalCaveats';
 import { MASK, setAmountsHidden } from '@/lib/format';
 
 // Home's one Net worth card (rollout phase 4a): the total, its caveats, the
@@ -79,6 +79,22 @@ describe('the card', () => {
       setAmountsHidden(false);
       if (none) delete g.window;
     }
+  });
+});
+
+// The header's line under the name went (look and feel, step 2a); with every
+// account hidden, the total says why it counts nothing.
+describe('every account hidden', () => {
+  test('said under the total, as information, and where to unhide one', () => {
+    const t = text(render({ worth: 0, caveats: allHiddenCaveats(0, 3) }));
+    expect(t).toContain('All 3 accounts are hidden, so the total counts nothing. Unhide one from Hidden on the Accounts tab.');
+    expect(allHiddenCaveats(0, 1)[0].body).toBe('Your one account is hidden, so the total counts nothing. Unhide one from Hidden on the Accounts tab.');
+    expect(allHiddenCaveats(0, 3)[0].severity).toBe('info');
+  });
+
+  test('nothing while an account is shown, or with none hidden', () => {
+    expect(allHiddenCaveats(1, 3)).toEqual([]);
+    expect(allHiddenCaveats(0, 0)).toEqual([]);
   });
 });
 

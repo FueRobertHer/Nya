@@ -34,7 +34,7 @@
 
   /* Radii. */
   --r-xs: 6px; /* chips, badges */
-  --r-sm: 8px; /* inputs, small buttons, segmented items */
+  --r-sm: 8px; /* inputs, small buttons */
   --r-md: 12px; /* buttons, notices */
   --r-lg: 16px; /* cards, sheets */
   --r-pill: 999px;
@@ -72,7 +72,7 @@
   /* Lines */
   --border-subtle: #232834; /* dividers between rows */
   --border-strong: #2b3140; /* card and sheet edges */
-  --border-input: #707889; /* every control's edge (fields, secondary buttons, chips, the selected segment): 3:1 on canvas, surface and elevated */
+  --border-input: #707889; /* a control's edge (fields, chips, a secondary button on a fill of its own): 3:1 on canvas, surface and elevated */
 
   /* Text */
   --text-1: #eceef2;
@@ -373,12 +373,14 @@ h2.total-label {
     border-color 0.15s;
 }
 
-/* Every control's edge is --border-input (3:1 on every surface); --border-strong
-   is about 1.4:1 and reads as no edge at all. */
+/* A secondary button is tonal: an --elevated fill and no edge, since its
+   label says it is a button (WCAG 1.4.11 asks no edge of a labelled
+   control). The transparent edge is drawn in forced colors. On a fill of its
+   own (a notice, the rule offer) it keeps an edge instead, below .btn's. */
 button.secondary {
-  background: transparent;
-  border: 1px solid var(--border-input);
-  color: var(--text);
+  background: var(--elevated);
+  border: 1px solid transparent;
+  color: var(--text-1);
 }
 
 /* Hover only where there is a pointer: on touch screens it sticks after a tap. */
@@ -388,7 +390,7 @@ button.secondary {
     opacity: 0.9;
   }
   button.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
-    background: var(--raised);
+    background: var(--border-subtle);
     opacity: 1;
   }
 }
@@ -672,8 +674,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 .btn.secondary {
-  border-color: var(--border-input);
-  background: transparent;
+  border: 1px solid transparent;
+  background: var(--elevated);
   color: var(--text-1);
 }
 
@@ -692,11 +694,25 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   width: 100%;
 }
 
+/* Hovered, a secondary deepens a step (--raised is --elevated, no step) and
+   a ghost is underlined, so it never looks like a secondary at rest. */
 @media (hover: hover) {
-  .btn:is(.secondary, .ghost):hover:not(:disabled):not([aria-disabled="true"]) {
-    background: var(--elevated);
+  .btn.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--border-subtle);
     opacity: 1;
   }
+
+  .btn.ghost:hover:not(:disabled):not([aria-disabled="true"]) {
+    text-decoration: underline;
+    opacity: 1;
+  }
+}
+
+/* On a fill of its own a tonal button would vanish (the same fill on the
+   same fill), so there a secondary keeps its 3:1 edge on no fill. */
+:is(.notice, .rule-offer, .rule-preview) :is(button.secondary, .btn.secondary) {
+  border-color: var(--border-input);
+  background: transparent;
 }
 
 /* A group of buttons: wraps on a narrow screen, primary last in the markup. */
@@ -707,44 +723,54 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   gap: var(--sp-2);
 }
 
-/* Two to four views of one thing, or a range. The selected item is raised.
-   role="tablist" with aria-selected when it switches views, a radio group
-   with aria-checked when it sets a value. */
+/* Two to eight views of one thing, or a range: an underline switch, as the
+   tab bar is. role="tablist" with aria-selected when it switches views, a
+   radio group with aria-checked when it sets a value. */
 .segmented {
   display: flex;
-  gap: var(--sp-1);
-  padding: var(--sp-1);
-  border-radius: var(--r-md);
-  background: var(--elevated);
+  border-bottom: 1px solid var(--border-strong);
 }
 
 .segmented > button {
   flex: 1;
   width: auto;
-  min-height: calc(var(--tap) - 2 * var(--sp-1));
-  padding: var(--sp-1) var(--sp-2);
+  min-width: 0;
+  min-height: var(--tap);
+  margin-bottom: -1px;
+  /* The 3px under the label is the bar's place: padding here, so an item
+     that isn't current has no border at all (forced colors draw a
+     transparent one). */
+  padding: var(--sp-1) var(--sp-2) calc(var(--sp-1) + 3px);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: 0;
   background: transparent;
   color: var(--text-2);
   font-size: var(--fs-2);
   font-weight: var(--fw-medium);
 }
 
-/* Set apart by an edge and weight, not only by its shade (--surface is about
-   1.1:1 from the track). Inset, so the label doesn't move. */
+/* Set apart by a 3px --accent bar and weight, not only by color (--accent is
+   4.6:1 or more on canvas, surface and elevated). A border, not a shadow, and
+   on the current item alone, so forced colors draw it there and nowhere
+   else. */
 .segmented > button:is([aria-selected="true"], [aria-checked="true"]) {
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border-input);
+  padding-bottom: var(--sp-1);
+  border-bottom: 3px solid var(--accent);
   color: var(--text-1);
   font-weight: var(--fw-semibold);
 }
 
-/* Touch screens get the full 44px per item. */
-@media (pointer: coarse) {
-  .segmented > button {
-    min-height: var(--tap);
+@media (hover: hover) {
+  .segmented > button:hover:not(:disabled) {
+    color: var(--text-1);
   }
+}
+
+/* A chart's range: up to eight items, each keeping its 44px height and
+   going narrower than 44px (24px or more) to fit a 320px screen. */
+.segmented.compact > button {
+  padding-inline: 0;
+  font-size: var(--fs-1);
 }
 
 /* Activity's, Budgets' and the Plan's pinned bars (components/ActivityBar.tsx,
@@ -1159,14 +1185,6 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   flex-shrink: 0;
 }
 
-/* Its ⋯: outlined, as a secondary action, not filled. */
-.menu-anchor > .icon-btn {
-  border: 1px solid var(--border-input);
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--text-1);
-}
-
 .menu {
   position: absolute;
   top: 100%;
@@ -1352,19 +1370,15 @@ th.num {
 .top-row {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 0;
+  margin-bottom: var(--sp-6);
 }
 
-/* The brand and its line take the room the buttons leave, down to the
-   brand's own width, so the buttons keep theirs for as long as they can. */
+/* The brand takes the room the buttons leave, down to its own width, so
+   the buttons keep theirs for as long as they can. */
 .top-row > :first-child {
   flex: 1 1 0;
-}
-
-.top-row h1 {
-  margin-bottom: 4px;
 }
 
 .card-actions {
@@ -1516,9 +1530,10 @@ button:disabled:where(:not([class*="cl-"])) {
   justify-content: flex-end;
 }
 
-/* Icon button: a 44px square, its 20px icon centered. The header's (hide
-   amounts, refresh, the Settings gear), the report page's hide amounts and
-   Settings' back button. */
+/* Icon button: a 44px square, its 20px icon centered, bare. The header's
+   (hide amounts, refresh, the Settings gear), a card's ⋯, the month's arrows
+   and Settings' and the Plan's back. Its icon and aria-label name it, so it
+   needs no edge; the transparent one is drawn in forced colors. */
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -1527,6 +1542,22 @@ button:disabled:where(:not([class*="cl-"])) {
   min-width: var(--tap);
   min-height: var(--tap);
   padding: var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-2);
+}
+
+@media (hover: hover) {
+  .icon-btn:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--elevated);
+    color: var(--text-1);
+    opacity: 1;
+  }
+
+  .icon-btn.hide-amounts-btn[aria-pressed="true"]:hover {
+    color: var(--accent);
+  }
 }
 
 .icon-btn svg {
@@ -1839,30 +1870,9 @@ button:disabled:where(:not([class*="cl-"])) {
   margin: 4px 0 0;
 }
 
-/* Time range buttons under a chart: a quiet segmented row, the chosen one in
-   the accent. Big enough to tap on a phone. */
-.chart-ranges {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.chart-range {
-  flex: 1;
-  width: auto;
-  background: none;
-  border: none;
-  border-radius: 8px;
-  padding: 7px 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.chart-range[aria-pressed="true"] {
-  background: var(--accent-tint);
-  color: var(--accent);
+/* The time range under the net worth chart: a compact underline switch. */
+.chart-range-switch {
+  margin-top: var(--sp-1);
 }
 
 .chart-note {
@@ -2470,10 +2480,6 @@ span.meter-fill {
   margin: 0;
   font-size: 22px;
   letter-spacing: -0.01em;
-}
-
-.top-row .sub {
-  margin: 6px 0 24px;
 }
 
 .top-actions {
@@ -3118,6 +3124,14 @@ button.danger-outline {
   height: auto;
   aspect-ratio: 340 / 150;
   border-radius: var(--r-md);
+}
+
+/* The range switch's placeholder: one 44px item across, over its rule. */
+.home-skeleton-range {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-height: var(--tap);
 }
 
 .home-skeleton-ranges {
@@ -4530,6 +4544,7 @@ button.plan-edit:disabled {
 .planned-rows .list-row[aria-disabled="true"],
 .planned-add[aria-disabled="true"],
 .forecast-warn[aria-disabled="true"],
+.plan-compare-pick > .chip[aria-disabled="true"],
 .plan-inputs .list-row[aria-disabled="true"] {
   opacity: 0.6;
   cursor: not-allowed;
@@ -4957,16 +4972,18 @@ button.import-choice {
    styles that make a clean A4 or Letter PDF of the report alone, in black
    and white --- */
 
-/* A link that looks like a secondary button: Open reports, and Download as
-   CSV, which is a file to save rather than an action. */
+/* A link that looks like a secondary button, tonal as they are: Open
+   reports, and Download as CSV, which is a file to save rather than an
+   action. */
 .report-link-button {
   display: block;
   text-align: center;
   margin-top: 12px;
   padding: 12px 20px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 10px;
-  color: var(--text);
+  background: var(--elevated);
+  color: var(--text-1);
   font-size: 15px;
   font-weight: 600;
   text-decoration: none;
@@ -6492,8 +6509,8 @@ button.cash-flow-show {
    has one, as :placeholder-shown never matches a field without, which would
    draw the mask in it empty. A percentage's field (data-percent) stays, as
    percentages do everywhere. */
+/* On: the eye crossed out, in the accent. */
 .hide-amounts-btn[aria-pressed="true"] {
-  border-color: var(--accent);
   color: var(--accent);
 }
 
@@ -7470,8 +7487,13 @@ button.review-keys-toggle {
   gap: 16px;
 }
 
-.plan-compare-pick {
-  flex-wrap: wrap;
+/* A plan to compare is named by its scenario, up to 40 characters: its
+   chip wraps at 320px rather than push the sheet sideways. */
+.plan-compare-pick > .chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
 
 .plan-working-line {

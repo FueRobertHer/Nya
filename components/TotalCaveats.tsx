@@ -21,6 +21,14 @@ export type CaveatSeverity = Severity | 'info';
  *  amount), and what it says in full. */
 export type Caveat = { key: string; severity: CaveatSeverity; summary: string; body: ReactNode };
 
+/** Every account hidden, so the Home total counts nothing: said under it
+ *  (the header said it once, under the name). None while one is shown. */
+export function allHiddenCaveats(shownInstitutions: number, hiddenAccounts: number): Caveat[] {
+  if (shownInstitutions > 0 || hiddenAccounts === 0) return [];
+  const all = hiddenAccounts === 1 ? 'Your one account is' : `All ${hiddenAccounts} accounts are`;
+  return [{ key: 'all-hidden', severity: 'info', summary: 'every account hidden', body: `${all} hidden, so the total counts nothing. Unhide one from Hidden on the Accounts tab.` }];
+}
+
 const INFO = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <circle cx="12" cy="12" r="9" />

@@ -77,8 +77,8 @@ export function HomeSkeleton() {
           </span>
         </div>
         <span className="skeleton block home-skeleton-plot" />
-        <div className="chart-ranges">
-          <span className="chart-range">
+        <div className="segmented compact chart-range-switch">
+          <span className="home-skeleton-range">
             <span className="skeleton home-skeleton-ranges" />
           </span>
         </div>
@@ -469,13 +469,10 @@ export function AppLoading({ account, tab = 'home' }: { account: 'clerk' | 'pass
   return (
     <main className="wrap">
       <div className="top-row">
-        <div>
-          <Brand />
-          <p className="sub">Loading your accounts…</p>
-        </div>
+        <Brand />
         <div className="top-actions">
           <HideAmountsToggle />
-          <button className="secondary icon-btn" disabled aria-label="Refresh" title="Refresh">
+          <button className="icon-btn" disabled aria-label="Refresh" title="Refresh">
             <HeaderIcon d={REFRESH} spin />
           </button>
           {account === 'clerk' ? (
@@ -483,7 +480,7 @@ export function AppLoading({ account, tab = 'home' }: { account: 'clerk' | 'pass
               <span className="skeleton user-button-skeleton" aria-hidden="true" />
             </div>
           ) : (
-            <button className="secondary icon-btn" aria-disabled="true" aria-label="Settings" title="Settings">
+            <button className="icon-btn" aria-disabled="true" aria-label="Settings" title="Settings">
               <HeaderIcon d={GEAR} />
             </button>
           )}

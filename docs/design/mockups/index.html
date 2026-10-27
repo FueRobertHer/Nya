@@ -84,7 +84,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .topbar { display: flex; align-items: center; gap: 8px; padding: 14px 2px 2px; }
 .app .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; flex: 1; }
 .app .logo { width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #f2c879, #b07a2c); display: inline-block; }
-.app .ibtn { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border-strong); display: grid; place-items: center; color: var(--text-2); background: transparent; position: relative; }
+.app .ibtn { width: 34px; height: 34px; border-radius: 10px; border: 0; display: grid; place-items: center; color: var(--text-2); background: transparent; position: relative; }
 .app .ibtn svg, .app .row-ico svg, .app .tab svg { width: 18px; height: 18px; }
 .app .avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #6d5dfc, #a77bf3); position: relative; }
 .app .dot { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); border: 2px solid var(--canvas); }
@@ -131,14 +131,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .notice ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 2px; }
 .app .btn { font: 600 14px var(--f-app); border-radius: 12px; padding: 9px 14px; min-height: 40px; border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .app .btn.primary { background: var(--accent-fill); color: var(--on-fill); }
-.app .btn.secondary { background: transparent; border-color: var(--border-strong); color: var(--text-1); }
+.app .btn.secondary { background: var(--elevated); border-color: transparent; color: var(--text-1); }
 .app .btn.ghost { background: transparent; color: var(--accent); padding: 9px 6px; }
 .app .btn.danger { background: var(--danger-fill); color: var(--on-fill); }
 .app .btn.sm { font-size: 13px; min-height: 34px; padding: 6px 12px; }
 .app .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.app .seg { display: flex; background: var(--elevated); border-radius: 10px; padding: 3px; gap: 2px; }
-.app .seg span { flex: 1; text-align: center; font-size: 13px; font-weight: 500; padding: 6px 4px; border-radius: 8px; color: var(--text-2); }
-.app .seg span.on { background: var(--surface); color: var(--text-1); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border-input); }
+.app .seg { display: flex; border-bottom: 1px solid var(--border-strong); }
+.app .seg span { flex: 1; text-align: center; font-size: 13px; font-weight: 500; padding: 6px 4px 9px; margin-bottom: -1px; color: var(--text-2); }
+.app .seg span.on { padding-bottom: 6px; border-bottom: 3px solid var(--accent); color: var(--text-1); font-weight: 600; }
 .app .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .app .chip { font-size: 12px; font-weight: 500; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border-input); color: var(--text-2); white-space: nowrap; }
 .app .chip.on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
@@ -297,7 +297,6 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen old" aria-label="Home today">
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
-            <div class="onote" style="padding:0 2px">4 institutions connected</div>
             <div class="ocard">
               <div class="olabel">Net Worth</div>
               <div class="ototal">$1,275,289.77</div>
@@ -1035,7 +1034,6 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn" style="opacity:.6"><svg><use href="#i-ref"/></svg></span><span class="sk avatar"></span></div>
-            <span class="small muted" style="padding:0 2px">Loading your accounts…</span>
             <div class="card" aria-label="Net worth loading">
               <div class="hero-label">Net worth</div>
               <span class="sk hero-sk"></span>

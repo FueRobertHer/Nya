@@ -23,6 +23,7 @@ import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import { Why } from './Why';
+import { Segmented } from './Segmented';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -129,17 +130,24 @@ function Buttons({
   );
 }
 
-/** Choices in a row, the chosen one marked (the chart range style). */
-export function Choice<T extends string>({ value, options, onChange, label, disabled = false }: { value: T; options: [T, string][]; onChange: (v: T) => void; label: string; disabled?: boolean }) {
-  return (
-    <div className="chart-ranges plan-choice" role="group" aria-label={label}>
-      {options.map(([v, text]) => (
-        <button key={v} type="button" className="chart-range" aria-pressed={v === value} disabled={disabled} onClick={() => onChange(v)}>
-          {text}
-        </button>
-      ))}
-    </div>
-  );
+/** Choices in a row, the chosen one marked: a radio group setting a value,
+ *  or, with `tabs`, a switch between views (components/Segmented.tsx). */
+export function Choice<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  disabled = false,
+  tabs,
+}: {
+  value: T;
+  options: [T, string][];
+  onChange: (v: T) => void;
+  label: string;
+  disabled?: boolean;
+  tabs?: { id: (v: T) => string; panel: string };
+}) {
+  return <Segmented className="plan-choice" label={label} value={value} onChange={onChange} options={options} disabled={disabled} tabs={tabs} />;
 }
 
 /** Both ages, refusing a target already passed: it would have Coast FI grow

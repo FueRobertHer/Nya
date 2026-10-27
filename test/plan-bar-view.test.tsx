@@ -497,7 +497,7 @@ describe('Scenarios, from the bar and from the card', () => {
     serve({ scenarios: [RETIRE] });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    expect(tab.arrow()?.getAttribute('class')).toBe('secondary icon-btn');
+    expect(tab.arrow()?.getAttribute('class')).toBe('icon-btn');
     await press(tab.arrow());
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.arrow()).toBeNull();

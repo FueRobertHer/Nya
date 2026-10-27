@@ -20,7 +20,7 @@ describe('the sign-in page as the server draws it', () => {
     const html = renderToStaticMarkup(<SignInFlow demoTicket>{page}</SignInFlow>);
     expect(html).toContain('<main class="auth-wrap" hidden=""><p class="page-body">Clerk&#x27;s form</p></main>');
     expect(html.indexOf('<main class="wrap">')).toBeGreaterThan(html.indexOf('<main class="auth-wrap" hidden="">'));
-    expect(html).toContain('<p class="sub">Loading your accounts…</p>');
+    expect(html).toContain('<main class="wrap"><div class="top-row"><div class="brand">');
     expect(html).toContain('aria-busy="true"');
   });
 

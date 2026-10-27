@@ -76,7 +76,7 @@ export default function BudgetsBar({
       <div className="budgets-heading">
         {segment === 'month' ? (
           <>
-            <button type="button" className="secondary icon-btn" aria-label="Earlier month" aria-disabled={!onEarlier} onClick={onEarlier}>
+            <button type="button" className="icon-btn" aria-label="Earlier month" aria-disabled={!onEarlier} onClick={onEarlier}>
               {chevron(LEFT)}
             </button>
             <div className="budgets-month-pick">
@@ -96,7 +96,7 @@ export default function BudgetsBar({
                 </>
               )}
             </div>
-            <button type="button" className="secondary icon-btn" aria-label="Later month" aria-disabled={!onLater} onClick={onLater}>
+            <button type="button" className="icon-btn" aria-label="Later month" aria-disabled={!onLater} onClick={onLater}>
               {chevron(RIGHT)}
             </button>
           </>

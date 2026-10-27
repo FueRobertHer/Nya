@@ -85,6 +85,10 @@ import type { FirePlan } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
 
+/** Allocation's two views, by asset class or tax bucket, as tabs. */
+const allocationTabId = (v: string) => `allocation-tab-${v}`;
+const ALLOCATION_PANEL = 'allocation-panel';
+
 /** The local day recovered balances were observed: the local day of the
  *  instant when the server knew it, else the stored UTC day (as the Plan's
  *  invested assets say it). */
@@ -288,12 +292,15 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
               ['class', 'Asset class'],
               ['bucket', 'Tax bucket'],
             ]}
+            tabs={{ id: allocationTabId, panel: ALLOCATION_PANEL }}
           />
-          {view === 'class' ? (
-            <ClassView alloc={alloc} money={money} editable={editable} settings={current} open={open} />
-          ) : (
-            <BucketView alloc={alloc} money={money} editable={editable} open={open} />
-          )}
+          <div id={ALLOCATION_PANEL} role="tabpanel" aria-labelledby={allocationTabId(view)}>
+            {view === 'class' ? (
+              <ClassView alloc={alloc} money={money} editable={editable} settings={current} open={open} />
+            ) : (
+              <BucketView alloc={alloc} money={money} editable={editable} open={open} />
+            )}
+          </div>
           <AllocationNotes alloc={alloc} money={money} />
           <DriftSection
             alloc={alloc}

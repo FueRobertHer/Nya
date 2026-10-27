@@ -62,7 +62,7 @@ describe('Home while it loads', () => {
     // Its own classes are the placeholders and their sizes; every other is the card's or the chart's.
     const layout = [...classesOf(html)].filter((c) => c !== 'skeleton' && c !== 'block' && !c.startsWith('home-skeleton-') && c !== 'visually-hidden');
     expect(layout.filter((c) => !real.has(c))).toEqual([]);
-    for (const c of ['total-value', 'hero-delta', 'chart-readout', 'chart-readout-date', 'chart-info-btn', 'chart-ranges', 'chart-range', 'net-worth-foot']) expect(layout).toContain(c);
+    for (const c of ['total-value', 'hero-delta', 'chart-readout', 'chart-readout-date', 'chart-info-btn', 'segmented', 'compact', 'chart-range-switch', 'net-worth-foot']) expect(layout).toContain(c);
   });
 });
 
@@ -71,10 +71,10 @@ describe('the app loading, as a page', () => {
   const password = renderToStaticMarkup(<AppLoading account="password" />);
   const actions = (html: string) => html.slice(html.indexOf('<div class="top-actions">'), html.indexOf('<section'));
 
-  test('the dashboard header with its loading line, and Home loading', () => {
-    expect(clerk).toContain('<main class="wrap"><div class="top-row">');
+  test('the dashboard header, with no line under the name, and Home loading', () => {
+    expect(clerk).toContain('<main class="wrap"><div class="top-row"><div class="brand">');
     expect(clerk).toContain('<h1>Nya</h1>');
-    expect(clerk).toContain('<p class="sub">Loading your accounts…</p>');
+    expect(clerk).not.toContain('class="sub"');
     expect(clerk).toContain(renderToStaticMarkup(<HomeSkeleton />));
   });
 
@@ -83,7 +83,7 @@ describe('the app loading, as a page', () => {
     // Hide amounts works; Refresh turns, unavailable, drawn with the dashboard's own icon.
     expect(header).toContain('aria-label="Hide amounts"');
     expect(header).toContain(
-      `<button class="secondary icon-btn" disabled="" aria-label="Refresh" title="Refresh">${renderToStaticMarkup(<HeaderIcon d={REFRESH} spin />)}</button>`
+      `<button class="icon-btn" disabled="" aria-label="Refresh" title="Refresh">${renderToStaticMarkup(<HeaderIcon d={REFRESH} spin />)}</button>`
     );
     // The account menu's place holds the circle ClerkAccount keeps until Clerk draws the avatar.
     expect(header).toContain('<div class="user-button-slot"><span class="skeleton user-button-skeleton" aria-hidden="true"></span></div>');
@@ -94,7 +94,7 @@ describe('the app loading, as a page', () => {
     const header = actions(password);
     expect(header).not.toContain('user-button-slot');
     expect(header).toContain(
-      `<button class="secondary icon-btn" aria-disabled="true" aria-label="Settings" title="Settings">${renderToStaticMarkup(<HeaderIcon d={GEAR} />)}</button>`
+      `<button class="icon-btn" aria-disabled="true" aria-label="Settings" title="Settings">${renderToStaticMarkup(<HeaderIcon d={GEAR} />)}</button>`
     );
   });
 

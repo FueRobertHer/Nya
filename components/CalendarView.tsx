@@ -265,7 +265,7 @@ export default function CalendarView({
       {badge && <NoticeBadge tone={badge} />}
 
       <div className="cal-head">
-        <button type="button" className="secondary icon-btn" onClick={() => go(-1)} aria-disabled={month <= first} aria-label="Previous month">
+        <button type="button" className="icon-btn" onClick={() => go(-1)} aria-disabled={month <= first} aria-label="Previous month">
           {chevron(LEFT)}
         </button>
         <div className="cal-title">
@@ -284,7 +284,7 @@ export default function CalendarView({
             </button>
           )}
         </div>
-        <button type="button" className="secondary icon-btn" onClick={() => go(1)} aria-disabled={month >= last} aria-label="Next month">
+        <button type="button" className="icon-btn" onClick={() => go(1)} aria-disabled={month >= last} aria-label="Next month">
           {chevron(RIGHT)}
         </button>
       </div>

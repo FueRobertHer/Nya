@@ -30,6 +30,7 @@ import { ReportView } from './ReportView';
 import RunwayReport from './RunwayReport';
 import YearOverYearReport from './YearOverYearReport';
 import { Sheet } from './Sheet';
+import { Segmented } from './Segmented';
 import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
 import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
@@ -48,6 +49,10 @@ function browserZone(): string {
 
 /** The reports the page offers, as the address names them. */
 export type ReportChoice = 'accountant' | 'runway' | 'year-over-year';
+/** Which report shows: tabs over the one panel the report is drawn in. */
+const reportTabId = (c: ReportChoice) => `report-tab-${c}`;
+const REPORT_PANEL = 'report-panel';
+
 const CHOICES: { choice: ReportChoice; label: string }[] = [
   { choice: 'accountant', label: 'For your accountant' },
   { choice: 'runway', label: 'Runway' },
@@ -248,113 +253,119 @@ export default function ReportsPage() {
           missing. Print one, or save it as a PDF.
         </p>
         {which && (
-          <div className="chart-ranges report-choice" role="group" aria-label="Which report">
-            {CHOICES.map((c) => (
-              <button key={c.choice} className="chart-range" aria-pressed={which === c.choice} onClick={() => choose(c.choice)}>
-                {c.label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            className="report-choice"
+            label="Which report"
+            value={which}
+            onChange={choose}
+            options={CHOICES.map((c) => [c.choice, c.label] as const)}
+            tabs={{ id: reportTabId, panel: REPORT_PANEL }}
+          />
         )}
       </div>
 
-      {which === 'runway' && <RunwayReport />}
-      {which === 'year-over-year' && <YearOverYearReport />}
+      {/* The report the tabs above show; a panel once they are there. */}
+      <div id={REPORT_PANEL} role={which ? 'tabpanel' : undefined} aria-labelledby={which ? reportTabId(which) : undefined}>
+        {which === 'runway' && <RunwayReport />}
+        {which === 'year-over-year' && <YearOverYearReport />}
 
-      {form && which === 'accountant' && (
-        <div className="card no-print report-controls">
-          <div className="button-pair report-kind" role="group" aria-label="Kind of report">
-            <button className={form.kind === 'year' ? '' : 'secondary'} aria-pressed={form.kind === 'year'} onClick={() => make({ kind: 'year', currency: null })}>
-              Tax year
-            </button>
-            <button className={form.kind === 'range' ? '' : 'secondary'} aria-pressed={form.kind === 'range'} onClick={() => make({ kind: 'range', currency: null })}>
-              Date range
-            </button>
-          </div>
-          {form.kind === 'year' ? (
-            <label className="field">
-              Calendar year
-              <select value={form.year} onChange={(e) => make({ year: Number(e.target.value), currency: null })}>
-                {years.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                    {y === thisYear ? ' (so far)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <div className="report-dates">
+        {form && which === 'accountant' && (
+          <div className="card no-print report-controls">
+            <Segmented
+              className="report-kind"
+              label="Kind of report"
+              value={form.kind}
+              onChange={(kind) => make({ kind, currency: null })}
+              options={[
+                ['year', 'Tax year'],
+                ['range', 'Date range'],
+              ]}
+            />
+            {form.kind === 'year' ? (
               <label className="field">
-                From
-                <input type="date" min={EARLIEST_REPORT_DAY} max={today} value={form.start} onChange={(e) => change({ start: e.target.value })} />
+                Calendar year
+                <select value={form.year} onChange={(e) => make({ year: Number(e.target.value), currency: null })}>
+                  {years.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                      {y === thisYear ? ' (so far)' : ''}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <label className="field">
-                To
-                <input type="date" min={EARLIEST_REPORT_DAY} max={today} value={form.end} onChange={(e) => change({ end: e.target.value })} />
-              </label>
-              <button onClick={() => make({ currency: null })} disabled={loading}>
-                Make report
-              </button>
-            </div>
-          )}
-          {report && (report.currencies.length > 1 || (!!report.home && report.currencies.some((c) => c.currency !== report.home))) && (
-            <label className="field">
-              Currency
-              <select value={form.currency ?? report.currency ?? ''} onChange={(e) => make({ currency: e.target.value })}>
-                {/* With a home currency: it first, then the period's, any of
-                    them converted into (lib/report/build.ts). */}
-                {report.home && !report.currencies.some((c) => c.currency === report.home) && (
-                  <option value={report.home}>{report.home} (your home currency)</option>
-                )}
-                {report.currencies.map((c) => (
-                  <option key={c.currency} value={c.currency}>
-                    {c.currency} ({c.transactions} transaction{c.transactions === 1 ? '' : 's'}){c.currency === report.home ? ', your home currency' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {error && (
-            <div className="error" role="alert">
-              {error}
-            </div>
-          )}
-          <div className="action-row report-actions">
-            <button className="secondary" onClick={() => window.print()} disabled={!report || loading}>
-              Print or save as PDF
-            </button>
-            {report && !loading ? (
-              <a className="report-link-button" href={`/api/reports?${csvQuery(report)}`} download>
-                Download as CSV
-              </a>
             ) : (
-              <button className="secondary" disabled>
-                Download as CSV
-              </button>
+              <div className="report-dates">
+                <label className="field">
+                  From
+                  <input type="date" min={EARLIEST_REPORT_DAY} max={today} value={form.start} onChange={(e) => change({ start: e.target.value })} />
+                </label>
+                <label className="field">
+                  To
+                  <input type="date" min={EARLIEST_REPORT_DAY} max={today} value={form.end} onChange={(e) => change({ end: e.target.value })} />
+                </label>
+                <button onClick={() => make({ currency: null })} disabled={loading}>
+                  Make report
+                </button>
+              </div>
             )}
-            <button className="secondary" onClick={() => setMarking(true)} disabled={!report || loading}>
-              Mark categories
-            </button>
-            {stoppedCount > 0 && (
-              <button className="secondary" onClick={() => setStoppedOpen(true)}>
-                Accounts you stopped tracking ({stoppedCount})
-              </button>
+            {report && (report.currencies.length > 1 || (!!report.home && report.currencies.some((c) => c.currency !== report.home))) && (
+              <label className="field">
+                Currency
+                <select value={form.currency ?? report.currency ?? ''} onChange={(e) => make({ currency: e.target.value })}>
+                  {/* With a home currency: it first, then the period's, any of
+                      them converted into (lib/report/build.ts). */}
+                  {report.home && !report.currencies.some((c) => c.currency === report.home) && (
+                    <option value={report.home}>{report.home} (your home currency)</option>
+                  )}
+                  {report.currencies.map((c) => (
+                    <option key={c.currency} value={c.currency}>
+                      {c.currency} ({c.transactions} transaction{c.transactions === 1 ? '' : 's'}){c.currency === report.home ? ', your home currency' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
+            {error && (
+              <div className="error" role="alert">
+                {error}
+              </div>
+            )}
+            <div className="action-row report-actions">
+              <button className="secondary" onClick={() => window.print()} disabled={!report || loading}>
+                Print or save as PDF
+              </button>
+              {report && !loading ? (
+                <a className="report-link-button" href={`/api/reports?${csvQuery(report)}`} download>
+                  Download as CSV
+                </a>
+              ) : (
+                <button className="secondary" disabled>
+                  Download as CSV
+                </button>
+              )}
+              <button className="secondary" onClick={() => setMarking(true)} disabled={!report || loading}>
+                Mark categories
+              </button>
+              {stoppedCount > 0 && (
+                <button className="secondary" onClick={() => setStoppedOpen(true)}>
+                  Accounts you stopped tracking ({stoppedCount})
+                </button>
+              )}
+            </div>
+            <p className="panel-note">
+              To save a PDF, choose Save as PDF in the print window. Days and times are read in {zone}. The report reads what Nya has stored, so open Nya first to
+              bring your connections up to date.
+            </p>
           </div>
-          <p className="panel-note">
-            To save a PDF, choose Save as PDF in the print window. Days and times are read in {zone}. The report reads what Nya has stored, so open Nya first to
-            bring your connections up to date.
-          </p>
-        </div>
-      )}
+        )}
 
-      {which === 'accountant' && loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
-      {which === 'accountant' && report && (
-        <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
-          <ReportView report={report} />
-        </div>
-      )}
+        {which === 'accountant' && loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
+        {which === 'accountant' && report && (
+          <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
+            <ReportView report={report} />
+          </div>
+        )}
+      </div>
 
       {stopped && (
         <Sheet open={stoppedOpen} title="Accounts you stopped tracking" onClose={() => setStoppedOpen(false)}>
