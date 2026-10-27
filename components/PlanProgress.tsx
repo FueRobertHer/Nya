@@ -274,7 +274,9 @@ function Compared({ saved, answer, money, nameOf }: { saved: SavedPlan; answer: 
       {l.compared && (
         <div className="txn-detail">
           <div className="txn-detail-row">
-            <span>Invested on {l.compared.day}</span>
+            <span>
+              <Masked>{`Invested on ${l.compared.day}`}</Masked>
+            </span>
             <span className="money">
               <Masked>{l.compared.actual}</Masked>
             </span>
