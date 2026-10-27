@@ -39,7 +39,9 @@ describe('the card', () => {
   test('a heading, the total, and the foot row', () => {
     const html = render();
     expect(html).toContain('<h2 id="net-worth-title" class="total-label" tabindex="-1">Net worth</h2>');
-    expect(html).toContain('$125,000.50');
+    // Said whole, drawn with its cents apart (look and feel, step 3).
+    expect(html).toContain('<span class="visually-hidden">$125,000.50</span>');
+    expect(html).toContain('<span aria-hidden="true">$125,000<span class="cents">.50</span></span>');
     expect(text(html)).toContain('Updated');
     expect(html).toContain('>Chart notes</button>');
     expect(html).not.toContain('History paused');
@@ -75,6 +77,9 @@ describe('the card', () => {
       const html = render();
       expect(html).not.toContain('125,000');
       expect(html).toContain(MASK);
+      // No cents to draw apart, and the mask is said as "hidden".
+      expect(html).not.toContain('class="cents"');
+      expect(text(html)).toContain('hidden');
     } finally {
       setAmountsHidden(false);
       if (none) delete g.window;

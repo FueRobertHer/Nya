@@ -2,10 +2,22 @@ import type { Metadata, Viewport } from 'next';
 import { connection } from 'next/server';
 import { cookies } from 'next/headers';
 import { ClerkProvider } from '@clerk/nextjs';
+import { Red_Hat_Display, Red_Hat_Text } from 'next/font/google';
 import './globals.css';
 import { clerkEnabled } from '@/lib/auth-mode';
 import { CLERK_APPEARANCE, THEME_COOKIE, colorScheme, statusBarStyle, themeChoice, themeColors } from '@/lib/theme';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
+
+// Nya's type (look and feel, step 3): Red Hat Text for reading, Red Hat
+// Display for titles and figures (--font-ui and --font-display in
+// app/globals.css). next/font fetches them when the app is built and serves
+// them from the app itself, so no page asks Google for anything. Latin is
+// preloaded; other scripts load from their own files when a page uses them.
+// No italic file: next/font would preload it on every page for the two
+// places that slant (an excluded tag, an estimated day), which the browser
+// slants itself.
+const text = Red_Hat_Text({ subsets: ['latin'], display: 'swap', variable: '--font-red-hat-text' });
+const display = Red_Hat_Display({ subsets: ['latin'], display: 'swap', variable: '--font-red-hat-display' });
 
 // Next takes metadata or generateMetadata, not both: this is the part that
 // doesn't depend on the theme.
@@ -53,7 +65,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // (lib/security-headers.ts).
   await connection();
   const page = (
-    <html lang="en" data-theme={(await chosenTheme()) ?? undefined}>
+    <html lang="en" className={`${text.variable} ${display.variable}`} data-theme={(await chosenTheme()) ?? undefined}>
       <body>
         {children}
         <ServiceWorkerRegistration />

@@ -10,10 +10,39 @@
 
 import type { ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
-import { fmt, fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
+import { fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
 import { CAUTION } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
+import { formatMoney, moneyRuns } from '@/lib/format';
 import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
+
+/** The total, its cents at half size (look and feel, step 3). Drawn in runs
+ *  a screen reader would stop between, so it hears the whole figure apart;
+ *  while amounts are hidden there are no cents, and Masked says "hidden". */
+function HeroFigure({ worth, currency }: { worth: number; currency: string | null }) {
+  // The same text either way: moneyRuns joins to formatMoney's.
+  const whole = formatMoney(worth, currency);
+  const runs = moneyRuns(worth, currency);
+  if (!runs.some((r) => r.cents)) return <Masked>{whole}</Masked>;
+  return (
+    <>
+      <span aria-hidden="true">
+        {runs.map((r, i) =>
+          r.cents ? (
+            <span key={i} className="cents">
+              <Masked>{r.text}</Masked>
+            </span>
+          ) : (
+            <Masked key={i}>{r.text}</Masked>
+          )
+        )}
+      </span>
+      <span className="visually-hidden">
+        <Masked>{whole}</Masked>
+      </span>
+    </>
+  );
+}
 
 /** What a nightly job failing says, to everyone. What to do is only for the
  *  deployment's admin, who alone can (design-system.md "Who an instruction
@@ -89,7 +118,7 @@ export default function NetWorthCard({
           Net worth
         </h2>
         <div className={`total-value${worth < 0 ? ' negative' : ''}`}>
-          <Masked>{fmt(worth, currency)}</Masked>
+          <HeroFigure worth={worth} currency={currency} />
         </div>
         {delta}
       </div>

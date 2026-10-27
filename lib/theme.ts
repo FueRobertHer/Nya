@@ -12,8 +12,6 @@ export const LIGHT = {
   canvas: '#f6f7f9',
 } as const;
 
-export const FONT_UI = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-
 /** A theme chosen in Settings > Preferences. None follows the system: dark
  *  when it is dark or says nothing, light when it is light (the CSS decides). */
 export type ThemeChoice = 'light' | 'dark';
@@ -76,7 +74,8 @@ export const CLERK_APPEARANCE = {
     colorModalBackdrop: 'var(--scrim)',
     // --r-sm, Nya's own inputs and small buttons (look and feel, step 2c).
     borderRadius: '8px',
-    fontFamily: FONT_UI,
+    // Red Hat Text, as the app's own (app/layout.tsx loads it).
+    fontFamily: 'var(--font-ui)',
   },
   elements: {
     // Clerk takes one color for its buttons and its links (colorPrimary), so

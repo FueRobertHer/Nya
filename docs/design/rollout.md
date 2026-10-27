@@ -764,6 +764,25 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 - Clerk's account window stays Clerk's own, centered.
 - The avatar's initials, in place of Clerk's gradient picture, are a setting in Clerk's dashboard (Customization, Avatars), not code.
 
+### Step 3: type
+
+**Built:**
+
+- **Red Hat Text and Display** through `next/font/google` in `app/layout.tsx`: fetched when the app is built, served from the app, latin preloaded for both (Display draws Home's total). No italic file, which next/font would preload on every page: the two places that slant (an excluded tag, an estimated day) take the browser's slant. `--font-ui` and the new `--font-display` name the family after next/font's variable, so `tokens.css` holds the same lines and a static check page still gets Red Hat.
+- **Display** for titles and figures, in one rule beside the tokens (design-system.md, Type); the guard holds it there. A heading drawn as a label keeps Text.
+- **Clerk** takes `var(--font-ui)`; `FONT_UI` in `lib/theme.ts` is gone, and the guard checks Clerk's font is the token.
+- **The hero's cents** at half size in `--text-2` (`moneyRuns` in `lib/format.ts`; `fullMoney` is now its runs joined, so the two can't differ). The amount scans know `moneyRuns` as a formatter.
+- **Measured at 320px** against main, on the Alex demo account. Both families have true tabular figures. The hero, the chart's ranges, the month stepper (8px to spare on both), the period chips, Budgets and the Plan fit as before. Two places changed:
+  - **In / Out / Net** overflowed its card on main already (by 8px) and by 26px in Display. Its figures are now `clamp(15px, 4.6vw, 17px)`, 17px from a 370px screen, and the row wraps its last figure under rather than past the edge.
+  - **A badge in a row's second line** (an account's "$12,461.24 uninvested") was cut off at the edge on main and more so now. It wraps inside the row instead.
+
+**Kept narrow:**
+
+- The type scale is unchanged: it already matched the artifact.
+- The print footer's page boxes keep the system stack, which they spell out (next/font's family names are hashed).
+- The hero stays in its card until step 5.
+- An institution's name beside its total can take a line more at 320px (Red Hat's figures are wider): it wraps, nothing is cut.
+
 ## The contrast check
 
 `test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.

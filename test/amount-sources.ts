@@ -458,7 +458,7 @@ export function clientModules(root: string): string[] {
 
 /** The formatter calls that write an amount the way lib/format.ts does, with
  *  the switch: a call to one of these hides it. */
-export const FORMATTERS = ['formatMoney', 'signedMoney', 'compactMoney', 'hiddenMoney', 'hiddenFigure', 'hideAmountsIn', 'hideFiguresIn'];
+export const FORMATTERS = ['formatMoney', 'moneyRuns', 'signedMoney', 'compactMoney', 'hiddenMoney', 'hiddenFigure', 'hideAmountsIn', 'hideFiguresIn'];
 
 /** What writes an amount's own figures for a form's field to hold, whatever
  *  the switch says (lib/format.ts fieldAmount): never text drawn on a page,
