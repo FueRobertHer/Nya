@@ -505,6 +505,18 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   padding: 0 var(--sp-5) var(--sp-3);
 }
 
+/* The Plan's What if… card: its scenarios' rows, under the chips, run to
+   the card's foot, as Your figures' do. */
+.plan-what-if:has(> .list-rows) {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.plan-what-if > .list-rows {
+  margin-top: var(--sp-3);
+  margin-bottom: 0;
+}
+
 /* This month's FI line arrives after Home paints, or not at all: until a
    card has a row, it isn't there. */
 .this-month:not(:has(li)) {
