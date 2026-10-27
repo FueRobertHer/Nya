@@ -224,7 +224,7 @@ What a screen shows while what fills it is on its way: the screen itself, with p
 
 ### Header and tab bar
 
-- **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention.
+- **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention. The brand's logo is the app icon (`app/icon.svg`, a gold face on a navy disc) in dark, and its light version (`public/icons/icon-light.svg`, a white face on a gold disc in a navy ring, the same shapes) in light and in print, so a light header carries no dark disc. `BrandLogo` (`components/Brand.tsx`) draws both, and `app/globals.css` shows one by the theme's own selectors.
 - **Tab bar**: five tabs, icons with `--fs-1` labels (12px, up from 11px), `--glass` with a blur. The current tab (`aria-current="page"`) has a 3px `--accent` bar over it and a bold label, not only its color (`--accent` is about 1.1:1 from `--text-2` in dark).
 
 ## Status and honesty

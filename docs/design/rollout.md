@@ -633,7 +633,7 @@ Ship each kind's shape once: an older release reads a scenario with a kind it do
 
 **Kept narrow:**
 
-- No light app icon or install splash: the manifest stays dark.
+- No light app icon or install splash: the manifest stays dark. (The header's logo has had a light version since, `public/icons/icon-light.svg`, which `BrandLogo` shows whenever the theme is light; the favicon and the installed icon are still the dark one.)
 - With System, an iOS home-screen app keeps the white status bar text. iOS has no setting that follows the device's mode, so on a light device the clock reads poorly until you choose Light, which sends the light bar. This needs checking on a device.
 - No sync of the choice across devices or open tabs.
 
