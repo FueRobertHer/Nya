@@ -3,7 +3,7 @@ import { DEFAULT_PLAN, projectFrom, type FirePlan, type Measured } from '@/lib/f
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { planPath, type PlanPath } from '@/lib/fire/path';
 import { hasWalk, savingsIn, walkBalanceAt, walkPath, type LifeEvent, type WalkChanges } from '@/lib/fire/events';
-import { projectBalance } from '@/lib/fire/fi';
+import { projectBalance, projectionShort } from '@/lib/fire/fi';
 import { seededRandom } from '@/lib/fire/random';
 
 // One plan's path (lib/fire/path.ts): invested assets year by year from
@@ -70,6 +70,26 @@ describe('by hand', () => {
     expect(less.short).toEqual({ year: 2, have: 753_750, need: 900_000, kind: 'cost' });
   });
 
+  test('a windfall that reaches the FI number on the day it comes: FI that year, and the point says what is in hand then (8d, with 8b’s chart)', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
+    const f = figures(plan({ age: 40, targetAge: 45, spending: 40_000, assets: 500_000, savings: 50_000 }), none, [gift]);
+    expect(f.view.fiNumber).toBe(1_000_000);
+    expect(f.view.yearsToFi).toBe(2);
+    expect(f.view.fiAge).toBe(42);
+    const p = path(f);
+    // The point is the balance before the windfall, as before a cost; what
+    // is in hand once it is in is at the FI number or over it.
+    expect(p.points[2]).toEqual({ age: 42, balance: 653_750, inHand: 1_053_750 });
+    expect(p.points.filter((q) => q.inHand !== undefined).length).toBe(1);
+    expect(balances(p)[5]).toBe(f.view.atTargetAge as number);
+    // With a home the same year, in hand is after it; with one it can't pay, none.
+    const both = path(figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [gift, home(1_000_000)]));
+    expect(both.points[2].inHand).toBeCloseTo(53_750, 6);
+    const short = path(figures(plan({ age: 40, targetAge: 45, assets: 500_000, savings: 50_000 }), none, [gift, home(2_000_000)]));
+    expect(short.points[2]).toEqual({ age: 42, balance: 653_750 });
+    expect(short.short?.kind).toBe('cost');
+  });
+
   test('savings below zero in the walk: it stops the year that would take it below zero, never a negative balance', () => {
     // Spending $30,000 more a year for good from today, saving nothing: the
     // walk saves -$30,000 a year at no growth.
@@ -82,12 +102,30 @@ describe('by hand', () => {
     expect(f.short).toEqual(p.short);
   });
 
-  test('with no events, savings below zero take the closed form below zero, as atTargetAge already says (for 8b to decide how to draw)', () => {
+  test('with no events, savings below zero: the projection stops the year that would take it below zero, as the walk does, and there is no balance at the stop age (rollout 8b)', () => {
     const f = figures(plan({ age: 40, targetAge: 55, assets: 100_000, savings: -10_000 }), none);
     const p = path(f);
-    expect(p.short).toBeNull();
-    expect(balances(p)[15]).toBe(f.view.atTargetAge as number);
-    expect(balances(p)[15]).toBeLessThan(0);
+    // $100,000 at 5%, taking $10,000 a year: $5,000 more than it earns,
+    // growing; below zero in the 15th year.
+    expect(p.points).toHaveLength(15);
+    expect(p.short).toEqual({ year: 14, have: projectBalance(100_000, -10_000, 0.05, 14), need: 10_000, kind: 'savings' });
+    expect(projectBalance(100_000, -10_000, 0.05, 15)).toBeLessThan(0);
+    expect(f.view.atTargetAge).toBeNull();
+  });
+
+  test('a plan started from its FI number at a stop age the projection never gets to says so, never a balance below zero (review of 8b)', () => {
+    const f = figures(plan({ age: 40, targetAge: 55, spending: 40_000, assets: 100_000, savings: -10_000 }), none);
+    expect(f.startsWith?.projected).toBeNull();
+    expect(f.startsWith?.short).toEqual({ year: 14, have: projectBalance(100_000, -10_000, 0.05, 14), need: 10_000, kind: 'savings' });
+    expect(f.startsWith?.more).toBe(true);
+  });
+
+  test('invested assets below zero: nothing grows from there, even with savings that would climb out', () => {
+    const f = figures(plan({ age: 40, targetAge: 70 }), { spending: null, savings: 6_000, assets: -100_000 });
+    const p = path(f);
+    expect(p.points).toEqual([{ age: 40, balance: -100_000 }]);
+    expect(p.short).toEqual({ year: 0, have: -100_000, need: -6_000, kind: 'savings' });
+    expect(f.view.atTargetAge).toBeNull();
   });
 
   test('already at FI with savings below zero for good: the FI date is today, and the path still runs out before the stop age', () => {
@@ -179,7 +217,7 @@ function generate(seed: number) {
   const m: Measured = {
     spending: maybe(0.7, () => int(10, 120) * 1000),
     savings: maybe(0.7, () => int(-20, 80) * 1000),
-    assets: maybe(0.7, () => int(0, 1500) * 1000),
+    assets: maybe(0.7, () => (r() < 0.05 ? -int(1, 50) * 1000 : int(0, 1500) * 1000)),
     unmeasured: off,
   };
   const at = () => (age ?? 40) + int(-3, 30);
@@ -241,7 +279,7 @@ describe('generated plans', () => {
       const p = planPath(f);
       expect(p === null).toBe(from === null);
       if (!p || !from) continue;
-      expect(p.points[0]).toEqual({ age: f.plan.age as number, balance: from.assets });
+      expect([p.points[0].age, p.points[0].balance]).toEqual([f.plan.age as number, from.assets]);
       p.points.forEach((x, k) => expect(x.age).toBe((f.plan.age as number) + k));
       expect(p.stopAge).toBe(f.plan.targetAge as number);
       expect(p.fiNumber).toBe(f.view.fiNumber);
@@ -281,9 +319,10 @@ describe('generated plans', () => {
       const g = f.plan.realReturn;
       const b = balances(p);
       for (let k = 0; k < b.length; k++) {
-        expect(b[k]).toBeGreaterThanOrEqual(0);
+        // Today's assets are what they are; nothing after them is below zero.
+        if (k > 0) expect(b[k]).toBeGreaterThanOrEqual(0);
         if (k + 1 < b.length) {
-          expect(costIn(w, k)).toBeLessThanOrEqual(b[k] + inAt(w, k) + 1e-9);
+          if (costIn(w, k) > 0) expect(costIn(w, k)).toBeLessThanOrEqual(b[k] + inAt(w, k) + 1e-9);
           expect(b[k + 1]).toBe((b[k] + inAt(w, k) - costIn(w, k)) * (1 + g) + savingsIn(w, from.savings, k));
         }
       }
@@ -298,6 +337,23 @@ describe('generated plans', () => {
         expect(b[60]).toBe(at.balance);
       }
     }
+  });
+
+  test('a point says what is in hand exactly in a year with money in whose costs are paid: the balance, plus the money in, less the costs, in the walk’s order', () => {
+    let checked = 0;
+    for (const { f } of cases) {
+      const p = planPath(f, 60);
+      if (!p) continue;
+      const w = p.fromWalk ? (f.events as NonNullable<PlanFigures['events']>).walk : null;
+      p.points.forEach((q, k) => {
+        const paid = w !== null && !(costIn(w, k) > 0 && costIn(w, k) > q.balance + inAt(w, k) + 1e-9);
+        if (w !== null && inAt(w, k) > 0 && paid) {
+          checked++;
+          expect(q.inHand).toBe(q.balance + inAt(w, k) - costIn(w, k));
+        } else expect(q.inHand).toBeUndefined();
+      });
+    }
+    expect(checked).toBeGreaterThan(30);
   });
 
   test('the only money in is the windfalls’, each once, at its own age from today', () => {
@@ -324,6 +380,7 @@ describe('generated plans', () => {
           expect(at).toEqual({ balance });
         } else {
           expect(balance).toBe(projectBalance(from.assets, from.savings, g, k));
+          if (k > 0) expect(balance).toBeGreaterThanOrEqual(0);
           if (k > 0) {
             const step = p.points[k - 1].balance * (1 + g) + from.savings;
             expect(Math.abs(step - balance)).toBeLessThanOrEqual(1e-9 * Math.max(1, Math.abs(balance)));
@@ -367,7 +424,12 @@ describe('generated plans', () => {
       expect(p.short).toBeNull();
       if (Number.isInteger(y)) {
         expect(inHand(y)).toBeGreaterThanOrEqual(fi * (1 - 1e-9));
-        if (b[y] < fi * (1 - 1e-9)) onTheDay++;
+        if (b[y] < fi * (1 - 1e-9)) {
+          // Reached the day money comes in: the point's in hand says so, for
+          // the chart to step up to the FI number at the FI age.
+          onTheDay++;
+          expect(p.points[y].inHand).toBe(inHand(y));
+        }
       } else {
         expect(b[Math.ceil(y)]).toBeGreaterThanOrEqual(fi * (1 - 1e-9));
         expect(inHand(Math.floor(y))).toBeLessThan(fi * (1 + 1e-9));
@@ -416,5 +478,45 @@ describe('walkPath', () => {
       const at = walkBalanceAt(150_000, 30_000, 0.04, w, years);
       expect(at).toEqual(p.short ? { short: p.short } : { balance: p.balances[years] });
     }
+  });
+});
+
+describe('projectionShort', () => {
+  // A year-by-year loop: the first year end below zero.
+  const byYear = (a: number, c: number, g: number, years: number) => {
+    for (let k = 0; k < years; k++) if (projectBalance(a, c, g, k + 1) < 0) return { year: k, have: projectBalance(a, c, g, k), need: -c, kind: 'savings' as const };
+    return null;
+  };
+  test('is the first year end below zero, as a year-by-year loop finds it, for any start, savings, growth and span', () => {
+    const r = seededRandom(42);
+    let found = 0;
+    for (let i = 0; i < 5000; i++) {
+      const a = Math.round((r() * 2 - 0.1) * 1_000_000);
+      const c = Math.round((r() * 2 - 1) * 80_000);
+      const g = [-0.05, 0, 0.03, 0.05, 0.15, (r() - 0.3) * 0.2][Math.floor(r() * 6)];
+      const years = Math.floor(r() * 85);
+      const want = byYear(a, c, g, years);
+      if (want) found++;
+      expect(projectionShort(a, c, g, years)).toEqual(want);
+    }
+    expect(found).toBeGreaterThan(500);
+  });
+  test('a balance run down to exactly zero is decided by the figure shown: never a point or a balance at the stop age below zero (review of 8b)', () => {
+    for (const [a, c, g, n] of [
+      [100_000, -105_000, 0.05, 1],
+      [41_000, -22_050, 0.05, 2],
+    ]) {
+      expect(projectionShort(a, c, g, n)).toEqual(byYear(a, c, g, n));
+      const f = figures(plan({ age: 40, targetAge: 40 + n, assets: a, savings: c, realReturn: g }), none);
+      for (const q of path(f).points.slice(1)) expect(q.balance).toBeGreaterThanOrEqual(0);
+      if (f.view.atTargetAge !== null) expect(f.view.atTargetAge).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('is cheap for any span a stored plan can hold', () => {
+    expect(projectionShort(100_000, -10_000, 0.05, Infinity)).toEqual(byYear(100_000, -10_000, 0.05, 100));
+    expect(projectionShort(100_000, 10_000, 0.05, Infinity)).toBeNull();
+    expect(projectionShort(100_000, -10_000, 0.05, 1e9)).toEqual({ year: 14, have: projectBalance(100_000, -10_000, 0.05, 14), need: 10_000, kind: 'savings' });
+    expect(projectionShort(100_000, 10_000, 0.05, 1e9)).toBeNull();
   });
 });

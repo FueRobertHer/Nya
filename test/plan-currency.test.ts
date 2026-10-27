@@ -512,11 +512,12 @@ describe('Home’s FI card, rendered, never from a figure not measured (review r
     const html = await home(plan({ age: 40, targetAge: 55 }), accounts, rows, null);
     expect(html).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, EUR (1 account in USD).');
     expect(html).toContain('Years to FI aren’t worked out: your invested assets aren’t measured (above), and a figure that isn’t measured is never counted as zero.');
-    expect(html).not.toMatch(/FI in about [\d.]+ years?/);
+    expect(html).not.toMatch(/FI (in about [\d.]+ years?|around age \d+)/);
     // Weighed by amount, measured, and worked out.
     const weighed = await home(plan({ age: 40, targetAge: 55 }), accounts, rows, null, ecbTable({ home: null }).latest!.rates);
     expect(weighed).not.toContain('Not measured');
-    expect(weighed).toMatch(/FI in about [\d.]+ years?/);
+    // The Plan's answer, against the stop age (rollout phase 8b).
+    expect(weighed).toMatch(/FI around age \d+, \d+ years? before you stop at 55/);
   });
 
   test('spending typed and the year not measured: the savings rate’s absence is said, in the year’s own words', async () => {
@@ -631,7 +632,8 @@ describe('the year weighed on each side, money out apart from money in (review r
     const flows = trailingFlows(mirror, '2026-09-14', { currency: 'USD' })!;
     const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, mirror.length), rates };
     const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(DEFAULT_PLAN, inputs, 'USD'), plan: DEFAULT_PLAN, saved: true, repaired: false, inputs, onOpenPlan: () => {} })).replace(/&#x27;|&#39;/g, "'");
-    expect(html).toContain(`<span class="list-row-sub">FI number $${Math.round(flows.spending / 0.04).toLocaleString('en-US')} · `);
+    // How far is the title (years aren't worked out), and the FI number is in the line under it.
+    expect(html).toContain(`of $${Math.round(flows.spending / 0.04).toLocaleString('en-US')} invested</span>`);
     expect(html).toContain('The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year).');
     expect(html).toContain('Years to FI aren’t worked out: your savings aren’t measured (above), and a figure that isn’t measured is never counted as zero.');
     expect(html).not.toMatch(/FI in /);

@@ -31,6 +31,7 @@ import { CAR as UPCOMING_CAR, REFUND as UPCOMING_REFUND, SCENES as UPCOMING_SCEN
 import { IncomePoolHeader } from '@/components/IncomePool';
 import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
+import PlanPathChart from '@/components/PlanPathChart';
 import { ScenariosSheet } from '@/components/PlanScenarios';
 import { LifeEventsCard } from '@/components/PlanEvents';
 import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
@@ -1124,6 +1125,22 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   ),
   'Plan: the simulation’s fan chart': () => (
     <PlanFanChart bands={{ p10: [100_000, 80_000, 0], p25: [100_000, 90_000, 50_000], p50: [100_000, 105_000, 110_000], p75: [100_000, 120_000, 150_000], p90: [100_000, 140_000, 200_000] }} startAge={60} currency="USD" />
+  ),
+  // Your path's chart (rollout phase 8b): its summary and its table.
+  'Plan: Your path’s chart': () => (
+    <PlanPathChart
+      points={[
+        { age: 40, balance: 250_000 },
+        { age: 41, balance: 292_500 },
+        { age: 42, balance: 1_100_000 },
+      ]}
+      today={40}
+      stopAge={42}
+      fiNumber={1_000_000}
+      fiAge={41.8}
+      realReturn={0.05}
+      currency="USD"
+    />
   ),
   // Since rollout phase 6b the scenarios are listed and compared in a sheet
   // (the Plan's bar, which opens it, has no amounts, and is left to the
