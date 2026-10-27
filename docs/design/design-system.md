@@ -207,6 +207,8 @@ A small popover for an object's rare actions (the institution ⋯ menu, a transa
 
 Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge (moved in when that would take it past the screen's edge), below it or above it when there is no room below. Its ⋯ is a bare icon button, as the header's are. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
 
+Clerk's account menu (the avatar's) takes the same row metrics through `CLERK_APPEARANCE` in `lib/theme.ts` (look and feel step 2c), and Clerk's corners are `--r-sm`.
+
 ### Empty state
 
 A title, one line of helper text, and one primary action. Replaces the empty-note paragraphs that explain at length ("No recurring charges detected yet; they show up once...").

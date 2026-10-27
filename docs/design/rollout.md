@@ -692,7 +692,7 @@ A look and feel review (2026-10-26) found that Nya read like a starter template,
 
 ### Step 2a: edges off controls
 
-Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activity and Budgets one month control and one month; 2c puts Clerk's account screens in a Nya sheet, after a prototype.
+Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activity and Budgets one month control and one month; 2c puts Clerk's account screens in a Nya sheet, after a prototype (which failed its gate, so 2c shipped the fallback: below).
 
 **Built:**
 
@@ -742,6 +742,27 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 - The calendar on Upcoming keeps its own month: it runs a year ahead.
 - Each Activity-to-Budgets visit on a past month reads that month from the server, as picking it on Budgets does.
 - The two tabs can name different months for one shared month (Activity's nearest with transactions, Budgets' this month for a later one).
+
+### Step 2c: Clerk's account window
+
+2c was to put Clerk's account screens in a Nya sheet, after a throwaway prototype. The prototype (Clerk 7.9.7, the Alex demo account on the dev server) failed its gate, so 2c ships the fallback.
+
+**What the prototype found:**
+
+- **The layout:** Clerk lays its profile out by the window's width, not the space it is given. In the 440px panel on a desktop window it draws its 880px layout, its menu of pages beside the page, and overflows. Narrowing it took about ten overrides, some into wrappers with only internal class names, in a script that loads from Clerk's CDN and can change without Nya changing.
+- **On a phone** its narrow layout fits, but its own page switcher is a second header under the sheet's.
+- **What worked:** hash routing kept the address; Clerk's popovers sit above the sheet and close on Escape without closing it. Clerk adds its own Manage account back to the menu when it is left out, which one `appearance` rule hides.
+
+**Built:**
+
+- **Manage account in Settings > Account** (`AccountSettings`, the section's card): it opens Clerk's account window with Nya's Data & privacy page (`ProfileWindow`: `openUserProfile` with a custom page drawn through a portal from Nya's own tree, so `DeleteAccount` keeps Clerk's context). Before, the section only pointed at the avatar menu, since `openUserProfile()` alone left the page out. Sign out stays the avatar menu's alone.
+- **Clerk's radius** is 8px (`--r-sm`), not 10px.
+- **The account menu's rows** take `.menu-item`'s metrics (44px, `--sp-2` by `--sp-3`, `--fs-3`), Clerk's own rows and those Nya adds alike.
+
+**Kept narrow:**
+
+- Clerk's account window stays Clerk's own, centered.
+- The avatar's initials, in place of Clerk's gradient picture, are a setting in Clerk's dashboard (Customization, Avatars), not code.
 
 ## The contrast check
 

@@ -1,6 +1,7 @@
 'use client';
 
 import ClerkAccount from './ClerkAccount';
+import AccountSettings from './AccountSettings';
 import { Brand } from './Brand';
 import { useRouter } from 'next/navigation';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
@@ -2061,33 +2062,10 @@ export default function Dashboard({
     {
       id: 'account',
       title: 'Account',
-      sub: clerk ? 'Your profile and signing out are in the account menu' : 'Sign out here, or on every device',
-      content: (
-        <div className="card stack">
-          {clerk ? (
-            // Only where things are: Sign out is the account menu's own, so
-            // it is not repeated here. No button to the account window
-            // either: Clerk's openUserProfile() would open it without the
-            // Data & privacy page, which only the menu's window carries.
-            <p className="helper">
-              Tap your picture or initial, at the top right. Manage account there has your profile, how you
-              sign in, your devices and deleting your account; Sign out is beside it.
-            </p>
-          ) : (
-            <>
-              <p className="helper">Sign out everywhere also signs out every other device.</p>
-              <div className="btn-row">
-                <button className="btn secondary" onClick={logout}>
-                  Sign out
-                </button>
-                <button className="btn secondary" onClick={signOutEverywhere}>
-                  Sign out everywhere
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      ),
+      sub: clerk ? 'Your profile, how you sign in, and deleting your account' : 'Sign out here, or on every device',
+      // Sign out is the account menu's own with Clerk, so the card says
+      // where it is, beside Manage account (components/AccountSettings.tsx).
+      content: <AccountSettings clerk={clerk} clearDevice={clearDevice} onSignOut={logout} onSignOutEverywhere={signOutEverywhere} />,
     },
   ];
 

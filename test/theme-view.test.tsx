@@ -1,4 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { installDom, click, FakeEvent, type FakeElement } from './mini-dom';
 import { CLERK_APPEARANCE, colorScheme, statusBarStyle, themeChoice, themeColors } from '@/lib/theme';
 
@@ -43,6 +45,17 @@ describe('what the layout sends for a choice (lib/theme.ts)', () => {
     expect(CLERK_APPEARANCE.variables.colorPrimary).toBe('var(--accent)');
     expect(CLERK_APPEARANCE.variables.colorPrimaryForeground).toBe('var(--on-fill)');
     expect(CLERK_APPEARANCE.elements.formButtonPrimary.backgroundColor).toBe('var(--accent-fill)');
+  });
+
+  // Look and feel step 2c: Clerk's corners and its account menu as Nya's own.
+  test("Clerk's corners are --r-sm, and its menu's rows, its own and Nya's, are .menu-item's", () => {
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8');
+    expect(CLERK_APPEARANCE.variables.borderRadius).toBe(css.match(/--r-sm:\s*([^;]+);/)![1].trim());
+    const menuItem = css.match(/^\.menu-item \{([^}]*)\}/m)![1];
+    const prop = (name: string) => menuItem.match(new RegExp(`^\\s*${name}:\\s*([^;]+);`, 'm'))![1].trim();
+    for (const row of [CLERK_APPEARANCE.elements.userButtonPopoverActionButton, CLERK_APPEARANCE.elements.userButtonPopoverCustomItemButton]) {
+      expect(row).toEqual({ minHeight: prop('min-height'), padding: prop('padding'), fontSize: prop('font-size') });
+    }
   });
 });
 
