@@ -637,6 +637,30 @@ Ship each kind's shape once: an older release reads a scenario with a kind it do
 - With System, an iOS home-screen app keeps the white status bar text. iOS has no setting that follows the device's mode, so on a light device the clock reads poorly until you choose Light, which sends the light bar. This needs checking on a device.
 - No sync of the choice across devices or open tabs.
 
+## After the rollout: controls and states without color
+
+An audit of the primitives against the design system found what the token check can't see: rules using a token too faint for what it marks, and states told only by color. Each fix is in how a token is used; no token's value changed.
+
+**Built:**
+
+- **Control edges at 3:1.** A plain field (the `:where(input, select, textarea)` rule, so every `.field` input), the invite link's box, `button.secondary` and `.btn.secondary`, `.chip` and the ⋯ button are edged in `--border-input` (3.6:1 or more on every surface), not `--border-strong` (about 1.4:1, which read as no edge). Only `.text-input` had it.
+- **Critical and caution told apart by shape.** In light, `--neg` and `--warn` are about 1.1:1 apart, and both notices drew the same triangle. A caution notice now has the clock that Needs attention's caution rows use (`CAUTION` in `components/ConnectionStatus.tsx`; `levelIcon()` where the level is decided at run time), and a critical notice has an edge in its own color. Every notice has a 1px edge, transparent unless critical, so the two stay the same size.
+- **The Plan's notices said in full.** Progress's (`components/PlanProgress.tsx`) and What if…'s error had no icon and no level for a screen reader; they are TotalCaveats' `Notice` now, with both.
+- **Selected states more than a color.** The selected segment has an inset `--border-input` edge and semibold label (its `--surface` is about 1.1:1 from the track). The current tab has a 3px `--accent` bar over it and a bold label (`--accent` is about 1.1:1 from `--text-2` in dark). A chip that is on has an `--accent` edge and leads with a check, drawn in CSS so no component changed.
+- **Cards have an edge.** `--surface` is about 1.07:1 from `--canvas` in both themes, so a card is edged in `--border-strong`, as the Color table always said, at `--r-lg`.
+- **The scales, where the base rules strayed:** a bare button's radius is `--r-md` (was 10px), a plain field's and `.text-input`'s `--r-sm` (10px), a sheet's corners `--r-lg` (20px), a card's `--r-lg` (14px).
+- **A sheet's title wraps** instead of being cut with an ellipsis: a scenario's name is up to 40 characters.
+- **Table headers** are `--fs-1` in sentence case, not 11px uppercase (the small-type baseline falls to 16).
+- **The guard** checks the rules above use what they must (`design guard: controls and states read without color`), and that no caution notice draws the critical triangle.
+
+**Kept narrow:**
+
+- `.link-btn` (84 uses in 24 files, about 15px tall) stays until each screen's actions move to `.btn.ghost`.
+- `button { width: 100% }` stays, as phase 2 left it.
+- Card padding stays `--sp-5` on phones: rows run to a card's edges by a `--sp-5` margin, so `--sp-4` would move with them.
+- Empty states keep `.empty-note`: a title and an action for each needs its own words.
+- The select chevron stays one gray in a data URI: it passes 3:1 on every surface in both themes.
+
 ## The contrast check
 
 `test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.

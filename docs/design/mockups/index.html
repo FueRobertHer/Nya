@@ -91,7 +91,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app h1.screen-title { font-size: 20px; font-weight: 700; margin: 4px 2px 0; }
 
 /* Components */
-.app .card { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.app .card { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .app .card.flush { padding: 4px 0; gap: 0; }
 .app .card-header { display: flex; align-items: center; gap: 8px; }
 .app .card.flush .card-header { padding: 8px 14px 4px; }
@@ -122,9 +122,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .badge.warn { background: var(--warn-tint); color: var(--warn); }
 .app .badge.neg { background: var(--neg-tint); color: var(--neg); }
 .app .badge.pos { background: var(--pos-tint); color: var(--pos); }
-.app .notice { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 8px 10px; border-radius: 10px; }
+.app .notice { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 8px 10px; border: 1px solid transparent; border-radius: 10px; }
 .app .notice svg { width: 15px; height: 15px; flex: none; margin-top: 2px; }
-.app .notice.crit { background: var(--neg-tint); color: var(--neg); }
+.app .notice.crit { background: var(--neg-tint); color: var(--neg); border-color: currentColor; }
 .app .notice.warn { background: var(--warn-tint); color: var(--warn); }
 .app .notice.info { background: var(--caveat-surface); color: var(--text-2); }
 .app .notice .act { margin-left: auto; font-weight: 600; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
@@ -138,10 +138,11 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .app .seg { display: flex; background: var(--elevated); border-radius: 10px; padding: 3px; gap: 2px; }
 .app .seg span { flex: 1; text-align: center; font-size: 13px; font-weight: 500; padding: 6px 4px; border-radius: 8px; color: var(--text-2); }
-.app .seg span.on { background: var(--surface); color: var(--text-1); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+.app .seg span.on { background: var(--surface); color: var(--text-1); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border-input); }
 .app .chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.app .chip { font-size: 12px; font-weight: 500; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-2); white-space: nowrap; }
-.app .chip.on { background: var(--accent-tint); border-color: transparent; color: var(--accent); }
+.app .chip { font-size: 12px; font-weight: 500; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border-input); color: var(--text-2); white-space: nowrap; }
+.app .chip.on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); }
+.app .chip.on::before { content: "\2713\00a0"; }
 .app .field { border: 1px solid var(--border-input); border-radius: 10px; padding: 8px 10px; font-size: 14px; color: var(--text-3); display: flex; gap: 8px; align-items: center; background: var(--surface); }
 .app .field svg { width: 16px; height: 16px; }
 .app .meter { height: 6px; border-radius: 99px; background: var(--elevated); overflow: hidden; }
@@ -195,8 +196,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 
 /* Tab bar */
 .app .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 58px; background: var(--glass); border-top: 1px solid var(--border-subtle); display: grid; grid-template-columns: repeat(5, 1fr); backdrop-filter: blur(12px); }
-.app .tab { display: grid; justify-items: center; align-content: center; gap: 2px; font-size: 12px; color: var(--text-3); }
-.app .tab.on { color: var(--accent); }
+.app .tab { position: relative; display: grid; justify-items: center; align-content: center; gap: 2px; font-size: 12px; color: var(--text-3); }
+.app .tab.on { color: var(--accent); font-weight: 700; }
+.app .tab.on::before { content: ""; position: absolute; top: -1px; left: 50%; width: 32px; height: 3px; margin-left: -16px; border-radius: 0 0 999px 999px; background: var(--accent); }
 
 /* Sheets and menus */
 .app .scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 5; }

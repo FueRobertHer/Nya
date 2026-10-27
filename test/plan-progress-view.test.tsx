@@ -166,8 +166,13 @@ describe('saved, set against what was recorded', () => {
   });
 
   test('a save that met a change on another device is information; a failure is critical', () => {
-    expect(view({ error: { text: 'Your saved plan was changed on another device: here it is as it is now.', kind: 'info' } })).toContain('<p class="notice info">Your saved plan was changed on another device');
-    expect(view({ error: { text: 'Failed to save your plan', kind: 'critical' } })).toContain('<p class="notice critical">Failed to save your plan');
+    // Each with its icon and its level said first (TotalCaveats' Notice).
+    expect(view({ error: { text: 'Your saved plan was changed on another device: here it is as it is now.', kind: 'info' } })).toMatch(
+      /<div class="notice info"><svg[^]*?<\/svg><div><span class="visually-hidden">Note: <\/span>Your saved plan was changed on another device/
+    );
+    expect(view({ error: { text: 'Failed to save your plan', kind: 'critical' } })).toMatch(
+      /<div class="notice critical"><svg[^]*?<\/svg><div><span class="visually-hidden">Critical: <\/span>Failed to save your plan/
+    );
   });
 
   test('days that couldn’t be read are said', () => {

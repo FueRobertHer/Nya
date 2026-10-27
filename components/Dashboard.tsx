@@ -58,7 +58,7 @@ import Insights, { budgetAlerts, paymentAlerts, spendingNotes, type IdleCashAcco
 import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAttention';
 import { attentionItems, type Go } from './attention';
 import ConnectionDetails from './ConnectionDetails';
-import { ALERT, ConnectionStatus, connectionSeverity, statusBadge, type ConnectionPlace } from './ConnectionStatus';
+import { ALERT, CAUTION, ConnectionStatus, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
 import { Menu } from './Menu';
 import { cardlessSeverity as cardlessSeverityOf, firstToFix, severityOf, worse, type Severity } from '@/lib/accounts-status';
 import {
@@ -2440,13 +2440,13 @@ export default function Dashboard({
                 {healthUnavailable ? (
                   // Also where Home's row about it lands (components/attention.ts).
                   <div className="notice caution" id="health-unread" tabIndex={-1}>
-                    {ALERT}
+                    {CAUTION}
                     <p>Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.</p>
                   </div>
                 ) : (
                   unreadConnections > 0 && (
                     <div className="notice caution">
-                      {ALERT}
+                      {CAUTION}
                       <p>{`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}</p>
                     </div>
                   )
@@ -2462,7 +2462,7 @@ export default function Dashboard({
                     none chosen yet) that need attention, in Settings. */}
                 {cardlessWorst && (
                   <div className={`notice ${cardlessWorst}`}>
-                    {ALERT}
+                    {levelIcon(cardlessWorst)}
                     <div className="stack tight">
                       <p>
                         {cardlessCount === 1
