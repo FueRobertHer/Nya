@@ -247,7 +247,7 @@ describe('NetWorthChart time ranges', () => {
     expect(html).toContain('Past 6 months');
     // Mar 24 to Sep 24 is 184 days; the first shown value is 100 + 233.
     expect(html).toContain('+$184.00 (+55.3%)');
-    expect(html).toContain('aria-pressed="true">6M<');
+    expect(html).toMatch(/role="radio" aria-checked="true"[^>]*>6M</);
   });
 
   // Its change includes money added, so a percentage would read as a return.
@@ -259,7 +259,7 @@ describe('NetWorthChart time ranges', () => {
   test('opens an investment on year to date, and offers no 3Y or 5Y yet', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={year} rangeSet="investment" />);
     expect(html).toContain('Year to date');
-    expect(html).toContain('aria-pressed="true">YTD<');
+    expect(html).toMatch(/role="radio" aria-checked="true"[^>]*>YTD</);
     expect(html).not.toContain('>3Y<');
     expect(html).not.toContain('>5Y<');
   });

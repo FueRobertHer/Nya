@@ -584,6 +584,15 @@ describe('the card', () => {
     expect(t).toContain('Over time');
   });
 
+  // Two views of the same accounts: tabs over one panel (look and feel, step 2a).
+  test('by asset class or tax bucket: tabs, the chosen one labelling the panel', () => {
+    const html = renderToStaticMarkup(<AllocationCard allocation={state()} plan={plan()} onUseMix={noop} institutions={institutions} balancesAsOf={null} />);
+    expect(html).toContain('<div class="segmented plan-choice" role="tablist" aria-label="Allocation by">');
+    expect(html).toMatch(/role="tab" id="allocation-tab-class" aria-controls="allocation-panel" aria-selected="true" tabindex="0">Asset class</);
+    expect(html).toMatch(/role="tab" id="allocation-tab-bucket" aria-controls="allocation-panel" aria-selected="false" tabindex="-1">Tax bucket</);
+    expect(html).toContain('<div id="allocation-panel" role="tabpanel" aria-labelledby="allocation-tab-class">');
+  });
+
   test('with a scenario open: says so, and its own settings, the same for every plan, can’t be changed there', () => {
     const html = renderToStaticMarkup(
       <AllocationCard allocation={state()} plan={plan()} onUseMix={noop} settingsLocked scenarioName="Retire at 50" institutions={institutions} balancesAsOf={null} />

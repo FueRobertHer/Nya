@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
+import { Segmented } from './Segmented';
 import { reportDay, reportTime } from './ReportView';
 import { fieldAmount, formatMoney } from '@/lib/format';
 import { addDays, isTimeZone } from '@/lib/report/period';
@@ -410,13 +411,7 @@ export default function RunwayReport() {
   return (
     <>
       <div className="card no-print report-controls runway-controls">
-        <div className="chart-ranges" role="group" aria-label="Spending over">
-          {RUNWAY_WINDOWS.map((m) => (
-            <button key={m} className="chart-range" aria-pressed={whatIf.months === m} onClick={() => change({ months: m })}>
-              Last {m} months
-            </button>
-          ))}
-        </div>
+        <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `Last ${m} months`] as const)} />
         <div className="runway-fields">
           <label className="field">
             Spending lower by, a month

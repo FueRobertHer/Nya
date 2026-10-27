@@ -431,6 +431,36 @@ describe('what the tab waits for', () => {
     await tab.unmount();
   });
 
+  // More than one is chosen, so the plans to compare are chips (look and feel,
+  // step 2a); one that would leave fewer than two stays focusable and says why.
+  test('Compare: the plans are chips, and one that would leave fewer than two stays, focusable, with the note', async () => {
+    serve({
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
+      'GET /api/plan-scenarios': listing(entry(), entry({ id: 's2', name: 'Spend more', set: { spending: 55_000 } })),
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render();
+    await press(tab.scenarios());
+    const sheet = tab.dialog()!;
+    const group = sheet.findAll((e) => e.getAttribute('aria-label') === 'Plans to compare')[0]!;
+    expect(group.getAttribute('class')).toBe('chip-row plan-compare-pick');
+    const chip = (name: string) => group.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === name)[0]!;
+    const state = () => ['Your plan', 'Retire at 50', 'Spend more'].map((n) => `${chip(n).getAttribute('aria-pressed')}/${chip(n).getAttribute('aria-disabled') ?? '-'}`);
+    expect(chip('Your plan').getAttribute('class')).toBe('chip');
+    // All three chosen: any may go.
+    expect(state()).toEqual(['true/-', 'true/-', 'true/-']);
+    await press(chip('Spend more'));
+    // Two left: neither may go, and neither leaves the tab order.
+    expect(state()).toEqual(['true/true', 'true/true', 'false/-']);
+    expect(chip('Your plan').disabled).toBe(false);
+    // The locked ones say why: the note, read with them.
+    expect(sheet.findAll((e) => e.getAttribute('id') === chip('Your plan').getAttribute('aria-describedby'))[0]?.textContent.trim()).toBe('Choose two to four plans.');
+    expect(chip('Spend more').getAttribute('aria-describedby')).toBeNull();
+    await press(chip('Your plan'));
+    expect(state()).toEqual(['true/true', 'true/true', 'false/-']);
+    await tab.unmount();
+  });
+
   test('a scenario refused for lasting changes below zero shows its life events, to change', async () => {
     const below = entry({ set: {}, events: [{ id: 'x', kind: 'spending', label: 'Mortgage paid off', fromAge: 41, yearly: -45_000, years: null }] });
     serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/plan-scenarios': listing(below), 'GET /api/allocation-settings': [200, { settings: null }] });

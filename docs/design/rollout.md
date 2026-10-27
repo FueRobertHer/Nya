@@ -652,6 +652,7 @@ An audit of the primitives against the design system found what the token check 
 - **A sheet's title wraps** instead of being cut with an ellipsis: a scenario's name is up to 40 characters.
 - **Table headers** are `--fs-1` in sentence case, not 11px uppercase (the small-type baseline falls to 16).
 - **The guard** checks the rules above use what they must (`design guard: controls and states read without color`), and that no caution notice draws the critical triangle.
+- **Since the look and feel's step 2a**, buttons have no edge and the selected segment is an underline: WCAG 1.4.11 asks no edge of a control its label or icon names, so the edge on `button.secondary`, `.btn.secondary`, the ⋯ and the selected segment went, and the guard checks what took its place. Fields, chips and the invite link keep `--border-input`, as does a secondary on a fill of its own.
 
 **Kept narrow:**
 
@@ -666,7 +667,7 @@ An audit of the primitives against the design system found what the token check 
 A look and feel review (2026-10-26) found that Nya read like a starter template, and its direction, ink and brass, was approved and recorded in the design system artifact (its `audit.md`, findings L1 to L11). The app takes it in five steps, one pull request each, in this order:
 
 1. **Details**: logo tiles, readable bank names, the repeated account type, the two notices the Budgets and Plan tabs opened on, and Clerk's primary button. No palette change.
-2. **Fewer boxes**: bare icon buttons, tonal secondary buttons, one underline view switch, no header subtitle, one month control shared by Activity and Budgets, and Clerk's profile in a sheet.
+2. **Fewer boxes**, in three pull requests: 2a, bare icon buttons, tonal secondary buttons, one underline view switch and no header subtitle; 2b, one month control shared by Activity and Budgets; 2c, Clerk's profile in a sheet.
 3. **Type**: Red Hat Text and Display through `next/font`, and the hero's small cents.
 4. **Ink and brass**: the new token values in `tokens.css`, `app/globals.css`, `lib/theme.ts`, the manifest and Clerk; the guard's pairs; the header logo as a two-ink mark; underlined links.
 5. **The hero**: net worth out of its card, a full-width chart without money ticks, scrubbing.
@@ -686,8 +687,26 @@ A look and feel review (2026-10-26) found that Nya read like a starter template,
 
 - The net worth chart's money ticks, drawn over its plot at the left, stay until step 5 takes them off the plot.
 - Recurring bills, the calendar, Upcoming and Home's This month still show the bank's text: their rows don't say whether a name is the bank's or one the person typed.
-- "1 institution connected" under the header waits for step 2.
+- "1 institution connected" under the header went in step 2a.
 - A row stored before Plaid's merchant name was kept apart from its descriptor holds the two merged, with no merchant name, so an all-capitals merchant name there (IKEA) shows in title case. Only old rows are stored that way.
+
+### Step 2a: edges off controls
+
+Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activity and Budgets one month control and one month; 2c puts Clerk's account screens in a Nya sheet, after a prototype.
+
+**Built:**
+
+- **Bare icon buttons.** `.icon-btn` is bare: no edge or fill, its icon in `--text-2`, `--elevated` on hover, and a transparent 1px edge that forced colors draw. The header's Hide amounts and Refresh, the password mode's gear, Settings' back, the month's arrows, the Plan's back and a card's ⋯ (whose own outlined rule went) are all one. Hide amounts on is its crossed-out eye in `--accent`. A sheet's close and back stay filled circles.
+- **Tonal secondary buttons.** `button.secondary` and `.btn.secondary` are an `--elevated` fill with a `--text-1` label and a transparent edge, `--border-subtle` on hover (`--raised` is `--elevated`, no step). A ghost is underlined on hover, so it never looks like a secondary at rest. On a fill of its own (a notice, the rule offer and its preview) a secondary keeps its `--border-input` edge on no fill, since the same fill on the same fill vanishes. Open reports and Download as CSV (`.report-link-button`) are tonal too.
+- **One underline switch.** `.segmented` has no track: a 1px `--border-strong` rule, 44px items, the current one semibold over a 3px `--accent` bar (a bottom border, so forced colors keep it). `.segmented.compact` (12px labels, items narrower than 44px) fits the net worth chart's eight ranges at 320px. `Segmented` (`components/Segmented.tsx`) draws it as a radio group or tabs, with one tab stop and the arrow keys, for the net worth range and Runway's window (`.chart-ranges` of `aria-pressed` buttons before), the Plan's `Choice`, the kind of report (a primary and a pressed secondary before), and, as tabs over one panel, Allocation's two views and which report shows. The Plan's compare pick, which chooses several, is chips; one that would leave fewer than two plans or more than four stays focusable and says why. `.chart-ranges` and `.chart-range` are gone.
+- **No header subtitle.** "N institutions connected" left the header; with nothing connected the connect card says it, and with every account hidden Home's total says so in an information note. The header row is centered and keeps `--sp-6` under it.
+- **The guard** changed with the design (below, under controls and states without color): a secondary and an icon button must keep their transparent edge, a secondary on a fill of its own its `--border-input` edge, the current item of a switch its `--accent` bar and its weight, and every icon button an `aria-label`.
+
+**Kept narrow:**
+
+- Month controls stay as they are until 2b; the calendar still says Previous month, Next month and Today.
+- `.link-btn` stays, as before.
+- Spending's period chips stay chips: four labels as long as "Year to date" don't fit one row at 320px.
 
 ## The contrast check
 

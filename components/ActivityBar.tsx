@@ -87,7 +87,7 @@ export default function ActivityBar({
             <>
               <button
                 type="button"
-                className="secondary icon-btn"
+                className="icon-btn"
                 aria-label="Earlier month"
                 aria-disabled={month === null || !onEarlier}
                 onClick={month === null ? undefined : onEarlier}
@@ -99,7 +99,7 @@ export default function ActivityBar({
               </h2>
               <button
                 type="button"
-                className="secondary icon-btn"
+                className="icon-btn"
                 aria-label="Later month"
                 aria-disabled={month === null || !onLater}
                 onClick={month === null ? undefined : onLater}

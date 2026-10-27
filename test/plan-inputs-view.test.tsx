@@ -716,7 +716,7 @@ describe('Why? in a figure’s sheet', () => {
     expect(part(tab.row('Annual spending')!, 'list-row-sub')?.textContent).toBe('Typed by you');
     await press(tab.row('Annual spending'));
     const sheet = tab.dialog()!;
-    expect(button(sheet, 'My own')?.getAttribute('aria-pressed')).toBe('true');
+    expect(button(sheet, 'My own')?.getAttribute('aria-checked')).toBe('true');
     expect(whyOf(sheet)).toBeNull();
     await press(button(sheet, 'Nya’s figure'));
     expect(sheet.textContent).toContain(`$36,000 from ${span}`);

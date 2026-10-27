@@ -32,11 +32,11 @@ Defined in `tokens.css` and copied into `app/globals.css`; Clerk's appearance an
 |---|---|---|---|---|
 | Page | `--canvas` | `#0d0f14` | `#f6f7f9` | Behind cards |
 | Card | `--surface` | `#151821` | `#ffffff` | Cards, sheets |
-| Raised | `--elevated` | `#1c202b` | `#f0f2f6` | Pressed rows, inputs on a card, segmented track |
+| Raised | `--elevated` | `#1c202b` | `#f0f2f6` | Pressed rows, inputs on a card, a secondary button's fill |
 | Chrome | `--glass` | 88% surface | 88% white | Header and tab bar over a blur |
 | Divider | `--border-subtle` | `#232834` | `#e6e8ef` | Between rows |
 | Edge | `--border-strong` | `#2b3140` | `#d5d9e2` | Card, sheet and menu edges. About 1.4:1, so it never marks a control on its own |
-| Control | `--border-input` | `#707889` | `#757c8a` | Every control's edge: fields, secondary buttons, chips, the ⋯ button, the selected segment (3:1 on canvas, card and raised) |
+| Control | `--border-input` | `#707889` | `#757c8a` | A control's edge: fields, chips, and a secondary button on a fill of its own (a notice, the rule offer) (3:1 on canvas, card and raised) |
 | Text | `--text-1/2/3` | `#eceef2` / `#9499a6` / `#868c9b` | `#11141c` / `#525866` / `#636a77` | Primary, secondary, meta |
 | Action | `--accent` | `#5b8def` | `#2563eb` | Links, selection, focus |
 | Money in | `--pos` | `#34d399` | `#047857` | Inflows, gains |
@@ -94,7 +94,7 @@ System UI font, as today: fast, native, and no font file to host or put in the C
 
 - **Spacing**: `--sp-1` to `--sp-8` on a 4px grid. Card padding `--sp-4` on phones and `--sp-5` from 720px; gap between cards `--sp-3`; between rows 0 (dividers do the separating).
 - **Margins belong to layout, not to text.** Notes and labels carry no built-in top margin; a stack container sets the gap. This is what removes the 245 inline `marginTop` patches (100 of them `marginTop: 0`, undoing a class's own margin).
-- **Radii**: `--r-xs` 6 (chips), `--r-sm` 8 (inputs, segmented items), `--r-md` 12 (buttons, notices), `--r-lg` 16 (cards, sheets), `--r-pill`. Today there are 19 radii.
+- **Radii**: `--r-xs` 6 (chips), `--r-sm` 8 (inputs), `--r-md` 12 (buttons, notices), `--r-lg` 16 (cards, sheets), `--r-pill`. Today there are 19 radii.
 - **Motion**: `--dur-fast` 140ms for presses and toggles, `--dur-base` 220ms for sheets and segment changes, `--dur-pulse` 900ms for each way of a loading placeholder's pulse, one easing. One global reduced-motion rule zeroes them; today only the sheets and Card Mode respect it.
 - **Layers**: header, tab bar, sheet backdrop, sheet, toast, as tokens.
 
@@ -142,10 +142,10 @@ Two to four labelled figures in a row (In, Out, Net). Label `--fs-1` in `--text-
 | Variant | Look | Use |
 |---|---|---|
 | Primary | `--accent-fill`, white label | The one main action in a card or sheet |
-| Secondary | Transparent, `--border-strong` edge | Other actions |
-| Ghost | Text only in `--accent`, padded to 44px | Inline actions (Edit, See all) |
+| Secondary | Tonal: `--elevated` fill, `--text-1` label, no edge (a transparent one, for forced colors); `--border-subtle` on hover. On a fill of its own (a notice, the rule offer) transparent with a `--border-input` edge | Other actions |
+| Ghost | Text only in `--accent`, padded to 44px, underlined on hover | Inline actions (Edit, See all) |
 | Danger | `--danger-fill`, white label | Confirming something destructive, inside a confirm sheet only |
-| Icon | 44px square, icon 20px | Header, card menus, sheet close |
+| Icon | 44px square, icon 20px in `--text-2`, bare (no edge or fill), `--elevated` on hover; its `aria-label` is its name. A sheet's close and back are filled circles (`.sheet-icon-btn`) | Header, card menus, the month's arrows, back |
 
 - **Width is auto by default**; `.btn-block` makes one full width. Today `button { width: 100% }` forces about 25 one-off classes (`.logout-btn`, `.manage-toggle`, `.disconnect-btn`, `.plan-edit`, `.pool-toggle`, `.split-small`, `.rollup-toggle` and more) that each undo it.
 - **One button group** (`.btn-row`): gap `--sp-2`, wraps on narrow screens, primary last. Replaces `.button-pair`, `.action-row`, `.card-actions`, `.button-stack`.
@@ -154,9 +154,9 @@ Two to four labelled figures in a row (In, Out, Net). Label `--fs-1` in `--text-
 
 ### Segmented control
 
-Two to four mutually exclusive views of the same thing (Transactions / Spending / Shared; History / Monte Carlo). A track in `--elevated`, the selected item on `--surface` with `--text-1` at weight 600 and an inset `--border-input` edge (its shade alone is about 1.1:1 from the track), each item 44px tall on touch. `role="tablist"` when it switches views, a radio group when it switches a setting.
+Two to four mutually exclusive views of the same thing (Transactions / Spending / Shared; History / Monte Carlo), drawn as an underline switch that matches the tab bar (since the look and feel's step 2): no track, a 1px `--border-strong` rule under it, each item 44px tall in `--text-2` at weight 500, the current one `--text-1` at weight 600 over a 3px `--accent` bar (a bottom border, so forced colors keep it; `--accent` is 4.6:1 or more on canvas, card and raised). `role="tablist"` when it switches views, a radio group when it switches a setting; `Segmented` (`components/Segmented.tsx`) draws either, with one tab stop and the arrow keys.
 
-A **range control** (1M ... All) looks the same but is a labelled radio group, and may hold up to six options; more than that become chips. Spending's period lengths (since phase 5c) are chips in a labelled radio group (`role="radio"`, `aria-checked`, arrows, Home and End), as the mockup draws them: four labels as long as "Year to date" don't fit one segmented row at 320px. The cash forecast's 30, 60 and 90 days (since phase 6a3) are the first range control drawn as `.segmented`. Budgets > Upcoming's **List · Calendar** is a tablist of two, held to the mockup's width (`.upcoming-views`). Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
+A **range control** (1M ... All) looks the same but is a labelled radio group. `.segmented.compact` (12px labels) holds up to eight, each 44px tall and narrower than 44px (24px or more) so the net worth chart's eight fit 320px; a set whose labels don't fit becomes chips. Spending's period lengths (since phase 5c) are chips in a labelled radio group (`role="radio"`, `aria-checked`, arrows, Home and End), as the mockup draws them: four labels as long as "Year to date" don't fit one segmented row at 320px. The cash forecast's 30, 60 and 90 days (since phase 6a3) are the first range control drawn as `.segmented`. Budgets > Upcoming's **List · Calendar** is a tablist of two, held to the mockup's width (`.upcoming-views`). Replaces `.chart-ranges` / `.chart-range` (a generic control named after the chart), `.manage-toggle`, and the `[aria-pressed]` chip toggles used as modes.
 
 ### Badge and chip
 
@@ -201,7 +201,7 @@ The footer is `Sheet`'s `footer` prop, drawn as `.sheet-footer` after the scroll
 
 A small popover for an object's rare actions (the institution ⋯ menu, a transaction's overflow). Items are 44px rows; a destructive item is last, in `--neg`, and opens a confirm sheet.
 
-Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge (moved in when that would take it past the screen's edge), below it or above it when there is no room below. Its ⋯ is outlined like a secondary button. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
+Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge (moved in when that would take it past the screen's edge), below it or above it when there is no room below. Its ⋯ is a bare icon button, as the header's are. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
 
 ### Empty state
 
@@ -261,7 +261,7 @@ Nya shows its gaps on purpose (see [features.md](../features.md)): a missing row
 
 ## Accessibility
 
-- 44px minimum targets on touch (`--tap`). Today `.link-btn` is about 15px, `.disconnect-btn` about 26px, `.chart-range` about 28px; about 10 rules set a 44px minimum.
+- 44px minimum targets on touch (`--tap`). Today `.link-btn` is about 15px, `.disconnect-btn` about 26px; about 10 rules set a 44px minimum.
 - Real headings (`<h1>` per screen, `<h2>` per card) so screen-reader users can jump by heading.
 - No interactive element inside another (no buttons inside a clickable row; a "Why?" for a row lives in the sheet the row opens).
 - A deep link or a jump (the Accounts status pill, `?view=connections`, a Needs attention item) moves keyboard focus to the target's heading, not just the scroll position.

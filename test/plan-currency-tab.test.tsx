@@ -176,7 +176,7 @@ async function saveSpending(tab: Awaited<ReturnType<typeof render>>, value: stri
   await press(tab.row('Annual spending'));
   const dialog = tab.dialog()!;
   const own = dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'My own')[0];
-  if (own && own.getAttribute('aria-pressed') !== 'true') await press(own);
+  if (own && own.getAttribute('aria-checked') !== 'true') await press(own);
   const field = dialog.findAll((e) => e.tagName === 'INPUT')[0];
   await act(async () => type(field, value));
   await press(dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);

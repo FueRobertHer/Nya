@@ -41,7 +41,7 @@
 
   /* Radii. */
   --r-xs: 6px; /* chips, badges */
-  --r-sm: 8px; /* inputs, small buttons, segmented items */
+  --r-sm: 8px; /* inputs, small buttons */
   --r-md: 12px; /* buttons, notices */
   --r-lg: 16px; /* cards, sheets */
   --r-pill: 999px;
@@ -80,7 +80,7 @@
   /* Lines */
   --border-subtle: #232834; /* dividers between rows */
   --border-strong: #2b3140; /* card and sheet edges */
-  --border-input: #707889; /* every control's edge (fields, secondary buttons, chips, the selected segment): 3:1 on canvas, surface and elevated */
+  --border-input: #707889; /* a control's edge (fields, chips, a secondary button on a fill of its own): 3:1 on canvas, surface and elevated */
 
   /* Text */
   --text-1: #eceef2;

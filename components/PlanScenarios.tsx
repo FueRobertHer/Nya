@@ -470,13 +470,27 @@ export function ScenariosSheet({
         {ready && list.length > 0 && planState === 'ready' && (
           <>
             <div className="plan-subhead">Compare</div>
-            <p className="panel-note">Choose two to four plans.</p>
-            <div className="chart-ranges plan-choice plan-compare-pick" role="group" aria-label="Plans to compare">
+            <p className="panel-note" id="plan-compare-note">
+              Choose two to four plans.
+            </p>
+            {/* Chips, since more than one is chosen. One that would leave
+                fewer than two or more than four stays focusable and says why
+                (the note), rather than dropping out of the tab order. */}
+            <div className="chip-row plan-compare-pick" role="group" aria-label="Plans to compare">
               {ids.map((id) => {
                 const on = selected.includes(id);
                 const name = id === 'plan' ? 'Your plan' : (list.find((s) => s.id === id)?.name ?? '');
+                const locked = on ? selected.length <= 2 : selected.length >= 4;
                 return (
-                  <button key={id} type="button" className="chart-range" aria-pressed={on} disabled={on ? selected.length <= 2 : selected.length >= 4} onClick={() => toggle(id)}>
+                  <button
+                    key={id}
+                    type="button"
+                    className="chip"
+                    aria-pressed={on}
+                    aria-disabled={locked || undefined}
+                    aria-describedby={locked ? 'plan-compare-note' : undefined}
+                    onClick={locked ? undefined : () => toggle(id)}
+                  >
                     {name}
                   </button>
                 );

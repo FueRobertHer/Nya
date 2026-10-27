@@ -22,7 +22,7 @@ export function HideAmountsToggle() {
   return (
     <button
       type="button"
-      className="secondary icon-btn hide-amounts-btn"
+      className="icon-btn hide-amounts-btn"
       onClick={() => setHideAmounts(!hidden)}
       aria-pressed={hidden}
       aria-label="Hide amounts"
