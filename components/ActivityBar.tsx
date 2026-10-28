@@ -3,6 +3,8 @@
 // Activity's pinned bar (docs/design/information-architecture.md#activity):
 // the month (components/MonthStepper.tsx), the tab's ⋯ (adding or importing
 // transactions, when a manual account takes them), and its three segments.
+// The month's row is there on every segment, as tall, so the segments stay
+// put: on Shared, which isn't by month, it holds only the ⋯, or nothing.
 // The segments follow the WAI-ARIA tabs pattern: one tab stop, the arrow
 // keys, Home and End move between them and choose as they go.
 
@@ -56,7 +58,9 @@ export default function ActivityBar({
   monthPending = false,
 }: {
   /** The month shown, or null to leave the stepper out: on Shared, whose
-   *  balances aren't by month, and before there is one. */
+   *  balances aren't by month, and before there is one. Its row stays,
+   *  empty but for the ⋯, so the segments never move as the view changes
+   *  (the screen review after step 5). */
   month: ActivityMonth | null;
   /** With no month yet, while the transactions load: the stepper drawn
    *  with a placeholder for its name, so it doesn't push the list down when
@@ -95,7 +99,7 @@ export default function ActivityBar({
           end={dots}
         />
       ) : (
-        dots && <div className="activity-month">{dots}</div>
+        <div className="activity-month">{dots}</div>
       )}
       <div className="segmented" role="tablist" aria-label="Activity" onKeyDown={onKeyDown}>
         {ACTIVITY_SEGMENTS.map((s, i) => (

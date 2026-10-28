@@ -17,8 +17,15 @@
 // screen reader (lib/goal-text.ts meterLabel). Everything is worked out here
 // from the balances this page shows; the months behind each pace come from
 // the server (components/goal-flows-state.ts), and nothing derived is saved.
+//
+// With no goal at all (none archived either), the card is the empty state
+// (components/EmptyState.tsx, the screen review after step 5): what goals
+// are for and Add goal as its one primary. Add goal is one button either way
+// (`addRef`), so a sheet that closes once the button it opened from is gone
+// (the first goal saved takes the empty state with it) gives focus to the
+// Add goal under the list, as Budgets' does.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { formatMoney, hideAmountsIn, spoken } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
@@ -30,6 +37,7 @@ import GoalSheet from './GoalSheet';
 import GoalPlansRepair, { type GoalPlansDamage } from './GoalPlansRepair';
 import { Masked } from './HideAmounts';
 import TotalCaveats, { type Caveat } from './TotalCaveats';
+import EmptyState from './EmptyState';
 
 export type { Goal } from '@/lib/goal-model';
 export type { GoalAccount } from '@/lib/goal-view';
@@ -102,6 +110,20 @@ export function GoalsCardView({
   useEffect(() => {
     if (status === 'error') setSheet((s) => (s.open ? { ...s, open: false } : s));
   }, [status]);
+  // Closed: the sheet gives focus back to the button that opened it as its
+  // own effect ends, which runs before this one. When it couldn't (that
+  // button went meanwhile: the empty state's, once the first goal is in),
+  // focus goes to Add goal as it is drawn now, rather than to nothing.
+  const addRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(sheet.open);
+  useEffect(() => {
+    const closed = wasOpen.current && !sheet.open;
+    wasOpen.current = sheet.open;
+    if (!closed) return;
+    let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
+    if (lost) addRef.current?.focus({ preventScroll: true });
+  }, [sheet.open]);
 
   const { views, splits } = goalViews(goals, accounts, flows.flows, today);
   const archived = goals.filter((g) => g.plan?.archived);
@@ -209,7 +231,13 @@ export function GoalsCardView({
         </div>
       )}
 
-      {goals.length === 0 && <p className="empty-note">No goals yet. Set a target, track it against an account’s balance, and see when you’ll reach it.</p>}
+      {goals.length === 0 && (
+        <EmptyState
+          title="No goals yet"
+          line="Set a target, track it against an account’s balance, and see when you’ll reach it."
+          action={{ label: 'Add goal', opens: true, ref: addRef, onSelect: () => edit(null) }}
+        />
+      )}
 
       {views.map((v) => {
         const goal = v.goal;
@@ -263,11 +291,13 @@ export function GoalsCardView({
         );
       })}
 
-      <div className="card-actions" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={() => edit(null)} disabled={goals.length >= MAX_GOALS}>
-          Add goal
-        </button>
-      </div>
+      {goals.length > 0 && (
+        <div className="card-actions" style={{ marginTop: 16 }}>
+          <button ref={addRef} className="secondary" onClick={() => edit(null)} disabled={goals.length >= MAX_GOALS}>
+            Add goal
+          </button>
+        </div>
+      )}
       {goals.length >= MAX_GOALS && <p className="panel-note">{MAX_GOALS} goals is the most, archived ones included: delete an archived one to add another.</p>}
 
       {archived.length > 0 && (

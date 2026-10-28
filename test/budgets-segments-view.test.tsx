@@ -120,8 +120,8 @@ function mount(props: Props = {}) {
     selected: () => tabs().filter((e) => e.getAttribute('aria-selected') === 'true').map((e) => e.textContent),
     // The panels a person can see.
     shown: () => panels().filter((p) => !p.hasAttribute('hidden')),
-    // The bar's heading: the month's name on Month (components/MonthStepper.tsx), the segment's on the others.
-    heading: () => all((e) => e.tagName === 'H2' && ['budgets-title', 'month-stepper-title'].includes(e.getAttribute('class') ?? ''))[0],
+    // The bar's heading: the month's name on Month (components/MonthStepper.tsx), the segment's on the others, read alone.
+    heading: () => all((e) => e.getAttribute('class') === 'budgets-bar')[0].findAll((e) => e.tagName === 'H2')[0],
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -157,14 +157,20 @@ describe('Budgets: the bar and its segments', () => {
     expect(v.shown()).toEqual([v.panelOf('Upcoming')]);
     expect(v.panelOf('Upcoming').textContent).toContain('Cash forecast');
     expect(v.panelOf('Month').textContent).not.toContain('Cash forecast');
-    // The segment's name is the heading, not announced: choosing it said so.
+    // The segment's name is the heading, read alone and not announced:
+    // choosing it said so, and on screen the month's row stays, empty, as
+    // tall, so the segments don't move and nothing repeats the tab.
     expect(v.heading().textContent).toBe('Upcoming');
+    expect(v.heading().getAttribute('class')).toBe('visually-hidden');
+    expect((v.heading().parentNode as FakeElement).getAttribute('class')).toBe('budgets-heading');
+    expect(v.all((e) => e.getAttribute('class') === 'budgets-heading')[0].childNodes).toHaveLength(1);
     expect(v.heading().hasAttribute('aria-live')).toBe(false);
     expect(v.heading().hasAttribute('id')).toBe(false);
     act(() => click(v.tab('Goals')));
     expect(v.shown()).toEqual([v.panelOf('Goals')]);
     expect(v.panelOf('Goals').textContent).toContain('No goals yet');
     expect(v.heading().textContent).toBe('Goals');
+    expect(v.heading().getAttribute('class')).toBe('visually-hidden');
     v.unmount();
   });
 

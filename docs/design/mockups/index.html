@@ -568,8 +568,8 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"><svg width="18" height="18"><use href="#i-dots"/></svg></span></div>
               <div class="seg"><span class="on">Transactions</span><span>Spending</span><span>Shared</span></div>
             </div>
-            <div class="card">
-              <div class="stat"><div><div class="k">In</div><div class="v pos">$6,420</div></div><div><div class="k">Out</div><div class="v">$4,183</div></div><div><div class="k">Net</div><div class="v pos">+$2,237</div></div></div>
+            <div>
+              <div class="stat"><div><div class="k">In</div><div class="v pos">+$6,420</div></div><div><div class="k">Out</div><div class="v">-$4,183</div></div><div><div class="k">Net</div><div class="v pos">+$2,237</div></div></div>
               <div class="xs t3">Transfers and loan payments left out</div>
             </div>
             <div class="field"><svg><use href="#i-search"/></svg>Search transactions</div>
@@ -586,7 +586,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode.</figcaption>
+        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). In, Out and Net are one strip under the bar, on the page and signed, said once on the tab. The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -597,6 +597,10 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="seg"><span>Transactions</span><span class="on">Spending</span><span>Shared</span></div>
             </div>
             <div class="seg" style="max-width:240px"><span class="on">1M</span><span>3M</span><span>12M</span><span>YTD</span></div>
+            <div>
+              <div class="stat"><div><div class="k">In</div><div class="v pos">+$6,420</div></div><div><div class="k">Out</div><div class="v">-$4,183</div></div><div><div class="k">Net</div><div class="v pos">+$2,237</div></div></div>
+              <div class="xs t3">Transfers and loan payments left out</div>
+            </div>
             <div class="card">
               <div class="card-header"><h2>Where it went</h2><span class="meta money">$4,183</span></div>
               <svg class="chart" viewBox="0 0 300 120" aria-hidden="true">
@@ -622,7 +626,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>SPENDING</b>One period for every card: its length here, its last month the bar's. Below: net by month, income vs spend, tags, online vs in-store, places. Tapping a flow jumps to Transactions, filtered.</figcaption>
+        <figcaption><b>SPENDING</b>One period for every card: its length here, its last month the bar's. The strip under the switch sums it, naming the span when it is longer than the month; the cash flow has no figures of its own. Below: net by month, income vs spend, tags, online vs in-store, places. Tapping a flow jumps to Transactions, filtered.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -700,7 +704,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span>Upcoming</span></div>
+              <div class="monthbar"><span class="arrow"></span></div>
               <div class="seg"><span>Month</span><span class="on">Upcoming</span><span>Goals</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Chase hasn't synced since Oct 21, so bills and income there may be missing or out of date.</span></div>
@@ -726,14 +730,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab on"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>UPCOMING</b>One notice at the top for what the bills, income and planned items may be missing, with a badge on each card it bears on. Warns below opens the warning in a sheet. Bills, income, planned items and card payments due in one dated list over the forecast's range, or as a calendar. Recurring and Planned sit at the foot, their rows opening their sheets.</figcaption>
+        <figcaption><b>UPCOMING</b>The month's row stays, empty, so the segments don't move and nothing repeats the tab. One notice at the top for what the bills, income and planned items may be missing, with a badge on each card it bears on. Warns below opens the warning in a sheet. Bills, income, planned items and card payments due in one dated list over the forecast's range, or as a calendar. Recurring and Planned sit at the foot, their rows opening their sheets.</figcaption>
       </figure>
 
       <figure class="shot">
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span>Goals</span></div>
+              <div class="monthbar"><span class="arrow"></span></div>
               <div class="seg"><span>Month</span><span>Upcoming</span><span class="on">Goals</span></div>
             </div>
             <div class="card flush">
@@ -749,7 +753,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab on"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>GOALS</b>Saving toward something and paying something down, side by side. The payoff plan used to be a button on Accounts.</figcaption>
+        <figcaption><b>GOALS</b>The month's row stays, empty, as on Upcoming. Saving toward something and paying something down, side by side. The payoff plan used to be a button on Accounts.</figcaption>
       </figure>
     </div>
   </section>

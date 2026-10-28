@@ -6,9 +6,13 @@
 // name with the list of months laid over it (back to the first month with
 // transactions, ten years at most, or to the month Activity brought: a step
 // at a time would read each month from the server), and This month when
-// another month shows. Only the month's name is announced as it changes; a
-// segment's own name isn't, since choosing the segment already says it. The
-// segments are tabs, as Activity's are (components/ActivityBar.tsx).
+// another month shows. Only the month's name is announced as it changes. On
+// Upcoming and Goals, which aren't by month, the row stays as tall and shows
+// nothing (the screen review after step 5: the tab's name there only said
+// again what the tab under it says, and the segments moved without a row):
+// its heading, the segment's name, is read by a screen reader alone, so the
+// cards under it still sit under a heading. The segments are tabs, as
+// Activity's are (components/ActivityBar.tsx).
 
 import { useRef, type KeyboardEvent, type Ref } from 'react';
 import { segmentKey } from './ActivityBar';
@@ -86,7 +90,7 @@ export default function BudgetsBar({
         />
       ) : (
         <div className="budgets-heading">
-          <h2 key={segment} className="budgets-title">
+          <h2 key={segment} className="visually-hidden">
             {BUDGETS_SEGMENTS[at].label}
           </h2>
         </div>

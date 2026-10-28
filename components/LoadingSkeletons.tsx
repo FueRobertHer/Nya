@@ -14,6 +14,7 @@ import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import ActivityBar, { type ActivitySegment } from './ActivityBar';
 import BudgetsBar, { type BudgetsSegment } from './BudgetsBar';
 import PlanBar, { type PlanSegment } from './PlanBar';
+import MonthFigures from './MonthFigures';
 import { CollapsibleHeader } from './Collapsible';
 import { BACK_ARROW, SETTINGS_TITLES } from './Settings';
 import type { SettingsView, Tab } from '@/lib/dashboard-tab';
@@ -277,37 +278,23 @@ export function AccountsSkeleton() {
 
 /** Activity's list while the transactions load, under its bar
  *  (components/MonthBreakdown.tsx), in the order the segment draws it. On
- *  Transactions: the month's In, Out and Net with the line under them, then
- *  the list's card with its search field and rows. On Spending: the period's
- *  chips (on Month, its first), the Cash flow card with its chart, and In
- *  and out. Known words and controls show as themselves, unavailable. */
+ *  Transactions: the In, Out and Net strip (components/MonthFigures.tsx,
+ *  itself, its figures still to come) with the line under it, then the
+ *  list's card with its search field and rows. On Spending: the period's
+ *  switch (on its first length, the bar's month alone, so the strip names
+ *  no span), the same strip, and the Cash flow card with its chart. Known
+ *  words and controls show as themselves, unavailable. */
 export function ActivityListSkeleton({ segment }: { segment: ActivitySegment }) {
   useInStep();
   const spending = segment === 'spending';
+  // The strip hides itself from a screen reader with no figures: the one
+  // status below says it is loading.
   const summary = (
-    <div className="card" aria-hidden="true">
-      {spending && (
-        <div className="inst-header">
-          <div className="inst-name">In and out</div>
-          <div className="inst-total">
-            <span className="skeleton activity-skeleton-caption" />
-          </div>
-        </div>
-      )}
-      <div className="summary-row">
-        {['In', 'Out', 'Net'].map((label) => (
-          <div key={label}>
-            <div className="total-label">{label}</div>
-            <div className="summary-value">
-              <span className="skeleton activity-skeleton-figure" />
-            </div>
-          </div>
-        ))}
-      </div>
+    <MonthFigures totals={null} title="In and out">
       <div className="chart-note">
         <span className="skeleton activity-skeleton-note" />
       </div>
-    </div>
+    </MonthFigures>
   );
   return (
     <div aria-busy="true">
@@ -324,6 +311,7 @@ export function ActivityListSkeleton({ segment }: { segment: ActivitySegment }) 
               </button>
             ))}
           </div>
+          {summary}
           <div className="card" aria-hidden="true">
             <div className="inst-header">
               <div className="inst-name">Cash flow</div>
@@ -333,7 +321,6 @@ export function ActivityListSkeleton({ segment }: { segment: ActivitySegment }) 
             </div>
             <span className="skeleton block activity-skeleton-chart" />
           </div>
-          {summary}
         </>
       ) : (
         <>

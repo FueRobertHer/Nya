@@ -854,6 +854,24 @@ A review of the screens after step 5 found money ticks still on the card charts'
 - The cash forecast's own 30, 60 and 90 days stay hand-drawn `.segmented` markup.
 - A shared net worth stays dashed between its weekly points, and its note under the chart keeps its words.
 
+## After the screen review: Activity and Budgets
+
+The same review found Activity saying In, Out and Net three times (Out unsigned), bars whose segments moved as the view changed, empty screens with no first step, and Budgets opening on an offer whose button was the screen's only filled one. One PR, branch `fix/activity-budgets`.
+
+**Built:**
+
+- **In, Out and Net once, signed** (`components/MonthFigures.tsx`): one strip under the bar on Transactions and Spending, on the page, In "+$1,000.00", Out "-$4,391.92", Net with its sign, each rounded to the currency's unit first. Transactions' sums the bar's month; Spending's the period, under its switch, naming the span when it is longer than the month. The Cash flow card's own row and Spending's In and out card are gone; each keeps its qualifier lines in its words. The skeleton draws the strip itself.
+- **The bars hold their row.** Activity's month row stays on Shared and with no transactions (the ⋯, or nothing); Budgets' on Upcoming and Goals is empty on screen, its heading (the segment's name) read alone.
+- **Empty states with a first step** (`components/EmptyState.tsx`, `.empty-state`): Budgets with no budget this month (one card in place of Spent, Add budget filled), Goals with none, Shared with no one. Focus goes to the tonal Add once the first is added, and to the empty state's after the last budget is removed.
+- **The starter sets' offer is one row** with a × beside it, as the look and feel review's L11 asked; nothing in it is filled.
+
+**Kept narrow:**
+
+- The strip keeps today's figure size (15 to 17px, labels 13px), not the stat strip's `--fs-6` (design-system.md, Stat strip): three signed figures don't fit 320px at 20px.
+- At 320px on another month, This month wraps under the name; that second line isn't held on the segments without a month.
+- Activity's own empty screen, a past month with no budget, and the Budgets and Goals skeletons (which can't know a month will be empty) are as before.
+- The strip's "Transfers and loan payments excluded" and Cash flow's "Transfers, cash withdrawals and loan payments are left out" say nearly the same thing in different words; rewording either is a follow-up.
+
 ## The contrast check
 
 `test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, each button fill's label on it, the header logo's ink on the page and a card, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.

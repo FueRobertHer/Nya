@@ -69,18 +69,18 @@ const activity = (over: Partial<Parameters<typeof MonthBreakdown>[0]> = {}) =>
 describe('the Activity tab', () => {
   test('without a home currency: the dollars, the euro row named', () => {
     const t = activity();
-    expect(t).toContain('In $3,100.00');
-    expect(t).toContain('Out $2,512.30');
+    expect(t).toContain('In +$3,100.00');
+    expect(t).toContain('Out -$2,512.30');
     expect(t).toContain("1 transaction in BTC and 1 in EUR aren't in these totals, which are in USD.");
   });
 
   test('with one: every total in euros, each row at its day’s rate, to the cent; each row listed as it is', () => {
     const t = activity({ fx });
     // 3,100 / 1.1551
-    expect(t).toContain('In €2,683.75');
+    expect(t).toContain('In +€2,683.75');
     // 40 + 412.30 / 1.1551 + 2,100 / 1.1551
-    expect(t).toContain('Out €2,214.96');
-    expect(t).toContain('Net €468.79');
+    expect(t).toContain('Out -€2,214.96');
+    expect(t).toContain('Net +€468.79');
     expect(t).toContain('Converted into EUR at each day’s ECB rate: 3 transactions in USD.');
     expect(t).toContain("1 transaction in BTC isn't in these totals, which are in EUR: there is no rate for BTC on those days.");
     // Listed in its own currency.

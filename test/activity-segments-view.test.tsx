@@ -167,6 +167,40 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
+  test('the strip is said once, first in the panel (after Spending’s period), on the page, signed', () => {
+    const v = mount();
+    const [panel] = v.all((e) => e.getAttribute('id') === 'activity-panel');
+    const strip = () => v.all((e) => e.getAttribute('class') === 'month-figures');
+    const kids = () => panel.childNodes.filter((c): c is FakeElement => c instanceof FakeElement);
+    const figures = () => strip()[0].findAll((e) => (e.getAttribute('class') ?? '').startsWith('summary-value')).map((e) => e.textContent);
+    // Transactions: the first thing under the bar, never in a card.
+    expect(strip()).toHaveLength(1);
+    expect(kids()[0]).toBe(strip()[0]);
+    expect(figures()).toEqual(['+$3,100.00', '-$412.30', '+$2,687.70']);
+    for (let p = strip()[0].parentNode as FakeElement | null; p; p = p.parentNode as FakeElement | null) expect((p.getAttribute?.('class') ?? '').split(' ')).not.toContain('card');
+    // Its heading, for a screen reader alone: the bar names the month.
+    expect(strip()[0].findAll((e) => e.tagName === 'H2')[0].textContent).toBe(`In and out, ${longName(month)}`);
+    // Spending: after the period's switch, before the cash flow, which has none of its own.
+    act(() => click(v.tab('Spending')));
+    expect(strip()).toHaveLength(1);
+    expect(kids()[0].getAttribute('class')).toBe('segmented spending-period');
+    expect(kids()[1]).toBe(strip()[0]);
+    expect(v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('summary-row'))).toHaveLength(1);
+    expect(v.all((e) => e.getAttribute('class') === 'inst-name' && e.textContent === 'In and out')).toHaveLength(0);
+    // At 1M the period is the bar's month: no caption shown, only the heading.
+    expect(v.all((e) => e.getAttribute('class') === 'month-figures-caption')).toHaveLength(0);
+    v.unmount();
+  });
+
+  test('with no transactions, the month’s row is still there, empty, so the segments sit where they will', () => {
+    const v = mount({ txns: [] });
+    expect(v.text()).toContain('No transactions in the last 12 months.');
+    const rows = v.all((e) => e.getAttribute('class') === 'activity-month');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].childNodes).toHaveLength(0);
+    v.unmount();
+  });
+
   test('the arrow keys, Home and End move between the segments and choose as they go', () => {
     expect([segmentKey('ArrowRight', 2, 3), segmentKey('ArrowLeft', 0, 3), segmentKey('Home', 2, 3), segmentKey('End', 0, 3), segmentKey('a', 0, 3)]).toEqual([0, 2, 0, 2, null]);
     const v = mount();
@@ -269,10 +303,19 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
     const none = mount();
     expect(none.button('Activity options')).toBeUndefined();
-    // On Shared with nothing in it, the bar has no empty row.
+    // On Shared, which isn't by month, the month's row stays, as tall,
+    // so the segments don't move: with nothing in it here.
     act(() => click(none.tab('Shared')));
-    expect(none.all((e) => e.getAttribute('class') === 'activity-month')).toHaveLength(0);
+    const rows = none.all((e) => e.getAttribute('class') === 'activity-month');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].childNodes).toHaveLength(0);
     none.unmount();
+    // With a ⋯, the row holds it.
+    const some = mount({ onAddTransaction: () => {} });
+    act(() => click(some.tab('Shared')));
+    const [row] = some.all((e) => e.getAttribute('class') === 'activity-month');
+    expect(row.findAll((e) => e.getAttribute('aria-label') === 'Activity options')).toHaveLength(1);
+    some.unmount();
   });
 
   test('the bar shows while the transactions load, and Shared doesn’t wait for them', () => {

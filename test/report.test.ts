@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import { badgeOf } from '@/components/ConnectionHealth';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, signedMoney } from '@/lib/format';
 import { displayName } from '@/lib/categories';
 import { summarize, categoryTotals } from '@/lib/totals';
 import { HEALTH_STATES } from '@/lib/connection-state';
@@ -267,9 +267,11 @@ describe('the totals are the Activity tab’s', () => {
     const r = buildReport(input({ rows: MARCH, period: period({ kind: 'range', start: '2025-03-01', end: '2025-03-31' }) }));
     expect(r.currency).toBe('USD');
     const money = (n: number) => formatMoney(n, r.currency);
-    expect(tab.in).toBe(money(r.totals.money_in));
-    expect(tab.out).toBe(money(r.totals.money_out));
-    expect(tab.net).toBe(money(r.totals.net));
+    // The tab writes its figures signed: money in with its plus, money out with its minus.
+    const signed = (n: number) => signedMoney(n, r.currency);
+    expect(tab.in).toBe(signed(r.totals.money_in));
+    expect(tab.out).toBe(signed(-r.totals.money_out));
+    expect(tab.net).toBe(signed(r.totals.net));
     // The Activity tab shows the top five; the report lists them all, in the
     // same order, each name shown as the app shows a category's.
     expect(tab.categories).toEqual(r.money_out.slice(0, 5).map((c) => [displayName(c.category), money(c.amount)]));
@@ -298,8 +300,9 @@ describe('the totals are the Activity tab’s', () => {
     const march = period({ kind: 'range', start: '2025-03-01', end: '2025-03-31' });
     expect(buildReport(input({ rows: year, period: march })).currency).toBe('USD');
     const r = buildReport(input({ rows: year, period: march, currency: 'EUR' }));
-    const money = (n: number) => formatMoney(n, 'EUR');
-    expect([tab.in, tab.out, tab.net]).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    // The tab writes its figures signed: money in with its plus, money out with its minus.
+    const signed = (n: number) => signedMoney(n, 'EUR');
+    expect([tab.in, tab.out, tab.net]).toEqual([signed(r.totals.money_in), signed(-r.totals.money_out), signed(r.totals.net)]);
     expect(r.totals.left_out_text).toBe("2 transactions in USD aren't in these totals, which are in EUR.");
     expect(tab.note).toContain(r.totals.left_out_text!);
   });
@@ -1031,8 +1034,9 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
     // A month as the Activity tab shows it, from the rows it has.
     const april = period({ kind: 'range', start: '2025-04-01', end: '2025-04-30' });
     const shown = activityTab(KEPT.filter((t) => t.date.startsWith('2025-04')));
-    expect(shown.out).toBe(formatMoney(report({ period: april }).totals.money_out, 'USD'));
-    expect(shown.out).toBe(formatMoney(20, 'USD'));
+    // Money out, as the tab writes it: with its minus.
+    expect(shown.out).toBe(signedMoney(-report({ period: april }).totals.money_out, 'USD'));
+    expect(shown.out).toBe(signedMoney(-20, 'USD'));
   });
 
   test('the sources list each account whose end the period has something to say of, as closed, no longer yours or not followed from its day', () => {

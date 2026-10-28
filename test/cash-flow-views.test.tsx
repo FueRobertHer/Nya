@@ -11,7 +11,7 @@ import { cashFlow, inPeriod, periodCaption, periodEnding, periodOf, pickedRows, 
 import { addMonths } from '@/lib/rollover';
 import { summarize, spendingByCategory } from '@/lib/totals';
 import { filedId, indexTaxonomy } from '@/lib/categories';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, signedMoney } from '@/lib/format';
 import { localDate, localMonth } from '@/lib/local-date';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 import { countTransactions } from '@/lib/spending';
@@ -104,15 +104,26 @@ const sankey = (props: Partial<Parameters<typeof CashFlowSankey>[0]> = {}, width
 // there has about 108px, so names are cut beside their amounts.
 const FOUR = 380;
 
+// The In / Out / Net strip over the Activity tab's panel (components/MonthFigures.tsx),
+// as it writes its figures, signed.
+const strip = (html: string, label: string) => new RegExp(`total-label">${label}</div><div class="summary-value[^"]*">([^<]*)<`).exec(html)?.[1];
+// The cash flow's own totals, the rows of the table under its chart, worked
+// out by lib/cash-flow.ts apart from the tab's.
+const flowTotal = (html: string, label: 'Money in' | 'Money out') => new RegExp(`<td>${label}</td><td class="num">([^<]*)<`).exec(html)?.[1];
+
 describe('the issue’s acceptance, through the views themselves', () => {
   test('money in on the chart is the Activity tab’s money in for the same month, to the cent', () => {
     const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     const moneyIn = summarize(ROWS, (d) => d.startsWith(month), 'USD').money_in;
     expect(moneyIn).toBe(3138.5);
-    // Once in the chart's figures, once in the month's summary: the same figure.
-    expect(html.split(`<div class="summary-value inflow">${formatMoney(moneyIn, 'USD')}</div>`).length - 1).toBe(2);
-    const out = formatMoney(summarize(ROWS, (d) => d.startsWith(month), 'USD').money_out, 'USD');
-    expect(html.split(`<div class="summary-value">${out}</div>`).length - 1).toBe(2);
+    // In the chart's own totals and in the strip over the panel: the same
+    // figures, the strip's signed, and said once as In / Out / Net.
+    const moneyOut = summarize(ROWS, (d) => d.startsWith(month), 'USD').money_out;
+    expect(flowTotal(html, 'Money in')).toBe(formatMoney(moneyIn, 'USD'));
+    expect(strip(html, 'In')).toBe(signedMoney(moneyIn, 'USD'));
+    expect(flowTotal(html, 'Money out')).toBe(formatMoney(moneyOut, 'USD'));
+    expect(strip(html, 'Out')).toBe(signedMoney(-moneyOut, 'USD'));
+    expect(html.match(/class="summary-row"/g)).toHaveLength(1);
     expect(text(html)).toContain('Cash flow');
   });
 
@@ -148,7 +159,12 @@ describe('the issue’s acceptance, through the views themselves', () => {
     expect(t).toContain('Savings or debt $1.1K');
     expect(t).toContain('From savings or debt');
     expect(t).toContain('From savings or debt, beyond what came in $1,100.00');
-    expect(html).toContain('<div class="summary-value negative">-$1,100.00</div>');
+    // No In / Out / Net of its own: the strip over the panel says the net.
+    expect(html).not.toContain('summary-row');
+    const tab = renderToStaticMarkup(
+      <MonthBreakdown txns={[row(day(1), 'ACME CORP', -1000, 'income'), row(day(2), 'Landlord', 2100, 'rent and utilities')]} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />
+    );
+    expect(tab).toContain('<div class="summary-value negative">-$1,100.00</div>');
     expect(html).toContain('class="sankey-node deficit"');
     expect(html).toContain('class="sankey-link deficit"');
     expect(t).not.toContain('Left over');
@@ -343,7 +359,7 @@ describe('the period it is given', () => {
     const html = sankey({ period: 'last-3-months' });
     const s = summarize(ROWS, inPeriod(periodOf('last-3-months', today)), 'USD');
     expect(s.money_in).toBe(6238.5);
-    expect(html).toContain(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`);
+    expect(flowTotal(html, 'Money in')).toBe(formatMoney(s.money_in, 'USD'));
   });
 
   test('a period reaching before the earliest transaction says it may be missing what came before', () => {
@@ -433,8 +449,9 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
     const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />);
     const s = summarize(rows, (d) => d.startsWith(month), 'USD');
     expect(s.money_in).toBe(3638.5);
-    expect(html.split(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`).length - 1).toBe(2);
-    expect(html.split(`<div class="summary-value">${formatMoney(s.money_out, 'USD')}</div>`).length - 1).toBe(2);
+    // The chart's own totals and the strip over the panel, the same figures.
+    expect([flowTotal(html, 'Money in'), flowTotal(html, 'Money out')]).toEqual([formatMoney(s.money_in, 'USD'), formatMoney(s.money_out, 'USD')]);
+    expect([strip(html, 'In'), strip(html, 'Out')]).toEqual([signedMoney(s.money_in, 'USD'), signedMoney(-s.money_out, 'USD')]);
     const t = text(html);
     expect(t).toContain('2 of this month’s transactions were imported from files, not sent by the bank.');
     expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from files, not sent by the bank.`);

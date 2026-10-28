@@ -192,7 +192,7 @@ describe('design guard: controls and states read without color', () => {
   test('each title and figure is in the Display rule', () => {
     const at = css.indexOf('h1,', css.indexOf('Titles and figures in Red Hat Display'));
     const head = css.slice(at, css.indexOf('{', at));
-    const roles = ['.card-header > :is(h2, h3)', '.sheet-header h2', '.month-stepper-title', '.budgets-title', '.plan-title', '.total-value', '.summary-value', '.plan-stat-value', '.card-mode-amount', '.txn-sheet-amount', '.account-balance', '.txn-logo-fallback'];
+    const roles = ['.card-header > :is(h2, h3)', '.empty-state > :is(h2, h3)', '.sheet-header h2', '.month-stepper-title', '.plan-title', '.total-value', '.summary-value', '.plan-stat-value', '.card-mode-amount', '.txn-sheet-amount', '.account-balance', '.txn-logo-fallback'];
     expect(roles.filter((r) => !head.includes(r))).toEqual([]);
     expect(head).not.toContain('total-label');
   });

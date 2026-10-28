@@ -82,7 +82,8 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Confirming a destructive action, inside a sheet | `.btn.danger` | `button.danger` |
 | A group of buttons | `.btn-row` | `.button-pair`, `.card-actions` |
 | Helper text | `.helper` | `.panel-note` |
-| Empty state | `.empty-note` | |
+| Empty state: a card with nothing in it yet | `EmptyState` (`.empty-state`): a heading, one line, one filled primary | a `.empty-note` paragraph and a tonal button apart from it |
+| A line saying a list or a figure is empty, inside a card that has more | `.empty-note` | |
 | Content still loading | `.skeleton` (`.skeleton.block` for a box), on the real component's classes | `.spinner` in an empty card |
 | Critical notice (a number is wrong or short) | `.notice.critical` | `.error` |
 | Caution notice (real but dated, needs you) | `.notice.caution` | `.stale-note` |

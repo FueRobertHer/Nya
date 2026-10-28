@@ -191,7 +191,12 @@ describe('every tab while it loads', () => {
     // The month's row held, its name still to come.
     expect(activity).toContain('<h2 class="month-stepper-title" tabindex="-1" aria-live="polite"><span class="skeleton activity-skeleton-month" aria-hidden="true"></span></h2>');
     expect(activity).not.toContain('<select');
-    expect(renderToStaticMarkup(<ActivitySkeleton segment="shared" />)).not.toContain('month-stepper');
+    // Shared isn't by month: the month's row is held all the same, empty, as the tab draws it.
+    const shared = renderToStaticMarkup(<ActivitySkeleton segment="shared" />);
+    expect(shared).not.toContain('month-stepper');
+    expect(shared).toContain('<div class="activity-month"></div>');
+    // Budgets' Goals and Upcoming: the row held, its heading read alone, never the tab's name on screen.
+    for (const segment of ['goals', 'upcoming'] as const) expect(renderToStaticMarkup(<BudgetsSkeleton segment={segment} />)).toContain('<div class="budgets-heading"><h2 class="visually-hidden">');
     const budgets = renderToStaticMarkup(<BudgetsSkeleton segment="month" />);
     expect(budgets).toStartWith('<div inert=""><div class="budgets-bar">');
     expect(budgets).toContain('<span class="skeleton budgets-skeleton-month" aria-hidden="true"></span>');
@@ -229,15 +234,22 @@ describe('every tab while it loads', () => {
   test('the known words show as words: card titles and the figures’ labels', () => {
     const activity = renderToStaticMarkup(<ActivitySkeleton segment="transactions" />);
     for (const w of ['>In<', '>Out<', '>Net<', '>Transactions<', 'placeholder="Search transactions"']) expect(activity).toContain(w);
-    // In and out is titled only on Spending, after the period's switch and the Cash flow card, as MonthBreakdown draws it.
-    expect(activity).not.toContain('In and out');
+    // The In, Out and Net strip (components/MonthFigures.tsx) itself, its
+    // figures to come, hidden from a screen reader (the one status says it
+    // is loading), first on Transactions, before the list.
+    expect(activity).toContain('<section class="month-figures" aria-labelledby="month-figures-title" aria-hidden="true"><h2 id="month-figures-title" class="visually-hidden">In and out</h2>');
+    expect(activity.indexOf('month-figures')).toBeLessThan(activity.indexOf('<h2>Transactions</h2>'));
     const spending = renderToStaticMarkup(<ActivitySkeleton segment="spending" />);
     const at = (w: string) => spending.indexOf(w);
     // The switch's own markup and classes, on 1M, under inert, nothing dimmed.
     expect(spending).toContain('<div class="segmented spending-period" inert="">');
     expect(at('>1M</button>')).toBeGreaterThan(-1);
-    expect(at('>1M</button>')).toBeLessThan(at('>Cash flow<'));
-    expect(at('>Cash flow<')).toBeLessThan(at('>In and out<'));
+    // Then the strip, as MonthBreakdown draws it (no span at 1M), then the
+    // Cash flow card; no In and out card.
+    expect(at('>1M</button>')).toBeLessThan(at('class="month-figures"'));
+    expect(at('class="month-figures"')).toBeLessThan(at('>Cash flow<'));
+    expect(spending).not.toContain('month-figures-caption');
+    expect(spending).not.toContain('<div class="inst-name">In and out</div>');
     expect(spending).toContain('<button type="button" role="radio" aria-checked="true" tabindex="-1">1M</button>');
     expect(spending.slice(at('spending-period'), spending.indexOf('</div>', at('spending-period')))).not.toContain('disabled');
     expect(renderToStaticMarkup(<BudgetsSkeleton segment="month" />)).toContain('<h3>Spent</h3>');

@@ -420,11 +420,15 @@ describe('the preview', () => {
 });
 
 describe('the offer, once', () => {
-  test('says what the sets are, and lets you keep yours', () => {
+  test('one row that opens the sets, and beside it, not inside it, a bare × that keeps yours; nothing filled', () => {
     const html = renderToStaticMarkup(TemplateOfferCard({ onKeep: () => {}, onSee: () => {} }));
-    expect(html).toContain('Categories that fit you');
-    expect(html).toContain('Keep mine');
-    expect(html).toContain('See starter sets');
+    expect(html).toStartWith('<ul class="card list-rows template-offer"><li><button type="button" class="list-row" aria-haspopup="dialog">');
+    expect(html).toContain('<span class="list-row-title">Categories that fit you</span><span class="list-row-sub">A starter set may suit you better</span>');
+    // The row's button closes before the ×'s opens: no button inside another.
+    expect(html).toContain('</button><button type="button" class="icon-btn" aria-label="Keep my categories">');
+    expect(html.match(/<button/g)).toHaveLength(2);
+    expect(html).not.toContain('class="btn"');
+    expect(html).not.toContain('btn secondary');
   });
 
   test('isn’t drawn on the server, before the device says whether it had it', () => {

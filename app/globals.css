@@ -311,9 +311,9 @@ h2 {
    keeps Text. */
 h1,
 .card-header > :is(h2, h3),
+.empty-state > :is(h2, h3),
 .sheet-header h2,
 .month-stepper-title,
-.budgets-title,
 .plan-title,
 .total-value,
 .summary-value,
@@ -714,6 +714,26 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   color: var(--warn);
 }
 
+/* Budgets' starter-sets offer (components/TemplateOffer.tsx): one row that
+   opens the sets, and beside it, never inside it, a bare × that keeps your
+   categories. The row gives up its end padding to the ×, which keeps its
+   44px and sits a step in from the card's edge. */
+.template-offer > li {
+  display: flex;
+  align-items: center;
+}
+
+.template-offer .list-row {
+  flex: 1;
+  min-width: 0;
+  padding-inline-end: var(--sp-1);
+}
+
+.template-offer .icon-btn {
+  flex: none;
+  margin-inline-end: var(--sp-2);
+}
+
 /* Rows inside a card with a header: the focus ring drawn inside them, as on
    a card that is all rows. */
 .card > .list-rows .list-row:focus-visible {
@@ -904,22 +924,15 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   background: var(--canvas);
 }
 
-/* Activity's row with only its ⋯ (on Shared, which has no month), and
-   Budgets' heading on Upcoming and Goals: as tall as the month's row. */
+/* Activity's row on Shared, which has no month (its ⋯, or nothing), and
+   Budgets' on Upcoming and Goals (nothing on screen): as tall as the month's
+   row, so the segments under them never move. */
 .activity-month,
 .budgets-heading {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   min-height: var(--tap);
-}
-
-.budgets-title {
-  flex: 1;
-  margin: 0;
-  text-align: center;
-  font-size: var(--fs-3);
-  font-weight: var(--fw-semibold);
 }
 
 /* The month (components/MonthStepper.tsx): Activity's, Budgets' on Month
@@ -1873,6 +1886,30 @@ button:disabled:where(:not([class*="cl-"])) {
   margin: 12px 0 0;
 }
 
+/* A card with nothing in it yet (components/EmptyState.tsx): a heading, one
+   line, and one primary action, the first step. What must still be said
+   there sits between the line and the action. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.empty-state > :is(h2, h3) {
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+}
+
+.empty-state > :is(.stale-note, .error, .panel-note) {
+  margin: 0;
+}
+
+.empty-state > .btn {
+  margin-top: var(--sp-1);
+  align-self: flex-start;
+}
+
 /* --- bottom tab bar (mobile-first PWA navigation) --- */
 
 .tab-bar {
@@ -2145,6 +2182,21 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 /* --- monthly breakdown (Activity tab) --- */
+
+/* Activity's In, Out and Net (components/MonthFigures.tsx): one strip at
+   the top of the panel, on the page rather than in a card, kept a card's
+   margin from what follows. Its span, when it is more than the bar's month,
+   is a line over the figures. */
+.month-figures {
+  margin-bottom: var(--sp-4);
+}
+
+.month-figures-caption {
+  margin: 0 0 var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-regular);
+}
 
 /* In / Out / Net: on one line at any phone's width; past that (a very large
    month) the last wraps under, never past the card's edge. */
@@ -3429,8 +3481,8 @@ button.danger-outline {
   width: 5em;
 }
 
-/* Activity: the month in its bar, and the In and out card's caption and
-   three figures. */
+/* Activity: the month in its bar, the Cash flow card's caption, and the
+   In, Out and Net strip's three figures (components/MonthFigures.tsx). */
 .activity-skeleton-month,
 .budgets-skeleton-month {
   width: 8em;
@@ -6667,10 +6719,6 @@ button.split-small {
    transactions (components/MonthBreakdown.tsx). The app's own colors: money in
    and what is left over in the up hue, spending in the accent, what came from
    savings or debt in the down hue, the middle in the muted gray. --- */
-
-.cash-flow-summary {
-  margin-top: 12px;
-}
 
 .sankey-svg {
   display: block;
