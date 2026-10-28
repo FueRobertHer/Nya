@@ -198,9 +198,11 @@ export function fmtStaleDay(date: string, at?: string): string {
   return local ?? fmtDay(date);
 }
 
-// A due date as liabilitySummary says it: "Nov 15", with its year when that
-// isn't today's year ("Nov 15, 2025"). Parsed at local midnight, as fmtDay.
-function dueDay(iso: string, today: string): string {
+// A day as a row says it: "Nov 15", with its year when that isn't today's
+// year ("Nov 15, 2025"), so a day of another year never reads as this year's.
+// liabilitySummary's due dates, the rule preview's and a shared account's
+// transactions. Parsed at local midnight, as fmtDay.
+export function fmtDayInYear(iso: string, today: string = localDate()): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -227,7 +229,7 @@ export function liabilitySummary(a: Account, today: string = localDate()): strin
   if (l.apr != null) parts.push(`${l.apr.toFixed(2)}% APR`);
   if (l.minimum_payment != null) parts.push(`min ${fmt(l.minimum_payment, a.currency)}`);
   if (l.next_due_date) {
-    const day = dueDay(l.next_due_date, today);
+    const day = fmtDayInYear(l.next_due_date, today);
     if (l.next_due_date >= today) parts.push(`${l.is_overdue ? 'next due' : 'due'} ${day}`);
     else if (l.is_overdue) parts.push(`was due ${day}`);
   }

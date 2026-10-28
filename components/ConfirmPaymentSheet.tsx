@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import { shownName } from '@/lib/merchant-name';
 import type { Txn } from './MonthBreakdown';
 import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
@@ -226,7 +227,7 @@ export function ConfirmPaymentSheet({
     return (
       <Sheet open title="Paid back" onClose={() => !saving && onClose()}>
         <p className="panel-note" style={{ marginTop: 0 }}>
-          {t.name}, {shownDay(t.date)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
+          {shownName(t)}, {shownDay(t.date)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
           {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
         </p>
         {error && (
@@ -250,7 +251,7 @@ export function ConfirmPaymentSheet({
   return (
     <Sheet open title={direction === 'to_you' ? 'This paid back…' : 'This paid…'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {t.name}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} on {shownDay(t.date)}.{' '}
+        {shownName(t)}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} on {shownDay(t.date)}.{' '}
         {direction === 'to_you'
           ? 'Choose what it paid back: that much of it is money between you and them, never income.'
           : 'Choose what it paid of what you owe: that much of it is money between you and them, never spending.'}

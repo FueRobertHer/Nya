@@ -19,6 +19,7 @@ import { Masked } from './HideAmounts';
 import type { LifecycleTarget } from './AccountLifecycle';
 import type { HistoryImportTarget } from './HistoryImportSheet';
 import { hiddenFigure } from '@/lib/format';
+import { readableName } from '@/lib/merchant-name';
 import { isInvestmentType, isOwedType } from '@/lib/balance';
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
 import {
@@ -111,7 +112,7 @@ export function HoldingsTable({ holdings, flagged }: { holdings: Holding[]; flag
           return (
             <tr key={i}>
               <td>
-                {h.name}
+                {readableName(h.name)}
                 {/* The chip says WHICH row is cash; the amber says it's
                     worth doing something about, and only the owning
                     account can decide that. */}

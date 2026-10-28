@@ -282,6 +282,27 @@ describe('what others share with me', () => {
     expect(html).not.toContain("aren't shared yet");
   });
 
+  test("a shared row says its day as the app's rows do, and the bank's own text readably", () => {
+    const year = new Date().getFullYear();
+    const a = {
+      id: 'a',
+      label: 'Plaid Checking ••0000',
+      level: 'transactions' as const,
+      balance: 100,
+      currency: 'USD',
+      as_of: `${year}-10-25`,
+      debt: false,
+      transactions: [
+        { date: `${year}-10-24`, name: 'Uber', amount: 6.33, pending: false, currency: 'USD' },
+        { date: `${year - 1}-12-30`, name: 'CREDIT CARD 3333 PAYMENT *//', name_from_bank: true as const, amount: 25, pending: false, currency: 'USD' },
+      ],
+    };
+    const t = text(renderToStaticMarkup(<SharedAccountItem a={a} open onToggle={() => {}} />));
+    expect(t).toContain('Oct 24 Uber');
+    expect(t).toContain(`Dec 30, ${year - 1} Credit Card 3333 Payment`);
+    expect(t).not.toContain(`${year}-10-24`);
+  });
+
   test('each figure is shown in its own currency, nothing converted: the balance in its account’s, each row in its own', () => {
     const toggle = () => {};
     const pounds = {

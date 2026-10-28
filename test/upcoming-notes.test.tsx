@@ -366,9 +366,36 @@ const MOVES: { starts: string; was: string; now: string | null; why: string }[] 
   },
 ];
 
+/** What was reworded on purpose since, each by its full words as recorded
+ *  and its level: its new words, said at the same level, and what moved with
+ *  it behind "Why?" (`moved`, said at level `why`). The recording stays as it
+ *  was made. */
+const CAPITAL = 'each part of an Upcoming row’s line starts with a capital, as a label of its own (the words pass after the screen review)';
+const REWORDED: { was: string; level: string; now: string; moved?: string; why: string }[] = [
+  { was: 'pending', level: 'tag', now: 'Pending', why: CAPITAL },
+  {
+    was: "income · Every 2 weeks · its amount varies, not in the day's figure",
+    level: 'tag',
+    now: "Income · Every 2 weeks · Its amount varies, not in the day's figure",
+    why: CAPITAL,
+  },
+  {
+    was: "bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash",
+    level: 'tag',
+    now: "Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash",
+    why: CAPITAL,
+  },
+  { was: 'bill · Monthly · due Oct 15, not in yet', level: 'tag', now: 'Bill · Monthly · Due Oct 15, not in yet', why: CAPITAL },
+];
+
 describe('every note the segment said is still said, in its words and at its level', () => {
   test('the recording covers every scene', () => {
     expect(Object.keys(recorded).sort()).toEqual(Object.keys(SCENES).sort());
+  });
+
+  test('every rewording names words the recording holds', () => {
+    const all = Object.values(recorded).flat();
+    expect(REWORDED.filter((r) => !all.some((n) => n.text === r.was && n.level === r.level)).map((r) => r.was)).toEqual([]);
   });
 
   for (const [scene, notes] of Object.entries(recorded)) {
@@ -378,6 +405,13 @@ describe('every note the segment said is still said, in its words and at its lev
       const all = text(html);
       const missing = notes
         .map((n) => {
+          // Reworded on purpose: its new words, where the old ones were said.
+          const re = REWORDED.find((r) => r.was === n.text && r.level === n.level);
+          if (re) {
+            const now = n.level === 'tag' ? all.includes(re.now) : said.some((s) => s.level === n.level && s.text.includes(re.now));
+            const moved = re.moved === undefined || said.some((s) => s.level === 'why' && s.text.includes(re.moved!));
+            return now && moved ? null : n;
+          }
           // A row's line under its name (`tag`) is its subtitle now: its words.
           if (n.level === 'tag') return all.includes(n.text) ? null : n;
           const move = MOVES.find((m) => n.text.startsWith(m.starts) && n.level === m.was);

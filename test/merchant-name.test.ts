@@ -29,6 +29,21 @@ describe('readableName: a bank descriptor in capitals, readable', () => {
     expect(readableName(raw)).toBe(shown);
   });
 
+  // A security's name, which a broker sends in capitals as often: its fund
+  // words stay letters, and a brand keeps its own casing.
+  test.each([
+    ['NH PORTFOLIO 1055 (FIDELITY INDEX)', 'NH Portfolio 1055 (Fidelity Index)'],
+    ['SCHWAB US REIT ETF', 'Schwab US REIT ETF'],
+    ['ISHARES CORE MSCI EAFE ETF', 'iShares Core MSCI EAFE ETF'],
+    ['NUVEEN ESG LARGE-CAP VALUE ETF', 'Nuveen ESG Large-Cap Value ETF'],
+    ['TAIWAN SEMICONDUCTOR MFG SPON ADR', 'Taiwan Semiconductor MFG Spon ADR'],
+    ['VANGUARD FTSE DEVELOPED MARKETS ETF', 'Vanguard FTSE Developed Markets ETF'],
+    ['FIDELITY GOVERNMENT MONEY MARKET USD', 'Fidelity Government Money Market USD'],
+    ['ISHARES 20+ YEAR TREASURY BOND ETN', 'iShares 20+ Year Treasury Bond ETN'],
+  ])('the security %s reads %s', (raw, shown) => {
+    expect(readableName(raw)).toBe(shown);
+  });
+
   test('a name with any lowercase letter is left as it is', () => {
     expect(readableName('Uber')).toBe('Uber');
     expect(readableName('iTunes STORE')).toBe('iTunes STORE');

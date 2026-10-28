@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import { badgeOf } from '@/components/ConnectionHealth';
 import { formatMoney } from '@/lib/format';
+import { displayName } from '@/lib/categories';
 import { summarize, categoryTotals } from '@/lib/totals';
 import { HEALTH_STATES } from '@/lib/connection-state';
 import type { Txn } from '@/lib/transactions';
@@ -269,8 +270,9 @@ describe('the totals are the Activity tab’s', () => {
     expect(tab.in).toBe(money(r.totals.money_in));
     expect(tab.out).toBe(money(r.totals.money_out));
     expect(tab.net).toBe(money(r.totals.net));
-    // The Activity tab shows the top five; the report lists them all, in the same order.
-    expect(tab.categories).toEqual(r.money_out.slice(0, 5).map((c) => [c.category, money(c.amount)]));
+    // The Activity tab shows the top five; the report lists them all, in the
+    // same order, each name shown as the app shows a category's.
+    expect(tab.categories).toEqual(r.money_out.slice(0, 5).map((c) => [displayName(c.category), money(c.amount)]));
     // What each leaves out, and why, agrees too.
     expect(tab.note).toContain(`and ${r.totals.excluded} transaction you left out`);
     expect(tab.note).toContain(`Whether you excluded ${r.totals.exclusion_unknown} transaction couldn't be read`);

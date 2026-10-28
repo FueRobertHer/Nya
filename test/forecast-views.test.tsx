@@ -280,7 +280,7 @@ describe('the calendar', () => {
   test('a card\'s own charge is listed on its day but not added, and says why', () => {
     const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
     const t = view({ series: spotify, txns: [] });
-    expect(t).toContain("Spotify bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
+    expect(t).toContain("Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
     expect(t).not.toContain('Expected · -$10.99');
   });
 
@@ -288,7 +288,7 @@ describe('the calendar', () => {
   test('a card whose name already says card isn’t called a card twice', () => {
     const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Plaid Credit Card', account_type: 'credit' })));
     const t = view({ series: spotify, txns: [] });
-    expect(t).toContain("Spotify bill · Monthly · on the Plaid Credit Card, not in the day's figure");
+    expect(t).toContain("Spotify Bill · Monthly · On the Plaid Credit Card, not in the day's figure");
     expect(t).not.toContain('Card card');
   });
 
@@ -301,8 +301,8 @@ describe('the calendar', () => {
       ],
     });
     expect(t).toContain('Posted · -$30.00');
-    expect(t).toContain("Ramen in JPY, not in the day's figure");
-    expect(t).toContain("Work trip excluded, not in the day's figure");
+    expect(t).toContain("Ramen In JPY, not in the day's figure");
+    expect(t).toContain("Work trip Excluded, not in the day's figure");
   });
 
   test('each day\'s cell carries its figure: what posted before today, what is expected after', () => {

@@ -137,6 +137,17 @@ describe('the runway, drawn', () => {
     expect(t).toContain('a month in this what-if');
   });
 
+  test("a card's payment and a one-off named by the bank's own text read readably, in the list and the caveat", () => {
+    const amex = ['07', '08', '09'].map((m) => row(`amex-${m}`, `2026-${m}-12`, 1500, { name: 'AMEX EPAYMENT *//', name_from_bank: true, category: 'loan payments', subcategory: 'credit card payment' }));
+    const roof = row('roof', '2026-08-20', 6000, { name: 'ROOFING OF PORTLAND OR', name_from_bank: true, category: 'home improvement' });
+    const built = buildRunwayInputs({ today: TODAY, position, rows: [...ROWS, ...amex, roof], planned: PLANNED, dismissed: [] });
+    const t = text(draw(runway({ ...built })));
+    expect(t).toContain('Amex Epayment from Checking looks like a card’s payment');
+    expect(t).toContain('Amex Epayment from Checking: $4,500.00 over 3 payments');
+    expect(t).toContain('Roofing of Portland OR, Aug 20, 2026: $6,000.00');
+    expect(t).not.toContain('EPAYMENT');
+  });
+
   test('what leaves cash unseen is said: a card Nya doesn’t see, transfers out and cash taken out, and the what-if that counts them', () => {
     const amex = ['07', '08', '09'].map((m) => row(`amex-${m}`, `2026-${m}-12`, 1500, { name: 'AMEX EPAYMENT', category: 'loan payments', subcategory: 'credit card payment' }));
     // Rent for a sublet paid by Zelle, and a move to a health savings account
@@ -301,7 +312,7 @@ describe('year over year, drawn', () => {
     expect(t).toContain('Oct 2026 (to the 22nd)');
     expect(t).toContain('Aug 2026 $800.00 $650.00 +$150.00 +23.1% This year may be short of Citi');
     // A group, then its categories; new when last year had none.
-    expect(t).toContain('Food $1,100.00 $900.00 +$200.00 +22.2% food and drink $1,100.00 $900.00 +$200.00 +22.2%');
+    expect(t).toContain('Food $1,100.00 $900.00 +$200.00 +22.2% Food and drink $1,100.00 $900.00 +$200.00 +22.2%');
     expect(t).toContain('Shopping $20.00 $0.00 +$20.00 new');
     // What it can't see, first.
     expect(t).toContain('These figures may be incomplete:');
@@ -321,7 +332,7 @@ describe('year over year, drawn', () => {
     expect(t).toContain('Jan 2026 $3,000.00 $3,000.00 No change');
     expect(t).toMatch(/Feb 2026 \$0\.00 \$0\.00 Mar 2026/);
     // By group: no change, and no percent beside it.
-    expect(t).toContain('Income $3,000.00 $3,000.00 No change income $3,000.00 $3,000.00 No change Shopping');
+    expect(t).toContain('Income $3,000.00 $3,000.00 No change Income $3,000.00 $3,000.00 No change Shopping');
   });
 
   test('with a home currency, the amounts are in it, what is in another converted, and it says so, never an amount', () => {

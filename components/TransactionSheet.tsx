@@ -124,6 +124,9 @@ function longDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** Plaid's payment_channel in words: "online", "in store", "other". */
+const CHANNEL_WORDS: Readonly<Record<string, string>> = { online: 'Online', 'in store': 'In store', other: 'Other' };
+
 // "What is this charge?": the Plaid fields that answer it (the real merchant
 // behind a processor, channel, place, time, website, reference and check
 // numbers, and, for joint accounts, the owner), skipping any the row doesn't
@@ -134,7 +137,7 @@ function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) 
 
   if (t.counterparty) rows.push({ label: 'Merchant', value: t.counterparty });
   if (t.payment_processor) rows.push({ label: 'Processed by', value: t.payment_processor });
-  if (t.payment_channel) rows.push({ label: 'Channel', value: t.payment_channel });
+  if (t.payment_channel) rows.push({ label: 'Channel', value: CHANNEL_WORDS[t.payment_channel] ?? displayName(t.payment_channel) });
   if (t.city) rows.push({ label: 'Where', value: t.region ? `${t.city}, ${t.region}` : t.city });
   if (time) rows.push({ label: 'Time', value: time });
   if (t.website)

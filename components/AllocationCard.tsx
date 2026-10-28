@@ -51,6 +51,7 @@ import { compactMoney, spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { distinctAccountNames } from '@/lib/account-names';
 import { instantDay } from '@/lib/local-date';
+import { readableName } from '@/lib/merchant-name';
 import {
   allocate,
   bankCash,
@@ -458,8 +459,8 @@ function ActionButton({ onClick, disabled, children, label }: { onClick: () => v
 }
 
 /** A security's name for its row: its ticker, with its name when it has one
- *  that says more. */
-const securityLabel = (s: SecurityRow) => s.ticker ?? s.name ?? 'A holding with no name';
+ *  that says more; a name sent in capitals, readable (lib/merchant-name.ts). */
+const securityLabel = (s: SecurityRow) => s.ticker ?? (s.name ? readableName(s.name) : 'A holding with no name');
 
 /** The sheet that classifies a security, by its ticker or, with none, its
  *  name; null when it has neither. */
@@ -521,7 +522,7 @@ export function ClassView({
                   key={s.key}
                   label={securityLabel(s)}
                   value={money(s.amount)}
-                  note={`${s.name && s.name !== s.ticker ? `${s.name}. ` : ''}${classifiedText(s.classified)}. In ${names(s.accounts)}.${unclassifiable(s) ?? ''}`}
+                  note={`${s.name && s.name !== s.ticker ? `${readableName(s.name)}. ` : ''}${classifiedText(s.classified)}. In ${names(s.accounts)}.${unclassifiable(s) ?? ''}`}
                   action={
                     sheet ? (
                       <ActionButton onClick={() => open(sheet)} disabled={!editable} label={`Classify ${securityLabel(s)}`}>

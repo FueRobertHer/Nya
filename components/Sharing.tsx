@@ -32,6 +32,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatMoney } from '@/lib/format';
+import { shownName } from '@/lib/merchant-name';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
@@ -125,7 +126,7 @@ type SharedAccount = {
   /** At the transactions level, the last SHARED_TXN_DAYS days of them, each in
    *  its own currency (null: the main one); or, instead, that a manual
    *  account's can't be read. */
-  transactions?: { date: string; name: string; amount: number; pending: boolean; currency: string | null }[];
+  transactions?: { date: string; name: string; amount: number; pending: boolean; currency: string | null; name_from_bank?: true }[];
   transactions_unreadable?: true;
   /** It ended on `on` (lib/lifecycle.ts): no balance then, and only the
    *  transactions from before it. */
@@ -1026,7 +1027,7 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
         a.transactions?.map((t, i) => (
           <div key={i} className="incoming-txn">
             <span>
-              {t.date} {t.name}
+              {shortDate(t.date)} {shownName(t)}
               {t.pending ? ' (pending)' : ''}
             </span>
             <span>

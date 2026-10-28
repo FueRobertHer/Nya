@@ -20,6 +20,8 @@
 // same in a test (test/report-view.test.tsx) as in the browser.
 
 import { formatMoney } from '@/lib/format';
+import { displayName } from '@/lib/categories';
+import { shownName } from '@/lib/merchant-name';
 import { Masked } from './HideAmounts';
 import { endedBefore, type Report, type ReportMonth } from '@/lib/report/build';
 import {
@@ -357,7 +359,7 @@ export function ReportView({ report }: { report: Report }) {
               <tbody>
                 {report.marked.categories.map((c) => (
                   <tr key={c.category}>
-                    <td>{c.category}</td>
+                    <td>{displayName(c.category)}</td>
                     <td className="num"><Masked>{money(c.money_in)}</Masked></td>
                     <td className="num"><Masked>{money(c.money_out)}</Masked></td>
                     <td className="num">{c.transactions}</td>
@@ -408,8 +410,8 @@ export function ReportView({ report }: { report: Report }) {
                     return (
                       <tr key={i}>
                         <td className="report-nowrap">{reportDay(r.date)}</td>
-                        <td>{r.name}</td>
-                        <td>{r.category}</td>
+                        <td>{shownName(r)}</td>
+                        <td>{displayName(r.category)}</td>
                         <td>
                           {r.institution}: {r.account} ({sourceName(r.source)})
                         </td>
@@ -445,7 +447,7 @@ function CategoryTable({ rows, money, empty }: { rows: Report['money_out']; mone
         <tbody>
           {rows.map((c) => (
             <tr key={c.category}>
-              <td>{c.category}</td>
+              <td>{displayName(c.category)}</td>
               <td className="num"><Masked>{money(c.amount)}</Masked></td>
               <td className="num">{c.transactions}</td>
             </tr>

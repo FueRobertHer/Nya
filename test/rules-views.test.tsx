@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import RulesCard from '@/components/RulesCard';
-import RuleSheet from '@/components/RuleSheet';
+import RuleSheet, { RuleSample } from '@/components/RuleSheet';
 import MonthBreakdown, { exclusionOffer, nameForRules, type Txn } from '@/components/MonthBreakdown';
 import { colorAfterKey } from '@/components/TagsCard';
 import TxnTagsNote from '@/components/TxnTagsNote';
@@ -108,6 +108,16 @@ describe('the Rules screen', () => {
 });
 
 describe('the rule drawer', () => {
+  // The screen review: "2026-10-24 Uber · PLAID CHECKING".
+  test('a matching transaction reads as the rows do: its day, its name readable, its account', () => {
+    const year = localDate().slice(0, 4);
+    const sample = (over: object) => text(renderToStaticMarkup(<ul><RuleSample s={{ transaction_id: 't', date: `${year}-10-24`, name: 'Uber', amount: 12.5, currency: 'USD', account_name: 'Plaid Checking', ...over }} /></ul>));
+    expect(sample({})).toBe('Oct 24 Uber · Plaid Checking -$12.50');
+    expect(sample({ name: 'CREDIT CARD 3333 PAYMENT *//', name_from_bank: true })).toBe('Oct 24 Credit Card 3333 Payment · Plaid Checking -$12.50');
+    // A day of another year says its year.
+    expect(sample({ date: '2024-10-24' })).toBe('Oct 24, 2024 Uber · Plaid Checking -$12.50');
+  });
+
   test('a rule made from a transaction opens with its name to match and its category, and says a choice on one transaction wins', () => {
     const draft = newDraft({ conditions: [{ field: 'name', op: 'equals', value: 'Blue Bottle', value2: '', direction: '' }], set_category: shopping });
     const html = renderToStaticMarkup(<RuleSheet rules={state(emptyRuleSet(), { draft })} taxonomy={taxonomy} tags={TAGS} accounts={[]} onChanged={() => {}} />);

@@ -16,6 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Masked } from './HideAmounts';
+import { shownName } from '@/lib/merchant-name';
 import type { Txn } from './MonthBreakdown';
 import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
@@ -344,7 +345,7 @@ export default function SharedExpensesCard({
               return (
                 <li key={`${pr.row}:${pr.person}`} className="shared-proposal">
                   <div>
-                    {t.name} · {shownDay(t.date)} ·{' '}
+                    {shownName(t)} · {shownDay(t.date)} ·{' '}
                     <span className={pr.amount < 0 ? 'inflow' : undefined}>
                       <Masked>{signedMoney(-pr.amount, pr.currency, { always: true })}</Masked>
                     </span>
@@ -411,7 +412,7 @@ export default function SharedExpensesCard({
                   disabled={busy}
                   onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'move', transaction_id: s.transaction_id, to: m.transaction_id, account: m.account_id })}
                 >
-                  Move to {m.t.name}, {shownDay(m.t.date)}, {m.t.account_name}
+                  Move to {shownName(m.t)}, {shownDay(m.t.date)}, {m.t.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'keep', transaction_id: s.transaction_id }, false)}>
@@ -437,7 +438,7 @@ export default function SharedExpensesCard({
                   disabled={busy}
                   onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'move', transaction_id: p.transaction_id, to: m.transaction_id, account: m.account_id })}
                 >
-                  Move to {m.t.name}, {shownDay(m.t.date)}, {m.t.account_name}
+                  Move to {shownName(m.t)}, {shownDay(m.t.date)}, {m.t.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
@@ -489,7 +490,7 @@ export default function SharedExpensesCard({
         const t = byId.get(tw.bank);
         return (
           <div key={`twice:${tw.bank}`} className="stale-note">
-            {t ? `${t.name}, ${shownDay(t.date)}` : 'A transaction'} is shared twice: as the bank’s, and as the row imported from a file that it stands for. The bank’s share
+            {t ? `${shownName(t)}, ${shownDay(t.date)}` : 'A transaction'} is shared twice: as the bank’s, and as the row imported from a file that it stands for. The bank’s share
             counts.
             <div className="card-actions">
               <button

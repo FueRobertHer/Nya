@@ -64,6 +64,11 @@ const apiPayment = (o: RunwayPayment): ApiPayment => ({ name: o.name, institutio
  *  the runway's currency. */
 type ApiOwn = { amount: number; currency: string } | null;
 const apiOwn = (own: OwnAmount | undefined): ApiOwn => (own ? { amount: tidy(own.amount), currency: own.currency } : null);
+/** A one-off or a card's payments as the API gives them: the name as the
+ *  bank or Plaid gave it, without the report's flag for showing it readably. */
+function apiNamed<T extends { name_from_bank?: true }>({ name_from_bank: _shown, ...rest }: T): Omit<T, 'name_from_bank'> {
+  return rest;
+}
 
 /** One line of the runway, in the API's shape. */
 export type ApiRunwayLine = {
@@ -100,7 +105,7 @@ type ApiRunwayFigures = {
     transactions: number;
     refunds: number;
     infrequent_bills: number;
-    card_payments: CardPayments[];
+    card_payments: Omit<CardPayments, 'name_from_bank'>[];
     card_payments_total: number;
     transfers_out: number;
     transfers_out_own: number;
@@ -108,8 +113,8 @@ type ApiRunwayFigures = {
     cash_out: number;
     spending: number;
     income: number;
-    one_offs: OneOff[];
-    one_offs_in: OneOff[];
+    one_offs: Omit<OneOff, 'name_from_bank'>[];
+    one_offs_in: Omit<OneOff, 'name_from_bank'>[];
     left_out: LeftOut;
     left_out_text: string | null;
     months_short: MonthShort[];
@@ -188,7 +193,7 @@ function runwayFigures(r: RunwayReport, p: RunwayProjection, whatIf: RunwayWhatI
       transactions: w.transactions,
       refunds: w.refunds,
       infrequent_bills: w.infrequent,
-      card_payments: w.card_payments,
+      card_payments: w.card_payments.map(apiNamed),
       card_payments_total: w.card_payments_total,
       transfers_out: w.transfers_out,
       transfers_out_own: w.transfers_out_own,
@@ -196,8 +201,8 @@ function runwayFigures(r: RunwayReport, p: RunwayProjection, whatIf: RunwayWhatI
       cash_out: w.cash_out,
       spending: w.spending,
       income: w.income,
-      one_offs: w.one_offs,
-      one_offs_in: w.one_offs_in,
+      one_offs: w.one_offs.map(apiNamed),
+      one_offs_in: w.one_offs_in.map(apiNamed),
       left_out: w.left_out,
       left_out_text: w.left_out_text,
       months_short: w.short,

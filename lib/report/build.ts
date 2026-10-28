@@ -428,6 +428,9 @@ export type ReportMarked = {
 export type AppendixRow = {
   date: string;
   name: string;
+  /** `name` is the bank's own descriptor: the report shows it readably
+   *  (lib/merchant-name.ts), and the CSV writes it as it is. */
+  name_from_bank?: true;
   category: string;
   /** Plaid's sign: positive is money out. */
   amount: number;
@@ -1014,6 +1017,7 @@ export function buildReport(input: ReportInput): Report {
         return {
           date: t.date,
           name: t.name,
+          ...(t.name_from_bank ? { name_from_bank: true as const } : {}),
           category: markOf(t).name,
           amount: t.amount,
           currency: currencyOf(t) ?? currency,

@@ -63,6 +63,19 @@ const holdings = [
 const alloc = (settings: AllocationSettings | null = null) => allocate({ institutions, holdings, settings, currency: 'USD' });
 
 describe('the allocation by class', () => {
+  // The screen review: "NH PORTFOLIO 1055 (FIDELITY INDEX)".
+  test("a holding with no ticker is named readably, its broker's capitals made words", () => {
+    const nh = allocate({
+      institutions: [inst('Fidelity', [acct('nh', { name: 'NH 529', subtype: '529', balance: 9_055 })])],
+      holdings: [hold('nh', null, 9_055, { security_type: 'mutual fund', name: 'NH PORTFOLIO 1055 (FIDELITY INDEX)' })],
+      settings: null,
+      currency: 'USD',
+    });
+    const t = text(renderToStaticMarkup(<ClassView alloc={nh} money={money} editable settings={EMPTY_SETTINGS} open={noop} />));
+    expect(t).toContain('NH Portfolio 1055 (Fidelity Index) $9,055');
+    expect(t).not.toContain('PORTFOLIO');
+  });
+
   test('shows every class held with its amount and share, the unclassified share plainly, and a way to classify it', () => {
     const t = text(renderToStaticMarkup(<ClassView alloc={alloc()} money={money} editable settings={EMPTY_SETTINGS} open={noop} />));
     expect(t).toContain('US stocks $50,000 31%');

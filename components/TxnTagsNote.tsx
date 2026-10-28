@@ -17,6 +17,7 @@ import { useMemo, useState } from 'react';
 import { MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { TAG_NAME_MAX, cleanTagName, tagNameKey, type Tag } from '@/lib/tags';
 import TagChips from './TagChips';
+import { shownName } from '@/lib/merchant-name';
 
 /** A change to a row's tags: ids to put on or take off, or a name typed. */
 export type TagChange = { add?: string[]; remove?: string[]; newTag?: string };
@@ -30,7 +31,7 @@ export default function TxnTagsNote({
   onChangeTags,
   onSaveNote,
 }: {
-  t: { transaction_id: string; name: string; pending: boolean; tags?: string[]; note?: string | null };
+  t: { transaction_id: string; name: string; name_from_bank?: true; pending: boolean; tags?: string[]; note?: string | null };
   tags: readonly Tag[];
   onChangeTags: (change: TagChange) => void;
   onSaveNote: (note: string) => void;
@@ -76,7 +77,7 @@ export default function TxnTagsNote({
             }
           }}
           placeholder="Add a tag"
-          aria-label={`Add a tag to ${t.name}`}
+          aria-label={`Add a tag to ${shownName(t)}`}
         />
         <button className="secondary" disabled={!typed} onClick={putOn}>
           Add
@@ -98,7 +99,7 @@ export default function TxnTagsNote({
         rows={2}
         onChange={(e) => setNote(e.target.value)}
         placeholder="Note"
-        aria-label={`Note on ${t.name}`}
+        aria-label={`Note on ${shownName(t)}`}
       />
       <div className="rename-row">
         <button className="secondary" disabled={note.trim() === (t.note ?? '').trim()} onClick={() => onSaveNote(note.trim())}>

@@ -60,7 +60,7 @@ export default function CategoryRollup({
                 <span className="rollup-caret" aria-hidden="true">
                   {expanded ? '▾' : '▸'}
                 </span>
-                {group.name}
+                {displayName(group.name)}
               </span>
               <div className="cat-track">
                 <div className="cat-bar" style={{ width: `${(total / max) * 100}%` }} />

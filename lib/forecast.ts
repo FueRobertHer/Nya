@@ -60,6 +60,7 @@ import { minorDigits } from './manual-txn-input';
 import { currencyOf } from './spending';
 import { convert, type FxTable, type NoRate } from './fx/rates';
 import { reasonText } from './fx/words';
+import { shownName } from './merchant-name';
 
 /** The ranges a forecast is shown for, in days from today. */
 export const FORECAST_RANGES = [30, 60, 90] as const;
@@ -374,6 +375,9 @@ export type ForecastEvent = {
   /** Positive is money in, as the forecast shows it. */
   amount: number;
   name: string;
+  /** A series' name that is the bank's own descriptor, shown readably
+   *  (lib/merchant-name.ts shownName). */
+  name_from_bank?: true;
   source: 'bill' | 'income' | 'planned' | 'what-if';
   /** The series or planned item it comes from. */
   ref: string;
@@ -471,6 +475,7 @@ export function forecastEvents(opts: {
         date: d.date,
         amount: sign * at.amount,
         name: s.name,
+        ...(s.name_from_bank ? { name_from_bank: true as const } : {}),
         source: s.kind,
         ref: s.id,
         cadence: s.cadence,
@@ -831,9 +836,9 @@ export function forecastNoteItems(opts: ForecastNoteInput): ForecastNote[] {
 
   // Pay left out, named.
   for (const s of opts.series?.lapsed ?? [])
-    items('lapsed', `${s.name} hasn't come since ${days.day(s.lastDate)}, so it isn't in this forecast. If it still comes, add it as planned income.`);
+    items('lapsed', `${shownName(s)} hasn't come since ${days.day(s.lastDate)}, so it isn't in this forecast. If it still comes, add it as planned income.`);
   for (const s of opts.series?.varied ?? [])
-    items('varies', `${s.name} comes on a schedule, but its amount varies too much to forecast, so it isn't in this. Add what you expect as planned income.`);
+    items('varies', `${shownName(s)} comes on a schedule, but its amount varies too much to forecast, so it isn't in this. Add what you expect as planned income.`);
 
   // A typed balance holds until it is updated. (A connector's is the bank's,
   // held with its own date when it is old: said above.)
@@ -858,7 +863,7 @@ export function forecastNoteItems(opts: ForecastNoteInput): ForecastNote[] {
   if (unplaced.length > 0)
     items(
       'unplaced',
-      `${join(unique(unplaced.map((s) => s.name)))} ${unplaced.length === 1 ? 'is' : 'are'} on an account whose type isn't known, so ${unplaced.length === 1 ? "it isn't" : "they aren't"} in this forecast.`
+      `${join(unique(unplaced.map((s) => shownName(s))))} ${unplaced.length === 1 ? 'is' : 'are'} on an account whose type isn't known, so ${unplaced.length === 1 ? "it isn't" : "they aren't"} in this forecast.`
     );
   return notes;
 }
