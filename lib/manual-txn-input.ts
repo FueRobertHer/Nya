@@ -5,6 +5,8 @@
 // (app/api/manual-transactions), shared so the two agree. Pure, safe to
 // import from client code; the store is lib/manual-txns.ts.
 
+import { minorDigits, toMinorUnits } from './format';
+
 export const MAX_PAYEE_CHARS = 100; // as long as a vendor rename (app/api/rename)
 export const MAX_CATEGORY_CHARS = 60; // as long as a recategorization (app/api/recategorize)
 export const MAX_NOTE_CHARS = 500;
@@ -90,22 +92,11 @@ export function knownCurrency(code: string): boolean {
   return list('currency').includes(code);
 }
 
-/** How many decimal places an amount in the currency has: its minor unit, as
- *  Intl knows it (2 for USD and EUR, 0 for JPY, 3 for KWD), or 2 for a code
- *  Intl doesn't take. */
-export function minorDigits(currency: string): number {
-  try {
-    return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
-  } catch {
-    return 2;
-  }
-}
-
-/** The amount rounded to the currency's minor unit (half away from zero). */
-export function toMinorUnits(amount: number, currency: string): number {
-  const scale = 10 ** minorDigits(currency);
-  return (Math.sign(amount) * Math.round(Math.abs(amount) * scale)) / scale;
-}
+/** A currency's minor unit, and an amount rounded to it, are lib/format.ts's
+ *  (minorDigits, toMinorUnits), kept there so the formatters can say an amount
+ *  rounds to nothing; still exported from here for the callers that read them
+ *  with the rest of a manual transaction's rules. */
+export { minorDigits, toMinorUnits };
 
 /** Whether the amount is a whole number of the currency's minor units: no
  *  more precise than the currency allows. */

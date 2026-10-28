@@ -64,6 +64,10 @@ function cellFigure(n: number): string {
   return `${sign}${figures}${SUFFIXES[tier]}`;
 }
 
+/** "the Sapphire card", or "the Plaid Credit Card" for a name that already
+ *  says it is one: never "the Plaid Credit Card card". */
+const theCard = (name: string) => (/\bcard$/i.test(name.trim()) ? `the ${name.trim()}` : `the ${name} card`);
+
 /** Why an expected amount isn't in its day's figure (lib/calendar.ts). */
 function offText(e: CalendarEntry): string | null {
   switch (e.off) {
@@ -71,7 +75,7 @@ function offText(e: CalendarEntry): string | null {
       return `in ${e.currency}, not in the day's figure`;
     case 'not-cash':
       return e.accountType === 'credit'
-        ? `on ${e.account ? `the ${e.account} card` : 'a card'}, not in the day's figure: the card's payment is what leaves cash`
+        ? `on ${e.account ? theCard(e.account) : 'a card'}, not in the day's figure: the card's payment is what leaves cash`
         : `on ${e.account || 'an account'}, not a cash account, not in the day's figure`;
     case 'unknown-account':
       return "on an account of unknown type, not in the day's figure";

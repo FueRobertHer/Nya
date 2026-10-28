@@ -224,9 +224,11 @@ describe('a category chosen for a SimpleFIN row through the picker', () => {
     expect([after.category_id, after.category_name, after.category_kind, after.paired ?? null, after.subcategory]).toEqual([food.id, 'food and drink', 'expense', null, null]);
     const other = one(rows, 'PAYMENT THANK YOU', 2);
     expect([other.category, other.paired ?? null, countsInTotals(other, 'USD')]).toEqual([null, null, true]);
-    // The page shows the same at once: the mark and the detail go.
+    // The page shows the same at once: the mark and the detail go, and so
+    // does Plaid's doubt about its own category.
     expect(recategorizedRow(visa, { category_id: food.id }, a.categories)).toEqual({
       category: 'food and drink',
+      category_confidence: null,
       category_id: food.id,
       category_name: 'food and drink',
       category_kind: 'expense',

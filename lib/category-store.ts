@@ -41,6 +41,7 @@ import {
   indexTaxonomy,
   isTaxonomy,
   observedKeys,
+  ownCategory,
   resolveCategory,
   groupOf,
   seedTaxonomy,
@@ -179,10 +180,22 @@ export type Filing = { category_id?: string; category_name?: string | null; cate
 /** Files rows in place (lib/categories.ts resolveCategory). A row whose
  *  words no category has room for (past MAX_CATEGORIES) is left unfiled: it
  *  shows its words and counts by them, as before categories had kinds, and
- *  totals by category put it under the uncategorized one (filedId). */
-export function fileRows(ix: CategoryIndex, rows: Iterable<CategoryFacts & Filing>): void {
+ *  totals by category put it under the uncategorized one (filedId).
+ *
+ *  Plaid's confidence in its category (`category_confidence`, which the
+ *  Activity tab marks "Check category" when low) is about Plaid's category
+ *  alone, so a row filed by anything else has it cleared: the person's own
+ *  category (chosen for it, carried across a re-link, or from a row they
+ *  imported), or the layers' (an approval in Card Mode, a rule, a merchant's
+ *  default). Only what filing actually used counts: a layer's category that
+ *  was deleted files nothing, so the row falls back to Plaid's and keeps its
+ *  mark. A row without the field (an older one) is left without it. */
+export function fileRows(ix: CategoryIndex, rows: Iterable<CategoryFacts & Filing & { category_confidence?: string | null }>): void {
   for (const r of rows) {
     const { category, said, filed } = resolveCategory(ix, r);
+    // Read before the facts it was filed by go, below.
+    const notPlaid = !!ownCategory(ix, r) || (!!r.rule_category && !!categoryById(ix, r.rule_category));
+    if (notPlaid && r.category_confidence) r.category_confidence = null;
     if (filed) {
       r.category_id = category.id;
       r.category_name = said ? category.name : null;

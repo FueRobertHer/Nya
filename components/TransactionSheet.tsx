@@ -266,6 +266,19 @@ function TxnSheet({
   };
   const c = currencyOf(t) ?? currency;
   const exclusion = exclusionOffer(t);
+  // "Check category" answered: the category it has, chosen as the person's
+  // through the same path as picking one (app/api/recategorize), which takes
+  // Plaid's doubt off it. Only where the category field below is the row's
+  // own (not a split's parts or a group's), and once it has posted: a choice
+  // is kept by the row's id, and a pending row gets a new one when it posts.
+  const confirm: CategoryChoice | null =
+    !isLowConfidence(t) || t.pending || t.split_parts || t.group_outside || t.group_members
+      ? null
+      : taxonomy && t.category_id
+        ? { category_id: t.category_id }
+        : !taxonomy && t.category
+          ? { category: t.category }
+          : null;
   const countable = !!onToggleExcluded && !t.group_members && !t.group_outside;
 
   if (renaming && t.vendor_key) {
@@ -368,6 +381,14 @@ function TxnSheet({
             <p>
               {t.pending && <span className="badge">Pending</span>}{' '}
               {isLowConfidence(t) && <span className="badge warn">Check category</span>}
+              {confirm && (
+                <>
+                  {' '}
+                  <button className="btn ghost" onClick={() => onRecategorize(t.transaction_id, confirm)}>
+                    Looks right
+                  </button>
+                </>
+              )}
             </p>
           )}
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}

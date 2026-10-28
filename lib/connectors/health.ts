@@ -136,7 +136,7 @@ export function connectorHealthText(name: string, h: ConnectionHealth): string |
       const n = d.accounts.length;
       // One that closed holds nothing once it is said (lib/connectors/institutions.ts).
       const it = plural(n, 'it', 'them');
-      return `${names(d.accounts)} ${plural(n, "isn't", "aren't")} in ${by}'s latest answer. If you removed ${it} at ${by}, stop tracking ${it} here with Choose accounts. If ${plural(n, 'it', 'they')} closed, say so with Close… on ${plural(n, 'it', 'each')}, from the Accounts tab. ${until}`;
+      return `${names(d.accounts)} ${plural(n, "isn't", "aren't")} in ${by}'s latest answer. If you removed ${it} at ${by}, stop tracking ${it} here with Choose accounts. If ${plural(n, 'it', 'they')} closed, say so with Mark as closed… on ${plural(n, 'it', 'each')}, from the Accounts tab. ${until}`;
     }
     case 'stale':
       return `Nya hasn't had an answer from ${by} in over a day: its daily update didn't run. Nothing for you to do; Refresh asks now.`;

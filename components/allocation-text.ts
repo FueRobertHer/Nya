@@ -4,40 +4,46 @@
 //
 // COLORS. Each class keeps its color wherever it is drawn (the bar, the
 // table's swatch, the chart over time), in the order the classes are shown
-// (lib/allocation/classes.ts ASSET_CLASSES): the dark steps of the default
-// categorical palette, whose order was checked against this app's card
-// surface (#171a21) for telling neighbours apart, with and without colour
-// vision deficiency, and contrast. Unclassified is a neutral gray, never a
-// class's hue: it is money whose class isn't known. Tax buckets are another
-// set of things, shown in another view, so they take the palette from its
-// first slot again. Identity never rests on color alone: every swatch has its
-// name beside it, and every figure is in a table.
+// (lib/allocation/classes.ts ASSET_CLASSES). They are the tag colors
+// (--tag-<color> in app/globals.css), so they follow the theme and pass 3:1
+// on a card in both, and never the meaning colors: green and red say money
+// in and out, orange says something needs you, brass is for actions. The
+// tag palette's green and orange are close to those in both themes, so they
+// go to the two classes least likely to be read as money moving, Real estate
+// and Crypto, a trade-off nine tags for eight classes can't avoid; its red
+// isn't used. Neighbours in the order differ in hue and in lightness as far
+// as the palette allows (test/design-guard.test.ts measures each pair in
+// both themes). Unclassified is a neutral, never a class's hue (the field
+// edge's gray, --border-input): it is money whose class isn't known. Tax
+// buckets are another set of things, shown in another view, so they take
+// the same colors from the start again. Identity never rests on color alone:
+// every swatch has its name beside it, and every figure is in a table.
 
 import { isMoney, shareLabel, type AccountGap, type AllocCaveat, type PlanMix } from '@/lib/allocation/allocation';
 import type { BucketSlot } from '@/lib/allocation/buckets';
 import { CLASS_WORDS, splitText, type Classified, type Slot } from '@/lib/allocation/classes';
 import { wholeMoney } from './plan-text';
 
-export const UNCLASSIFIED_COLOR = '#6f7480';
+export const UNCLASSIFIED_COLOR = 'var(--border-input)';
 
 export const CLASS_COLORS: Record<Slot, string> = {
-  'us-stocks': '#3987e5',
-  'intl-stocks': '#d95926',
-  bonds: '#199e70',
-  cash: '#c98500',
-  stocks: '#d55181',
-  'real-estate': '#008300',
-  crypto: '#9085e9',
-  other: '#e66767',
+  'us-stocks': 'var(--tag-blue)',
+  'intl-stocks': 'var(--tag-teal)',
+  bonds: 'var(--tag-purple)',
+  cash: 'var(--tag-gray)',
+  stocks: 'var(--tag-yellow)',
+  'real-estate': 'var(--tag-orange)',
+  crypto: 'var(--tag-green)',
+  other: 'var(--tag-pink)',
   unclassified: UNCLASSIFIED_COLOR,
 };
 
 export const BUCKET_COLORS: Record<BucketSlot, string> = {
-  taxable: '#3987e5',
-  'tax-deferred': '#d95926',
-  roth: '#199e70',
-  hsa: '#c98500',
-  education: '#d55181',
+  taxable: 'var(--tag-blue)',
+  'tax-deferred': 'var(--tag-teal)',
+  roth: 'var(--tag-purple)',
+  hsa: 'var(--tag-gray)',
+  education: 'var(--tag-yellow)',
   unclassified: UNCLASSIFIED_COLOR,
 };
 

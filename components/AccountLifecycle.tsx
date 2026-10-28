@@ -5,7 +5,7 @@
 // questions about an account missing from its bank's answer or at zero for
 // weeks are answered here (lib/lifecycle-questions.ts).
 //
-//   - LifecycleSheet: the form, opened from an account's Close… action, from a
+//   - LifecycleSheet: the form, opened from an account's Mark as closed… action, from a
 //     question, or from the Accounts that ended card.
 //   - AccountQuestions: the questions on an institution's card (and in
 //     connection health): Closed, Still open, Stop following.

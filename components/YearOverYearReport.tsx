@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Masked } from './HideAmounts';
 import { reportDay, reportTime } from './ReportView';
 import { browserZone } from './RunwayReport';
-import { formatMoney, signedMoney } from '@/lib/format';
+import { formatMoney, roundsToNothing, signedMoney } from '@/lib/format';
 import { gapSentences, reportConvertedText, scopeLine } from '@/lib/report/words';
 import type { Change, YoyCategory, YoyCompare, YoyGroup, YoyPeriod } from '@/lib/report/year-over-year';
 import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read';
@@ -30,6 +30,19 @@ const spanWords = (p: Pick<YoyPeriod, 'start' | 'end'>) => `${reportDay(p.start)
 export function pctWords(c: Change): string {
   if (c.pct !== null) return `${c.pct > 0 ? '+' : ''}${c.pct.toFixed(1)}%`;
   return c.this === 0 ? '' : 'new';
+}
+
+/** Whether a change rounds to nothing in the currency: said as no change,
+ *  never "+$0.00 (0.0%)", which reads as a gain. */
+const unchanged = (c: Change, currency: string | null) => roundsToNothing(c.change, currency);
+
+/** A table's Change cell: the amount signed, with its percent when asked;
+ *  "No change" when it rounds to nothing; nothing when both years are zero,
+ *  since there is nothing to compare. */
+function changeCell(c: Change, currency: string | null, withPct: boolean): string {
+  if (c.this === 0 && c.last === 0) return '';
+  if (unchanged(c, currency)) return 'No change';
+  return `${signedMoney(c.change, currency, { always: true })}${withPct && pctWords(c) ? ` ${pctWords(c)}` : ''}`;
 }
 
 /** "st", "nd", "rd" or "th", for a day of the month. */
@@ -63,7 +76,7 @@ function Compare({ title, compare, currency }: { title: string; compare: YoyComp
         <Masked>{money(c.this)}</Masked>
       </div>
       <div className="report-note">
-        <Masked>{`last year ${money(c.last)}; ${signedMoney(c.change, currency, { always: true })}${pctWords(c) ? ` (${pctWords(c)})` : ''}`}</Masked>
+        <Masked>{`last year ${money(c.last)}; ${unchanged(c, currency) ? 'no change' : `${signedMoney(c.change, currency, { always: true })}${pctWords(c) ? ` (${pctWords(c)})` : ''}`}`}</Masked>
       </div>
     </div>
   );
@@ -117,7 +130,7 @@ function MonthTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
                     <Masked>{money(c.last)}</Masked>
                   </td>
                   <td className="num">
-                    <Masked>{`${signedMoney(c.change, r.currency, { always: true })}${pctWords(c) ? ` ${pctWords(c)}` : ''}`}</Masked>
+                    <Masked>{changeCell(c, r.currency, true)}</Masked>
                   </td>
                   <td>{notes.join('. ')}</td>
                 </tr>
@@ -144,9 +157,9 @@ function GroupTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
         <Masked>{money(c[measure].last)}</Masked>
       </td>
       <td className="num">
-        <Masked>{signedMoney(c[measure].change, r.currency, { always: true })}</Masked>
+        <Masked>{changeCell(c[measure], r.currency, false)}</Masked>
       </td>
-      <td className="num">{pctWords(c[measure])}</td>
+      <td className="num">{unchanged(c[measure], r.currency) ? '' : pctWords(c[measure])}</td>
     </tr>
   );
   return (

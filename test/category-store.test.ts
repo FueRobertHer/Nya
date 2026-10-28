@@ -177,6 +177,30 @@ describe('filing transactions', () => {
     expect(named((await store.readTaxonomy(ctx))!, 'transfer to savings')).toBeUndefined();
   });
 
+  // Plaid's confidence ("Check category") is about Plaid's category: a row
+  // filed by anything else has it cleared, only when that is what filed it.
+  test('Plaid’s confidence goes from a row the person or a layer filed, and stays on one Plaid’s category filed', async () => {
+    const t = await store.ensureTaxonomy(ctx, { observed: textKeys(['pet supplies']) });
+    const ix = indexTaxonomy(t);
+    const pets = named(t, 'pet supplies')!.id;
+    const plaid = { category: 'food and drink', pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, category_confidence: 'LOW' };
+    const r = [
+      { ...plaid },
+      // The person's own (chosen, carried across a re-link, or from a file).
+      { ...plaid, category: 'pet supplies', category_set: true },
+      // A layer's: an approval, a rule or a merchant's default, by id.
+      { ...plaid, rule_category: pets },
+      // A layer's that was deleted files nothing: Plaid's files it, and its doubt stays.
+      { ...plaid, rule_category: 'deleted-category' },
+      // An older row without the field gains none.
+      { category: 'pet supplies', category_set: true },
+    ] as Record<string, unknown>[];
+    store.fileRows(ix, r as never);
+    expect(r.map((x) => x.category_confidence)).toEqual(['LOW', null, null, 'LOW', undefined]);
+    expect('category_confidence' in r[4]).toBe(false);
+    expect(r[2].category_id).toBe(pets);
+  });
+
   test('a storage failure is an error, never rows filed by nothing', async () => {
     fake.failNext('get');
     await expect(store.fileTransactions(ctx, rows() as never, { grow: true })).rejects.toThrow(/armed failure/);

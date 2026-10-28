@@ -455,6 +455,15 @@ describe('the bank changes a split transaction’s amount', () => {
     }
   });
 
+  // Its category is the transaction's, shown as its parts, so a "Check
+  // category" on it would have no answer.
+  test('the remainder doesn’t carry Plaid’s doubt about the transaction’s category', () => {
+    const doubted = row('t1', { amount: 60, category_confidence: 'LOW' });
+    const rest = expandSplitsAndGroups([doubted], inputs({ splits: new Map([['t1', record]]) })).rows[2];
+    expect(rest.split_remainder).toEqual({ was: 50 });
+    expect(rest.category_confidence).toBeNull();
+  });
+
   test('a rule’s category on the transaction files its remainder', () => {
     const ruled = row('t1', { amount: 60, category_id: cat('auto'), category: 'auto', category_name: 'auto', category_by_rule: true });
     const rest = expandSplitsAndGroups([ruled], inputs({ splits: new Map([['t1', record]]) })).rows[2];

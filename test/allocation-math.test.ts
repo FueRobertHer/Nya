@@ -118,7 +118,7 @@ describe('the allocation', () => {
   test('positions worth more than the balance are counted as listed, and named', () => {
     const a = allocate({ institutions: [inst('X', [acct('m', { name: 'Margin', balance: 80_000 })])], holdings: [hold('m', 'VTI', 100_000)], settings: null, currency: 'USD' });
     expect(a.classes['us-stocks']).toBe(100_000);
-    expect(a.over).toEqual([{ account: 'Margin', institution: 'X', amount: 20_000 }]);
+    expect(a.over).toEqual([{ account_id: 'm', account: 'Margin', mask: null, institution: 'X', amount: 20_000 }]);
     expect(a.total).toBe(100_000);
     expect(a.buckets.taxable).toBe(100_000);
   });

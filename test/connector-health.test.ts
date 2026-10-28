@@ -90,11 +90,11 @@ describe('connector health', () => {
     const one = connectorHealth(detail('missing', { accounts: ['Visa'] }), null);
     expect(one).toMatchObject({ state: 'partial', action: 'resolve' });
     expect(connectorHealthText('My Bank', one)).toBe(
-      "Visa isn't in SimpleFIN's latest answer. If you removed it at SimpleFIN, stop tracking it here with Choose accounts. If it closed, say so with Close… on it, from the Accounts tab. Until then its balances are shown as last known, and no day's total is saved."
+      "Visa isn't in SimpleFIN's latest answer. If you removed it at SimpleFIN, stop tracking it here with Choose accounts. If it closed, say so with Mark as closed… on it, from the Accounts tab. Until then its balances are shown as last known, and no day's total is saved."
     );
     const two = connectorHealth(detail('missing', { accounts: ['Visa', 'Savings'] }), null);
     expect(connectorHealthText('My Bank', two)).toContain(
-      "Visa and Savings aren't in SimpleFIN's latest answer. If you removed them at SimpleFIN, stop tracking them here with Choose accounts. If they closed, say so with Close… on each, from the Accounts tab."
+      "Visa and Savings aren't in SimpleFIN's latest answer. If you removed them at SimpleFIN, stop tracking them here with Choose accounts. If they closed, say so with Mark as closed… on each, from the Accounts tab."
     );
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import InstitutionCard, { type InstitutionCardProps } from '@/components/InstitutionCard';
-import type { Account, Institution } from '@/components/accounts-format';
+import { liabilitySummary, type Account, type Institution } from '@/components/accounts-format';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
 
 // One institution's card on the Accounts tab (rollout phase 3). Its notices
@@ -168,7 +168,31 @@ describe('the institution card notices, words and color', () => {
     const html = render(institution({ accounts: [card] }));
     expect(html).toContain('<span class="badge neg">Overdue</span>');
     const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
-    expect(text(sub.slice(0, sub.indexOf('</button>')))).toStartWith('Overdue · 24.99% APR · min $35.00 · due Oct 24');
+    // The missed payment's day, said as past (it was before today).
+    expect(text(sub.slice(0, sub.indexOf('</button>')))).toStartWith('Overdue · 24.99% APR · min $35.00 · was due Oct 24');
+  });
+
+  test('overdue with nothing else reported: the badge still shows, beside the kind of account', () => {
+    const loan = account({ account_id: 'acc_loan', name: 'Plaid Mortgage', type: 'loan', subtype: 'mortgage', balance: 56302.06, liability: { kind: 'mortgage', apr: null, apr_label: null, minimum_payment: null, next_due_date: null, last_statement_balance: null, last_payment_amount: null, last_payment_date: null, is_overdue: true } });
+    const html = render(institution({ accounts: [loan] }));
+    const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
+    expect(sub.slice(0, sub.indexOf('</button>'))).toContain('<span class="badge neg">Overdue</span>');
+  });
+
+  // The screen review: "Overdue · ... · due Nov 15" read as overdue and due
+  // later at once, and a card read "due May 28" five months after it passed.
+  test('the due date as it is today: coming, next after an overdue one, missed, or passed and dropped', () => {
+    const terms = (next_due_date: string | null, is_overdue: boolean) =>
+      liabilitySummary(
+        account({ type: 'loan', liability: { kind: 'mortgage', apr: 3.99, apr_label: 'Interest rate', minimum_payment: 3141.54, next_due_date, last_statement_balance: null, last_payment_amount: null, last_payment_date: null, is_overdue } }),
+        '2026-10-27'
+      );
+    expect(terms('2026-11-15', false)).toBe('3.99% APR · min $3,141.54 · due Nov 15');
+    expect(terms('2026-10-27', false)).toBe('3.99% APR · min $3,141.54 · due Oct 27');
+    expect(terms('2026-11-15', true)).toBe('3.99% APR · min $3,141.54 · next due Nov 15');
+    expect(terms('2026-05-28', true)).toBe('3.99% APR · min $3,141.54 · was due May 28');
+    expect(terms('2026-05-28', false)).toBe('3.99% APR · min $3,141.54');
+    expect(terms(null, true)).toBe('3.99% APR · min $3,141.54');
   });
 
   test('the institution lines: payment details importing, accounts not added, transactions not allowed', () => {
@@ -218,8 +242,8 @@ describe('the account rows', () => {
     const rows = html.split('<button class="list-row"').slice(1);
     expect(rows).toHaveLength(2);
     for (const row of rows) expect(row.slice(0, row.indexOf('</button>'))).not.toContain('<button');
-    // No Hide, Close… or Delete on the card: they are in the account's sheet.
-    for (const word of ['Hide', 'Close…', 'Delete', 'Update', 'Add transaction', 'Import']) expect(text(html)).not.toContain(word);
+    // No Hide, Mark as closed… or Delete on the card: they are in the account's sheet.
+    for (const word of ['Hide', 'Mark as closed…', 'Delete', 'Update', 'Add transaction', 'Import']) expect(text(html)).not.toContain(word);
     expect(text(rows[0].slice(rows[0].indexOf('>') + 1))).toStartWith('Total Checking ••4421 checking $1,200.00');
   });
 

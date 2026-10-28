@@ -9,7 +9,7 @@
 //   count      "Chase is gone: count its transactions": each account is
 //              ended (closed, no longer yours, or stop following, from a
 //              day), unless it has an end already, then counted. The end is
-//              written first, through the lifecycle module as Close… writes
+//              written first, through the lifecycle module as Mark as closed… writes
 //              it: stopped between the two, the account is ended and held
 //              (Stop following), and the card offers the count again.
 //   uncount    "Don't count them": counted no more, held again; the end
