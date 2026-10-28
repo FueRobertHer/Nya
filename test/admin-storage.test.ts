@@ -362,7 +362,11 @@ describe('the route', () => {
     clerk.signedIn = 'user_demo';
     expect(await adminCtx()).toBeNull();
     const open = (path: string) => proxy(new NextRequest(`https://nya.test${path}`, { headers: { accept: 'text/html' } }), {} as any);
-    for (const path of ['/admin/storage', '/admin/jobs']) expect([path, (await open(path)).headers.get('x-middleware-rewrite')]).toEqual([path, null]);
+    // Passed on untouched (not turned away for some other reason): no rewrite and no redirect.
+    for (const path of ['/admin/storage', '/admin/jobs']) {
+      const res = await open(path);
+      expect([path, res.headers.get('x-middleware-rewrite'), res.headers.get('location')]).toEqual([path, null, null]);
+    }
     expect((await open('/admin-view/storage')).headers.get('x-middleware-rewrite')).toBe('https://nya.test/__nya-no-such-page__');
     expect((await route.GET(new Request('http://x/api/admin/storage'))).status).toBe(404);
     await expect(AdminStoragePage()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
