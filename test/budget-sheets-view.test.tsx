@@ -915,3 +915,71 @@ describe('the tab around its sheets: the income setting and a past month', () =>
     v.unmount();
   });
 });
+
+describe('a month with no budget: the empty state’s Add budget (the screen review after step 5)', () => {
+  /** The tab, its budgets kept as a store keeps them: the list saved shows at once. */
+  function mountEmptyTab(initial: Budgets) {
+    globalThis.fetch = (async () => new Response('{}', { status: 404 })) as unknown as typeof fetch;
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    function Page() {
+      const [budgets, setBudgets] = useState(initial);
+      return (
+        <BudgetsTab
+          txns={[row('g', { amount: 120 })]}
+          budgets={budgets}
+          taxonomy={taxonomy}
+          onSave={async (next) => {
+            setBudgets(next);
+            return true;
+          }}
+          goals={[]}
+          onSaveGoals={async () => true}
+          accounts={[]}
+          loading={false}
+          series={[]}
+        />
+      );
+    }
+    act(() => root.render(<Page />));
+    const v = harness(host as unknown as FakeElement);
+    /** The empty state's button: the month's one primary. */
+    const first = () => v.all((e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'btn' && e.textContent === 'Add budget')[0] ?? null;
+    return { ...v, first, unmount: () => act(() => root.unmount()) };
+  }
+
+  test('it opens Add budget’s sheet; once the first budget is in, the card gives way and focus lands on the Add budget under its row', async () => {
+    const v = mountEmptyTab({ categories: {}, groups: {} });
+    expect(v.add()).toBeNull();
+    expect(v.first()!.getAttribute('aria-haspopup')).toBe('dialog');
+    v.first()!.focus();
+    act(() => click(v.first()!));
+    await settle();
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Add budget');
+    act(() => type(v.field('Category or group to budget')!, `category:${GROCERIES}`));
+    act(() => type(v.field('Monthly limit')!, '300'));
+    await act(async () => click(v.button('Add budget', v.dialog()!)!));
+    await settle(400);
+    expect(v.dialog()).toBeNull();
+    expect(v.first()).toBeNull();
+    expect(v.add()).not.toBeNull();
+    expect(v.focused() === v.add()).toBe(true);
+    v.unmount();
+  });
+
+  test('removing the last budget brings the empty state, and focus lands on its Add budget', async () => {
+    const v = mountEmptyTab(ONE);
+    expect(v.first()).toBeNull();
+    act(() => click(v.row('Food')!));
+    await v.open('Groceries');
+    act(() => click(v.button('Remove…', v.dialog()!)!));
+    await act(async () => click(v.button('Remove', v.dialog()!)!));
+    await settle(400);
+    expect(v.dialog()).toBeNull();
+    expect(v.add()).toBeNull();
+    expect(v.first()).not.toBeNull();
+    expect(v.focused() === v.first()).toBe(true);
+    v.unmount();
+  });
+});

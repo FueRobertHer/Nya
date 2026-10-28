@@ -4,11 +4,12 @@
 // transactions. A scrollable "Net by month" column row selects the month:
 // each column's height is that month's net magnitude and its color the sign
 // (green positive, red negative). Below it, a two-line chart traces cumulative
-// income vs spend across the days of the selected month. Then a summary shows
-// money in / money out / net (transfers and loan payments excluded, so
-// credit-card payments don't double-count as both spending and income, and so
-// is anything the person excluded; every total is in one currency and says
-// what it left out in others: lib/spending.ts); top spending, rolled up to
+// income vs spend across the days of the selected month. Money in / money
+// out / net heads the panel, said once (components/MonthFigures.tsx;
+// transfers and loan payments excluded, so credit-card payments don't
+// double-count as both spending and income, and so is anything the person
+// excluded; every total is in one currency and says what it left out in
+// others: lib/spending.ts); top spending, rolled up to
 // your category groups (components/CategoryRollup.tsx), draws as single-hue
 // horizontal bars (magnitude lives in length, not color); and finally the
 // searchable transaction list, each row a button that opens its sheet
@@ -23,6 +24,7 @@ import { Segmented } from "./Segmented";
 import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
+import MonthFigures from "./MonthFigures";
 import { amountSamples, compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
@@ -874,7 +876,6 @@ export default function MonthBreakdown({
     );
   }
 
-  const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
   // SimpleFIN's and Lunch Flow's rows come without categories: said while any counts.
@@ -909,39 +910,18 @@ export default function MonthBreakdown({
     setFlowPick(null);
   };
 
-  // The In / Out / Net, with what it leaves out and may be missing: the
-  // month's on Transactions over the list, and the period's on Spending among
-  // its cards, naming it as they do.
-  const summaryCard = (
-    <div className="card">
-      {onSpending && (
-        <div className="inst-header">
-          <div className="inst-name">In and out</div>
-          <div className="inst-total">{caption}</div>
-        </div>
-      )}
-      <div className="summary-row">
-        <div>
-          <div className="total-label">In</div>
-          <div className="summary-value inflow">
-            <Masked>{formatMoney(moneyIn, currency)}</Masked>
-          </div>
-        </div>
-        <div>
-          <div className="total-label">Out</div>
-          <div className="summary-value">
-            <Masked>{formatMoney(moneyOut, currency)}</Masked>
-          </div>
-        </div>
-        <div>
-          <div className="total-label">Net</div>
-          <div
-            className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
-          >
-            <Masked>{formatMoney(net, currency)}</Masked>
-          </div>
-        </div>
-      </div>
+  // The In / Out / Net, with what it leaves out and may be missing, said
+  // once, at the top of the panel under the bar (components/MonthFigures.tsx):
+  // the month's on Transactions, over the list; the period's on Spending,
+  // under the switch that chooses it, naming it when it is longer than the
+  // bar's month, as every card there names it.
+  const longer = onSpending && !!period && !(period.months.length === 1 && period.months[0] === selected);
+  const figures = (
+    <MonthFigures
+      totals={{ moneyIn, moneyOut, currency }}
+      title={`In and out, ${onSpending ? caption : selected ? monthName(selected) : ""}`}
+      caption={longer ? caption : null}
+    >
       <div className="chart-note">
         Transfers and loan payments excluded
         {excludedCount > 0 &&
@@ -970,7 +950,7 @@ export default function MonthBreakdown({
             {n}
           </div>
         ))}
-    </div>
+    </MonthFigures>
   );
 
   return (
@@ -992,6 +972,7 @@ export default function MonthBreakdown({
                 options={SPANS.map((s) => [s.key, s.short, s.label] as const)}
               />
             )}
+            {figures}
             {/* Where the money came from and went (#41), over the period;
                 tapping a node lists its transactions on Transactions. */}
             {taxonomy && (
@@ -1060,8 +1041,6 @@ export default function MonthBreakdown({
                 <MonthFlowChart txns={countedPeriod} from={period.from} to={period.to} currency={currency} />
               </div>
             )}
-            {summaryCard}
-
             {taxonomy && byCategoryId.size > 0 && (
               <div className="card">
                 <div className="inst-header">
@@ -1163,7 +1142,7 @@ export default function MonthBreakdown({
           </>
         ) : (
           <>
-            {summaryCard}
+            {figures}
 
             <div className="card" ref={listRef}>
               <div className="card-header">

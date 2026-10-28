@@ -285,7 +285,7 @@ describe('a past month, as it was', () => {
     expect(t).not.toContain('Add budget');
     // Said in the Spent card (components/BudgetsTab.tsx), not by the card of rows.
     expect(card({ past: true, month: '2026-03', budgets: { categories: {}, groups: {} }, spent: {} })).toBe('');
-    expect(text(renderToStaticMarkup(<NoBudgets past month="2026-03" />))).toBe('No budgets in March 2026.');
+    expect(text(renderToStaticMarkup(<NoBudgets month="2026-03" />))).toBe('No budgets in March 2026.');
   });
 
   test('one that couldn’t be loaded says so, with a way to try again', () => {

@@ -35,6 +35,14 @@
 // stays open on what was typed when a save fails. Focus goes back to the row
 // that opened it, or to + Add budget when that row has gone.
 //
+// EMPTY (the screen review after step 5). This month with no budget at all,
+// the tab passes `empty` (what the Spent card would have said of the month)
+// and this card draws the month's one card in its place
+// (components/EmptyState.tsx): what budgets are for, those notes, and Add
+// budget as the one primary. Add budget is one button either way (`addRef`),
+// so focus finds it: after the first budget is added, the tonal one under
+// its row; after the last is removed, the empty state's.
+//
 // Budgets are saved whole (lib/whole-list-store.ts, app/api/budgets), so
 // nothing here saves until they have loaded; a save that fails puts back
 // what is stored. A past month is shown as it was: its rows open nothing.
@@ -48,6 +56,7 @@ import { localMonth } from '@/lib/local-date';
 import { Masked } from './HideAmounts';
 import { chevron, RIGHT } from './ActivityBar';
 import { AddBudgetSheet, BudgetSheet, OrphanBudgetSheet, type BudgetLevel, type BudgetRollover } from './BudgetSheet';
+import EmptyState from './EmptyState';
 import type { BudgetSuggestions } from '@/lib/budget-suggestions';
 
 /** Amber from 85% of what is available, and past it: Budgets' meters never
@@ -151,6 +160,7 @@ export default function BudgetsCard({
   suggestions = null,
   saveError = null,
   monthError = null,
+  empty,
 }: {
   taxonomy: Taxonomy;
   budgets: Budgets;
@@ -193,6 +203,10 @@ export default function BudgetsCard({
   /** Why the month couldn't be worked out, for a rollover level whose
    *  month has gone. */
   monthError?: string | null;
+  /** This month has no budget at all: the empty state is drawn, holding
+   *  these notes (the Spent card's, which the tab then leaves out), with
+   *  Add budget as its primary. Left out, the month has budgets. */
+  empty?: ReactNode;
 }) {
   const shownMonth = month ?? localMonth();
   const ix = useMemo(() => indexTaxonomy(taxonomy), [taxonomy]);
@@ -401,8 +415,21 @@ export default function BudgetsCard({
 
   return (
     <>
-      {/* With no budget, the Spent card says so (NoBudgets); a budget on
-          a category since deleted is still a row. */}
+      {/* With no budget this month, the month's one card; a past month's
+          Spent card says so (NoBudgets). A budget on a category since
+          deleted is still a row, under it. */}
+      {empty !== undefined && !past && (
+        <section className="card" aria-labelledby={`${uid}-empty`}>
+          <EmptyState
+            id={`${uid}-empty`}
+            title="No budgets yet"
+            line="Track spending against a monthly limit, for a category or a whole group."
+            action={{ label: 'Add budget', opens: true, ref: addRef, onSelect: () => show({ kind: 'add', choice: '', draft: '' }) }}
+          >
+            {empty}
+          </EmptyState>
+        </section>
+      )}
       {(shown.length > 0 || orphans.length > 0) && (
         <ul className="card list-rows budget-rows">
           {shown.map((m) => {
@@ -533,7 +560,7 @@ export default function BudgetsCard({
         </ul>
       )}
 
-      {!past && (
+      {!past && empty === undefined && (
         <div className="btn-row">
           <button type="button" ref={addRef} className="btn secondary budget-add-button" aria-haspopup="dialog" onClick={() => show({ kind: 'add', choice: '', draft: '' })}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -619,15 +646,10 @@ export default function BudgetsCard({
   );
 }
 
-/** What the month says with no budget in it, in the Spent card
- *  (components/BudgetsTab.tsx): this month how to add one, a past month that
- *  there were none. */
-export function NoBudgets({ past, month }: { past: boolean; month: string }) {
-  return (
-    <p className="empty-note">
-      {past ? `No budgets in ${monthName(month)}.` : 'No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.'}
-    </p>
-  );
+/** What a past month says with no budget in it, in its Spent card
+ *  (components/BudgetsTab.tsx). This month's is the empty state, above. */
+export function NoBudgets({ month }: { month: string }) {
+  return <p className="empty-note">{`No budgets in ${monthName(month)}.`}</p>;
 }
 
 /** The month's total: every group's limit and what counts against it, over

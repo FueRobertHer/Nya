@@ -71,7 +71,7 @@ const now: Record<string, () => string> = {
   'the group’s sheet': () => card({ edit: { kind: 'group', id: FOOD } }),
   // Said in the Spent card now (a past month's in its card too: NoBudgets).
   'no budgets': () => monthPanel(tab({ budgets: { categories: {}, groups: {} } })),
-  'no budgets in a past month': () => renderToStaticMarkup(<NoBudgets past month={addMonths(NOW, -1)} />),
+  'no budgets in a past month': () => renderToStaticMarkup(<NoBudgets month={addMonths(NOW, -1)} />),
   pool: () => renderToStaticMarkup(<IncomePoolHeader pool={POOL} currency="USD" month={NOW} today={NOW} />),
   'pool before it began': () => renderToStaticMarkup(<IncomePoolHeader pool={POOL_BEFORE} currency="USD" month={addMonths(NOW, -1)} today={NOW} />),
   'pool with nothing to count': () => renderToStaticMarkup(<IncomePoolHeader pool={POOL_EMPTY} currency="USD" month={addMonths(NOW, -1)} today={NOW} />),
@@ -91,6 +91,22 @@ const IN_THE_SETTING = new Set([...recorded['income on'], ...recorded['income of
  *  warning, so not a note whose words must stay on screen. */
 const NOW_A_STATUS: Record<string, string> = { 'Loading budgets…': 'Loading budgets' };
 
+/** The one empty line that is now an empty state's title and line
+ *  (components/EmptyState.tsx, the screen review after step 5): the old
+ *  sentence split, its "Add one below" gone with the button now in the same
+ *  card. Not a warning, so its words may change; both parts must still be
+ *  there, the line as helper text. Every warning is checked as before. */
+const NOW_AN_EMPTY_STATE: Record<string, { title: string; line: string }> = {
+  'No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.': {
+    title: 'No budgets yet',
+    line: 'Track spending against a monthly limit, for a category or a whole group.',
+  },
+};
+const inEmptyState = (html: string, text: string) => {
+  const e = NOW_AN_EMPTY_STATE[text];
+  return !!e && html.includes(`>${e.title}</h3><p class="helper">${e.line}</p>`) && html.includes('class="empty-state"');
+};
+
 describe('every note the month said is still said, in its words and at its level', () => {
   test('the recording covers every scene drawn now', () => {
     expect(Object.keys(recorded).sort()).toEqual(Object.keys(now).sort());
@@ -103,6 +119,7 @@ describe('every note the month said is still said, in its words and at its level
       const missing = notes
         .filter((n) => !(scene.startsWith('tab:') && IN_THE_SETTING.has(n.text)))
         .filter((n) => !(n.text in NOW_A_STATUS && html.includes(`role="status">${NOW_A_STATUS[n.text]}</p>`)))
+        .filter((n) => !inEmptyState(html, n.text))
         .map((n) => ({ text: filled(n.text), level: n.level }))
         .filter((n) => !said.some((s) => s.level === n.level && s.text.includes(n.text)));
       expect(missing).toEqual([]);
@@ -252,14 +269,46 @@ describe('the month’s one notice', () => {
 });
 
 describe('the Spent card', () => {
-  test('with no budget, it says so, in its words, and there is no card of rows', () => {
+  test('with no budget this month, the month is one card, the empty state, in place of Spent: what budgets are for and Add budget as its primary', () => {
     const html = tab({ budgets: { categories: {}, groups: {} } });
-    const spent = spentCard(html);
-    expect(text(spent.slice(0, spent.indexOf('</section>')))).toContain('No budgets yet. Add one below to track spending against a monthly limit, for a category or a whole group.');
-    expect(monthPanel(html).split('No budgets yet').length - 1).toBe(1);
-    expect(monthPanel(html)).not.toContain('budget-rows');
-    // + Add budget, under it.
-    expect(text(monthPanel(html))).toContain('Add budget');
+    const panel = monthPanel(html);
+    expect(panel).not.toContain('budgets-spent-title');
+    expect(panel).not.toContain('budget-rows');
+    const empty = panel.slice(panel.lastIndexOf('<section', panel.indexOf('class="empty-state"')));
+    const card = empty.slice(0, empty.indexOf('</section>'));
+    expect(card).toStartWith('<section class="card"');
+    expect(card).toContain('<h3 id=');
+    expect(text(card)).toStartWith('No budgets yet Track spending against a monthly limit, for a category or a whole group.');
+    // The Spent card's note on what the spending leaves out, kept, before the button.
+    expect(text(card)).toEndWith("Note: 1 transaction in EUR isn't in these budgets, which are in USD. Add budget");
+    // One button, filled: the screen's first step, not a tonal one outside the card.
+    expect(card).toContain('<button type="button" class="btn" aria-haspopup="dialog">Add budget</button>');
+    expect(panel.split('>Add budget<').length - 1).toBe(1);
+    expect(panel).not.toContain('budget-add-button');
+    expect(panel.split('No budgets yet').length - 1).toBe(1);
+  });
+
+  test('with no budget, what the Spent card would have said is in the empty state, before its button, in its words', () => {
+    const html = tab({ budgets: { categories: {}, groups: {} }, budgetsSaveError: 'Your budgets couldn’t be saved.' });
+    const panel = monthPanel(html);
+    const card = panel.slice(panel.indexOf('class="empty-state"'));
+    const at = (w: string) => card.indexOf(w);
+    expect(at('Your budgets couldn’t be saved.')).toBeGreaterThan(-1);
+    expect(at('Your budgets couldn’t be saved.')).toBeLessThan(at('>Add budget<'));
+    expect(notesIn(card).find((n) => n.text.includes('couldn’t be saved'))?.level).toBe('caution');
+  });
+
+  test('a budget on a category since deleted is a budget all the same: its row, the Spent card, never "No budgets yet"', () => {
+    const panel = monthPanel(tab({ budgets: { categories: { gone_1: { amount: 25 } }, groups: {} } }));
+    expect(panel).not.toContain('empty-state');
+    expect(panel).not.toContain('No budgets');
+    expect(panel).toContain('aria-labelledby="budgets-spent-title"');
+    expect(text(panel)).toContain('A category since deleted');
+    expect(panel).toContain('budget-add-button');
+  });
+
+  test('a past month with no budget keeps its Spent card and its line', () => {
+    expect(renderToStaticMarkup(<NoBudgets month={addMonths(NOW, -1)} />)).toBe(`<p class="empty-note">No budgets in ${monthName(addMonths(NOW, -1))}.</p>`);
   });
 
   test('its title, what is spent of what is available, and its notes for the figures, each in full or gathered', () => {

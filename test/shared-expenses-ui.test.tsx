@@ -137,13 +137,37 @@ describe('the card', () => {
     expect(said).toContain('About $24.00 owed to you in all, at the latest exchange rates: an estimate');
   });
 
-  test('the first time: what it is for, and how to begin', () => {
-    const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf({ people: [], items: [], shares: [], balances: {} }))} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />));
-    expect(said).toContain('Keep track of what people owe you and what you owe them.');
+  test('the first time: the empty state, what it is for, and Add someone as its one primary', () => {
+    const html = renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf({ people: [], items: [], shares: [], balances: {} }))} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />);
+    const empty = html.slice(html.indexOf('<div class="empty-state">'));
+    // A heading of its own (the panel's first: Activity's cards are h2), in place of the card's title.
+    expect(empty).toStartWith('<div class="empty-state"><h2>No shared expenses yet</h2><p class="helper">Keep track of what people owe you and what you owe them.</p>');
+    expect(html).not.toContain('inst-header');
+    expect(empty).toContain('<button type="button" class="btn" aria-haspopup="dialog">Add someone</button>');
+    // One Add someone, filled; Settings still offered, and how the money moves still said, at the foot.
+    expect(html.split('>Add someone<').length - 1).toBe(1);
+    expect(text(html)).toContain('Settings');
+    expect(text(html)).toContain('Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.');
     // How the money moves, once (the screen review: it was said twice).
-    expect(said).toContain('Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.');
-    expect(said.split('the money moves').length - 1).toBe(1);
-    expect(said).toContain('Add someone');
+    expect(text(html).split('the money moves').length - 1).toBe(1);
+  });
+
+  test('the first time with a setting that couldn’t be read: said in the empty state, before its button, in its words', () => {
+    const html = renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf({ people: [], items: [], shares: [], balances: {}, settings_unread: true }))} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />);
+    const empty = html.slice(html.indexOf('<div class="empty-state">'));
+    const at = (w: string) => empty.indexOf(w);
+    expect(at('<p class="stale-note">Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.</p>')).toBeGreaterThan(-1);
+    expect(at('Your setting for shared expenses')).toBeLessThan(at('>Add someone<'));
+  });
+
+  test('no one, but something kept that couldn’t be read: the card as it is, its warning in its words, never the empty state', () => {
+    const card = cardOf({ people: [], items: [], shares: [], balances: null, unread: { 'expense-people': { unreadable: ['p-x'], unrecognised: [] } } });
+    const html = renderToStaticMarkup(<SharedExpensesCard shared={shared(card)} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />);
+    expect(html).not.toContain('empty-state');
+    expect(html).toContain('<div class="inst-name">Shared expenses</div>');
+    expect(text(html)).toContain('Some of what you keep here couldn’t be read: 1 person. Nothing was changed. Balances aren’t shown until everything can be read: one that can’t could be anyone’s.');
+    expect(text(html)).toContain('Remove what is damaged');
+    expect(html).toContain('<button class="secondary">Add someone</button>');
   });
 
   test('what couldn’t be read: no balance, and the damaged removed only once confirmed', () => {

@@ -31,7 +31,11 @@
 // short, the meter, the notes that explain the figures, and why anything
 // couldn't be loaded), the budgets as rows that open their sheets
 // (components/BudgetsCard.tsx), + Add budget, and "My income is irregular"
-// as a row that opens its setting. Once the budgets have been ready, a
+// as a row that opens its setting. This month with no budget at all is one
+// card instead of Spent and its rows (components/EmptyState.tsx, drawn by
+// BudgetsCard, which owns Add budget's sheet): what budgets are for, what
+// the Spent card would have said of the month, and Add budget as the one
+// primary (the screen review after step 5). Once the budgets have been ready, a
 // reload (after a save the server refused) keeps all of it drawn from what
 // the page holds, read only, so a sheet open on a budget stays open on what
 // was typed and says why.
@@ -63,7 +67,7 @@ import { historyCount, leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
 import type { FxTable } from '@/lib/fx/rates';
 import { splitChangedText } from './SplitChangedNote';
-import type { Budgets } from '@/lib/budget-set';
+import { placeBudgets, type Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals, NoBudgets, type RolloverChange, type Target } from './BudgetsCard';
 import { changeRollover, useBudgetMonth, NOT_LOADED as NOT_LOADED_TEXT, type BudgetMonthState } from './budget-month-state';
@@ -85,7 +89,7 @@ import type { GoalPlansDamage } from './GoalPlansRepair';
 import UpcomingPanel from './UpcomingPanel';
 import { Masked } from './HideAmounts';
 import TemplateOffer from './TemplateOffer';
-import BudgetsBar, { budgetsPanelId, budgetsTabId, type BudgetsMonth, type BudgetsSegment } from './BudgetsBar';
+import BudgetsBar, { BUDGETS_MONTH_TITLE, budgetsPanelId, budgetsTabId, type BudgetsMonth, type BudgetsSegment } from './BudgetsBar';
 import { chevron, RIGHT } from './ActivityBar';
 import { budgetsRange, budgetsShown, writeMonth, type ViewMonth } from './view-month-state';
 
@@ -537,6 +541,31 @@ export default function BudgetsTab({
   if (hasTotal && namedWithout) spentNotes.push({ key: 'without', severity: 'info', summary: 'connections without transactions', body: namedWithout });
   if (assumedNote) spentNotes.push({ key: 'assumed', severity: 'info', summary: 'earlier amounts assumed', body: assumedNote });
 
+  // The starter sets' offer declined, its row gone: focus to the month's
+  // heading, where the panel starts, rather than to nothing.
+  const focusMonth = () => document.getElementById(BUDGETS_MONTH_TITLE)?.focus({ preventScroll: true });
+
+  // This month with no budget at all: one card, the empty state, in place of
+  // Spent (BudgetsCard draws it, holding Add budget's sheet). What the Spent
+  // card would have said goes in it, in the same order and words. A past
+  // month keeps Spent with its line: it is read only, with no first step.
+  // A budget on a category or group since deleted (an orphan) is a budget
+  // all the same, a row of its own: never under "No budgets yet".
+  const orphaned = !!taxonomy && !!shownBudgets && placeBudgets(shownBudgets, indexTaxonomy(taxonomy)).orphans.length > 0;
+  const empty = drawn && !!taxonomy && !!shownBudgets && !!shownSpent && !hasTotal && !past && !orphaned;
+  const emptyNotes = empty ? (
+    <>
+      {budgetsSaveError && <Notice level="caution">{budgetsSaveError}</Notice>}
+      {month.status === 'error' && month.error && <Notice level="caution">{month.error}</Notice>}
+      {noSpending && (
+        <p className="empty-note">
+          {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
+        </p>
+      )}
+      <TotalCaveats items={spentNotes} />
+    </>
+  ) : undefined;
+
   return (
     <>
       {bar}
@@ -547,67 +576,71 @@ export default function BudgetsTab({
               once there are rows (Activity can bring one while they load). */}
           {past && drawn && <p className="helper">{monthName} is shown as it was. To change a budget, go to this month.</p>}
           <TotalCaveats items={notice} />
-          {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
+          {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} onKept={focusMonth} />}
           {drawn && view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}
-          <section className="card stack" aria-labelledby="budgets-spent-title">
-            <div className="card-header">
-              <h3 id="budgets-spent-title">Spent</h3>
-              {hasTotal && drawn && !noSpending && (
-                <span className="meta money">
-                  <Masked>
-                    {totalBudget > 0
-                      ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
-                      : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
-                  </Masked>
-                </span>
+          {/* Conditional in its own slot, so BudgetsCard below keeps its
+              place and is never drawn anew while a sheet closes. */}
+          {!empty && (
+            <section className="card stack" aria-labelledby="budgets-spent-title">
+              <div className="card-header">
+                <h3 id="budgets-spent-title">Spent</h3>
+                {hasTotal && drawn && !noSpending && (
+                  <span className="meta money">
+                    <Masked>
+                      {totalBudget > 0
+                        ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
+                        : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+                    </Masked>
+                  </span>
+                )}
+              </div>
+              {/* The month itself may be short: said in full in the notice above. */}
+              {drawn && ownNotes.length > 0 && (
+                <div>
+                  <span className="badge warn">May be incomplete</span>
+                </div>
               )}
-            </div>
-            {/* The month itself may be short: said in full in the notice above. */}
-            {drawn && ownNotes.length > 0 && (
-              <div>
-                <span className="badge warn">May be incomplete</span>
-              </div>
-            )}
-            {drawn && hasTotal && !noSpending && (
-              <div className={`meter-track${meterState(totalRatio)}`}>
-                <div className={`meter-fill${meterState(totalRatio)}`} style={{ width: `${Math.min(totalRatio * 100, 100)}%` }} />
-              </div>
-            )}
-            {budgetsStatus === 'error' ? (
-              <Notice level="caution">{budgetsError}</Notice>
-            ) : !drawn ? (
-              // The meter's place, and the budgets' rows under the card
-              // (below), as they will be.
-              <>
-                <span className="skeleton block budgets-skeleton-meter" aria-hidden="true" />
-                <p className="visually-hidden" role="status">
-                  Loading budgets
-                </p>
-              </>
-            ) : (
-              <>
-                {budgetsSaveError && <Notice level="caution">{budgetsSaveError}</Notice>}
-                {!past && month.status === 'error' && month.error && <Notice level="caution">{month.error}</Notice>}
-                {noSpending && (
-                  <p className="empty-note">
-                    {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
+              {drawn && hasTotal && !noSpending && (
+                <div className={`meter-track${meterState(totalRatio)}`}>
+                  <div className={`meter-fill${meterState(totalRatio)}`} style={{ width: `${Math.min(totalRatio * 100, 100)}%` }} />
+                </div>
+              )}
+              {budgetsStatus === 'error' ? (
+                <Notice level="caution">{budgetsError}</Notice>
+              ) : !drawn ? (
+                // The meter's place, and the budgets' rows under the card
+                // (below), as they will be.
+                <>
+                  <span className="skeleton block budgets-skeleton-meter" aria-hidden="true" />
+                  <p className="visually-hidden" role="status">
+                    Loading budgets
                   </p>
-                )}
-                {!taxonomy ? (
-                  categoriesError ? (
-                    <Notice level="caution">{`${categoriesError} Budgets are shown once they are.`}</Notice>
+                </>
+              ) : (
+                <>
+                  {budgetsSaveError && <Notice level="caution">{budgetsSaveError}</Notice>}
+                  {!past && month.status === 'error' && month.error && <Notice level="caution">{month.error}</Notice>}
+                  {noSpending && (
+                    <p className="empty-note">
+                      {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
+                    </p>
+                  )}
+                  {!taxonomy ? (
+                    categoriesError ? (
+                      <Notice level="caution">{`${categoriesError} Budgets are shown once they are.`}</Notice>
+                    ) : (
+                      <p className="empty-note">Loading your categories…</p>
+                    )
                   ) : (
-                    <p className="empty-note">Loading your categories…</p>
-                  )
-                ) : (
-                  past && !view && <PastMonthPending state={month} name={monthName} />
-                )}
-                {taxonomy && shownBudgets && shownSpent && !hasTotal && <NoBudgets past={past} month={shownMonth} />}
-              </>
-            )}
-            {/* What the figure counts, after what went wrong with it. */}
-            <TotalCaveats items={spentNotes} />
-          </section>
+                    past && !view && <PastMonthPending state={month} name={monthName} />
+                  )}
+                  {taxonomy && shownBudgets && shownSpent && !hasTotal && past && <NoBudgets month={shownMonth} />}
+                </>
+              )}
+              {/* What the figure counts, after what went wrong with it. */}
+              <TotalCaveats items={spentNotes} />
+            </section>
+          )}
           {!drawn && budgetsStatus !== 'error' && <RowsSkeleton count={4} className="card list-rows budget-rows" />}
           {drawn && taxonomy && shownBudgets && shownSpent && (
             <BudgetsCard
@@ -627,6 +660,7 @@ export default function BudgetsTab({
               suggestions={!past ? (view?.suggestions ?? null) : null}
               saveError={budgetsSaveError}
               monthError={!past && month.status === 'error' ? month.error : null}
+              empty={emptyNotes}
             />
           )}
           {drawn && !past && heldIncome && (
