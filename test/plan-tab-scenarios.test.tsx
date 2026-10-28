@@ -332,12 +332,12 @@ describe('Your figures with a scenario open', () => {
     expect(tab.text()).toContain('At age 55$1,552,698');
     await press(tab.arrow());
     await openScenario(tab, 'A big home');
-    expect(tab.text()).toContain('At age 55--');
+    expect(tab.text()).toContain('At age 55Not projected');
     expect(tab.text()).toContain('You’d have about $653,750 at 42, less than the $900,000 it takes from your investments, so nothing is projected at 55: change the cost, or when it comes.');
     await tab.unmount();
   });
 
-  test('with an FI number, the At age row says the life events count, and a walk that stops is said once, under Years to FI', async () => {
+  test('with an FI number, the At age row says the life events count, and a walk that stops is said once, under the answer', async () => {
     const home = (cost: number): LifeEvent => ({ id: 'h', kind: 'house', label: 'Home', atAge: 42, cost, yearly: 0, years: null });
     serve({
       'GET /api/fire-plan': [200, { plan: { ...PLAN, savings: 50_000, assets: 500_000 }, currency: 'USD' }],
@@ -352,7 +352,8 @@ describe('Your figures with a scenario open', () => {
     await press(tab.arrow());
     await openScenario(tab, 'A big home');
     expect(tab.text()).toContain('so there is no FI date: change the cost, or when it comes.');
-    expect(tab.text()).toContain('At age 55--Nothing is projected at 55, for the reason under Years to FI.');
+    expect(tab.text()).toContain('Financial independenceNo FI dateYou’d have about $653,750 at 42');
+    expect(tab.text()).toContain('At age 55Not projectedNothing is projected at 55, for the reason under the answer.');
     expect(tab.text()).not.toContain('so nothing is projected at 55');
     await tab.unmount();
   });

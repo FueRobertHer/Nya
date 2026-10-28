@@ -70,6 +70,11 @@ export type RunwayCashAccount = {
   converted?: number;
 };
 
+/** One of the runway's own notes. Every one is a caution, as the cash
+ *  forecast's notes on where it starts are (components/upcoming-notes.tsx),
+ *  and as the page's one amber box said them. */
+export type RunwayNote = { text: string; level: 'caution'; kind: string };
+
 export type RunwayReport = RunwayBuilt & {
   version: 1;
   time_zone: string;
@@ -90,6 +95,11 @@ export type RunwayReport = RunwayBuilt & {
   data_as_of: string | null;
   /** What it can't see, in words with no amount and no date in them. */
   notes: string[];
+  /** The same notes, in the same order, each with its level and its kind in
+   *  a few words, for the page to gather them under one line
+   *  (lib/report/runway-words.ts runwayCaveatItems): `notes` is their text,
+   *  kept as it was for the read-only API and any client that reads it. */
+  note_items?: RunwayNote[];
   /** With a home currency and `plain` asked for: the runway as before one,
    *  nothing converted (the API's version 1 fields, lib/api-reports.ts). */
   plain?: RunwayReport;
@@ -125,13 +135,16 @@ function cashInstitutions(accounts: readonly ApiAccount[], today: string): Forec
   return [...out.values()];
 }
 
+/** A note at the runway's one level, with its kind. */
+const note = (kind: string, text: string): RunwayNote => ({ text, level: 'caution', kind });
+
 /** What couldn't be read of the accounts, in words. */
-function missingNotes(missing: readonly ApiMissing[]): string[] {
-  const notes: string[] = [];
+function missingNotes(missing: readonly ApiMissing[]): RunwayNote[] {
+  const notes: RunwayNote[] = [];
   const institutions = [...new Set(missing.filter((m) => m.institution !== null && m.account_id === null).map((m) => m.institution!))];
-  for (const i of institutions) notes.push(`Your accounts at ${i} couldn’t be read, so any cash there isn’t in this.`);
+  for (const i of institutions) notes.push(note('accounts not read', `Your accounts at ${i} couldn’t be read, so any cash there isn’t in this.`));
   const accounts = missing.filter((m) => m.account_id !== null).length;
-  if (accounts > 0) notes.push(`${accounts === 1 ? 'An account' : `${accounts} accounts`} couldn’t be read, so any cash in ${accounts === 1 ? 'it' : 'them'} isn’t in this.`);
+  if (accounts > 0) notes.push(note('accounts not read', `${accounts === 1 ? 'An account' : `${accounts} accounts`} couldn’t be read, so any cash in ${accounts === 1 ? 'it' : 'them'} isn’t in this.`));
   return notes;
 }
 
@@ -230,34 +243,34 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
       return day === null || daysFrom(day, today) <= MANUAL_STALE_DAYS ? [] : [{ name: a.name, institution: a.institution, updated_at: a.updated_at }];
     });
 
-    const notes: string[] = [...missingNotes(accounts.missing_accounts)];
-    for (const n of position.noBalance) notes.push(`${n.name} at ${n.institution} has no balance to start from, so it isn’t in this.`);
+    const items: RunwayNote[] = [...missingNotes(accounts.missing_accounts)];
+    for (const n of position.noBalance) items.push(note('a balance missing', `${n.name} at ${n.institution} has no balance to start from, so it isn’t in this.`));
     // With a home currency, why each left out has no rate.
     const cashLeft = withWhy(leftOutText(position.leftOut, currency, { noun: 'cash account', where: 'this runway', plural: false }), position.conversion, position.leftOut);
-    if (cashLeft) notes.push(cashLeft);
+    if (cashLeft) items.push(note('another currency left out', cashLeft));
     // A pending charge that can't be taken off for its currency, named as an
     // account left out is.
     const charges = position.pending.leftOut ?? [];
     const chargesLeft = withWhy(leftOutText(charges, currency, { noun: 'pending charge', where: 'this runway', plural: false }), position.conversion, charges);
-    if (chargesLeft) notes.push(chargesLeft);
+    if (chargesLeft) items.push(note('another currency left out', chargesLeft));
     const eventsLeft = withWhy(leftOutText(built.events_left_out, currency, { noun: 'expected payment', where: 'this runway', plural: false }), built.conversion?.expected);
-    if (eventsLeft) notes.push(eventsLeft);
+    if (eventsLeft) items.push(note('another currency left out', eventsLeft));
     // A manual cash account with no transactions in the longest window: what
     // is spent from it isn't known.
     for (const a of position.included) {
       if (a.manual && !rows.some((t) => t.account_id === a.account_id && t.date >= longest.start && t.date <= longest.end)) {
-        notes.push(`${a.name} at ${a.institution} has no transactions in the last 12 months, so what you spend from it isn’t in your spending.`);
+        items.push(note('an account with no transactions', `${a.name} at ${a.institution} has no transactions in the last 12 months, so what you spend from it isn’t in your spending.`));
       }
     }
-    if (!built.has_cash && position.noBalance.length === 0) notes.push('No checking, savings or cash on hand is in Nya, so there is no cash to start from.');
-    for (const a of live.filter(isHsa)) notes.push(`${a.name} at ${a.institution} is a health savings account, for health costs, so it isn’t counted as cash.`);
+    if (!built.has_cash && position.noBalance.length === 0) items.push(note('no cash to start from', 'No checking, savings or cash on hand is in Nya, so there is no cash to start from.'));
+    for (const a of live.filter(isHsa)) items.push(note('a health savings account', `${a.name} at ${a.institution} is a health savings account, for health costs, so it isn’t counted as cash.`));
     if (live.some((a) => isInvestmentType(a.type))) {
-      notes.push('Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.');
+      items.push(note('cash in investment accounts', 'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.'));
     }
-    if (!planned.ok) notes.push('Your planned items couldn’t be read, so they aren’t in this, and bills you marked not recurring may be.');
-    if (input.hidden) notes.push('Hidden accounts are left out, their balances and their transactions.');
+    if (!planned.ok) items.push(note('planned items not read', 'Your planned items couldn’t be read, so they aren’t in this, and bills you marked not recurring may be.'));
+    if (input.hidden) items.push(note('hidden accounts', 'Hidden accounts are left out, their balances and their transactions.'));
 
-    return { ...built, ...base, cash_accounts, owed_on_cards: tidy(owed), stale_balances: stale, notes };
+    return { ...built, ...base, cash_accounts, owed_on_cards: tidy(owed), stale_balances: stale, notes: items.map((n) => n.text), note_items: items };
   };
 
   // With a home currency, converted; as before one beside it when asked
