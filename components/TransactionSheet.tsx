@@ -120,6 +120,10 @@ function fmtTime(iso: string | null): string | null {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+// What a row files under, for the status line: its category's id, or its
+// category's words where the taxonomy can't be read.
+const filedUnder = (t: Pick<Txn, 'category_id' | 'category'>) => t.category_id ?? t.category ?? null;
+
 /** "Thu, Oct 22, 2026". */
 function longDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -268,9 +272,11 @@ function TxnSheet({
   // The category just chosen, while the offer to make a rule of it stands.
   const [offer, setOffer] = useState<string | null>(null);
   // What the status line says: the last of Looks right or Exclude / Include
-  // to be saved, and on which row. Picking a category clears a kept, so
-  // a later choice (or the same one picked again) never reads as kept.
-  const [announced, setAnnounced] = useState<{ id: string; kept: true } | { id: string; excluded: boolean } | null>(null);
+  // to be saved, and on which row. A kept is said only while the row still
+  // files under what it kept (its category's id, not its name, which can
+  // change on saving), and picking a category clears it, so a choice made
+  // while the save is out, or after, never reads as kept.
+  const [announced, setAnnounced] = useState<{ id: string; kept: string | null } | { id: string; excluded: boolean } | null>(null);
   const forgetKept = () => setAnnounced((a) => (a && 'kept' in a ? null : a));
   // Include on a pending row takes its row away (exclusionOffer: it can't be
   // excluded again until it posts): focus goes to the line said in its place.
@@ -380,10 +386,15 @@ function TxnSheet({
     ) : t.group_members ? null : (
       <label className="field">
         Category
-        <select ref={categoryRef} className="text-input" value={t.category ?? 'other'} onChange={(e) => {
+        <select
+          ref={categoryRef}
+          className="text-input"
+          value={t.category ?? 'other'}
+          onChange={(e) => {
             forgetKept();
             onRecategorize(t.transaction_id, { category: e.target.value });
-          }}>
+          }}
+        >
           {pickable.map((p) => (
             <option key={p} value={p}>
               {p}
@@ -464,10 +475,11 @@ function TxnSheet({
                     className="btn ghost"
                     onClick={() => {
                       const id = t.transaction_id;
+                      const kept = filedUnder(t);
                       setAnnounced(null);
                       // Said only once the server has it.
                       void Promise.resolve(onRecategorize(id, confirm)).then((saved) => {
-                        if (saved === true) setAnnounced({ id, kept: true });
+                        if (saved === true) setAnnounced({ id, kept });
                       });
                       // The button goes with the mark: focus to the field it was about.
                       categoryRef.current?.focus();
@@ -485,7 +497,9 @@ function TxnSheet({
             {announced?.id !== t.transaction_id
               ? ''
               : 'kept' in announced
-                ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
+                ? announced.kept === filedUnder(t)
+                  ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
+                  : ''
                 : announced.excluded === (t.excluded === true)
                   ? announced.excluded
                     ? 'Excluded from budgets and reports.'

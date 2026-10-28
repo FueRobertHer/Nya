@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, click, type, type FakeElement } from './mini-dom';
 import { categoriesFor } from './category-fixture';
+import type { CategoryChoice } from '@/components/transaction-edits';
 
 // A transaction's sheet on Activity's Transactions (rollout phase 5e,
 // docs/design/information-architecture.md#activity), used as a person would
@@ -367,6 +368,24 @@ describe('a transaction’s sheet', () => {
     v.render({ onRecategorize, onToggleExcluded, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...household(t), excluded: true } : t)) });
     await settle();
     expect(status()).toBe('Excluded from budgets and reports.');
+    v.unmount();
+  });
+
+  test('a pick made while Looks right is still saving is never said to be kept', async () => {
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    let resolve: (saved: boolean) => void = () => {};
+    const onRecategorize = (_id: string, choice: CategoryChoice) =>
+      'category_id' in choice && choice.category_id === cat('groceries') ? new Promise<boolean>((r) => (resolve = r)) : Promise.resolve(true);
+    const v = mount({ txns: served().map(low), onRecategorize });
+    await v.open('Whole Foods');
+    const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    // Household picked before the server answers Looks right.
+    act(() => type(v.field('Category')!, cat('household')));
+    v.render({ onRecategorize, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, category_id: cat('household'), category_name: 'household' } : t)) });
+    act(() => resolve(true));
+    await settle();
+    expect(status()).toBe('');
     v.unmount();
   });
 
