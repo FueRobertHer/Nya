@@ -854,6 +854,23 @@ A review of the screens after step 5 found money ticks still on the card charts'
 - The cash forecast's own 30, 60 and 90 days stay hand-drawn `.segmented` markup.
 - A shared net worth stays dashed between its weekly points, and its note under the chart keeps its words.
 
+## After the screen review: answers first
+
+The same review found two answers said after their reasons, and one said twice: the Plan's answer boxed, under a full-width age button, with a Years to FI row repeating it and Coast FI as "--"; What if… with ten dimmed choices before why; and Runway with a seven-line "What it can't see" box before its months, which sat in a strip of three. One PR, branch `fix/answers-first`.
+
+**Built:**
+
+- **One hero shell.** `components/Hero.tsx` and `.hero` hold what Home's hero had to itself: the label a real heading, the figure at the hero size, an edge on every notice that isn't critical. Home's markup is the same but for the class; its no-wrap and scrub stay its own.
+- **The Plan's answer is its hero,** on the page: against the stop age, how it is worked out in one line (the old Years to FI row's note, without the age again), and a ghost "Add your age" line under it. No Years to FI row. An answer, Coast FI or the balance at the stop age that isn't worked out names what it needs ("Needs your invested assets", "Needs your age", "Needs other assumptions"), never "--"; the line on the FI number still says why. What qualifies the answer is gathered under it as Home's caveats are.
+- **What if… says why first:** your age, with the same ask opening the same Ages sheet, and every other reason the choices are off, before them. Once the age is saved focus goes to the first choice, or the card's title when the choices are still off.
+- **Runway's months are its hero,** with what it can't see right under them: every note a caution, as the amber box said them (the cash forecast's notes are too), one in full and more on one line that opens to each, each kind in a few words (`runwayCaveatItems`, `note_items` beside the read's `notes`, which the read-only API keeps word for word). Then the cash and the line with income, the chart, and the what-if, moved from above the report into its first part. On paper every note prints in full in a box under the months.
+
+**Kept narrow:**
+
+- The accountant's report and Year over year keep their "may be missing" box first: an accountant reads the gaps before any figure.
+- The Plan's path chart stays inside the gutter; only Home's runs to the edges.
+- Your figures' rows keep their "--" for a figure not measured, with its reason under it.
+
 ## After the screen review: Activity and Budgets
 
 The same review found Activity saying In, Out and Net three times (Out unsigned), bars whose segments moved as the view changed, empty screens with no first step, and Budgets opening on an offer whose button was the screen's only filled one. One PR, branch `fix/activity-budgets`.

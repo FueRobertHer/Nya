@@ -51,7 +51,7 @@ function useInStep() {
 export function HomeSkeleton() {
   useInStep();
   return (
-    <section className="stack net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">
+    <section className="stack hero net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">
       <div>
         <h2 id="net-worth-loading" className="total-label">
           Net worth
@@ -414,9 +414,40 @@ export function BudgetsSkeleton({ segment = 'month' }: { segment?: BudgetsSegmen
 }
 
 /** A Plan segment while the saved plan loads (components/PlanTab.tsx): a
- *  card with its title, its chart and its figures' rows still to come. */
-export function PlanPanelSkeleton() {
+ *  card with its title, its chart and its figures' rows still to come. On
+ *  Your path, its shape since the screen review: the answer on the page (the
+ *  hero, its label already there), its line and its chart, then Your
+ *  figures' card, 16px apart as the loaded panel's are, so nothing moves as
+ *  the plan arrives. */
+export function PlanPanelSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
   useInStep();
+  if (segment === 'path') {
+    return (
+      <div className="stack loose" aria-busy="true">
+        <section className="stack hero plan-hero" aria-hidden="true">
+          <div>
+            <h3 className="total-label">Financial independence</h3>
+            <div className="total-value plan-answer">
+              <span className="skeleton plan-skeleton-answer" />
+            </div>
+            <div className="stack tight plan-answer-lines">
+              <span className="skeleton home-skeleton-delta" />
+            </div>
+          </div>
+          <span className="skeleton block plan-skeleton-chart" />
+        </section>
+        <section className="card stack" aria-hidden="true">
+          <div className="card-header">
+            <h3>
+              <span className="skeleton rows-skeleton-title" />
+            </h3>
+          </div>
+          <RowsSkeleton count={3} />
+        </section>
+        <Status label="Loading your plan" />
+      </div>
+    );
+  }
   return (
     <div aria-busy="true">
       <section className="card stack" aria-hidden="true">
@@ -442,7 +473,7 @@ export function PlanSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
       <div inert>
         <PlanBar segment={segment} onSegment={nothing} scenario={null} scenariosCount={null} onScenarios={nothing} onBack={nothing} />
       </div>
-      <PlanPanelSkeleton />
+      <PlanPanelSkeleton segment={segment} />
     </>
   );
 }

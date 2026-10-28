@@ -28,7 +28,7 @@ for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs
 const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { NO_CHANGES } = await import('@/lib/fire/scenarios');
+const { NO_CHANGES, MAX_PLAN_SCENARIOS } = await import('@/lib/fire/scenarios');
 const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText, fiWhen } = await import('@/components/plan-what-if');
 const { setAmountsHidden } = await import('@/lib/format');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
@@ -70,12 +70,12 @@ const listing = (...scenarios: Entry[]): [number, unknown] => [200, { scenarios,
 const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
 const classOf = (e: FakeElement) => (e.getAttribute('class') ?? '').split(' ');
 
-async function render(answers: Record<string, Answer | [number, unknown]>) {
+async function render(answers: Record<string, Answer | [number, unknown]>, over: Partial<PlanTabProps> = {}) {
   const calls = serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/allocation-settings': [200, { settings: null }], ...answers });
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  const props: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [] };
+  const props: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [], ...over };
   await act(async () => root.render(<PlanTab {...props} />));
   await settle();
   const find = (pred: (e: FakeElement) => boolean) => container.findAll(pred)[0] ?? null;
@@ -288,15 +288,84 @@ describe('the What if… card', () => {
     await tab.unmount();
   });
 
-  test('without your age the templates are off, and it says why; with a saved plan that can’t be read, there is no card', async () => {
+  test('without your age the templates are off, and why comes first: the same ask as the answer’s, before the choices; with a saved plan that can’t be read, there is no card', async () => {
     const tab = await render({ 'GET /api/fire-plan': [200, { plan: { ...PLAN, age: null }, currency: 'USD' }], 'GET /api/plan-scenarios': listing() });
     expect(tab.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
-    expect(tab.card()?.textContent).toContain('Type your age first (Ages, under Your figures): a life choice is placed by age.');
+    const card = tab.card()!;
+    expect(card.textContent).toContain('A life choice is placed by age.Add your age');
+    expect(card.textContent).not.toContain('Type your age first');
+    // Read before the choices it is about (the screen review).
+    const order = card.findAll(() => true);
+    const ask = button(card, 'Add your age')!;
+    expect(classOf(ask)).toEqual(['btn', 'ghost', 'hero-ask']);
+    expect(order.indexOf(ask)).toBeLessThan(order.indexOf(tab.chip('Buy a home')!));
     await tab.unmount();
     const broken = await render({ 'GET /api/fire-plan': [500, { error: 'no' }], 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
     expect(broken.card()).toBeNull();
     await broken.unmount();
   });
+
+  /** The plan without an age, saved back as the Ages sheet sends it. */
+  const ageless = (over: Record<string, unknown> = {}, plan: Record<string, unknown> = PLAN) => {
+    let current: unknown = { ...plan, age: null };
+    return {
+      'GET /api/fire-plan': () => [200, { plan: current, currency: 'USD', ...over }] as [number, unknown],
+      'PUT /api/fire-plan': (c: Call) => {
+        current = c.body.plan;
+        return [200, { plan: current, currency: 'USD', ...over }] as [number, unknown];
+      },
+    };
+  };
+  /** Types an age in the open Ages sheet and saves it. */
+  const saveAge = async (tab: Awaited<ReturnType<typeof render>>) => {
+    const form = tab.dialog()!;
+    expect(form.getAttribute('aria-label')).toBe('Your ages');
+    const [age] = form.findAll((e) => e.tagName === 'INPUT');
+    await act(async () => type(age, '40'));
+    await press(button(form, 'Save'));
+    await settle(400);
+  };
+  const closeOf = (sheet: FakeElement) => sheet.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0] ?? null;
+
+  test('its ask opens the Ages sheet; closed, focus is back on it, and once the age is saved, on the first life choice', async () => {
+    const tab = await render({ ...ageless(), 'GET /api/plan-scenarios': listing() });
+    const ask = () => (tab.card() ? button(tab.card()!, 'Add your age') : null);
+    await press(ask());
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Your ages');
+    await press(closeOf(tab.dialog()!));
+    await settle(400);
+    expect(dom.document.activeElement).toBe(ask()!);
+    await press(ask());
+    await saveAge(tab);
+    expect(ask()).toBeNull();
+    expect(tab.chip('Buy a home')?.getAttribute('disabled')).toBeNull();
+    expect(dom.document.activeElement).toBe(tab.chip('Buy a home')!);
+    await tab.unmount();
+  }, 20_000);
+
+  test('once the age is saved and the choices are still off (no currency, or the most scenarios kept), focus goes to the card’s title', async () => {
+    const title = (tab: Awaited<ReturnType<typeof render>>) => tab.card()!.findAll((e) => e.getAttribute('id') === 'plan-what-if-title')[0];
+    const full = Array.from({ length: MAX_PLAN_SCENARIOS }, (_, i) => entry({ id: `s${i}`, name: `Scenario ${i}` }));
+    for (const [answers, said, over] of [
+      // Nothing typed, no accounts and no currency: none to give a
+      // scenario's amounts, and none needed to save the age.
+      [{ ...ageless({ currency: null }, { ...DEFAULT_PLAN, targetAge: 55 }), 'GET /api/plan-scenarios': listing() }, 'Your plan has no currency yet', { currency: null }],
+      [{ ...ageless(), 'GET /api/plan-scenarios': listing(...full) }, `You have ${MAX_PLAN_SCENARIOS} scenarios`, {}],
+    ] as const) {
+      const tab = await render(answers, over);
+      const card = tab.card()!;
+      // Why, before the choices, as the age is.
+      const order = card.findAll(() => true);
+      const reason = card.findAll((e) => e.tagName === 'P' && e.textContent.startsWith(said))[0];
+      expect(order.indexOf(reason)).toBeLessThan(order.indexOf(tab.chip('Buy a home')!));
+      await press(button(card, 'Add your age'));
+      await saveAge(tab);
+      expect(tab.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
+      expect(title(tab).getAttribute('tabindex')).toBe('-1');
+      expect(dom.document.activeElement).toBe(title(tab));
+      await tab.unmount();
+    }
+  }, 30_000);
 
   test('a refused save is said in the form, which stays open', async () => {
     const tab = await render({ 'GET /api/plan-scenarios': listing(), 'POST /api/plan-scenarios': [409, { error: 'Another scenario has that name: choose another, so they can be told apart.' }] });
@@ -331,7 +400,7 @@ describe('the What if… card', () => {
     await press(tab.row('Spend less'));
     expect(tab.bar()?.textContent).toContain('Scenario: Spend less');
     // What the row said is what the scenario's FI card says.
-    expect(tab.container.textContent).toContain('Around age 47,');
+    expect(tab.container.textContent).toContain('Financial independenceAround age 47');
     await tab.unmount();
   });
 

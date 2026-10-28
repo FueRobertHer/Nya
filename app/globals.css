@@ -371,31 +371,53 @@ h1,
   user-select: none;
 }
 
-/* Your path's answer (rollout phase 8b): words, not a figure, so the hero's
-   smaller end, where "Around age 39" fits a phone's line. */
-.total-value.plan-answer {
-  font-size: 32px;
-  line-height: 1.15;
-}
-
-/* Home's hero (components/NetWorthCard.tsx, look and feel step 5): on the
+/* A hero (components/Hero.tsx: Home's net worth since look and feel step 5,
+   the Plan's answer and the runway's months since the screen review): on the
    page, not in a card, with more room under it than a card's margin gave,
-   before the card under it. Its title is a real heading, drawn as the label
-   it was. */
-.net-worth-hero {
+   before the card under it. Its title is a real heading (h2 or h3), drawn as
+   the label it was. Its figure is at the hero size: 32px on a phone, 40px
+   from about 445px. */
+.hero {
   margin-bottom: var(--sp-6);
 }
 
-h2.total-label {
+.hero .total-label {
   margin: 0;
   font-weight: var(--fw-regular);
 }
 
-/* The hero's figure at the hero size (32px on a phone, 40px from about
-   445px), never wrapping: a scrubbed day's value is the same length, so the
-   chart under the finger never moves. */
-.net-worth-hero .total-value {
+.hero .total-value {
   font-size: var(--fs-hero);
+}
+
+/* Your path's answer (rollout phase 8b): words, not a figure, so the hero's
+   smaller end, where "Around age 39" fits a phone's line. */
+.hero .total-value.plan-answer {
+  font-size: 32px;
+  line-height: 1.15;
+}
+
+/* The runway's months, or its words ("Doesn't run out"), which may wrap on a
+   phone. */
+.runway-hero .total-value {
+  line-height: 1.15;
+}
+
+/* A line that asks for what the answer needs ("Add your age"): a ghost
+   button, its text in line with the answer over it. */
+.hero-ask {
+  margin-inline-start: calc(-1 * var(--sp-2));
+}
+
+/* The Plan's answer's lines: against the stop age, how it is worked out, and
+   what it still needs. */
+.plan-answer-lines {
+  margin-top: var(--sp-2);
+}
+
+/* Home's figure never wraps: a scrubbed day's value is the same length, so
+   the chart under the finger never moves. */
+.net-worth-hero .total-value {
   white-space: nowrap;
 }
 
@@ -435,13 +457,13 @@ h2.total-label {
   font-variant-numeric: tabular-nums;
 }
 
-.net-worth-hero .notice {
+.hero .notice {
   overflow-wrap: anywhere;
 }
 
 /* On the page a notice's fill is close to the canvas (an information one is
    about 1.0:1 in light), so each keeps an edge; a critical one has its own. */
-.net-worth-hero .notice:not(.critical) {
+.hero .notice:not(.critical) {
   border-color: var(--border-subtle);
 }
 
@@ -3526,6 +3548,11 @@ button.danger-outline {
    charts draw at (150 to 340, components/NetWorthChart.tsx's cardFrame and
    components/ForecastChart.tsx). */
 .upcoming-skeleton-chart,
+.plan-skeleton-answer {
+  width: 6em;
+  max-width: 100%;
+}
+
 .plan-skeleton-chart {
   width: 100%;
   height: auto;
@@ -5618,6 +5645,34 @@ button.import-choice {
   flex: none;
 }
 
+/* The runway's first page on screen (components/RunwayReport.tsx, since the
+   screen review): on the page, not a card, since its months are the page's
+   hero; the parts after it stay cards. Every note it can't see is in a box
+   for paper alone, where a closed line would print nothing; on screen they
+   are under the months by the hero's rules. Paper keeps the report's own
+   layout, so both are for the screen only. */
+@media screen {
+  .runway-report .report-first {
+    background: none;
+    border-radius: 0;
+    padding: 0;
+  }
+
+  .runway-print-caveats {
+    display: none;
+  }
+
+  /* Its notices on the page keep the hero's edge (.hero .notice) with no
+     cash to start from too, where there is no hero to hold them. */
+  .runway-report .report-first .notice {
+    overflow-wrap: anywhere;
+  }
+
+  .runway-report .report-first .notice:not(.critical) {
+    border-color: var(--border-subtle);
+  }
+}
+
 @media print {
   /* The paper's own size, A4 or Letter, whichever the print window has, with
      a footer on every page: the report and its period on the left (a style
@@ -5792,6 +5847,21 @@ button.import-choice {
 
   .report .report-first h2 {
     margin: 6pt 0 4pt;
+  }
+
+  /* The runway's months, the answer, larger than every figure under them. */
+  .report .runway-hero {
+    margin-bottom: 8pt;
+  }
+
+  .report .runway-hero .total-label {
+    font-size: 9pt;
+    margin: 0;
+  }
+
+  .report .runway-hero .total-value {
+    font-size: 20pt;
+    margin-top: 2pt;
   }
 
   .report .report-first h3 {
@@ -7812,6 +7882,16 @@ button.review-keys-toggle {
 
 .runway-chart {
   margin-top: 8px;
+}
+
+/* Under the months: the cash now and the line with income, two figures. */
+.report-bottom-line.runway-bottom-line {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* The what-if, under the chart it changes. */
+.runway-report .runway-controls {
+  margin-top: var(--sp-4);
 }
 
 .runway-scenario-actions {

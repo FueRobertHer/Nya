@@ -17,6 +17,7 @@ import { useState, type ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import { fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
 import { CAUTION } from './ConnectionStatus';
+import { Hero } from './Hero';
 import { HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
 import { formatMoney, moneyRuns, roundsToNothing } from '@/lib/format';
@@ -152,18 +153,18 @@ export default function NetWorthCard({
   const [reading, setReading] = useState<HeroReading | null>(null);
   const shown = reading ? reading.value : worth;
   return (
-    <section className="stack net-worth-hero" aria-labelledby="net-worth-title">
-      <div>
-        {/* Focus lands here when the last Needs attention row goes. */}
-        <h2 id="net-worth-title" className="total-label" tabIndex={-1}>
-          Net worth
-        </h2>
-        <div className={`total-value${shown < 0 ? ' negative' : ''}`}>
-          <HeroFigure worth={shown} currency={currency} />
-        </div>
-        {/* The change line, about today; while a day is scrubbed, that day
-            in its place, the line keeping its height so the chart under the
-            finger never moves. */}
+    // Focus lands on the label when the last Needs attention row goes.
+    <Hero
+      id="net-worth-title"
+      label="Net worth"
+      focusable
+      className="net-worth-hero"
+      figure={<HeroFigure worth={shown} currency={currency} />}
+      figureClass={shown < 0 ? 'negative' : undefined}
+      line={
+        // The change line, about today; while a day is scrubbed, that day in
+        // its place, the line keeping its height so the chart under the
+        // finger never moves.
         <div className={`hero-line${reading ? ' scrubbed' : ''}`}>
           {delta}
           {reading && (
@@ -174,7 +175,8 @@ export default function NetWorthCard({
             </p>
           )}
         </div>
-      </div>
+      }
+    >
       <TotalCaveats items={caveats} />
 
       <HeroScrub.Provider value={setReading}>
@@ -203,6 +205,6 @@ export default function NetWorthCard({
           {notesCount > 0 ? `Chart notes (${notesCount})` : 'Chart notes'}
         </button>
       </div>
-    </section>
+    </Hero>
   );
 }

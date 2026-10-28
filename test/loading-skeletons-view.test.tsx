@@ -9,6 +9,7 @@ import {
   BudgetsSkeleton,
   HomeSkeleton,
   LinesSkeleton,
+  PlanPanelSkeleton,
   PlanSkeleton,
   SettingsSkeleton,
   SharedWithMeSkeleton,
@@ -32,7 +33,7 @@ describe('Home while it loads', () => {
   const html = renderToStaticMarkup(<HomeSkeleton />);
 
   test('the Net worth card, busy, its title in words and its figures as placeholders', () => {
-    expect(html).toContain('<section class="stack net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">');
+    expect(html).toContain('<section class="stack hero net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">');
     expect(html).toContain('<h2 id="net-worth-loading" class="total-label">Net worth</h2>');
     expect(html).toContain('<p class="visually-hidden" role="status">Loading</p>');
     // No figure, and nothing a screen reader reads but the title and the status.
@@ -126,6 +127,22 @@ describe('Clerk’s form while it loads', () => {
 // Each tab while it loads (lib/dashboard-tab.ts keeps the tab across a
 // reload, so the first paint is the tab's own): drawn on the tab's classes,
 // busy, said once, placeholders hidden, the bar the tab's own but unavailable.
+// Since the screen review the Plan's answer is on the page, not in a card:
+// Your path's skeleton is that shape too, so nothing moves as the plan comes.
+describe('Your path while the plan loads', () => {
+  test('the answer on the page, its label already there, then Your figures’ card, 16px apart; the other segments keep their card', () => {
+    const html = renderToStaticMarkup(<PlanPanelSkeleton segment="path" />);
+    expect(html.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero plan-hero" aria-hidden="true"><div><h3 class="total-label">Financial independence</h3><div class="total-value plan-answer">')).toBe(true);
+    expect(html.indexOf('plan-skeleton-chart')).toBeLessThan(html.indexOf('<section class="card stack"'));
+    expect(renderToStaticMarkup(<PlanSkeleton segment="path" />)).toContain(html);
+    for (const segment of ['stress', 'portfolio'] as const) {
+      const other = renderToStaticMarkup(<PlanPanelSkeleton segment={segment} />);
+      expect(other.startsWith('<div aria-busy="true"><section class="card stack" aria-hidden="true">')).toBe(true);
+      expect(other).not.toContain('plan-hero');
+    }
+  });
+});
+
 describe('every tab while it loads', () => {
   const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8');
   // Classes the tabs' own lists carry with no rule of their own (txn-list,
@@ -286,7 +303,7 @@ describe('every tab while it loads', () => {
     expect(read('MonthBreakdown.tsx')).toContain('<ActivityListSkeleton segment={segment} />');
     expect(read('BudgetsTab.tsx')).toContain("panel('month', <BudgetsMonthSkeleton />)");
     expect(read('PlanTabLoader.tsx')).toContain('<PlanSkeleton segment={props.segment} />');
-    expect(read('PlanTab.tsx')).toContain('<PlanPanelSkeleton />');
+    expect(read('PlanTab.tsx')).toContain('<PlanPanelSkeleton segment={s} />');
     for (const f of ['MonthBreakdown.tsx', 'BudgetsTab.tsx', 'PlanTabLoader.tsx', 'PlanTab.tsx']) expect(read(f)).not.toContain('className="spinner"');
     // A placeholder is a box or a line's width, never a sentence in a pulsing bar.
     expect(read('PlanProgress.tsx')).not.toContain('<p className="skeleton"');
