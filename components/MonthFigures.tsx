@@ -16,7 +16,7 @@
 // (components/LoadingSkeletons.tsx); the loading view's one status says it
 // is loading, so the strip itself is hidden from a screen reader then.
 
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { signedMoney, toMinorUnits } from '@/lib/format';
 import { Masked } from './HideAmounts';
 
@@ -36,7 +36,6 @@ export function shownFigures({ moneyIn, moneyOut, currency }: MonthTotals): { in
 }
 
 const LABELS = ['In', 'Out', 'Net'] as const;
-const MONTH_FIGURES_TITLE = 'month-figures-title';
 
 export default function MonthFigures({
   totals,
@@ -55,6 +54,7 @@ export default function MonthFigures({
   /** What qualifies the figures, under them. */
   children?: ReactNode;
 }) {
+  const titleId = useId();
   const shown = totals ? shownFigures(totals) : null;
   const c = totals?.currency ?? null;
   const values: [string, string][] = shown
@@ -65,16 +65,16 @@ export default function MonthFigures({
       ]
     : [];
   return (
-    <section className="month-figures" aria-labelledby={MONTH_FIGURES_TITLE} aria-hidden={shown ? undefined : true}>
+    <section className="month-figures" aria-labelledby={titleId} aria-hidden={shown ? undefined : true}>
       {/* Its heading: the span shown when it is more than the bar's month,
           else read alone (the bar names the month). */}
       {caption ? (
-        <h2 id={MONTH_FIGURES_TITLE} className="month-figures-caption">
+        <h2 id={titleId} className="month-figures-caption">
           <span className="visually-hidden">In and out, </span>
           {caption}
         </h2>
       ) : (
-        <h2 id={MONTH_FIGURES_TITLE} className="visually-hidden">
+        <h2 id={titleId} className="visually-hidden">
           {title}
         </h2>
       )}

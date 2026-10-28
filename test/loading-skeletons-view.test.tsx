@@ -237,7 +237,9 @@ describe('every tab while it loads', () => {
     // The In, Out and Net strip (components/MonthFigures.tsx) itself, its
     // figures to come, hidden from a screen reader (the one status says it
     // is loading), first on Transactions, before the list.
-    expect(activity).toContain('<section class="month-figures" aria-labelledby="month-figures-title" aria-hidden="true"><h2 id="month-figures-title" class="visually-hidden">In and out</h2>');
+    const heading = /<section class="month-figures" aria-labelledby="([^"]+)" aria-hidden="true"><h2 id="([^"]+)" class="visually-hidden">In and out<\/h2>/.exec(activity);
+    expect(heading).not.toBeNull();
+    expect(heading![1]).toBe(heading![2]);
     expect(activity.indexOf('month-figures')).toBeLessThan(activity.indexOf('<h2>Transactions</h2>'));
     const spending = renderToStaticMarkup(<ActivitySkeleton segment="spending" />);
     const at = (w: string) => spending.indexOf(w);

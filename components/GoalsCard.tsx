@@ -217,7 +217,9 @@ export function GoalsCardView({
 
   return (
     <div className="card goals-card">
-      {(saveError || caveats.length > 0 || allocated.length > 0) && (
+      {/* With no goal, the empty state says why a save failed, between its
+          line and its button (design-system.md "Empty state"). */}
+      {goals.length > 0 && (saveError || caveats.length > 0 || allocated.length > 0) && (
         <div className="stack tight">
           {saveError && <p className="stale-note"><Masked>{hideAmountsIn(saveError)}</Masked></p>}
           <TotalCaveats items={caveats} />
@@ -236,7 +238,9 @@ export function GoalsCardView({
           title="No goals yet"
           line="Set a target, track it against an account’s balance, and see when you’ll reach it."
           action={{ label: 'Add goal', opens: true, ref: addRef, onSelect: () => edit(null) }}
-        />
+        >
+          {saveError && <p className="stale-note"><Masked>{hideAmountsIn(saveError)}</Masked></p>}
+        </EmptyState>
       )}
 
       {views.map((v) => {

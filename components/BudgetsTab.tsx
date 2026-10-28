@@ -67,7 +67,7 @@ import { historyCount, leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
 import type { FxTable } from '@/lib/fx/rates';
 import { splitChangedText } from './SplitChangedNote';
-import type { Budgets } from '@/lib/budget-set';
+import { placeBudgets, type Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals, NoBudgets, type RolloverChange, type Target } from './BudgetsCard';
 import { changeRollover, useBudgetMonth, NOT_LOADED as NOT_LOADED_TEXT, type BudgetMonthState } from './budget-month-state';
@@ -549,7 +549,10 @@ export default function BudgetsTab({
   // Spent (BudgetsCard draws it, holding Add budget's sheet). What the Spent
   // card would have said goes in it, in the same order and words. A past
   // month keeps Spent with its line: it is read only, with no first step.
-  const empty = drawn && !!taxonomy && !!shownBudgets && !!shownSpent && !hasTotal && !past;
+  // A budget on a category or group since deleted (an orphan) is a budget
+  // all the same, a row of its own: never under "No budgets yet".
+  const orphaned = !!taxonomy && !!shownBudgets && placeBudgets(shownBudgets, indexTaxonomy(taxonomy)).orphans.length > 0;
+  const empty = drawn && !!taxonomy && !!shownBudgets && !!shownSpent && !hasTotal && !past && !orphaned;
   const emptyNotes = empty ? (
     <>
       {budgetsSaveError && <Notice level="caution">{budgetsSaveError}</Notice>}
@@ -631,7 +634,7 @@ export default function BudgetsTab({
                   ) : (
                     past && !view && <PastMonthPending state={month} name={monthName} />
                   )}
-                  {taxonomy && shownBudgets && shownSpent && !hasTotal && <NoBudgets month={shownMonth} />}
+                  {taxonomy && shownBudgets && shownSpent && !hasTotal && past && <NoBudgets month={shownMonth} />}
                 </>
               )}
               {/* What the figure counts, after what went wrong with it. */}

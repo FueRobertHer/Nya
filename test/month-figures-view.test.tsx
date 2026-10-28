@@ -67,9 +67,15 @@ describe('the figures', () => {
 
 describe('its heading', () => {
   test('read alone when the bar names the month; shown when it is a longer span', () => {
-    expect(strip(1, 1)).toContain('<h2 id="month-figures-title" class="visually-hidden">In and out, October 2026</h2>');
-    const longer = strip(1, 1, 'USD', 'Aug to Oct 2026');
-    expect(longer).toContain('<h2 id="month-figures-title" class="month-figures-caption"><span class="visually-hidden">In and out, </span>Aug to Oct 2026</h2>');
+    // Labelled by its heading, whose id is its own (useId), so two never clash.
+    const labelled = (html: string) => {
+      const by = /<section class="month-figures" aria-labelledby="([^"]+)"/.exec(html)?.[1];
+      expect(by).toBeTruthy();
+      return html.replace(`id="${by}"`, 'id="HEADING"');
+    };
+    expect(labelled(strip(1, 1))).toContain('<h2 id="HEADING" class="visually-hidden">In and out, October 2026</h2>');
+    const longer = labelled(strip(1, 1, 'USD', 'Aug to Oct 2026'));
+    expect(longer).toContain('<h2 id="HEADING" class="month-figures-caption"><span class="visually-hidden">In and out, </span>Aug to Oct 2026</h2>');
     expect(longer).not.toContain('In and out, October 2026');
   });
 });
@@ -77,7 +83,7 @@ describe('its heading', () => {
 describe('while the sums are on their way', () => {
   test('the same strip, placeholders where the figures go, hidden from a screen reader', () => {
     const html = renderToStaticMarkup(<MonthFigures totals={null} title="In and out" />);
-    expect(html).toStartWith('<section class="month-figures" aria-labelledby="month-figures-title" aria-hidden="true">');
+    expect(html).toMatch(/^<section class="month-figures" aria-labelledby="[^"]+" aria-hidden="true">/);
     expect(html.match(/<span class="skeleton activity-skeleton-figure"><\/span>/g)).toHaveLength(3);
     for (const label of ['In', 'Out', 'Net']) expect(html).toContain(`<div class="total-label">${label}</div>`);
     // Loaded, it is read.

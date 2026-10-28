@@ -876,7 +876,6 @@ export default function MonthBreakdown({
     );
   }
 
-  const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
   // A total that looks finished but may not be says so, under the total.
   // SimpleFIN's and Lunch Flow's rows come without categories: said while any counts.

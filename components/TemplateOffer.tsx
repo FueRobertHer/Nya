@@ -108,7 +108,9 @@ export function TemplateOfferCard({ onKeep, onSee }: { onKeep: () => void; onSee
           </span>
           {chevron(RIGHT)}
         </button>
-        <button type="button" className="icon-btn" aria-label="Keep my categories" onClick={onKeep}>
+        {/* Its name shows on hover too (as the header's icon buttons'), so
+            it can be found by sight and asked for by voice. */}
+        <button type="button" className="icon-btn" aria-label="Keep my categories" title="Keep my categories" onClick={onKeep}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
             <path d="M18 6 6 18M6 6l12 12" />
           </svg>

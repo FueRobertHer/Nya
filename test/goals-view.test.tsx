@@ -137,6 +137,10 @@ describe('the card', () => {
     expect(html).toContain('<div class="empty-state"><h3>No goals yet</h3><p class="helper">Set a target, track it against an account’s balance, and see when you’ll reach it.</p><button type="button" class="btn" aria-haspopup="dialog">Add goal</button></div>');
     expect(html.split('>Add goal<').length - 1).toBe(1);
     expect(html).not.toContain('empty-note');
+    // A save that failed, with no goal: said in the empty state, between its line and its button.
+    const failed = card([], { saveError: 'Could not save goals. Showing what is saved.' });
+    expect(failed).toContain('<p class="helper">Set a target, track it against an account’s balance, and see when you’ll reach it.</p><p class="stale-note">Could not save goals. Showing what is saved.</p><button type="button" class="btn"');
+    expect(failed.split('Could not save goals').length - 1).toBe(1);
     // With a goal, no empty state, and Add goal is the tonal one under the list.
     const one = card([goal('Fund', 'sav', 15_000)]);
     expect(one).not.toContain('empty-state');

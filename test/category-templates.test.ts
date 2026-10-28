@@ -425,7 +425,8 @@ describe('the offer, once', () => {
     expect(html).toStartWith('<ul class="card list-rows template-offer"><li><button type="button" class="list-row" aria-haspopup="dialog">');
     expect(html).toContain('<span class="list-row-title">Categories that fit you</span><span class="list-row-sub">A starter set may suit you better</span>');
     // The row's button closes before the ×'s opens: no button inside another.
-    expect(html).toContain('</button><button type="button" class="icon-btn" aria-label="Keep my categories">');
+    // Its name shown on hover too, as the header's icon buttons', for voice control.
+    expect(html).toContain('</button><button type="button" class="icon-btn" aria-label="Keep my categories" title="Keep my categories">');
     expect(html.match(/<button/g)).toHaveLength(2);
     expect(html).not.toContain('class="btn"');
     expect(html).not.toContain('btn secondary');

@@ -298,6 +298,15 @@ describe('the Spent card', () => {
     expect(notesIn(card).find((n) => n.text.includes('couldn’t be saved'))?.level).toBe('caution');
   });
 
+  test('a budget on a category since deleted is a budget all the same: its row, the Spent card, never "No budgets yet"', () => {
+    const panel = monthPanel(tab({ budgets: { categories: { gone_1: { amount: 25 } }, groups: {} } }));
+    expect(panel).not.toContain('empty-state');
+    expect(panel).not.toContain('No budgets');
+    expect(panel).toContain('aria-labelledby="budgets-spent-title"');
+    expect(text(panel)).toContain('A category since deleted');
+    expect(panel).toContain('budget-add-button');
+  });
+
   test('a past month with no budget keeps its Spent card and its line', () => {
     expect(renderToStaticMarkup(<NoBudgets month={addMonths(NOW, -1)} />)).toBe(`<p class="empty-note">No budgets in ${monthName(addMonths(NOW, -1))}.</p>`);
   });
