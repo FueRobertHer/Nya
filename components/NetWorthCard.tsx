@@ -19,8 +19,40 @@ import { fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
 import { CAUTION } from './ConnectionStatus';
 import { HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
-import { formatMoney, moneyRuns } from '@/lib/format';
+import { formatMoney, moneyRuns, roundsToNothing } from '@/lib/format';
 import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
+
+/** The change Home's hero shows (components/Dashboard.tsx works it out). */
+export type HeroChange = { value: number; pct: number; days: number };
+
+/** The hero's change line: up in green, down in red, each with its arrow and
+ *  how much; a change that rounds to nothing in the currency is said in
+ *  words, in the secondary text color and with no arrow, so no change never
+ *  reads as a gain. What else the change holds (accounts that ended, rate
+ *  moves) follows either way. */
+export function HeroDelta({ delta, currency, endedIn, fromRates }: { delta: HeroChange; currency: string | null; endedIn: number; fromRates: string }) {
+  const none = roundsToNothing(delta.value, currency);
+  const up = delta.value > 0;
+  const days = `${delta.days} ${delta.days === 1 ? 'day' : 'days'}`;
+  return (
+    <div className={`hero-delta ${none ? 'flat' : up ? 'up' : 'down'}`}>
+      {none ? (
+        `No change in ${days}`
+      ) : (
+        <>
+          {up ? '▲' : '▼'} <Masked>{formatMoney(Math.abs(delta.value), currency)}</Masked> ({delta.pct.toFixed(1)}%) · past {days}
+        </>
+      )}
+      {endedIn > 0 && ` · includes ${endedIn === 1 ? 'an account' : `${endedIn} accounts`} that ended`}
+      {fromRates && (
+        <>
+          {' · '}
+          <Masked>{fromRates}</Masked>
+        </>
+      )}
+    </div>
+  );
+}
 
 /** The total, its cents at half size (look and feel, step 3). Drawn in runs
  *  a screen reader would stop between, so it hears the whole figure apart;

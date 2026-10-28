@@ -39,6 +39,30 @@ export function amountsHidden(): boolean {
   return hidden;
 }
 
+/** How many decimal places an amount in the currency has: its minor unit, as
+ *  Intl knows it (2 for USD and EUR, 0 for JPY, 3 for KWD), or 2 for a code
+ *  Intl doesn't take. */
+export function minorDigits(currency: string): number {
+  try {
+    return new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  } catch {
+    return 2;
+  }
+}
+
+/** The amount rounded to the currency's minor unit (half away from zero). */
+export function toMinorUnits(amount: number, currency: string): number {
+  const scale = 10 ** minorDigits(currency);
+  return (Math.sign(amount) * Math.round(Math.abs(amount) * scale)) / scale;
+}
+
+/** Whether a change of this amount would be written as zero in the
+ *  currency (none named: in cents): a change line then says there was no
+ *  change, rather than "+$0.00" in the color of a gain. */
+export function roundsToNothing(amount: number, currency: string | null): boolean {
+  return toMinorUnits(amount, currency || 'USD') === 0;
+}
+
 type Sign = 'auto' | 'always' | 'exceptZero';
 
 const signOf = (n: number, sign: Sign) => (n < 0 ? '-' : (n > 0 && sign !== 'auto') || (n === 0 && sign === 'always') ? '+' : '');

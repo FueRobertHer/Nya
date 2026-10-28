@@ -99,20 +99,22 @@ function menuItems(p: Props): string[] {
 }
 
 describe('the account sheet', () => {
-  test('a linked account: its balance and source, Hide and Close… in the footer, history import in its ⋯', () => {
+  test('a linked account: its balance and source, Hide and Mark as closed… in the footer, history import in its ⋯', () => {
     const a = account();
     const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
     expect(html).toContain('aria-label="Total Checking ••4421"');
     expect(text(html)).toContain('$1,200.00 Chase · checking');
-    expect(buttons(footerOf(html))).toEqual(['Hide', 'Close…']);
-    expect(footerOf(html)).toContain('aria-label="Total Checking: closed, no longer yours, or stop following"');
+    expect(buttons(footerOf(html))).toEqual(['Hide', 'Mark as closed…']);
+    // Its name starts with the words on it, so a voice command naming the
+    // button finds it; "Mark as closed", never the sheet's own Close.
+    expect(footerOf(html)).toContain('aria-label="Mark as closed… Total Checking: closed, no longer yours, or stop following"');
     expect(menuItems(props(a, plaid(a)))).toEqual(['Import history from a file']);
   });
 
   test('a typed account: Update balance and Add transaction too, and Import and Delete in its ⋯', () => {
     const a = account({ account_id: 'acc_cash', name: 'Cash', mask: null, currency: 'EUR', updated_at: '2026-10-08T15:05:00.000Z' });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, typed(a))} />);
-    expect(buttons(footerOf(html))).toEqual(['Hide', 'Close…', 'Add transaction', 'Update balance']);
+    expect(buttons(footerOf(html))).toEqual(['Hide', 'Mark as closed…', 'Add transaction', 'Update balance']);
     expect(text(html)).toMatch(/Wallet · checking · in EUR · Updated Oct 8, \d+:05 [AP]M/);
     expect(menuItems(props(a, typed(a)))).toEqual(['Import a file', 'Delete…']);
     // A hidden one isn't imported into.
@@ -122,7 +124,7 @@ describe('the account sheet', () => {
   test('an account SimpleFIN feeds: nothing typed-only, no history import, and no ⋯ with nothing in it', () => {
     const a = account({ updated_at: new Date('2026-10-08T12:00:00').toISOString() });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, fed(a))} />);
-    expect(buttons(footerOf(html))).toEqual(['Hide', 'Close…']);
+    expect(buttons(footerOf(html))).toEqual(['Hide', 'Mark as closed…']);
     expect(text(html)).toContain('Balance as of Oct 8');
     expect(html).not.toContain('aria-haspopup="menu"');
   });
@@ -131,7 +133,7 @@ describe('the account sheet', () => {
     const a = account({ held: { as_of: '2026-09-12' } });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
     expect(html).toContain('<span class="badge warn">Last known balance, from Sep 12</span>');
-    expect(buttons(footerOf(html))).toEqual(['Close…']);
+    expect(buttons(footerOf(html))).toEqual(['Mark as closed…']);
   });
 
   test('a card: its payment line with Overdue in red, its limit used, and its terms', () => {
@@ -147,10 +149,17 @@ describe('the account sheet', () => {
     });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
     expect(html).toContain('<span class="badge neg">Overdue</span>');
-    expect(text(html)).toContain('Overdue · 24.99% APR · min $35.00 · due Oct 24');
+    // Its year too once today is in another (liabilitySummary).
+    expect(text(html)).toMatch(/Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24(, 2026)?( |$)/);
     expect(text(html)).toContain('28% of $5,000.00 limit');
     expect(text(html)).toContain('Statement balance $1,288.40');
     expect(text(html)).toContain('Last payment $900.00 on Sep 25');
+  });
+
+  test('overdue with no terms reported: the badge still shows', () => {
+    const a = account({ account_id: 'acc_loan', name: 'Plaid Mortgage', type: 'loan', subtype: 'mortgage', balance: 56302.06, liability: { kind: 'mortgage', apr: null, apr_label: null, minimum_payment: null, next_due_date: null, last_statement_balance: null, last_payment_amount: null, last_payment_date: null, is_overdue: true } });
+    const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
+    expect(html).toContain('<p class="helper"><span class="badge neg">Overdue</span></p>');
   });
 
   test('a brokerage: its own positions with gain or loss, and its cash with its share', () => {
@@ -198,7 +207,7 @@ describe('the account sheet', () => {
       const [el] = body.findAll((e) => e.tagName === 'BUTTON' && e.textContent === label);
       act(() => click(el));
     };
-    for (const label of ['Hide', 'Close…', 'Add transaction', 'Update balance']) press(label);
+    for (const label of ['Hide', 'Mark as closed…', 'Add transaction', 'Update balance']) press(label);
     const [more] = body.findAll((e) => e.getAttribute('aria-haspopup') === 'menu');
     act(() => click(more));
     press('Import a file');

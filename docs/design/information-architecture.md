@@ -81,7 +81,7 @@ Moves off Home: the timeline notes card (into a sheet from the chart), the backu
 **One tap away:**
 
 - **Add account** sheet: Connect a bank or card; Connect a brokerage or retirement account (where enabled); Connect with SimpleFIN (also for Redbark, which speaks the same protocol); Connect with Lunch Flow (where enabled); Add a manual account; Switching from another app. Each option has one line; the coverage explanation (which service reaches which countries) is a "Which should I use?" disclosure.
-- **Account** sheet (tap a row): balance and its source line; balance history chart; holdings with gain or loss and the cash share; payment terms (statement balance, last payment, interest, escrow, payoff); investment activity; recent transactions with "See all in Activity". Actions in the sheet's footer: **Hide** and **Close...**, plus Update balance and Add transaction on manual accounts. In the sheet's ⋯: Import a file (manual), Import history from a file, Repair holdings history, Rename, and **Delete** (manual only, confirmed).
+- **Account** sheet (tap a row): balance and its source line; balance history chart; holdings with gain or loss and the cash share; payment terms (statement balance, last payment, interest, escrow, payoff); investment activity; recent transactions with "See all in Activity". Actions in the sheet's footer: **Hide** and **Mark as closed…**, plus Update balance and Add transaction on manual accounts. In the sheet's ⋯: Import a file (manual), Import history from a file, Repair holdings history, Rename, and **Delete** (manual only, confirmed).
 - **Institution ⋯ menu**: Connection details (health, last synced, whose side a problem is on, the provider's code), Add or remove accounts, Enable payment details, Allow transactions, and for SimpleFIN and Lunch Flow: Refresh, Choose accounts, Answer. Last: **Disconnect...**, confirmed by typing the name as today.
 - **Payoff plan** moves to Budgets > Goals.
 - **Sharing** moves to the avatar menu and Settings.
@@ -100,7 +100,7 @@ A pinned bar at the top: the month (**‹ October 2026 ⌄ ›**, `MonthStepper`
 | **Spending** | One period shared by every card here (since phase 5c): chips for its length (Month, 3 months, 12 months, Year to date), ending with the bar's month, which the bar's arrows and Net by month's columns move; each card names it. Cash flow (Sankey, "Show as a table"); Net by month (tapping a month sets the period); Income vs spend; Spending by group; Spending by tag; Online vs in-store; Where you spent; a **Reports** row (tax year, runway, year over year). Tapping a Sankey node switches to Transactions with that filter. |
 | **Shared** | Shared expenses: people and balances, Paid back?, Add someone, Add an IOU, archived; its settings (counting, Venmo and Cash App) behind a gear. |
 
-**Transaction** sheet (tap a row; since phase 5e) replaces the inline editor: category, tags and note, split or group, share the cost or "This paid back", receipt, include or exclude, the rules that matched and "Create a rule from this", and the bank's details. In the sheet's ⋯ (in its footer): rename vendor (a second level of the sheet), and Edit or delete for manual transactions. After a category change, the "Make a rule" offer shows in the sheet, under the category, and the sheet stays open. A split transaction's parts and a group's transactions are rows of their own and open the sheet on themselves: a part's category, whether it counts and Edit split; a group's transaction taken out of it. Each row is a button: its name, one line (category, account, where it came from) with its provenance as chips (Pending, Check category, To review, Excluded or Hidden by a rule, Note, a receipt), and under it the notes that bear on what it counts as.
+**Transaction** sheet (tap a row; since phase 5e) replaces the inline editor: category (with **Looks right** beside a Check category chip, which keeps the category it has as the person's), tags and note, split or group, share the cost or "This paid back", receipt, include or exclude, the rules that matched and "Create a rule from this", and the bank's details. In the sheet's ⋯ (in its footer): rename vendor (a second level of the sheet), and Edit or delete for manual transactions. After a category change, the "Make a rule" offer shows in the sheet, under the category, and the sheet stays open. A split transaction's parts and a group's transactions are rows of their own and open the sheet on themselves: a part's category, whether it counts and Edit split; a group's transaction taken out of it. Each row is a button: its name, one line (category, account, where it came from) with its provenance as chips (Pending, Check category, To review, Excluded or Hidden by a rule, Note, a receipt), and under it the notes that bear on what it counts as.
 
 ## Budgets
 
@@ -212,11 +212,11 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ConnectionStatus | New in phase 3b | On each institution card (and Settings > Connections): what is wrong and what it does to the total, in one color from lib/accounts-status.ts, when it last synced and whose side, the account questions, and each button that fixes it once |
 | ConnectionDetails | New in phase 3b | Institution ⋯ > Connection details: Plaid's own words, side and code; a SimpleFIN or Lunch Flow connection's card (where it reaches, requests left, history) |
 | AccountSparkline, HoldingsRecorded, InvestmentActivity, LiabilityDetail | Inline expansion of a row | Account sheet |
-| AccountSheet | New in phase 3 | Tap an account row on Accounts: balance and source, history, holdings, terms; Hide and Close... in its footer, Update balance and Add transaction on typed accounts; Import a file, Import history and Delete in its ⋯ |
+| AccountSheet | New in phase 3 | Tap an account row on Accounts: balance and source, history, holdings, terms; Hide and Mark as closed… in its footer, Update balance and Add transaction on typed accounts; Import a file, Import history and Delete in its ⋯ |
 | Manual account sheet, OwedFlipNote | Add manual, Update on a row | Add account sheet, Account sheet > Update balance |
 | ManualTxnSheet, ImportSheet | Manual row buttons; Activity add card | Account sheet; Activity bar ⋯ |
 | HistoryImportSheet | Expanded row; ended accounts | Account sheet; Accounts that ended |
-| AccountLifecycle (questions, Close sheet, EndedAccounts) | Cards, Manage-only Close... | Questions on the card; Close... in the Account sheet; Accounts that ended section |
+| AccountLifecycle (questions, Close sheet, EndedAccounts) | Cards, Manage-only Close... | Questions on the card; Mark as closed… in the Account sheet; Accounts that ended section |
 | Hidden accounts card | Bottom of Accounts | Bottom of Accounts |
 | Disconnect sheet, DisconnectSplitsNote | Manage-only header button; ConnectionHealth | ⋯ > Disconnect...; Settings > Connections |
 | ConnectRedirect ("already connected") | After Connect | Unchanged |
@@ -309,7 +309,7 @@ One word for one thing, everywhere:
 | Word | Means | Not |
 |---|---|---|
 | **Hide** | Keep syncing, stop counting | Remove, archive |
-| **Close** | The account ended on a day (closed, no longer yours, or no longer followed); history before stays | Disconnect, delete |
+| **Close** | The account ended on a day (closed, no longer yours, or no longer followed); history before stays; its button reads "Mark as closed…", so it is never taken for a sheet's Close | Disconnect, delete |
 | **Disconnect** | Remove a connection to an institution; its accounts' history is kept | Remove, unlink |
 | **Delete** | Permanently remove something you made (a manual account, a transaction, a rule) | Forget |
 | **Forget** | Permanently remove what Nya kept about a disconnected account | Delete |

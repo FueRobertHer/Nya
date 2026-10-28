@@ -19,6 +19,7 @@ import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
+import { distinctAccountNames } from '@/lib/account-names';
 import {
   HORIZON_MONTHS,
   MAX_APR,
@@ -123,8 +124,20 @@ function listNames(list: string[]): string {
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-function accountName(a: DebtAccount): string {
-  return a.mask ? `${a.name} ••${a.mask}` : a.name;
+/** Each debt's name in the plan's sentences, by id: its name and mask
+ *  ("Sapphire ••1234"), with its institution in front where another debt
+ *  has the same name (lib/account-names.ts), so two sandbox mortgages at two
+ *  banks don't read the same. The helper is told not to add the mask, which
+ *  is written here after every name. */
+function accountNames(accounts: readonly DebtAccount[]): (a: DebtAccount) => string {
+  const named = distinctAccountNames(
+    accounts.map((a) => ({ id: a.id, name: a.name, institution: a.institution })),
+    { mask: false }
+  );
+  return (a) => {
+    const name = named.get(a.id) ?? a.name;
+    return a.mask ? `${name} ••${a.mask}` : name;
+  };
 }
 
 /** What the plan can't see, as one sentence each (lib/payoff.ts blindSpots). */
@@ -222,6 +235,7 @@ export function PayoffPanel({
   }
 
   const money = moneyIn(currency);
+  const accountName = accountNames(rows.map((r) => r.account));
   const nameOf = (id: string) => accountName(rows.find((r) => r.account.id === id)!.account);
   const setTerm = (id: string, field: keyof TypedTerms, value: string | undefined) =>
     onChange((prev) => ({ ...prev, typed: { ...prev.typed, [id]: { ...prev.typed[id], [field]: value } } }));
@@ -256,7 +270,7 @@ export function PayoffPanel({
       </p>
     );
   } else if (waiting > 0) {
-    summary = <Waiting rows={rows} waiting={waiting} money={money} />;
+    summary = <Waiting rows={rows} waiting={waiting} money={money} accountName={accountName} />;
   } else if (debts.length === 0) {
     summary = (
       <p className="empty-note">
@@ -454,7 +468,7 @@ function holdReason(a: DebtAccount, money: (cents: number) => string): string | 
 }
 
 /** The plan is waiting on terms: how many, and the debts held for a reason. */
-function Waiting({ rows, waiting, money }: { rows: PlanRow[]; waiting: number; money: (cents: number) => string }) {
+function Waiting({ rows, waiting, money, accountName }: { rows: PlanRow[]; waiting: number; money: (cents: number) => string; accountName: (a: DebtAccount) => string }) {
   const held = rows.filter(
     (r) => r.status === 'needs-terms' && r.minimum.value === null && !r.minimum.error && r.account.minimumHold
   );
@@ -532,28 +546,35 @@ function PlanSummary({
     );
   }
 
-  const lines: string[] = [];
+  // Keyed by which sentence each is, never by its words.
+  const lines: { key: string; text: string }[] = [];
   if (extraCents > 0 && plan.extraSaved) {
     const { interestCents, months } = plan.extraSaved;
-    lines.push(
-      interestCents === null || months === null
-        ? `Without the extra ${money(extraCents)} a month, these debts aren't paid off within ${HORIZON_YEARS} years.`
-        : `The extra ${money(extraCents)} a month saves ${savingText(interestCents, months, money) || 'nothing here'}.`
-    );
+    lines.push({
+      key: 'extra',
+      text:
+        interestCents === null || months === null
+          ? `Without the extra ${money(extraCents)} a month, these debts aren't paid off within ${HORIZON_YEARS} years.`
+          : `The extra ${money(extraCents)} a month saves ${savingText(interestCents, months, money) || 'nothing here'}.`
+    });
   }
   const neverOnMinimums = comparison.minimums.debts.filter((d) => d.months === null).map((d) => nameOf(d.id));
   if (neverOnMinimums.length > 0) {
-    lines.push(
-      `Against paying only the minimums: this clears ${listNames(neverOnMinimums)}, which minimums alone don't within ${HORIZON_YEARS} years.`
-    );
+    lines.push({
+      key: 'never-on-minimums',
+      text:
+        `Against paying only the minimums: this clears ${listNames(neverOnMinimums)}, which minimums alone don't within ${HORIZON_YEARS} years.`
+    });
   } else {
     const { interestCents, months } = plan.saved;
     const saving = savingText(interestCents!, months!, money);
-    lines.push(
-      saving
-        ? `Against paying only the minimums, this saves ${saving}.`
-        : 'The same as paying only the minimums. An extra amount each month pays it off sooner.'
-    );
+    lines.push({
+      key: 'against-minimums',
+      text:
+        saving
+          ? `Against paying only the minimums, this saves ${saving}.`
+          : 'The same as paying only the minimums. An extra amount each month pays it off sooner.'
+    });
   }
 
   const notes = [
@@ -579,8 +600,8 @@ function PlanSummary({
         </div>
       </div>
       {lines.map((l) => (
-        <div className="status-note" key={l}>
-          <Masked>{l}</Masked>
+        <div className="status-note" key={l.key}>
+          <Masked>{l.text}</Masked>
         </div>
       ))}
     </>

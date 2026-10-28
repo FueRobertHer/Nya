@@ -310,6 +310,20 @@ describe('year over year, drawn', () => {
     expect(t).toContain('Activity inside investment accounts, such as trades, dividends and interest, isn’t in it.');
   });
 
+  // The screen review: "+$0.00 (0.0%)" read as a gain.
+  test('a change that rounds to nothing says no change, and a month with nothing in either year stays blank', () => {
+    const same = [...rows.filter((r) => r.transaction_id !== 'pay-26'), row('pay-26', '2026-01-15', -3000.004, { category: 'income' })];
+    const t = text(renderToStaticMarkup(<YearOverYearView report={report({ ...buildYearOverYear({ rows: same, taxonomy, currency: 'USD', today: TODAY }) })} />));
+    expect(t).not.toContain('+$0.00');
+    expect(t).not.toMatch(/[^\d.]0\.0%/);
+    expect(t).toContain('Money in $0.00 last year $0.00; no change');
+    // By month: January's money in is the same (to a fraction of a cent); February has nothing either year.
+    expect(t).toContain('Jan 2026 $3,000.00 $3,000.00 No change');
+    expect(t).toMatch(/Feb 2026 \$0\.00 \$0\.00 Mar 2026/);
+    // By group: no change, and no percent beside it.
+    expect(t).toContain('Income $3,000.00 $3,000.00 No change income $3,000.00 $3,000.00 No change Shopping');
+  });
+
   test('with a home currency, the amounts are in it, what is in another converted, and it says so, never an amount', () => {
     const { ecbTable } = require('./fx-fixture') as typeof import('./fx-fixture');
     // 1 USD = 0.80 EUR every day, a rate of the person's own: 1 EUR is 1.25 USD.

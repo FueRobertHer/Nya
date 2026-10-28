@@ -10,6 +10,8 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUCKET_COLORS, CLASS_COLORS } from '@/components/allocation-text';
+import { SLOTS } from '@/lib/allocation/classes';
+import { BUCKET_SLOTS } from '@/lib/allocation/buckets';
 import { CLERK_APPEARANCE, DARK, LIGHT } from '@/lib/theme';
 import baselineJson from './design-guard-baseline.json';
 import {
@@ -273,14 +275,54 @@ describe('design guard: the tokens (app/globals.css and docs/design/tokens.css)'
     expect(t.lightBySystem).toEqual(t.light);
   });
 
-  // The allocation views draw each class and tax bucket in one color in both
-  // themes (components/allocation-text.ts), on a card.
+  // The allocation views draw each class and tax bucket in one color
+  // (components/allocation-text.ts): a tag token, or the neutral field edge
+  // for unclassified money, never a color that means something.
+  const ALLOCATION_TOKEN = /^var\(--(tag-(?:gray|orange|yellow|green|teal|blue|purple|pink)|border-input)\)$/;
+  const tokenOf = (color: string) => color.match(ALLOCATION_TOKEN)?.[1] ?? null;
+
+  test('the allocation colors are tag tokens (unclassified the field edge), never a meaning color or a literal', () => {
+    const wrong = [...Object.entries(CLASS_COLORS), ...Object.entries(BUCKET_COLORS)].filter(([, color]) => tokenOf(color) === null).map(([slot, color]) => `${slot}: ${color}`);
+    // The tag red is left unused: it reads as money out (--neg).
+    expect(wrong).toEqual([]);
+    expect(CLASS_COLORS.unclassified).toBe('var(--border-input)');
+    expect(BUCKET_COLORS.unclassified).toBe('var(--border-input)');
+  });
+
   test('the allocation colors pass 3:1 on a card in both themes', () => {
     const failing: string[] = [];
     for (const [name, theme] of [['dark', app.dark], ['light', app.light]] as const) {
       for (const color of new Set([...Object.values(CLASS_COLORS), ...Object.values(BUCKET_COLORS)])) {
-        const ratio = contrast(color, theme.surface);
+        const hex = theme[tokenOf(color) ?? ''];
+        if (!hex) {
+          failing.push(`${color} isn't a token of the ${name} theme`);
+          continue;
+        }
+        const ratio = contrast(hex, theme.surface);
         if (ratio < 3) failing.push(`${color} on ${name} --surface is ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failing).toEqual([]);
+  });
+
+  // Neighbours in the bar and the chart over time (the order the slots are
+  // shown) differ in lightness as well as hue, so they can be told apart
+  // without telling the hues apart: at least 1.1:1 in both themes. Real
+  // estate and Crypto take the tag green and orange (the two near the
+  // meaning colors, kept for the classes least read as money moving), which
+  // are only 1.05:1 apart in light: they differ in hue, which is said here.
+  test('neighbouring allocation colors differ in lightness in both themes', () => {
+    const failing: string[] = [];
+    const orders = [SLOTS.map((s) => [s, CLASS_COLORS[s]] as const), BUCKET_SLOTS.map((b) => [b, BUCKET_COLORS[b]] as const)];
+    for (const [name, theme] of [['dark', app.dark], ['light', app.light]] as const) {
+      for (const order of orders) {
+        for (let i = 1; i < order.length; i++) {
+          const [a, ca] = order[i - 1];
+          const [b, cb] = order[i];
+          const min = a === 'real-estate' && b === 'crypto' ? 1.05 : 1.1;
+          const ratio = contrast(theme[tokenOf(ca) ?? ''], theme[tokenOf(cb) ?? '']);
+          if (ratio < min) failing.push(`${a} beside ${b} is ${ratio.toFixed(2)}:1 in ${name}, needs ${min}:1`);
+        }
       }
     }
     expect(failing).toEqual([]);
