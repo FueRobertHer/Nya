@@ -1176,9 +1176,9 @@ const PAD_RIGHT = 10;
 const PAD_TOP = 14;
 // Room under the baseline for the 12px dates.
 const PAD_BOTTOM = 24;
-const PLAN_COLOR = 'var(--accent)';
+const PLAN_COLOR = 'var(--data)';
 // The baseline is context, so it is the meta gray, --text-3: over 3:1 on a
-// card in both themes, and far enough from the accent for colour-blind
+// card in both themes, and far enough from the plan's gold for colour-blind
 // readers too.
 const BASELINE_COLOR = 'var(--text-3)';
 

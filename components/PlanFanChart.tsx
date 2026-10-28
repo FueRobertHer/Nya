@@ -2,8 +2,9 @@
 
 // The fan chart for a simulated plan: the balance year by year as percentile
 // bands across every start (or run). One hue, as on the other charts: the
-// median a 2px accent line, the middle half (25th to 75th percentile) a
-// darker wash, the middle 80% (10th to 90th) a lighter one. Dependency-free
+// median a 2px --data (gold) line, the middle half (25th to 75th percentile)
+// a darker wash, the middle 80% (10th to 90th) the solid --data-tint. The
+// bands are drawn before the gridlines, which a solid band would hide. Dependency-free
 // SVG in the same house style as NetWorthChart: hairline gridlines with clean
 // tick values, labels in the muted text colour, and a readout row above the
 // plot instead of a tooltip, since on a phone the finger covers the point
@@ -186,6 +187,8 @@ export default function PlanFanChart({
         onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
+        <path d={outer} fill="var(--data-tint)" />
+        <path d={inner} fill="var(--data)" opacity={0.22} />
         {ticks.map((t) => (
           <g key={t}>
             <line x1={padLeft} x2={W - PAD_RIGHT} y1={yv(t)} y2={yv(t)} stroke="var(--border-subtle)" strokeWidth={1} />
@@ -194,13 +197,10 @@ export default function PlanFanChart({
             </text>
           </g>
         ))}
-
-        <path d={outer} fill="var(--accent)" opacity={0.12} />
-        <path d={inner} fill="var(--accent)" opacity={0.22} />
-        <path d={median} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={median} fill="none" stroke="var(--data)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
         {active !== null && <line x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />}
-        <circle cx={xs[i]} cy={yv(bands.p50[i])} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
+        <circle cx={xs[i]} cy={yv(bands.p50[i])} r={4} fill="var(--data)" stroke="var(--card)" strokeWidth={2} />
 
         {xTicks.map((t) => (
           <text key={`${t.x}-${t.label}`} className="chart-xlabel" x={t.x} y={H - 6} textAnchor={t.anchor}>

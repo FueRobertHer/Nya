@@ -53,6 +53,19 @@ describe('the path chart', () => {
     expect(html).toContain('At a steady 5% a year after inflation. Real markets don’t move steadily; Stress test shows how much that matters.');
   });
 
+  // The light accent review: the wash is the solid --data-tint, so it is
+  // drawn first and the axis, the FI line and its label go over it (the
+  // label sits inside the wash once the path has crossed the FI number).
+  test('the solid wash is drawn under the axis, the FI line and its label', () => {
+    const html = draw(props());
+    const wash = html.indexOf('fill="var(--data-tint)"');
+    expect(wash).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf('stroke="var(--border-subtle)"')).toBeGreaterThan(wash);
+    expect(html.indexOf('stroke-dasharray="4 4"')).toBeGreaterThan(wash);
+    expect(html.indexOf('>FI number</text>')).toBeGreaterThan(wash);
+    expect(html.indexOf('stroke="var(--data)"')).toBeGreaterThan(html.indexOf('>FI number</text>'));
+  });
+
   test('an FI age too close to the stop age to label is left unlabelled, never drawn over it', () => {
     const html = draw(props({ points: steady(250_000, 30_000, 40, 55), stopAge: 55 }));
     expect(ages(html)).toEqual(['FI number', '40', 'stop 55']);

@@ -21,7 +21,7 @@ const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 const PAD_BOTTOM = 20;
-// The two lines differ by dash as well as color: brass and coral are close
+// The two lines differ by dash as well as color: gold and coral are close
 // in lightness. Round caps lengthen each dash by the stroke's width, so
 // "0 4" draws dots.
 const WITH_DASH = '5 4';
@@ -74,7 +74,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
   const { x, y, ticks, showZero } = geo;
   const marks = [
     { date: projection.without_income.runs_out, key: 'without' as const, color: 'var(--down)' },
-    { date: projection.with_income.runs_out, key: 'with' as const, color: 'var(--accent)' },
+    { date: projection.with_income.runs_out, key: 'with' as const, color: 'var(--data)' },
   ].filter((m): m is { date: string; key: 'without' | 'with'; color: string } => m.date !== null && points.some((p) => p.date === m.date));
 
   function scrub(clientX: number) {
@@ -96,7 +96,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
     <div className="runway-chart">
       <div className="chart-legend">
         <span className="chart-legend-item">
-          <LegendLine color="var(--accent)" dash={WITH_DASH} />
+          <LegendLine color="var(--data)" dash={WITH_DASH} />
           With income
         </span>
         <span className="chart-legend-item">
@@ -146,7 +146,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
           </g>
         ))}
         {showZero && <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(0)} y2={y(0)} stroke="var(--down)" strokeOpacity={0.6} strokeWidth={1} />}
-        <path d={geo.with} fill="none" stroke="var(--accent)" strokeWidth={2} strokeDasharray={WITH_DASH} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={geo.with} fill="none" stroke="var(--data)" strokeWidth={2} strokeDasharray={WITH_DASH} strokeLinejoin="round" strokeLinecap="round" />
         <path d={geo.without} fill="none" stroke="var(--down)" strokeWidth={2} strokeDasharray={WITHOUT_DASH} strokeLinejoin="round" strokeLinecap="round" />
         {marks.map((m) => {
           const p = points.find((q) => q.date === m.date)!;

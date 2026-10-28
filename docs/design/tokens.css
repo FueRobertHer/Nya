@@ -98,6 +98,8 @@
 
   /* Meaning, as a background tint (text in the matching color sits on it) */
   --accent-tint: #2a2a24;
+  --data: #d4b680; /* what Nya measures: chart series, meters, bars (gold) */
+  --data-tint: #2a2a24;
   --pos-tint: #15302c;
   --neg-tint: #352229;
   --warn-tint: #35281e;
@@ -150,11 +152,13 @@
     --text-1: #111826;
     --text-2: #4f5869;
     --text-3: #5e6777;
-    --accent: #846326;
+    --accent: #22488a;
     --pos: #047857;
     --neg: #b91c1c;
     --warn: #a3410b;
-    --accent-tint: #f6f0e4;
+    --accent-tint: #dde4f1;
+    --data: #96732c;
+    --data-tint: #f5eedf;
     --pos-tint: #e8f5ef;
     --neg-tint: #fbecec;
     --warn-tint: #fcefe6;
@@ -165,7 +169,7 @@
     --on-fill: #ffffff;
     --logo-tile: #ffffff;
     --brand-mark: #18243d;
-    --focus: #846326;
+    --focus: #22488a;
     --scrim: rgba(17, 24, 38, 0.4);
     --shadow: rgba(17, 24, 38, 0.16);
     --tag-gray: #4b5262;
@@ -201,11 +205,13 @@
   --text-1: #111826;
   --text-2: #4f5869;
   --text-3: #5e6777;
-  --accent: #846326;
+  --accent: #22488a;
   --pos: #047857;
   --neg: #b91c1c;
   --warn: #a3410b;
-  --accent-tint: #f6f0e4;
+  --accent-tint: #dde4f1;
+  --data: #96732c;
+  --data-tint: #f5eedf;
   --pos-tint: #e8f5ef;
   --neg-tint: #fbecec;
   --warn-tint: #fcefe6;
@@ -216,7 +222,7 @@
   --on-fill: #ffffff;
   --logo-tile: #ffffff;
   --brand-mark: #18243d;
-  --focus: #846326;
+  --focus: #22488a;
   --scrim: rgba(17, 24, 38, 0.4);
   --shadow: rgba(17, 24, 38, 0.16);
   --tag-gray: #4b5262;

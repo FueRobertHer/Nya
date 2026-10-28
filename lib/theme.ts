@@ -80,7 +80,7 @@ export const CLERK_APPEARANCE = {
   elements: {
     // Clerk takes one color for its buttons and its links (colorPrimary), so
     // that stays --accent, which passes as link text, with --on-accent-fill on
-    // it (ink on brass, 9.80:1, in dark; white on brass, 5.54:1, in light).
+    // it (ink on brass, 9.80:1, in dark; white on navy, 8.89:1, in light).
     // Its primary button alone takes --accent-fill, as Nya's own primary does
     // (ink on brass, 8.98:1; white on navy, 15.46:1).
     formButtonPrimary: {
@@ -99,8 +99,8 @@ export const CLERK_APPEARANCE = {
     userButtonPopoverActionButton: MENU_ROW,
     userButtonPopoverCustomItemButton: MENU_ROW,
     // A link inside a sentence is underlined, as Nya's own are ("Don't have an
-    // account? Sign up", a field's "Forgot password?"): brass is close to
-    // body text in lightness.
+    // account? Sign up", a field's "Forgot password?"): the accent (brass in
+    // dark, navy in light) is close to body text in lightness.
     footerActionLink: { textDecoration: 'underline', textUnderlineOffset: '2px' },
     formFieldAction: { textDecoration: 'underline', textUnderlineOffset: '2px' },
   },
