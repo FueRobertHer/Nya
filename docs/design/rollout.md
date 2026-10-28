@@ -904,9 +904,35 @@ On Activity and Budgets the month row still changed as the months stepped: at 32
 - Upcoming, Goals and Shared open with the empty two-line row, to keep the segments still.
 - Budgets' past-month notice and the starter sets' offer at the top of the Month panel still differ by month, on purpose: warnings keep their words.
 
+## After the light accent review
+
+A review of the light theme on 2026-10-28 (the design system artifact's audit.md, "Light accent review") found the logo's navy only in the small header mark and the primary button, so light read as gold on grey while dark is gold on navy. The accent now acts and gold measures: every control in light is navy, gold keeps the measures, and both logo inks show in both themes. Dark looks the same apart from the solid washes, the unfaded estimates and the measured slice. One PR, branch `design/light-accent`.
+
+**Built:**
+
+- **The tokens.** Light's `--accent` and `--focus` are navy `#22488a` (a brighter step of the logo navy `#18243d`, which is 1.15:1 from body text and 1.00:1 from the primary's fill), on an `--accent-tint` of `#dde4f1`. New `--data` and `--data-tint`: brass `#d4b680` on `#2a2a24` in dark, gold `#96732c` on `#f5eedf` in light, in `tokens.css`, `app/globals.css` and every light copy.
+- **Measures on `--data`.** The net worth line and its dots, Your path's line, the plan fan's median and bands, Runway's line with income, the forecast's main line, the payoff plan's line, the cash flow's out side (ribbons, bars and its legend dot), `.cat-bar`, `.meter-fill` (its track on `--data-tint`), the plan legend, and the calendar's planned ring. What you act on or select stays `--accent`.
+- **Solid washes.** A wash under a line is the solid `--data-tint`, since gold seen through over the cool light canvas mixes to a muddy grey beige; the fan's inner band is `--data` at 22% over it. A solid tint hides what is under it, so Your path draws its area before the baseline, FI line and label, and the plan fan its bands before its gridlines.
+- **Estimates unfaded.** The net worth line's estimated stretches are dashed at full strength, no longer faded to 75%.
+- **The measured slice.** A measurement between two days on a net worth chart is a deeper gold slice of the area under the line (`--data` at 16%), not a full-height band.
+- **The plan legend's swatches** are the solid tint and a `color-mix` of the inner band, as the fan draws them.
+- **The guard's new pairs:** `--data` at 3:1 on canvas, surface, elevated and `--data-tint`, in both themes.
+
+**Checked**, on a static page with `app/globals.css` and the real charts rendered to markup, at 340px in both themes:
+
+- the hero with an estimated last month (dashed at full strength over the solid wash), its range switch's navy bar in light;
+- Your path with its FI line and label over the wash, and the plan fan with its gridlines over its bands and its legend swatches matching them;
+- a meter on track (gold on its tint) and at caution (hatched orange), the calendar's planned ring and due square, a link in a sentence and the view switch, with no sideways scroll;
+- the measured slice by the hero's view test (drawn after the wash, no full-height band), since it needs a gesture.
+
+**Kept narrow:**
+
+- The blue tag suggestion (`.tag-suggestion.chosen`) has no edge or check and now sits closer to a selected chip; it is left for when it is next touched.
+- The hero draw-in stays deferred.
+
 ## The contrast check
 
-`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, each button fill's label on it, the header logo's ink on the page and a card, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
+`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, each button fill's label on it, the header logo's ink on the page and a card, field borders on every surface, the focus ring, and `--data` on canvas, surface, elevated and its tint at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
 
 ## Done means
 

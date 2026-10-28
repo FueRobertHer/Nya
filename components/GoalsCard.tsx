@@ -11,7 +11,7 @@
 // history survives, in a list that can be opened to restore one or delete it
 // for good.
 //
-// Progress meters use the accent hue, switching to the up-green once the goal
+// Progress meters use gold (--data), switching to the up-green once the goal
 // is reached (state, not severity: reaching a goal is good); the "where you
 // should be" marker is a lighter tick on the track, said in words to a
 // screen reader (lib/goal-text.ts meterLabel). Everything is worked out here

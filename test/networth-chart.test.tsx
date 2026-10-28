@@ -416,9 +416,22 @@ describe('NetWorthChart as the hero', () => {
     expect(html).toContain('viewBox="0 0 352 140"');
     expect(html).not.toContain('chart-tick');
     expect(html).not.toContain('stroke="var(--border-subtle)"');
-    // Its wash, and the today dot ringed in the page it stands on.
-    expect(html).toContain('opacity="0.12"');
-    expect(html).toMatch(/<circle [^>]*stroke="var\(--canvas\)"/);
+    // Its wash, solid (gold drawn see-through over the light canvas turns a
+    // grey beige: the light accent review), and the today dot ringed in the
+    // page it stands on.
+    expect(html).toMatch(/<path d="[^"]*" fill="var\(--data-tint\)"><\/path>/);
+    expect(html).not.toContain('opacity="0.12"');
+    expect(html).toMatch(/<circle [^>]*fill="var\(--data\)"[^>]*stroke="var\(--canvas\)"/);
+  });
+
+  // The light accent review: an estimate is told by its dash at full
+  // strength. Faded to 75%, the gold read as khaki at 3.1:1 on the page.
+  test('an estimated stretch is dashed, never faded', () => {
+    const points = year.map((p, i) => (i > year.length - 30 ? { ...p, estimated: true } : p));
+    const html = at(352, <NetWorthChart hero points={points} />);
+    const lines = [...html.matchAll(/<path [^>]*stroke="var\(--data\)"[^>]*>/g)].map((m) => m[0]);
+    expect(lines.some((l) => l.includes('stroke-dasharray="5 4"'))).toBe(true);
+    expect(lines.filter((l) => l.includes('opacity'))).toEqual([]);
   });
 
   test('its months keep inside the gutter and never overlap, at a phone’s width and a wide one', () => {

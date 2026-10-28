@@ -145,10 +145,11 @@ describe('design guard: controls and states read without color', () => {
     ['.tab-bar button.active::before {', 'var(--accent)', 'the current tab has a bar'],
     ['.tab-bar {', 'calc((100% - var(--content-max)) / 2)', 'the tabs keep to the content column on a wide window'],
     ['.notice.critical {', 'border-color: currentColor', 'a critical notice has an edge'],
-    // Look and feel, step 4: brass sits close to orange, coral and body text.
+    // Look and feel, step 4: the accent sits close to body text, and gold
+    // (--data) close to orange and coral.
     ['a:not([class]) {', 'text-decoration: underline', 'a link inside a sentence is underlined'],
     ['.meter-fill.warn {', 'repeating-linear-gradient', 'a meter at caution is hatched, not only orange'],
-    ['.cal-dot.planned {', 'border: 1.5px solid var(--accent)', "the calendar's planned dot is a ring"],
+    ['.cal-dot.planned {', 'border: 1.5px solid var(--data)', "the calendar's planned dot is a ring"],
     ['.cal-dot.due {', 'border-radius: 1px', "the calendar's payment due dot is a square"],
     ['.brand-mark {', 'forced-color-adjust: none', "forced colors leaves the logo's mask as drawn"],
     ['.brand-mark {', 'color: var(--brand-mark)', "the logo's ink is --brand-mark"],

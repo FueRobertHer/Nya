@@ -1,5 +1,5 @@
 /** A chart legend's sample of one line, in its color and its dash, where two
- *  lines would otherwise be told apart by hue alone (brass beside orange or
+ *  lines would otherwise be told apart by hue alone (gold beside orange or
  *  coral is about 1.1 to 1.3:1). Its words name the line; this is decoration. */
 export function LegendLine({ color, dash }: { color: string; dash: string }) {
   return (
