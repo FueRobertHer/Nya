@@ -13,8 +13,9 @@
 // and Crypto, a trade-off nine tags for eight classes can't avoid; its red
 // isn't used. Neighbours in the order differ in hue and in lightness as far
 // as the palette allows (test/design-guard.test.ts measures each pair in
-// both themes). Unclassified is a neutral, never a class's hue (the field
-// edge's gray, --border-input): it is money whose class isn't known. Tax
+// both themes). Unclassified is the field edge's gray (--border-input), a
+// neutral rather than a tag: it is money whose class isn't known. Cash is the
+// tag gray, a different step, and never its neighbour in the order. Tax
 // buckets are another set of things, shown in another view, so they take
 // the same colors from the start again. Identity never rests on color alone:
 // every swatch has its name beside it, and every figure is in a table.

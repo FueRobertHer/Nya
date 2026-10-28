@@ -33,13 +33,14 @@ export type HeroChange = { value: number; pct: number; days: number };
 export function HeroDelta({ delta, currency, endedIn, fromRates }: { delta: HeroChange; currency: string | null; endedIn: number; fromRates: string }) {
   const none = roundsToNothing(delta.value, currency);
   const up = delta.value > 0;
+  const days = `${delta.days} ${delta.days === 1 ? 'day' : 'days'}`;
   return (
     <div className={`hero-delta ${none ? 'flat' : up ? 'up' : 'down'}`}>
       {none ? (
-        `No change in ${delta.days} days`
+        `No change in ${days}`
       ) : (
         <>
-          {up ? '▲' : '▼'} <Masked>{formatMoney(Math.abs(delta.value), currency)}</Masked> ({delta.pct.toFixed(1)}%) · past {delta.days} days
+          {up ? '▲' : '▼'} <Masked>{formatMoney(Math.abs(delta.value), currency)}</Masked> ({delta.pct.toFixed(1)}%) · past {days}
         </>
       )}
       {endedIn > 0 && ` · includes ${endedIn === 1 ? 'an account' : `${endedIn} accounts`} that ended`}

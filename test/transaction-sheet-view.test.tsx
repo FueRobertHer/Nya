@@ -307,10 +307,15 @@ describe('a transaction’s sheet', () => {
     expect(changes).toEqual([{ id: 'Whole Foods', choice: { category_id: cat('groceries') } }]);
     // No offer to make a rule: nothing was changed.
     expect(v.dialog()!.textContent).not.toContain('Do the same for every transaction');
+    // The button goes, so focus goes to the field it was about, and the status line says it was kept.
+    expect(dom.document.activeElement).toBe(v.field('Category') as never);
+    const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    expect(status()).toBe('Category kept: groceries.');
     // The row as the dashboard then shows it (components/transaction-edits.ts).
     v.render({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...low(t), ...recategorizedRow(low(t), changes[0].choice as never, taxonomy) } : t)) });
     expect(badges()).toEqual([]);
     expect(v.button('Looks right', v.dialog()!)).toBeNull();
+    expect(status()).toBe('Category kept: groceries.');
     v.unmount();
   });
 

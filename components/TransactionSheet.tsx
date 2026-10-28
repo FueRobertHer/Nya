@@ -256,6 +256,8 @@ function TxnSheet({
 }: Inner & { t: Txn }) {
   // The category just chosen, while the offer to make a rule of it stands.
   const [offer, setOffer] = useState<string | null>(null);
+  // The row whose category Looks right just kept, said in the status line.
+  const [kept, setKept] = useState<string | null>(null);
   // Rename vendor, a second level of the sheet, and what is typed there.
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(t.name);
@@ -384,13 +386,25 @@ function TxnSheet({
               {confirm && (
                 <>
                   {' '}
-                  <button className="btn ghost" onClick={() => onRecategorize(t.transaction_id, confirm)}>
+                  <button
+                    className="btn ghost"
+                    onClick={() => {
+                      onRecategorize(t.transaction_id, confirm);
+                      setKept(t.transaction_id);
+                      // The button goes with the mark: focus to the field it was about.
+                      categoryRef.current?.focus();
+                    }}
+                  >
                     Looks right
                   </button>
                 </>
               )}
             </p>
           )}
+          {/* Said once Looks right is pressed, since the button goes. */}
+          <p className="visually-hidden" role="status">
+            {kept === t.transaction_id ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.` : ''}
+          </p>
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}
           <TxnNotes t={t} whole={t} shared={shared} as="p" />
         </div>

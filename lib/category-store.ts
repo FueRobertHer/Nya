@@ -189,7 +189,9 @@ export type Filing = { category_id?: string; category_name?: string | null; cate
  *  imported), or the layers' (an approval in Card Mode, a rule, a merchant's
  *  default). Only what filing actually used counts: a layer's category that
  *  was deleted files nothing, so the row falls back to Plaid's and keeps its
- *  mark. A row without the field (an older one) is left without it. */
+ *  mark. An approval in the category the row already shows sets no layer
+ *  category, so lib/review-layer.ts applyReview clears the mark for it. A
+ *  row without the field (an older one) is left without it. */
 export function fileRows(ix: CategoryIndex, rows: Iterable<CategoryFacts & Filing & { category_confidence?: string | null }>): void {
   for (const r of rows) {
     const { category, said, filed } = resolveCategory(ix, r);

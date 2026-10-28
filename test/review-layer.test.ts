@@ -165,6 +165,20 @@ describe('an approval', () => {
     expect([t.name, t.approved_name]).toEqual(['Costco Wholesale', 'Costco']);
   });
 
+  // Plaid's doubt about its own category ("Check category") is answered by
+  // an approval in any category: the one the row shows, or another.
+  test('an approval takes Plaid’s doubt away, whether it agrees with Plaid’s category or moves it; one with no category doesn’t', () => {
+    const low = { category_confidence: 'LOW' };
+    const [agrees, moves, none, open] = read(
+      [row('t1', low), row('t2', low), row('t3', low), row('t4', low)],
+      layer({ approvals: new Map([['t1', approval()], ['t2', approval({ category_id: cat('household') })], ['t3', approval({ category_id: null })]]) })
+    );
+    expect([agrees.category_name, agrees.category_confidence]).toEqual(['general merchandise', null]);
+    expect([moves.category_name, moves.category_confidence]).toEqual(['household', null]);
+    expect(none.category_confidence).toBe('LOW');
+    expect(open.category_confidence).toBe('LOW');
+  });
+
   test('the person’s own category always shows, approved or not', () => {
     const [t] = read([row('t1', { category: 'groceries', category_set: true })], layer({ approvals: new Map([['t1', approval()]]) }), ruleSet(cat('household')));
     expect([t.category_name, t.review_suggestion, t.reviewed_at]).toEqual(['groceries', undefined, '2026-10-11T09:00:00.000Z']);

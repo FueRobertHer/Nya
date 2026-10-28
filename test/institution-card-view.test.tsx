@@ -169,7 +169,8 @@ describe('the institution card notices, words and color', () => {
     expect(html).toContain('<span class="badge neg">Overdue</span>');
     const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
     // The missed payment's day, said as past (it was before today).
-    expect(text(sub.slice(0, sub.indexOf('</button>')))).toStartWith('Overdue · 24.99% APR · min $35.00 · was due Oct 24');
+    // (With its year, once today is in another.)
+    expect(text(sub.slice(0, sub.indexOf('</button>')))).toMatch(/^Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24(, 2026)?( |$)/);
   });
 
   test('overdue with nothing else reported: the badge still shows, beside the kind of account', () => {
@@ -193,6 +194,10 @@ describe('the institution card notices, words and color', () => {
     expect(terms('2026-05-28', true)).toBe('3.99% APR · min $3,141.54 · was due May 28');
     expect(terms('2026-05-28', false)).toBe('3.99% APR · min $3,141.54');
     expect(terms(null, true)).toBe('3.99% APR · min $3,141.54');
+    // In another year, its year: the screen review saw "was due Nov 15" on
+    // Oct 27, for last year's Nov 15, which read as still to come.
+    expect(terms('2025-11-15', true)).toBe('3.99% APR · min $3,141.54 · was due Nov 15, 2025');
+    expect(terms('2027-01-05', false)).toBe('3.99% APR · min $3,141.54 · due Jan 5, 2027');
   });
 
   test('the institution lines: payment details importing, accounts not added, transactions not allowed', () => {
