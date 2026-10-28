@@ -3945,7 +3945,6 @@ button.danger-outline {
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
-  text-transform: none;
 }
 
 .info-table th,
@@ -4324,7 +4323,6 @@ button.plan-edit:disabled {
    than running into each other on a narrow phone. */
 .plan-grid thead th {
   font-size: var(--fs-1);
-  text-transform: none;
   white-space: normal;
 }
 
@@ -4332,7 +4330,6 @@ button.plan-edit:disabled {
 .plan-grid-span {
   display: block;
   font-weight: 400;
-  text-transform: none;
 }
 
 /* A flexible rule's second figure in a cell: the lowest year's spending,
@@ -4377,7 +4374,6 @@ button.plan-edit:disabled {
 .plan-grid th.plan-grid-rate {
   color: var(--text);
   font-size: 13px;
-  text-transform: none;
 }
 
 .plan-worst,
@@ -6507,7 +6503,6 @@ button.tag-suggestion.chosen {
 .pool-table th[scope='row'] {
   color: inherit;
   font-weight: 400;
-  text-transform: none;
 }
 
 .pool-uncertain {

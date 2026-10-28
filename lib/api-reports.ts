@@ -277,8 +277,11 @@ export async function readApiRunway(
   // Version 1's fields as before a home currency; base converted.
   const v1 = r.plain ?? r;
   const p = projectRunway(v1, whatIf);
-  // What the page says first, in the same words, its days as they are.
-  const notes = runwayCaveats(v1, p, { day: iso, time: iso, month: iso });
+  // What the page says first, in the same words, its days as they are, and
+  // each name as the API gives it (card_payments[].name): the bank's text as
+  // the bank wrote it, never the page's readable form.
+  const asGiven = { ...p, window: { ...p.window, card_payments: p.window.card_payments.map(apiNamed) } };
+  const notes = runwayCaveats(v1, asGiven, { day: iso, time: iso, month: iso });
   const converted = r.conversion ? runwayBase(r, projectRunway(r, whatIf), whatIf) : null;
   return {
     today,

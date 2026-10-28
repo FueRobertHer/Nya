@@ -40,6 +40,26 @@ describe('readableName: a bank descriptor in capitals, readable', () => {
     ['VANGUARD FTSE DEVELOPED MARKETS ETF', 'Vanguard FTSE Developed Markets ETF'],
     ['FIDELITY GOVERNMENT MONEY MARKET USD', 'Fidelity Government Money Market USD'],
     ['ISHARES 20+ YEAR TREASURY BOND ETN', 'iShares 20+ Year Treasury Bond ETN'],
+    // Brokers and fund houses as they write themselves.
+    ['TRP EQUITY INCOME', 'TRP Equity Income'],
+    ['T. ROWE PRICE EQUITY INCOME', 'T. Rowe Price Equity Income'],
+    ['TROWE PRICE BLUE CHIP GROWTH', 'T. Rowe Price Blue Chip Growth'],
+    ['BLACKROCK LIFEPATH INDEX 2050', 'BlackRock Lifepath Index 2050'],
+    ['JPMORGAN EQUITY PREMIUM INCOME ETF', 'JPMorgan Equity Premium Income ETF'],
+    ['PIMCO INCOME FUND', 'PIMCO Income Fund'],
+    ['NVIDIA CORP', 'NVIDIA Corp'],
+    ['DOUBLELINE TOTAL RETURN BOND I', 'DoubleLine Total Return Bond I'],
+    ['VANGUARD 500 INDEX ADMIRAL', 'Vanguard 500 Index Admiral'],
+    ['FIDELITY CONTRAFUND', 'Fidelity Contrafund'],
+    ['SCHWAB S&P 500 INDEX', 'Schwab S&P 500 Index'],
+    ['SPDR S&P 500 ETF TRUST', 'SPDR S&P 500 ETF Trust'],
+    ['INVESCO QQQ TRUST', 'Invesco QQQ Trust'],
+    ['PROSHARES ULTRAPRO QQQ', 'ProShares Ultrapro QQQ'],
+    ['VANECK SEMICONDUCTOR ETF', 'VanEck Semiconductor ETF'],
+    ['WISDOMTREE US QUALITY DIVIDEND GROWTH', 'WisdomTree US Quality Dividend Growth'],
+    ['TIAA-CREF LIFECYCLE 2050', 'TIAA-CREF Lifecycle 2050'],
+    ['AQR LARGE CAP MOMENTUM', 'AQR Large Cap Momentum'],
+    ['PGIM TOTAL RETURN BOND', 'PGIM Total Return Bond'],
   ])('the security %s reads %s', (raw, shown) => {
     expect(readableName(raw)).toBe(shown);
   });

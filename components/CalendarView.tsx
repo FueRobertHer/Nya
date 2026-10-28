@@ -154,7 +154,7 @@ function ExpectedWords({ e, currency }: { e: CalendarEntry; currency: string | n
         e.late && e.due ? `due ${fmtDay(e.due)}, not in yet` : null,
         offText(e),
       ])}
-      {e.figure !== undefined ? <Masked>{` · ${signedMoney(e.figure, currency)} in the day's figure, at today's rates`}</Masked> : ''}
+      {e.figure !== undefined ? <Masked>{` · ${metaLine([`${signedMoney(e.figure, currency)} in the day's figure, at today's rates`])}`}</Masked> : ''}
     </>
   );
 }

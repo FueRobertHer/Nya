@@ -14,14 +14,25 @@
 const SMALL = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to', 'via', 'with']);
 
 /** Words with vowels that are still read letter by letter: a bank's
- *  ("ACH", "ATM"), then a fund's ("ETF", "REIT", "MSCI EAFE", "USD"). */
+ *  ("ACH", "ATM"), a fund's ("ETF", "REIT", "MSCI EAFE", "USD"), and the
+ *  brokers and fund houses that write their names in capitals ("PIMCO"). */
 const ACRONYMS = new Set([
-  'AAA', 'ACH', 'AMC', 'ATM', 'EFT', 'ESPN', 'HBO', 'IOU', 'IRS', 'POS', 'UPS', 'USA', 'USPS',
+  'AAA', 'ACH', 'AMC', 'ATM', 'EFT', 'ESPN', 'HBO', 'IOU', 'IRS', 'POS', 'UPS', 'USA', 'USAA', 'USPS',
   'ADR', 'EAFE', 'ESG', 'ETF', 'ETN', 'EUR', 'FTSE', 'HSA', 'IRA', 'MSCI', 'REIT', 'USD',
+  'AQR', 'CREF', 'NVIDIA', 'PGIM', 'PIMCO', 'SPDR', 'TIAA', 'TRP',
 ]);
 
 /** Words a brand writes its own way. */
-const CASED: ReadonlyMap<string, string> = new Map([['ISHARES', 'iShares']]);
+const CASED: ReadonlyMap<string, string> = new Map([
+  ['BLACKROCK', 'BlackRock'],
+  ['DOUBLELINE', 'DoubleLine'],
+  ['ISHARES', 'iShares'],
+  ['JPMORGAN', 'JPMorgan'],
+  ['PROSHARES', 'ProShares'],
+  ['TROWE', 'T. Rowe'],
+  ['VANECK', 'VanEck'],
+  ['WISDOMTREE', 'WisdomTree'],
+]);
 
 /** One run of letters: capitalised, or kept in capitals when it reads as
  *  letters (no vowel, like "CVS" or "SQ", or a known acronym), or is two

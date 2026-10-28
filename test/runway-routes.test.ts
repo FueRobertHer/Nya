@@ -380,6 +380,14 @@ describe('the runway from stored data', () => {
     const twelve = r.windows.find((w: any) => w.months === 12);
     expect(twelve.start).toBe('2025-10-01');
     expect(twelve.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 640, count: 1, name_from_bank: true }]);
+    // The API gives the bank's text as the bank wrote it, in its list and in
+    // its notes alike; only the page shows it readably.
+    const a = (await quiet(() => api(apiRunway, 'runway', 'months=12'))).body;
+    expect(a.spending.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 640, count: 1 }]);
+    expect(a.notes.filter((n: string) => n.includes('looks like a card’s payment'))).toEqual([
+      expect.stringMatching(/^AMEX EPAYMENT from Checking looks like a card’s payment/),
+    ]);
+    expect(JSON.stringify(a)).not.toMatch(/Amex Epayment|name_from_bank/);
   });
 
   test('takes only a time zone: a what-if is never sent, and nothing is written', async () => {

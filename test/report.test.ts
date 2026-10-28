@@ -944,12 +944,14 @@ describe('the CSV', () => {
       SYNC_REMEDY,
     ]);
     expect(of('total')[0].slice(2, 7)).toEqual([String(r.totals.money_in), String(r.totals.money_out), String(r.totals.net), String(r.totals.counted), 'USD']);
-    expect(of('money_out').map((x) => [x[1], x[3]])).toEqual(r.money_out.map((c) => [c.category, String(c.amount)]));
-    expect(of('money_in').map((x) => [x[1], x[2]])).toEqual(r.money_in.map((c) => [c.category, String(c.amount)]));
+    // Each category as the page and the app write it ("Rent and utilities").
+    expect(of('money_out').map((x) => [x[1], x[3]])).toEqual(r.money_out.map((c) => [displayName(c.category), String(c.amount)]));
+    expect(of('money_out')[0][1]).toBe('Rent and utilities');
+    expect(of('money_in').map((x) => [x[1], x[2]])).toEqual(r.money_in.map((c) => [displayName(c.category), String(c.amount)]));
     expect(of('month').length).toBe(12);
     expect(of('month').find((x) => x[1] === '2025-10')![7]).toBe('May be missing transactions from Chase');
     expect(of('month').find((x) => x[1] === '2025-01')![7]).toBe('');
-    expect(of('marked')[0].slice(1, 6)).toEqual(['medical', '0', '290.1', '', '4']);
+    expect(of('marked')[0].slice(1, 6)).toEqual(['Medical', '0', '290.1', '', '4']);
     expect(of('institution')[0][7]).toContain('transactions last brought in 2025-09-12T15:00:00.000Z');
     expect(reportFilename(r)).toBe('nya-report-2025.csv');
     expect(reportFilename({ period: period({ kind: 'range', start: '2026-01-01', end: '2026-03-31' }) })).toBe('nya-report-2026-01-01-to-2026-03-31.csv');
