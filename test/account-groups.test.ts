@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { groupOf, summarize } from '@/components/account-groups';
-import { accountKind, signedBalance, type Account, type Institution } from '@/components/accounts-format';
+import { AccountSubtype } from 'plaid';
+import { accountKindParts, kindWords, signedBalance, subtypeWords, type Account, type Institution } from '@/components/accounts-format';
 import type { PageFx } from '@/lib/fx/view';
 import type { ConnectionHealth } from '@/lib/connection-state';
 import type { ConnectorIssue } from '@/lib/connectors/types';
@@ -268,17 +269,138 @@ describe('currencies', () => {
 
 describe('what kind of account it is', () => {
   const inst = { manual: false } as Institution;
-  const acct = (over: Partial<Account>) => ({ name: 'Plaid Checking', official_name: null, type: 'depository', subtype: 'checking', currency: null, ...over }) as Account;
+  const acct = (over: Partial<Account>) => ({ name: 'Everyday', official_name: null, type: 'depository', subtype: 'checking', currency: null, ...over }) as Account;
+  const kind = (over: Partial<Account>, i: Institution = inst) => accountKindParts(acct(over), i, 'USD');
 
-  test("the bank's own name, without the type it already says", () => {
-    expect(accountKind(acct({ official_name: 'Plaid Gold Standard 0% Interest Checking' }), inst, 'USD')).toBe('Plaid Gold Standard 0% Interest Checking');
-    expect(accountKind(acct({ official_name: 'Everyday Money Market Account', subtype: 'money market' }), inst, 'USD')).toBe('Everyday Money Market Account');
+  test("the bank's own name, without the kind it already says", () => {
+    expect(kind({ official_name: 'Plaid Gold Standard 0% Interest Checking' })).toEqual(['Plaid Gold Standard 0% Interest Checking']);
+    expect(kind({ official_name: 'Everyday Money Market Account', subtype: 'money market' })).toEqual(['Everyday Money Market Account']);
+    // The screen review's "... Interest Saving · savings": one word, plural or not.
+    expect(kind({ official_name: 'Plaid Silver Standard 0.1% Interest Saving', subtype: 'savings' })).toEqual(['Plaid Silver Standard 0.1% Interest Saving']);
   });
 
-  test('the type when the name doesn’t say it, or a word only contains it', () => {
-    expect(accountKind(acct({ official_name: 'Plaid Silver Standard 0.1% Interest Saving', subtype: 'savings' }), inst, 'USD')).toBe('Plaid Silver Standard 0.1% Interest Saving · savings');
-    expect(accountKind(acct({ official_name: 'Checkingplus Rewards' }), inst, 'USD')).toBe('Checkingplus Rewards · checking');
-    expect(accountKind(acct({}), inst, 'USD')).toBe('checking');
-    expect(accountKind(acct({ subtype: null }), inst, 'USD')).toBe('depository');
+  test('nothing when its own name says it, as the title over it already does', () => {
+    expect(kind({ name: 'Plaid Checking' })).toEqual([]);
+    expect(kind({ name: 'Northwind 401(k)', type: 'investment', subtype: '401k' })).toEqual([]);
+    expect(kind({ name: 'Plaid IRA', type: 'investment', subtype: 'ira' })).toEqual([]);
+    expect(kind({ name: 'Plaid Student Loan', type: 'loan', subtype: 'student' })).toEqual([]);
+  });
+
+  test('the kind in words when no name says it, or a word only contains it', () => {
+    expect(kind({ official_name: 'Checkingplus Rewards' })).toEqual(['Checkingplus Rewards', 'Checking']);
+    expect(kind({})).toEqual(['Checking']);
+    expect(kind({ subtype: null })).toEqual(['Bank account']);
+    expect(kind({ name: 'Car', type: 'loan', subtype: 'auto' })).toEqual(['Auto loan']);
+    expect(kind({ name: 'House', type: 'loan', subtype: 'other' })).toEqual(['Loan']);
+  });
+
+  test('a typed balance in another currency says so, as a part of its own', () => {
+    const typed = { manual: true } as Institution;
+    expect(kind({ name: 'Cash', currency: 'EUR' }, typed)).toEqual(['Checking', 'in EUR']);
+    // Its name says the kind: the currency alone, never a "·" with nothing before it.
+    expect(kind({ name: 'Plaid Checking', currency: 'EUR' }, typed)).toEqual(['in EUR']);
+  });
+
+  test('the payoff plan and Hidden accounts name the kind the same way', () => {
+    expect(kindWords({ name: 'Plaid Auto', official_name: null, type: 'loan', subtype: 'auto' })).toBeNull();
+    expect(kindWords({ name: 'Car', type: 'loan', subtype: 'auto' })).toBe('Auto loan');
+  });
+});
+
+describe("Plaid's account subtypes in words", () => {
+  // Every subtype Plaid lists (plaid v27, AccountSubtype), as a label.
+  const EXPECTED: Record<string, string> = {
+    '401a': '401(a)',
+    '401k': '401(k)',
+    '403B': '403(b)',
+    '457b': '457(b)',
+    '529': '529 plan',
+    auto: 'Auto loan',
+    brokerage: 'Brokerage',
+    business: 'Business loan',
+    'cash isa': 'Cash ISA',
+    'cash management': 'Cash management',
+    cd: 'CD',
+    checking: 'Checking',
+    commercial: 'Commercial loan',
+    construction: 'Construction loan',
+    consumer: 'Consumer loan',
+    'credit card': 'Credit card',
+    'crypto exchange': 'Crypto exchange',
+    ebt: 'EBT',
+    'education savings account': 'Education savings account',
+    'fixed annuity': 'Fixed annuity',
+    gic: 'GIC',
+    'health reimbursement arrangement': 'Health reimbursement arrangement',
+    'home equity': 'Home equity loan',
+    hsa: 'HSA',
+    isa: 'ISA',
+    ira: 'IRA',
+    keogh: 'Keogh plan',
+    lif: 'LIF',
+    'life insurance': 'Life insurance',
+    'line of credit': 'Line of credit',
+    lira: 'LIRA',
+    loan: 'Loan',
+    lrif: 'LRIF',
+    lrsp: 'LRSP',
+    'money market': 'Money market',
+    mortgage: 'Mortgage',
+    'mutual fund': 'Mutual fund',
+    'non-custodial wallet': 'Non-custodial wallet',
+    'non-taxable brokerage account': 'Non-taxable brokerage account',
+    other: 'Other',
+    'other insurance': 'Other insurance',
+    'other annuity': 'Other annuity',
+    overdraft: 'Overdraft',
+    paypal: 'PayPal',
+    payroll: 'Payroll',
+    pension: 'Pension',
+    prepaid: 'Prepaid',
+    prif: 'PRIF',
+    'profit sharing plan': 'Profit sharing plan',
+    rdsp: 'RDSP',
+    resp: 'RESP',
+    retirement: 'Retirement',
+    rlif: 'RLIF',
+    roth: 'Roth IRA',
+    'roth 401k': 'Roth 401(k)',
+    rrif: 'RRIF',
+    rrsp: 'RRSP',
+    sarsep: 'SARSEP',
+    savings: 'Savings',
+    'sep ira': 'SEP IRA',
+    'simple ira': 'SIMPLE IRA',
+    sipp: 'SIPP',
+    'stock plan': 'Stock plan',
+    student: 'Student loan',
+    'thrift savings plan': 'Thrift Savings Plan',
+    tfsa: 'TFSA',
+    trust: 'Trust',
+    ugma: 'UGMA',
+    utma: 'UTMA',
+    'variable annuity': 'Variable annuity',
+  };
+
+  test('every subtype Plaid lists is listed here', () => {
+    const plaid: string[] = Object.values(AccountSubtype);
+    expect([...plaid].sort()).toEqual(Object.keys(EXPECTED).sort());
+  });
+
+  for (const [subtype, words] of Object.entries(EXPECTED)) {
+    test(`"${subtype}" reads "${words}"`, () => {
+      expect(subtypeWords(subtype, 'other')).toBe(words);
+    });
+  }
+
+  test('none, or "other", says the type, and in a sentence only names and letters keep their capitals', () => {
+    expect(subtypeWords(null, 'loan')).toBe('Loan');
+    expect(subtypeWords('other', 'investment')).toBe('Investment');
+    expect(subtypeWords(null, 'depository')).toBe('Bank account');
+    expect(subtypeWords('brokerage', 'investment', true)).toBe('brokerage');
+    expect(subtypeWords('auto', 'loan', true)).toBe('auto loan');
+    expect(subtypeWords('401k', 'investment', true)).toBe('401(k)');
+    expect(subtypeWords('roth', 'investment', true)).toBe('Roth IRA');
+    expect(subtypeWords('sep ira', 'investment', true)).toBe('SEP IRA');
   });
 });

@@ -52,6 +52,7 @@ import { isInvestmentType } from '@/lib/balance';
 import { distinctAccountNames } from '@/lib/account-names';
 import { instantDay } from '@/lib/local-date';
 import { readableName } from '@/lib/merchant-name';
+import { subtypeWords } from './accounts-format';
 import {
   allocate,
   bankCash,
@@ -597,11 +598,12 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
       <div className="plan-rows">
         {alloc.accounts.map((a) => {
           const b = a.bucket;
+          // "from its type, 401(k)": its type in words, never in a second pair of parentheses.
           const note =
             b.from === 'you'
               ? `as you set it${b.subtype !== 'unclassified' ? `; its type says ${BUCKET_NAMES[b.subtype].toLowerCase()}` : ''}`
               : b.from === 'subtype'
-                ? `from its type${a.subtype ? ` (${a.subtype})` : ''}`
+                ? `from its type${a.subtype ? `, ${subtypeWords(a.subtype, 'investment', true)}` : ''}`
                 : a.manual && !a.subtype
                   ? 'unclassified: an account you track by hand has no type to go by'
                   : `unclassified: ${b.why ?? "Nya doesn't know this kind of account"}`;

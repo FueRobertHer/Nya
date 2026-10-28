@@ -181,7 +181,7 @@ describe('the allocation by tax bucket', () => {
     expect(t).toContain('Taxable $100,000');
     expect(t).toContain('Roth $50,000');
     expect(t).toContain('Unclassified $10,000');
-    expect(t).toContain('Brokerage · Vanguard Taxable $100,000, from its type (brokerage).');
+    expect(t).toContain('Brokerage · Vanguard Taxable $100,000, from its type, brokerage.');
     expect(t).toContain('401(k) · Vanguard Roth $50,000, as you set it; its type says tax-deferred.');
     expect(t).toContain('Old pension · Manual accounts Unclassified $10,000, unclassified: an account you track by hand has no type to go by.');
     expect(t).toContain('A 401(k) can hold Roth money');
@@ -195,7 +195,7 @@ describe('the allocation by tax bucket', () => {
       currency: 'USD',
     });
     const t = text(renderToStaticMarkup(<BucketView alloc={a} money={money} editable open={noop} />));
-    expect(t).toContain("401(k) · Fidelity Tax-deferred $70,000, its balance on Oct 1, 2026 (Fidelity couldn't be reached since), from its type (401k).");
+    expect(t).toContain("401(k) · Fidelity Tax-deferred $70,000, its balance on Oct 1, 2026 (Fidelity couldn't be reached since), from its type, 401(k).");
   });
 });
 

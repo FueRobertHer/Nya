@@ -86,6 +86,18 @@ describe('the payoff planner', () => {
     expect(html).toContain('Purchase APR from Plaid');
   });
 
+  // The screen review: "FIRST PLATYPUS BANK · AUTO".
+  test("each debt's line says its kind in words, and nothing its name already says", () => {
+    const car = { ...mortgage, account_id: 'car', name: 'Car', mask: '0002', subtype: 'auto' };
+    const t = panel([chase([sapphire, mortgage, car])]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    expect(t).toContain('Sapphire ••4321');
+    expect(t).toContain('Chase · Credit card');
+    expect(t).toContain('Chase · Auto loan');
+    // "Mortgage" names it: the bank alone.
+    expect(t).not.toContain('Chase · Mortgage');
+    expect(t).not.toMatch(/· (auto|credit card|mortgage)\b/);
+  });
+
   test('a manual loan has no terms: it is needed, says why, and the plan waits for it', () => {
     const html = panel([chase([sapphire]), ...alliant]);
     expect(html).toContain('Add the missing rate or payment for 1 debt below, or leave it out, to see the plan.');

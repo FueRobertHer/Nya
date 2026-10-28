@@ -103,7 +103,8 @@ describe('the account sheet', () => {
     const a = account();
     const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
     expect(html).toContain('aria-label="Total Checking ••4421"');
-    expect(text(html)).toContain('$1,200.00 Chase · checking');
+    // Its name says checking: the bank alone, never "Chase · checking" under "Total Checking".
+    expect(text(html)).toContain('$1,200.00 Chase Hide');
     expect(buttons(footerOf(html))).toEqual(['Hide', 'Mark as closed…']);
     // Its name starts with the words on it, so a voice command naming the
     // button finds it; "Mark as closed", never the sheet's own Close.
@@ -115,7 +116,10 @@ describe('the account sheet', () => {
     const a = account({ account_id: 'acc_cash', name: 'Cash', mask: null, currency: 'EUR', updated_at: '2026-10-08T15:05:00.000Z' });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, typed(a))} />);
     expect(buttons(footerOf(html))).toEqual(['Hide', 'Mark as closed…', 'Add transaction', 'Update balance']);
-    expect(text(html)).toMatch(/Wallet · checking · in EUR · Updated Oct 8, \d+:05 [AP]M/);
+    expect(text(html)).toMatch(/Wallet · Checking · in EUR · Updated Oct 8, \d+:05 [AP]M/);
+    // Named for its kind, the currency follows the bank directly.
+    const named = account({ ...a, name: 'Checking' });
+    expect(text(renderToStaticMarkup(<AccountSheet {...props(named, typed(named))} />))).toMatch(/Wallet · in EUR · Updated Oct 8, \d+:05 [AP]M/);
     expect(menuItems(props(a, typed(a)))).toEqual(['Import a file', 'Delete…']);
     // A hidden one isn't imported into.
     expect(menuItems(props({ ...a, hidden: true }, typed({ ...a, hidden: true })))).toEqual(['Delete…']);

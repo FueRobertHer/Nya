@@ -23,7 +23,7 @@ import { readableName } from '@/lib/merchant-name';
 import { isInvestmentType, isOwedType } from '@/lib/balance';
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
 import {
-  accountKind,
+  accountKindParts,
   balanceDay,
   fmt,
   fmtDay,
@@ -273,8 +273,7 @@ export default function AccountSheet({
             <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>
           </p>
           <p className="helper">
-            {inst.institution_name} · {accountKind(a, inst, shownCurrency)}
-            {day && ` · ${day}`}
+            {[inst.institution_name, ...accountKindParts(a, inst, shownCurrency), day].filter(Boolean).join(' · ')}
           </p>
         </div>
         {held && (

@@ -20,6 +20,7 @@ import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
 import { distinctAccountNames } from '@/lib/account-names';
+import { kindWords } from './accounts-format';
 import {
   HORIZON_MONTHS,
   MAX_APR,
@@ -770,7 +771,7 @@ function DebtRow({
         </span>
       </div>
       <div className="type-tag">
-        {a.institution} · {a.subtype || a.type}
+        {[a.institution, kindWords({ name: a.name, subtype: a.subtype ?? null, type: a.type })].filter(Boolean).join(' · ')}
         {balanceNote}
       </div>
     </>
