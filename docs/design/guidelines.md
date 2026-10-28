@@ -95,7 +95,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Money that lines up | `.money` | `font-variant-numeric` in a feature rule |
 | A meter | `.meter-track` with `.meter-fill` | |
 | Key and value details | `.txn-detail` with `.txn-detail-row` | |
-| In, out and net figures | `.summary-row` with `.summary-value` | |
+| Labelled figures in a row (In, Out, Net; totals by kind) | `.stat-strip` of `.stat`, each a `.stat-label` over a `.stat-value` | `.summary-row` with `.summary-value` |
 | A form field | `.field` around a plain `<input>` or `<select>` | |
 | A form in a sheet | `.sheet-form` | |
 | A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`) | a `.button-pair` at the end of the body |

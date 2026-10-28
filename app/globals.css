@@ -317,6 +317,7 @@ h1,
 .plan-title,
 .total-value,
 .summary-value,
+.stat-value,
 .plan-stat-value,
 .card-mode-amount,
 .txn-sheet-amount,
@@ -2025,6 +2026,7 @@ button:disabled:where(:not([class*="cl-"])) {
 /* The info button at the end of the readout row: the explanations of the
    lines are one tap away instead of under every chart. */
 .chart-info-btn {
+  position: relative;
   width: auto;
   margin-left: auto;
   align-self: center;
@@ -2033,6 +2035,16 @@ button:disabled:where(:not([class*="cl-"])) {
   padding: 4px;
   color: var(--text-2);
   line-height: 0;
+}
+
+/* Its hit area is 44px each way, the icon and its place in the row as they
+   were: centered on the 24px button, reaching 10px past each edge, as
+   .chip::after does. Above it there is at least the readout's margin and the
+   hero's gap (18px) before the next control. */
+.chart-info-btn::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--tap)) / 2));
 }
 
 .chart-info-btn svg {
@@ -2123,6 +2135,62 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .summary-value.negative {
   color: var(--down);
+}
+
+/* A stat strip (docs/design/design-system.md#stat-strip): labelled figures,
+   two to a row on a phone, all in one row from 640px, or three to a row when
+   there are five (the Accounts tab's totals by kind with Other). A cell may
+   shrink below its figure (min-width: 0), so a long one wraps inside its own
+   cell rather than running into the next. The figure is sized by its own
+   cell (a container): 24px where there is room, down to 15px in a narrow
+   one, so a debt of seven figures fits on one line two to a row at 320px
+   and four to a row on a wide screen. */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 640px) {
+  .stat-strip {
+    grid-template-columns: none;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+  }
+
+  .stat-strip:has(> :nth-child(5)) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-flow: row;
+  }
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.stat-label {
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-medium);
+}
+
+.stat-value {
+  font-size: clamp(var(--fs-3), 13cqi, var(--fs-6));
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+}
+
+/* A badge on a figure (Incomplete) keeps its own width. */
+.stat > .badge {
+  align-self: flex-start;
 }
 
 .cat-list {
@@ -2704,47 +2772,24 @@ span.meter-fill {
   color: var(--accent);
 }
 
-/* The Accounts tab's own row, on the right: the status pill
-   (components/AccountsStatus.tsx), then + Add account. */
+/* The Accounts tab's own row: the status pill on the left
+   (components/AccountsStatus.tsx), + Add account at the right, there too
+   when there is no pill. The totals by kind under it are a stat strip in a
+   card (components/AccountsSummary.tsx). */
 .accounts-bar {
   align-items: center;
   display: flex;
-  justify-content: flex-end;
   gap: var(--sp-2);
   margin-bottom: var(--sp-3);
+}
+
+.accounts-bar > .btn {
+  margin-left: auto;
 }
 
 .accounts-bar .btn > svg {
   width: var(--icon);
   height: var(--icon);
-}
-
-/* The line by kind under it (components/AccountsSummary.tsx): each label
-   with its figure, wrapping at phone widths. */
-.accounts-summary {
-  margin-bottom: var(--sp-4);
-}
-
-.accounts-summary-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--text-2);
-  font-size: var(--fs-2);
-}
-
-.accounts-summary-line > li {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-.accounts-summary-line .money {
-  color: var(--text-1);
-  font-weight: var(--fw-semibold);
 }
 
 /* The top of an account's sheet (components/AccountSheet.tsx): its balance,
@@ -2985,65 +3030,6 @@ span.meter-fill {
   flex-shrink: 0;
 }
 
-.peer-list {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
-}
-
-.peer-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  font-weight: 500;
-}
-
-.peer-item + .peer-item {
-  border-top: 1px solid var(--line);
-}
-
-.peer-item-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.peer-item-name {
-  display: block;
-  font-size: 15px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.peer-item-meta {
-  display: block;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 400;
-  margin-top: 2px;
-}
-
-.peer-item .chevron {
-  width: 16px;
-  height: 16px;
-  color: var(--text-2);
-  flex-shrink: 0;
-}
-
-.peer-item-action {
-  width: auto;
-  padding: 7px 12px;
-  font-size: 13px;
-}
-
 .avatar {
   width: 36px;
   height: 36px;
@@ -3055,6 +3041,16 @@ span.meter-fill {
   color: var(--accent);
   font-size: 15px;
   font-weight: 700;
+}
+
+/* Settings > Account: who is signed in (components/AccountSettings.tsx),
+   with Clerk's picture of them. */
+.account-identity img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
 }
 
 .avatar.small {
@@ -3372,9 +3368,15 @@ button.danger-outline {
   width: 60%;
 }
 
-/* The Accounts tab: the line by kind, and each institution's name and total. */
-.accounts-skeleton-summary {
-  width: 16em;
+/* The Accounts tab: the totals' labels and figures, and each institution's
+   name and total. */
+.accounts-skeleton-label {
+  width: 5em;
+  max-width: 100%;
+}
+
+.accounts-skeleton-figure {
+  width: 5em;
   max-width: 100%;
 }
 
@@ -6870,6 +6872,13 @@ button.cash-flow-show {
 
 .weekly-summary-card > button,
 .unsubscribe-card > button {
+  margin-top: 12px;
+}
+
+/* Its button's place while the setting loads, as tall as the button. */
+.weekly-summary-card > .weekly-summary-skeleton-button {
+  display: block;
+  height: var(--tap);
   margin-top: 12px;
 }
 

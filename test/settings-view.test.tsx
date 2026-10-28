@@ -101,10 +101,35 @@ describe('the dashboard', () => {
   });
 
   test('the restore banner and the currency notes open their Settings sections', () => {
-    expect(dashboard).toContain("setSettings('data');");
-    expect(dashboard).toContain("setSettings('preferences');\n    setCurrencyFocus({ rateFor });");
+    expect(dashboard).toContain("enterSettings('data');");
+    expect(dashboard).toContain("enterSettings('preferences');\n      setCurrencyFocus({ rateFor });");
     // The empty state keeps its own Bring back a download, never on screen with Settings.
     expect(dashboard).toContain(') : settings ? (\n          <SettingsScreen');
+  });
+
+  test('every way into Settings records what opened it, and closing falls back when that is gone', () => {
+    // Needs attention, the pill and the Accounts notice; the account menu's two.
+    expect(dashboard).toContain("const openConnections = useCallback(() => enterSettings('connections'), [enterSettings]);");
+    expect(dashboard).toContain("const openSettings = useCallback(() => enterSettings('list', avatarButton() ?? (document.activeElement as HTMLElement | null)), [enterSettings]);");
+    expect(dashboard).toContain("const openSharing = useCallback(() => enterSettings('sharing', avatarButton() ?? (document.activeElement as HTMLElement | null)), [enterSettings]);");
+    // Only from closed: moving between its own levels keeps the first opener.
+    expect(dashboard).toContain('if (!settingsShown.current) settingsOpener.current = opener;');
+    expect(dashboard).toContain("const target = opener?.isConnected ? opener : (avatarButton() ?? document.querySelector<HTMLElement>('.top-actions [aria-label=\"Settings\"]'));");
+    // Nothing else sets Settings open but enterSettings, the address, and the tab bar's close.
+    const opens = [...dashboard.matchAll(/setSettings\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(opens.sort()).toEqual(['null', 'null', 'parseSettings(query, { sharing: clerk }', 'view'].sort());
+  });
+
+  test('Sharing is in place, one place: the account menu and the empty state open Settings > Sharing', () => {
+    expect(section('sharing')).toContain('content: <SharingSettings />,');
+    expect(dashboard).not.toContain('SharingDrawer');
+    expect(dashboard).not.toContain('sharingOpen');
+    expect(dashboard).toContain('onOpenSharing={openSharing}');
+    expect(dashboard).toContain('<button className="secondary" onClick={openSharing}>');
+  });
+
+  test('a reload in Settings shows Settings loading, not the tab under it', () => {
+    expect(dashboard).toContain('settings ? (\n            <SettingsSkeleton view={settings} />\n          ) : (\n            <TabSkeleton');
   });
 
   // The institution's card and its rows (components/InstitutionCard.tsx).

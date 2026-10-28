@@ -12,8 +12,12 @@ import { mockForFile } from './scoped-mock';
 type Page = { label: string; url: string; mount: (el: HTMLDivElement) => void; unmount: () => void; mountIcon: (el: HTMLDivElement) => void; unmountIcon: () => void };
 const opened: { customPages: Page[] }[] = [];
 const menuPages: { label: string; url: string }[] = [];
+// Who Clerk says is signed in, as its useUser() answers: set per test.
+type User = { fullName: string | null; username: string | null; imageUrl: string; primaryEmailAddress: { emailAddress: string } | null };
+let signedIn: { isLoaded: boolean; user: User | null } = { isLoaded: true, user: null };
 await mockForFile('@clerk/nextjs', () => ({
   useClerk: () => ({ openUserProfile: (p: { customPages: Page[] }) => opened.push(p), signOut: async () => {}, addListener: () => () => {} }),
+  useUser: () => signedIn,
   UserButton: Object.assign(({ children }: { children: unknown }) => children, {
     MenuItems: () => null,
     Action: () => null,
@@ -104,6 +108,35 @@ describe('Settings > Account', () => {
     expect(cleared).toEqual(['device']);
     answer = () => new Promise(() => {});
     v.unmount();
+  });
+
+  test('who is signed in, in place above Manage account: picture, name, and the email when it isn’t the name', () => {
+    const user: User = { fullName: 'Alex Rivera', username: 'alex', imageUrl: 'https://img.clerk.test/alex.png', primaryEmailAddress: { emailAddress: 'alex@example.com' } };
+    const row = (u: User | null, isLoaded = true) => {
+      signedIn = { isLoaded, user: u };
+      const v = mount(<AccountSettings clerk clearDevice={() => {}} onSignOut={() => {}} onSignOutEverywhere={() => {}} />);
+      const list = v.host.findAll((e: FakeElement) => e.tagName === 'UL' && e.getAttribute('aria-label') === 'Signed in as')[0];
+      const out = {
+        list: !!list,
+        title: list?.findAll((e: FakeElement) => e.getAttribute('class') === 'list-row-title')[0]?.textContent ?? null,
+        sub: list?.findAll((e: FakeElement) => e.getAttribute('class') === 'list-row-sub')[0]?.textContent ?? null,
+        img: list?.findAll((e: FakeElement) => e.tagName === 'IMG')[0]?.getAttribute('src') ?? null,
+        skeleton: v.host.findAll((e: FakeElement) => (e.getAttribute('class') ?? '').split(' ').includes('skeleton')).length,
+        // It comes before Manage account, inside the one card.
+        first: (v.host.findAll((e: FakeElement) => e.getAttribute('class') === 'card stack')[0]?.childNodes[0] as FakeElement | undefined)?.tagName ?? null,
+        manage: !!v.button('Manage account'),
+      };
+      v.unmount();
+      return out;
+    };
+    expect(row(user)).toEqual({ list: true, title: 'Alex Rivera', sub: 'alex@example.com', img: 'https://img.clerk.test/alex.png', skeleton: 0, first: 'UL', manage: true });
+    // No full name: the username; neither: the email, said once.
+    expect(row({ ...user, fullName: null })).toMatchObject({ title: 'alex', sub: 'alex@example.com' });
+    expect(row({ ...user, fullName: null, username: null })).toMatchObject({ title: 'alex@example.com', sub: null });
+    // While Clerk loads: one row of placeholders where it will be, and nothing without a user.
+    expect(row(null, false)).toMatchObject({ list: false, skeleton: 3, manage: true });
+    expect(row(null)).toMatchObject({ list: false, skeleton: 0, first: 'P', manage: true });
+    signedIn = { isLoaded: true, user: null };
   });
 
   test('the avatar menu’s window carries the same page', () => {

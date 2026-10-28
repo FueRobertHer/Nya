@@ -5,7 +5,7 @@ import AccountSettings from './AccountSettings';
 import { Brand } from './Brand';
 import { useRouter } from 'next/navigation';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
-import { SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
+import { SETTINGS_TITLES, SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -26,12 +26,12 @@ import WeeklySummaryCard from './WeeklySummaryCard';
 import { ThemeCard } from './ThemeCard';
 import { localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
-import { SharingDrawer, SharedWithMe } from './Sharing';
+import { SharingSettings, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
 import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
-import { TabSkeleton } from './LoadingSkeletons';
-import { TABS, parseTab, tabHref, type Tab } from '@/lib/dashboard-tab';
+import { SettingsSkeleton, TabSkeleton } from './LoadingSkeletons';
+import { TABS, parseSettings, parseTab, settingsHref, tabHref, type Tab } from '@/lib/dashboard-tab';
 import ConnectButtons from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
@@ -187,6 +187,9 @@ function useLast<T>(value: T | null): T | null {
   return last.current;
 }
 
+/** The account menu's button, the avatar, once Clerk has drawn it. */
+const avatarButton = () => document.querySelector<HTMLElement>('.user-button-slot button');
+
 /** A 20px line icon for the account actions. */
 function ActionIcon({ d }: { d: string }) {
   return (
@@ -243,6 +246,7 @@ export default function Dashboard({
   brokerageLink = false,
   lunchFlow = false,
   initialTab = 'home',
+  initialSettings = null,
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -258,6 +262,9 @@ export default function Dashboard({
   /** The tab the address asks for (lib/dashboard-tab.ts), read by the server
    *  (app/page.tsx): a reload comes back to the tab it left. */
   initialTab?: Tab;
+  /** Settings, when the address has it open (lib/dashboard-tab.ts), read by
+   *  the server the same way: a reload in Settings comes back to it. */
+  initialSettings?: SettingsView | null;
 }) {
   const cacheKey = cacheKeyFor(viewer);
   // Hiding amounts (components/hide-amounts.ts) changes what every formatter
@@ -490,36 +497,55 @@ export default function Dashboard({
   );
   const goals = goalsState.value;
   // The Settings screen (components/Settings.tsx), in place of the tabs while
-  // it is open: null when closed, else its list or one section.
-  const [settings, setSettings] = useState<SettingsView | null>(null);
+  // it is open: null when closed, else its list or one section. Kept in the
+  // address beside the tab (lib/dashboard-tab.ts), so a reload comes back to it.
+  const [settings, setSettings] = useState<SettingsView | null>(initialSettings);
   const router = useRouter();
-  // What opened it (the avatar's button, or the gear), for focus to go back
-  // to when Settings closes.
+  // What opened it, for focus to go back to when Settings closes: recorded
+  // each time it opens from closed, whatever opened it (the account menu, the
+  // gear, a Needs attention row, a currency note, the restore banner, the
+  // Accounts tab's pill or notice), and kept while it moves between its own
+  // levels.
   const settingsOpener = useRef<HTMLElement | null>(null);
-  const openSettings = useCallback(() => {
-    settingsOpener.current = document.querySelector<HTMLElement>('.user-button-slot button') ?? (document.activeElement as HTMLElement | null);
+  const settingsShown = useRef(initialSettings !== null);
+  useEffect(() => {
+    settingsShown.current = settings !== null;
+  }, [settings]);
+  /** Opens Settings at `view`. `opener` is what focus goes back to when it
+   *  closes: by default whatever has focus now. */
+  const enterSettings = useCallback((view: SettingsView, opener: HTMLElement | null = document.activeElement as HTMLElement | null) => {
+    if (!settingsShown.current) settingsOpener.current = opener;
+    settingsShown.current = true;
     window.scrollTo(0, 0);
-    setSettings('list');
+    setSettings(view);
   }, []);
+  // The account menu's items are gone once one is chosen, so the avatar that
+  // opened the menu is the opener (in password mode, the gear, which has focus).
+  const openSettings = useCallback(() => enterSettings('list', avatarButton() ?? (document.activeElement as HTMLElement | null)), [enterSettings]);
+  const openSharing = useCallback(() => enterSettings('sharing', avatarButton() ?? (document.activeElement as HTMLElement | null)), [enterSettings]);
   const closeSettings = useCallback(() => {
     setSettings(null);
     requestAnimationFrame(() => {
       const opener = settingsOpener.current;
-      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      settingsOpener.current = null;
+      // What opened it may be gone (a row on the tab, drawn anew as Settings
+      // closes): then where Settings always opens from, the avatar or the gear.
+      const target = opener?.isConnected ? opener : (avatarButton() ?? document.querySelector<HTMLElement>('.top-actions [aria-label="Settings"]'));
+      target?.focus({ preventScroll: true });
     });
   }, []);
   // The Currency card is in Settings > Preferences.
-  const openCurrency = useCallback((rateFor: string | null = null) => {
-    setSettings('preferences');
-    setCurrencyFocus({ rateFor });
-  }, []);
+  const openCurrency = useCallback(
+    (rateFor: string | null = null) => {
+      enterSettings('preferences');
+      setCurrencyFocus({ rateFor });
+    },
+    [enterSettings]
+  );
   // The institution whose Connection details are open, by id, from its ⋯
   // (its rare actions are in that menu; disconnectTarget drives the
   // type-to-confirm drawer).
   const [detailsFor, setDetailsFor] = useState<string | null>(null);
-  // The Sharing drawer, opened from the Accounts tab or the account menu.
-  const [sharingOpen, setSharingOpen] = useState(false);
-  const closeSharing = useCallback(() => setSharingOpen(false), []);
   // The debt payoff planner, opened from Budgets > Goals (components/DebtPayoff.tsx).
   const [payoffOpen, setPayoffOpen] = useState(false);
   const closePayoff = useCallback(() => setPayoffOpen(false), []);
@@ -783,16 +809,19 @@ export default function Dashboard({
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     setTab(parseTab(query));
+    setSettings(parseSettings(query, { sharing: clerk }));
     if (query.get('view') === 'connections') setHealthFocus(true);
+    // Once, as the page arrives: the address it came with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The open tab, kept in the address so a reload comes back to it: replaced,
-  // never pushed, so Back leaves the page as it always did. Settings isn't a
-  // tab and isn't kept: a reload there comes back to the tab under it.
+  // The open tab, and Settings over it, kept in the address so a reload comes
+  // back to them: replaced, never pushed, so Back leaves the page as it always
+  // did. Declared after the effect above, which reads the address first.
   useEffect(() => {
-    const href = tabHref(tab, window.location.href);
+    const href = settingsHref(settings, tabHref(tab, window.location.href));
     if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, '', href);
-  }, [tab]);
+  }, [tab, settings]);
 
   // Everything else loads in parallel with net worth (no waterfall): transactions
   // feed Activity and insights, budgets/goals feed the Budgets tab. All are cheap
@@ -1182,13 +1211,13 @@ export default function Dashboard({
   /** The banner's way to the card: Settings > Your data and privacy, with
    *  focus moved to it. */
   const openRestore = useCallback(() => {
-    setSettings('data');
+    enterSettings('data');
     requestAnimationFrame(() => {
       const card = document.getElementById('bring-back');
       card?.focus({ preventScroll: true });
       card?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     });
-  }, []);
+  }, [enterSettings]);
 
   // `currency`: what a new account's currency starts as (the home currency,
   // else the one most accounts are in), for the person to change.
@@ -1578,10 +1607,7 @@ export default function Dashboard({
   const cardlessWorst = cardless.reduce<Severity | null>((w, c) => worse(w, c.severity), null);
   // What couldn't be read about how many connections, hidden ones' too.
   const unreadConnections = institutions.filter((i) => i.health?.unread).length;
-  const openConnections = useCallback(() => {
-    window.scrollTo(0, 0);
-    setSettings('connections');
-  }, []);
+  const openConnections = useCallback(() => enterSettings('connections'), [enterSettings]);
   const removeConnection = (item_id: string) => {
     const target = institutions.find((i) => i.item_id === item_id);
     if (target) startDisconnect(target);
@@ -1863,7 +1889,7 @@ export default function Dashboard({
   const settingsSections: SettingsSection[] = [
     {
       id: 'preferences',
-      title: 'Preferences',
+      title: SETTINGS_TITLES.preferences,
       sub: 'Theme, home currency and rates, weekly summary email',
       content: (
         <>
@@ -1884,7 +1910,7 @@ export default function Dashboard({
     },
     {
       id: 'transactions',
-      title: 'Transactions',
+      title: SETTINGS_TITLES.transactions,
       sub: 'Categories, tags, rules, merchant defaults, review queue',
       content: (
         <>
@@ -1913,7 +1939,7 @@ export default function Dashboard({
     },
     {
       id: 'connections',
-      title: 'Connections',
+      title: SETTINGS_TITLES.connections,
       sub:
         cardless.length > 0
           ? `${cardless.length} with no card on Accounts, reconnected accounts`
@@ -2001,26 +2027,17 @@ export default function Dashboard({
       ? [
           {
             id: 'sharing' as const,
-            title: 'Sharing',
+            title: SETTINGS_TITLES.sharing,
             sub: 'Who sees your accounts, and for how long',
-            content: (
-              <div className="card">
-                <p className="panel-note">
-                  Invite someone to follow your accounts, and choose what each person sees and for how long.
-                </p>
-                <div className="card-actions">
-                  <button className="secondary" onClick={() => setSharingOpen(true)}>
-                    Open sharing
-                  </button>
-                </div>
-              </div>
-            ),
+            // In place: the invite, the people and the blocked, each person
+            // in a sheet of their own (components/Sharing.tsx).
+            content: <SharingSettings />,
           },
         ]
       : []),
     {
       id: 'data',
-      title: 'Your data and privacy',
+      title: SETTINGS_TITLES.data,
       sub: filesMode?.connected ? 'Download, bring back a download, receipts, API tokens' : 'Download, bring back a download, API tokens',
       content: (
         <>
@@ -2062,7 +2079,7 @@ export default function Dashboard({
     },
     {
       id: 'account',
-      title: 'Account',
+      title: SETTINGS_TITLES.account,
       sub: clerk ? 'Your profile, how you sign in, and deleting your account' : 'Sign out here, or on every device',
       // Sign out is the account menu's own with Clerk, so the card says
       // where it is, beside Manage account (components/AccountSettings.tsx).
@@ -2237,7 +2254,7 @@ export default function Dashboard({
               <HeaderIcon d={REFRESH} spin={refreshing || loading} />
             </button>
             {clerk ? (
-              <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={() => setSharingOpen(true)} />
+              <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={openSharing} />
             ) : (
               // Password mode has no account menu: Sign out and Sign out
               // everywhere are in Settings > Account.
@@ -2251,8 +2268,13 @@ export default function Dashboard({
         {loading ? (
           // The open tab as it will be, its figures still to come
           // (components/LoadingSkeletons.tsx), rather than a spinner the
-          // whole page then grows from.
-          <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
+          // whole page then grows from; Settings as it will be, when the
+          // address has it open.
+          settings ? (
+            <SettingsSkeleton view={settings} />
+          ) : (
+            <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
+          )
         ) : settings ? (
           <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
         ) : !connected ? (
@@ -2269,7 +2291,7 @@ export default function Dashboard({
                   Add manual
                 </button>
                 {clerk && (
-                  <button className="secondary" onClick={() => setSharingOpen(true)}>
+                  <button className="secondary" onClick={openSharing}>
                     <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
                     Sharing
                   </button>
@@ -2400,10 +2422,11 @@ export default function Dashboard({
 
             {tab === 'accounts' && (
               <>
-                {/* Connecting, a manual account and switching are in the
-                    Add account sheet; sharing is in the avatar menu and
-                    Settings > Sharing. The pill counts from this load only:
-                    never from this device's snapshot or a load that failed. */}
+                {/* The status first, then Add account, tonal and at the
+                    right: connecting, a manual account and switching are in
+                    its sheet; sharing is in the avatar menu and Settings >
+                    Sharing. The pill counts from this load only: never from
+                    this device's snapshot or a load that failed. */}
                 <div className="accounts-bar">
                   <AccountsStatus
                     entries={statusEntries}
@@ -2412,7 +2435,7 @@ export default function Dashboard({
                     syncing={sortedInstitutions.some((i) => !i.manual || !!i.connector) || cardless.length > 0}
                     onGo={goToFirstToFix}
                   />
-                  <button className="btn" onClick={() => setAddAccountOpen(true)}>
+                  <button className="btn secondary" onClick={() => setAddAccountOpen(true)}>
                     <ActionIcon d="M12 5v14M5 12h14" />
                     Add account
                   </button>
@@ -2724,7 +2747,6 @@ export default function Dashboard({
         {/* At the foot of every tab: how the data is protected, and who can read it. */}
         <TrustLinks />
       </main>
-      {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
       {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
       <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
       {/* The offer, from its row in Needs attention: a choice closes it and
@@ -2780,8 +2802,8 @@ export default function Dashboard({
         </nav>
       )}
 
-      {/* Forms and confirmations open in the same drawer as Sharing
-          (components/Sheet.tsx). Each keeps its last content while it slides
+      {/* Forms and confirmations open in a drawer (components/Sheet.tsx), as
+          a person does in Settings > Sharing. Each keeps its last content while it slides
           out, so it doesn't empty mid-animation. */}
       <Sheet
         open={!!manualDraft || !!manualMoved?.open}

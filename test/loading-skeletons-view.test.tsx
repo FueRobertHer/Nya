@@ -10,6 +10,7 @@ import {
   HomeSkeleton,
   LinesSkeleton,
   PlanSkeleton,
+  SettingsSkeleton,
   SharedWithMeSkeleton,
   SignInSkeleton,
   TabSkeleton,
@@ -201,6 +202,27 @@ describe('every tab while it loads', () => {
     expect(renderToStaticMarkup(<AccountsSkeleton />)).toContain('<div class="accounts-bar" inert="">');
   });
 
+  test('Accounts: Add account tonal at the right, then the totals as a strip of three', () => {
+    const html = renderToStaticMarkup(<AccountsSkeleton />);
+    expect(html).toContain('<div class="accounts-bar" inert=""><span class="btn secondary">');
+    expect(html).toContain('<div class="card stack" aria-hidden="true"><ul class="stat-strip">');
+    expect(html.match(/<li class="stat">/g)).toHaveLength(3);
+    expect(html).not.toContain('accounts-summary');
+  });
+
+  test('Settings, when the address has it open: its bar and title, then its rows or a section’s card', () => {
+    const list = renderToStaticMarkup(<SettingsSkeleton view="list" />);
+    expect(list).toStartWith('<section class="settings" aria-busy="true" aria-labelledby="settings-loading-title"><div class="settings-bar" inert="">');
+    expect(list).toContain('aria-label="Close Settings"');
+    expect(list).toContain('<h2 id="settings-loading-title">Settings</h2>');
+    expect(list).toContain('<ul class="card list-rows" aria-hidden="true">');
+    expect(list.match(/<li>/g)).toHaveLength(6);
+    const data = renderToStaticMarkup(<SettingsSkeleton view="data" />);
+    expect(data).toContain('aria-label="Back to Settings"');
+    expect(data).toContain('<h2 id="settings-loading-title">Your data and privacy</h2>');
+    for (const html of [list, data]) expect(html.match(/role="status"/g)?.length).toBe(1);
+  });
+
   test('the known words show as words: card titles and the figures’ labels', () => {
     const activity = renderToStaticMarkup(<ActivitySkeleton segment="transactions" />);
     for (const w of ['>In<', '>Out<', '>Net<', '>Transactions<', 'placeholder="Search transactions"']) expect(activity).toContain(w);
@@ -236,6 +258,10 @@ describe('every tab while it loads', () => {
     expect(plan).not.toContain('Net worth');
     expect(plan.match(/role="status"/g)?.length).toBe(1);
     expect(renderToStaticMarkup(<AppLoading account="clerk" />)).toContain(renderToStaticMarkup(<HomeSkeleton />));
+    // Settings open over a tab: Settings' loading view, not the tab's.
+    const settings = renderToStaticMarkup(<AppLoading account="clerk" tab="plan" settings="sharing" />);
+    expect(settings).toContain(renderToStaticMarkup(<SettingsSkeleton view="sharing" />));
+    expect(settings).not.toContain('plan-bar');
   });
 
   test('the tabs draw them in place of the spinners they had', () => {

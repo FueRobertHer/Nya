@@ -10,11 +10,22 @@
 // passes them in. Each new level moves focus to its heading.
 
 import { useEffect, useRef, type ReactNode } from 'react';
+import type { SettingsSectionId, SettingsView } from '@/lib/dashboard-tab';
 
-export type SettingsSectionId = 'preferences' | 'transactions' | 'connections' | 'sharing' | 'data' | 'account';
+// The ids and what the address holds are in lib/dashboard-tab.ts, which the
+// server reads too.
+export type { SettingsSectionId, SettingsView } from '@/lib/dashboard-tab';
 
-/** What Settings shows: its list of sections, or one of them. */
-export type SettingsView = 'list' | SettingsSectionId;
+/** Each section's title: in its row, on its screen, and on the loading view
+ *  a reload there shows first (components/LoadingSkeletons.tsx). */
+export const SETTINGS_TITLES: Record<SettingsSectionId, string> = {
+  preferences: 'Preferences',
+  transactions: 'Transactions',
+  connections: 'Connections',
+  sharing: 'Sharing',
+  data: 'Your data and privacy',
+  account: 'Account',
+};
 
 export type SettingsSection = {
   id: SettingsSectionId;
@@ -31,6 +42,8 @@ const chevron = (d: string) => (
 );
 const LEFT = 'm15 18-6-6 6-6';
 const RIGHT = 'm9 18 6-6-6-6';
+/** The bar's arrow back (to the list, or out of Settings). */
+export const BACK_ARROW = chevron(LEFT);
 
 export function SettingsScreen({
   view,
@@ -64,7 +77,7 @@ export function SettingsScreen({
           onClick={() => (section ? go('list') : onClose())}
           aria-label={section ? 'Back to Settings' : 'Close Settings'}
         >
-          {chevron(LEFT)}
+          {BACK_ARROW}
         </button>
         <h2 id="settings-title" ref={heading} tabIndex={-1}>
           {section ? section.title : 'Settings'}

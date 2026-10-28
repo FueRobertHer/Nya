@@ -1,9 +1,10 @@
 'use client';
 
 // Read-only sharing between connected people (#45, lib/sharing.ts). Two parts:
-//   - the Sharing drawer (components/Sheet.tsx), opened from the Accounts tab
-//     or the account menu: an invite link to connect with someone, the people
-//     I'm connected with, and for each what I call them, what they see of
+//   - Settings > Sharing (SharingSettings), opened from Settings or the
+//     account menu: in place, an invite link to connect with someone, the
+//     people I'm connected with and the blocked; each person in a sheet of
+//     their own (components/Sheet.tsx) with what I call them, what they see of
 //     mine, per account (not shared, that it exists, balance, or balance and
 //     recent transactions) and until when, a preview of exactly what they see,
 //     both records of showings (when what I share was shown to them, and when
@@ -20,7 +21,7 @@
 //     and says why it couldn't be refreshed. With nothing on screen it says
 //     nothing, unless nothing has loaded yet and the last good read on this
 //     device had something shared (rememberShares).
-// Beside the accounts, the other kinds of share (#45 step 3): the drawer's
+// Beside the accounts, the other kinds of share (#45 step 3): a person's sheet's
 // choices for them, and what they could work out from all of it together,
 // are components/ShareKinds.tsx; how a card draws them, components/SharedViews.tsx.
 // Only with Clerk on; with the shared password there's nobody to connect
@@ -30,13 +31,15 @@
 // Class names avoid "share": ad blockers' social-share filters hide such
 // elements (Fanboy's list has ##.share-row).
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { formatMoney } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
-import { SharedWithMeSkeleton } from './LoadingSkeletons';
+import { RowsSkeleton, SharedWithMeSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
+import { CAUTION } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import { cacheKeyFor } from './device-cache';
 import { InferenceNotes, KindsEditor, sameViews, seenText, viewsToSave, type ShareableGoal } from './ShareKinds';
@@ -162,6 +165,13 @@ function Chevron() {
   );
 }
 
+/** A done notice's icon. */
+const CHECK = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
 /** A phone's own share menu (Messages and the like). Only on touch screens:
  *  desktop browsers have one too, but there copying is what people expect. */
 function touchShare(): boolean {
@@ -191,8 +201,19 @@ async function sendLink(url: string, field: HTMLInputElement | null): Promise<bo
 /** The end choice a connection's settings open with: as saved, if it has one. */
 const savedChoice = (c: Connection): EndChoice => (c.expires_at ? 'keep' : 'none');
 
-/** The Sharing drawer. Loads each time it opens. */
-export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** The value, or the last one that wasn't null: what a closing sheet keeps
+ *  showing while it slides out. */
+function useLast<T>(value: T | null): T | null {
+  const last = useRef<T | null>(value);
+  if (value !== null) last.current = value;
+  return last.current;
+}
+
+/** Settings > Sharing (docs/design/information-architecture.md#settings): the
+ *  list in place (the invite, the people, the blocked), and each person in a
+ *  sheet of their own, with "What they see" as its second level. Loads as the
+ *  section opens: Settings mounts a section only while it is open. */
+export function SharingSettings() {
   const [data, setData] = useState<SharingPayload | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, Choice>>({});
@@ -219,6 +240,9 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const [records, setRecords] = useState<{ id: string; data: ConnectionRecords | null; failed: boolean } | null>(null);
   const askedRecords = useRef(0);
   const [damaged, setDamaged] = useState<DamagedRecords | null>(null);
+  // The People card's title, where focus goes once a person is removed or
+  // blocked: the row that opened their sheet is gone with them.
+  const people = useRef<HTMLHeadingElement>(null);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/connections').catch(() => null);
@@ -245,19 +269,9 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     setRecords((r) => (body ? { id, data: body, failed: false } : { id, data: r?.id === id ? r.data : null, failed: true }));
   }, []);
   useEffect(() => {
-    if (open) {
-      load();
-      loadDamaged();
-      return;
-    }
-    // Next time it opens at the top, with nothing half-done showing.
-    setSelected(null);
-    setPreviewing(false);
-    setInvite(null);
-    setNotice('');
-    setError('');
-    setRecords(null);
-  }, [open, load, loadDamaged]);
+    load();
+    loadDamaged();
+  }, [load, loadDamaged]);
 
   // Opening a connection starts its draft from what is saved.
   const openConnection = useCallback(
@@ -329,7 +343,26 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     [load, loadDamaged, loadRecords, selected]
   );
 
+  // Removes, blocks or (block null) unblocks, after confirming the first two.
+  // A person removed or blocked from their sheet takes the sheet with them,
+  // and focus goes to the People card, under the line saying what was done.
+  const remove = useCallback(
+    async (id: string, block: boolean | null) => {
+      const what = block
+        ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.'
+        : 'Remove them? Everything shared both ways ends.';
+      if (block !== null && !window.confirm(what)) return;
+      const done = await act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
+      if (!done || block === null) return;
+      setSelected(null);
+      requestAnimationFrame(() => people.current?.focus());
+    },
+    [act]
+  );
+
   const current = data?.connections?.find((c) => c.id === selected) ?? null;
+  // What the sheet shows while it slides out, once closed.
+  const shown = useLast(current);
   const accounts = data?.accounts ?? [];
   // Unsaved changes to what they see: the preview shows what is saved.
   const unsaved =
@@ -337,338 +370,201 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
     (accounts.some((a) => (draft[a.id] ?? 'none') !== (current.sharing[a.id] ?? 'none')) ||
       !sameViews(viewsDraft, current.views) ||
       (endFor(endChoice, endDay) !== undefined && !(endChoice === 'none' && current.expires_at === null)));
-  const title = current ? (previewing ? `What ${current.label} sees` : current.label) : 'Sharing';
   return (
-    <Sheet
-      open={open}
-      title={title}
-      onClose={onClose}
-      onBack={current ? () => (previewing ? setPreviewing(false) : setSelected(null)) : undefined}
-    >
-      {current && previewing ? (
-        <PreviewView who={current.label} expiresAt={current.expires_at} preview={preview} error={previewError} unsaved={unsaved} />
-      ) : (
-        <SharingPanelView
-          data={data}
-          current={current}
-          draft={draft}
-          viewsDraft={viewsDraft}
-          labelDraft={labelDraft}
-          endChoice={endChoice}
-          endDay={endDay}
-          invite={invite}
-          busy={busy}
-          error={error}
-          notice={notice}
-          onOpen={openConnection}
-          onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
-          onViews={setViewsDraft}
-          onLabel={setLabelDraft}
-          onEndChoice={setEndChoice}
-          onEndDay={setEndDay}
-          onInvite={async (fromName, theirLabel) => {
-            const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
-            if (body) setInvite(body);
+    <>
+      <SharingListView
+        data={data}
+        invite={invite}
+        busy={busy}
+        // What was done, or went wrong, on the list; a person's sheet says
+        // its own while it is open.
+        error={selected ? '' : error}
+        notice={selected ? '' : notice}
+        damaged={damaged}
+        peopleRef={people}
+        onOpen={openConnection}
+        onInvite={async (fromName, theirLabel) => {
+          const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
+          if (body) setInvite(body);
+        }}
+        onClearDamaged={() =>
+          clearRecords(
+            damaged?.damaged ?? [],
+            damaged?.maybe_connected
+              ? 'Clear what can’t be read? Nothing readable is lost.'
+              : 'Clear what can’t be read? It belongs to no one you’re connected with now, and nothing readable is lost.'
+          )
+        }
+        onUnblock={(id) => remove(id, null)}
+      />
+      {data && (
+        <Sheet
+          open={!!current}
+          title={shown ? (previewing ? `What ${shown.label} sees` : shown.label) : 'Sharing'}
+          onClose={() => {
+            setSelected(null);
+            setNotice('');
+            setError('');
           }}
-          onSave={async () => {
-            if (!current) return;
-            const expires_at = endFor(endChoice, endDay);
-            const saved = await act(
-              'PUT',
-              '/api/connections',
-              { id: current.id, label: labelDraft, accounts: draft, views: viewsToSave(viewsDraft), ...(expires_at !== undefined ? { expires_at } : {}) },
-              'Saved.'
-            );
-            // What is saved now: a choice like "7 days" isn't sent again with the next save.
-            if (saved && expires_at !== undefined) setEndChoice(expires_at === null ? 'none' : 'keep');
-          }}
-          onRenew={async () => {
-            if (!current) return;
-            const expires_at = endAfterDays(RENEW_DAYS);
-            const renewed = await act('PUT', '/api/connections', { id: current.id, expires_at }, `Renewed until ${endLabel(expires_at)}.`);
-            if (renewed) setEndChoice('keep');
-          }}
-          onPreview={() => {
-            if (current) openPreview(current.id);
-          }}
-          records={records && current && records.id === current.id ? records.data : null}
-          recordsFailed={!!(records && current && records.id === current.id && records.failed)}
-          onShowAll={() => {
-            if (current) loadRecords(current.id, true);
-          }}
-          damaged={damaged}
-          onClearRecord={(id) => clearRecords([id], 'Clear this record? It can’t be read, so nothing readable is lost, and the next showing starts a new one.')}
-          onClearDamaged={() =>
-            clearRecords(
-              damaged?.damaged ?? [],
-              damaged?.maybe_connected
-                ? 'Clear what can’t be read? Nothing readable is lost.'
-                : 'Clear what can’t be read? It belongs to no one you’re connected with now, and nothing readable is lost.'
-            )
-          }
-          onRemove={async (id, block) => {
-            const what = block
-              ? 'Block them? Everything shared both ways ends, and they can’t connect with you again.'
-              : 'Remove them? Everything shared both ways ends.';
-            if (block !== null && !window.confirm(what)) return;
-            const done = await act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
-            if (done) setSelected(null);
-          }}
-        />
+          onBack={previewing ? () => setPreviewing(false) : undefined}
+        >
+          {shown &&
+            (previewing ? (
+              <PreviewView who={shown.label} expiresAt={shown.expires_at} preview={preview} error={previewError} unsaved={unsaved} />
+            ) : (
+              <ConnectionView
+                data={data}
+                current={shown}
+                draft={draft}
+                viewsDraft={viewsDraft}
+                labelDraft={labelDraft}
+                endChoice={endChoice}
+                endDay={endDay}
+                busy={busy}
+                error={error}
+                notice={notice}
+                onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
+                onViews={setViewsDraft}
+                onLabel={setLabelDraft}
+                onEndChoice={setEndChoice}
+                onEndDay={setEndDay}
+                onSave={async () => {
+                  if (!current) return;
+                  const expires_at = endFor(endChoice, endDay);
+                  const saved = await act(
+                    'PUT',
+                    '/api/connections',
+                    { id: current.id, label: labelDraft, accounts: draft, views: viewsToSave(viewsDraft), ...(expires_at !== undefined ? { expires_at } : {}) },
+                    'Saved.'
+                  );
+                  // What is saved now: a choice like "7 days" isn't sent again with the next save.
+                  if (saved && expires_at !== undefined) setEndChoice(expires_at === null ? 'none' : 'keep');
+                }}
+                onRenew={async () => {
+                  if (!current) return;
+                  const expires_at = endAfterDays(RENEW_DAYS);
+                  const renewed = await act('PUT', '/api/connections', { id: current.id, expires_at }, `Renewed until ${endLabel(expires_at)}.`);
+                  if (renewed) setEndChoice('keep');
+                }}
+                onPreview={() => {
+                  if (current) openPreview(current.id);
+                }}
+                records={records && records.id === shown.id ? records.data : null}
+                recordsFailed={!!(records && records.id === shown.id && records.failed)}
+                onShowAll={() => {
+                  if (current) loadRecords(current.id, true);
+                }}
+                onClearRecord={(id) => clearRecords([id], 'Clear this record? It can’t be read, so nothing readable is lost, and the next showing starts a new one.')}
+                onRemove={remove}
+              />
+            ))}
+        </Sheet>
       )}
-    </Sheet>
+    </>
   );
 }
 
-export function SharingPanelView({
+/** The list, in place on Settings > Sharing: how sharing works, the invite,
+ *  the people (each a row that opens their sheet) and the blocked. What the
+ *  list's actions did, or why they failed, is said once at its top, in one
+ *  status region. */
+export function SharingListView({
   data,
-  current,
-  draft,
-  viewsDraft = {},
-  labelDraft,
-  endChoice,
-  endDay,
   invite,
   busy,
   error,
   notice,
-  onOpen,
-  onChoose,
-  onViews = () => {},
-  onLabel,
-  onEndChoice,
-  onEndDay,
-  onInvite,
-  onSave,
-  onRenew,
-  onPreview,
-  records,
-  recordsFailed,
-  onShowAll,
   damaged,
-  onClearRecord,
+  peopleRef,
+  onOpen,
+  onInvite,
   onClearDamaged,
-  onRemove,
+  onUnblock,
 }: {
   data: SharingPayload | null;
-  /** The connection being looked at, or null for the list. */
-  current: Connection | null;
-  draft: Record<string, Choice>;
-  /** The other kinds, as being chosen. */
-  viewsDraft?: ShareViews;
-  labelDraft: string;
-  endChoice: EndChoice;
-  endDay: string;
   invite: Invite;
   busy: boolean;
   error: string;
   notice: string;
-  onOpen: (id: string) => void;
-  onChoose: (id: string, c: Choice) => void;
-  onViews?: (views: ShareViews) => void;
-  onLabel: (label: string) => void;
-  onEndChoice: (c: EndChoice) => void;
-  onEndDay: (day: string) => void;
-  onInvite: (fromName: string, theirLabel: string) => void;
-  onSave: () => void;
-  /** Gives an ended share another RENEW_DAYS, as it was. */
-  onRenew: () => void;
-  onPreview: () => void;
-  /** The open connection's records: null while they load, or when they
-   *  couldn't be (recordsFailed). */
-  records: ConnectionRecords | null;
-  recordsFailed: boolean;
-  /** Asks for every day of the open connection's records. */
-  onShowAll: () => void;
   /** My damaged records no connection is matched to, or null when that
    *  isn't known (still loading, or it couldn't be). */
   damaged: DamagedRecords | null;
-  /** Clears my unreadable record on a connection, by its id (after confirming). */
-  onClearRecord: (id: string) => void;
+  /** The People card's title, for focus to land on. */
+  peopleRef?: Ref<HTMLHeadingElement>;
+  onOpen: (id: string) => void;
+  onInvite: (fromName: string, theirLabel: string) => void;
   /** Clears my unreadable records that belong to no connection now (after
    *  confirming). */
   onClearDamaged: () => void;
-  /** block: true blocks, false removes, null lifts a block (no confirmation). */
-  onRemove: (id: string, block: boolean | null) => void;
+  onUnblock: (id: string) => void;
 }) {
   const [fromName, setFromName] = useState('');
   const [theirLabel, setTheirLabel] = useState('');
   const [sent, setSent] = useState(false);
-  if (!data) return error ? <div className="error">{error}</div> : <div className="spinner" role="status" aria-label="Loading" />;
-  if (!data.enabled) return <p className="panel-note">Sharing needs accounts; this app signs in with a shared password.</p>;
-  const accounts = data.accounts ?? [];
-  const status = (
-    <>
-      {error && <div className="error">{error}</div>}
-      {notice && <div className="status-note">{notice}</div>}
-    </>
-  );
-
-  if (current) {
-    // What they can see now: a share on an account I've since hidden, or on
-    // one waiting for its balance, is paused. One waiting is listed only
-    // where it is shared, to keep or end.
-    const seen = accounts.filter((a) => !a.waiting && current.sharing[a.id]).length;
-    const listed = accounts.filter((a) => !a.waiting || current.sharing[a.id]);
-    // What they can see now, in words: accounts, and the other kinds.
-    const sees = seenText(seen, current.views);
-    const over = sees !== null && ended(current.expires_at);
+  if (!data) {
+    if (error) return <Notice level="critical">{error}</Notice>;
     return (
-      <>
-        <section className="panel-section">
-          <label className="field">
-            What you call them
-            <input value={labelDraft} onChange={(e) => onLabel(e.target.value)} maxLength={40} />
-          </label>
-          <p className="panel-note">
-            {current.introduced_as ? `They introduced themselves as “${current.introduced_as}”. ` : 'They didn’t give a name. '}
-            Connected {shortDate(current.since)}. Not who you meant to invite? Remove them.
-          </p>
-        </section>
-        <section className="panel-section">
-          <p className="section-label">What they can see</p>
-          {over ? (
-            <>
-              <p className="stale-note" style={{ margin: '0 0 6px' }}>
-                Ended {endLabel(current.expires_at!)}: {current.label} sees {sharedKinds(current.views).length > 0 ? 'nothing of yours' : 'none of your accounts'} now. Your choices below are kept.
-              </p>
-              <button className="secondary" onClick={onRenew} disabled={busy} style={{ marginBottom: 6 }}>
-                Renew until {endLabel(endAfterDays(RENEW_DAYS))}
-              </button>
-            </>
-          ) : (
-            <p className="panel-note" style={{ margin: '0 0 6px' }}>
-              {sees === null
-                ? `${current.label} can’t see any of your accounts.`
-                : `${current.label} can see ${sees}, read-only${current.expires_at ? `, until ${endLabel(current.expires_at)}` : ''}.`}
-            </p>
-          )}
-          {listed.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
-          {byInstitution(listed).map(([institution, list]) => (
-            <div key={institution} className="institution-group">
-              <p className="institution-name">{institution}</p>
-              {list.map((a) => (
-                <div key={a.id} className="peer-row">
-                  <span>
-                    {a.name ?? a.label}
-                    {a.waiting && (
-                      <span className="type-tag" style={{ display: 'block' }}>
-                        Waiting for its balance: shown to them again once it has one
-                      </span>
-                    )}
-                  </span>
-                  <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
-                    {(a.waiting ? (['none', current.sharing[a.id]] as Choice[]) : (Object.keys(LEVEL_LABEL) as Choice[])).map((c) => (
-                      <option key={c} value={c}>
-                        {LEVEL_LABEL[c]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-          ))}
-          <KindsEditor
-            views={viewsDraft}
-            onChange={onViews}
-            goals={data.goals_unreadable ? null : (data.goals ?? [])}
-            who={current.label}
-            accounts={accounts
-              .filter((a) => !a.waiting)
-              .map((a) => {
-                const c = draft[a.id] ?? 'none';
-                return { id: a.id, label: a.label, level: c === 'none' ? null : c, investment: a.investment === true };
-              })}
-          />
-          <EndPicker saved={current.expires_at} choice={endChoice} day={endDay} onChoice={onEndChoice} onDay={onEndDay} />
-          <button onClick={onSave} disabled={busy || (endChoice === 'date' && endFor('date', endDay) === undefined)} style={{ marginTop: 4 }}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
-            See what {current.label} sees
-          </button>
-          {status}
-        </section>
-        <section className="panel-section">
-          <p className="section-label">Shown to them</p>
-          <ShowingsRecord
-            key={`them-${current.id}`}
-            who={current.label}
-            mine
-            since={records?.record_since ?? null}
-            summary={records?.shown_to_them ?? null}
-            failed={recordsFailed}
-            busy={busy}
-            onClear={
-              records && records.shown_to_them.days === null && records.shown_to_them.problem === 'unreadable' && records.record_id
-                ? () => onClearRecord(records.record_id!)
-                : undefined
-            }
-            onShowAll={onShowAll}
-          />
-          <p className="panel-note">
-            Counted each time their app loads what you share, which it does when that part of their Accounts tab comes into view. Kept{' '}
-            {ACCESS_LOG_DAYS} days at most, and only while you’re connected. They see this same record.
-          </p>
-        </section>
-        <section className="panel-section">
-          <p className="section-label">Shown to you</p>
-          <ShowingsRecord
-            key={`me-${current.id}`}
-            who={current.label}
-            mine={false}
-            since={records?.record_since ?? null}
-            summary={records?.shown_to_me ?? null}
-            failed={recordsFailed}
-            busy={busy}
-            onShowAll={onShowAll}
-          />
-          <p className="panel-note">{current.label}’s record of each time what they share was shown to you: the same one they see.</p>
-        </section>
-        <section className="panel-section">
-          <p className="section-label">Connection</p>
-          <div className="button-pair">
-            <button className="danger-outline" onClick={() => onRemove(current.id, false)} disabled={busy}>
-              Remove
-            </button>
-            <button className="danger-outline" onClick={() => onRemove(current.id, true)} disabled={busy}>
-              Block
-            </button>
+      <div className="stack" aria-busy="true">
+        <section className="card stack" aria-hidden="true">
+          <div className="card-header">
+            <h2>
+              <span className="skeleton rows-skeleton-title" />
+            </h2>
           </div>
-          <p className="panel-note">Either ends everything shared, both ways. Blocking also stops them connecting with you again.</p>
+          <RowsSkeleton count={2} />
         </section>
-      </>
+        <p className="visually-hidden" role="status">
+          Loading
+        </p>
+      </div>
     );
   }
-
+  if (!data.enabled) return <p className="empty-note">Sharing needs accounts; this app signs in with a shared password.</p>;
+  const accounts = data.accounts ?? [];
   const connections = data.connections ?? [];
   const blocked = data.blocked ?? [];
   const unmatched = damaged?.damaged ?? [];
   return (
-    <>
-      <section className="panel-section">
-        <p className="panel-note" style={{ marginTop: 0 }}>
-          They see only the accounts you choose, read-only. Nobody else in the app can find you.
-        </p>
+    <div className="stack">
+      <div className="stack tight">
+        <p className="helper">They see only the accounts you choose, read-only. Nobody else in the app can find you.</p>
         {unmatched.length > 0 && (
-          <>
-            <p className="stale-note">
-              {damaged?.maybe_connected
-                ? unmatched.length === 1
-                  ? 'A record of showings can’t be read, and Nya can’t tell whose it is: someone you’re no longer connected with, or someone whose record id can’t be read.'
-                  : `${unmatched.length} records of showings can’t be read, and Nya can’t tell whose they are: people you’re no longer connected with, or someone whose record id can’t be read.`
-                : unmatched.length === 1
-                  ? 'A record of showings from someone you’re no longer connected with can’t be read.'
-                  : `${unmatched.length} records of showings from people you’re no longer connected with can’t be read.`}
-            </p>
-            <button className="secondary" onClick={onClearDamaged} disabled={busy} style={{ marginTop: 10 }}>
-              {unmatched.length === 1 ? 'Clear it' : 'Clear them'}
-            </button>
-          </>
+          <div className="notice caution">
+            {CAUTION}
+            <div className="stack tight">
+              <p>
+                {damaged?.maybe_connected
+                  ? unmatched.length === 1
+                    ? 'A record of showings can’t be read, and Nya can’t tell whose it is: someone you’re no longer connected with, or someone whose record id can’t be read.'
+                    : `${unmatched.length} records of showings can’t be read, and Nya can’t tell whose they are: people you’re no longer connected with, or someone whose record id can’t be read.`
+                  : unmatched.length === 1
+                    ? 'A record of showings from someone you’re no longer connected with can’t be read.'
+                    : `${unmatched.length} records of showings from people you’re no longer connected with can’t be read.`}
+              </p>
+              <div className="btn-row">
+                <button className="btn secondary" onClick={onClearDamaged} disabled={busy}>
+                  {unmatched.length === 1 ? 'Clear it' : 'Clear them'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
-      </section>
-      <section className="panel-section">
-        <p className="section-label">Invite someone</p>
+        {/* One region for what the list's actions did: always on the page, so
+            a line put in it is read out. */}
+        <div role="status">
+          {error && <Notice level="critical">{error}</Notice>}
+          {notice && (
+            <div className="notice done">
+              {CHECK}
+              <div>{notice}</div>
+            </div>
+          )}
+        </div>
+      </div>
+      <section className="card stack" aria-labelledby="sharing-invite-title">
+        <div className="card-header">
+          <h2 id="sharing-invite-title">Invite someone</h2>
+        </div>
         <label className="field">
           Your name, as they’ll see it
           <input value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="Optional" maxLength={40} />
@@ -677,9 +573,11 @@ export function SharingPanelView({
           What you call them
           <input value={theirLabel} onChange={(e) => setTheirLabel(e.target.value)} placeholder="Optional" maxLength={40} />
         </label>
-        <button onClick={() => onInvite(fromName, theirLabel)} disabled={busy}>
-          Create invite link
-        </button>
+        <div className="btn-row">
+          <button className="btn" onClick={() => onInvite(fromName, theirLabel)} disabled={busy}>
+            Create invite link
+          </button>
+        </div>
         {invite && (
           <>
             <div className="invite-link">
@@ -697,17 +595,20 @@ export function SharingPanelView({
                 {sent ? (touchShare() ? 'Sent' : 'Copied') : touchShare() ? 'Send' : 'Copy'}
               </button>
             </div>
-            <p className="panel-note">Send it to them yourself. It works once, until {new Date(invite.expires_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>
+            <p className="helper">Send it to them yourself. It works once, until {new Date(invite.expires_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</p>
           </>
         )}
-        {status}
       </section>
-      <section className="panel-section">
-        <p className="section-label">People</p>
+      <section className="card stack" aria-labelledby="sharing-people-title">
+        <div className="card-header">
+          <h2 id="sharing-people-title" ref={peopleRef} tabIndex={-1}>
+            People
+          </h2>
+        </div>
         {connections.length === 0 ? (
-          <p className="panel-note">No one yet. Create an invite link and send it to them.</p>
+          <p className="empty-note">No one yet. Create an invite link and send it to them.</p>
         ) : (
-          <div className="peer-list">
+          <ul className="list-rows">
             {connections.map((c) => {
               const seen = accounts.filter((a) => !a.waiting && c.sharing[a.id]).length;
               const sees = seenText(seen, c.views);
@@ -718,39 +619,253 @@ export function SharingPanelView({
                     ? `Ended ${endLabel(c.expires_at!)}`
                     : `Sees ${sees}${c.expires_at ? ` until ${endLabel(c.expires_at)}` : ''}`;
               return (
-                <button key={c.id} className="peer-item" onClick={() => onOpen(c.id)}>
-                  <span className="avatar">{initial(c.label)}</span>
-                  <span className="peer-item-text">
-                    <span className="peer-item-name">{c.label}</span>
-                    <span className="peer-item-meta">
-                      {what} · since {shortDate(c.since)}
+                <li key={c.id}>
+                  <button className="list-row" aria-haspopup="dialog" onClick={() => onOpen(c.id)}>
+                    <span className="avatar" aria-hidden="true">
+                      {initial(c.label)}
                     </span>
-                  </span>
-                  <Chevron />
-                </button>
+                    <span className="list-row-text">
+                      <span className="list-row-title">{c.label}</span>
+                      <span className="list-row-sub">
+                        {what} · since {shortDate(c.since)}
+                      </span>
+                    </span>
+                    <Chevron />
+                  </button>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
       </section>
       {blocked.length > 0 && (
-        <section className="panel-section">
-          <p className="section-label">Blocked</p>
-          <div className="peer-list">
+        <section className="card stack" aria-labelledby="sharing-blocked-title">
+          <div className="card-header">
+            <h2 id="sharing-blocked-title">Blocked</h2>
+          </div>
+          <ul className="list-rows">
             {blocked.map((b) => (
-              <div key={b.id} className="peer-item">
-                <span className="avatar small">{initial(b.label)}</span>
-                <span className="peer-item-text">
-                  <span className="peer-item-name">{b.label}</span>
+              <li key={b.id}>
+                {/* Not a button itself: its one action is Unblock, beside it. */}
+                <div className="list-row">
+                  <span className="avatar small" aria-hidden="true">
+                    {initial(b.label)}
+                  </span>
+                  <span className="list-row-text">
+                    <span className="list-row-title">{b.label}</span>
+                  </span>
+                  <button className="btn secondary" onClick={() => onUnblock(b.id)} disabled={busy}>
+                    Unblock
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/** One person, in their sheet: what I call them, what they see of mine and
+ *  until when, both records of showings, and Remove and Block. */
+export function ConnectionView({
+  data,
+  current,
+  draft,
+  viewsDraft = {},
+  labelDraft,
+  endChoice,
+  endDay,
+  busy,
+  error,
+  notice,
+  onChoose,
+  onViews = () => {},
+  onLabel,
+  onEndChoice,
+  onEndDay,
+  onSave,
+  onRenew,
+  onPreview,
+  records,
+  recordsFailed,
+  onShowAll,
+  onClearRecord,
+  onRemove,
+}: {
+  data: SharingPayload;
+  /** The connection being looked at. */
+  current: Connection;
+  draft: Record<string, Choice>;
+  /** The other kinds, as being chosen. */
+  viewsDraft?: ShareViews;
+  labelDraft: string;
+  endChoice: EndChoice;
+  endDay: string;
+  busy: boolean;
+  error: string;
+  notice: string;
+  onChoose: (id: string, c: Choice) => void;
+  onViews?: (views: ShareViews) => void;
+  onLabel: (label: string) => void;
+  onEndChoice: (c: EndChoice) => void;
+  onEndDay: (day: string) => void;
+  onSave: () => void;
+  /** Gives an ended share another RENEW_DAYS, as it was. */
+  onRenew: () => void;
+  onPreview: () => void;
+  /** The open connection's records: null while they load, or when they
+   *  couldn't be (recordsFailed). */
+  records: ConnectionRecords | null;
+  recordsFailed: boolean;
+  /** Asks for every day of the open connection's records. */
+  onShowAll: () => void;
+  /** Clears my unreadable record on a connection, by its id (after confirming). */
+  onClearRecord: (id: string) => void;
+  /** block: true blocks, false removes (each confirmed first). */
+  onRemove: (id: string, block: boolean) => void;
+}) {
+  const accounts = data.accounts ?? [];
+  const status = (
+    <>
+      {error && <div className="error">{error}</div>}
+      {notice && <div className="status-note">{notice}</div>}
+    </>
+  );
+
+  // What they can see now: a share on an account I've since hidden, or on
+  // one waiting for its balance, is paused. One waiting is listed only
+  // where it is shared, to keep or end.
+  const seen = accounts.filter((a) => !a.waiting && current.sharing[a.id]).length;
+  const listed = accounts.filter((a) => !a.waiting || current.sharing[a.id]);
+  // What they can see now, in words: accounts, and the other kinds.
+  const sees = seenText(seen, current.views);
+  const over = sees !== null && ended(current.expires_at);
+  return (
+    <>
+      <section className="panel-section">
+        <label className="field">
+          What you call them
+          <input value={labelDraft} onChange={(e) => onLabel(e.target.value)} maxLength={40} />
+        </label>
+        <p className="panel-note">
+          {current.introduced_as ? `They introduced themselves as “${current.introduced_as}”. ` : 'They didn’t give a name. '}
+          Connected {shortDate(current.since)}. Not who you meant to invite? Remove them.
+        </p>
+      </section>
+      <section className="panel-section">
+        <p className="section-label">What they can see</p>
+        {over ? (
+          <>
+            <p className="stale-note" style={{ margin: '0 0 6px' }}>
+              Ended {endLabel(current.expires_at!)}: {current.label} sees {sharedKinds(current.views).length > 0 ? 'nothing of yours' : 'none of your accounts'} now. Your choices below are kept.
+            </p>
+            <button className="secondary" onClick={onRenew} disabled={busy} style={{ marginBottom: 6 }}>
+              Renew until {endLabel(endAfterDays(RENEW_DAYS))}
+            </button>
+          </>
+        ) : (
+          <p className="panel-note" style={{ margin: '0 0 6px' }}>
+            {sees === null
+              ? `${current.label} can’t see any of your accounts.`
+              : `${current.label} can see ${sees}, read-only${current.expires_at ? `, until ${endLabel(current.expires_at)}` : ''}.`}
+          </p>
+        )}
+        {listed.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
+        {byInstitution(listed).map(([institution, list]) => (
+          <div key={institution} className="institution-group">
+            <p className="institution-name">{institution}</p>
+            {list.map((a) => (
+              <div key={a.id} className="peer-row">
+                <span>
+                  {a.name ?? a.label}
+                  {a.waiting && (
+                    <span className="type-tag" style={{ display: 'block' }}>
+                      Waiting for its balance: shown to them again once it has one
+                    </span>
+                  )}
                 </span>
-                <button className="secondary peer-item-action" onClick={() => onRemove(b.id, null)} disabled={busy}>
-                  Unblock
-                </button>
+                <select value={draft[a.id] ?? 'none'} onChange={(e) => onChoose(a.id, e.target.value as Choice)} aria-label={`What they see of ${a.label}`}>
+                  {(a.waiting ? (['none', current.sharing[a.id]] as Choice[]) : (Object.keys(LEVEL_LABEL) as Choice[])).map((c) => (
+                    <option key={c} value={c}>
+                      {LEVEL_LABEL[c]}
+                    </option>
+                  ))}
+                </select>
               </div>
             ))}
           </div>
-        </section>
-      )}
+        ))}
+        <KindsEditor
+          views={viewsDraft}
+          onChange={onViews}
+          goals={data.goals_unreadable ? null : (data.goals ?? [])}
+          who={current.label}
+          accounts={accounts
+            .filter((a) => !a.waiting)
+            .map((a) => {
+              const c = draft[a.id] ?? 'none';
+              return { id: a.id, label: a.label, level: c === 'none' ? null : c, investment: a.investment === true };
+            })}
+        />
+        <EndPicker saved={current.expires_at} choice={endChoice} day={endDay} onChoice={onEndChoice} onDay={onEndDay} />
+        <button onClick={onSave} disabled={busy || (endChoice === 'date' && endFor('date', endDay) === undefined)} style={{ marginTop: 4 }}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
+          See what {current.label} sees
+        </button>
+        {status}
+      </section>
+      <section className="panel-section">
+        <p className="section-label">Shown to them</p>
+        <ShowingsRecord
+          key={`them-${current.id}`}
+          who={current.label}
+          mine
+          since={records?.record_since ?? null}
+          summary={records?.shown_to_them ?? null}
+          failed={recordsFailed}
+          busy={busy}
+          onClear={
+            records && records.shown_to_them.days === null && records.shown_to_them.problem === 'unreadable' && records.record_id
+              ? () => onClearRecord(records.record_id!)
+              : undefined
+          }
+          onShowAll={onShowAll}
+        />
+        <p className="panel-note">
+          Counted each time their app loads what you share, which it does when that part of their Accounts tab comes into view. Kept{' '}
+          {ACCESS_LOG_DAYS} days at most, and only while you’re connected. They see this same record.
+        </p>
+      </section>
+      <section className="panel-section">
+        <p className="section-label">Shown to you</p>
+        <ShowingsRecord
+          key={`me-${current.id}`}
+          who={current.label}
+          mine={false}
+          since={records?.record_since ?? null}
+          summary={records?.shown_to_me ?? null}
+          failed={recordsFailed}
+          busy={busy}
+          onShowAll={onShowAll}
+        />
+        <p className="panel-note">{current.label}’s record of each time what they share was shown to you: the same one they see.</p>
+      </section>
+      <section className="panel-section">
+        <p className="section-label">Connection</p>
+        <div className="button-pair">
+          <button className="danger-outline" onClick={() => onRemove(current.id, false)} disabled={busy}>
+            Remove
+          </button>
+          <button className="danger-outline" onClick={() => onRemove(current.id, true)} disabled={busy}>
+            Block
+          </button>
+        </div>
+        <p className="panel-note">Either ends everything shared, both ways. Blocking also stops them connecting with you again.</p>
+      </section>
     </>
   );
 }

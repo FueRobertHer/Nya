@@ -15,7 +15,8 @@ import ActivityBar, { type ActivitySegment } from './ActivityBar';
 import BudgetsBar, { type BudgetsSegment } from './BudgetsBar';
 import PlanBar, { type PlanSegment } from './PlanBar';
 import { CollapsibleHeader } from './Collapsible';
-import type { Tab } from '@/lib/dashboard-tab';
+import { BACK_ARROW, SETTINGS_TITLES } from './Settings';
+import type { SettingsView, Tab } from '@/lib/dashboard-tab';
 import { SPANS } from '@/lib/cash-flow';
 
 // The animations kept in step: the placeholders' pulse, and Refresh turning.
@@ -225,25 +226,33 @@ export function SharedWithMeSkeleton() {
 }
 
 /** The Accounts tab while the accounts are on their way: its bar with Add
- *  account (unavailable until they are in), the line by kind, and two
- *  institution cards (components/InstitutionCard.tsx) with their rows. */
+ *  account (unavailable until they are in), the totals by kind as a strip of
+ *  three, and two institution cards (components/InstitutionCard.tsx) with
+ *  their rows. */
 export function AccountsSkeleton() {
   useInStep();
   return (
     <div aria-busy="true">
       <div className="accounts-bar" inert>
-        <span className="btn">
+        <span className="btn secondary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14" />
           </svg>
           Add account
         </span>
       </div>
-      <div className="accounts-summary stack tight" aria-hidden="true">
-        <ul className="accounts-summary-line">
-          <li>
-            <span className="skeleton accounts-skeleton-summary" />
-          </li>
+      <div className="card stack" aria-hidden="true">
+        <ul className="stat-strip">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="stat">
+              <span className="stat-label">
+                <span className="skeleton accounts-skeleton-label" />
+              </span>
+              <span className="stat-value">
+                <span className="skeleton accounts-skeleton-figure" />
+              </span>
+            </li>
+          ))}
         </ul>
       </div>
       {[3, 2].map((rows, i) => (
@@ -449,6 +458,37 @@ export function PlanSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
   );
 }
 
+/** Settings while the dashboard's first load is on its way, when the address
+ *  has it open (a reload there, lib/dashboard-tab.ts): its bar with the title
+ *  it will have, then its list's rows, or a section's first card, still to
+ *  come (components/Settings.tsx). */
+export function SettingsSkeleton({ view }: { view: SettingsView }) {
+  useInStep();
+  return (
+    <section className="settings" aria-busy="true" aria-labelledby="settings-loading-title">
+      <div className="settings-bar" inert>
+        <button className="icon-btn" aria-label={view === 'list' ? 'Close Settings' : 'Back to Settings'}>
+          {BACK_ARROW}
+        </button>
+        <h2 id="settings-loading-title">{view === 'list' ? 'Settings' : SETTINGS_TITLES[view]}</h2>
+      </div>
+      {view === 'list' ? (
+        <RowsSkeleton count={Object.keys(SETTINGS_TITLES).length} className="card list-rows" />
+      ) : (
+        <section className="card stack" aria-hidden="true">
+          <div className="card-header">
+            <h3>
+              <span className="skeleton rows-skeleton-title" />
+            </h3>
+          </div>
+          <RowsSkeleton count={3} />
+        </section>
+      )}
+      <Status label="Loading" />
+    </section>
+  );
+}
+
 /** The open tab while the dashboard's first load is on its way, on the
  *  segment it will open on. */
 export function TabSkeleton({
@@ -481,8 +521,9 @@ export function TabSkeleton({
  *  dashboard arriving changes nothing: hide amounts works, Refresh turns,
  *  unavailable, and the account menu's place holds the circle the
  *  dashboard's own keeps until Clerk draws the avatar (ClerkAccount). The
- *  Settings gear of password mode does nothing until the dashboard is in. */
-export function AppLoading({ account, tab = 'home' }: { account: 'clerk' | 'password'; tab?: Tab }) {
+ *  Settings gear of password mode does nothing until the dashboard is in.
+ *  With Settings in the address, Settings' loading view in place of the tab's. */
+export function AppLoading({ account, tab = 'home', settings = null }: { account: 'clerk' | 'password'; tab?: Tab; settings?: SettingsView | null }) {
   return (
     <main className="wrap">
       <div className="top-row">
@@ -503,7 +544,7 @@ export function AppLoading({ account, tab = 'home' }: { account: 'clerk' | 'pass
           )}
         </div>
       </div>
-      <TabSkeleton tab={tab} />
+      {settings ? <SettingsSkeleton view={settings} /> : <TabSkeleton tab={tab} />}
     </main>
   );
 }

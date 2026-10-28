@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach, setSystemTime } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SharingPanelView, SharedWithMeView, PreviewView, SharedAccountItem, shortDate, sharedTxnAmount, endedText } from '@/components/Sharing';
+import { ConnectionView, SharingListView, SharedWithMeView, PreviewView, SharedAccountItem, shortDate, sharedTxnAmount, endedText } from '@/components/Sharing';
 import { formatMoney } from '@/lib/format';
 import {
   endAfterDays,
@@ -30,38 +30,52 @@ type PanelOpts = {
   records?: any;
   recordsFailed?: boolean;
   damaged?: any;
+  notice?: string;
 };
-const panel = (data: any, opts: PanelOpts = {}) =>
-  renderToStaticMarkup(
-    <SharingPanelView
+/** A person's sheet (ConnectionView) with `current`, else the list in place
+ *  on Settings > Sharing (SharingListView). */
+const panel = (data: any, opts: PanelOpts = {}) => {
+  if (!opts.current)
+    return renderToStaticMarkup(
+      <SharingListView
+        data={data}
+        invite={opts.invite ?? null}
+        busy={false}
+        error={opts.error ?? ''}
+        notice={opts.notice ?? ''}
+        damaged={opts.damaged ?? null}
+        onOpen={noop}
+        onInvite={noop}
+        onClearDamaged={noop}
+        onUnblock={noop}
+      />
+    );
+  return renderToStaticMarkup(
+    <ConnectionView
       data={data}
-      current={opts.current ?? null}
+      current={opts.current}
       draft={opts.draft ?? {}}
-      labelDraft={opts.current?.label ?? ''}
-      endChoice={opts.endChoice ?? (opts.current?.expires_at ? 'keep' : 'none')}
+      labelDraft={opts.current.label}
+      endChoice={opts.endChoice ?? (opts.current.expires_at ? 'keep' : 'none')}
       endDay={opts.endDay ?? ''}
-      invite={opts.invite ?? null}
       busy={false}
       error={opts.error ?? ''}
       notice=""
-      onOpen={noop}
       onChoose={noop}
       onLabel={noop}
       onEndChoice={noop}
       onEndDay={noop}
-      onInvite={noop}
       onSave={noop}
       onRenew={noop}
       onPreview={noop}
       records={opts.records ?? null}
       recordsFailed={opts.recordsFailed ?? false}
       onShowAll={noop}
-      damaged={opts.damaged ?? null}
       onClearRecord={noop}
-      onClearDamaged={noop}
       onRemove={noop}
     />
   );
+};
 const pat = {
   id: 'c1',
   label: 'Pat',
@@ -121,10 +135,44 @@ describe('dates', () => {
   });
 });
 
-describe('the sharing drawer', () => {
-  test('shows a load error rather than nothing, and a spinner while loading', () => {
-    expect(panel(null, { error: 'Could not load sharing.' })).toContain('Could not load sharing.');
-    expect(panel(null)).toContain('role="status"');
+describe('Settings > Sharing, the list in place, and a person’s sheet', () => {
+  test('shows a load error rather than nothing, and placeholders while loading', () => {
+    const failed = panel(null, { error: 'Could not load sharing.' });
+    expect(failed).toContain('<div class="notice critical">');
+    expect(failed).toContain('Could not load sharing.');
+    const loading = panel(null);
+    expect(loading).toContain('<p class="visually-hidden" role="status">Loading</p>');
+    expect(loading).toContain('class="skeleton rows-skeleton-title"');
+    expect(loading).not.toContain('spinner');
+  });
+
+  test('the list is cards on the screen: Invite someone and People, each person a row that opens their sheet', () => {
+    const html = panel({ enabled: true, connections: [pat], blocked: [], accounts });
+    expect(html).toContain('<section class="card stack" aria-labelledby="sharing-invite-title"><div class="card-header"><h2 id="sharing-invite-title">Invite someone</h2></div>');
+    expect(html).toContain('<h2 id="sharing-people-title" tabindex="-1">People</h2>');
+    expect(html).toContain('<ul class="list-rows"><li><button class="list-row" aria-haspopup="dialog">');
+    expect(html).toContain('<button class="btn">Create invite link</button>');
+    // No sheet styling left on the screen, and no inline spacing.
+    for (const old of ['panel-section', 'section-label', 'peer-item', 'style=']) expect(html).not.toContain(old);
+  });
+
+  test('the blocked: each a row with Unblock beside it, never a button inside a button', () => {
+    const html = panel({ enabled: true, connections: [], blocked: [{ id: 'c9', label: 'Ex' }], accounts });
+    expect(html).toContain('<h2 id="sharing-blocked-title">Blocked</h2>');
+    const row = html.slice(html.indexOf('<div class="list-row">'), html.indexOf('</li>', html.indexOf('<div class="list-row">')));
+    expect(row).toContain('<span class="list-row-title">Ex</span>');
+    expect(row).toContain('<button class="btn secondary">Unblock</button>');
+  });
+
+  test('what the list’s actions did is said in its one status region, always there', () => {
+    const quiet = panel({ enabled: true, connections: [], accounts });
+    expect(quiet).toContain('<div role="status"></div>');
+    const done = panel({ enabled: true, connections: [], accounts }, { notice: 'Unblocked.' });
+    expect(done).toContain('<div role="status"><div class="notice done">');
+    expect(text(done)).toContain('Unblocked.');
+    const failed = panel({ enabled: true, connections: [], accounts }, { error: 'Something went wrong.' });
+    expect(failed).toContain('<div role="status"><div class="notice critical">');
+    expect(failed.match(/role="status"/g)).toHaveLength(1);
   });
 
   test('says sharing needs accounts with the shared password', () => {
@@ -588,6 +636,10 @@ describe('a connection’s end, preview and records in the drawer', () => {
       'A record of showings can’t be read, and Nya can’t tell whose it is: someone you’re no longer connected with, or someone whose record id can’t be read.'
     );
     for (const nothing of [{ damaged: [], maybe_connected: false }, null]) expect(list(nothing)).not.toContain('can’t be read');
+    // A caution, as it was, with its button in it.
+    const html = panel({ enabled: true, connections: [pat], accounts }, { damaged: { damaged: ['a'.repeat(32)], maybe_connected: false } });
+    expect(html).toContain('<div class="notice caution">');
+    expect(html).toContain('<button class="btn secondary">Clear it</button>');
   });
 });
 
