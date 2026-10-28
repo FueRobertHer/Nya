@@ -120,9 +120,15 @@ function fmtTime(iso: string | null): string | null {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-// What a row files under, for the status line: its category's id, or its
-// category's words where the taxonomy can't be read.
-const filedUnder = (t: Pick<Txn, 'category_id' | 'category'>) => t.category_id ?? t.category ?? null;
+// What a row files under, for the status line: its category's id and its
+// category's words. Saved without the taxonomy, a row keeps only the words.
+type Filed = { id: string | null; words: string | null };
+const filedUnder = (t: Pick<Txn, 'category_id' | 'category'>): Filed => ({ id: t.category_id ?? null, words: t.category ?? null });
+// Still filed under what was kept: the same id, or no id now and the same words.
+const stillFiled = (kept: Filed, t: Pick<Txn, 'category_id' | 'category'>) => {
+  const now = filedUnder(t);
+  return now.id !== null ? now.id === kept.id : now.words !== null && now.words === kept.words;
+};
 
 /** "Thu, Oct 22, 2026". */
 function longDay(iso: string): string {
@@ -276,7 +282,7 @@ function TxnSheet({
   // files under what it kept (its category's id, not its name, which can
   // change on saving), and picking a category clears it, so a choice made
   // while the save is out, or after, never reads as kept.
-  const [announced, setAnnounced] = useState<{ id: string; kept: string | null } | { id: string; excluded: boolean } | null>(null);
+  const [announced, setAnnounced] = useState<{ id: string; kept: Filed } | { id: string; excluded: boolean } | null>(null);
   const forgetKept = () => setAnnounced((a) => (a && 'kept' in a ? null : a));
   // Include on a pending row takes its row away (exclusionOffer: it can't be
   // excluded again until it posts): focus goes to the line said in its place.
@@ -497,7 +503,7 @@ function TxnSheet({
             {announced?.id !== t.transaction_id
               ? ''
               : 'kept' in announced
-                ? announced.kept === filedUnder(t)
+                ? stillFiled(announced.kept, t)
                   ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
                   : ''
                 : announced.excluded === (t.excluded === true)

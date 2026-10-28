@@ -389,6 +389,22 @@ describe('a transaction’s sheet', () => {
     v.unmount();
   });
 
+  test('without the categories read, Looks right is still said once its words are saved', async () => {
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    const { recategorizedRow } = await import('@/components/transaction-edits');
+    const choices: CategoryChoice[] = [];
+    const onRecategorize = (_id: string, choice: CategoryChoice) => (choices.push(choice), Promise.resolve(true));
+    const v = mount({ taxonomy: null, txns: served().map(low), onRecategorize });
+    await v.open('Whole Foods');
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    // The row as the dashboard shows it once saved by its words: no id now.
+    v.render({ taxonomy: null, onRecategorize, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...low(t), ...recategorizedRow(low(t), choices[0], null) } : t)) });
+    await settle();
+    expect(choices).toEqual([{ category: 'groceries' }]);
+    expect(v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent).toBe('Category kept: groceries.');
+    v.unmount();
+  });
+
   test('a pending row keeps its mark without Looks right: a choice is kept by id, and it gets a new one when it posts', async () => {
     const v = mount({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'UNKNOWN', pending: true } : t)) });
     await v.open('Whole Foods');
