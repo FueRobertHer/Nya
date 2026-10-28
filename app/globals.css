@@ -1852,6 +1852,10 @@ button:disabled:where(:not([class*="cl-"])) {
   -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid var(--border-subtle);
   padding-bottom: env(safe-area-inset-bottom);
+  /* The glass spans the window, but the tabs keep to the content column
+     (.wrap's 760px), so on a wide window they don't sit 250px apart. */
+  padding-left: max(env(safe-area-inset-left, 0px), calc((100% - 760px) / 2));
+  padding-right: max(env(safe-area-inset-right, 0px), calc((100% - 760px) / 2));
 }
 
 .tab-bar button {
