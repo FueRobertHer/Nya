@@ -1,15 +1,15 @@
 'use client';
 
 // Activity's pinned bar (docs/design/information-architecture.md#activity):
-// the month (components/MonthStepper.tsx), the tab's ⋯ (adding or importing
-// transactions, when a manual account takes them), and its three segments.
-// The month's row is there on every segment, as tall, so the segments stay
-// put: on Shared, which isn't by month, it holds only the ⋯, or nothing.
+// the month (components/MonthStepper.tsx) over its three segments, the same
+// row as Budgets' on Month. The month's row is there on every segment, as
+// tall, so the segments stay put: on Shared, which isn't by month, it holds
+// nothing. Adding or importing a transaction is in the Transactions card's
+// ⋯ (components/MonthBreakdown.tsx), on the list it adds to.
 // The segments follow the WAI-ARIA tabs pattern: one tab stop, the arrow
 // keys, Home and End move between them and choose as they go.
 
 import { useRef, type KeyboardEvent } from 'react';
-import { Menu, type MenuItem } from './Menu';
 import MonthStepper, { chevron, LEFT, RIGHT } from './MonthStepper';
 
 export type ActivitySegment = 'transactions' | 'spending' | 'shared';
@@ -54,13 +54,12 @@ export default function ActivityBar({
   month,
   segment,
   onSegment,
-  menu,
   monthPending = false,
 }: {
   /** The month shown, or null to leave the stepper out: on Shared, whose
    *  balances aren't by month, and before there is one. Its row stays,
-   *  empty but for the ⋯, so the segments never move as the view changes
-   *  (the screen review after step 5). */
+   *  empty and as tall as the month's two lines, so the segments never move
+   *  as the view changes (the screen review after step 5). */
   month: ActivityMonth | null;
   /** With no month yet, while the transactions load: the stepper drawn
    *  with a placeholder for its name, so it doesn't push the list down when
@@ -68,8 +67,6 @@ export default function ActivityBar({
   monthPending?: boolean;
   segment: ActivitySegment;
   onSegment: (s: ActivitySegment) => void;
-  /** The ⋯'s items; none leaves it out. */
-  menu: MenuItem[];
 }) {
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const at = ACTIVITY_SEGMENTS.findIndex((s) => s.key === segment);
@@ -82,7 +79,6 @@ export default function ActivityBar({
     tabs.current[to]?.focus();
   };
 
-  const dots = menu.length > 0 ? <Menu label="Activity options" items={menu} /> : null;
   return (
     <div className="activity-bar">
       {month !== null || monthPending ? (
@@ -96,10 +92,9 @@ export default function ActivityBar({
           onMonth={month?.onMonth ?? (() => {})}
           back={month?.back ?? null}
           skeleton="activity-skeleton-month"
-          end={dots}
         />
       ) : (
-        <div className="activity-month">{dots}</div>
+        <div className="activity-month" />
       )}
       <div className="segmented" role="tablist" aria-label="Activity" onKeyDown={onKeyDown}>
         {ACTIVITY_SEGMENTS.map((s, i) => (

@@ -354,10 +354,12 @@ describe('the calendar, redrawn', () => {
       expect(title()).toBe('November 2026');
       const today = button('This month')!;
       expect(today.getAttribute('class')).toBe('btn ghost month-stepper-back');
-      // After the month's name, outside what is announced as it changes and
-      // outside the list laid over the name.
+      // On its own line under the month's name, outside what is announced as
+      // it changes and outside the list laid over the name. The calendar
+      // holds that line as the bars do, so its days never move down.
       const live = host.findAll((e) => e.getAttribute('aria-live') === 'polite')[0]!;
       expect(today.parentElement).toBe(live.parentElement!.parentElement);
+      expect((today.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper');
       expect(live.textContent).toBe('November 2026');
       press(today);
       expect(title()).toBe('October 2026');

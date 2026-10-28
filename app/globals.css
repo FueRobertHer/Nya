@@ -934,11 +934,11 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 /* Activity's, Budgets' and the Plan's pinned bars (components/ActivityBar.tsx,
    components/BudgetsBar.tsx, components/PlanBar.tsx). Activity's: the month
-   (.month-stepper) and the tab's ⋯ over its segments, kept in view under the
-   status bar while the segment scrolls. Budgets': its heading (the month on
-   Month) over its segments. The Plan's: its heading (your plan,
-   with Scenarios, or the scenario open, after the arrow back) over its
-   segments. */
+   (.month-stepper) over its segments, kept in view under the status bar
+   while the segment scrolls. Budgets': its heading (the month on Month)
+   over its segments, the same row as Activity's. The Plan's: its heading
+   (your plan, with Scenarios, or the scenario open, after the arrow back)
+   over its segments. */
 .activity-bar,
 .budgets-bar,
 .plan-bar {
@@ -952,42 +952,66 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   background: var(--canvas);
 }
 
-/* Activity's row on Shared, which has no month (its ⋯, or nothing), and
-   Budgets' on Upcoming and Goals (nothing on screen): as tall as the month's
-   row, so the segments under them never move. */
+/* Activity's row on Shared, which has no month, and Budgets' on Upcoming
+   and Goals (nothing on screen on either): as tall as the month's two lines
+   (its name's 44px, and This month's 32px line, held), so the segments
+   under them never move. */
 .activity-month,
 .budgets-heading {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  min-height: var(--tap);
+  min-height: calc(var(--tap) + 32px);
 }
 
 /* The month (components/MonthStepper.tsx): Activity's, Budgets' on Month
-   and the calendar's. Its arrows either side of the name, which the list of
-   months lies over, and This month after the name when another month shows.
-   At 320px that doesn't fit beside the name and wraps under it; the arrows
-   and Activity's ⋯ keep to the first line, where a second tap finds them. */
+   and the calendar's, the same at every width. A grid: its arrows either
+   side of the name, which the list of months lies over, and on a line of
+   its own under the name This month, when another month shows. That line
+   is held while This month isn't there, so the row is as tall on every
+   month and nothing under it moves as the months step: a tab's bar, and
+   the calendar's card. The line is 32px, as a chip is, so it costs the
+   bar less than a full row. */
 .month-stepper {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--sp-1);
-  min-height: var(--tap);
-}
-
-.month-stepper-mid {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: var(--tap) minmax(0, 1fr) var(--tap);
+  grid-template-rows: minmax(var(--tap), auto) minmax(32px, auto);
+  align-items: start;
   column-gap: var(--sp-1);
-  min-width: 0;
 }
 
-/* The name and its chevron, with the native select laid unseen over them
-   alone (never over This month), so a tap on the name picks any month. */
+/* This month: under the name, as wide as its words, a small ghost button
+   (13px words after a return arrow) on the 32px line. Its hit area still
+   reaches 44px, 6px into the name's row above and the gap below, as a
+   chip's does; laid after the name, it takes the taps there. */
+.month-stepper-back {
+  position: relative;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: center;
+  gap: var(--sp-1);
+  min-height: 32px;
+  padding-block: 0;
+  font-size: var(--fs-2);
+}
+
+.month-stepper-back::after {
+  content: "";
+  position: absolute;
+  inset: calc((32px - var(--tap)) / 2) 0;
+}
+
+.month-stepper-back > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* The name and its chevron, centered between the arrows, with the native
+   select laid unseen over them alone (never over This month), so a tap on
+   the name picks any month. */
 .month-stepper-name {
+  justify-self: center;
   position: relative;
   display: flex;
   align-items: center;
@@ -1067,29 +1091,18 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   scroll-margin-top: calc(env(safe-area-inset-top, 0px) + var(--sp-2));
 }
 
-/* Shared has no month: its ⋯ keeps to the right. */
-.activity-month > .menu-anchor {
-  margin-left: auto;
-}
-
-/* What a jump scrolls to on Activity (a segment chosen from the pinned bar,
-   a cash-flow pick's list, the review count) stops under the bar, not behind it: the bar's two 44px rows (the
-   segments' with their track's padding), its padding and gap, under the
-   status bar. */
+/* What a jump scrolls to on Activity and Budgets (a segment chosen from the
+   pinned bar, a cash-flow pick's list, the review count) stops under the
+   bar, not behind it: the bar's rows (the month's 44px and This month's
+   32px line held, or the row as tall without a month; then the segments'
+   44px with their track's padding), its padding and gap, under the status
+   bar. The bar is as tall on every month and segment, so this is
+   the one stop. */
 .activity-panel,
 .activity-panel :is(.card, .flow-shown, .review-count),
 .budgets-panel,
 .budgets-panel .card {
-  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 2 * var(--tap) + 4 * var(--sp-2));
-}
-
-/* Away from the month the tab opens on, This month may wrap under the
-   month's name (a narrow screen), and the bar is a 44px row taller. Where
-   it doesn't wrap, the jump stops that much lower: a gap, never hidden. */
-:is(.activity-bar, .budgets-bar):has(.month-stepper-back) ~ :is(.activity-panel, .budgets-panel),
-:is(.activity-bar, .budgets-bar):has(.month-stepper-back) ~ .activity-panel :is(.card, .flow-shown, .review-count),
-:is(.activity-bar, .budgets-bar):has(.month-stepper-back) ~ .budgets-panel .card {
-  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 3 * var(--tap) + 4 * var(--sp-2));
+  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 2 * var(--tap) + 32px + 4 * var(--sp-2));
 }
 
 /* Badge: a status or source label, not clickable. Chip: clickable, 32px
@@ -6949,6 +6962,13 @@ button.cash-flow-show {
 .cash-flow-tag {
   color: var(--text-2);
   font-size: var(--fs-1);
+}
+
+/* The Activity list's title row: 44px tall with the ⋯ (a manual account to
+   add to) or without, and in its skeleton, so the list never drops when the
+   ⋯ comes with it. */
+.txn-list-header {
+  min-height: var(--tap);
 }
 
 /* Above the Activity list: which node's transactions it shows, and the way

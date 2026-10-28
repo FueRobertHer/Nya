@@ -175,6 +175,8 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .sticky { position: sticky; top: 0; background: var(--canvas); padding: 10px 0 2px; display: grid; gap: 8px; z-index: 2; }
 .app .monthbar { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
 .app .monthbar .arrow { width: 32px; height: 32px; display: grid; place-items: center; color: var(--text-2); }
+/* Activity's and Budgets' row (MonthStepper): the arrows either side of the name, and under it a line held for This month, empty on the month the tab opens on, so the row never changes size; the rows without a month are as tall. */
+.app .monthbar.month { display: grid; grid-template-columns: 32px 1fr 32px; grid-template-rows: 32px 32px; align-items: center; justify-items: center; }
 .app dl.kv { margin: 0; display: grid; gap: 0; }
 .app dl.kv div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border-subtle); font-size: 14px; }
 .app dl.kv div:first-child { border-top: 0; }
@@ -567,7 +569,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"><svg width="18" height="18"><use href="#i-dots"/></svg></span></div>
+              <div class="monthbar month"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"></span></div>
               <div class="seg"><span class="on">Transactions</span><span>Spending</span><span>Shared</span></div>
             </div>
             <div>
@@ -577,6 +579,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="field"><svg><use href="#i-search"/></svg>Search transactions</div>
             <div class="chips"><span class="chip"><span class="unsure"></span>Unsure category (1)</span><span class="chip on">To review</span><span class="chip">Tag</span><span class="chip">Receipt</span></div>
             <div class="card flush">
+              <div class="card-header"><h2>Transactions</h2><span class="meta">48</span><span class="ibtn" style="border:0;width:30px;height:30px"><svg><use href="#i-dots"/></svg></span></div>
               <div class="daybar"><span>Thu, Oct 22</span><span class="money">-$84.17</span></div>
               <div class="row"><span class="row-ico">W</span><div class="main"><span class="title">Whole Foods Market</span><span class="sub">Groceries · Chase ••4421</span></div><div class="end"><span class="money">-$62.40</span></div></div>
               <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Shell</span><span class="sub">Gas <span class="badge">Pending</span></span></div><div class="end"><span class="money">-$21.77</span></div></div>
@@ -588,14 +591,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). In, Out and Net are one strip under the bar, on the page and signed, said once on the tab. The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode.</figcaption>
+        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). In, Out and Net are one strip under the bar, on the page and signed, said once on the tab. The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode. The month's row is Budgets' own: under the name a line held for This month, empty on the month the tab opens on, so stepping months never moves the list. Adding and importing a transaction are in the Transactions card's ⋯.</figcaption>
       </figure>
 
       <figure class="shot">
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"><svg width="18" height="18"><use href="#i-dots"/></svg></span></div>
+              <div class="monthbar month"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"></span></div>
               <div class="seg"><span>Transactions</span><span class="on">Spending</span><span>Shared</span></div>
             </div>
             <div class="seg" style="max-width:240px"><span class="on">1M</span><span>3M</span><span>12M</span><span>YTD</span></div>
@@ -679,7 +682,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"></span></div>
+              <div class="monthbar month"><span class="arrow"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>October 2026</span><span class="arrow"></span></div>
               <div class="seg"><span class="on">Month</span><span>Upcoming</span><span>Goals</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Chase hasn't synced since Oct 21, so this month may be missing some of its transactions.</span></div>
@@ -706,7 +709,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span class="arrow"></span></div>
+              <div class="monthbar month"><span class="arrow"></span></div>
               <div class="seg"><span>Month</span><span class="on">Upcoming</span><span>Goals</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Chase hasn't synced since Oct 21, so bills and income there may be missing or out of date.</span></div>
@@ -739,7 +742,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span class="arrow"></span></div>
+              <div class="monthbar month"><span class="arrow"></span></div>
               <div class="seg"><span>Month</span><span>Upcoming</span><span class="on">Goals</span></div>
             </div>
             <div class="card flush">

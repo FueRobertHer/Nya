@@ -4,13 +4,27 @@
 // wider screens (styles in app/globals.css). Closes on the backdrop or the
 // close button; Escape goes back a level if there is one, else closes. While
 // open the page behind it doesn't scroll, and focus moves into it and back to
-// where it was when it closes (if that is still on the page).
+// where it was when it closes (if that is still on the page; if not, to what
+// the control's owner named instead, focusInsteadOf).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 // The slide-out transition: --dur-base in app/globals.css (the guard checks
 // they match), so it comes off the page as it finishes sliding.
 const CLOSE_MS = 220;
+
+// Where focus goes when the control a sheet was opened from has left the
+// page by the time the sheet closes (a save read the list again and drew
+// its card anew, the control with it), as the control's owner names it
+// (Menu's focusInstead). Held weakly, so a control gone for good takes its
+// entry with it.
+const insteadOf = new WeakMap<Element, () => HTMLElement | null>();
+
+/** Focus goes to what `to` gives, then, when a sheet opened from `opener`
+ *  closes after `opener` has left the page, rather than to nothing. */
+export function focusInsteadOf(opener: Element, to: () => HTMLElement | null) {
+  insteadOf.set(opener, to);
+}
 
 export function Sheet({
   open,
@@ -71,8 +85,11 @@ export function Sheet({
     return () => {
       window.removeEventListener('keydown', onKey);
       root.style.overflow = overflow;
-      // Opened from a menu that has since closed: nothing to go back to.
-      if (before?.isConnected) before.focus({ preventScroll: true });
+      // Opened from a control that has since left the page: what its owner
+      // named instead (a menu that has since closed names nothing, and
+      // focus stays where it falls).
+      const back = !before || before.isConnected ? before : (insteadOf.get(before)?.() ?? null);
+      if (back?.isConnected) back.focus({ preventScroll: true });
     };
   }, [active]);
 

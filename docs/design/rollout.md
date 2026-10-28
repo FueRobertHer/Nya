@@ -889,6 +889,21 @@ The same review found Activity saying In, Out and Net three times (Out unsigned)
 - Activity's own empty screen, a past month with no budget, and the Budgets and Goals skeletons (which can't know a month will be empty) are as before.
 - The strip's "Transfers and loan payments excluded" and Cash flow's "Transfers, cash withdrawals and loan payments are left out" say nearly the same thing in different words; rewording either is a follow-up.
 
+## After the screen review: the month row
+
+On Activity and Budgets the month row still changed as the months stepped: at 320px This month wrapped under the name and the bar grew by a 44px line on some months and not others; at 375px the name slid aside to make room for it; and Activity's ⋯ on the same line put its arrows and name 24px left of Budgets', popping in after the list loaded. One PR, branch `fix/month-row`.
+
+**Built:**
+
+- **This month's line is always held** (`components/MonthStepper.tsx`, `.month-stepper`): the stepper is a grid, the arrows and the name on the first line and the return button on the second, at every width, in the order they are seen. On a tab's bar the second line is there, empty, on the month the tab returns to; the bar is 32px taller, chosen over a row that changes size. The return button is a small ghost on that line (a return arrow before 13px words, the line 32px, the hit area still 44px), so the held line costs less than a full row. The calendar holds it too, so its days don't drop 44px stepping off this month on a wide screen, where before the button sat beside the name.
+- **The rows without a month are as tall** (`.activity-month`, `.budgets-heading`, the month's 44px and This month's 32px), so switching segments moves nothing either, and a jump stops under the bar at one height (the `:has(.month-stepper-back)` scroll margin is gone).
+- **Activity's ⋯ is in the Transactions card's header**, after the count, named "Options for transactions", as an institution card's is in its header: the month row is the same on Activity, Budgets and the calendar. Spending and Shared have none. The header is 44px tall with or without it, and so is its skeleton. A sheet it opened gives focus to the list's heading when an import has drawn the card anew meanwhile (`focusInsteadOf` in `components/Sheet.tsx`, Menu's `focusInstead`).
+
+**Kept narrow:**
+
+- Upcoming, Goals and Shared open with the empty two-line row, to keep the segments still.
+- Budgets' past-month notice and the starter sets' offer at the top of the Month panel still differ by month, on purpose: warnings keep their words.
+
 ## After the light accent review
 
 A review of the light theme on 2026-10-28 (the design system artifact's audit.md, "Light accent review") found the logo's navy only in the small header mark and the primary button, so light read as gold on grey while dark is gold on navy. The accent now acts and gold measures: every control in light is navy, gold keeps the measures, and both logo inks show in both themes. Dark looks the same apart from the solid washes, the unfaded estimates and the measured slice. One PR, branch `design/light-accent`.
