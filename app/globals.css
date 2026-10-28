@@ -67,41 +67,43 @@
   color-scheme: dark;
 
   /* Surfaces */
-  --canvas: #0d0f14;
-  --surface: #151821;
-  --elevated: #1c202b;
-  --glass: rgba(21, 24, 33, 0.88); /* header and tab bar, over a blur */
+  --canvas: #0b1019;
+  --surface: #131a27;
+  --elevated: #1b2333;
+  --glass: rgba(19, 26, 39, 0.88); /* header and tab bar, over a blur */
 
   /* Lines */
-  --border-subtle: #232834; /* dividers between rows */
-  --border-strong: #2b3140; /* card and sheet edges */
-  --border-input: #707889; /* a control's edge (fields, chips, a secondary button on a fill of its own): 3:1 on canvas, surface and elevated */
+  --border-subtle: #222b3c; /* dividers between rows */
+  --border-strong: #2e384c; /* card and sheet edges */
+  --border-input: #6f7b91; /* a control's edge (fields, chips, a secondary button on a fill of its own): 3:1 on canvas, surface and elevated */
 
   /* Text */
-  --text-1: #eceef2;
-  --text-2: #9499a6;
-  --text-3: #868c9b;
+  --text-1: #eeece7;
+  --text-2: #9ba4b5;
+  --text-3: #8b94a6;
 
   /* Meaning, as text or icon color */
-  --accent: #5b8def; /* links, selected states, focus */
-  --pos: #34d399;
-  --neg: #f87171;
-  --warn: #fbbf24;
+  --accent: #d4b680; /* links, selected states, focus */
+  --pos: #4ade9b;
+  --neg: #f7857a;
+  --warn: #fb9a4b;
 
   /* Meaning, as a background tint (text in the matching color sits on it) */
-  --accent-tint: #1d263a;
-  --pos-tint: #192e2f;
-  --neg-tint: #30232b;
-  --warn-tint: #312c21;
-  --caveat-surface: #191d27; /* neutral information notices */
+  --accent-tint: #2a2a24;
+  --pos-tint: #15302c;
+  --neg-tint: #352229;
+  --warn-tint: #35281e;
+  --caveat-surface: #182031; /* neutral information notices */
 
-  /* Fills with white labels */
-  --accent-fill: #2563eb;
+  /* Fills, each with its label: --on-accent-fill on the primary, --on-fill on danger */
+  --accent-fill: #cdae74;
+  --on-accent-fill: #0b1019; /* the primary button's label: ink on brass */
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
   --logo-tile: #ffffff;
+  --brand-mark: #bfa271; /* the header logo's one ink: the logo gold */
 
-  --focus: #5b8def;
+  --focus: #d4b680;
   --scrim: rgba(0, 0, 0, 0.55);
   --shadow: rgba(0, 0, 0, 0.45); /* under a sheet */
 
@@ -130,32 +132,34 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --canvas: #f6f7f9;
+    --canvas: #f4f5f8;
     --surface: #ffffff;
-    --elevated: #f0f2f6;
+    --elevated: #eef0f4;
     --glass: rgba(255, 255, 255, 0.88);
-    --border-subtle: #e6e8ef;
-    --border-strong: #d5d9e2;
-    --border-input: #757c8a;
-    --text-1: #11141c;
-    --text-2: #525866;
-    --text-3: #636a77;
-    --accent: #2563eb;
+    --border-subtle: #e3e6ec;
+    --border-strong: #d3d8e1;
+    --border-input: #737c8c;
+    --text-1: #111826;
+    --text-2: #4f5869;
+    --text-3: #5e6777;
+    --accent: #846326;
     --pos: #047857;
     --neg: #b91c1c;
-    --warn: #92400e;
-    --accent-tint: #eef3fd;
-    --pos-tint: #ebf4f2;
-    --neg-tint: #fceeee;
-    --warn-tint: #fcf4eb;
-    --caveat-surface: #f1f3f8;
-    --accent-fill: #2563eb;
+    --warn: #a3410b;
+    --accent-tint: #f6f0e4;
+    --pos-tint: #e8f5ef;
+    --neg-tint: #fbecec;
+    --warn-tint: #fcefe6;
+    --caveat-surface: #f1f3f7;
+    --accent-fill: #18243d;
+    --on-accent-fill: #ffffff;
     --danger-fill: #dc2626;
     --on-fill: #ffffff;
     --logo-tile: #ffffff;
-    --focus: #2563eb;
-    --scrim: rgba(17, 20, 28, 0.4);
-    --shadow: rgba(17, 20, 28, 0.16);
+    --brand-mark: #18243d;
+    --focus: #846326;
+    --scrim: rgba(17, 24, 38, 0.4);
+    --shadow: rgba(17, 24, 38, 0.16);
     --tag-gray: #4b5262;
     --tag-gray-tint: #eef0f3;
     --tag-red: #b42323;
@@ -179,32 +183,34 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --canvas: #f6f7f9;
+  --canvas: #f4f5f8;
   --surface: #ffffff;
-  --elevated: #f0f2f6;
+  --elevated: #eef0f4;
   --glass: rgba(255, 255, 255, 0.88);
-  --border-subtle: #e6e8ef;
-  --border-strong: #d5d9e2;
-  --border-input: #757c8a;
-  --text-1: #11141c;
-  --text-2: #525866;
-  --text-3: #636a77;
-  --accent: #2563eb;
+  --border-subtle: #e3e6ec;
+  --border-strong: #d3d8e1;
+  --border-input: #737c8c;
+  --text-1: #111826;
+  --text-2: #4f5869;
+  --text-3: #5e6777;
+  --accent: #846326;
   --pos: #047857;
   --neg: #b91c1c;
-  --warn: #92400e;
-  --accent-tint: #eef3fd;
-  --pos-tint: #ebf4f2;
-  --neg-tint: #fceeee;
-  --warn-tint: #fcf4eb;
-  --caveat-surface: #f1f3f8;
-  --accent-fill: #2563eb;
+  --warn: #a3410b;
+  --accent-tint: #f6f0e4;
+  --pos-tint: #e8f5ef;
+  --neg-tint: #fbecec;
+  --warn-tint: #fcefe6;
+  --caveat-surface: #f1f3f7;
+  --accent-fill: #18243d;
+  --on-accent-fill: #ffffff;
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
   --logo-tile: #ffffff;
-  --focus: #2563eb;
-  --scrim: rgba(17, 20, 28, 0.4);
-  --shadow: rgba(17, 20, 28, 0.16);
+  --brand-mark: #18243d;
+  --focus: #846326;
+  --scrim: rgba(17, 24, 38, 0.4);
+  --shadow: rgba(17, 24, 38, 0.16);
   --tag-gray: #4b5262;
   --tag-gray-tint: #eef0f3;
   --tag-red: #b42323;
@@ -266,6 +272,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
   /* No grey flash on tap in mobile Safari; buttons show their own press. */
   -webkit-tap-highlight-color: transparent;
+}
+
+/* A link inside a sentence is underlined: brass is close to body text in
+   lightness (1.65:1 dark, 3.21:1 light), so its hue alone can't mark it
+   (look and feel, step 4). A link with a class (a button, a row, the quiet
+   navigation in .trust-links and .report-nav) draws itself. */
+a:not([class]) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .wrap {
@@ -383,14 +399,15 @@ h2.total-label {
   margin-left: auto;
 }
 
-/* The fill is deeper than --accent so its white label passes AA (4.5:1).
+/* The primary: brass under an ink label in dark, the logo navy under a white
+   one in light (--on-accent-fill, 8.98:1 and 15.46:1).
    Not on Clerk's own buttons (classes cl-...): its window sets no width on
    "Update profile" or a row's ⋯, so the full width here squeezed the name and
    address beside them to a few letters. :where keeps this at no specificity,
    below every class rule, as the bare element selector was. */
 :where(button:not([class*="cl-"])) {
   background: var(--accent-fill);
-  color: var(--on-fill);
+  color: var(--on-accent-fill);
   border: none;
   padding: var(--sp-3) var(--sp-5);
   border-radius: var(--r-md);
@@ -701,7 +718,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   border: 1px solid transparent;
   border-radius: var(--r-md);
   background: var(--accent-fill);
-  color: var(--on-fill);
+  color: var(--on-accent-fill);
   font-size: var(--fs-3);
   font-weight: var(--fw-semibold);
   line-height: var(--lh-tight);
@@ -1978,6 +1995,13 @@ button:disabled:where(:not([class*="cl-"])) {
   border-radius: 50%;
 }
 
+/* A line's sample in its own dash (components/LegendLine.tsx), where two
+   lines are told apart by more than hue. */
+.chart-legend-line {
+  display: block;
+  flex-shrink: 0;
+}
+
 /* --- monthly breakdown (Activity tab) --- */
 
 /* In / Out / Net: on one line at any phone's width; past that (a very large
@@ -2183,8 +2207,12 @@ span.meter-fill {
   min-width: 2px;
 }
 
+/* A meter at caution (a budget from 85%, BudgetsCard's meterState, with no
+   word until Over's badge; a card's credit use from 50%, AccountSheet):
+   hatched, so caution reads apart from the brass fill by more than hue
+   (brass and orange are about 1.1:1 apart). */
 .meter-fill.warn {
-  background: var(--warn);
+  background: repeating-linear-gradient(135deg, var(--warn) 0 4px, var(--warn-tint) 4px 6px);
 }
 
 .meter-fill.over {
@@ -2287,10 +2315,6 @@ span.meter-fill {
   margin: 0;
   min-width: 0;
   word-break: break-word;
-}
-
-.txn-detail-row a {
-  color: var(--accent);
 }
 
 /* Account last-4 and credit-utilization meter on the Accounts tab. */
@@ -2525,36 +2549,23 @@ span.meter-fill {
   gap: 10px;
 }
 
-.brand-logo {
+/* The logo as a two-ink mark (components/Brand.tsx BrandLogo): one ink,
+   --brand-mark, which each theme and print set, through a mask whose white
+   and black must stay as drawn, so forced colors leaves it alone; there it
+   takes the forced text color, readable on the forced page. */
+.brand-mark {
   width: 34px;
   height: 34px;
-  border-radius: 50%;
   flex-shrink: 0;
   display: block;
+  color: var(--brand-mark);
+  forced-color-adjust: none;
 }
 
-/* The light theme's logo (components/Brand.tsx BrandLogo): the dark one
-   until the theme is light, by the theme's own selectors, and on paper. */
-.brand-logo.light {
-  display: none;
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .brand-logo.dark {
-    display: none;
+@media (forced-colors: active) {
+  .brand-mark {
+    color: CanvasText;
   }
-
-  :root:not([data-theme="dark"]) .brand-logo.light {
-    display: block;
-  }
-}
-
-:root[data-theme="light"] .brand-logo.dark {
-  display: none;
-}
-
-:root[data-theme="light"] .brand-logo.light {
-  display: block;
 }
 
 .brand h1 {
@@ -3626,10 +3637,6 @@ button.danger-outline {
   margin-top: 8px;
 }
 
-.download-card a {
-  color: var(--accent);
-}
-
 /* --- the receipt after deleting an account (components/DeletionReceipt.tsx) --- */
 
 .receipt-card {
@@ -3664,18 +3671,8 @@ button.danger-outline {
   overflow-wrap: anywhere;
 }
 
-.receipt-card a {
-  color: var(--accent);
-}
-
 .receipt-done {
   margin-top: 10px;
-}
-
-/* --- links inside notes, such as the Plaid Portal in the disconnect sheet --- */
-
-.panel-note a {
-  color: var(--accent);
 }
 
 /* --- security and privacy pages (app/security, app/privacy), the links to
@@ -3739,7 +3736,6 @@ button.danger-outline {
   line-height: 1.5;
 }
 
-.info-section a,
 .info-section code {
   color: var(--accent);
 }
@@ -4145,12 +4141,14 @@ button.plan-edit:disabled {
 /* A flexible rule's second figure in a cell: the lowest year's spending,
    "low 85%", which wraps after "low" where a cell is narrower than its
    46px (a 320px phone). */
+/* --text-1, as text-2 is short of 4.5:1 on the strongest cells (up to 46%
+   --accent); its size and weight keep it secondary. */
 .plan-grid-low {
   display: block;
   white-space: normal;
   font-size: var(--fs-1);
   font-weight: 500;
-  color: var(--muted);
+  color: var(--text-1);
 }
 
 .plan-grid td.plan-grid-cell {
@@ -4782,11 +4780,15 @@ button.plan-edit:disabled {
   background: var(--down);
 }
 
+/* Planned and due are brass and orange, about 1.1:1 apart, so each has its
+   own shape too: a ring, and a square. */
 .cal-dot.planned {
-  background: var(--accent);
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
 }
 
 .cal-dot.due {
+  border-radius: 1px;
   background: var(--warn);
 }
 
@@ -5299,32 +5301,34 @@ button.import-choice {
   :root:not([data-theme]),
   :root[data-theme] {
     color-scheme: light;
-    --canvas: #f6f7f9;
+    --canvas: #f4f5f8;
     --surface: #ffffff;
-    --elevated: #f0f2f6;
+    --elevated: #eef0f4;
     --glass: rgba(255, 255, 255, 0.88);
-    --border-subtle: #e6e8ef;
-    --border-strong: #d5d9e2;
-    --border-input: #757c8a;
-    --text-1: #11141c;
-    --text-2: #525866;
-    --text-3: #636a77;
-    --accent: #2563eb;
+    --border-subtle: #e3e6ec;
+    --border-strong: #d3d8e1;
+    --border-input: #737c8c;
+    --text-1: #111826;
+    --text-2: #4f5869;
+    --text-3: #5e6777;
+    --accent: #846326;
     --pos: #047857;
     --neg: #b91c1c;
-    --warn: #92400e;
-    --accent-tint: #eef3fd;
-    --pos-tint: #ebf4f2;
-    --neg-tint: #fceeee;
-    --warn-tint: #fcf4eb;
-    --caveat-surface: #f1f3f8;
-    --accent-fill: #2563eb;
+    --warn: #a3410b;
+    --accent-tint: #f6f0e4;
+    --pos-tint: #e8f5ef;
+    --neg-tint: #fbecec;
+    --warn-tint: #fcefe6;
+    --caveat-surface: #f1f3f7;
+    --accent-fill: #18243d;
+    --on-accent-fill: #ffffff;
     --danger-fill: #dc2626;
     --on-fill: #ffffff;
     --logo-tile: #ffffff;
-    --focus: #2563eb;
-    --scrim: rgba(17, 20, 28, 0.4);
-    --shadow: rgba(17, 20, 28, 0.16);
+    --brand-mark: #18243d;
+    --focus: #846326;
+    --scrim: rgba(17, 24, 38, 0.4);
+    --shadow: rgba(17, 24, 38, 0.16);
     --tag-gray: #4b5262;
     --tag-gray-tint: #eef0f3;
     --tag-red: #b42323;
@@ -5343,15 +5347,6 @@ button.import-choice {
     --tag-purple-tint: #f2ebfc;
     --tag-pink: #b3195f;
     --tag-pink-tint: #fbeaf2;
-  }
-
-  /* The light theme's logo, as on a light screen (.brand-logo.light). */
-  .brand-logo.dark {
-    display: none;
-  }
-
-  .brand-logo.light {
-    display: block;
   }
 
   :root:not([data-theme]),
@@ -7170,6 +7165,9 @@ button.review-keys-toggle {
    narrow phone rather than pushing the card wider. */
 .migration-link .link-btn {
   display: inline;
+  /* In a sentence, so underlined, as a link there is (a:not([class])). */
+  text-decoration: underline;
+  text-underline-offset: 2px;
   text-align: left;
   white-space: normal;
 }

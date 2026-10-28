@@ -12,6 +12,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { RunwayProjection } from '@/lib/report/runway';
 import { compactMoney, formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import { LegendLine } from './LegendLine';
 import { reportDay } from './ReportView';
 
 const W = 340;
@@ -20,6 +21,11 @@ const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 const PAD_BOTTOM = 20;
+// The two lines differ by dash as well as color: brass and coral are close
+// in lightness. Round caps lengthen each dash by the stroke's width, so
+// "0 4" draws dots.
+const WITH_DASH = '5 4';
+const WITHOUT_DASH = '0 4';
 
 // 2-3 clean tick values (1/2/5 x 10^n steps) inside [min, max].
 function niceTicks(min: number, max: number): number[] {
@@ -90,11 +96,11 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
     <div className="runway-chart">
       <div className="chart-legend">
         <span className="chart-legend-item">
-          <span className="chart-legend-dot" style={{ background: 'var(--accent)' }} />
+          <LegendLine color="var(--accent)" dash={WITH_DASH} />
           With income
         </span>
         <span className="chart-legend-item">
-          <span className="chart-legend-dot" style={{ background: 'var(--down)' }} />
+          <LegendLine color="var(--down)" dash={WITHOUT_DASH} />
           Without income
         </span>
       </div>
@@ -140,8 +146,8 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
           </g>
         ))}
         {showZero && <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(0)} y2={y(0)} stroke="var(--down)" strokeOpacity={0.6} strokeWidth={1} />}
-        <path d={geo.with} fill="none" stroke="var(--accent)" strokeWidth={2} strokeDasharray="5 4" strokeLinejoin="round" strokeLinecap="round" />
-        <path d={geo.without} fill="none" stroke="var(--down)" strokeWidth={2} strokeDasharray="5 4" strokeLinejoin="round" strokeLinecap="round" />
+        <path d={geo.with} fill="none" stroke="var(--accent)" strokeWidth={2} strokeDasharray={WITH_DASH} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={geo.without} fill="none" stroke="var(--down)" strokeWidth={2} strokeDasharray={WITHOUT_DASH} strokeLinejoin="round" strokeLinecap="round" />
         {marks.map((m) => {
           const p = points.find((q) => q.date === m.date)!;
           return <circle key={m.key} cx={x(days(m.date))} cy={y(p[m.key])} r={4} fill={m.color} stroke="var(--card)" strokeWidth={2} />;

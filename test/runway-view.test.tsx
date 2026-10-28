@@ -114,6 +114,19 @@ describe('the runway, drawn', () => {
     expect(text(draw(runway(), three({ months: 12 })))).toContain('Aug 2026 may be missing');
   });
 
+  // Look and feel, step 4: brass beside coral is about 1.3:1, so without
+  // income is dotted, and the legend shows each line's dash.
+  test('its two lines differ by dash as well as color, and the legend shows each dash', () => {
+    const html = draw();
+    expect(html).toMatch(/<path[^>]*stroke="var\(--accent\)"[^>]*stroke-dasharray="5 4"/);
+    expect(html).toMatch(/<path[^>]*stroke="var\(--down\)"[^>]*stroke-dasharray="0 4"/);
+    const samples = [...html.matchAll(/<svg class="chart-legend-line"[^>]*><line[^>]*stroke="([^"]+)"[^>]*stroke-dasharray="([^"]+)"/g)].map((m) => [m[1], m[2]]);
+    expect(samples).toEqual([
+      ['var(--accent)', '5 4'],
+      ['var(--down)', '0 4'],
+    ]);
+  });
+
   test('a what-if, in words and in the figures', () => {
     const t = text(draw(runway(), three({ lower_by: 304.38, income_until: '2026-12-31', planned: false, leave_out_one_offs: true })));
     expect(t).toContain('Worked out with spending over the last 3 full months, spending lower by $304.38 a month, income stopping after Dec 31, 2026, what you planned left out and one-offs left out.');

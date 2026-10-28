@@ -60,21 +60,21 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 
 /* ---------- Nya app tokens (copied from docs/design/tokens.css) ---------- */
 .app {
-  --canvas: #0d0f14; --surface: #151821; --elevated: #1c202b;
-  --border-subtle: #232834; --border-strong: #2b3140; --border-input: #707889;
-  --text-1: #eceef2; --text-2: #9499a6; --text-3: #868c9b;
-  --accent: #5b8def; --pos: #34d399; --neg: #f87171; --warn: #fbbf24;
-  --accent-tint: #1d263a; --pos-tint: #192e2f; --neg-tint: #30232b; --warn-tint: #312c21; --caveat-surface: #191d27;
-  --accent-fill: #2563eb; --danger-fill: #dc2626; --on-fill: #ffffff; --glass: rgba(21, 24, 33, 0.88); --scrim: rgba(0, 0, 0, 0.55);
+  --canvas: #0b1019; --surface: #131a27; --elevated: #1b2333;
+  --border-subtle: #222b3c; --border-strong: #2e384c; --border-input: #6f7b91;
+  --text-1: #eeece7; --text-2: #9ba4b5; --text-3: #8b94a6;
+  --accent: #d4b680; --pos: #4ade9b; --neg: #f7857a; --warn: #fb9a4b;
+  --accent-tint: #2a2a24; --pos-tint: #15302c; --neg-tint: #352229; --warn-tint: #35281e; --caveat-surface: #182031;
+  --accent-fill: #cdae74; --on-accent-fill: #0b1019; --danger-fill: #dc2626; --on-fill: #ffffff; --glass: rgba(19, 26, 39, 0.88); --scrim: rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }
 .app[data-t="light"] {
-  --canvas: #f6f7f9; --surface: #ffffff; --elevated: #f0f2f6;
-  --border-subtle: #e6e8ef; --border-strong: #d5d9e2; --border-input: #757c8a;
-  --text-1: #11141c; --text-2: #525866; --text-3: #636a77;
-  --accent: #2563eb; --pos: #047857; --neg: #b91c1c; --warn: #92400e;
-  --accent-tint: #eef3fd; --pos-tint: #ebf4f2; --neg-tint: #fceeee; --warn-tint: #fcf4eb; --caveat-surface: #f1f3f8;
-  --accent-fill: #2563eb; --danger-fill: #dc2626; --on-fill: #ffffff; --glass: rgba(255, 255, 255, 0.88); --scrim: rgba(17, 20, 28, 0.4);
+  --canvas: #f4f5f8; --surface: #ffffff; --elevated: #eef0f4;
+  --border-subtle: #e3e6ec; --border-strong: #d3d8e1; --border-input: #737c8c;
+  --text-1: #111826; --text-2: #4f5869; --text-3: #5e6777;
+  --accent: #846326; --pos: #047857; --neg: #b91c1c; --warn: #a3410b;
+  --accent-tint: #f6f0e4; --pos-tint: #e8f5ef; --neg-tint: #fbecec; --warn-tint: #fcefe6; --caveat-surface: #f1f3f7;
+  --accent-fill: #18243d; --on-accent-fill: #ffffff; --danger-fill: #dc2626; --on-fill: #ffffff; --glass: rgba(255, 255, 255, 0.88); --scrim: rgba(17, 24, 38, 0.4);
   color-scheme: light;
 }
 
@@ -131,7 +131,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .notice .act { margin-left: auto; font-weight: 600; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
 .app .notice ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 2px; }
 .app .btn { font: 600 14px var(--f-app); border-radius: 12px; padding: 9px 14px; min-height: 40px; border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-.app .btn.primary { background: var(--accent-fill); color: var(--on-fill); }
+.app .btn.primary { background: var(--accent-fill); color: var(--on-accent-fill); }
 .app .btn.secondary { background: var(--elevated); border-color: transparent; color: var(--text-1); }
 .app .btn.ghost { background: transparent; color: var(--accent); padding: 9px 6px; }
 .app .btn.danger { background: var(--danger-fill); color: var(--on-fill); }
@@ -309,7 +309,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             </div>
             <div class="ocard">
               <div class="otitle">Over time</div>
-              <svg class="chart" viewBox="0 0 300 80"><polyline points="0,62 40,58 80,60 120,46 160,44 200,36 240,30 300,18" fill="none" stroke="#5b8def" stroke-width="2"/></svg>
+              <svg class="chart" viewBox="0 0 300 80"><polyline points="0,62 40,58 80,60 120,46 160,44 200,36 240,30 300,18" fill="none" stroke="var(--accent)" stroke-width="2"/></svg>
               <div class="orange"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
               <div class="owarn">The nightly backup failed; the last one saved was on Oct 20. Check the backup cron in Vercel.</div>
             </div>

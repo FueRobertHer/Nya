@@ -57,6 +57,7 @@ const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { renderToStaticMarkup } = require('react-dom/server') as typeof import('react-dom/server');
 const { default: MonthFlowChart } = await import('@/components/MonthFlowChart');
 const { default: CashFlowSankey } = await import('@/components/CashFlowSankey');
 const { default: ForecastChart, fmtDay } = await import('@/components/ForecastChart');
@@ -316,11 +317,30 @@ describe('a chart drawn at its width', () => {
     const v = mount(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={1000} />);
     expect(v.viewBox()).toBe(`0 0 248 ${Math.round((248 * 150) / 340)}`);
     expect(v.lineEnd()).toMatch(/^238\.0,/);
-    expect(v.lineEnd('var(--warn)')).toMatch(/^238\.0,/);
+    expect(v.lineEnd('var(--text-2)')).toMatch(/^238\.0,/);
     v.resize(600);
     expect(v.lineEnd()).toMatch(/^590\.0,/);
-    expect(v.lineEnd('var(--warn)')).toMatch(/^590\.0,/);
+    expect(v.lineEnd('var(--text-2)')).toMatch(/^590\.0,/);
     v.unmount();
+  });
+
+  // Look and feel, step 4: brass beside orange is about 1.1:1, so the what-if
+  // is a gray dotted line, not --warn, and the legend shows each line's dash.
+  test('the what-if differs from the forecast by dash as well as color, and the legend shows each dash', () => {
+    const html = renderToStaticMarkup(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={1000} />);
+    expect(html).toMatch(/<path[^>]*stroke="var\(--accent\)"[^>]*stroke-dasharray="5 4"/);
+    expect(html).toMatch(/<path[^>]*stroke="var\(--text-2\)"[^>]*stroke-dasharray="0 4"/);
+    expect(html).not.toMatch(/<path[^>]*stroke="var\(--warn\)"/);
+    const samples = [...html.matchAll(/<svg class="chart-legend-line"[^>]*><line[^>]*stroke="([^"]+)"[^>]*stroke-dasharray="([^"]+)"/g)].map((m) => [m[1], m[2]]);
+    expect(samples).toEqual([
+      ['var(--accent)', '5 4'],
+      ['var(--text-2)', '0 4'],
+    ]);
+    // Its low point sits on the what-if line, so it takes that line's color
+    // while it is above the warning (a threshold of 0 keeps it there).
+    const calm = renderToStaticMarkup(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={0} />);
+    expect(calm).toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--text-2\)"/);
+    expect(calm).not.toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--accent\)"/);
   });
 
   test('on a phone their gridlines are 20 or more apart, and a wide card keeps each one the 1, 2, 5 rule gives', () => {

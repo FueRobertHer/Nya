@@ -19,12 +19,12 @@ describe('what the layout sends for a choice (lib/theme.ts)', () => {
 
   test("the chrome color: each theme's canvas by the system's setting, then dark's where it states none; or the choice's for all", () => {
     expect(themeColors(null)).toEqual([
-      { media: '(prefers-color-scheme: light)', color: '#f6f7f9' },
-      { media: '(prefers-color-scheme: dark)', color: '#0d0f14' },
-      { color: '#0d0f14' },
+      { media: '(prefers-color-scheme: light)', color: '#f4f5f8' },
+      { media: '(prefers-color-scheme: dark)', color: '#0b1019' },
+      { color: '#0b1019' },
     ]);
-    expect(themeColors('light').map((t) => t.color)).toEqual(['#f6f7f9', '#f6f7f9', '#f6f7f9']);
-    expect(themeColors('dark').map((t) => t.color)).toEqual(['#0d0f14', '#0d0f14', '#0d0f14']);
+    expect(themeColors('light').map((t) => t.color)).toEqual(['#f4f5f8', '#f4f5f8', '#f4f5f8']);
+    expect(themeColors('dark').map((t) => t.color)).toEqual(['#0b1019', '#0b1019', '#0b1019']);
   });
 
   test("color-scheme and iOS's status bar follow a choice; with none, both themes and dark's bar", () => {
@@ -41,9 +41,9 @@ describe('what the layout sends for a choice (lib/theme.ts)', () => {
     }
   });
 
-  test("Clerk's primary button takes the deeper fill, so its white label passes; its links keep the accent", () => {
+  test("Clerk's primary button takes the primary's fill and its label (ink on brass in dark); its links keep the accent", () => {
     expect(CLERK_APPEARANCE.variables.colorPrimary).toBe('var(--accent)');
-    expect(CLERK_APPEARANCE.variables.colorPrimaryForeground).toBe('var(--on-fill)');
+    expect(CLERK_APPEARANCE.variables.colorPrimaryForeground).toBe('var(--on-accent-fill)');
     expect(CLERK_APPEARANCE.elements.formButtonPrimary.backgroundColor).toBe('var(--accent-fill)');
   });
 
@@ -81,9 +81,9 @@ const meta = (attrs: Record<string, string>) => {
   dom.document.head.appendChild(m);
   return m;
 };
-const lightColor = meta({ name: 'theme-color', media: '(prefers-color-scheme: light)', content: '#f6f7f9' });
-const darkColor = meta({ name: 'theme-color', media: '(prefers-color-scheme: dark)', content: '#0d0f14' });
-const anyColor = meta({ name: 'theme-color', content: '#0d0f14' });
+const lightColor = meta({ name: 'theme-color', media: '(prefers-color-scheme: light)', content: '#f4f5f8' });
+const darkColor = meta({ name: 'theme-color', media: '(prefers-color-scheme: dark)', content: '#0b1019' });
+const anyColor = meta({ name: 'theme-color', content: '#0b1019' });
 const scheme = meta({ name: 'color-scheme', content: 'dark light' });
 
 // Each choice applied, the dashboard is told (it refreshes the page's server parts).
@@ -130,9 +130,9 @@ describe('the Theme card', () => {
     expect(dom.document.documentElement.dataset.theme).toBe('light');
     expect(v.checked()).toBe('Light');
     expect(changed).toBe(1);
-    expect(lightColor.getAttribute('content')).toBe('#f6f7f9');
-    expect(darkColor.getAttribute('content')).toBe('#f6f7f9');
-    expect(anyColor.getAttribute('content')).toBe('#f6f7f9');
+    expect(lightColor.getAttribute('content')).toBe('#f4f5f8');
+    expect(darkColor.getAttribute('content')).toBe('#f4f5f8');
+    expect(anyColor.getAttribute('content')).toBe('#f4f5f8');
     expect(scheme.getAttribute('content')).toBe('light');
     v.unmount();
   });
@@ -145,9 +145,9 @@ describe('the Theme card', () => {
     expect(written).toEqual(['nya-theme=; Path=/; Max-Age=0; SameSite=Lax']);
     expect(dom.document.documentElement.dataset.theme).toBeUndefined();
     expect(v.checked()).toBe('System');
-    expect(lightColor.getAttribute('content')).toBe('#f6f7f9');
-    expect(darkColor.getAttribute('content')).toBe('#0d0f14');
-    expect(anyColor.getAttribute('content')).toBe('#0d0f14');
+    expect(lightColor.getAttribute('content')).toBe('#f4f5f8');
+    expect(darkColor.getAttribute('content')).toBe('#0b1019');
+    expect(anyColor.getAttribute('content')).toBe('#0b1019');
     expect(scheme.getAttribute('content')).toBe('dark light');
     v.unmount();
   });
@@ -160,8 +160,8 @@ describe('the Theme card', () => {
     expect(v.checked()).toBe('Dark');
     expect(changed).toBe(1);
     expect(dom.document.documentElement.dataset.theme).toBe('dark');
-    expect(darkColor.getAttribute('content')).toBe('#0d0f14');
-    expect(lightColor.getAttribute('content')).toBe('#0d0f14');
+    expect(darkColor.getAttribute('content')).toBe('#0b1019');
+    expect(lightColor.getAttribute('content')).toBe('#0b1019');
     key(group, 'ArrowDown');
     expect(v.checked()).toBe('Light');
     key(group, 'ArrowRight');

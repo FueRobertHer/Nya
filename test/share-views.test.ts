@@ -39,8 +39,12 @@ const { tidy } = await import('@/lib/totals');
 // The fixture dates everything it seeds from the clock when it seeds, and the
 // clock is held at noon of the day this file loaded, so the bank's rows
 // below are the ones it seeds. Which months they fall in is worked out from
-// their dates, never assumed.
-const NOW = new Date(`${new Date().toISOString().slice(0, 10)}T12:00:00.000Z`);
+// their dates, never assumed. Never a Wednesday, though: the fixture records
+// balances 3 and 2 days back, which the weekly history reads as one week
+// (Monday to Sunday), and on a Wednesday 2 days back is a Monday, so the two
+// fall in different weeks. A Wednesday holds the clock at the Tuesday before.
+const LOADED = new Date(`${new Date().toISOString().slice(0, 10)}T12:00:00.000Z`);
+const NOW = LOADED.getUTCDay() === 3 ? new Date(LOADED.getTime() - DAY) : LOADED;
 setSystemTime(NOW);
 const CHASE_TXNS = chaseTxns();
 const SYNCED_AT = syncedAt();
