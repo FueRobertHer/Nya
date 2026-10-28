@@ -287,6 +287,18 @@ describe('on the card of the one it is shared with', () => {
     expect(page).not.toContain('What is spent in October 2026 may be off');
   });
 
+  // The screen review: no money on any net worth chart's plot. One point a
+  // week, so every segment skips days: an estimated week leaves it dashed,
+  // and the range is never called estimated for it.
+  test('a shared net worth’s chart has no money on its plot, a table, and stays dashed week to week', () => {
+    const html = card();
+    expect(html).toContain('class="chart-svg at-width"');
+    expect(html).not.toContain('chart-tick');
+    expect(html).toContain('<summary>Show as a table</summary>');
+    expect([...html.matchAll(/<path [^>]*stroke-width="2"[^>]*>/g)].every((m) => m[0].includes('stroke-dasharray'))).toBe(true);
+    expect(html).not.toContain('Estimated, not recorded');
+  });
+
   test('a net worth with one point of history says when it begins, not a chart of one', () => {
     const one = text(card({ net_worth: { ...(VIEWS.net_worth as any), history: [{ date: '2026-10-18', value: 1 }], accounts: undefined } }));
     expect(one).toContain('Its history begins Oct 18');

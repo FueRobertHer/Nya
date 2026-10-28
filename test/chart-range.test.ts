@@ -3,7 +3,7 @@ import {
   availableRanges,
   rangeLabel,
   touchGesture,
-  axisTicks,
+  axisTickLadder,
   initialRange,
   monthsBefore,
   rangeStart,
@@ -86,35 +86,42 @@ describe('which ranges are offered', () => {
 });
 
 describe('time axis labels', () => {
-  test('a month is labelled by week, ending on the last day', () => {
-    expect(axisTicks('2026-08-24', '2026-09-24').map((t) => t.label)).toEqual([
-      'Aug 27',
-      'Sep 3',
-      'Sep 10',
-      'Sep 17',
-      'Sep 24',
+  const labels = (first: string, last: string) => axisTickLadder(first, last).map((step) => step.map((t) => t.label));
+
+  test('a month is labelled by week, two weeks or four, ending on the last day', () => {
+    expect(labels('2026-08-24', '2026-09-24')).toEqual([
+      ['Aug 27', 'Sep 3', 'Sep 10', 'Sep 17', 'Sep 24'],
+      ['Aug 27', 'Sep 10', 'Sep 24'],
+      ['Aug 27', 'Sep 24'],
     ]);
   });
 
-  test('months are labelled by month, January as its year', () => {
-    expect(axisTicks('2025-09-24', '2026-09-24').map((t) => t.label)).toEqual(['Oct', '2026', 'Apr', 'Jul']);
-    expect(axisTicks('2026-03-24', '2026-09-24').map((t) => t.label)).toEqual(['May', 'Jul', 'Sep']);
-  });
-
-  test('years are labelled by year', () => {
-    expect(axisTicks('2021-09-24', '2026-09-24').map((t) => t.label)).toEqual([
-      '2022',
-      '2023',
-      '2024',
-      '2025',
-      '2026',
+  test('months are labelled by month, January as its year, every 1, 2, 3, 6 or 12 months', () => {
+    expect(labels('2026-03-24', '2026-09-24')).toEqual([['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'], ['May', 'Jul', 'Sep'], ['Apr', 'Jul'], ['Jul']]);
+    expect(labels('2025-09-24', '2026-09-24')).toEqual([
+      ['Oct', 'Nov', 'Dec', '2026', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'],
+      ['Nov', '2026', 'Mar', 'May', 'Jul', 'Sep'],
+      ['Oct', '2026', 'Apr', 'Jul'],
+      ['2026', 'Jul'],
+      ['2026'],
     ]);
   });
 
-  test('never more than about five', () => {
+  test('years are labelled by year, every 1, 2, 5, 10 or 20', () => {
+    expect(labels('2021-09-24', '2026-09-24')).toEqual([['2022', '2023', '2024', '2025', '2026'], ['2022', '2024', '2026'], ['2025']]);
+  });
+
+  test('densest first, and no step labels nothing', () => {
     for (const first of ['2026-07-24', '2026-06-24', '2025-12-01', '2023-09-24', '2016-01-01']) {
-      expect(axisTicks(first, '2026-09-24').length).toBeLessThanOrEqual(6);
+      const ladder = axisTickLadder(first, '2026-09-24');
+      expect(ladder.length).toBeGreaterThan(1);
+      for (let k = 1; k < ladder.length; k++) expect(ladder[k].length).toBeLessThanOrEqual(ladder[k - 1].length);
+      expect(ladder.every((step) => step.length > 0)).toBe(true);
     }
+  });
+
+  test('a range of a day or less has no labels', () => {
+    expect(axisTickLadder('2026-09-24', '2026-09-24')).toEqual([]);
   });
 });
 

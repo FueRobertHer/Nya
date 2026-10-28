@@ -115,10 +115,14 @@ const caption = (key: Parameters<typeof periodEnding>[0], end = month) => period
 const money = (v: number) => formatMoney(v, 'USD');
 
 describe('Spending’s period', () => {
-  test('four lengths as a labelled radio group, Month first; the cash flow has no control of its own', () => {
+  test('four lengths as a labelled radio group of the underline switch, 1M first; the cash flow has no control of its own', () => {
     const v = mount();
-    expect(v.radios().map((e) => e.textContent)).toEqual(['Month', '3 months', '12 months', 'Year to date']);
-    expect(v.checked()).toEqual(['Month']);
+    expect(v.radios().map((e) => e.textContent)).toEqual(['1M', '3M', '12M', 'YTD']);
+    // Names start with the words shown (WCAG 2.5.3), then say them in full.
+    expect(v.radios().map((e) => e.getAttribute('aria-label'))).toEqual(['1M, 1 month', '3M, 3 months', '12M, 12 months', 'YTD, year to date']);
+    // The underline switch, held to its items' width.
+    expect(v.group()!.getAttribute('class')).toBe('segmented spending-period');
+    expect(v.checked()).toEqual(['1M']);
     const longName = new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     expect(v.group()!.getAttribute('aria-label')).toBe(`Period ending ${longName}`);
     expect(v.radios().map((e) => e.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1']);
@@ -130,8 +134,8 @@ describe('Spending’s period', () => {
   test('every card sums the period: a longer one counts the months before', () => {
     const v = mount({ tags: [{ id: 'food', name: 'Food run', color: 'blue', created_at: '2026-01-01T00:00:00.000Z' }] });
     expect(v.out()).toBe(money(400));
-    act(() => click(v.chip('3 months')));
-    expect(v.checked()).toEqual(['3 months']);
+    act(() => click(v.chip('3M')));
+    expect(v.checked()).toEqual(['3M']);
     expect(v.out()).toBe(money(620));
     // Each card says the period it sums.
     const three = caption('last-3-months');
@@ -145,32 +149,32 @@ describe('Spending’s period', () => {
     const [chart] = v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('chart-svg'));
     const first = new Date(`${back(2)}-01T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC', ...(back(2).slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' as const } : {}) });
     expect(chart.getAttribute('aria-label')).toContain(`for ${first} to`);
-    act(() => click(v.chip('12 months')));
+    act(() => click(v.chip('12M')));
     expect(v.out()).toBe(money(627));
     v.unmount();
   });
 
   test('the arrow keys move between the lengths and choose as they go', () => {
     const v = mount();
-    key(v.chip('Month'), 'ArrowRight');
-    expect(v.checked()).toEqual(['3 months']);
-    expect(dom.document.activeElement).toBe(v.chip('3 months'));
-    key(v.chip('3 months'), 'ArrowDown');
-    expect(v.checked()).toEqual(['12 months']);
-    key(v.chip('12 months'), 'End');
-    expect(v.checked()).toEqual(['Year to date']);
-    key(v.chip('Year to date'), 'ArrowUp');
-    expect(v.checked()).toEqual(['12 months']);
-    key(v.chip('12 months'), 'Home');
-    expect(v.checked()).toEqual(['Month']);
+    key(v.chip('1M'), 'ArrowRight');
+    expect(v.checked()).toEqual(['3M']);
+    expect(dom.document.activeElement).toBe(v.chip('3M'));
+    key(v.chip('3M'), 'ArrowDown');
+    expect(v.checked()).toEqual(['12M']);
+    key(v.chip('12M'), 'End');
+    expect(v.checked()).toEqual(['YTD']);
+    key(v.chip('YTD'), 'ArrowUp');
+    expect(v.checked()).toEqual(['12M']);
+    key(v.chip('12M'), 'Home');
+    expect(v.checked()).toEqual(['1M']);
     v.unmount();
   });
 
   test('the bar’s month ends the period and keeps its length; so does a column of Net by month', () => {
     const v = mount();
-    act(() => click(v.chip('3 months')));
+    act(() => click(v.chip('3M')));
     act(() => click(v.button('Earlier month')));
-    expect(v.checked()).toEqual(['3 months']);
+    expect(v.checked()).toEqual(['3M']);
     // Last month and the two before it: no Whole Foods.
     expect(v.out()).toBe(money(227));
     expect(v.text()).toContain(caption('last-3-months', back(1)));
@@ -181,7 +185,7 @@ describe('Spending’s period', () => {
     expect(cols().filter((e) => e.getAttribute('class') === 'trend-col in-period')).toHaveLength(2);
     // A column moves the end, as the arrows do.
     act(() => click(cols()[cols().length - 1]));
-    expect(v.checked()).toEqual(['3 months']);
+    expect(v.checked()).toEqual(['3M']);
     expect(v.out()).toBe(money(620));
     expect(pressed()).toBe(1);
     v.unmount();
@@ -205,7 +209,7 @@ describe('Spending’s period', () => {
   test('a pick lists the period’s rows on Transactions, which stays on the month; choosing a length ends it', () => {
     let segment = 'spending' as 'spending' | 'transactions';
     const v = mount({ onSegment: (s) => v.rerender({ segment: (segment = s as typeof segment) }) });
-    act(() => click(v.chip('3 months')));
+    act(() => click(v.chip('3M')));
     const [groceries] = v.all((e) => e.getAttribute('class') === 'cash-flow-show' && e.textContent.startsWith('Groceries'));
     act(() => click(groceries));
     expect(segment).toBe('transactions');
@@ -217,8 +221,8 @@ describe('Spending’s period', () => {
     expect(v.out()).toBe(money(400));
     // Back on Spending, the length is kept; choosing one ends the pick.
     v.rerender({ segment: 'spending' });
-    expect(v.checked()).toEqual(['3 months']);
-    act(() => click(v.chip('Month')));
+    expect(v.checked()).toEqual(['3M']);
+    act(() => click(v.chip('1M')));
     v.rerender({ segment: 'transactions' });
     expect(v.all((e) => e.getAttribute('class') === 'flow-shown')).toHaveLength(0);
     v.unmount();
@@ -226,7 +230,7 @@ describe('Spending’s period', () => {
 
   test('without categories, the In / Out / Net card sums the period and says what may be missing from it', () => {
     const v = mount({ taxonomy: null, notes: ['Your rules couldn’t be read'] });
-    act(() => click(v.chip('3 months')));
+    act(() => click(v.chip('3M')));
     expect(v.out()).toBe(money(620));
     expect(v.text()).toContain('Your rules couldn’t be read.');
     // With categories, the cash flow says it, and the card doesn't again.

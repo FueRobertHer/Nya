@@ -18,7 +18,8 @@
 // (lib/categories.ts), so renaming a category renames it here at once.
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import ActivityBar, { ACTIVITY_PANEL, segmentKey, segmentTabId, type ActivityMonth, type ActivitySegment } from "./ActivityBar";
+import ActivityBar, { ACTIVITY_PANEL, segmentTabId, type ActivityMonth, type ActivitySegment } from "./ActivityBar";
+import { Segmented } from "./Segmented";
 import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
@@ -432,7 +433,6 @@ export default function MonthBreakdown({
   // Spending's period: its length (SPANS), ending with the bar's month. Kept
   // here, so a reload's spinner brings it back, and across segments.
   const [span, setSpan] = useState<PeriodKey>("this-month");
-  const spanRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const shownRef = useRef<HTMLDivElement>(null);
   const pickedNow = useRef(false);
@@ -888,7 +888,7 @@ export default function MonthBreakdown({
         : notes
       : [];
   const caption = period ? periodCaption(period, today) : "";
-  // The period's length, from the chips at the top of Spending; a pick from
+  // The period's length, from the switch at the top of Spending; a pick from
   // the cash flow ends with it, as with a month chosen.
   const chooseSpan = (k: PeriodKey) => {
     if (k === span) return;
@@ -966,34 +966,18 @@ export default function MonthBreakdown({
       {panel(
         segment === "spending" ? (
           <>
-            {/* The period every card here sums: a length, ending with the bar's month. */}
+            {/* The period every card here sums: a length, ending with the
+                bar's month. The underline switch, a labelled radio group
+                (since the screen review: the chips were a fourth kind of
+                switch and wrapped at 375px), held to its items' width. */}
             {selected && (
-              <div className="chip-row" role="radiogroup" aria-label={`Period ending ${monthName(selected)}`}>
-                {SPANS.map((s, i) => (
-                  <button
-                    key={s.key}
-                    type="button"
-                    role="radio"
-                    className="chip"
-                    aria-checked={span === s.key}
-                    tabIndex={span === s.key ? 0 : -1}
-                    ref={(el) => {
-                      spanRefs.current[i] = el;
-                    }}
-                    onClick={() => chooseSpan(s.key)}
-                    onKeyDown={(e) => {
-                      const key = e.key === "ArrowUp" ? "ArrowLeft" : e.key === "ArrowDown" ? "ArrowRight" : e.key;
-                      const next = segmentKey(key, i, SPANS.length);
-                      if (next === null) return;
-                      e.preventDefault();
-                      chooseSpan(SPANS[next].key);
-                      spanRefs.current[next]?.focus();
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                className="spending-period"
+                label={`Period ending ${monthName(selected)}`}
+                value={span}
+                onChange={chooseSpan}
+                options={SPANS.map((s) => [s.key, s.short, s.label] as const)}
+              />
             )}
             {/* Where the money came from and went (#41), over the period;
                 tapping a node lists its transactions on Transactions. */}

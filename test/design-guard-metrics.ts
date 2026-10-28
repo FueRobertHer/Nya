@@ -258,6 +258,9 @@ export function contrastPairs(): [string, string, number][] {
   // The header logo's one ink, on the page and on a card.
   pairs.push(['brand-mark', 'canvas', UI], ['brand-mark', 'surface', UI]);
   pairs.push(['focus', 'surface', UI], ['focus', 'canvas', UI]);
+  // The Plan grid's strongest cell (a neutral ramp to --border-strong, since
+  // the screen review): its figures, and the plan's own brass outline.
+  pairs.push(['text-1', 'border-strong', TEXT], ['text-2', 'border-strong', TEXT], ['accent', 'border-strong', UI]);
   // A tag's text on its tint, and its swatch (the text step) on a card.
   for (const tag of TAG_COLORS) pairs.push([`tag-${tag}`, `tag-${tag}-tint`, TEXT], [`tag-${tag}`, 'surface', UI]);
   return pairs;

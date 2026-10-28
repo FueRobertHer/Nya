@@ -128,17 +128,21 @@ describe('the forecast', () => {
       )
     );
 
-  test('its zero tick reads "$0", never "-$0", where its axis starts just under zero', () => {
-    // At a phone's width the ticks step in thousands (rollout 6a4), so an
-    // axis from about -$800 starts at Math.ceil(-0.8) thousand, which is -0.
+  // The screen review: "$125K" sat on the line. Where its axis starts just
+  // under zero (the case that once drew "-$0" as a tick), the plot has no
+  // gridline and no amount, and zero's rule is named in a word instead.
+  test('no money on its plot at a phone’s width: zero’s rule is named in a word, and every day is behind Show as a table', () => {
     const html = renderToStaticMarkup(
       <DrawnWidth.Provider value={248}>
         <ForecastCard institutions={[chase()]} series={series()} planned={EMPTY_PLANNED} today={TODAY} />
       </DrawnWidth.Provider>
     );
-    const ticks = [...html.matchAll(/<text class="chart-tick"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
-    expect(ticks).toContain('$0');
-    expect(ticks.filter((t) => /^-\D*0$/.test(t))).toEqual([]);
+    const svg = html.slice(html.indexOf('<svg class="chart-svg at-width"'), html.indexOf('</svg>', html.indexOf('<svg class="chart-svg at-width"')));
+    expect(svg).not.toContain('chart-tick');
+    expect(svg).not.toContain('stroke="var(--border-subtle)"');
+    expect(text(svg)).not.toMatch(/\$/);
+    expect(svg).toMatch(/<text class="chart-rule-label" x="8" y="[\d.]+">Zero<\/text>/);
+    expect(html).toContain('<summary>Show as a table</summary>');
   });
 
   test('is labelled an estimate, starts from the cash accounts it names, and gives its lowest point', () => {

@@ -204,16 +204,21 @@ describe('every tab while it loads', () => {
   test('the known words show as words: card titles and the figures’ labels', () => {
     const activity = renderToStaticMarkup(<ActivitySkeleton segment="transactions" />);
     for (const w of ['>In<', '>Out<', '>Net<', '>Transactions<', 'placeholder="Search transactions"']) expect(activity).toContain(w);
-    // In and out is titled only on Spending, after the period's chips and the Cash flow card, as MonthBreakdown draws it.
+    // In and out is titled only on Spending, after the period's switch and the Cash flow card, as MonthBreakdown draws it.
     expect(activity).not.toContain('In and out');
     const spending = renderToStaticMarkup(<ActivitySkeleton segment="spending" />);
     const at = (w: string) => spending.indexOf(w);
-    expect(at('>Month</span>')).toBeGreaterThan(-1);
-    expect(at('>Month</span>')).toBeLessThan(at('>Cash flow<'));
+    // The switch's own markup and classes, on 1M, under inert, nothing dimmed.
+    expect(spending).toContain('<div class="segmented spending-period" inert="">');
+    expect(at('>1M</button>')).toBeGreaterThan(-1);
+    expect(at('>1M</button>')).toBeLessThan(at('>Cash flow<'));
     expect(at('>Cash flow<')).toBeLessThan(at('>In and out<'));
-    expect(spending).toContain('<span class="chip" role="radio" aria-checked="true">Month</span>');
+    expect(spending).toContain('<button type="button" role="radio" aria-checked="true" tabindex="-1">1M</button>');
+    expect(spending.slice(at('spending-period'), spending.indexOf('</div>', at('spending-period')))).not.toContain('disabled');
     expect(renderToStaticMarkup(<BudgetsSkeleton segment="month" />)).toContain('<h3>Spent</h3>');
     expect(renderToStaticMarkup(<BudgetsSkeleton segment="upcoming" />)).toContain('<h3>Cash forecast</h3><span class="badge">Estimate</span>');
+    // The forecast's Show as a table keeps its 44px line while it loads.
+    expect(renderToStaticMarkup(<BudgetsSkeleton segment="upcoming" />)).toContain('<details class="plan-table-view" inert=""><summary>Show as a table</summary></details>');
     expect(renderToStaticMarkup(<SharedWithMeSkeleton />)).toContain('Shared with me');
   });
 

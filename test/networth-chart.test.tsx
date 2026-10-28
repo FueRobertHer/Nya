@@ -302,16 +302,102 @@ describe('NetWorthChart time ranges', () => {
     expect(html).toMatch(/class="chart-info" hidden=""/);
   });
 
-  test('the axis is labelled at months, not only its two ends', () => {
+  // Every month that fits: Mar 24 to Sep 24 on a 340-wide card has room for
+  // each month start (the screen review found six months labelled twice).
+  test('the axis is labelled at every month that fits, not only its two ends', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={year} />);
     const labels = [...html.matchAll(/class="chart-xlabel"[^>]*>([^<]*)</g)].map((m) => m[1]);
-    expect(labels).toEqual(['May', 'Jul', 'Sep']);
+    expect(labels).toEqual(['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']);
+  });
+});
+
+// The screen review after step 5: a history that is an estimate from end to
+// end (a demo's, estimated up to a recorded today) was dashed throughout and
+// never looked solid. With no recorded stretch to set apart, it is drawn
+// solid and says once, in words, that it is estimated.
+describe('NetWorthChart estimated throughout', () => {
+  function days(n: number, est: (i: number) => boolean, step = 1): P[] {
+    return Array.from({ length: n }, (_, i) => ({
+      date: new Date(Date.parse('2026-09-01T00:00:00Z') + i * step * 86_400_000).toISOString().slice(0, 10),
+      value: 1000 + i,
+      ...(est(i) ? { estimated: true } : {}),
+    }));
+  }
+  const readDate = (html: string) => html.match(/<span class="chart-readout-date">([^<]*)</)?.[1];
+  const label = (html: string) => html.match(/<svg [^>]*role="img" aria-label="([^"]*)"/)?.[1] ?? '';
+
+  test('every day estimated: one solid line, and the readout, the label and the info say so', () => {
+    const points = days(20, () => true);
+    expect(runs(points)).toEqual(['solid']);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(readDate(html)).toBe('Since Sep 1, 2026 · estimated');
+    expect(label(html)).toContain('Estimated, not recorded.');
+    expect(html).toContain('Estimated, not recorded. No stretch of this range is recorded, so the line is solid.');
+    expect(html).not.toContain('Dashed: estimated');
+  });
+
+  test('estimated up to a recorded last day: solid, and the words keep that day out', () => {
+    const points = days(20, (i) => i < 19);
+    expect(runs(points)).toEqual(['solid']);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(readDate(html)).toBe('Since Sep 1, 2026 · estimated');
+    expect(label(html)).toContain('Estimated, not recorded, except Sep 20.');
+  });
+
+  test('a recorded stretch: dashed and solid as before, and the range is not called estimated', () => {
+    const points = days(20, (i) => i < 10);
+    expect(runs(points)).toEqual(['dashed', 'solid']);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(readDate(html)).toBe('Since Sep 1, 2026');
+    expect(html).not.toContain('Estimated, not recorded');
+    expect(html).toContain('Dashed: estimated');
+  });
+
+  test('every day recorded: solid, and nothing says estimated', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={days(20, () => false)} />);
+    expect(readDate(html)).toBe('Since Sep 1, 2026');
+    expect(html).not.toContain('stimated');
+  });
+
+  // A shared net worth is one point a week (lib/share-views.ts): every
+  // segment skips days, so a few estimated weeks must not turn it solid.
+  test('recorded points a week apart with some estimated weeks stay dashed, and the range is not called estimated', () => {
+    const points = days(12, (i) => i >= 3 && i < 6, 7);
+    expect(runs(points)).toEqual(['dashed']);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(readDate(html)).not.toContain('estimated');
+    expect(html).not.toContain('Estimated, not recorded');
+  });
+
+  // The same weekly line read on a Monday: 25 recorded Sundays, the 26th
+  // estimated, and Monday's own point. Its one segment over consecutive days
+  // (Sunday to Monday) touches the estimate, but recorded weeks are joined
+  // all along it: it stays dashed and is never called estimated.
+  test('25 recorded weeks, an estimated Sunday and a recorded Monday stay dashed, and the range is not called estimated', () => {
+    const sundays = Array.from({ length: 26 }, (_, i) => ({
+      date: new Date(Date.parse('2026-05-03T00:00:00Z') + i * 7 * 86_400_000).toISOString().slice(0, 10),
+      value: 1000 + i,
+      ...(i === 25 ? { estimated: true } : {}),
+    }));
+    const points = [...sundays, { date: '2026-10-26', value: 1100 }];
+    expect(runs(points)).toEqual(['dashed']);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(readDate(html)).not.toContain('estimated');
+    expect(html).not.toContain('Estimated, not recorded');
+  });
+
+  // A day bridged between two recorded ones is a straight line, not worked
+  // out from transactions: the words say only that it is estimated.
+  test('the words hold for a bridged day too: estimated, not recorded, never "from transactions"', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={days(20, () => true)} />);
+    expect(html).not.toContain('from transactions, not recorded');
   });
 });
 
 // Home's hero (look and feel, step 5): edge to edge, drawn at its own width,
 // no gridlines and no money on its plot, its months spaced by their widths.
-// A chart elsewhere (an account's) is drawn as before.
+// Since the screen review, a chart elsewhere (an account's) takes the same
+// rules in its card's shape.
 describe('NetWorthChart as the hero', () => {
   function daily(first: string, last: string, start = 100) {
     const out: P[] = [];
@@ -325,7 +411,8 @@ describe('NetWorthChart as the hero', () => {
 
   test('drawn at its width, with no gridline and no money tick on the plot', () => {
     const html = at(352, <NetWorthChart hero points={year} />);
-    expect(html).toContain('class="chart-svg hero-chart"');
+    // at-width: its months take the 12px rule (.at-width .chart-xlabel).
+    expect(html).toContain('class="chart-svg at-width hero-chart"');
     expect(html).toContain('viewBox="0 0 352 140"');
     expect(html).not.toContain('chart-tick');
     expect(html).not.toContain('stroke="var(--border-subtle)"');
@@ -343,7 +430,7 @@ describe('NetWorthChart as the hero', () => {
         const from = m[2] === 'start' ? x : m[2] === 'end' ? x - w : x - w / 2;
         return [from, from + w] as const;
       });
-      expect(labels.length).toBeGreaterThanOrEqual(2);
+      expect(labels.length).toBeGreaterThanOrEqual(5);
       for (const [from, to] of labels) {
         expect(from).toBeGreaterThanOrEqual(16);
         expect(to).toBeLessThanOrEqual(width - 16);
@@ -352,17 +439,64 @@ describe('NetWorthChart as the hero', () => {
     }
   });
 
+  // The fixture ends Sep 24, so its six months start Mar 24, and every month
+  // start whose day lies outside the gutter is labelled: a step of one month.
+  // Apr 1 is 15.5px in at 320, inside the gutter, and 17.9px in at 375.
+  test('six months get a label for every month start outside the gutter, at a phone’s width', () => {
+    const months = (width: number) => [...at(width, <NetWorthChart hero points={year} />).matchAll(/class="chart-xlabel"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    expect(months(320)).toEqual(['May', 'Jun', 'Jul', 'Aug', 'Sep']);
+    expect(months(375)).toEqual(['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']);
+  });
+
+  // A year's months are about 30px apart at 375: too close for every one with
+  // room to spare, so every second month, evenly; on a wide screen, all twelve.
+  test('a year takes every second month on a phone and every month on a wide screen, evenly stepped', () => {
+    const months = (width: number) =>
+      [...at(width, <NetWorthChart hero points={year} initialRange="1Y" />).matchAll(/class="chart-xlabel"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    expect(months(320)).toEqual(['Nov', '2026', 'Mar', 'May', 'Jul', 'Sep']);
+    expect(months(375)).toEqual(['Nov', '2026', 'Mar', 'May', 'Jul', 'Sep']);
+    expect(months(760)).toEqual(['Oct', 'Nov', 'Dec', '2026', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']);
+  });
+
+  // Twelve years on a phone: every second year fits once the last label,
+  // pushed in from the edge, is left out rather than failing the step (it
+  // gave 2015, 2020 and 2025 when it did).
+  test('twelve years on a phone take every second year, an edge label that would crowd left out', () => {
+    const long = daily('2014-01-01', '2026-10-27');
+    const years = (width: number, hero: boolean) =>
+      [...at(width, <NetWorthChart hero={hero} points={long} initialRange="ALL" />).matchAll(/class="chart-xlabel"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    expect(years(320, true)).toEqual(['2016', '2018', '2020', '2022', '2024']);
+    expect(years(280, false)).toEqual(['2016', '2018', '2020', '2022', '2024', '2026']);
+  });
+
   test('every point is behind Show as a table, rendered only once it is opened', () => {
     const html = at(352, <NetWorthChart hero points={year} />);
     expect(html).toContain('<summary>Show as a table</summary>');
     expect(html).not.toContain('<table>');
   });
 
-  test('an account’s chart keeps its card look: its viewBox, gridlines and ticks, and no table', () => {
+  // The screen review: the account's chart printed "-$2K" on its line. Every
+  // net worth chart now takes the hero's rules, in its card's shape.
+  test('an account’s chart: drawn at its width in the card’s shape, no money on the plot, months spaced, and a table', () => {
     const html = at(352, <NetWorthChart points={year} />);
-    expect(html).toContain('class="chart-svg"');
-    expect(html).toContain('viewBox="0 0 340 150"');
-    expect(html).toContain('chart-tick');
-    expect(html).not.toContain('Show as a table');
+    expect(html).toContain('class="chart-svg at-width"');
+    expect(html).toContain(`viewBox="0 0 352 ${Math.round((352 * 150) / 340)}"`);
+    expect(html).not.toContain('chart-tick');
+    expect(html).not.toContain('stroke="var(--border-subtle)"');
+    expect(html).toMatch(/<circle [^>]*stroke="var\(--surface\)"/);
+    const labels = [...html.matchAll(/<text class="chart-xlabel" x="([\d.]+)"[^>]*text-anchor="(start|middle|end)"[^>]*>([^<]*)</g)].map((m) => {
+      const x = Number(m[1]);
+      const w = labelWidth(m[3]);
+      const from = m[2] === 'start' ? x : m[2] === 'end' ? x - w : x - w / 2;
+      return [from, from + w] as const;
+    });
+    expect(labels).toHaveLength(6);
+    for (const [from, to] of labels) {
+      expect(from).toBeGreaterThanOrEqual(0);
+      expect(to).toBeLessThanOrEqual(352);
+    }
+    for (let i = 1; i < labels.length; i++) expect(labels[i][0] - labels[i - 1][1]).toBeGreaterThanOrEqual(MIN_LABEL_GAP);
+    expect(html).toContain('<summary>Show as a table</summary>');
+    expect(html).not.toContain('<table>');
   });
 });

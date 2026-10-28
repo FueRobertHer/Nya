@@ -2,9 +2,11 @@
 
 // The success-rate grid: the plan at several withdrawal rates (rows) and
 // lengths (columns). A table first, since the numbers are the point, with a
-// single-hue wash behind each cell (more success, more accent) as a heatmap
-// cue; the figures, not the colour, carry the value. The plan's own cell is
-// outlined, and each cell's title spells it out for a pointer or screen reader.
+// neutral shade behind each cell (more success, darker in light and lighter
+// in dark, from --elevated to --border-strong) as a heatmap cue; the
+// figures, not the shade, carry the value. Brass is never behind a figure
+// (the screen review): it only outlines the plan's own cell. Each cell's
+// title spells it out for a pointer or screen reader.
 //
 // A flexible rule (guardrails, percent of portfolio, VPW, floor and ceiling)
 // buys its success by cutting spending, so its cells carry a second figure:
@@ -16,6 +18,7 @@
 // where its starts end, and the line under the grid says why a longer column
 // can read safer than a shorter one.
 
+import type { CSSProperties } from 'react';
 import type { GridCell } from '@/lib/fire/simulate';
 import { pct, successText } from './plan-text';
 import { plainNumber } from '@/lib/format';
@@ -78,15 +81,16 @@ export default function PlanGrid({
         </>
       );
     }
-    // More success, more accent, from faint at 50% or less to strongest at
-    // 100%: below half every plan is a poor one, and spreading the shades over
-    // 50% to 100% keeps 85% and 100% apart.
-    const shade = c ? 0.06 + 0.4 * Math.max(0, Math.min(1, (c.successRate - 0.5) / 0.5)) : 0;
+    // More success, a stronger shade, from the faintest at 50% or less to
+    // the strongest at 100%: below half every plan is a poor one, and spreading
+    // the shades over 50% to 100% keeps 85% and 100% apart. The colors are
+    // in app/globals.css (.plan-grid-cell.scored); the cell carries its share.
+    const shade = c ? Math.max(0, Math.min(1, (c.successRate - 0.5) / 0.5)) : null;
     return (
       <td
         key={years}
-        className={`num plan-grid-cell${own ? ' own' : ''}`}
-        style={{ background: `color-mix(in srgb, var(--accent) ${(shade * 100).toFixed(1)}%, transparent)` }}
+        className={`num plan-grid-cell${own ? ' own' : ''}${shade !== null ? ' scored' : ''}`}
+        style={shade !== null ? ({ '--shade': `${(shade * 100).toFixed(1)}%` } as CSSProperties) : undefined}
         title={title}
         aria-label={title}
       >

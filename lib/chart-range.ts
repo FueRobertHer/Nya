@@ -126,28 +126,37 @@ export function touchGesture(at: number[]): { active: number | null; measure: [n
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+export type AxisTick = { date: string; label: string };
+
 /**
- * Where to label the time axis between `first` and `last`, at most about five
- * labels, at dates a reader recognises:
- *   - up to two months: every week (or two), counted back from the last day;
- *   - up to three years: month starts, every 1, 2, 3 or 6 months, with January
- *     shown as its year so the year change is visible;
- *   - longer: the start of each year (or every other).
+ * Where the time axis between `first` and `last` may be labelled, at dates a
+ * reader recognises, as a ladder of whole steps from the densest to the
+ * sparsest. The chart takes the first step whose labels fit its width
+ * (components/NetWorthChart.tsx), so every month that fits is labelled and
+ * the labels stay evenly spaced:
+ *   - up to two months: every week, two weeks or four, counted back from the
+ *     last day;
+ *   - up to three years: month starts, every 1, 2, 3, 6 or 12 months, with
+ *     January shown as its year so the year change is visible;
+ *   - longer: the start of every year, or every 2, 5, 10 or 20 years.
+ * A step that would label nothing is left out; empty for a range of a day
+ * or less.
  */
-export function axisTicks(first: string, last: string): { date: string; label: string }[] {
+export function axisTickLadder(first: string, last: string): AxisTick[][] {
   const t0 = parse(first);
   const t1 = parse(last);
   const days = Math.round((t1 - t0) / DAY_MS);
   if (days <= 0) return [];
 
   if (days <= 62) {
-    const step = days <= 35 ? 7 : 14;
-    const out: { date: string; label: string }[] = [];
-    for (let t = t1; t >= t0; t -= step * DAY_MS) {
-      const d = new Date(t);
-      out.unshift({ date: iso(t), label: `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}` });
-    }
-    return out;
+    return [7, 14, 28].map((step) => {
+      const out: AxisTick[] = [];
+      for (let t = t1; t >= t0; t -= step * DAY_MS) {
+        const d = new Date(t);
+        out.unshift({ date: iso(t), label: `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCDate()}` });
+      }
+      return out;
+    });
   }
 
   const [y0, m0] = first.split('-').map(Number);
@@ -160,17 +169,20 @@ export function axisTicks(first: string, last: string): { date: string; label: s
       if (Date.UTC(year, month, 1) > t1) break;
       starts.push({ year, month });
     }
-    const step = [1, 2, 3, 6, 12].find((s) => Math.ceil(starts.length / s) <= 5) ?? 12;
-    return starts
-      .filter(({ month }) => month % step === 0)
-      .map(({ year, month }) => ({
-        date: iso(Date.UTC(year, month, 1)),
-        label: month === 0 ? String(year) : MONTH_NAMES[month],
-      }));
+    const steps = [1, 2, 3, 6, 12].map((step) =>
+      starts
+        .filter(({ month }) => month % step === 0)
+        .map(({ year, month }) => ({
+          date: iso(Date.UTC(year, month, 1)),
+          label: month === 0 ? String(year) : MONTH_NAMES[month],
+        })),
+    );
+    return steps.filter((step) => step.length > 0);
   }
 
   const years: number[] = [];
   for (let year = y0 + 1; Date.UTC(year, 0, 1) <= t1; year++) years.push(year);
-  const step = Math.ceil(years.length / 5);
-  return years.filter((y) => y % step === 0).map((year) => ({ date: `${year}-01-01`, label: String(year) }));
+  return [1, 2, 5, 10, 20]
+    .map((step) => years.filter((y) => y % step === 0).map((year) => ({ date: `${year}-01-01`, label: String(year) })))
+    .filter((step) => step.length > 0);
 }

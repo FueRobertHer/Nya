@@ -834,6 +834,26 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 
 With step 5, the look and feel's five steps are built.
 
+## After the screen review: charts
+
+A review of the screens after step 5 found money ticks still on the card charts' plots, a hero that never looked solid, brass behind the Plan grid's figures, and a fourth kind of switch on Spending. One PR, branch `fix/charts`.
+
+**Built:**
+
+- **No money on the plot, every net worth chart.** The account sheet's chart, a link's preview and a shared net worth take the hero's rules in their card's shape (150 to 340): drawn at their width (`at-width`, so their months are 12px, as the hero's now are too), no gridlines and no money ticks, the end dot ringed in `--surface`, and **Show as a table** under each. `hero` keeps only the bleed, the gutter for its months, the `--canvas` ring, `pan-y` and moving the figure. The account chart's loading box grows by the table's 44px line and the 8px over it.
+- **The cash forecast** likewise: no gridlines or ticks; its zero and warning rules named in words at their left end ("Zero", "Warning", 12px `--text-2`, `.chart-rule-label`), over the lines with a `--surface` halo, the warning's over its rule and zero's under when the two are close, and kept a line apart in any arrangement; **Show as a table** with each day's low and end (and, under a what-if, the line with the purchase and each day's end without it, as the readout gives them). Upcoming's skeleton keeps the table's line.
+- **Every month that fits.** `axisTicks`, which capped a range at about five labels, is now a ladder of whole steps (`axisTickLadder` in `lib/chart-range.ts`); a chart takes the densest whose labels sit 12px apart by their widths (twice `MIN_LABEL_GAP`, as Red Hat at 12px runs wider than the estimate), leaving out a label pushed in from either edge that would crowd its neighbour rather than giving up the step (twelve years at 320px: every second year). Six months get every month start outside the hero's gutter (Apr to Sep at 375px, May to Sep at 320px, where Apr 1 falls in the gutter); a year gets every second month at 320 and 375px and every month at 760px.
+- **All estimate, drawn solid.** A history with no recorded stretch in the range (no segment, however long, joins two recorded points) is one solid line, and says once that it is estimated: "Past 6 months · estimated" in the readout, "Estimated, not recorded" in the label and the info (a bridged day is a straight line, not from transactions), with ", except Oct 27" (or "except 3 recorded days") when some days are. A shared net worth's weekly recorded points never turn solid through an estimated week or an estimated Sunday beside a recorded Monday.
+- **The Plan grid** shades its cells on a neutral ramp, `--elevated` to `--border-strong` by `--shade` (`.plan-grid-cell.scored`), brass only for the plan's own outline; it runs to 8px inside the card's border instead of meeting it. The guard checks `--text-1`, `--text-2` and the outline on `--border-strong`, and that the shade uses it.
+- **Spending's period** is the underline switch: `1M · 3M · 12M · YTD`, named "1M, 1 month" ... "YTD, year to date" (`Segmented` takes an item's name as a third element), held to 240px (`.spending-period`) so it doesn't read as a second row of tabs, its skeleton the same markup under `inert`.
+
+**Kept narrow:**
+
+- Runway's chart and the allocation chart stay on a fixed viewBox with 10px text, so `.chart-tick` and `.chart-xlabel` keep their 10px rules (the allocation card is in another change).
+- The card charts keep `touch-action: none`: inside a card or sheet there is a gutter to scroll from.
+- The cash forecast's own 30, 60 and 90 days stay hand-drawn `.segmented` markup.
+- A shared net worth stays dashed between its weekly points, and its note under the chart keeps its words.
+
 ## The contrast check
 
 `test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, each button fill's label on it, the header logo's ink on the page and a card, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.

@@ -450,12 +450,14 @@ export const isPeriodKey = (v: unknown): v is PeriodKey => PERIODS.some((p) => p
 /** The lengths the Activity tab's Spending offers, each ending with the
  *  month its bar is on (`periodEnding`): that month, it and the two or
  *  eleven before it, and January of its year to it. "this-month" is that
- *  month, whichever it is. */
-export const SPANS: readonly { key: PeriodKey; label: string }[] = [
-  { key: 'this-month', label: 'Month' },
-  { key: 'last-3-months', label: '3 months' },
-  { key: 'last-12-months', label: '12 months' },
-  { key: 'year-to-date', label: 'Year to date' },
+ *  month, whichever it is. Each has its short words, which four across fit
+ *  a 320px screen, and its name, which starts with them (WCAG 2.5.3: speech
+ *  input says what it sees). */
+export const SPANS: readonly { key: PeriodKey; short: string; label: string }[] = [
+  { key: 'this-month', short: '1M', label: '1M, 1 month' },
+  { key: 'last-3-months', short: '3M', label: '3M, 3 months' },
+  { key: 'last-12-months', short: '12M', label: '12M, 12 months' },
+  { key: 'year-to-date', short: 'YTD', label: 'YTD, year to date' },
 ];
 
 /** A period of `key`'s length ending with `month` (YYYY-MM) rather than with

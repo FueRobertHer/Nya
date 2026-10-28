@@ -101,6 +101,18 @@ describe('Segmented as a radio group', () => {
     expect(chosen).toEqual([]);
     v.unmount();
   });
+
+  // Short words (Spending's "YTD") take a name that starts with them, so a
+  // screen reader says the whole and speech input can say what it sees; an
+  // item without one is named by its words alone.
+  test('an item may carry a name that starts with its words; one without keeps its words as its name', () => {
+    const html = renderToStaticMarkup(
+      <Segmented label="Period" value="m" onChange={() => {}} options={[['m', '1M', '1M, 1 month'], ['y', 'YTD', 'YTD, year to date'], ['a', 'All']]} />
+    );
+    expect(html).toContain('aria-label="1M, 1 month"');
+    expect(html).toMatch(/aria-label="YTD, year to date"[^>]*>YTD</);
+    expect(html).toMatch(/aria-checked="false" tabindex="-1">All</);
+  });
 });
 
 describe('Segmented as tabs', () => {
