@@ -205,7 +205,7 @@ function mount(node: React.ReactNode) {
     readout: () => host.findAll((e) => e.getAttribute('class') === 'chart-readout-date').map((e) => e.textContent),
     // Where the chart's line in `stroke` ends: its main one (the forecast, the
     // chosen plan) by default.
-    lineEnd: (stroke = 'var(--accent)') => {
+    lineEnd: (stroke = 'var(--data)') => {
       const d = svg()!.findAll((e) => e.tagName.toLowerCase() === 'path' && e.getAttribute('stroke') === stroke)[0].getAttribute('d')!;
       return d.match(/L(-?[\d.]+,-?[\d.]+)$/)?.[1] ?? null;
     },
@@ -331,18 +331,18 @@ describe('a chart drawn at its width', () => {
     v.unmount();
   });
 
-  // Look and feel, step 4: brass beside orange is about 1.1:1, so the what-if
+  // Look and feel, step 4: gold beside orange is about 1.1:1, so the what-if
   // is a gray dotted line, not --warn, and the legend shows each line's dash.
   test('the what-if differs from the forecast by dash as well as color, and the legend shows each dash', () => {
     const html = renderToStaticMarkup(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={1000} />);
-    expect(html).toMatch(/<path[^>]*stroke="var\(--accent\)"[^>]*stroke-dasharray="5 4"/);
+    expect(html).toMatch(/<path[^>]*stroke="var\(--data\)"[^>]*stroke-dasharray="5 4"/);
     expect(html).toMatch(/<path[^>]*stroke="var\(--text-2\)"[^>]*stroke-dasharray="0 4"/);
     expect(html).not.toMatch(/<path[^>]*stroke="var\(--warn\)"/);
     const samples = [...html.matchAll(/<svg class="chart-legend-line"[^>]*><line[^>]*stroke="([^"]+)"[^>]*stroke-dasharray="([^"]+)"/g)].map((m) => [m[1], m[2]]);
     // The legend is the two lines' alone: the warning's rule is named on
     // the plot, at its left end (the screen review), not as a third entry.
     expect(samples).toEqual([
-      ['var(--accent)', '5 4'],
+      ['var(--data)', '5 4'],
       ['var(--text-2)', '0 4'],
     ]);
     expect(html).toContain('<text class="chart-rule-label" x="8"');
@@ -351,7 +351,7 @@ describe('a chart drawn at its width', () => {
     // in the card it stands on.
     const calm = renderToStaticMarkup(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={0} />);
     expect(calm).toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--text-2\)"[^>]*stroke="var\(--surface\)"/);
-    expect(calm).not.toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--accent\)"/);
+    expect(calm).not.toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--data\)"/);
   });
 
   // The screen review: the forecast's "$125K" sat on its line. It has no
@@ -432,7 +432,7 @@ describe('a chart drawn at its width', () => {
     expect(b).toBeLessThanOrEqual(H - 24);
     // After the forecast's line in the drawing order, so over it.
     const kids = v.svg()!.findAll((e) => e.tagName.toLowerCase() === 'path' || e.getAttribute('class') === 'chart-rule-label');
-    const line = kids.findIndex((e) => e.getAttribute('stroke') === 'var(--accent)');
+    const line = kids.findIndex((e) => e.getAttribute('stroke') === 'var(--data)');
     expect(kids.findIndex((e) => e.getAttribute('class') === 'chart-rule-label')).toBeGreaterThan(line);
     v.unmount();
   });

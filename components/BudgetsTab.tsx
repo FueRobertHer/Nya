@@ -2,7 +2,7 @@
 
 // Budgets tab -- the Mint core loop: monthly budgets per category or per
 // category group, rolled up to your groups (components/BudgetsCard.tsx), with
-// progress meters (fill carries severity: accent -> warning -> over),
+// progress meters (fill carries severity: gold -> warning -> over),
 // then savings goals, and what is coming (components/UpcomingPanel.tsx): the
 // cash forecast with its what-if, the list or calendar of what is due, the
 // bills and income detected and the items planned. Spending is the current

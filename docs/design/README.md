@@ -46,7 +46,7 @@ Two plans were drawn up independently from the code on `origin/main` and from th
 | Plan: scenario bar, three segments | Adopted | Fixes the scenario flow. |
 | Completeness caveats in a neutral style | Changed: color by severity, and critical caveats never collapse | An incomplete total is red today on purpose; neutral, or folding "needs reconnecting" into a count, would soften it. |
 | Backup failures as an action for everyone | Changed: the fact for everyone, the instruction for the admin | Only the deployment's owner can fix a backup. |
-| Accent `#3b76f6` or `#5b8def` for buttons | Replaced with `#2563eb`, then by ink and brass (look and feel, step 4) | White on either fails AA (4.11 and 3.23); on `#2563eb` it is 5.17. Since step 4 the primary is brass under an ink label in dark (8.98:1) and the logo navy under white in light (15.46:1). |
+| Accent `#3b76f6` or `#5b8def` for buttons | Replaced with `#2563eb`, then by ink and brass (look and feel, step 4) | White on either fails AA (4.11 and 3.23); on `#2563eb` it is 5.17. Since step 4 the primary is brass under an ink label in dark (8.98:1) and the logo navy under white in light (15.46:1). Since the light accent review (2026-10-28) light's accent is navy `#22488a` (dark's stays brass), and gold `--data` draws what Nya measures in both themes. |
 | Tertiary text `#686e7c` / `#767d8c`, light green `#059669` | Replaced | They fail AA (3.47, 4.13, 3.77). |
 | Tokens with aliases; check print and hide amounts | Adopted | Lets the migration go a component at a time. |
 
