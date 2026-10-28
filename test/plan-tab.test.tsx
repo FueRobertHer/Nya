@@ -611,6 +611,31 @@ describe('the grid', () => {
     expect(t).toContain('Try again');
   });
 
+  // The screen review: brass washed behind each figure. The shade is neutral
+  // now (its colors in .plan-grid-cell.scored), each scored cell carrying its
+  // share; brass is only the plan's own outline.
+  test('cells are shaded by success on a neutral ramp, never brass behind a figure', () => {
+    const html = renderToStaticMarkup(
+      <PlanGrid
+        cells={[cell(0.04, 30, 1), cell(0.05, 30, 0.75), cell(0.06, 30, 0.4)]}
+        rates={[0.04, 0.05, 0.06, 0.07]}
+        horizons={[30]}
+        current={{ rate: 0.05, years: 30 }}
+        flexible={false}
+        pathsNoun="starts"
+      />
+    );
+    const cells = [...html.matchAll(/<td class="([^"]*)"( style="([^"]*)")?/g)].map((m): [string, string | null] => [m[1], m[3] ?? null]);
+    expect(cells).toEqual([
+      ['num plan-grid-cell scored', '--shade:100.0%'],
+      ['num plan-grid-cell own scored', '--shade:50.0%'],
+      ['num plan-grid-cell scored', '--shade:0.0%'],
+      // Still being worked out: no shade at all.
+      ['num plan-grid-cell', null],
+    ]);
+    expect(html).not.toContain('--accent');
+  });
+
   test("a flexible rule's cells carry how far spending fell", () => {
     const html = renderToStaticMarkup(
       <PlanGrid cells={[cell(0.04, 30, 1, 0.42)]} rates={[0.04]} horizons={[30]} current={{ rate: 0.04, years: 30 }} flexible pathsNoun="starts" />

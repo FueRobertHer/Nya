@@ -142,6 +142,8 @@ describe('design guard: controls and states read without color', () => {
     ['.chart-svg.hero-chart {', 'margin-inline: calc(-1 * var(--sp-4))', "the hero's chart bleeds through the gutter"],
     ['.chart-svg.hero-chart {', 'touch-action: pan-y', "the hero's chart still lets the page scroll"],
     ['.plan-table-view summary {', 'line-height: var(--tap)', 'Show as a table is a 44px target'],
+    // The screen review: brass behind a figure is ruled out.
+    ['.plan-grid td.plan-grid-cell.scored {', 'var(--border-strong) var(--shade), var(--elevated)', "the Plan grid's shade is neutral, never brass behind a figure"],
   ];
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);

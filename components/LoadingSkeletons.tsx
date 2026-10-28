@@ -302,11 +302,15 @@ export function ActivityListSkeleton({ segment }: { segment: ActivitySegment }) 
     <div aria-busy="true">
       {spending ? (
         <>
-          <div className="chip-row" inert>
+          {/* The period's switch as MonthBreakdown draws it (Segmented), on
+              its first length, as plain markup under inert: nothing to
+              press yet, and nothing dimmed, so it doesn't change look when
+              the real one arrives. */}
+          <div className="segmented spending-period" inert>
             {SPANS.map((s, i) => (
-              <span key={s.key} className="chip" role="radio" aria-checked={i === 0}>
-                {s.label}
-              </span>
+              <button key={s.key} type="button" role="radio" aria-checked={i === 0} tabIndex={-1}>
+                {s.short}
+              </button>
             ))}
           </div>
           <div className="card" aria-hidden="true">
@@ -386,6 +390,11 @@ export function UpcomingSkeleton() {
           <span className="badge">Estimate</span>
         </div>
         <span className="skeleton block upcoming-skeleton-chart" />
+        {/* The chart's Show as a table, its known words in its 44px line,
+            under inert: nothing to open yet. */}
+        <details className="plan-table-view" inert>
+          <summary>Show as a table</summary>
+        </details>
       </section>
       <RowsSkeleton count={4} className="card list-rows" />
       <Status label="Loading what is coming" />

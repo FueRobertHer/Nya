@@ -3,9 +3,13 @@
 // Single-series net-worth-over-time line chart. Dependency-free inline SVG.
 //
 // Follows the house dataviz specs: 2px round-capped line in the accent hue,
-// area wash at ~10% opacity, >=8px end-dot with a 2px surface ring, hairline
-// solid gridlines with clean tick values, muted text tokens for all labels
-// (never the series color), no legend for a single series. Touch/pointer
+// area wash at ~10% opacity, >=8px end-dot with a 2px surface ring, muted
+// text tokens for all labels (never the series color), no legend for a
+// single series. Every net worth chart (Home's hero, an account's sheet, a
+// shared net worth) is drawn at its own width (components/drawn-width.ts),
+// so its months are 12px, with no gridlines and no money on the plot (the
+// screen review after step 5): its scale is in the readout, in the SVG's
+// label (current, low and high) and in "Show as a table". Touch/pointer
 // scrubbing snaps a crosshair to the nearest day; the readout lives in a row
 // above the plot instead of a floating tooltip, since on a phone the finger
 // covers exactly the point being read.
@@ -22,6 +26,15 @@
 // straight line across days nothing was recorded (bridgeInteriorEstimates in
 // lib/history.ts). A segment joining two points more than a day apart draws
 // dashed too, even between real points: every day it spans is unmeasured.
+// When the range has no recorded stretch at all (no segment joins two
+// recorded points, however far apart, as in a history estimated up to a
+// recorded today), dashes would set nothing apart: the line is drawn solid,
+// and the readout, the label and the info say once that it is estimated,
+// so an estimate never reads as recorded. The look can change with the
+// range: a range that reaches a recorded stretch is dashed and solid again.
+// A run of recorded points that is dashed only for the days between them
+// (a shared net worth, one point a week) stays dashed, whatever estimates
+// sit among them.
 //
 // Notes on the timeline (#50, lib/timeline-notes.ts) mark their days: a
 // dotted rule and a small marker, never a change to the line, so a step (an
@@ -33,22 +46,22 @@
 // the selection is announced.
 //
 // As Home's hero (`hero`, look and feel step 5) it runs edge to edge under
-// the figure: drawn at its own width (components/drawn-width.ts), with no
-// gridlines and no money ticks, the months under it; a pointer's scrub moves
-// the hero's figure (components/hero-scrub.ts) instead of the readout, which
-// keeps the range's change; and every point in the range is behind "Show as
-// a table". Elsewhere (an account's sheet, a shared net worth) it is drawn
-// as before.
+// the figure, its months kept inside the page's gutter and the today dot
+// ringed in the page; a pointer's scrub moves the hero's figure
+// (components/hero-scrub.ts) instead of the readout, which keeps the range's
+// change. Elsewhere (an account's sheet, a shared net worth) it keeps to its
+// card, in the shape it has always had, and the readout reads the day under
+// the finger.
 
 import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { formatMoney, compactMoney, spoken } from '@/lib/format';
+import { formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
 import { HeroScrub } from './hero-scrub';
 import {
   availableRanges,
-  axisTicks,
+  axisTickLadder,
   initialRange,
   rangeLabel,
   sliceRange,
@@ -62,22 +75,24 @@ type Baseline = { date: string; value: number }[] | null;
 /** A note on the timeline: its day, and what it says. */
 export type ChartNote = { date: string; text: string };
 
-/** The plot's box: the card chart's fixed viewBox, or the hero's, whose
- *  width is the one it is drawn at. */
-type Frame = { W: number; H: number; left: number; right: number; top: number; bottom: number; hero: boolean };
-const CARD: Frame = { W: 340, H: 150, left: 8, right: 10, top: 12, bottom: 20, hero: false };
+/** The plot's box, at the width it is drawn at: `inset` is how far in from
+ *  either side the months keep. */
+type Frame = { W: number; H: number; left: number; right: number; top: number; bottom: number; inset: number; hero: boolean };
+/** A card's chart keeps the shape it has always had (150 to 340), its
+ *  months inside its own box, which sits inside the card's padding. */
+const cardFrame = (W: number): Frame => ({ W, H: Math.round((W * 150) / 340), left: 8, right: 10, top: 8, bottom: 20, inset: 0, hero: false });
 /** The hero's line runs from the screen's edge to the today dot's ring (4 +
- *  2), 120px of plot over 20 for the months. */
-const heroFrame = (W: number): Frame => ({ W, H: 140, left: 2, right: 8, top: 8, bottom: 20, hero: true });
-/** The hero's months keep to the page's gutter, in line with the text above. */
-const HERO_GUTTER = 16;
+ *  2), 120px of plot over 20 for the months, which keep to the page's
+ *  gutter, in line with the text above. */
+const heroFrame = (W: number): Frame => ({ W, H: 140, left: 2, right: 8, top: 8, bottom: 20, inset: 16, hero: true });
 /** How far sideways a finger on the hero goes before it scrubs, in CSS
  *  pixels: less, and it may be the start of a scroll. */
 const SIDEWAYS = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Closest two axis labels may sit on the card chart, in viewBox units,
- *  centre to centre, before one is dropped. */
-const MIN_LABEL_GAP = 30;
+/** The gap a step of month labels needs between neighbours, edge to edge,
+ *  to be chosen: twice the least, since a label drawn in Red Hat at 12px can
+ *  run wider than labelWidth's estimate. */
+const AXIS_GAP = 2 * LABEL_GAP;
 
 // Every figure prints in the series' own currency. No currency (a shared
 // net-worth total, which has none of its own) formats as "$", as it always
@@ -94,18 +109,6 @@ function fmtDay(iso: string, withYear = false): string {
     day: 'numeric',
     ...(withYear ? { year: 'numeric' } : {}),
   });
-}
-
-// 2-3 clean tick values (1/2/5 x 10^n steps) inside [min, max].
-function niceTicks(min: number, max: number): number[] {
-  const span = max - min || 1;
-  const rough = span / 2.5;
-  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
-  const norm = rough / mag;
-  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
-  const out: number[] = [];
-  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(v);
-  return out;
 }
 
 const RANGE_TEXT: Record<RangeKey, string> = {
@@ -154,17 +157,18 @@ export default function NetWorthChart({
   reserveSplit?: boolean;
   /** Notes on the timeline, marked on their days (see the header). */
   notes?: readonly ChartNote[];
-  /** Home's hero: edge to edge, no ticks, its scrub moving the figure above
-   *  (see the header). */
+  /** Home's hero: edge to edge, its scrub moving the figure above (see the
+   *  header). */
   hero?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  // The hero is drawn at its own width; the card chart keeps its viewBox.
+  // Drawn at its own width, in the hero's frame or a card's.
   const [drawnRef, drawnW] = useDrawnWidth<SVGSVGElement>();
-  const frame = useMemo(() => (hero ? heroFrame(drawnW) : CARD), [hero, drawnW]);
+  const frame = useMemo(() => (hero ? heroFrame(drawnW) : cardFrame(drawnW)), [hero, drawnW]);
   const { W, H } = frame;
-  // The hero's SVG is the one measured: it is wider than its box, by the bleed.
-  const heroRef = useCallback(
+  // The SVG itself is the one measured: the hero's is wider than its box, by
+  // the bleed.
+  const plotRef = useCallback(
     (el: SVGSVGElement | null) => {
       svgRef.current = el;
       drawnRef(el);
@@ -250,12 +254,22 @@ export default function NetWorthChart({
     // at the boundary between reconstructed and recorded history. So does one
     // that skips days: a solid line across a three-week hole would claim
     // three weeks of measurements that were never taken.
+    //
+    // Unless no stretch of the range is recorded (`uniform`, see the header):
+    // no segment, of any length, joins two recorded points. A segment between
+    // two recorded points is recorded at both its ends, so a line of recorded
+    // points a week apart never qualifies through an estimated week (or an
+    // estimated Sunday beside a recorded Monday). Then the line is one solid
+    // run, said in words instead.
+    const gaps = points.map((_, i) => i > 0 && ts[i] - ts[i - 1] > DAY_MS);
+    const touches = (i: number) => !!(points[i].estimated || points[i - 1].estimated);
+    let recordedSegment = false;
+    for (let i = 1; i < points.length; i++) if (!touches(i)) recordedSegment = true;
+    const uniform = points.length > 1 && !recordedSegment;
     const runs: { est: boolean; d: string }[] = [];
-    let hasGap = false;
+    const hasGap = gaps.some(Boolean);
     for (let i = 1; i < points.length; i++) {
-      const gap = ts[i] - ts[i - 1] > DAY_MS;
-      if (gap) hasGap = true;
-      const est = !!(points[i].estimated || points[i - 1].estimated || gap);
+      const est = !uniform && (touches(i) || gaps[i]);
       const prev = runs[runs.length - 1];
       if (prev && prev.est === est) prev.d += `L${pt(i)}`;
       else runs.push({ est, d: `M${pt(i - 1)}L${pt(i)}` });
@@ -270,37 +284,55 @@ export default function NetWorthChart({
             .map((b, i) => (b === null ? '' : `${i === baseStart ? 'M' : 'L'}${xs[i].toFixed(1)},${y(b).toFixed(1)}`))
             .join('');
 
-    // Time axis: labels at recognisable dates, anchored so none runs off the
-    // plot, and dropped where two would collide.
-    const xTicks: { x: number; label: string; anchor: 'start' | 'middle' | 'end' }[] = [];
-    if (frame.hero) {
-      // The hero's months at 12px, kept inside the page's gutter (the plot
-      // itself runs to the screen's edges), spaced by their widths.
+    // Time axis: 12px labels at recognisable dates, each kept inside the
+    // frame's inset (the hero's page gutter; a card's own box), anchored so
+    // none runs past it. Of the ladder of whole steps (every month, every
+    // two...), the densest whose labels all sit AXIS_GAP apart by their
+    // widths, so every month that fits is labelled and they stay evenly
+    // spaced; a label whose day falls outside the inset is left out, not
+    // moved, and a step left with none is passed over. Where no step fits,
+    // the sparsest, dropping any label that would crowd the one before it.
+    type XTick = { x: number; label: string; anchor: 'start' | 'middle' | 'end' };
+    const fromX = Math.max(frame.inset, left);
+    const toX = Math.min(W - frame.inset, W - right);
+    const place = (step: { date: string; label: string }[], drop: boolean): XTick[] | null => {
+      const out: XTick[] = [];
       let lastEnd = -Infinity;
-      for (const t of axisTicks(points[0].date, points[points.length - 1].date)) {
+      for (const t of step) {
         const tx = x(Date.parse(`${t.date}T00:00:00Z`));
-        if (tx < HERO_GUTTER || tx > W - HERO_GUTTER) continue;
+        if (tx < fromX || tx > toX) continue;
         const w = labelWidth(t.label);
-        const anchor = tx - w / 2 < HERO_GUTTER ? 'start' : tx + w / 2 > W - HERO_GUTTER ? 'end' : 'middle';
+        const anchor = tx - w / 2 < frame.inset ? 'start' : tx + w / 2 > W - frame.inset ? 'end' : 'middle';
         const from = anchor === 'start' ? tx : anchor === 'end' ? tx - w : tx - w / 2;
-        if (from - lastEnd < LABEL_GAP) continue;
+        if (from - lastEnd < AXIS_GAP) {
+          // An end label, pushed in from the edge, that crowds the one
+          // before it is left out: the step is still evenly spaced. So is a
+          // first label pushed in from the start, when it crowds this one.
+          if (anchor === 'end') continue;
+          if (out.length === 1 && out[0].anchor === 'start') out.pop();
+          else if (!drop) return null;
+          else continue;
+        }
         lastEnd = from + w;
-        xTicks.push({ x: tx, label: t.label, anchor });
+        out.push({ x: tx, label: t.label, anchor });
       }
-    } else {
-      for (const t of axisTicks(points[0].date, points[points.length - 1].date)) {
-        const tx = x(Date.parse(`${t.date}T00:00:00Z`));
-        if (tx < left || tx > W - right) continue;
-        if (xTicks.length > 0 && tx - xTicks[xTicks.length - 1].x < MIN_LABEL_GAP) continue;
-        const anchor = tx < left + 16 ? 'start' : tx > W - right - 16 ? 'end' : 'middle';
-        xTicks.push({ x: tx, label: t.label, anchor });
+      return out;
+    };
+    const ladder = axisTickLadder(points[0].date, points[points.length - 1].date);
+    let xTicks: XTick[] = [];
+    for (const step of ladder) {
+      const fits = place(step, false);
+      if (fits && fits.length > 0) {
+        xTicks = fits;
+        break;
       }
     }
+    if (xTicks.length === 0 && ladder.length > 0) xTicks = place(ladder[ladder.length - 1], true) ?? [];
 
     const outline = points.map((_, i) => `${i === 0 ? 'M' : 'L'}${pt(i)}`).join('');
     const baseY = H - bottom;
     const area = `${outline}L${xs[xs.length - 1].toFixed(1)},${baseY}L${xs[0].toFixed(1)},${baseY}Z`;
-    return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi), xTicks, hasGap, base, basePath, baseStart };
+    return { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, basePath, baseStart };
   }, [points, baseline, frame, W, H]);
 
   // The notes in the range, a day each (several notes on one day join), each
@@ -321,12 +353,22 @@ export default function NetWorthChart({
     return here.length > 0 ? here.map((m) => m.text).join('; ') : null;
   };
 
-  const { vals, xs, y, runs, area, baseY, ticks, xTicks, hasGap, base, basePath, baseStart } = geo;
+  const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, basePath, baseStart } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
   // Dates carry the year once the range crosses one, or "Mar 3" is ambiguous.
   const withYear = points[0].date.slice(0, 4) !== points[last].date.slice(0, 4);
   const day = (i: number) => fmtDay(points[i].date, withYear);
+  // A line drawn solid because none of it is recorded says so in words,
+  // true to the days that are: a recorded today, or a few recorded days.
+  let estimatedWords = '';
+  if (uniform) {
+    const recorded = points.flatMap((p, i) => (p.estimated ? [] : [i]));
+    const except = recorded.length === 0 ? '' : recorded.length === 1 ? `, except ${day(recorded[0])}` : `, except ${recorded.length} recorded days`;
+    // Not "from transactions": a day bridged between two others is a
+    // straight line across days with no data (lib/history.ts).
+    estimatedWords = `Estimated, not recorded${except}.`;
+  }
 
   /**
    * Money added and growth from the baseline's start to point i, or null.
@@ -382,7 +424,8 @@ export default function NetWorthChart({
   if (baseStart >= 0) {
     info.push(`Grey line: the balance on ${day(baseStart)} plus money added since. The gap above it is growth.`);
   }
-  if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');
+  if (uniform) info.push(`${estimatedWords} No stretch of this range is recorded, so the line is solid.`);
+  else if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');
   if (rangeChange.approx) info.push('≈: the change starts or ends on an estimated balance.');
   if (marked.length > 0) info.push('Dotted lines mark your notes: touch the day to read one, or pick it from the list below.');
   info.push('Touch with two fingers, or drag with a mouse, to compare two days.');
@@ -535,7 +578,8 @@ export default function NetWorthChart({
     readDate = `${day(readActive)}${points[readActive].estimated ? ' · estimated' : ''}`;
   } else {
     readValue = rangeChange.text;
-    readDate = rangeLabel(range, points[0].date, points[last].date);
+    // Said once here when the line is solid for being all an estimate.
+    readDate = `${rangeLabel(range, points[0].date, points[last].date)}${uniform ? ' · estimated' : ''}`;
   }
 
   return (
@@ -575,12 +619,12 @@ export default function NetWorthChart({
       )}
 
       <svg
-        ref={hero ? heroRef : svgRef}
-        className={hero ? 'chart-svg hero-chart' : 'chart-svg'}
+        ref={plotRef}
+        className={hero ? 'chart-svg at-width hero-chart' : 'chart-svg at-width'}
         viewBox={`0 0 ${W} ${H}`}
         role="img"
         aria-label={spoken(
-          `${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}`
+          `${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
         )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -589,18 +633,8 @@ export default function NetWorthChart({
         onLostPointerCapture={onPointerEnd}
         onPointerLeave={onPointerLeave}
       >
-        {/* recessive hairline gridlines with clean tick values; the hero has
-            none, nor money on its plot (look and feel, step 5) */}
-        {!hero &&
-          ticks.map((t) => (
-            <g key={t}>
-              <line x1={frame.left} x2={W - frame.right} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
-              <text className="chart-tick" x={frame.left} y={y(t) - 3}>
-                {compactMoney(t, currency)}
-              </text>
-            </g>
-          ))}
-
+        {/* No gridlines and no money on the plot: the scale is in the
+            readout, the label and the table. */}
         {/* the measured stretch, shaded between its two days */}
         {measure && (
           <rect
@@ -619,7 +653,7 @@ export default function NetWorthChart({
             className="chart-baseline"
             d={basePath}
             fill="none"
-            stroke="var(--muted)"
+            stroke="var(--text-2)"
             strokeWidth={1.25}
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -659,7 +693,7 @@ export default function NetWorthChart({
         {/* end-dot (or the active or measured dots) with a 2px ring in what
             is behind it: the card, or the page under the hero */}
         {(measure ?? [active ?? last]).map((i) => (
-          <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--accent)" stroke={hero ? 'var(--canvas)' : 'var(--card)'} strokeWidth={2} />
+          <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--accent)" stroke={hero ? 'var(--canvas)' : 'var(--surface)'} strokeWidth={2} />
         ))}
 
         {/* time axis */}
@@ -693,40 +727,38 @@ export default function NetWorthChart({
           : ''}
       </p>
 
-      {/* The hero's plot has no money on it: every point in the range, newest
+      {/* The plot has no money on it: every point in the range, newest
           first, for anyone who can't read the line. Its rows render only
-          while it is open, and through Masked each time, so hide amounts
-          masks them. */}
-      {hero && (
-        <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
-          <summary>Show as a table</summary>
-          {tableOpen && (
-            <table>
-              <thead>
-                <tr>
-                  <th>Day</th>
-                  <th className="num">{label}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {points
-                  .map((p, i) => (
-                    <tr key={p.date}>
-                      <td>
-                        {day(i)}
-                        {p.estimated ? ' · estimated' : ''}
-                      </td>
-                      <td className="num">
-                        <Masked>{formatMoney(p.value, currency)}</Masked>
-                      </td>
-                    </tr>
-                  ))
-                  .reverse()}
-              </tbody>
-            </table>
-          )}
-        </details>
-      )}
+          while it is open, and through Masked each time (never memoized as
+          text), so hide amounts masks them. */}
+      <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
+        <summary>Show as a table</summary>
+        {tableOpen && (
+          <table>
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="num">{label}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {points
+                .map((p, i) => (
+                  <tr key={p.date}>
+                    <td>
+                      {day(i)}
+                      {p.estimated ? ' · estimated' : ''}
+                    </td>
+                    <td className="num">
+                      <Masked>{formatMoney(p.value, currency)}</Masked>
+                    </td>
+                  </tr>
+                ))
+                .reverse()}
+            </tbody>
+          </table>
+        )}
+      </details>
 
       {/* In the markup even while closed (hidden), so it is one tap to show and
           the page never shifts while loading it. */}
