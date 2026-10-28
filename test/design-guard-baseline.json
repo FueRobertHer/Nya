@@ -117,7 +117,7 @@
     "inlineLayoutStyles": 1
   },
   "components/Sharing.tsx": {
-    "inlineLayoutStyles": 8
+    "inlineLayoutStyles": 6
   },
   "components/SharingDates.tsx": {
     "inlineLayoutStyles": 5

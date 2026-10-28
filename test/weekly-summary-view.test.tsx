@@ -41,6 +41,14 @@ const sheet = (over: Partial<Body> = {}) =>
   );
 
 describe('the card', () => {
+  test('while it loads: its line and its button’s place as placeholders, said once, never "Loading…"', () => {
+    const html = card({ kind: 'loading' });
+    expect(html).not.toContain('Loading…');
+    expect(html.match(/class="skeleton lines-skeleton-/g)).toHaveLength(1);
+    expect(html).toContain('<span class="skeleton block weekly-summary-skeleton-button" aria-hidden="true"></span>');
+    expect(html).toContain('<p class="visually-hidden" role="status">Loading your weekly summary</p>');
+  });
+
   test('says whether it is on, and on which day and zone', () => {
     expect(statusLine(null)).toBe('Off');
     expect(statusLine({ ...ON, enabled: false })).toBe('Off');
