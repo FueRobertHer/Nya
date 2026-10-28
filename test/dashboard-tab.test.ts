@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseTab, tabHref, TABS } from '@/lib/dashboard-tab';
+import { parseSettings, parseTab, settingsHref, tabHref, SETTINGS_SECTIONS, TABS, type SettingsView } from '@/lib/dashboard-tab';
 
 // The open tab kept in the address (lib/dashboard-tab.ts), so a reload comes
 // back to it: read by the page on the server, written by the dashboard.
@@ -45,21 +45,78 @@ describe('the address for a tab', () => {
   });
 });
 
+describe('Settings in the address', () => {
+  test('?settings= names a section, or asks for the list', () => {
+    for (const id of SETTINGS_SECTIONS) expect(parseSettings({ settings: id })).toBe(id);
+    expect(parseSettings(new URLSearchParams('tab=plan&settings=data'))).toBe('data');
+    expect(parseSettings({ settings: 'list' })).toBe('list');
+  });
+
+  test('absent is closed; empty, unknown or repeated asks for the list or takes the first', () => {
+    expect(parseSettings({})).toBeNull();
+    expect(parseSettings(new URLSearchParams('tab=plan'))).toBeNull();
+    expect(parseSettings({ settings: '' })).toBe('list');
+    expect(parseSettings(new URLSearchParams('settings'))).toBe('list');
+    expect(parseSettings({ settings: 'manage' })).toBe('list');
+    expect(parseSettings({ settings: ['account', 'data'] })).toBe('account');
+  });
+
+  test('Sharing is offered only with Clerk: without it the address opens the list', () => {
+    expect(parseSettings({ settings: 'sharing' }, { sharing: false })).toBe('list');
+    expect(parseSettings({ settings: 'account' }, { sharing: false })).toBe('account');
+    expect(parseSettings({ settings: 'sharing' })).toBe('sharing');
+  });
+
+  test('the address for it sets or drops only ?settings=, keeping the tab, the rest and the hash', () => {
+    expect(settingsHref('connections', 'https://nya.test/?tab=accounts')).toBe('/?tab=accounts&settings=connections');
+    expect(settingsHref('list', '/')).toBe('/?settings=list');
+    expect(settingsHref(null, 'https://nya.test/?tab=plan&settings=data#top')).toBe('/?tab=plan#top');
+    expect(settingsHref(null, '/?x=1')).toBe('/?x=1');
+  });
+
+  test('reading back the address written gives the same tab and the same Settings, through both', () => {
+    const views: (SettingsView | null)[] = [null, 'list', ...SETTINGS_SECTIONS];
+    for (const tab of TABS)
+      for (const view of views) {
+        const url = new URL(settingsHref(view, tabHref(tab, 'https://nya.test/?view=connections&settings=account')), 'https://nya.test');
+        expect([tab, view, parseTab(url.searchParams), parseSettings(url.searchParams)]).toEqual([tab, view, tab, view]);
+        // A tab changing under Settings keeps it.
+        const again = new URL(tabHref('budgets', url.href), 'https://nya.test');
+        expect(parseSettings(again.searchParams)).toBe(view);
+      }
+  });
+});
+
 describe('where it is read and written', () => {
   const read = (p: string) => readFileSync(join(import.meta.dir, '..', p), 'utf8');
 
   test('the page reads it on the server and hands it to the dashboard and to the app loading', () => {
     const page = read('app/page.tsx');
-    expect(page).toContain('parseTab(await searchParams)');
-    expect(page).toContain('<AppLoading account="clerk" tab={tab} />');
-    expect(page.match(/initialTab=\{tab\}/g)?.length).toBe(2);
+    expect(page).toContain('const params = await searchParams;');
+    expect(page).toContain('const tab = parseTab(params);');
+    // Sharing only where there is Clerk to share between people.
+    expect(page).toContain('const settings = parseSettings(params, { sharing: clerkEnabled() });');
+    expect(page).toContain('<AppLoading account="clerk" tab={tab} settings={settings} />');
+    expect(page.match(/initialTab=\{tab\} initialSettings=\{settings\}/g)?.length).toBe(2);
   });
 
-  test('the dashboard replaces the address as the tab changes, never pushing a history entry', () => {
-    const dashboard = read('components/Dashboard.tsx');
+  test('the dashboard replaces the address as the tab or Settings changes, never pushing a history entry', () => {
+    const dashboard = read('components/Dashboard.tsx').replace(/\r\n/g, '\n');
     expect(dashboard).toContain('useState<Tab>(initialTab)');
+    expect(dashboard).toContain('useState<SettingsView | null>(initialSettings)');
+    expect(dashboard).toContain('const href = settingsHref(settings, tabHref(tab, window.location.href));');
     expect(dashboard).toContain("window.history.replaceState(null, '', href)");
+    expect(dashboard).toContain('}, [tab, settings]);');
     expect(dashboard).not.toContain('pushState');
+    // The address it came with is read before anything writes over it.
+    const read1 = dashboard.indexOf('setSettings(parseSettings(query, { sharing: clerk }));');
+    const write = dashboard.indexOf('const href = settingsHref(');
+    expect(read1).toBeGreaterThan(-1);
+    expect(read1).toBeLessThan(write);
+  });
+
+  test('Your data, opened from Settings > Your data, goes back to it', () => {
+    expect(read('components/DataInventory.tsx')).toContain('<PageHeader back="/?settings=data" />');
   });
 
   test('Reports, opened from Activity, goes back to it', () => {

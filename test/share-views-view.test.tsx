@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
-import { SharingPanelView, SharedWithMeView, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
+import { ConnectionView, SharingListView, SharedWithMeView, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
 import { LOCAL_CACHE_KEY } from '@/components/device-cache';
 import { SharedViewsList, outlookWords } from '@/components/SharedViews';
 import { seenText, kindsText, viewsToSave, sameViews } from '@/components/ShareKinds';
@@ -345,39 +345,39 @@ describe('in the drawer', () => {
     ],
   };
   const noop = () => {};
-  const panel = (viewsDraft: any, opts: { draft?: Record<string, string>; current?: any; data?: any } = {}) =>
-    renderToStaticMarkup(
-      <SharingPanelView
+  // A person's sheet (ConnectionView), or with `current: null` the list it
+  // is opened from (SharingListView, in place on Settings > Sharing).
+  const panel = (viewsDraft: any, opts: { draft?: Record<string, string>; current?: any; data?: any } = {}) => {
+    const current = 'current' in opts ? opts.current : pat;
+    if (!current) return renderToStaticMarkup(<SharingListView data={opts.data ?? data} invite={null} busy={false} error="" notice="" damaged={null} onOpen={noop} onInvite={noop} onClearDamaged={noop} onUnblock={noop} />);
+    return renderToStaticMarkup(
+      <ConnectionView
         data={opts.data ?? data}
-        current={'current' in opts ? opts.current : pat}
+        current={current}
         draft={(opts.draft ?? { a: 'balance', b: 'none', i: 'none' }) as Record<string, Choice>}
         viewsDraft={viewsDraft}
         labelDraft="Pat"
         endChoice="none"
         endDay=""
-        invite={null}
         busy={false}
         error=""
         notice=""
-        onOpen={noop}
         onChoose={noop}
         onViews={noop}
         onLabel={noop}
         onEndChoice={noop}
         onEndDay={noop}
-        onInvite={noop}
         onSave={noop}
         onRenew={noop}
         onPreview={noop}
         records={null}
         recordsFailed={false}
         onShowAll={noop}
-        damaged={null}
         onClearRecord={noop}
-        onClearDamaged={noop}
         onRemove={noop}
       />
     );
+  };
 
   test('each kind is a choice, not shared until chosen, with what it shows once it is', () => {
     const page = text(panel({}));

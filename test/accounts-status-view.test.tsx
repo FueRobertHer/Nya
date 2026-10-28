@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import AccountsStatus, { statusCounts, type StatusEntry } from '@/components/AccountsStatus';
 
 // The Accounts tab's status pill (rollout phase 3c): how many connections
@@ -68,5 +70,17 @@ describe('when it says nothing', () => {
 
   test('only accounts typed by hand: nothing syncs, so nothing to say', () => {
     expect(render([{ key: 'manual', severity: null }], { syncing: false })).toBe('');
+  });
+});
+
+describe('its place on the tab', () => {
+  test('the pill first, on the left, then Add account, tonal, at the right', () => {
+    const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
+    const bar = dashboard.slice(dashboard.indexOf('<div className="accounts-bar">'), dashboard.indexOf('<AccountsSummary'));
+    expect(bar.indexOf('<AccountsStatus')).toBeGreaterThan(-1);
+    expect(bar.indexOf('<AccountsStatus')).toBeLessThan(bar.indexOf('Add account'));
+    expect(bar).toContain('<button className="btn secondary" onClick={() => setAddAccountOpen(true)}>');
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\r\n/g, '\n');
+    expect(css).toContain('.accounts-bar > .btn {\n  margin-left: auto;\n}');
   });
 });

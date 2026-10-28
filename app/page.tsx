@@ -4,12 +4,15 @@ import { AppLoading } from '@/components/LoadingSkeletons';
 import { clerkEnabled } from '@/lib/auth-mode';
 import { brokerageLinkEnabled } from '@/lib/item-products';
 import { lunchFlowEnabled } from '@/lib/connectors/switch';
-import { parseTab, type Tab } from '@/lib/dashboard-tab';
+import { parseSettings, parseTab, type SettingsView, type Tab } from '@/lib/dashboard-tab';
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   // The tab the address asks for (lib/dashboard-tab.ts), so a reload draws
-  // that tab's loading view first and comes back to it.
-  const tab = parseTab(await searchParams);
+  // that tab's loading view first and comes back to it; and Settings, open
+  // over it, the same way (Sharing only with Clerk, else its list).
+  const params = await searchParams;
+  const tab = parseTab(params);
+  const settings = parseSettings(params, { sharing: clerkEnabled() });
   // Without Clerk there is one person, who is the admin (lib/admin-items.ts), so
   // nothing more is read.
   // Whether to offer connecting a brokerage or retirement account, which is off
@@ -17,20 +20,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ [
   // likewise (lib/connectors/switch.ts).
   const brokerageLink = brokerageLinkEnabled();
   const lunchFlow = lunchFlowEnabled();
-  if (!clerkEnabled()) return <Dashboard clerk={false} admin brokerageLink={brokerageLink} lunchFlow={lunchFlow} initialTab={tab} />;
+  if (!clerkEnabled()) return <Dashboard clerk={false} admin brokerageLink={brokerageLink} lunchFlow={lunchFlow} initialTab={tab} initialSettings={settings} />;
   // Who is signed in, and whether they are the admin, are read before the
   // dashboard is sent. Meanwhile the page streams the app loading
   // (components/LoadingSkeletons.tsx), the header and Net worth card the
   // dashboard draws while it loads: so once Clerk signs someone in and moves
   // here, that shows at once, where the sign-in page stayed before.
   return (
-    <Suspense fallback={<AppLoading account="clerk" tab={tab} />}>
-      <SignedInHome brokerageLink={brokerageLink} lunchFlow={lunchFlow} tab={tab} />
+    <Suspense fallback={<AppLoading account="clerk" tab={tab} settings={settings} />}>
+      <SignedInHome brokerageLink={brokerageLink} lunchFlow={lunchFlow} tab={tab} settings={settings} />
     </Suspense>
   );
 }
 
-async function SignedInHome({ brokerageLink, lunchFlow, tab }: { brokerageLink: boolean; lunchFlow: boolean; tab: Tab }) {
+async function SignedInHome({ brokerageLink, lunchFlow, tab, settings }: { brokerageLink: boolean; lunchFlow: boolean; tab: Tab; settings: SettingsView | null }) {
   const { auth } = await import('@clerk/nextjs/server');
   const { userId } = await auth();
   // Decided here, on the server, so nobody else is ever sent the admin's panel
@@ -45,5 +48,5 @@ async function SignedInHome({ brokerageLink, lunchFlow, tab }: { brokerageLink: 
       admin = false;
     }
   }
-  return <Dashboard clerk viewer={userId ?? undefined} admin={admin} brokerageLink={brokerageLink} lunchFlow={lunchFlow} initialTab={tab} />;
+  return <Dashboard clerk viewer={userId ?? undefined} admin={admin} brokerageLink={brokerageLink} lunchFlow={lunchFlow} initialTab={tab} initialSettings={settings} />;
 }
