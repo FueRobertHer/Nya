@@ -44,7 +44,7 @@ Also:
 - **No color literals** (`#hex`, `rgb()`, `hsl()`) in components or in new CSS rules. Charts pass `var(--…)` strings to `fill` and `stroke`.
 - The app is light or dark (rollout phase 7), so a color that only reads in one of them is a bug. Code that can't read a CSS variable (`themeColor`, the web manifest) imports `lib/theme.ts`; Clerk takes the variables themselves.
 - A token at an alpha is `color-mix(in srgb, var(--token) N%, transparent)`, never the token's color restated as `rgba()`.
-- **Meaning, not decoration.** Blue is for actions and the current selection. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Amber is only for something that needs the person. Red is for a number that is wrong or short.
+- **Meaning, not decoration.** Brass (`--accent`) is for actions and the current selection. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Orange (`--warn`) is only for something that needs the person. Red is for a number that is wrong or short. Brass is close to orange, coral and body text in lightness, so it never carries a meaning alone: underline a link inside a sentence, and tell two chart lines apart by dash as well as color.
 - **Never color alone**: a state shown in color also has a word or an icon.
 
 ## Type
@@ -110,7 +110,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 
 Nya shows its gaps on purpose ([features.md](../features.md)). A new feature that can be wrong, stale or incomplete must say so, in these terms:
 
-- **Severity sets the color, and is never lowered to save space.** Critical (red): a number is wrong or short. Caution (amber): real but dated, held or paused, or it needs the person. Information (neutral): nothing is wrong.
+- **Severity sets the color, and is never lowered to save space.** Critical (red): a number is wrong or short. Caution (orange): real but dated, held or paused, or it needs the person. Information (neutral): nothing is wrong.
 - **On the number.** A caveat sits under the figure it qualifies. Critical caveats always show in full, naming what is wrong. Two or more lesser ones may collapse into a line that states how many and what kind.
 - **Needs attention.** Anything that asks the person to act also appears in Home's Needs attention, linking to where it is fixed.
 - **Who can act.** An instruction only the deployment's admin can follow is shown only to the admin; everyone else gets the fact.

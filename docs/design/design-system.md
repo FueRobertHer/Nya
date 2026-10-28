@@ -19,7 +19,7 @@ How Nya should look and behave, screen to screen. The tokens are in [tokens.css]
 - **Dark and light.** The theme follows the system: dark when the system is dark or states no preference (so most people see what they see today), light when it is light. Settings > Preferences can pin Dark or Light. Keeping everyone on dark until they opt in is the alternative; see [Decisions you can reverse](README.md#decisions-you-can-reverse).
 - **Fewer boxes.** A screen is a few cards with grouped rows, not a column of cards each holding one fact. Rows share a card and are split by 1px dividers.
 - **One hero number per screen.** Net worth on Home, a month's net on Activity, the answer on Plan (when you reach FI, since phase 8b: words, at the hero's 32px end so "Around age 39" fits a phone's line). Everything else is smaller.
-- **Color is meaning.** Blue is for things you can act on and the current selection. Green and red are for money in and out, and for gain and loss. Amber is only for something that needs you. Red as a background means a number is wrong or short. One status uses green: the Accounts tab's "All synced", the good end of the status pill whose other ends are red and amber.
+- **Color is meaning.** Brass is for things you can act on and the current selection (ink and brass, from the logo, since the look and feel's step 4). Green and red are for money in and out, and for gain and loss. Orange is only for something that needs you. Red as a background means a number is wrong or short. One status uses green: the Accounts tab's "All synced", the good end of the status pill whose other ends are red and orange. Brass sits close to orange, coral and body text in lightness, so it never carries a meaning alone: a link inside a sentence is underlined, a meter at caution is hatched, and two chart lines differ by dash.
 - **Considered and rejected:** an editorial "warm paper" style with a serif display face. It is pleasant for reading and worse for scanning columns of figures.
 
 The mockups ([mockups/index.html](mockups/index.html)) show the refined current dark beside this direction on Home, so the choice can be made on a real screen.
@@ -30,46 +30,50 @@ Defined in `tokens.css` and copied into `app/globals.css`; Clerk's appearance an
 
 | Role | Token | Dark | Light | Use |
 |---|---|---|---|---|
-| Page | `--canvas` | `#0d0f14` | `#f6f7f9` | Behind cards |
-| Card | `--surface` | `#151821` | `#ffffff` | Cards, sheets |
-| Raised | `--elevated` | `#1c202b` | `#f0f2f6` | Pressed rows, inputs on a card, a secondary button's fill |
+| Page | `--canvas` | `#0b1019` (ink) | `#f4f5f8` | Behind cards |
+| Card | `--surface` | `#131a27` | `#ffffff` | Cards, sheets |
+| Raised | `--elevated` | `#1b2333` | `#eef0f4` | Pressed rows, inputs on a card, a secondary button's fill |
 | Chrome | `--glass` | 88% surface | 88% white | Header and tab bar over a blur |
-| Divider | `--border-subtle` | `#232834` | `#e6e8ef` | Between rows |
-| Edge | `--border-strong` | `#2b3140` | `#d5d9e2` | Card, sheet and menu edges. About 1.4:1, so it never marks a control on its own |
-| Control | `--border-input` | `#707889` | `#757c8a` | A control's edge: fields, chips, and a secondary button on a fill of its own (a notice, the rule offer) (3:1 on canvas, card and raised) |
-| Text | `--text-1/2/3` | `#eceef2` / `#9499a6` / `#868c9b` | `#11141c` / `#525866` / `#636a77` | Primary, secondary, meta |
-| Action | `--accent` | `#5b8def` | `#2563eb` | Links, selection, focus |
-| Money in | `--pos` | `#34d399` | `#047857` | Inflows, gains |
-| Money out | `--neg` | `#f87171` | `#b91c1c` | Outflows, losses, critical text |
-| Needs you | `--warn` | `#fbbf24` | `#92400e` | Caution text |
+| Divider | `--border-subtle` | `#222b3c` | `#e3e6ec` | Between rows |
+| Edge | `--border-strong` | `#2e384c` | `#d3d8e1` | Card, sheet and menu edges. About 1.4:1, so it never marks a control on its own |
+| Control | `--border-input` | `#6f7b91` | `#737c8c` | A control's edge: fields, chips, and a secondary button on a fill of its own (a notice, the rule offer) (3:1 on canvas, card and raised) |
+| Text | `--text-1/2/3` | `#eeece7` / `#9ba4b5` / `#8b94a6` | `#111826` / `#4f5869` / `#5e6777` | Primary, secondary, meta |
+| Action | `--accent` | `#d4b680` (brass) | `#846326` | Links (underlined inside a sentence), selection, focus |
+| Money in | `--pos` | `#4ade9b` | `#047857` | Inflows, gains |
+| Money out | `--neg` | `#f7857a` | `#b91c1c` | Outflows, losses, critical text |
+| Needs you | `--warn` | `#fb9a4b` (orange) | `#a3410b` | Caution text |
 | Tints | `--*-tint` | solid, about 12% | solid, about 8% | Notice and chip backgrounds |
-| Buttons | `--accent-fill`, `--danger-fill` | `#2563eb`, `#dc2626` | same | Filled buttons with `--on-fill` white labels |
+| Primary | `--accent-fill`, `--on-accent-fill` | `#cdae74` (brass) under `#0b1019` (ink) | `#18243d` (the logo navy) under white | The primary button |
+| Danger | `--danger-fill`, `--on-fill` | `#dc2626` under white | same | The danger button |
 | Tags | `--tag-<color>`, `--tag-<color>-tint` | pastel on a solid ~19% tint | a deep step on a solid ~8% tint | A tag's chip (text on tint) and its swatch (the text step), for the nine colors in `lib/tags.ts` (since phase 7) |
 | Shadow | `--shadow` | 45% black | 16% ink | Under a sheet |
 | Logo tile | `--logo-tile` | white | white | Behind a merchant's logo, so a dark logo shows on a dark card |
+| Logo mark | `--brand-mark` | `#bfa271` (the logo gold) | `#18243d` (the logo navy) | The header logo's one ink, and nothing else |
 
-**Contrast.** Every text token passes WCAG AA (4.5:1) on canvas, surface and elevated in both themes, every meaning color passes on its own tint, white passes on both fills, field borders pass 3:1 on every surface, and each tag color passes 4.5:1 on its tint and 3:1 (its swatch) on a card. The pairings are checked by `test/design-guard.test.ts` on every test run. The ones most likely to matter:
+**Contrast.** Every text token passes WCAG AA (4.5:1) on canvas, surface and elevated in both themes, every meaning color passes on its own tint, each fill's label passes on it, field borders pass 3:1 on every surface, and each tag color passes 4.5:1 on its tint and 3:1 (its swatch) on a card. The pairings are checked by `test/design-guard.test.ts` on every test run. The ones most likely to matter:
 
 | Pair | Dark | Light |
 |---|---|---|
-| `--text-2` on `--surface` | 6.22 | 7.13 |
-| `--text-3` on `--surface` | 5.27 | 5.44 |
-| `--accent` on `--surface` | 5.49 | 5.17 |
-| `--neg` on `--surface` | 6.41 | 6.47 |
-| `--warn` on `--warn-tint` | 8.32 | 6.51 |
-| `--neg` on `--neg-tint` | 5.42 | 5.73 |
-| `--accent` on `--accent-tint` | 4.68 | 4.65 |
-| white on `--accent-fill` | 5.17 | 5.17 |
+| `--text-2` on `--surface` | 6.95 | 7.16 |
+| `--text-3` on `--surface` | 5.71 | 5.70 |
+| `--accent` on `--surface` | 8.97 | 5.54 |
+| `--neg` on `--surface` | 7.13 | 6.47 |
+| `--warn` on `--warn-tint` | 6.67 | 5.61 |
+| `--neg` on `--neg-tint` | 6.08 | 5.64 |
+| `--accent` on `--accent-tint` | 7.42 | 4.88 |
+| `--on-accent-fill` on `--accent-fill` | 8.98 | 15.46 |
 | white on `--danger-fill` | 4.83 | 4.83 |
-| `--border-input` on `--elevated` (3:1 for UI, its weakest surface) | 3.67 | 3.74 |
+| `--border-input` on `--elevated` (3:1 for UI, its weakest surface) | 3.68 | 3.69 |
+| `--brand-mark` on `--canvas` (3:1 for a graphic) | 7.82 | 14.18 |
+| `--accent` from `--text-1` | 1.65 | 3.21 |
 
-Today white on the accent button is 3.23:1 and white on the danger button 3.32:1; both fail. That is why the button fill is a deeper blue than the accent text in dark.
+The primary's label is the ink in dark: white on its fill would be 2.12:1 (and 1.94:1 on `--accent`, where Clerk's primary states draw it). Brass is 1.65:1 from body text in dark and 3.21:1 in light, so a link inside a sentence is underlined (`a:not([class])`, and Clerk's "Sign up"), never told by its hue alone.
 
-**Charts** use the same tokens: `--pos` and `--neg` for in and out, `--accent` for the selected series, `--text-3` for ticks, `--border-subtle` for gridlines. The column a readout is for is marked with a `--border-strong` rule, a line drawn for comparison is `--text-3`, and a heat map (the Plan's grid) is `--accent` at an alpha, through `color-mix`. The allocation views' class colors are fixed (`components/allocation-text.ts`): each passes 3:1 on a card in both themes, which the guard checks. No chart color is written as a literal (since phase 7). A chart **drawn at its own width** (`useDrawnWidth`, `components/drawn-width.ts`: Income vs spend and the cash flow since phase 5d, the cash forecast and the payoff plan since 6a4, the other charts with phase 6) has a viewBox as wide as it is laid out, so a viewBox unit is a CSS pixel and its text is `--fs-1` (12px) at every width, never scaled down on a phone. A chart on a fixed viewBox draws its text at a fraction of its size on a phone (10px at 340 units is 7.3px on a 248px card).
+**Charts** use the same tokens: `--pos` and `--neg` for in and out, `--accent` for the selected series, `--text-3` for ticks, `--border-subtle` for gridlines. The column a readout is for is marked with a `--border-strong` rule, a line drawn for comparison is `--text-3`, and a heat map (the Plan's grid) is `--accent` at an alpha, through `color-mix`. Two lines told apart (the forecast and a what-if, Runway with and without income) differ by dash as well as color, since brass is about 1.1:1 from orange and 1.3:1 from coral: the second is round dots (`0 4`; with round caps a short dash looks solid), and the legend shows each line's sample (`LegendLine`). A what-if is `--text-2`, not `--warn`, which means caution. The calendar's planned dot is a brass ring and a payment due an orange square. The allocation views' class colors are fixed (`components/allocation-text.ts`): each passes 3:1 on a card in both themes, which the guard checks. No chart color is written as a literal (since phase 7). A chart **drawn at its own width** (`useDrawnWidth`, `components/drawn-width.ts`: Income vs spend and the cash flow since phase 5d, the cash forecast and the payoff plan since 6a4, the other charts with phase 6) has a viewBox as wide as it is laid out, so a viewBox unit is a CSS pixel and its text is `--fs-1` (12px) at every width, never scaled down on a phone. A chart on a fixed viewBox draws its text at a fraction of its size on a phone (10px at 340 units is 7.3px on a 248px card).
 
 **A path against a target** (Your path's chart, `components/PlanPathChart.tsx`, phase 8b): one `--accent` line of one series over a 12% `--accent` wash, the target as a dashed `--text-3` line with its 12px name, a `--pos` marker where the line reaches it, and a `--text-3` rule at the age it runs to. A year with money in (a scenario's windfall, phase 8d) steps the line straight up at its age, to what is in hand then, so a windfall that reaches the target reaches it on the line, with the marker on the step; its table row says both figures. No amount is written on the plot (no money ticks), so the plot needs no masking; the ages along it are spaced by their widths (`labelWidth` and `MIN_LABEL_GAP` in `components/drawn-width.ts`, shared with the fan chart), and one that would crowd another is left out. What it shows is said in words through `spoken()` for a screen reader, and every point is in a table behind **Show as a table**, through `Masked`. Once a plan is saved as your plan (phase 8e), two lines run before today, where the path starts: what was recorded, a solid 2px `--text-1` line, and where that plan had it, a dotted (`2 4`) 2px `--text-2` line, with a `--border-subtle` rule at today; a line under the chart names both (never the line's look alone), the summary starts with them, and they have a table of their own behind **Show as a table**. The axis then starts at the start's age, with "today" marked when there is room.
 
-**Print** is the light theme with black and white over it (`@media print`, since phase 7): text, surfaces, lines and amber are black, white and grays, and the other meaning colors and tints are light's, whichever theme is on screen. The guard holds print's copy of the light theme to `tokens.css`.
+**Print** is the light theme with black and white over it (`@media print`, since phase 7): text, surfaces, lines and orange (`--warn`) are black, white and grays, and the other meaning colors and tints are light's, whichever theme is on screen. The guard holds print's copy of the light theme to `tokens.css`.
 
 ## Type
 
@@ -144,10 +148,10 @@ Two to four labelled figures in a row (In, Out, Net). Label `--fs-1` in `--text-
 
 | Variant | Look | Use |
 |---|---|---|
-| Primary | `--accent-fill`, white label | The one main action in a card or sheet |
+| Primary | `--accent-fill`, its `--on-accent-fill` label (ink on brass in dark, white on navy in light) | The one main action in a card or sheet |
 | Secondary | Tonal: `--elevated` fill, `--text-1` label, no edge (a transparent one, for forced colors); `--border-subtle` on hover. On a fill of its own (a notice, the rule offer) transparent with a `--border-input` edge | Other actions |
 | Ghost | Text only in `--accent`, padded to 44px, underlined on hover | Inline actions (Edit, See all) |
-| Danger | `--danger-fill`, white label | Confirming something destructive, inside a confirm sheet only |
+| Danger | `--danger-fill`, its white `--on-fill` label | Confirming something destructive, inside a confirm sheet only |
 | Icon | 44px square, icon 20px in `--text-2`, bare (no edge or fill), `--elevated` on hover; its `aria-label` is its name. A sheet's close and back are filled circles (`.sheet-icon-btn`) | Header, card menus, the month's arrows, back |
 
 - **Width is auto by default**; `.btn-block` makes one full width. Today `button { width: 100% }` forces about 25 one-off classes (`.logout-btn`, `.manage-toggle`, `.disconnect-btn`, `.plan-edit`, `.pool-toggle`, `.split-small`, `.rollup-toggle` and more) that each undo it.
@@ -188,7 +192,7 @@ The only way to say something is wrong or worth knowing. See [Status and honesty
 | Done | `--pos` text on `--pos-tint` | "Saved. 14 transactions now use this rule." |
 
 - Two forms: **inline** (one line under the number it qualifies) and **block** (inside a card or sheet, with an optional action button).
-- **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: old exchange rates and accrued interest left out" (the worst kinds first, so an amber line names what made it amber; past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
+- **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: old exchange rates and accrued interest left out" (the worst kinds first, so an orange line names what made it orange; past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
 - Never color alone: every notice has an icon and words, and starts with its level for a screen reader ("Critical:", "Caution:", "Note:", visually hidden), as Needs attention's rows do. Critical and caution differ by shape as well as color (in light, `--neg` and `--warn` are about 1.1:1 apart): critical has the alert triangle and an edge, caution the clock, the same shapes as Needs attention's rows.
 
 Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`, `.plan-warning`, `.forecast-warning`, `.api-access-warning`, `.restore-banner`, and the feature-scoped notes (`.lifecycle-note`, `.review-note`, `.split-note`, `.goal-note`, `.budget-note`, `.currency-note`, `.imported-history-note`, `.kind-warnings`, `.plan-save-error`, `.payoff-field-error`, `.card-mode-error`).
@@ -234,7 +238,7 @@ What a screen shows while what fills it is on its way: the screen itself, with p
 
 ### Header and tab bar
 
-- **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention. The brand's logo is the app icon (`app/icon.svg`, a gold face on a navy disc) in dark, and its light version (`public/icons/icon-light.svg`, a white face on a gold disc in a navy ring, the same shapes) in light and in print, so a light header carries no dark disc. `BrandLogo` (`components/Brand.tsx`) draws both, and `app/globals.css` shows one by the theme's own selectors.
+- **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention. The brand's logo is a two-ink mark (since the look and feel's step 4): the app icon's ring and cat face in one ink, `--brand-mark` (the logo gold on dark, its navy on light and in print), with the disc and the cat's features cut away, so the page is its disc. `BrandLogo` (`components/Brand.tsx`) draws it as one inline SVG through a mask, so it follows the theme with no image to swap; in forced colors it takes the forced text color. The filled coin (`app/icon.svg`) stays the favicon and the installed icon.
 - **Tab bar**: five tabs, icons with `--fs-1` labels (12px, up from 11px), `--glass` with a blur. The current tab (`aria-current="page"`) has a 3px `--accent` bar over it and a bold label, not only its color (`--accent` is about 1.1:1 from `--text-2` in dark).
 
 ## Status and honesty
@@ -246,7 +250,7 @@ Nya shows its gaps on purpose (see [features.md](../features.md)): a missing row
 | Severity | When | Color |
 |---|---|---|
 | Critical | A number is wrong or short: an institution needs reconnecting, rows couldn't be shown, a total is incomplete. Also an overdue payment in Needs attention | Red |
-| Caution | Numbers are real but dated, held or paused: stale but recovered balances, an account that stopped reporting (held at its last known balance until you answer), a connection that ends soon (Reconnect soon), history paused, a backup or clean-up failed, a month may be missing transactions. In Needs attention, also a payment due within a week and a budget over or nearly over; on Budgets, a budget's meter from 85% and its **Over** badge (since phase 6a2) | Amber |
+| Caution | Numbers are real but dated, held or paused: stale but recovered balances, an account that stopped reporting (held at its last known balance until you answer), a connection that ends soon (Reconnect soon), history paused, a backup or clean-up failed, a month may be missing transactions. In Needs attention, also a payment due within a week and a budget over or nearly over; on Budgets, a budget's meter from 85% (hatched, since the look and feel's step 4) and its **Over** badge (since phase 6a2) | Orange |
 | Information | Nothing is wrong: converted currency, imported history, rates used | Neutral |
 
 **Placement follows three rules.**
@@ -257,7 +261,7 @@ Nya shows its gaps on purpose (see [features.md](../features.md)): a missing row
 
 **A connection's problems have one color**, from two questions (`lib/accounts-status.ts`, since rollout phase 3b): is it broken in a way only the person can fix (sign in again, reconnect, connect again, pay or fix it at SimpleFIN or Lunch Flow, say which way a card goes, remove one that can't be repaired)? Is the total missing an account's money (nothing fetched or recovered, accounts not shown, too old, held with no balance)? Either makes it critical, and the card shows the button that fixes it or says what isn't counted. Anything else that is off is a caution, a new connection waiting for its first answer included. The card's notice, its badge, Settings > Connections and the Accounts status all use it, and the words never change with the color.
 
-**Who an instruction is for.** The backup and receipt clean-up notices reach every user (the server sends them ungated), but only the deployment's admin can act on "check the backup cron in Vercel". When one fails, everyone sees it as an amber caution on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); the instruction and its action show only to the admin, in an Admin card under Needs attention. Each of its rows goes to the admin's Nightly jobs page (`/admin/jobs`), a page of its own where the job's runs are and **Run now** runs it, so Home carries no controls for it. When backups are fine, nothing is shown.
+**Who an instruction is for.** The backup and receipt clean-up notices reach every user (the server sends them ungated), but only the deployment's admin can act on "check the backup cron in Vercel". When one fails, everyone sees it as an orange caution on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); the instruction and its action show only to the admin, in an Admin card under Needs attention. Each of its rows goes to the admin's Nightly jobs page (`/admin/jobs`), a page of its own where the job's runs are and **Run now** runs it, so Home carries no controls for it. When backups are fine, nothing is shown.
 
 ## Copy
 

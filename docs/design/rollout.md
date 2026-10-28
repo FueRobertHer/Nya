@@ -633,7 +633,7 @@ Ship each kind's shape once: an older release reads a scenario with a kind it do
 
 **Kept narrow:**
 
-- No light app icon or install splash: the manifest stays dark. (The header's logo has had a light version since, `public/icons/icon-light.svg`, which `BrandLogo` shows whenever the theme is light; the favicon and the installed icon are still the dark one.)
+- No light app icon or install splash: the manifest stays dark. (The header's logo had a light version for a while, `public/icons/icon-light.svg`; since the look and feel's step 4 it is a two-ink mark in `--brand-mark`, gold on dark and navy on light, and that file is gone. The favicon and the installed icon are still the filled coin.)
 - With System, an iOS home-screen app keeps the white status bar text. iOS has no setting that follows the device's mode, so on a light device the clock reads poorly until you choose Light, which sends the light bar. This needs checking on a device.
 - No sync of the choice across devices or open tabs.
 
@@ -783,9 +783,36 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 - The hero stays in its card until step 5.
 - An institution's name beside its total can take a line more at 320px (Red Hat's figures are wider): it wraps, nothing is cut.
 
+### Step 4: ink and brass
+
+**Built:**
+
+- **The palette** from the design system artifact, in `tokens.css`, `app/globals.css` (dark, light by system, light chosen, print's copy), `lib/theme.ts` and the manifest: an ink canvas (`#0b1019`) and a cool paper (`#f4f5f8`), brass for action (`#d4b680` dark, `#846326` light), orange for caution (`#fb9a4b`, `#a3410b`), and the text, line, tint and meaning steps that go with them. Tags and the danger fill keep their colors.
+- **The primary** is brass under an ink label in dark and the logo navy under white in light: `--accent-fill` with the new `--on-accent-fill` (8.98:1 and 15.46:1; white on the brass fill would be 2.12:1). Clerk's primary states take the same label. Danger keeps `--on-fill`.
+- **Links inside a sentence are underlined** (`a:not([class])`): brass is 1.65:1 from body text in dark and 3.21:1 in light. Bare links had the browser's blue outside five places that set the accent; those five rules went. The one `.link-btn` inside a sentence (switching from another app) and Clerk's "Sign up" and "Forgot password?" are underlined too.
+- **The header logo is a two-ink mark** (`BrandLogo`, one inline SVG): the ring and the cat's face in `--brand-mark`, gold on dark (7.82:1 on the page) and navy on light and in print (14.18:1), the rest cut away by a mask so the page is its disc. Its mask id comes from `useId`. In forced colors it takes the forced text color. `public/icons/icon-light.svg` and the theme toggles for two images are gone; the favicon and installed icons stay the coin.
+- **What brass and orange would have left to hue alone** (about 1.1:1 apart in dark), each given a second cue:
+  - a budget's meter from 85%, which has no word until Over, is hatched in `--warn` on `--warn-tint`;
+  - the forecast's what-if is a `--text-2` dotted line (`0 4`, round caps) beside the forecast's brass dashes, its scrub dot and its low point with it, and no longer `--warn`, which means caution;
+  - Runway's without income is dotted beside with income's dashes (brass and coral, 1.26:1);
+  - those two legends show each line's sample (`LegendLine`, `components/LegendLine.tsx`), not a dot;
+  - the calendar's planned dot is a brass ring and a payment due an orange square.
+- **The Plan grid's "low" line** is `--text-1`: `--text-2` on its strongest cell was 2.89:1 on main and would have been 2.39:1.
+- **The guard** pairs `--on-accent-fill` on `--accent-fill` and on `--accent`, and `--brand-mark` on the page and a card; checks that every rule filling with `--accent-fill` labels it `--on-accent-fill`, and Clerk's foreground; and needs the underline, the hatch, the calendar's shapes and the mark's `forced-color-adjust`.
+
+**Measured:** every pair in the guard passes in both themes (the tightest is `--pos` on `--elevated` in light, 4.81:1); the allocation colors are 3.07:1 or more on a card; the Plan grid's own-cell outline goes from 2.55:1 to 3.09:1 against its strongest cell. Checked on the dev server as the Alex demo account at 320px and desktop, in both themes (Home, Accounts, Activity, Budgets, Upcoming's calendar, the Plan, Clerk's menu, the theme-color meta and the manifest), and on a static page with `app/globals.css` for the meter's three states, the forecast with a what-if, the calendar's legend, the grid's cells, links and buttons.
+
+**Kept narrow:**
+
+- Income and bill dots stay told apart by hue, as before.
+- `.link-btn` in a row stays as it is until those actions move to `.btn.ghost`.
+- The net worth chart turns brass with the token; its layout is step 5.
+- Forced colors and print weren't seen in a browser: the guard holds the mark's `forced-color-adjust: none` and its `--brand-mark` color, and print's copy of the tokens; the forced text color it takes there is unchecked.
+- The caution hatch also reaches an account's credit-utilization meter, which turns to caution from 50%.
+
 ## The contrast check
 
-`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, white on both button fills, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
+`test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, each button fill's label on it, the header logo's ink on the page and a card, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
 
 ## Done means
 

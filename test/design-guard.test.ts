@@ -127,6 +127,13 @@ describe('design guard: controls and states read without color', () => {
     ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],
     ['.tab-bar button.active::before {', 'var(--accent)', 'the current tab has a bar'],
     ['.notice.critical {', 'border-color: currentColor', 'a critical notice has an edge'],
+    // Look and feel, step 4: brass sits close to orange, coral and body text.
+    ['a:not([class]) {', 'text-decoration: underline', 'a link inside a sentence is underlined'],
+    ['.meter-fill.warn {', 'repeating-linear-gradient', 'a meter at caution is hatched, not only orange'],
+    ['.cal-dot.planned {', 'border: 1.5px solid var(--accent)', "the calendar's planned dot is a ring"],
+    ['.cal-dot.due {', 'border-radius: 1px', "the calendar's payment due dot is a square"],
+    ['.brand-mark {', 'forced-color-adjust: none', "forced colors leaves the logo's mask as drawn"],
+    ['.brand-mark {', 'color: var(--brand-mark)', "the logo's ink is --brand-mark"],
   ];
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);
@@ -166,6 +173,14 @@ describe('design guard: controls and states read without color', () => {
       }
     }
     expect(unnamed).toEqual([]);
+  });
+
+  // The primary's fill is brass in dark, where a white label is 2.12:1, so
+  // every rule that draws the fill names its own label.
+  test('every rule that fills with --accent-fill labels it --on-accent-fill', () => {
+    const filled = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /background:\s*var\(--accent-fill\)/.test(m[2]));
+    expect(filled.length).toBeGreaterThanOrEqual(2);
+    expect(filled.filter((m) => !/(^|[^-])color:\s*var\(--on-accent-fill\)/.test(m[2])).map((m) => m[1].trim())).toEqual([]);
   });
 
   test('a caution notice has the clock, not the critical triangle', () => {
@@ -224,6 +239,8 @@ describe('design guard: the tokens (app/globals.css and docs/design/tokens.css)'
     }
     // Clerk reads the app's own font token, so it can't drift from it.
     if (CLERK_APPEARANCE.variables.fontFamily !== 'var(--font-ui)') drift.push(`lib/theme.ts Clerk's fontFamily is ${CLERK_APPEARANCE.variables.fontFamily}, not var(--font-ui)`);
+    // Its primary states carry the primary's label, ink on brass in dark.
+    if (CLERK_APPEARANCE.variables.colorPrimaryForeground !== 'var(--on-accent-fill)') drift.push(`lib/theme.ts Clerk's colorPrimaryForeground is ${CLERK_APPEARANCE.variables.colorPrimaryForeground}, not var(--on-accent-fill)`);
     const manifest = JSON.parse(read('public/manifest.json'));
     for (const k of ['background_color', 'theme_color']) {
       if (manifest[k] !== app.dark.canvas) drift.push(`public/manifest.json ${k} is ${manifest[k]}, --canvas is ${app.dark.canvas}`);

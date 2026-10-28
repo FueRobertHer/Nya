@@ -252,7 +252,11 @@ export function contrastPairs(): [string, string, number][] {
   pairs.push(['text-1', 'caveat-surface', TEXT], ['text-2', 'caveat-surface', TEXT]);
   for (const k of ['accent', 'pos', 'neg', 'warn']) pairs.push([k, `${k}-tint`, TEXT], ['text-1', `${k}-tint`, TEXT]);
   pairs.push(['text-2', 'warn-tint', TEXT], ['text-2', 'neg-tint', TEXT]);
-  pairs.push(['on-fill', 'accent-fill', TEXT], ['on-fill', 'danger-fill', TEXT]);
+  pairs.push(['on-accent-fill', 'accent-fill', TEXT], ['on-fill', 'danger-fill', TEXT]);
+  // Clerk's primary-colored states put the primary's label on --accent.
+  pairs.push(['on-accent-fill', 'accent', TEXT]);
+  // The header logo's one ink, on the page and on a card.
+  pairs.push(['brand-mark', 'canvas', UI], ['brand-mark', 'surface', UI]);
   pairs.push(['focus', 'surface', UI], ['focus', 'canvas', UI]);
   // A tag's text on its tint, and its swatch (the text step) on a card.
   for (const tag of TAG_COLORS) pairs.push([`tag-${tag}`, `tag-${tag}-tint`, TEXT], [`tag-${tag}`, 'surface', UI]);
