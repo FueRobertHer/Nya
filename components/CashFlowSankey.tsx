@@ -311,21 +311,9 @@ export default function CashFlowSankey({
         <p className="empty-note">Nothing came in or went out in {caption}, of what the totals count.</p>
       ) : (
         <>
-          <div className="summary-row cash-flow-summary">
-            <div>
-              <div className="total-label">In</div>
-              <div className="summary-value inflow"><Masked>{formatMoney(flow.money_in, c)}</Masked></div>
-            </div>
-            <div>
-              <div className="total-label">Out</div>
-              <div className="summary-value"><Masked>{formatMoney(flow.money_out, c)}</Masked></div>
-            </div>
-            <div>
-              <div className="total-label">Net</div>
-              <div className={`summary-value${flow.net < 0 ? ' negative' : flow.net > 0 ? ' inflow' : ''}`}><Masked>{formatMoney(flow.net, c)}</Masked></div>
-            </div>
-          </div>
-
+          {/* No In / Out / Net of its own: the strip over the panel says the
+              period's (components/MonthFigures.tsx), and the chart's text
+              and its table say what came in and went out. */}
           <svg
             ref={drawnRef}
             className={`sankey-svg${marked ? ' sankey-picking' : ''}`}

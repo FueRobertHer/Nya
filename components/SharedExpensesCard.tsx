@@ -13,10 +13,18 @@
 // Nya keeps the list; the money moves in Venmo, Cash App or however the
 // people pay each other. Balances are figures only when everything could be
 // read (app/api/shared-expenses reads strictly).
+//
+// With no one in it yet, and nothing kept that couldn't be read, the card is
+// the empty state (components/EmptyState.tsx, the screen review after step
+// 5): what it is for and Add someone as its one primary. Add someone is one
+// button either way (`addRef`), so the person's sheet, closing once the
+// button it opened from is gone (the first person saved takes the empty
+// state with it), gives focus to the Add someone that is there now.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Masked } from './HideAmounts';
 import { shownName } from '@/lib/merchant-name';
+import EmptyState from './EmptyState';
 import type { Txn } from './MonthBreakdown';
 import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
@@ -125,6 +133,21 @@ export default function SharedExpensesCard({
   const [removing, setRemoving] = useState(false);
   const [own, setOwn] = useState<{ venmo: string; cashtag: string } | null>(null);
   const today = localDate();
+  // A person's sheet closed: it gives focus back to the button that opened
+  // it as its own effect ends, which runs before this one. When it couldn't
+  // (the empty state's button, gone once the first person is in), focus goes
+  // to Add someone as it is drawn now, rather than to nothing.
+  const addRef = useRef<HTMLButtonElement>(null);
+  const personOpen = shared.open?.kind === 'person';
+  const wasOpen = useRef(personOpen);
+  useEffect(() => {
+    const closed = wasOpen.current && !personOpen;
+    wasOpen.current = personOpen;
+    if (!closed) return;
+    let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
+    if (lost) addRef.current?.focus({ preventScroll: true });
+  }, [personOpen]);
 
   const names = useMemo(() => new Map((card?.people ?? []).map((p) => [p.id, p.name ?? REMOVED_NAME])), [card]);
   const nameOf = (id: string) => names.get(id) ?? REMOVED_NAME;
@@ -194,17 +217,38 @@ export default function SharedExpensesCard({
   const goneShares = (facts?.gone.shares ?? []).map((id) => card.shares.find((s) => s.transaction_id === id)).filter((s) => !!s);
   const gonePayments = (facts?.gone.payments ?? []).map((id) => card.payments.find((p) => p.transaction_id === id)).filter((p) => !!p);
 
+  // No one yet, and nothing that couldn't be read (whose warning and its
+  // remove buttons the card keeps as it is): the empty state.
+  const empty = card.people.length === 0 && unread.length === 0;
+  const addSomeone = () => setOpen({ kind: 'person', id: null });
+  const settingsUnread = card.settings_unread && (
+    <p className="stale-note">Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.</p>
+  );
+
   return (
     <div className="card shared-card">
-      <div className="inst-header">
-        <div className="inst-name">Shared expenses</div>
-      </div>
+      {empty ? (
+        <EmptyState
+          heading="h2"
+          title="No shared expenses yet"
+          line="Keep track of what people owe you and what you owe them."
+          action={{ label: 'Add someone', opens: true, ref: addRef, onSelect: addSomeone }}
+        >
+          {settingsUnread}
+        </EmptyState>
+      ) : (
+        <>
+          <div className="inst-header">
+            <div className="inst-name">Shared expenses</div>
+          </div>
 
-      {card.people.length === 0 && (
-        // How the money moves is the card's last line, for everyone: said once.
-        <p className="panel-note">Keep track of what people owe you and what you owe them.</p>
+          {card.people.length === 0 && (
+            // How the money moves is the card's last line, for everyone: said once.
+            <p className="panel-note">Keep track of what people owe you and what you owe them.</p>
+          )}
+          {settingsUnread}
+        </>
       )}
-      {card.settings_unread && <p className="stale-note">Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.</p>}
       {unread.length > 0 && (
         <div className="stale-note">
           Some of what you keep here couldn’t be read:{' '}
@@ -515,9 +559,11 @@ export default function SharedExpensesCard({
       )}
 
       <div className="card-actions">
-        <button className="secondary" onClick={() => setOpen({ kind: 'person', id: null })}>
-          Add someone
-        </button>
+        {!empty && (
+          <button ref={addRef} className="secondary" onClick={addSomeone}>
+            Add someone
+          </button>
+        )}
         {live.length > 0 && (
           <button className="secondary" onClick={() => setOpen({ kind: 'iou', id: null })}>
             Add an IOU

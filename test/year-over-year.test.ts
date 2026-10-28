@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import MonthBreakdown from '@/components/MonthBreakdown';
-import { formatMoney } from '@/lib/format';
+import { signedMoney } from '@/lib/format';
 import { summarize } from '@/lib/totals';
 import type { Txn } from '@/lib/transactions';
 import { buildYearOverYear, change, yearBefore, yoyCurrency, yoySpans } from '@/lib/report/year-over-year';
@@ -105,7 +105,8 @@ describe('the days compared', () => {
 describe('to the cent, by the Activity tab’s rule', () => {
   test('each month is the Activity tab’s month, both years', () => {
     const y = yoy();
-    const money = (n: number) => formatMoney(n, 'USD');
+    // The tab writes its figures signed: money in with its plus, money out with its minus.
+    const signed = (n: number) => signedMoney(n, 'USD');
     for (const m of y.months) {
       for (const side of ['this', 'last'] as const) {
         const span = m[side];
@@ -115,7 +116,7 @@ describe('to the cent, by the Activity tab’s rule', () => {
           continue;
         }
         const tab = activityTab(rows);
-        expect([m.month, side, tab.in, tab.out, tab.net]).toEqual([m.month, side, money(span.money_in), money(span.money_out), money(span.net)]);
+        expect([m.month, side, tab.in, tab.out, tab.net]).toEqual([m.month, side, signed(span.money_in), signed(-span.money_out), signed(span.net)]);
       }
     }
     // March 2026 by hand: rent 1,600 out, a refund of 20 in; the move to

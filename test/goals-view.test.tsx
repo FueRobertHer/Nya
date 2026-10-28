@@ -132,6 +132,21 @@ describe('the card', () => {
     expect(text(card([]))).toContain('No goals yet');
   });
 
+  test('no goal at all: the empty state, what goals are for, and Add goal as its one primary', () => {
+    const html = card([]);
+    expect(html).toContain('<div class="empty-state"><h3>No goals yet</h3><p class="helper">Set a target, track it against an account’s balance, and see when you’ll reach it.</p><button type="button" class="btn" aria-haspopup="dialog">Add goal</button></div>');
+    expect(html.split('>Add goal<').length - 1).toBe(1);
+    expect(html).not.toContain('empty-note');
+    // A save that failed, with no goal: said in the empty state, between its line and its button.
+    const failed = card([], { saveError: 'Could not save goals. Showing what is saved.' });
+    expect(failed).toContain('<p class="helper">Set a target, track it against an account’s balance, and see when you’ll reach it.</p><p class="stale-note">Could not save goals. Showing what is saved.</p><button type="button" class="btn"');
+    expect(failed.split('Could not save goals').length - 1).toBe(1);
+    // With a goal, no empty state, and Add goal is the tonal one under the list.
+    const one = card([goal('Fund', 'sav', 15_000)]);
+    expect(one).not.toContain('empty-state');
+    expect(one).toContain('<button class="secondary">Add goal</button>');
+  });
+
   test('the house style: no em or en dashes', () => {
     const html = card([goal('Trip', 'sav', 3000, { allocation: 1200, monthly_target: 100 }), goal('B', null, 5), goal('C', 'card', 5)]);
     expect(html).not.toMatch(/[\u2013\u2014]/);

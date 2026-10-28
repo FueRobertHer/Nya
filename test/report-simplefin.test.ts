@@ -45,7 +45,7 @@ const { resolvePeriod } = await import('@/lib/report/period');
 const { gapSentences, statusLines } = await import('@/lib/report/words');
 const { reportCsv } = await import('@/lib/report/csv');
 const { ReportView } = await import('@/components/ReportView');
-const { formatMoney } = await import('@/lib/format');
+const { formatMoney, signedMoney } = await import('@/lib/format');
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const transactions = await import('@/app/api/transactions/route');
 const endedRoute = await import('@/app/api/connectors/ended/route');
@@ -133,8 +133,9 @@ describe('SimpleFIN rows in a report’s totals', () => {
     const figure = (label: string) => new RegExp(`total-label">${label}</div><div class="summary-value[^"]*">([^<]*)<`).exec(html)?.[1];
 
     const r = await report(start, end);
-    const money = (n: number) => formatMoney(n, r.currency);
-    expect([figure('In'), figure('Out'), figure('Net')]).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    // The tab writes its figures signed: money in with its plus, money out with its minus.
+    const signed = (n: number) => signedMoney(n, r.currency);
+    expect([figure('In'), figure('Out'), figure('Net')]).toEqual([signed(r.totals.money_in), signed(-r.totals.money_out), signed(r.totals.net)]);
     // Pay and the unrelated deposit in; coffee, the dinner and the restaurant out; the card's payment neither.
     expect([r.totals.money_in, r.totals.money_out]).toEqual([2620, 178.17]);
     expect([r.totals.transactions, r.totals.counted, r.totals.transfers]).toEqual([7, 5, 2]);
@@ -183,7 +184,9 @@ describe('SimpleFIN rows in a report’s totals', () => {
 
     let r = await report(start, end);
     const money = (n: number) => formatMoney(n, r.currency);
-    expect(figures).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    // The tab writes its figures signed: money in with its plus, money out with its minus.
+    const signed = (n: number) => signedMoney(n, r.currency);
+    expect(figures).toEqual([signed(r.totals.money_in), signed(-r.totals.money_out), signed(r.totals.net)]);
     // Eating, then the dinner nobody categorized; the card's payment in neither.
     expect(r.money_out.map((c) => [c.category, c.amount, c.transactions])).toEqual([
       ['Eating', 92.5, 2],
@@ -208,7 +211,7 @@ describe('SimpleFIN rows in a report’s totals', () => {
     await categoriesRoute.POST(new Request('http://localhost/api/categories', { method: 'POST', body: JSON.stringify({ action: 'move-category', id: loans.id, group: housing.id }) }));
     a = await read();
     r = await report(start, end);
-    expect(tab().figures).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    expect(tab().figures).toEqual([signed(r.totals.money_in), signed(-r.totals.money_out), signed(r.totals.net)]);
     expect(r.totals.transfers).toBe(0);
     expect(r.money_out.map((c) => [c.category, c.amount])).toContainEqual(['loan payments', 300]);
     expect(r.money_in.map((c) => [c.category, c.amount])).toContainEqual(['loan payments', 300]);

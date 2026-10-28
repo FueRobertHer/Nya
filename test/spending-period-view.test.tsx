@@ -20,7 +20,7 @@ const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const { localDate, localMonth } = await import('@/lib/local-date');
 const { addMonths } = await import('@/lib/rollover');
 const { periodCaption, periodEnding } = await import('@/lib/cash-flow');
-const { amountSamples, formatMoney } = await import('@/lib/format');
+const { amountSamples, formatMoney, signedMoney } = await import('@/lib/format');
 const { textWidth } = await import('@/lib/sankey');
 type Txn = import('@/components/MonthBreakdown').Txn;
 
@@ -95,7 +95,7 @@ function mount(props: Props = {}) {
     radios,
     chip,
     checked: () => radios().filter((e) => e.getAttribute('aria-checked') === 'true').map((e) => e.textContent),
-    // The In / Out / Net card's Out, as the totals sum it.
+    // The In / Out / Net strip's Out (components/MonthFigures.tsx), as the totals sum it.
     out: () => all((e) => e.getAttribute('class') === 'summary-row')[0]?.findAll((e) => (e.getAttribute('class') ?? '').startsWith('summary-value'))[1]?.textContent ?? null,
     text: () => host.textContent,
     button: (label: string) => all((e) => e.getAttribute('aria-label') === label)[0],
@@ -113,6 +113,8 @@ const key = (el: FakeElement, k: string) => {
 
 const caption = (key: Parameters<typeof periodEnding>[0], end = month) => periodCaption(periodEnding(key, end), today);
 const money = (v: number) => formatMoney(v, 'USD');
+// Money out, as the strip over the panel writes it: with its minus.
+const spent = (v: number) => signedMoney(-v, 'USD');
 
 describe('Spending’s period', () => {
   test('four lengths as a labelled radio group of the underline switch, 1M first; the cash flow has no control of its own', () => {
@@ -133,13 +135,16 @@ describe('Spending’s period', () => {
 
   test('every card sums the period: a longer one counts the months before', () => {
     const v = mount({ tags: [{ id: 'food', name: 'Food run', color: 'blue', created_at: '2026-01-01T00:00:00.000Z' }] });
-    expect(v.out()).toBe(money(400));
+    expect(v.out()).toBe(spent(400));
     act(() => click(v.chip('3M')));
     expect(v.checked()).toEqual(['3M']);
-    expect(v.out()).toBe(money(620));
-    // Each card says the period it sums.
+    expect(v.out()).toBe(spent(620));
+    // Each card says the period it sums, and so does the strip over them,
+    // now that it is longer than the bar's month.
     const three = caption('last-3-months');
-    for (const card of ['In and out', 'Income vs spend', 'Top spending', 'Online vs in-store', 'Where you spent', 'Spending by tag']) {
+    const [strip] = v.all((e) => e.getAttribute('class') === 'month-figures');
+    expect(strip.findAll((e) => e.getAttribute('class') === 'month-figures-caption')[0]?.textContent).toBe(`In and out, ${three}`);
+    for (const card of ['Income vs spend', 'Top spending', 'Online vs in-store', 'Where you spent', 'Spending by tag']) {
       const [header] = v.all((e) => e.getAttribute('class') === 'inst-header' && e.textContent.startsWith(card));
       expect([card, header?.textContent.includes(three)]).toEqual([card, true]);
     }
@@ -150,7 +155,7 @@ describe('Spending’s period', () => {
     const first = new Date(`${back(2)}-01T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC', ...(back(2).slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' as const } : {}) });
     expect(chart.getAttribute('aria-label')).toContain(`for ${first} to`);
     act(() => click(v.chip('12M')));
-    expect(v.out()).toBe(money(627));
+    expect(v.out()).toBe(spent(627));
     v.unmount();
   });
 
@@ -176,7 +181,7 @@ describe('Spending’s period', () => {
     act(() => click(v.button('Earlier month')));
     expect(v.checked()).toEqual(['3M']);
     // Last month and the two before it: no Whole Foods.
-    expect(v.out()).toBe(money(227));
+    expect(v.out()).toBe(spent(227));
     expect(v.text()).toContain(caption('last-3-months', back(1)));
     // Net by month: the end month pressed, the others in the period marked.
     const cols = () => v.all((e) => (e.getAttribute('class') ?? '').startsWith('trend-col'));
@@ -186,7 +191,7 @@ describe('Spending’s period', () => {
     // A column moves the end, as the arrows do.
     act(() => click(cols()[cols().length - 1]));
     expect(v.checked()).toEqual(['3M']);
-    expect(v.out()).toBe(money(620));
+    expect(v.out()).toBe(spent(620));
     expect(pressed()).toBe(1);
     v.unmount();
   });
@@ -218,7 +223,7 @@ describe('Spending’s period', () => {
     expect(v.text()).toContain('Farmers market');
     expect(v.text()).not.toContain('Corner shop');
     // Transactions' own figures are still the month's.
-    expect(v.out()).toBe(money(400));
+    expect(v.out()).toBe(spent(400));
     // Back on Spending, the length is kept; choosing one ends the pick.
     v.rerender({ segment: 'spending' });
     expect(v.checked()).toEqual(['3M']);
@@ -231,7 +236,7 @@ describe('Spending’s period', () => {
   test('without categories, the In / Out / Net card sums the period and says what may be missing from it', () => {
     const v = mount({ taxonomy: null, notes: ['Your rules couldn’t be read'] });
     act(() => click(v.chip('3M')));
-    expect(v.out()).toBe(money(620));
+    expect(v.out()).toBe(spent(620));
     expect(v.text()).toContain('Your rules couldn’t be read.');
     // With categories, the cash flow says it, and the card doesn't again.
     v.rerender({ taxonomy });

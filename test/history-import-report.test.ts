@@ -34,7 +34,7 @@ const { resolvePeriod } = await import('@/lib/report/period');
 const { gapSentences } = await import('@/lib/report/words');
 const { reportCsv } = await import('@/lib/report/csv');
 const { ReportView } = await import('@/components/ReportView');
-const { formatMoney } = await import('@/lib/format');
+const { signedMoney } = await import('@/lib/format');
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const routes = await import('@/app/api/history-import/route');
 const transactionsRoute = await import('@/app/api/transactions/route');
@@ -172,8 +172,9 @@ describe('imported rows in a report’s totals', () => {
     const html = renderToStaticMarkup(createElement(MonthBreakdown, { txns: rows, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {} }));
     const figure = (label: string) => new RegExp(`total-label">${label}</div><div class="summary-value[^"]*">([^<]*)<`).exec(html)?.[1];
     const r = await report(m.start, m.end);
-    const money = (n: number) => formatMoney(n, r.currency);
-    expect([figure('In'), figure('Out'), figure('Net')]).toEqual([money(r.totals.money_in), money(r.totals.money_out), money(r.totals.net)]);
+    // The tab writes its figures signed: money in with its plus, money out with its minus.
+    const signed = (n: number) => signedMoney(n, r.currency);
+    expect([figure('In'), figure('Out'), figure('Net')]).toEqual([signed(r.totals.money_in), signed(-r.totals.money_out), signed(r.totals.net)]);
     expect([r.totals.money_in, r.totals.money_out]).toEqual([1200, 79.65]);
   });
 
