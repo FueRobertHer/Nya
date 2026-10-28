@@ -104,7 +104,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | A card that opens and closes on its title | `CollapsibleHeader` (`.section-toggle` in an `<h2>`) | `.holdings-toggle` with `.holdings-title` |
 <!-- /design-guard:classes -->
 
-**Avoid in new code**: `.link-btn` (about 15px tall; use `.btn.ghost`); `.type-tag` and other uppercase labels; one-off button classes that undo `button { width: 100% }` (a `.btn` sizes itself). The global `button` rule still fills every bare `<button>` and makes it full width, so new buttons always take a `.btn` class (or `.icon-btn`, `.list-row`, `.chip`, or sit in a `.segmented`).
+**Avoid in new code**: `.link-btn` (about 15px tall; use `.btn.ghost`); `.type-tag` (a meta line, sentence case since the words pass; use `.list-row-sub` or `.helper`); one-off button classes that undo `button { width: 100% }` (a `.btn` sizes itself). The global `button` rule still fills every bare `<button>` and makes it full width, so new buttons always take a `.btn` class (or `.icon-btn`, `.list-row`, `.chip`, or sit in a `.segmented`).
 
 ## Status and honesty
 

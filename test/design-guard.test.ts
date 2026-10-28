@@ -19,6 +19,7 @@ import {
   appTheme,
   contrast,
   contrastPairs,
+  cssCaseTransforms,
   hasClass,
   measure,
   read,
@@ -66,6 +67,19 @@ describe('design guard: no file moves away from the design language', () => {
       }
     }
     expect(stale).toEqual([]);
+  });
+});
+
+describe('design guard: sentence case and the token names', () => {
+  // Since the words PR after the screen review: no uppercase label is left,
+  // and the alias --muted (var(--text-2)) has no use left to keep working.
+  test('no on-screen rule sets text in capitals or title case', () => {
+    expect(cssCaseTransforms(read('app/globals.css'))).toEqual([]);
+  });
+
+  test('nothing uses the alias --muted: --text-2 is the token', () => {
+    const files = ['app/globals.css', ...sourceFiles()];
+    expect(files.filter((file) => read(file).includes('var(--muted)'))).toEqual([]);
   });
 });
 
