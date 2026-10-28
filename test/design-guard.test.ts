@@ -128,7 +128,7 @@ describe('design guard: controls and states read without color', () => {
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-semibold)', 'the current item of a switch is heavier'],
     ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],
     ['.tab-bar button.active::before {', 'var(--accent)', 'the current tab has a bar'],
-    ['.tab-bar {', 'calc((100% - 760px) / 2)', 'the tabs keep to the content column on a wide window'],
+    ['.tab-bar {', 'calc((100% - var(--content-max)) / 2)', 'the tabs keep to the content column on a wide window'],
     ['.notice.critical {', 'border-color: currentColor', 'a critical notice has an edge'],
     // Look and feel, step 4: brass sits close to orange, coral and body text.
     ['a:not([class]) {', 'text-decoration: underline', 'a link inside a sentence is underlined'],
