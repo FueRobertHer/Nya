@@ -280,6 +280,14 @@ describe('the calendar', () => {
     expect(t).not.toContain('Expected · -$10.99');
   });
 
+  // The screen review: "on the Plaid Credit Card card".
+  test('a card whose name already says card isn’t called a card twice', () => {
+    const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Plaid Credit Card', account_type: 'credit' })));
+    const t = view({ series: spotify, txns: [] });
+    expect(t).toContain("Spotify bill · Monthly · on the Plaid Credit Card, not in the day's figure");
+    expect(t).not.toContain('Card card');
+  });
+
   test('today\'s list says why a posted row isn\'t in the day\'s figure', () => {
     const t = view({
       txns: [

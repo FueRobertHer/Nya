@@ -7,7 +7,7 @@ import { connectorBalanceDay } from '@/lib/connectors/types';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import type { AccountQuestion } from './AccountLifecycle';
 import { formatMoney, hiddenFigure } from '@/lib/format';
-import { instantDay } from '@/lib/local-date';
+import { instantDay, localDate } from '@/lib/local-date';
 import { isOwedType, signedContribution } from '@/lib/balance';
 
 export type Account = {
@@ -198,16 +198,39 @@ export function fmtStaleDay(date: string, at?: string): string {
   return local ?? fmtDay(date);
 }
 
+// A due date as liabilitySummary says it: "Nov 15", with its year when that
+// isn't today's year ("Nov 15, 2025"). Parsed at local midnight, as fmtDay.
+function dueDay(iso: string, today: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(iso.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
+  });
+}
+
 // The one-line summary under a credit or loan row: rate, minimum, due date.
 // Built by pushing only the parts Plaid actually reported, so a card that
 // reports a due date but no APR still gets a useful line instead of "-- APR".
-export function liabilitySummary(a: Account): string | null {
+// The due date is said as what it is on `today` (local): one still to come
+// is "due Nov 15", or "next due Nov 15" beside an overdue payment, so the
+// row never reads as overdue and due later at once; one that has passed is
+// "was due May 28" on an overdue account (the missed payment's day, the one
+// true fact), and left out otherwise: a stale date from Plaid says nothing
+// about the next payment, and shown as is it reads as upcoming. A date in
+// another year than today's says its year ("was due Nov 15, 2025"), which
+// "Nov 15" alone would let read as this year's, still to come. Whether the
+// account is overdue is the row's own badge, which never waits on this line.
+export function liabilitySummary(a: Account, today: string = localDate()): string | null {
   const l = a.liability;
   if (!l) return null;
   const parts: string[] = [];
   if (l.apr != null) parts.push(`${l.apr.toFixed(2)}% APR`);
   if (l.minimum_payment != null) parts.push(`min ${fmt(l.minimum_payment, a.currency)}`);
-  if (l.next_due_date) parts.push(`due ${fmtDay(l.next_due_date)}`);
+  if (l.next_due_date) {
+    const day = dueDay(l.next_due_date, today);
+    if (l.next_due_date >= today) parts.push(`${l.is_overdue ? 'next due' : 'due'} ${day}`);
+    else if (l.is_overdue) parts.push(`was due ${day}`);
+  }
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 

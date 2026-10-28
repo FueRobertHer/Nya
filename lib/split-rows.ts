@@ -262,9 +262,12 @@ function partRows(parent: Txn, record: SplitRecord, ix: CategoryIndex | null, fr
     };
   });
   if (left !== 0) {
-    // The transaction's own category, as it would be filed whole.
+    // The transaction's own category, as it would be filed whole. Not
+    // Plaid's confidence in it: the row has no category of its own to
+    // answer "Check category" with (it is the transaction's, which is shown
+    // as its parts), and the person split it, so has looked at it.
     const own: Partial<Txn> = {};
-    for (const k of ['category', 'category_id', 'category_name', 'category_kind', 'category_by_rule', 'category_confidence'] as const) {
+    for (const k of ['category', 'category_id', 'category_name', 'category_kind', 'category_by_rule'] as const) {
       if (facts[k] !== undefined) (own as Record<string, unknown>)[k] = facts[k];
     }
     rows.push({
@@ -273,6 +276,7 @@ function partRows(parent: Txn, record: SplitRecord, ix: CategoryIndex | null, fr
       amount: left / scale,
       category: facts.category ?? null,
       ...own,
+      category_confidence: null,
       ...partExcluded(parent, false),
       ...of,
       split_index: record.parts.length,

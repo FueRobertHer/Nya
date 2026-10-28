@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import NetWorthCard from '@/components/NetWorthCard';
+import NetWorthCard, { HeroDelta } from '@/components/NetWorthCard';
 import { allHiddenCaveats, type Caveat } from '@/components/TotalCaveats';
 import { MASK, setAmountsHidden } from '@/lib/format';
 
@@ -129,5 +129,52 @@ describe('the nightly jobs: the fact, to everyone, with no instruction on the ca
     expect(held).toContain('so it removed none of them there.');
     for (const t of [failed, held]) expect(t).not.toContain('Vercel');
     expect(text(render({ filesProblem: { last_ok: null, reason: null, held: false, paused: true } }))).toContain('is paused until a nightly backup is recorded');
+  });
+});
+
+describe('the change line', () => {
+  const line = (value: number, more: { endedIn?: number; fromRates?: string; currency?: string; days?: number } = {}) =>
+    renderToStaticMarkup(<HeroDelta delta={{ value, pct: (Math.abs(value) / 1000) * 100, days: more.days ?? 30 }} currency={more.currency ?? 'USD'} endedIn={more.endedIn ?? 0} fromRates={more.fromRates ?? ''} />);
+
+  test('a gain is green with an up arrow, a loss red with a down arrow, each with how much', () => {
+    expect(line(10)).toStartWith('<div class="hero-delta up">');
+    expect(text(line(10))).toBe('▲ $10.00 (1.0%) · past 30 days');
+    expect(line(-10)).toStartWith('<div class="hero-delta down">');
+    expect(text(line(-10))).toBe('▼ $10.00 (1.0%) · past 30 days');
+  });
+
+  // The screen review: "▲ $0.00 (0.0%)" in green read as a gain.
+  test('no change, or one that rounds to nothing in the currency, is said in words, with no arrow and not in a gain’s color', () => {
+    for (const value of [0, 0.004, -0.004]) {
+      const html = line(value);
+      expect(html).toStartWith('<div class="hero-delta flat">');
+      expect(text(html)).toBe('No change in 30 days');
+      expect(html).not.toMatch(/[▲▼]/);
+    }
+    // A yen is the smallest unit: half of one rounds to nothing, a whole one doesn't.
+    expect(text(line(0.4, { currency: 'JPY' }))).toBe('No change in 30 days');
+    expect(line(1, { currency: 'JPY' })).toContain('hero-delta up');
+    // What else the change holds is still said.
+    expect(text(line(0, { endedIn: 2, fromRates: 'rates moved it' }))).toBe('No change in 30 days · includes 2 accounts that ended · rates moved it');
+  });
+
+  test('one day is a day', () => {
+    expect(text(line(0, { days: 1 }))).toBe('No change in 1 day');
+    expect(text(line(10, { days: 1 }))).toBe('▲ $10.00 (1.0%) · past 1 day');
+  });
+
+  test('with amounts hidden: the figure is masked, and no change is still said in words', () => {
+    const g = globalThis as Record<string, unknown>;
+    const none = g.window === undefined;
+    if (none) g.window = {};
+    try {
+      setAmountsHidden(true);
+      expect(line(10)).not.toContain('10.00');
+      expect(line(10)).toContain(MASK);
+      expect(text(line(0))).toBe('No change in 30 days');
+    } finally {
+      setAmountsHidden(false);
+      if (none) delete g.window;
+    }
   });
 });

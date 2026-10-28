@@ -112,7 +112,7 @@ import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import { accruedCaveats } from './AccruedInterestNote';
-import NetWorthCard from './NetWorthCard';
+import NetWorthCard, { HeroDelta } from './NetWorthCard';
 import { allHiddenCaveats, type Caveat } from './TotalCaveats';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
@@ -1833,6 +1833,7 @@ export default function Dashboard({
         accounts: i.accounts.map((a) => ({
           account_id: a.account_id,
           name: a.name,
+          mask: a.mask,
           type: a.type,
           subtype: a.subtype,
           balance: a.balance,
@@ -2077,7 +2078,7 @@ export default function Dashboard({
   const paymentAccounts = useMemo(
     () =>
       sortedInstitutions.flatMap((i) =>
-        i.accounts.map((a): PaymentAccount => ({ item_id: i.item_id, account_id: a.account_id, name: a.name, type: a.type, balance: a.balance, currency: a.currency, liability: a.liability }))
+        i.accounts.map((a): PaymentAccount => ({ item_id: i.item_id, account_id: a.account_id, name: a.name, institution: i.institution_name, mask: a.mask, type: a.type, balance: a.balance, currency: a.currency, liability: a.liability }))
       ),
     [sortedInstitutions]
   );
@@ -2315,19 +2316,7 @@ export default function Dashboard({
                   refreshing={refreshing}
                   notesCount={timeline.notes.length}
                   onNotes={() => setNotesOpen(true)}
-                  delta={shownDelta && (
-                    <div className={`hero-delta${shownDelta.value >= 0 ? ' up' : ' down'}`}>
-                      {shownDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(shownDelta.value), shownCurrency)}</Masked> (
-                      {shownDelta.pct.toFixed(1)}%) · past {shownDelta.days} days
-                      {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
-                      {fromRates && (
-                        <>
-                          {' · '}
-                          <Masked>{fromRates}</Masked>
-                        </>
-                      )}
-                    </div>
-                  )}
+                  delta={shownDelta && <HeroDelta delta={shownDelta} currency={shownCurrency} endedIn={endedInDelta} fromRates={fromRates} />}
                   chart={
                     shownHistory.length >= 2 ? (
                       <>
@@ -2515,7 +2504,7 @@ export default function Dashboard({
                           These accounts still sync, but are left out of net worth, transactions,
                           budgets and insights, on every day, past ones too. Unhiding restores their
                           history in full. To stop counting one only from a day on, unhide it, then open
-                          it, use Close… and choose Stop following: every day before then still counts.
+                          it, use Mark as closed… and choose Stop following: every day before then still counts.
                         </p>
                         {/* Each row's Unhide sits beside its text, not inside
                             a control. */}
@@ -3121,7 +3110,7 @@ export default function Dashboard({
                 account (#50). Only the person knows which happened. */}
             {endedOffer !== shownDisconnectTarget.item_id && (
               <p className="panel-note">
-                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (open the account, then Close…): it then stops counting from that day, and the chart marks it.
+                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (open the account, then Mark as closed…): it then stops counting from that day, and the chart marks it.
               </p>
             )}
             {/* What Plaid itself keeps is beyond a disconnect's reach (the

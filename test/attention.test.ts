@@ -158,6 +158,32 @@ describe('the rest', () => {
     expect(attentionItems({ ...NOTHING, now, payments })[0].go).toEqual({ to: 'account', item_id: 'i', account_id: 'Old' });
   });
 
+  // The screen review: two sandbox banks with the same mortgage read
+  // "Plaid Mortgage is overdue" twice.
+  test('payments: two accounts of one name are told apart by their institution, then their mask', () => {
+    const loan = (account_id: string, institution: string, mask: string): PaymentAccount => ({
+      item_id: `item-${account_id}`,
+      account_id,
+      name: 'Plaid Mortgage',
+      institution,
+      mask,
+      type: 'loan',
+      balance: 56302.06,
+      currency: 'USD',
+      liability: { minimum_payment: 3141.54, next_due_date: null, is_overdue: true },
+    });
+    const twoBanks = paymentAlerts([loan('a', 'Tartan Bank', '8888'), loan('b', 'Houndstooth Bank', '8888')], now);
+    expect(rows({ payments: twoBanks })).toEqual([
+      ['critical', 'Tartan Bank Plaid Mortgage is overdue', 'Minimum $3,141.54', 'account'],
+      ['critical', 'Houndstooth Bank Plaid Mortgage is overdue', 'Minimum $3,141.54', 'account'],
+    ]);
+    expect(new Set(twoBanks.map((p) => p.key)).size).toBe(2);
+    const oneBank = paymentAlerts([loan('a', 'Tartan Bank', '8888'), loan('b', 'Tartan Bank', '9999')], now);
+    expect(oneBank.map((p) => p.title)).toEqual(['Tartan Bank Plaid Mortgage ••8888 is overdue', 'Tartan Bank Plaid Mortgage ••9999 is overdue']);
+    // One of a name is named as before.
+    expect(paymentAlerts([loan('a', 'Tartan Bank', '8888')], now)[0].title).toBe('Plaid Mortgage is overdue');
+  });
+
   test('budgets: amber, the worst two, then how many more', () => {
     const alerts = {
       alerts: [

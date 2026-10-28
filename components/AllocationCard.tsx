@@ -49,6 +49,7 @@ import {
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { compactMoney, spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
+import { distinctAccountNames } from '@/lib/account-names';
 import { instantDay } from '@/lib/local-date';
 import {
   allocate,
@@ -622,39 +623,52 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
   );
 }
 
-/** What the allocation leaves out or can't see, one sentence each. */
+/** What the allocation leaves out or can't see, one sentence each, each
+ *  keyed by what it is about, never by its words: two sentences can read the
+ *  same (a caveat about two institutions of one name). Accounts that share a
+ *  name are told apart by their institution, then their mask
+ *  (lib/account-names.ts). */
 export function AllocationNotes({ alloc, money }: { alloc: Allocation; money: (n: number) => string }) {
-  const lines: string[] = [];
+  const lines: { key: string; text: string }[] = [];
   // With a home currency: what was converted, never a rate or an amount.
   const c = alloc.converted;
   if (c) {
-    lines.push(
-      `What is in ${names(c.from)} is converted into ${c.into} at the ECB’s newest rates${c.own.length > 0 ? `, and your own rate for ${names(c.own)}` : ''}, each balance and position on its own.`
-    );
+    lines.push({
+      key: 'converted',
+      text: `What is in ${names(c.from)} is converted into ${c.into} at the ECB’s newest rates${c.own.length > 0 ? `, and your own rate for ${names(c.own)}` : ''}, each balance and position on its own.`,
+    });
   }
   if (alloc.otherCurrencies.length) {
     const one = alloc.otherCurrencies.length === 1;
-    lines.push(
-      `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${one ? 'another currency' : 'other currencies'}. ${
+    lines.push({
+      key: 'other-currencies',
+      text: `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${one ? 'another currency' : 'other currencies'}. ${
         alloc.converting ? `There is no rate to convert ${one ? 'it' : 'them'} at.` : "The allocation doesn't convert currencies."
-      }`
-    );
+      }`,
+    });
   }
-  for (const c of alloc.caveats) lines.push(caveatText(c, 'this'));
+  alloc.caveats.forEach((c, i) => lines.push({ key: `caveat:${c.kind}:${i}`, text: caveatText(c, 'this') }));
+  const overNames = distinctAccountNames(alloc.over.map((o) => ({ id: o.account_id, name: o.account, institution: o.institution, mask: o.mask })));
   for (const o of alloc.over) {
-    lines.push(`${o.account}'s positions are worth ${money(o.amount)} more than its balance (a margin loan, or prices from another time): they are counted as listed.`);
+    lines.push({
+      key: `over:${o.account_id}`,
+      text: `${overNames.get(o.account_id) ?? o.account}'s positions are worth ${money(o.amount)} more than its balance (a margin loan, or prices from another time): they are counted as listed.`,
+    });
   }
-  if (alloc.unpriced > 0) lines.push(`${alloc.unpriced} position${alloc.unpriced === 1 ? ' has' : 's have'} no value from the institution, so ${alloc.unpriced === 1 ? "it isn't" : "they aren't"} counted.`);
-  if (alloc.noBalance > 0) lines.push(`${alloc.noBalance} account${alloc.noBalance === 1 ? ' has' : 's have'} no balance or position to count.`);
+  if (alloc.unpriced > 0) lines.push({ key: 'unpriced', text: `${alloc.unpriced} position${alloc.unpriced === 1 ? ' has' : 's have'} no value from the institution, so ${alloc.unpriced === 1 ? "it isn't" : "they aren't"} counted.` });
+  if (alloc.noBalance > 0) lines.push({ key: 'no-balance', text: `${alloc.noBalance} account${alloc.noBalance === 1 ? ' has' : 's have'} no balance or position to count.` });
   if (alloc.unattributed > 0) {
-    lines.push(`${alloc.unattributed} position${alloc.unattributed === 1 ? ' belongs' : 's belong'} to no account Nya can show, so ${alloc.unattributed === 1 ? "it isn't" : "they aren't"} counted. A refresh usually fixes this.`);
+    lines.push({
+      key: 'unattributed',
+      text: `${alloc.unattributed} position${alloc.unattributed === 1 ? ' belongs' : 's belong'} to no account Nya can show, so ${alloc.unattributed === 1 ? "it isn't" : "they aren't"} counted. A refresh usually fixes this.`,
+    });
   }
   if (lines.length === 0) return null;
   return (
     <>
       {lines.map((l) => (
-        <div key={l} className="as-of stale">
-          <Masked>{l}</Masked>
+        <div key={l.key} className="as-of stale">
+          <Masked>{l.text}</Masked>
         </div>
       ))}
     </>
@@ -881,11 +895,27 @@ export function SplitForm({
         {ASSET_CLASSES.map((c) => (
           <label key={c} className="field">
             {FIELD_NAMES[c]} %
-            <input type="number" inputMode="decimal" data-percent step="0.1" value={fields[c]} onChange={(e) => setFields((f) => ({ ...f, [c]: e.target.value }))} disabled={saving} />
+            <input
+              type="number"
+              inputMode="decimal"
+              data-percent
+              step="0.1"
+              value={fields[c]}
+              onChange={(e) => {
+                setFields((f) => ({ ...f, [c]: e.target.value }));
+                // What Save said is about what was there then.
+                setError('');
+              }}
+              disabled={saving}
+            />
           </label>
         ))}
       </div>
-      <p className="panel-note">Adds up to {sum / 10}%{sum === 1000 ? '.' : ': it needs to be 100%.'}</p>
+      {/* A running total, never an error before anything is typed: what is
+          wrong is said once Save is pressed (readSplit), in the error below. */}
+      <p className="helper" aria-live="polite">
+        {sum / 10}% of 100%
+      </p>
       {error && <div className="error">{error}</div>}
       {canRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={!editable || saving} onClick={() => void save(null)}>
@@ -1212,8 +1242,8 @@ export function HistoryBody({
       {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: the allocation over time doesn&apos;t convert currencies.</div>}
       {unreadableNote && <div className="as-of stale">{unreadableNote}</div>}
       {/* What today's allocation may be short of, so are the latest days. */}
-      {caveats.map((c) => (
-        <div key={caveatText(c, '')} className="as-of stale">
+      {caveats.map((c, i) => (
+        <div key={`${c.kind}:${i}`} className="as-of stale">
           {caveatText(c, 'the latest days')}
         </div>
       ))}

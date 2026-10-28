@@ -29,6 +29,7 @@ import { withCarry, type Carries } from '@/lib/rollover';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
 import type { Severity } from '@/lib/accounts-status';
+import { distinctAccountNames } from '@/lib/account-names';
 
 /**
  * A connection Plaid says will end on a date (lib/connection-state.ts,
@@ -127,8 +128,9 @@ export type InsightAccount = {
   };
 };
 
-/** An account a payment is about, with what opens its sheet. */
-export type PaymentAccount = InsightAccount & { item_id: string; account_id: string };
+/** An account a payment is about, with what opens its sheet, and its
+ *  institution and mask, which tell it from another of the same name. */
+export type PaymentAccount = InsightAccount & { item_id: string; account_id: string; institution?: string; mask?: string | null };
 
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
@@ -206,7 +208,8 @@ export function budgetAlerts({ txns, fx = null, budgets = EMPTY_BUDGETS, taxonom
  * Card and loan payments overdue (red) or coming due within a week (amber),
  * from Plaid's liabilities data rather than inferred from transactions:
  * overdue first, then soonest first. Every one: each is its own thing to do,
- * with its own account sheet. Home's Needs attention lists them.
+ * with its own account sheet. Home's Needs attention lists them, each named
+ * so no two read the same (lib/account-names.ts).
  */
 export function paymentAlerts(accounts: PaymentAccount[], now: Date = new Date()): ({ key: string; severity: Severity; item_id: string; account_id: string } & AlertLine)[] {
   const overdue: ({ key: string; severity: Severity; item_id: string; account_id: string } & AlertLine)[] = [];
@@ -215,15 +218,17 @@ export function paymentAlerts(accounts: PaymentAccount[], now: Date = new Date()
   // 24-hour blocks from now. Comparing against `now` drifted by one over the
   // day: after local noon a payment due today rounded to -1 and was dropped.
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const named = distinctAccountNames(accounts.filter((a) => a.liability).map((a) => ({ id: a.account_id, name: a.name, institution: a.institution ?? '', mask: a.mask })));
   for (const a of accounts) {
     const l = a.liability;
     if (!l) continue;
+    const name = named.get(a.account_id) ?? a.name;
     const ids = { item_id: a.item_id, account_id: a.account_id };
     if (l.is_overdue) {
       overdue.push({
         key: `overdue-${a.account_id}`,
-        text: `${a.name} is overdue${l.minimum_payment != null ? ` (${formatMoney(l.minimum_payment, a.currency)} minimum)` : ''}`,
-        title: `${a.name} is overdue`,
+        text: `${name} is overdue${l.minimum_payment != null ? ` (${formatMoney(l.minimum_payment, a.currency)} minimum)` : ''}`,
+        title: `${name} is overdue`,
         ...(l.minimum_payment != null ? { sub: `Minimum ${formatMoney(l.minimum_payment, a.currency)}` } : {}),
         severity: 'critical',
         ...ids,
@@ -241,8 +246,8 @@ export function paymentAlerts(accounts: PaymentAccount[], now: Date = new Date()
       days,
       alert: {
         key: `due-${a.account_id}`,
-        text: `${a.name}: ${l.minimum_payment != null ? `${formatMoney(l.minimum_payment, a.currency)} ` : ''}due ${when}`,
-        title: `${a.name} due ${when}`,
+        text: `${name}: ${l.minimum_payment != null ? `${formatMoney(l.minimum_payment, a.currency)} ` : ''}due ${when}`,
+        title: `${name} due ${when}`,
         ...(l.minimum_payment != null ? { sub: `Minimum ${formatMoney(l.minimum_payment, a.currency)}` } : {}),
         severity: 'caution',
         ...ids,

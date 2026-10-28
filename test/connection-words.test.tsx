@@ -13,7 +13,10 @@ import before from './connection-words-before-3b.json';
 // test/connection-words-before-3b.json) must still be on the institution's
 // card, on screen or behind its "Why?", never only in a sheet; what the
 // SimpleFIN card said about itself (where it reaches, when it last
-// answered, its history) is in Connection details.
+// answered, its history) is in Connection details. One word was changed on
+// purpose since: the account sheet's button the missing-account warning
+// names is "Mark as closed…" (it read "Close…", beside the sheet's own
+// Close), so the record names it as the button now reads.
 
 const noop = () => {};
 const text = (html: string) =>

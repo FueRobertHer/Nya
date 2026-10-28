@@ -47,8 +47,11 @@ export function recategorizedRow(t: Pick<Txn, 'paired'> | undefined, choice: Cat
   // The person's own now: a rule's category no longer shows (category_by_rule),
   // so the row's edit form starts from it (components/ManualTxnSheet.tsx); nor
   // does a merchant's default, nor a category offered an approved row
-  // (lib/review-layer.ts), which the person's own always beats.
-  const own = { ...shown, category_by_rule: undefined, filed_by_default: undefined, review_suggestion: undefined };
+  // (lib/review-layer.ts), which the person's own always beats. Nor Plaid's
+  // confidence in its own category, which no longer applies, so the row's
+  // "Check category" goes (the server clears it too: lib/category-store.ts
+  // fileRows).
+  const own = { ...shown, category_by_rule: undefined, filed_by_default: undefined, review_suggestion: undefined, category_confidence: null };
   return t?.paired ? { ...own, paired: undefined, subcategory: null } : own;
 }
 

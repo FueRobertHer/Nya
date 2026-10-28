@@ -293,6 +293,40 @@ describe('a transaction’s sheet', () => {
     v.unmount();
   });
 
+  // The screen review: "Check category" had no answer short of choosing
+  // another category.
+  test('Check category can be answered: Looks right chooses the category it has, as picking it would, and the mark goes', async () => {
+    const { recategorizedRow } = await import('@/components/transaction-edits');
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    const changes: { id: string; choice: unknown }[] = [];
+    const v = mount({ txns: served().map(low), onRecategorize: (id, choice) => changes.push({ id, choice }), onCreateRule: () => {} });
+    await v.open('Whole Foods');
+    const badges = () => v.dialog()!.findAll((e) => (e.getAttribute('class') ?? '').startsWith('badge')).map((e) => e.textContent);
+    expect(badges()).toEqual(['Check category']);
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    expect(changes).toEqual([{ id: 'Whole Foods', choice: { category_id: cat('groceries') } }]);
+    // No offer to make a rule: nothing was changed.
+    expect(v.dialog()!.textContent).not.toContain('Do the same for every transaction');
+    // The button goes, so focus goes to the field it was about, and the status line says it was kept.
+    expect(dom.document.activeElement).toBe(v.field('Category') as never);
+    const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    expect(status()).toBe('Category kept: groceries.');
+    // The row as the dashboard then shows it (components/transaction-edits.ts).
+    v.render({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...low(t), ...recategorizedRow(low(t), changes[0].choice as never, taxonomy) } : t)) });
+    expect(badges()).toEqual([]);
+    expect(v.button('Looks right', v.dialog()!)).toBeNull();
+    expect(status()).toBe('Category kept: groceries.');
+    v.unmount();
+  });
+
+  test('a pending row keeps its mark without Looks right: a choice is kept by id, and it gets a new one when it posts', async () => {
+    const v = mount({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'UNKNOWN', pending: true } : t)) });
+    await v.open('Whole Foods');
+    expect(v.dialog()!.textContent).toContain('Check category');
+    expect(v.button('Looks right', v.dialog()!)).toBeNull();
+    v.unmount();
+  });
+
   test('its ⋯: Rename vendor as a second level, and Edit or delete only for a row entered by hand', async () => {
     const said: string[] = [];
     const v = mount({ onRename: (key, name) => said.push(`rename ${key} ${name}`), onEditTransaction: (t) => said.push(`edit ${t.transaction_id}`) });

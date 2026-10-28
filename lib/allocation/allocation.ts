@@ -68,6 +68,9 @@ import { overridesOf, targetByRegion, type AllocationSettings } from './settings
 export type AllocAccount = {
   account_id: string;
   name: string;
+  /** The end of its number, which tells two accounts of one name at one
+   *  institution apart (lib/account-names.ts). */
+  mask?: string | null;
   type: string;
   subtype?: string | null;
   balance: number | null;
@@ -214,7 +217,7 @@ export type Allocation = {
   securities: SecurityRow[];
   gaps: AccountGap[];
   /** Positions worth more than the account's balance, by how much. */
-  over: { account: string; institution: string; amount: number }[];
+  over: { account_id: string; account: string; mask: string | null; institution: string; amount: number }[];
   /** Left out for being in another currency, by currency. */
   otherCurrencies: { currency: string; amount: number }[];
   /** Positions with no value: evidence of nothing, so not counted. */
@@ -395,7 +398,7 @@ export function allocate(input: {
           gap('not-in-position', diff);
           row.amount = a.balance;
         } else if (diff < -ROUNDING) {
-          over.push({ account: a.name, institution: inst.name, amount: -diff });
+          over.push({ account_id: a.account_id, account: a.name, mask: a.mask ?? null, institution: inst.name, amount: -diff });
         }
       }
       buckets[bucket.bucket] += row.amount;

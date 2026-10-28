@@ -3,7 +3,7 @@
 // One account's sheet, opened by its row on the Accounts tab
 // (docs/design/information-architecture.md#accounts): its balance and where
 // it comes from, its history, holdings and payment terms, and every action on
-// it. Hide and Close... are in the footer, with Update balance and Add
+// it. Hide and Mark as closed… are in the footer, with Update balance and Add
 // transaction on a typed account; the rare ones are in its ⋯. Replaces the
 // row that expanded in place and the buttons that sat inside it.
 //
@@ -232,7 +232,7 @@ export default function AccountSheet({
       <button
         className="btn secondary"
         disabled={lifecycleBusy}
-        aria-label={`${a.name}: closed, no longer yours, or stop following`}
+        aria-label={`Mark as closed… ${a.name}: closed, no longer yours, or stop following`}
         onClick={act(() =>
           onEnd({
             account_id: a.account_id,
@@ -248,7 +248,7 @@ export default function AccountSheet({
           })
         )}
       >
-        Close…
+        Mark as closed…
       </button>
       {typed && (
         <button className="btn secondary" onClick={act(() => onAddTransaction(a.account_id))}>
@@ -281,15 +281,16 @@ export default function AccountSheet({
             <span className={`badge ${a.balance == null ? 'neg' : 'warn'}`}>{held}</span>
           </p>
         )}
-        {liabLine && (
+        {/* Overdue is said whether or not any terms came with it. */}
+        {(liabLine || a.liability?.is_overdue) && (
           <p className="helper">
             {a.liability?.is_overdue && (
               <>
                 <span className="badge neg">Overdue</span>
-                {' · '}
+                {liabLine && ' · '}
               </>
             )}
-            <Masked>{liabLine}</Masked>
+            {liabLine && <Masked>{liabLine}</Masked>}
           </p>
         )}
         {util != null && (

@@ -1673,6 +1673,11 @@ button:disabled:where(:not([class*="cl-"])) {
   color: var(--down);
 }
 
+/* No change, in words and without an arrow: never in a gain's color. */
+.hero-delta.flat {
+  color: var(--text-2);
+}
+
 .top-actions {
   display: flex;
   gap: 8px;

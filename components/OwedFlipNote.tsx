@@ -7,7 +7,7 @@
 //
 //   Close    for an account that itself changed: every day before its end
 //            keeps it, and a new one of the other kind is added beside it
-//            (the same sheet as the account's own Close… button).
+//            (the same sheet as the account's own Mark as closed… button).
 //   Hide     for one entered as the wrong type from the start: hiding takes
 //            it out of every day, earlier ones too, each by what it was
 //            recorded as (its hidden entry keeps the type it had), so no day

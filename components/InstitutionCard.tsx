@@ -194,7 +194,9 @@ export default function InstitutionCard({
             // A Plaid balance is implicitly "now"; a typed or synced
             // one says when it was set.
             const day = held ? null : balanceDay(a, inst);
-            const overdue = !!liabLine && !!a.liability?.is_overdue;
+            // Its own fact, never waiting on the terms line, which can be
+            // empty (no rate, minimum or date reported).
+            const overdue = !!a.liability?.is_overdue;
             return (
               <li key={a.account_id}>
                 <button className="list-row" onClick={() => onOpenAccount(a.account_id)}>

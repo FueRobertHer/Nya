@@ -197,6 +197,12 @@ export function applyReview(t: Row, layer: ReviewLayer, f: ReviewFacts): void {
           delete marks.filed_by_default;
           marks.review_suggestion = { category_id: now.id, by: f.ruleId ? 'rule' : byDefault ? 'default' : 'bank', ...(f.ruleId ? { rule_id: f.ruleId } : {}) };
         }
+      } else if ('category_confidence' in t && t.category_confidence) {
+        // Approved in the category it already shows: the approval answers
+        // Plaid's doubt about it, so "Check category" goes, as it does when
+        // the approval pins another (through rule_category, which
+        // lib/category-store.ts fileRows reads).
+        t.category_confidence = null;
       }
     }
     if (f.listed && via) marks.review_via = via;
