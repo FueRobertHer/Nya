@@ -961,10 +961,10 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 /* The month (components/MonthStepper.tsx): Activity's, Budgets' on Month
    and the calendar's, the same at every width. A grid: its arrows either
    side of the name, which the list of months lies over, and on a line of
-   its own under the name This month, when another month shows. On a tab's
-   bar that line is held while This month isn't there, so the row is as tall
-   on every month and nothing under it moves as the months step. The
-   calendar's (.back-when-away) has the line only while This month does. */
+   its own under the name This month, when another month shows. That line
+   is held while This month isn't there, so the row is as tall on every
+   month and nothing under it moves as the months step: a tab's bar, and
+   the calendar's card. */
 .month-stepper {
   display: grid;
   grid-template-columns: var(--tap) minmax(0, 1fr) var(--tap);
@@ -973,9 +973,6 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   column-gap: var(--sp-1);
 }
 
-.month-stepper.back-when-away {
-  grid-template-rows: minmax(var(--tap), auto);
-}
 
 /* This month: under the name, as wide as its words. */
 .month-stepper-back {

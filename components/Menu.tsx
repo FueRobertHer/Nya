@@ -111,7 +111,8 @@ export function Menu({
   }, [open]);
 
   // Where focus goes instead of the button, for a sheet an item opens
-  // (components/Sheet.tsx), read as the sheet closes.
+  // (components/Sheet.tsx), read as the sheet closes. Not undone when the
+  // menu goes: that is the case it is for, and the entry goes with the button.
   useEffect(() => {
     const button = trigger.current;
     if (button && focusInstead) focusInsteadOf(button, () => focusInstead.current);

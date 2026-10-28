@@ -132,16 +132,7 @@ describe('the month stepper', () => {
     v.unmount();
   });
 
-  test('holdBack false (the calendar): the line only while the button is there', () => {
-    const v = mount(<MonthStepper month="2026-10" months={MONTHS} label={words} onMonth={() => {}} holdBack={false} />);
-    expect(v.host.findAll((e) => e.getAttribute('class') === 'month-stepper back-when-away')).toHaveLength(1);
-    expect(v.back()).toBeNull();
-    v.rerender(<MonthStepper month="2026-09" months={MONTHS} label={words} onMonth={() => {}} holdBack={false} back={{ label: 'This month', onBack: () => {} }} />);
-    expect((v.back()!.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper back-when-away');
-    v.unmount();
-  });
-
-  test('the stylesheet holds the second line on a bar and lets it go on the calendar, with no wrap', () => {
+  test('the stylesheet holds the second line everywhere, the calendar too, with no wrap', () => {
     const css = readFileSync(join(import.meta.dir, '../app/globals.css'), 'utf8').replace(/\r/g, '');
     // The body of the rule whose selector is `selector` alone.
     const rule = (selector: string) => {
@@ -155,7 +146,8 @@ describe('the month stepper', () => {
     expect(rule('.month-stepper')).not.toContain('row-gap');
     expect(rule('.month-stepper-back')).toContain('grid-row: 2;');
     expect(rule('.month-stepper-back')).toContain('grid-column: 2;');
-    expect(rule('.month-stepper.back-when-away')).toContain('grid-template-rows: minmax(var(--tap), auto);');
+    // No variant lets the line go: one that did moved the calendar's days down 44px on a wide screen.
+    expect(css).not.toMatch(/\.month-stepper\.[\w-]+ \{/);
     expect(css).not.toContain('.month-stepper-mid');
     // The rows without a month are as tall, so the segments under them never move.
     expect(rule('.activity-month,\n.budgets-heading')).toContain('min-height: calc(2 * var(--tap));');

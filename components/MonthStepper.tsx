@@ -12,9 +12,9 @@
 //
 // The return button has a line of its own under the name, at every width
 // (app/globals.css .month-stepper, a grid of two rows), with the arrows on
-// the first. On a tab's bar that line is held while the button isn't there,
+// the first. That line is held while the button isn't there,
 // so the row is as tall on every month and nothing under it moves as the
-// months step; the calendar, in a card, lets it go (holdBack).
+// months step, the calendar's in its card too.
 
 import { useRef, type RefObject } from 'react';
 
@@ -41,7 +41,6 @@ export default function MonthStepper({
   listLabel = 'Month to show',
   disabled = false,
   skeleton,
-  holdBack = true,
 }: {
   /** The month shown, YYYY-MM; null while it is still coming: a placeholder
    *  in its name's place, in the same elements, so nothing moves when it
@@ -68,11 +67,6 @@ export default function MonthStepper({
   disabled?: boolean;
   /** The placeholder's class, sized as the name it stands for. */
   skeleton?: string;
-  /** The return button's line held while it isn't there, empty, so the
-   *  row is as tall on every month (a tab's bar); false, the line only
-   *  while the button is (the calendar, whose card would otherwise carry an
-   *  empty line on the month it opens on). */
-  holdBack?: boolean;
 }) {
   const title = useRef<HTMLElement | null>(null);
   const list = useRef<HTMLSelectElement | null>(null);
@@ -87,7 +81,7 @@ export default function MonthStepper({
     // In the order they are seen, so Tab goes the same way: the earlier
     // arrow, the name, the later arrow, then the return button on the line
     // under the name.
-    <div className={holdBack ? 'month-stepper' : 'month-stepper back-when-away'}>
+    <div className="month-stepper">
       <button type="button" className="icon-btn" aria-label="Earlier month" aria-disabled={earlier === null} onClick={earlier === null ? undefined : () => onMonth(earlier)}>
         {chevron(LEFT)}
       </button>

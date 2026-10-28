@@ -292,7 +292,6 @@ export default function CalendarView({
         onMonth={go}
         heading="span"
         listLabel="Calendar month"
-        holdBack={false}
         back={
           month !== thisMonth
             ? {
