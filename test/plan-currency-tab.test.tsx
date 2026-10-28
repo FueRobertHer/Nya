@@ -548,10 +548,12 @@ describe('a figure not measured is never counted as zero (review round 2)', () =
     serve(planServer({ plan: AGED }).answers);
     const tab = await render({ institutions: euros, txns: euroYear, currency: 'EUR' });
     expect(tab.text()).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, EUR (1 account in USD).');
-    expect(tab.text()).toContain('Years to FI--Not worked out: your invested assets aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
+    // The answer names what it needs, and the line under it says why (since
+    // the screen review, in place of a Years to FI row of "--").
+    expect(tab.text()).toContain('Financial independenceNeeds your invested assetsYour invested assets aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
     expect(tab.text()).toContain('Your invested assets aren’t measured (below), so whether you have that much isn’t said.');
-    expect(tab.text()).toContain('At age 55--Not worked out: your invested assets aren’t measured (below)');
-    expect(tab.text()).not.toMatch(/Years to FIabout/);
+    expect(tab.text()).toContain('At age 55Needs your invested assetsYour invested assets aren’t measured (below)');
+    expect(tab.text()).not.toMatch(/Financial independence(In|Around)/);
     await tab.unmount();
   });
 
@@ -561,7 +563,7 @@ describe('a figure not measured is never counted as zero (review round 2)', () =
     expect(calls.some((c) => c.url === '/api/currency')).toBe(true);
     expect(tab.text()).toContain('€900,000');
     expect(tab.text()).not.toContain('Not measured');
-    expect(tab.text()).toMatch(/Years to FIabout/);
+    expect(tab.text()).toMatch(/Financial independenceAround age \d+/);
     await tab.unmount();
   });
 
@@ -572,7 +574,7 @@ describe('a figure not measured is never counted as zero (review round 2)', () =
     const tab = await render({ institutions: broker([USD({ balance: 400_000 })]), txns: year });
     expect(tab.text()).toContain('Annual spendingTyped by you$40,000');
     expect(tab.text()).toMatch(/Annual savingsNot measured--Caution: The year’s income and savings aren’t measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD \(\d+ transactions in CAD this year\)\./);
-    expect(tab.text()).toContain('Not worked out: your savings aren’t measured (below)');
+    expect(tab.text()).toContain('Financial independenceNeeds your savingsYour savings aren’t measured (below)');
     await tab.unmount();
   });
 });
@@ -641,7 +643,10 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, ECB] });
     const tab = await render({ institutions: dollars, txns: highEarner });
     expect(tab.text()).toMatch(/Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
-    expect(tab.text()).toContain('Financial independence--Add your age and when you’d like to stopNeeds your annual spending, which isn’t measured (below).Years to FI--Needs your annual spending, which isn’t measured (below).');
+    // The answer names what it needs; the line on the FI number says why,
+    // once, without the need again.
+    expect(tab.text()).toContain('Financial independenceNeeds your annual spendingAdd your age and when you’d like to stopYour annual spending isn’t measured (below).Coast FI');
+    expect(tab.text().match(/Needs your annual spending/g)?.length).toBe(1);
     expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
     expect(tab.text()).not.toContain('connect accounts with transactions');
     expect(tab.text()).not.toContain('$1,097');
@@ -657,7 +662,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     const tab = await render({ institutions: dollars, txns: mirror });
     expect(tab.text()).toMatch(/FI number \$[\d,]+: \$[\d,]+ a year ÷ 4% withdrawal rate/);
     expect(tab.text()).toMatch(/Annual spending\d+ days, scaled up to a year\$[\d,]+/);
-    expect(tab.text()).toContain('Years to FI--Not worked out: your savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
+    expect(tab.text()).toContain('Financial independenceNeeds your savingsYour savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
     expect(tab.text()).toMatch(/Annual savingsNot measured--Caution: The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
     expect(tab.text()).not.toContain('Not measured: more than a tenth');
     await tab.unmount();

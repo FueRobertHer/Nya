@@ -13,10 +13,12 @@
 // sent or stored: only a scenario the person saves by name is
 // (app/api/runway-scenarios), and that keeps the settings, never a figure.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
+import { Hero } from './Hero';
+import TotalCaveats from './TotalCaveats';
 import { Segmented } from './Segmented';
 import { reportDay, reportTime } from './ReportView';
 import { fieldAmount, formatMoney } from '@/lib/format';
@@ -24,7 +26,7 @@ import { addDays, isTimeZone } from '@/lib/report/period';
 import { DEFAULT_WHAT_IF, MONTH_DAYS, monthsText, projectRunway, RUNWAY_WINDOWS, windowOf, type RunwayLine, type RunwayProjection, type RunwayWhatIf } from '@/lib/report/runway';
 import type { RunwayReport as Runway } from '@/lib/report/runway-read';
 import { MAX_SCENARIOS, SCENARIO_NAME_MAX, scenarioWhatIf, type RunwayScenario } from '@/lib/report/runway-scenarios';
-import { hasMovedOut, hasOneOffs, runwayCaveats, runwayConvertedText, whatIfWords, type RunwayFormats } from '@/lib/report/runway-words';
+import { hasMovedOut, hasOneOffs, runwayCaveatItems, runwayConvertedText, whatIfWords, type RunwayFormats } from '@/lib/report/runway-words';
 import { cadenceLabel } from '@/lib/recurring';
 import { shownName } from '@/lib/merchant-name';
 import { plannedCadenceLabel } from '@/lib/planned';
@@ -59,13 +61,46 @@ const FORMATS = (r: Runway): RunwayFormats => ({ day: reportDay, time: (iso) => 
 /** An amount listed, in words, as part of the spending or the income. */
 const part = (words: string, amount: number, money: (n: number) => string) => `${words}: ${money(amount)}`;
 
-/** The runway as a page to read and print. No hooks and no state. */
-export function RunwayView({ runway, projection }: { runway: Runway; projection: RunwayProjection }) {
+/** The runway as a page to read and print. No hooks and no state. Since the
+ *  screen review the answer comes first: how long the cash lasts without
+ *  income is the page's hero, on the page rather than in a card, with what it
+ *  can't see right under it (one note in full, or a line that opens to each;
+ *  every one printed in full), then the cash and the line with income, the
+ *  chart, and the what-if's `controls` (for the screen only). */
+export function RunwayView({ runway, projection, controls }: { runway: Runway; projection: RunwayProjection; controls?: ReactNode }) {
   const money = (n: number) => formatMoney(n, runway.currency);
   const w = projection.window;
   const without = lastsWords(projection.without_income, runway.today);
   const withIncome = lastsWords(projection.with_income, runway.today);
-  const caveats = runwayCaveats(runway, projection, FORMATS(runway));
+  const caveats = runwayCaveatItems(runway, projection, FORMATS(runway));
+  // What it can't see, under the answer. On screen by the hero's rules: one
+  // in full, two or more on one line in amber that opens to each, every one
+  // a caution, as the one amber box said them (design-system.md "Notice",
+  // Gathered). A closed line would print nothing, so on paper the box is
+  // there instead, every note in full, in the same order.
+  const notes = (
+    <>
+      <div className="no-print">
+        {caveats.length > 0 ? (
+          <TotalCaveats items={caveats.map((c, i) => ({ key: `${i}:${c.kind}`, severity: c.level, summary: c.kind, body: <Masked>{c.text}</Masked> }))} />
+        ) : (
+          <p className="helper">Nothing is known to be missing from it.</p>
+        )}
+      </div>
+      <div className={`report-status runway-print-caveats${caveats.length > 0 ? ' report-status-short' : ''}`} role="note">
+        <p className="report-headline">{caveats.length > 0 ? 'What it can’t see:' : 'Nothing is known to be missing from it.'}</p>
+        {caveats.length > 0 && (
+          <ul>
+            {caveats.map((c, i) => (
+              <li key={i}>
+                <Masked>{c.text}</Masked>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
   // With a home currency: what was converted into the runway's currency.
   const converted = runwayConvertedText(runway, w);
   // An amount converted, beside the one it was written in.
@@ -97,24 +132,23 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
           </p>
         </header>
 
-        <div className={`report-status${caveats.length > 0 ? ' report-status-short' : ''}`} role="note">
-          <p className="report-headline">{caveats.length > 0 ? 'What it can’t see:' : 'Nothing is known to be missing from it.'}</p>
-          {caveats.length > 0 && (
-            <ul>
-              {caveats.map((c, i) => (
-                <li key={i}>
-                  <Masked>{c}</Masked>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
         {empty ? (
-          <p className="report-note">A runway starts from your checking, savings and cash on hand. Connect a bank, or add a manual account, to see one.</p>
+          <>
+            {notes}
+            <p className="report-note">A runway starts from your checking, savings and cash on hand. Connect a bank, or add a manual account, to see one.</p>
+          </>
         ) : (
           <>
-            <div className="report-bottom-line">
+            <Hero
+              id="runway-hero-title"
+              label="Without income"
+              className="runway-hero"
+              figure={without.figure}
+              line={<p className="helper">If your income stopped, your cash would last {without.words}.</p>}
+            >
+              {notes}
+            </Hero>
+            <div className="report-bottom-line runway-bottom-line">
               <div>
                 <div className="total-label">Cash now</div>
                 <div className="report-figure">
@@ -122,21 +156,17 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
                 </div>
               </div>
               <div>
-                <div className="total-label">Without income</div>
-                <div className="report-figure">{without.figure}</div>
-              </div>
-              <div>
                 <div className="total-label">{income}</div>
                 <div className="report-figure">{withIncome.figure}</div>
               </div>
               <p className="report-note">
-                If your income stopped, your cash would last {without.words}. {income}, {withIncome.words}. An estimate.{' '}
-                <Masked>{whatIfWords(whatIf, runway.currency, reportDay, w)}</Masked>
+                {income}, {withIncome.words}. An estimate. <Masked>{whatIfWords(whatIf, runway.currency, reportDay, w)}</Masked>
               </p>
             </div>
             {known && <RunwayChart projection={projection} currency={runway.currency} />}
           </>
         )}
+        {controls}
       </section>
 
       {!empty && (
@@ -411,66 +441,73 @@ export default function RunwayReport() {
 
   return (
     <>
-      <div className="card no-print report-controls runway-controls">
-        {/* The window's name over its switch, as a field's is, so the short
-            items ("6 months") keep their meaning; the group is named the same
-            for a screen reader, which hears it once. */}
-        <div className="field">
-          <span aria-hidden="true">Spending over</span>
-          <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `${m} months`] as const)} />
-        </div>
-        <div className="runway-fields">
-          <label className="field">
-            Spending lower by, a month
-            <input inputMode="decimal" autoComplete="off" value={lowerText} onChange={(e) => setLowerText(e.target.value)} placeholder="0" aria-label={`Spending lower by, a month, in ${code}`} />
-          </label>
-          <label className="field">
-            Income stops after
-            <input type="date" min={runway.today} value={whatIf.income_until ?? ''} onChange={(e) => change({ income_until: e.target.value || null })} />
-          </label>
-        </div>
-        {!lowerOk && <div className="error">Enter an amount, like 250 or 1,299.99.</div>}
-        {otherCurrency && (
-          <div className="stale-note">
-            That scenario’s lower spending was set in {otherCurrency}, and this runway is in {code}, so it isn’t applied. Type it again in {code}.
+      {/* The what-if under the answer it changes (since the screen review),
+          inside the report's first page, so on a phone the months come
+          first; for the screen only. */}
+      <RunwayView
+        runway={runway}
+        projection={projection}
+        controls={
+          <div className="card no-print report-controls runway-controls">
+            {/* The window's name over its switch, as a field's is, so the short
+                items ("6 months") keep their meaning; the group is named the same
+                for a screen reader, which hears it once. */}
+            <div className="field">
+              <span aria-hidden="true">Spending over</span>
+              <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `${m} months`] as const)} />
+            </div>
+            <div className="runway-fields">
+              <label className="field">
+                Spending lower by, a month
+                <input inputMode="decimal" autoComplete="off" value={lowerText} onChange={(e) => setLowerText(e.target.value)} placeholder="0" aria-label={`Spending lower by, a month, in ${code}`} />
+              </label>
+              <label className="field">
+                Income stops after
+                <input type="date" min={runway.today} value={whatIf.income_until ?? ''} onChange={(e) => change({ income_until: e.target.value || null })} />
+              </label>
+            </div>
+            {!lowerOk && <div className="error">Enter an amount, like 250 or 1,299.99.</div>}
+            {otherCurrency && (
+              <div className="stale-note">
+                That scenario’s lower spending was set in {otherCurrency}, and this runway is in {code}, so it isn’t applied. Type it again in {code}.
+              </div>
+            )}
+            <label className="report-mark">
+              <input type="checkbox" checked={whatIf.planned} onChange={(e) => change({ planned: e.target.checked })} />
+              <span>Count what you planned</span>
+            </label>
+            <label className="report-mark">
+              <input type="checkbox" checked={whatIf.leave_out_one_offs && oneOffs} disabled={!oneOffs} onChange={(e) => change({ leave_out_one_offs: e.target.checked })} />
+              <span>Leave out one-offs{oneOffs ? '' : ' (none in these months)'}</span>
+            </label>
+            <label className="report-mark">
+              <input type="checkbox" checked={whatIf.count_moved_out && movedOut} disabled={!movedOut} onChange={(e) => change({ count_moved_out: e.target.checked })} />
+              <span>Count transfers out and cash taken out as spending{movedOut ? '' : ' (none in these months)'}</span>
+            </label>
+            <p className="panel-note">Nothing you change here is saved, unless you save it as a scenario. Empty, income keeps coming.</p>
+            {/* Print, the one filled button, last; whole buttons wrap on a phone,
+                never their labels. */}
+            <div className="btn-row report-actions">
+              <button
+                className="btn ghost"
+                onClick={() => {
+                  setWhatIf(DEFAULT_WHAT_IF);
+                  setLowerText('');
+                  setOtherCurrency(null);
+                }}
+              >
+                Start over
+              </button>
+              <button className="btn secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
+                Save as a scenario
+              </button>
+              <button className="btn" onClick={() => window.print()}>
+                Print or save as PDF
+              </button>
+            </div>
           </div>
-        )}
-        <label className="report-mark">
-          <input type="checkbox" checked={whatIf.planned} onChange={(e) => change({ planned: e.target.checked })} />
-          <span>Count what you planned</span>
-        </label>
-        <label className="report-mark">
-          <input type="checkbox" checked={whatIf.leave_out_one_offs && oneOffs} disabled={!oneOffs} onChange={(e) => change({ leave_out_one_offs: e.target.checked })} />
-          <span>Leave out one-offs{oneOffs ? '' : ' (none in these months)'}</span>
-        </label>
-        <label className="report-mark">
-          <input type="checkbox" checked={whatIf.count_moved_out && movedOut} disabled={!movedOut} onChange={(e) => change({ count_moved_out: e.target.checked })} />
-          <span>Count transfers out and cash taken out as spending{movedOut ? '' : ' (none in these months)'}</span>
-        </label>
-        <p className="panel-note">Nothing you change here is saved, unless you save it as a scenario. Empty, income keeps coming.</p>
-        {/* Print, the one filled button, last; whole buttons wrap on a phone,
-            never their labels. */}
-        <div className="btn-row report-actions">
-          <button
-            className="btn ghost"
-            onClick={() => {
-              setWhatIf(DEFAULT_WHAT_IF);
-              setLowerText('');
-              setOtherCurrency(null);
-            }}
-          >
-            Start over
-          </button>
-          <button className="btn secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
-            Save as a scenario
-          </button>
-          <button className="btn" onClick={() => window.print()}>
-            Print or save as PDF
-          </button>
-        </div>
-      </div>
-
-      <RunwayView runway={runway} projection={projection} />
+        }
+      />
 
       <div className="card no-print">
         <div className="inst-header">

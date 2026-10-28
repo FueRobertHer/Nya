@@ -1159,8 +1159,23 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
       },
     });
     const tab = await mount();
-    const ask = () => button(tab.panel('path'), 'Add your age and when you’d like to stop');
+    const hero = () => part(tab.panel('path'), 'plan-hero')!;
+    const ask = () => button(hero(), 'Add your age and when you’d like to stop');
     expect(ask()).not.toBeNull();
+    // The answer on the page (since the screen review): no card, its label a
+    // heading under the Plan bar's, and the ask a ghost line under the
+    // answer, never a full-width button.
+    expect(hero().tagName).toBe('SECTION');
+    expect(hero().getAttribute('class')).toBe('stack hero plan-hero');
+    expect(part(hero(), 'total-label')?.tagName).toBe('H3');
+    expect(ask()!.getAttribute('class')).toBe('btn ghost hero-ask');
+    const all = hero().findAll(() => true);
+    expect(all.indexOf(ask()!)).toBeGreaterThan(all.indexOf(part(hero(), 'plan-answer')!));
+    let up = ask()!.parentNode as FakeElement | null;
+    for (; up && up !== hero(); up = up.parentNode as FakeElement | null) expect(has(up, 'btn-row')).toBe(false);
+    // Coast FI names what it needs, and nothing repeats the answer.
+    expect(hero().textContent).toContain('Coast FINeeds your ages');
+    expect(tab.panel('path').textContent).not.toContain('Years to FI');
     await press(ask());
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Your ages');
     await press(closeOf(tab.dialog()!));
@@ -1182,13 +1197,17 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
   }, 20_000);
 
   test('only the age missing, or only the stop age: it asks for that one', async () => {
-    for (const [over, words] of [
-      [{ targetAge: 55 }, 'Add your age'],
-      [{ age: 40 }, 'Add when you’d like to stop'],
+    for (const [over, words, coast] of [
+      [{ targetAge: 55 }, 'Add your age', 'Needs your age'],
+      [{ age: 40 }, 'Add when you’d like to stop', 'Needs your stop age'],
+      [{}, 'Add your age and when you’d like to stop', 'Needs your ages'],
     ] as const) {
       serve({ plan: { plan: { ...DEFAULT_PLAN, ...over }, currency: null } });
       const tab = await mount();
-      expect(button(tab.panel('path'), words)).not.toBeNull();
+      // The answer's own ask, not What if…'s.
+      const hero = part(tab.panel('path'), 'plan-hero')!;
+      expect(button(hero, words)).not.toBeNull();
+      expect(hero.textContent).toContain(`Coast FI${coast}`);
       await tab.unmount();
     }
   });

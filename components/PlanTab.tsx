@@ -72,10 +72,14 @@ import {
   successText,
   wholeMoney,
   yearsText,
-  yearsToFiText,
   askAgesText,
+  coastNeed,
+  figuresNeed,
+  projectionNeed,
+  SPENDING_NEED,
   fiHeadline,
 } from './plan-text';
+import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
@@ -167,7 +171,7 @@ function withOwn(values: number[], own: number): number[] {
 
 /** The value, or the last one that wasn't null: what a closing drawer keeps
  *  showing while it slides out (as in Dashboard.tsx). */
-/** The same place the walk stops, said once: under Years to FI. */
+/** The same place the walk stops, said once: under the answer. */
 const sameShort = (a: Shortfall, b: Shortfall | null) => b !== null && a.year === b.year && a.kind === b.kind && a.have === b.have && a.need === b.need;
 
 function useLast<T>(value: T | null): T | null {
@@ -714,8 +718,11 @@ export default function PlanTab({
     const closed = wasOpen.current && !sheetOpen;
     wasOpen.current = sheetOpen;
     let row = openedFrom.current === 'mix' ? mixHeading.current : openedFrom.current ? (inputRows.current.get(openedFrom.current) ?? null) : null;
-    // The FI card's ask goes once the ages are saved: then to the Ages row.
+    // The answer's ask goes once the ages are saved: then to the Ages row.
     if (openedFrom.current === 'ask-about' && !row?.isConnected) row = inputRows.current.get('about') ?? null;
+    // What if…'s goes once the age is saved: then to its first life choice
+    // when one can be tried, or else its title (components/PlanWhatIf.tsx).
+    if (openedFrom.current === 'ask-what-if' && !row?.isConnected) row = inputRows.current.get('what-if-first') ?? null;
     if (!closed || !row?.isConnected) return;
     let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
@@ -1080,7 +1087,7 @@ export default function PlanTab({
   const panel = (s: PlanSegment, body: React.ReactNode) => (
     <div className="plan-panel" id={planPanelId(s)} role="tabpanel" aria-labelledby={planTabId(s)} hidden={s !== segment} ref={s === segment ? panelRef : undefined}>
       {firstLoad ? (
-        <PlanPanelSkeleton />
+        <PlanPanelSkeleton segment={s} />
       ) : (
         <div className="stack loose">{body}</div>
       )}
@@ -1163,7 +1170,7 @@ export default function PlanTab({
               stopShort={
                 stopShort && plan.targetAge !== null
                   ? sameShort(stopShort, shown?.short ?? null)
-                    ? `Nothing is projected at ${plan.targetAge}, for the reason under Years to FI.`
+                    ? `Nothing is projected at ${plan.targetAge}, for the reason under the answer.`
                     : shortText(stopShort, plan.age, money, `nothing is projected at ${plan.targetAge}`)
                   : null
               }
@@ -1211,6 +1218,10 @@ export default function PlanTab({
                 canOpen={canOpen}
                 money={money}
                 onOpen={openScenario}
+                onAskAge={() => open({ kind: 'about' }, 'ask-what-if')}
+                reloading={reloading}
+                askRef={(el) => inputRowRef('ask-what-if', el)}
+                firstRef={(el) => inputRowRef('what-if-first', el)}
               />
             )}
 
@@ -1476,7 +1487,7 @@ export function FiCard({
   /** Spending in retirement with a scenario's lasting changes, which the FI
    *  number is worked out from, when it differs from today's. */
   retirementSpending?: number | null;
-  /** Years to FI came from the walk with a scenario's life events. */
+  /** The answer came from the walk with a scenario’s life events. */
   walked?: boolean;
   /** What that walk saves a year after the scenario's last change. */
   walkedSavings?: number | null;
@@ -1521,70 +1532,101 @@ export function FiCard({
   // from the same inputs as the rows that say which.
   const { spendingMissing, assetsShort } = inputFlags({ view, unread, withoutTransactions, transactionCount, assets: measuredAssets });
 
-  // The same words as the FI card on Home (components/FiProgressCard.tsx).
-  const yearsLine = fiShort ? 'None' : yearsToFiText(view.yearsToFi);
   // Spending there but not measured is said so, never as none to count.
   const spendingNeed = view.spending.source === 'unmeasured' ? 'Needs your annual spending, which isn’t measured (below).' : null;
-  let yearsNote = '';
+  // Under the answer, how it is worked out (or why there is none), said once:
+  // it was the Years to FI row's note, whose figure only said the answer
+  // again. Its "Around age 39" is the answer's own, so not said twice; with no
+  // FI number the line on the FI number says why, so nothing here.
+  const takes = formulasTake(plan);
+  const need = view.yearsToFi === null && !fiShort ? figuresNeed(view, takes) : null;
+  let howLine = '';
   if (fiShort) {
-    yearsNote = fiShort;
+    howLine = fiShort;
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
-    yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, growing` : 'Growing'} a steady ${pct(plan.realReturn)} a year after inflation, with this scenario’s life events changing what is saved in their years.`;
+    howLine = `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this scenario’s life events changing what is saved in their years.`;
   } else if (walked && view.yearsToFi === Infinity) {
-    yearsNote = `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
+    howLine = `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
-    yearsNote = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
+    howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
-    yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year, growing a steady ${pct(plan.realReturn)} a year after inflation.`;
-  } else if (view.yearsToFi === null) {
-    // A figure not measured is never taken as zero: what rests on it says why.
-    yearsNote = view.fiNumber === null ? (spendingNeed ?? 'Needs your annual spending.') : (notWorkedOutText(view, 'below') ?? 'Needs your invested assets or savings.');
+    howLine = `Saving ${money(savings.value ?? 0)} a year, growing a steady ${pct(plan.realReturn)} a year after inflation.`;
+  } else if (view.yearsToFi === null && view.fiNumber !== null) {
+    // A figure not measured is never taken as zero: the answer names what it
+    // needs, and this says why (nothing when the answer says it all).
+    howLine = notWorkedOutText(view, 'below', false) ?? '';
   }
-  const notWorkedOut = notWorkedOutText(view, 'below');
+  const notWorkedOut = notWorkedOutText(view, 'below', false);
 
   const fiSpending = retirementSpending ?? spending.value;
   // The answer first (rollout phase 8b): when FI comes, against the age you'd
   // like to stop, in the same words as Home's FI line. Where the projection
   // runs out before the stop age (at FI already, or after a scenario reaches
-  // it), it says so; a walk that never gets there says why under Years to FI.
+  // it), it says so; a walk that never gets there says why under the answer.
+  // Not worked out, the answer names what it needs, never "--".
   const runsOutAt = !fiShort && path?.short && plan.age !== null ? plan.age + path.short.year : null;
-  const head = fiHeadline(view, plan, { noDate: !!fiShort, runsOutAt });
+  const head = fiHeadline(view, plan, { noDate: !!fiShort, runsOutAt, need });
+  // What qualifies the answer, under it by the hero's rules (design-system.md
+  // "Status and honesty"): one in full, two or more on one line that opens to
+  // each, every note in its own words. None is critical.
+  const caveats: FigureNote[] = [];
+  const caveat = (level: FigureNote['level'], kind: string, text: string | null | undefined) => {
+    if (text) caveats.push({ key: `answer:${kind}`, level, kind, text });
+  };
+  caveat('caution', 'runs out before you stop', head.runsOut && `${head.runsOut} (below).`);
+  caveat('caution', 'invested assets may be low', view.progress !== null && view.fiNumber !== null && assetsShort ? 'Invested assets may be low (below).' : null);
+  caveat('caution', 'spending may be low', spendingMissing && `May be low: spending is missing ${spendingMissing} (below).`);
+  caveat('caution', 'currency', currencyNote);
+  caveat('info', 'converted', convertedNote);
+  const asks = !!head.ask && !!onAskAges;
   return (
-    <div className="card">
-      <ScenarioTag name={scenarioName} />
-      <div className="total-label">Financial independence</div>
-      {/* Words, not amounts, but from the figures: through Masked, as every
-          line read from them is (test/amount-sources.ts). */}
-      <div className="total-value plan-answer">
-        <Masked>{head.headline}</Masked>
-      </div>
-      {head.against && (
-        <div className="as-of">
-          <Masked>{head.against}</Masked>
-        </div>
-      )}
-      {head.runsOut && (
-        <div className="as-of stale">
-          <Masked>{`${head.runsOut} (below).`}</Masked>
-        </div>
-      )}
-      {head.ask && onAskAges && (
-        <div className="btn-row">
-          <button
-            type="button"
-            className="btn secondary"
-            ref={askRef}
-            aria-disabled={held ? 'true' : undefined}
-            onClick={() => {
-              if (!held) onAskAges();
-            }}
-          >
-            <Masked>{askAgesText(head.ask)}</Masked>
-          </button>
-        </div>
-      )}
+    <Hero
+      id="plan-fi-title"
+      level={3}
+      label="Financial independence"
+      className="plan-hero"
+      top={scenarioName ? <ScenarioTag name={scenarioName} /> : undefined}
+      // Words, not amounts, but from the figures: through Masked, as every
+      // line read from them is (test/amount-sources.ts).
+      figure={<Masked>{head.headline}</Masked>}
+      figureClass="plan-answer"
+      line={
+        (head.against || howLine || asks) && (
+          <div className="stack tight plan-answer-lines">
+            {head.against && (
+              <p className="helper">
+                <Masked>{head.against}</Masked>
+              </p>
+            )}
+            {howLine && (
+              <p className="helper">
+                <Masked>{howLine}</Masked>
+              </p>
+            )}
+            {/* What the answer still needs from you: a line under it that
+                opens the Ages sheet, never a full-width button. */}
+            {asks && (
+              <div>
+                <button
+                  type="button"
+                  className="btn ghost hero-ask"
+                  ref={askRef}
+                  aria-disabled={held ? 'true' : undefined}
+                  onClick={() => {
+                    if (!held) onAskAges!();
+                  }}
+                >
+                  <Masked>{askAgesText(head.ask!)}</Masked>
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      }
+    >
+      <FigureCaveats notes={caveats} />
       {view.progress !== null && view.fiNumber !== null && (
-        <>
+        <div>
           <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>
             <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
           </div>
@@ -1599,21 +1641,23 @@ export function FiCard({
               </>
             )}
           </div>
-          {assetsShort && <div className="as-of stale">Invested assets may be low (below).</div>}
-        </>
+        </div>
       )}
       <div className="as-of">
         <Masked>
           {view.fiNumber !== null && fiSpending !== null
             ? `FI number ${money(view.fiNumber)}: ${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
-            : !formulasTake(plan)
+            : !takes
               ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
-              : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
+              : // With the answer just over it saying "Needs your annual
+                // spending", this says only why, or how, not that again.
+                head.headline === SPENDING_NEED
+                ? view.spending.source === 'unmeasured'
+                  ? 'Your annual spending isn’t measured (below).'
+                  : 'Connect accounts with transactions, or type it below.'
+                : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
-      {spendingMissing && <div className="as-of stale">{`May be low: spending is missing ${spendingMissing} (below).`}</div>}
-      {currencyNote && <div className="as-of stale">{currencyNote}</div>}
-      {convertedNote && <div className="as-of">{convertedNote}</div>}
       {scenarioNotes.map((n) => (
         <div key={n} className="as-of">
           <Masked>{n}</Masked>
@@ -1633,15 +1677,16 @@ export function FiCard({
         />
       )}
 
+      {/* What follows from the answer, at the hero's foot, as Home's foot
+          row is in its hero. A figure not worked out says what it needs. */}
       <div className="plan-rows">
-        <Row label="Years to FI" value={yearsLine} note={yearsNote} />
         <Row
           label="Coast FI"
-          value={view.coast ? money(view.coast.number) : '--'}
+          value={view.coast ? money(view.coast.number) : coastNeed(plan, view, takes)}
           note={
             view.coast
               ? `With this much invested today you could stop saving now: growing ${pct(plan.realReturn)} a year after inflation, it reaches your FI number by age ${plan.targetAge}. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
-              : 'Needs your age and stop age.'
+              : undefined
           }
         />
         {view.barista && (
@@ -1655,10 +1700,16 @@ export function FiCard({
           <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
         )}
         {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && plan.targetAge !== null && (
-          <Row label={`At age ${plan.targetAge}`} value="--" note={(notWorkedOut ?? stopShort) as string} />
+          <Row
+            label={`At age ${plan.targetAge}`}
+            // Projected from the invested assets and savings alone, so what
+            // it needs is one of them, never the spending.
+            value={notWorkedOut ? (projectionNeed(view, takes) ?? 'Not worked out') : 'Not projected'}
+            note={(notWorkedOut ?? stopShort) as string}
+          />
         )}
       </div>
-    </div>
+    </Hero>
   );
 }
 
@@ -1674,7 +1725,7 @@ export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptio
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Stress test's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about';
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-what-if' | 'what-if-first';
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {

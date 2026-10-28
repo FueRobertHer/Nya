@@ -3,6 +3,7 @@
 // Imports nothing heavy: no engine, no data.
 
 import type { RuleKind } from '@/lib/fire/rules';
+import type { FiView } from '@/lib/fire/plan';
 import { amountsHidden, hiddenMoney } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
 
@@ -112,17 +113,18 @@ const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
 
 /** `runsOutAt`: the age the steady projection can't go on at, when it can't
  *  before the stop age (lib/fire/path.ts); `noDate`: the walk can't get to
- *  FI at all (a cost it can't pay). */
+ *  FI at all (a cost it can't pay); `need`: what an answer not worked out
+ *  waits for, said as the answer (figuresNeed), where the Plan draws it. */
 export function fiHeadline(
   view: { yearsToFi: number | null; fiAge: number | null },
   ages: { age: number | null; targetAge: number | null },
-  o: { noDate?: boolean; runsOutAt?: number | null } = {}
+  o: { noDate?: boolean; runsOutAt?: number | null; need?: string | null } = {}
 ): FiHeadline {
   const ask: FiHeadline['ask'] = ages.age === null && ages.targetAge === null ? 'both' : ages.age === null ? 'age' : ages.targetAge === null ? 'stop' : null;
   const base = { against: null, age: null, before: null, ask, runsOut: null };
   const y = view.yearsToFi;
   if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
-  if (y === null) return { ...base, kind: 'unknown', headline: '--' };
+  if (y === null) return { ...base, kind: 'unknown', headline: o.need ?? '--' };
   if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
   if (y === Infinity) return { ...base, kind: 'never', headline: 'Not reached at this savings rate' };
   const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
@@ -143,6 +145,50 @@ export function fiHeadline(
  *  sheet. */
 export function askAgesText(ask: NonNullable<FiHeadline['ask']>): string {
   return ask === 'both' ? 'Add your age and when you’d like to stop' : ask === 'age' ? 'Add your age' : 'Add when you’d like to stop';
+}
+
+/** Said in place of a figure the saved rates can't work out (lib/fire/plan.ts
+ *  formulasTake), where the FI number says which and where to change them. */
+export const ASSUMPTIONS_NEED = 'Needs other assumptions';
+
+/** Said in place of a figure the spending isn't there for. */
+export const SPENDING_NEED = 'Needs your annual spending';
+
+/** What a figure resting on the FI number waits for, said as its value in
+ *  place of "--" (the Plan's answer): other assumptions,
+ *  the spending, or the invested assets or savings that aren't measured or
+ *  aren't there. Null when nothing is missing. `takes`: the saved rates can
+ *  be worked with. */
+export function figuresNeed(view: Pick<FiView, 'fiNumber' | 'spending' | 'savings' | 'assets'>, takes: boolean): string | null {
+  if (!takes) return ASSUMPTIONS_NEED;
+  if (view.fiNumber === null) return SPENDING_NEED;
+  return projectionNeed(view, takes);
+}
+
+/** What a balance projected from today's invested assets and savings waits
+ *  for (the Plan's balance at the stop age, lib/fire/plan.ts projectFrom),
+ *  which never rests on the spending: other assumptions, or the invested
+ *  assets or savings that aren't measured or aren't there. Null when nothing
+ *  is missing. */
+export function projectionNeed(view: Pick<FiView, 'savings' | 'assets'>, takes: boolean): string | null {
+  if (!takes) return ASSUMPTIONS_NEED;
+  const assetsOff = view.assets.source === 'unmeasured';
+  const savingsOff = view.savings.source === 'unmeasured';
+  if (assetsOff && savingsOff) return 'Needs your invested assets and savings';
+  if (assetsOff) return 'Needs your invested assets';
+  if (savingsOff) return 'Needs your savings';
+  if (view.assets.value === null && view.savings.value === null) return 'Needs your invested assets or savings';
+  return null;
+}
+
+/** Coast FI's value when it isn't worked out: the ages it counts the years
+ *  between first, then what the FI number needs. */
+export function coastNeed(ages: { age: number | null; targetAge: number | null }, view: Pick<FiView, 'fiNumber' | 'spending' | 'savings' | 'assets'>, takes: boolean): string {
+  if (!takes) return ASSUMPTIONS_NEED;
+  if (ages.age === null && ages.targetAge === null) return 'Needs your ages';
+  if (ages.age === null) return 'Needs your age';
+  if (ages.targetAge === null) return 'Needs your stop age';
+  return figuresNeed(view, takes) ?? SPENDING_NEED;
 }
 
 /** What savings from bank data can't see, said the same way wherever a
