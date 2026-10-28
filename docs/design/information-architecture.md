@@ -192,10 +192,10 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections, each a view with a back button |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings |
-| NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards |
+| NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards; since the look and feel's step 5 the hero itself, on the page, not in a card (`.net-worth-hero`), with `components/hero-scrub.ts` carrying the day a finger is on from its chart to its figure |
 | NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
 | TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place; also the FI line (4c), Budgets > Month's notice and the notes under Spent, and the notice at the top of Goals (6a2); Budgets > Upcoming's notice and the forecast's notes on where it starts (6a3). Its `Notice` draws one notice with its level word, for the errors on the Month card and in the budgets' sheets, and the forecast's answer, Upcoming's load states and its sheets' errors (6a3) |
-| NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > Net worth card (the hero's currency lines as caveats on the total) |
+| NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > the hero (the hero's currency lines as caveats on the total); its chart drawn as the hero's (`hero`: edge to edge, `.hero-chart`, no money ticks, Show as a table) since the look and feel's step 5, and as before in an account's sheet and a shared net worth |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
 | CurrencyOffer (CurrencyNotes) | Its own Home card | A Needs attention row that opens CurrencyOfferSheet (built in 4b) |
 | TimelineNotes | Its own Home card | Chart notes sheet from the Net worth card's foot row (built in 4a) |

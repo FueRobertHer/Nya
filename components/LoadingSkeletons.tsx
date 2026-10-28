@@ -42,14 +42,14 @@ function useInStep() {
   useLayoutEffect(keepInStep, []);
 }
 
-/** Home's Net worth card while the first load is on its way: its title, then
- *  the total, its change line, the chart and the foot row as placeholders, each
- *  as tall as components/NetWorthCard.tsx draws it. The dashboard shows it
+/** Home's hero while the first load is on its way: its title, then the
+ *  total, its change line, the chart and the foot row as placeholders, each
+ *  as tall as components/NetWorthCard.tsx draws it, on the page as it is. The dashboard shows it
  *  while it loads, and so does AppLoading, below. */
 export function HomeSkeleton() {
   useInStep();
   return (
-    <section className="card stack net-worth-card" aria-busy="true" aria-labelledby="net-worth-loading">
+    <section className="stack net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">
       <div>
         <h2 id="net-worth-loading" className="total-label">
           Net worth
@@ -57,13 +57,15 @@ export function HomeSkeleton() {
         <div className="total-value" aria-hidden="true">
           <span className="skeleton home-skeleton-total" />
         </div>
-        <div className="hero-delta" aria-hidden="true">
-          <span className="skeleton home-skeleton-delta" />
+        <div className="hero-line" aria-hidden="true">
+          <div className="hero-delta">
+            <span className="skeleton home-skeleton-delta" />
+          </div>
         </div>
       </div>
       {/* The chart on its own classes (components/NetWorthChart.tsx): the
-          readout with its info button, the plot at the chart's proportions,
-          and the row of range buttons. */}
+          readout with its info button, the plot edge to edge at the hero's
+          height, and the row of range buttons. */}
       <div aria-hidden="true">
         <div className="chart-readout chart-readout-stable">
           <span className="chart-readout-value">
@@ -81,6 +83,12 @@ export function HomeSkeleton() {
           <span className="home-skeleton-range">
             <span className="skeleton home-skeleton-ranges" />
           </span>
+        </div>
+        {/* Show as a table, one 44px line. */}
+        <div className="plan-table-view">
+          <div className="home-skeleton-table-line">
+            <span className="skeleton home-skeleton-table" />
+          </div>
         </div>
       </div>
       {/* When it was updated, and the Chart notes button, which a phone

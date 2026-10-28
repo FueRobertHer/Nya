@@ -2298,9 +2298,11 @@ export default function Dashboard({
             <RestoreBanner hold={restoreHold} onOpen={openRestore} />
             {tab === 'home' && (
               <>
-                {/* One card: the total, what qualifies it, the chart and
+                {/* The hero (look and feel, step 5; one card since rollout
+                    phase 4a): the total, what qualifies it, the chart and
                     what qualifies that, the nightly jobs, and the chart
-                    notes in a sheet (rollout phase 4a). */}
+                    notes in a sheet. The chart is in the hero's currency, as
+                    the figure it moves is. */}
                 <NetWorthCard
                   worth={shownWorth}
                   currency={shownCurrency}
@@ -2329,7 +2331,7 @@ export default function Dashboard({
                   chart={
                     shownHistory.length >= 2 ? (
                       <>
-                        <NetWorthChart points={shownHistory} currency={base?.currency} notes={chartNotes} />
+                        <NetWorthChart hero points={shownHistory} currency={shownCurrency} notes={chartNotes} />
                         {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
                         {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
                       </>

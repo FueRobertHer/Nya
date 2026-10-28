@@ -810,6 +810,30 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 - Forced colors and print weren't seen in a browser: the guard holds the mark's `forced-color-adjust: none` and its `--brand-mark` color, and print's copy of the tokens; the forced text color it takes there is unchecked.
 - The caution hatch also reaches an account's credit-utilization meter, which turns to caution from 50%.
 
+### Step 5: the hero
+
+**Built:**
+
+- **Out of its card.** Home's net worth (`NetWorthCard`) is `section.stack.net-worth-hero` on the page: what it holds and its order are as they were, `--sp-6` under it where the card's margin was. A notice there keeps a `--border-subtle` edge (an information notice's fill is about 1.0:1 from the canvas in light).
+- **The figure** is at `--fs-hero` (32px on a 320px phone, 40px from about 445px; it was a fixed 40px), never wrapping, its cents at half size as since step 3.
+- **The chart** (`NetWorthChart` with `hero`): drawn at its own width (`useDrawnWidth`), through `.wrap`'s gutter (now `--sp-4`) to the screen's edges (`.hero-chart`), 120px of plot over 12px months kept inside the gutter and spaced by their widths; no gridlines and no money ticks; a 12% wash; the today dot ringed in `--canvas`; `touch-action: pan-y`, so a vertical drag still scrolls the page. Its readout keeps the range's change, and **Show as a table** lists every day in the range, newest first, once opened. The account and shared net worth charts are as they were.
+- **Scrubbing moves the figure.** A pointer's day (a mouse over the plot at once; a finger or pen once it has gone 6px sideways, more than up or down, so the start of a scroll never flashes a day into the figure) goes to the hero through a context (`components/hero-scrub.ts`), from a layout effect, so the figure changes in the plot's frame and only the hero re-renders. The change line's place says the day ("Jul 1 · estimated", and the day's note), its height kept, so the chart under the finger never moves (measured: its top the same before and during). Lifting, a cancelled touch or leaving the plot brings back today; a measurement, a note chosen from the list, new points or the chart going never leave a day behind. The chart is now in the hero's currency, as the figure it moves is.
+- **The skeleton** is the hero's shape: on the page, the change line's place, its plot placeholder bled and 140px tall, and a 44px line for Show as a table.
+- **Show as a table**'s summary is a 44px target, here and wherever `.plan-table-view` is used (the fan and path charts, and Allocation's two).
+- **The guard** needs the hero's notice edge, the figure's `nowrap`, the chart's bleed and `pan-y`, and the 44px summary.
+
+**Measured** on the dev server as the Alex demo account: at 320px the figure is 288px on a 288px line and the chart runs 0 to 320 with no sideways scroll; at desktop width it spans the wrap's full width; scrubbing by mouse moves the figure and keeps the chart's top; light and dark. At 320px, at the figure's full size: -$999,999.99 is 207px, ₩12,345,678,901 248px, -IDR 1,234,567,890 280px.
+
+**Kept narrow:**
+
+- The line's draw-in on first load is left for a change of its own: `clip-path` on an SVG group differs between engines, and only Chromium could be checked.
+- A figure past about 280px at 320px (an IDR total over about 10 billion) overflows its line by a few pixels on the narrowest phones; at 40px it overflowed more before.
+- Activity's month figure isn't a hero yet; no keyboard scrubbing (the notes list and the table carry it).
+- The account and shared charts keep their ticks and fixed viewBox.
+- The plot starts at the screen's edge, where a phone's own back gesture takes a swipe first; `touch-action` can't stop that.
+
+With step 5, the look and feel's five steps are built.
+
 ## The contrast check
 
 `test/design-guard.test.ts` checks the pairings in both themes (text on every surface at 4.5:1, each meaning color on its tint, each button fill's label on it, the header logo's ink on the page and a card, field borders on every surface and the focus ring at 3:1): both from `app/globals.css` (since phase 7), with each tag color on its tint and its swatch on a card. It also fails if the light theme's copies (system setting, explicit choice and print) drift apart, or if the app's themes, `tokens.css`, `lib/theme.ts` and the web manifest disagree. It runs with the tests.
