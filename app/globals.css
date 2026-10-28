@@ -277,7 +277,7 @@ body {
 /* A link inside a sentence is underlined: brass is close to body text in
    lightness (1.65:1 dark, 3.21:1 light), so its hue alone can't mark it
    (look and feel, step 4). A link with a class (a button, a row, the quiet
-   navigation in .trust-links and .report-nav) draws itself. */
+   navigation in .trust-links, the page header's brand) draws itself. */
 a:not([class]) {
   color: var(--accent);
   text-decoration: underline;
@@ -1370,6 +1370,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   font-size: var(--fs-3);
   font-weight: var(--fw-regular);
   text-align: left;
+  /* A link item (a file to save) reads as the others do. */
+  text-decoration: none;
 }
 
 .menu-item.danger {
@@ -1383,7 +1385,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 /* Matches the global button hover rule's specificity: raised, not dimmed. */
 @media (hover: hover) {
-  button.menu-item:hover:not(:disabled):not([class*="cl-"]) {
+  :is(button, a).menu-item:hover:not(:disabled):not([class*="cl-"]) {
     background: var(--surface);
     opacity: 1;
   }
@@ -3220,6 +3222,22 @@ button.danger-outline {
   font-size: 24px;
 }
 
+/* What Nya is, in one line under the name (lib/tagline.ts). */
+.auth-tagline {
+  max-width: 400px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-3);
+  line-height: var(--lh-body);
+  text-align: center;
+}
+
+/* Which banks work, folded away under the form, as wide as it. */
+.auth-wrap > .why {
+  width: 100%;
+  max-width: 400px;
+}
+
 /* --- demo accounts on the sign-in page (Preview only, lib/demo.ts) --- */
 
 .demo-panel {
@@ -3228,21 +3246,12 @@ button.danger-outline {
   margin: 0;
 }
 
-.demo-panel h2 {
-  margin: 0 0 6px;
-}
-
-.demo-panel .action-row {
-  margin-top: 14px;
-}
-
-.demo-panel form {
-  flex: 1 1 0;
-  display: flex;
-}
-
-.demo-panel form button {
-  width: 100%;
+/* Each account a tonal button of two lines, read from the left like a row:
+   the name, then what it is set up to hold. */
+.btn.demo-account {
+  justify-content: flex-start;
+  padding-block: var(--sp-3);
+  text-align: left;
 }
 
 /* Says Clerk's form hasn't loaded (components/SignInFlow.tsx), under its
@@ -3757,30 +3766,120 @@ button.danger-outline {
   margin-top: 10px;
 }
 
-/* --- security and privacy pages (app/security, app/privacy), the links to
-   them and the bank coverage note (components/InfoPage.tsx, TrustLinks.tsx) --- */
+/* --- the pages outside the tabs: their shared header (components/PageHeader.tsx),
+   the public pages as prose (components/InfoPage.tsx), the links between
+   them and the bank coverage note (TrustLinks.tsx) --- */
+
+/* The one header of every page outside the tabs: the logo and name, a 44px
+   link back into the app (only they are the link, not the whole row), and
+   a control at the row's other end on Reports. */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.page-brand {
+  display: inline-flex;
+  min-height: var(--tap);
+  color: var(--text-1);
+  font-size: var(--fs-5);
+  font-weight: var(--fw-semibold);
+  text-decoration: none;
+}
 
 .info-page {
   /* No tab bar here, so none of .wrap's room for one. */
   padding-bottom: calc(32px + env(safe-area-inset-bottom));
 }
 
-.info-brand {
-  /* Only the logo and name are the link back, not the whole row. */
-  display: inline-flex;
-  margin-bottom: 20px;
-  color: var(--text);
-  text-decoration: none;
-  font-size: 18px;
-  font-weight: 600;
-}
-
 .info-page h1 {
-  font-size: 24px;
-  margin: 0 0 6px;
+  font-size: var(--fs-6);
+  margin: 0 0 var(--sp-1);
 }
 
+/* A plain-language note said first (Privacy's, the download's), under the intro. */
+.info-page > .notice {
+  margin-bottom: var(--sp-6);
+}
+
+/* A long page's contents: a 44px link to each part, two columns from 600px
+   wide so the list stays short on a desktop. */
+.info-contents {
+  margin-bottom: var(--sp-8);
+}
+
+.info-contents h2 {
+  margin: 0 0 var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+}
+
+.info-contents ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.info-contents a,
+.info-section .info-index a {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+
+@media (min-width: 600px) {
+  .info-contents ol {
+    columns: 2;
+    column-gap: var(--sp-6);
+  }
+
+  .info-contents li {
+    break-inside: avoid;
+  }
+}
+
+/* The page as prose: parts under their headings, 32px apart, no cards. */
+.info-body > * + * {
+  margin-top: var(--sp-8);
+}
+
+.info-prose > h2 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-5);
+  font-weight: var(--fw-semibold);
+}
+
+/* Two classes, so it outranks a card's .info-section h3 just after it. */
+.info-section.info-prose h3 {
+  margin: var(--sp-5) 0 var(--sp-2);
+}
+
+/* A form on one of these pages keeps its card, with a card's title. */
 .info-section h2 {
+  margin-top: 0;
+}
+
+/* Privacy's commitments, each under its own heading. */
+.info-commitment + .info-commitment {
+  margin-top: var(--sp-6);
+}
+
+.info-section.info-prose .info-commitment h3 {
+  margin-top: 0;
+}
+
+/* The developer page's index of endpoints: a 44px link to each. */
+.info-section .info-index {
+  margin: 0 0 var(--sp-3);
+  padding: 0;
+  list-style: none;
+}
+
+.info-section .info-index li + li {
   margin-top: 0;
 }
 
@@ -3813,7 +3912,7 @@ button.danger-outline {
 }
 
 .info-section .info-aside {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -3827,10 +3926,6 @@ button.danger-outline {
   overflow-wrap: anywhere;
 }
 
-/* A plain-language summary, not a legal policy: said first, in amber. */
-.info-notice {
-  border-left: 3px solid var(--warn);
-}
 
 .info-table th[scope="row"] {
   width: 36%;
@@ -3914,9 +4009,7 @@ button.danger-outline {
 }
 
 .auth-wrap .coverage-note {
-  max-width: 400px;
   margin: 0;
-  text-align: center;
 }
 
 .auth-wrap .trust-links {
@@ -4491,26 +4584,37 @@ button.plan-edit:disabled {
 
 /* --- the developer page (app/developers) --- */
 
+/* Code on the page itself, off the cards: a surface with a hairline. */
 .info-section pre {
   max-width: 100%;
   margin: 0 0 12px;
   padding: 12px;
   overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
   line-height: 1.5;
 }
 
-.api-endpoint h2 code {
-  color: var(--text);
-  font-size: 16px;
+/* Each endpoint, a part of Endpoints under its own heading. */
+.info-prose > .api-endpoint {
+  margin-top: var(--sp-8);
 }
 
-.api-endpoint h3 {
-  margin: 16px 0 8px;
+.info-prose .api-endpoint h3 {
+  margin: 0 0 var(--sp-2);
+}
+
+.api-endpoint h3 code {
+  color: var(--text-1);
+  font-size: var(--fs-4);
+}
+
+.api-endpoint h4 {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--fs-3);
 }
 
 /* --- allocation (components/AllocationCard.tsx), on the Plan tab, and the FI
@@ -5119,8 +5223,7 @@ button.import-choice {
    and white --- */
 
 /* A link that looks like a secondary button, tonal as they are: Open
-   reports, and Download as CSV, which is a file to save rather than an
-   action. */
+   reports, the links to Your data and the admin's pages, a handoff's links. */
 .report-link-button {
   display: block;
   text-align: center;
@@ -5135,16 +5238,11 @@ button.import-choice {
   text-decoration: none;
 }
 
-.report-actions > .report-link-button {
-  flex: 1 1 0;
-  min-width: 0;
-  margin-top: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px 6px;
-  font-size: 13px;
-  line-height: 1.2;
+/* A report's buttons (the accountant's and Runway's): Print, the one filled
+   button, last, with what else there is beside it, whole buttons wrapping
+   rather than their labels. */
+.btn-row.report-actions {
+  margin-top: var(--sp-3);
 }
 
 /* No tab bar on this page, so none of .wrap's room for one. */
@@ -5152,15 +5250,6 @@ button.import-choice {
   padding-bottom: calc(32px + env(safe-area-inset-bottom));
 }
 
-.report-nav {
-  margin-bottom: 16px;
-  font-size: 14px;
-}
-
-.report-nav a {
-  color: var(--muted);
-  text-decoration: none;
-}
 
 .report-kind {
   margin: 0 0 12px;
@@ -5306,6 +5395,46 @@ button.import-choice {
 /* An imported description can be long unbroken text. */
 .report-appendix td {
   overflow-wrap: anywhere;
+}
+
+/* Where the data comes from, on a phone's screen: each table's rows stack,
+   a hairline between them, and each cell says its column over its words
+   (data-label, components/ReportView.tsx), so a date runs on one line
+   rather than three. Screen only: printed, they stay tables. An empty cell
+   (no as-of time for a connection with no transactions) says nothing. */
+@media screen and (max-width: 480px) {
+  .report-sources thead {
+    display: none;
+  }
+
+  .report-sources,
+  .report-sources tbody,
+  .report-sources tr,
+  .report-sources td {
+    display: block;
+    width: auto;
+  }
+
+  .report-sources tr {
+    padding: var(--sp-2) 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .report-sources td {
+    padding: var(--sp-1) 0;
+    border: 0;
+  }
+
+  .report-sources td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--text-2);
+    font-size: var(--fs-1);
+  }
+
+  .report-sources td:empty {
+    display: none;
+  }
 }
 
 .report-list {
@@ -6653,17 +6782,6 @@ button.cash-flow-show {
   color: var(--accent);
 }
 
-.report-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.report-top .report-nav {
-  margin-bottom: 0;
-}
 
 :root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus):not(:placeholder-shown) {
   color: transparent;

@@ -360,7 +360,7 @@ describe('where they are found', () => {
     expect(reportChoice('?kind=year&year=2025')).toBe('accountant');
     expect(reportChoice('?report=other')).toBe('accountant');
     const page = readFileSync(join(ROOT, 'components', 'ReportsPage.tsx'), 'utf8');
-    for (const label of ['For your accountant', 'Runway', 'Year over year']) expect(page).toContain(`label: '${label}'`);
+    for (const label of ['Accountant', 'Runway', 'Yearly']) expect(page).toContain(`label: '${label}'`);
     expect(page).toContain("{which === 'runway' && <RunwayReport />}");
   });
 

@@ -411,7 +411,13 @@ export default function RunwayReport() {
   return (
     <>
       <div className="card no-print report-controls runway-controls">
-        <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `Last ${m} months`] as const)} />
+        {/* The window's name over its switch, as a field's is, so the short
+            items ("6 months") keep their meaning; the group is named the same
+            for a screen reader, which hears it once. */}
+        <div className="field">
+          <span aria-hidden="true">Spending over</span>
+          <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `${m} months`] as const)} />
+        </div>
         <div className="runway-fields">
           <label className="field">
             Spending lower by, a month
@@ -441,15 +447,11 @@ export default function RunwayReport() {
           <span>Count transfers out and cash taken out as spending{movedOut ? '' : ' (none in these months)'}</span>
         </label>
         <p className="panel-note">Nothing you change here is saved, unless you save it as a scenario. Empty, income keeps coming.</p>
-        <div className="action-row report-actions">
-          <button className="secondary" onClick={() => window.print()}>
-            Print or save as PDF
-          </button>
-          <button className="secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
-            Save as a scenario
-          </button>
+        {/* Print, the one filled button, last; whole buttons wrap on a phone,
+            never their labels. */}
+        <div className="btn-row report-actions">
           <button
-            className="secondary"
+            className="btn ghost"
             onClick={() => {
               setWhatIf(DEFAULT_WHAT_IF);
               setLowerText('');
@@ -457,6 +459,12 @@ export default function RunwayReport() {
             }}
           >
             Start over
+          </button>
+          <button className="btn secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
+            Save as a scenario
+          </button>
+          <button className="btn" onClick={() => window.print()}>
+            Print or save as PDF
           </button>
         </div>
       </div>

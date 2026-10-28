@@ -63,7 +63,9 @@ describe('where it is read and written', () => {
   });
 
   test('Reports, opened from Activity, goes back to it', () => {
-    expect(read('components/ReportsPage.tsx')).toContain('<a href="/?tab=activity">← Nya</a>');
+    // The shared header's link back (components/PageHeader.tsx), to Activity.
+    expect(read('components/ReportsPage.tsx')).toContain('<PageHeader back="/?tab=activity"');
+    expect(read('components/PageHeader.tsx')).toContain('<a className="brand page-brand" href={back}>');
   });
 
   test('offline, a tab’s address finds the page kept for another', () => {

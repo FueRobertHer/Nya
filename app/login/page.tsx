@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 import { AppLoading } from '@/components/LoadingSkeletons';
 import { CONNECTIONS_PATH } from '@/lib/connection-state';
+import { TAGLINE } from '@/lib/tagline';
+import { Why } from '@/components/Why';
 
 /** How long the app loading may stand in for this page before the form comes
  *  back: a session the browser wouldn't keep sends Home back here, where
@@ -63,7 +65,10 @@ export default function LoginPage() {
   return (
     <main className="wrap">
       <h1>Nya</h1>
-      <p className="sub">Enter your password to continue</p>
+      {/* What Nya is, as the sign-in page says it, then what to do. */}
+      <p className="sub">
+        {TAGLINE} Enter your password to continue.
+      </p>
       <form className="card" onSubmit={handleSubmit}>
         <input
           className="text-input"
@@ -78,7 +83,9 @@ export default function LoginPage() {
         </button>
         {error && <div className="error">{error}</div>}
       </form>
-      <CoverageNote />
+      <Why label="Which banks work?">
+        <CoverageNote />
+      </Why>
       <TrustLinks />
     </main>
   );

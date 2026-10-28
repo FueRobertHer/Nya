@@ -31,12 +31,35 @@ import RunwayReport from './RunwayReport';
 import YearOverYearReport from './YearOverYearReport';
 import { Sheet } from './Sheet';
 import { Segmented } from './Segmented';
+import { Menu, type MenuItem, type MenuLink } from './Menu';
+import { PageHeader } from './PageHeader';
 import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
 import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
 import { HideAmountsToggle, useFiguresWhenPrinted } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
+
+/** The accountant's report's ⋯: its CSV, a file to save (disabled until a
+ *  report is on screen), marking categories, and the accounts you stopped
+ *  tracking when there are any. */
+export function accountantMenu(
+  report: Report | null,
+  loading: boolean,
+  stoppedCount: number,
+  setMarking: (open: boolean) => void,
+  setStoppedOpen: (open: boolean) => void
+): (MenuItem | MenuLink)[] {
+  const ready = !!report && !loading;
+  const items: (MenuItem | MenuLink)[] = [
+    report && !loading
+      ? { label: 'Download as CSV', href: `/api/reports?${csvQuery(report)}`, download: true }
+      : { label: 'Download as CSV', onSelect: () => {}, disabled: true },
+    { label: 'Mark categories', onSelect: () => setMarking(true), disabled: !ready },
+  ];
+  if (stoppedCount > 0) items.push({ label: `Accounts you stopped tracking (${stoppedCount})`, onSelect: () => setStoppedOpen(true) });
+  return items;
+}
 
 /** What the form holds. */
 export type ReportForm = { kind: 'year' | 'range'; year: number; start: string; end: string; currency: string | null };
@@ -54,9 +77,12 @@ const reportTabId = (c: ReportChoice) => `report-tab-${c}`;
 const REPORT_PANEL = 'report-panel';
 
 const CHOICES: { choice: ReportChoice; label: string }[] = [
-  { choice: 'accountant', label: 'For your accountant' },
+  // Short, so the three fit one line at 320px (measured: "Year over year"
+  // wraps there): the accountant's report covers a tax year or any dates,
+  // and Yearly compares this year with last.
+  { choice: 'accountant', label: 'Accountant' },
   { choice: 'runway', label: 'Runway' },
-  { choice: 'year-over-year', label: 'Year over year' },
+  { choice: 'year-over-year', label: 'Yearly' },
 ];
 
 /** The report the address asks for (`?report=`), else the accountant's. */
@@ -239,12 +265,9 @@ export default function ReportsPage() {
 
   return (
     <main className="wrap report-wrap">
-      <div className="report-top no-print">
-        <nav className="report-nav" aria-label="Back to Nya">
-          {/* Back to Activity, where Reports is opened from (lib/dashboard-tab.ts). */}
-          <a href="/?tab=activity">← Nya</a>
-        </nav>
-        <HideAmountsToggle />
+      <div className="no-print">
+        {/* Back to Activity, where Reports is opened from (lib/dashboard-tab.ts). */}
+        <PageHeader back="/?tab=activity" end={<HideAmountsToggle />} />
       </div>
       <div className="no-print">
         <h1>Reports</h1>
@@ -303,7 +326,8 @@ export default function ReportsPage() {
                   To
                   <input type="date" min={EARLIEST_REPORT_DAY} max={today} value={form.end} onChange={(e) => change({ end: e.target.value })} />
                 </label>
-                <button onClick={() => make({ currency: null })} disabled={loading}>
+                {/* Tonal: Print is the one filled button in this card. */}
+                <button className="btn secondary btn-block" onClick={() => make({ currency: null })} disabled={loading}>
                   Make report
                 </button>
               </div>
@@ -330,27 +354,13 @@ export default function ReportsPage() {
                 {error}
               </div>
             )}
-            <div className="action-row report-actions">
-              <button className="secondary" onClick={() => window.print()} disabled={!report || loading}>
+            {/* Print is the one button; the rest are under the report's ⋯
+                (the CSV as a link to save, so it needs no script). */}
+            <div className="btn-row report-actions">
+              <Menu label="More for this report" items={accountantMenu(report, loading, stoppedCount, setMarking, setStoppedOpen)} />
+              <button className="btn" onClick={() => window.print()} disabled={!report || loading}>
                 Print or save as PDF
               </button>
-              {report && !loading ? (
-                <a className="report-link-button" href={`/api/reports?${csvQuery(report)}`} download>
-                  Download as CSV
-                </a>
-              ) : (
-                <button className="secondary" disabled>
-                  Download as CSV
-                </button>
-              )}
-              <button className="secondary" onClick={() => setMarking(true)} disabled={!report || loading}>
-                Mark categories
-              </button>
-              {stoppedCount > 0 && (
-                <button className="secondary" onClick={() => setStoppedOpen(true)}>
-                  Accounts you stopped tracking ({stoppedCount})
-                </button>
-              )}
             </div>
             <p className="panel-note">
               To save a PDF, choose Save as PDF in the print window. Days and times are read in {zone}. The report reads what Nya has stored, so open Nya first to

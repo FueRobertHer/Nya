@@ -17,17 +17,20 @@ export const metadata: Metadata = {
 
 export default function OpenDownloadPage() {
   return (
-    <InfoPage page="open-download" title="Open a protected download" intro="A download of your data that you protected with a passphrase, opened in your browser.">
-      <section className="card info-section info-notice">
-        <p>
+    <InfoPage
+      page="open-download"
+      title="Open a protected download"
+      intro="A download of your data that you protected with a passphrase, opened in your browser."
+      notice={
+        <>
           Your file is opened on your device, by this page: it is never uploaded, and nothing about it is sent anywhere. You
           don’t need to sign in, so a file still opens here after the account it came from is deleted.
-        </p>
-      </section>
-
+        </>
+      }
+    >
       <OpenProtectedDownload />
 
-      <InfoSection title="With the age app">
+      <InfoSection id="age-app" title="With the age app">
         <p>
           A protected download is an age file (age-encryption.org), so the age app opens it too, without Nya. It runs on
           macOS, Linux and Windows. In a terminal:
@@ -42,7 +45,7 @@ export default function OpenDownloadPage() {
         </p>
       </InfoSection>
 
-      <InfoSection title="If it doesn’t open">
+      <InfoSection id="if-it-doesnt-open" title="If it doesn’t open">
         <ul>
           <li>
             Type the passphrase exactly as you set it: capitals, spaces and punctuation count. Nya never keeps it, so
