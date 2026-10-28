@@ -20,6 +20,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import ActivityBar, { ACTIVITY_PANEL, segmentTabId, type ActivityMonth, type ActivitySegment } from "./ActivityBar";
+import { Menu } from "./Menu";
 import { Segmented } from "./Segmented";
 import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
@@ -751,8 +752,9 @@ export default function MonthBreakdown({
 
   // The pinned bar: the month (none on Shared, whose balances aren't by
   // month, or before there is one), stepping through and listing the months
-  // with transactions, with a way back to the one the tab opens on; and the
-  // ⋯ to add or import a transaction where a manual account takes one.
+  // with transactions, with a way back to the one the tab opens on. The same
+  // row as Budgets', so the month sits where it does there: adding or
+  // importing a transaction is in the Transactions card's ⋯, below.
   // Where the tab opens: this month, or the latest with transactions while
   // this one has none yet, which the way back says. Landing on it writes
   // null, as the way back does.
@@ -779,17 +781,12 @@ export default function MonthBreakdown({
               : null,
         }
       : null;
-  const bar = (withMenu: boolean) => (
+  const bar = (
     <ActivityBar
       month={shownMonth}
       monthPending={segment !== "shared" && !selected && loading}
       segment={segment}
       onSegment={switchSegment}
-      menu={
-        withMenu && onAddTransaction
-          ? [{ label: "Add a transaction", onSelect: onAddTransaction }, ...(onImport ? [{ label: "Import a file", onSelect: onImport }] : [])]
-          : []
-      }
     />
   );
   const panel = (body: ReactNode) => (
@@ -802,7 +799,7 @@ export default function MonthBreakdown({
   if (segment === "shared") {
     return (
       <>
-        {bar(true)}
+        {bar}
         {panel(sharedSegment)}
       </>
     );
@@ -811,7 +808,7 @@ export default function MonthBreakdown({
   if (loading) {
     return (
       <>
-        {bar(false)}
+        {bar}
         {panel(
           <>
             {/* The list's cards as they will be, figures still to come
@@ -826,7 +823,8 @@ export default function MonthBreakdown({
   }
 
   // Entering a transaction by hand or importing a file, on a manual account,
-  // while there is nothing to list: in the ⋯ once there is.
+  // while there is nothing to list: in the Transactions card's ⋯ once there
+  // is.
   const addCard = onAddTransaction && (
     <div className="card">
       {onImport ? (
@@ -852,7 +850,7 @@ export default function MonthBreakdown({
     const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
     return (
       <>
-        {bar(false)}
+        {bar}
         {panel(
           <>
             {addCard}
@@ -955,7 +953,7 @@ export default function MonthBreakdown({
 
   return (
     <>
-      {bar(true)}
+      {bar}
       {panel(
         segment === "spending" ? (
           <>
@@ -1145,13 +1143,29 @@ export default function MonthBreakdown({
             {figures}
 
             <div className="card" ref={listRef}>
-              <div className="card-header">
+              {/* 44px tall with its ⋯ or without, as its skeleton is
+                  (components/LoadingSkeletons.tsx), so the list never drops
+                  when the ⋯ comes. */}
+              <div className="card-header txn-list-header">
                 <h2 ref={listHeading} tabIndex={-1}>Transactions</h2>
                 <span className="meta">
                   {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
                   {countTransactions(visible)}
                   {filtering ? ` of ${countTransactions(listed)}` : ""}
                 </span>
+                {/* Adding to the list or importing into it, on a manual
+                    account: the list's own rare actions (with nothing to
+                    list, the empty card's buttons). A save that reads the
+                    list again (an import) replaces this card, ⋯ and all,
+                    while its sheet is open: focus then comes back to the
+                    list's heading. */}
+                {onAddTransaction && (
+                  <Menu
+                    label="Options for transactions"
+                    items={[{ label: "Add a transaction", onSelect: onAddTransaction }, ...(onImport ? [{ label: "Import a file", onSelect: onImport }] : [])]}
+                    focusInstead={listHeading}
+                  />
+                )}
               </div>
               {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
 
