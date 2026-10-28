@@ -112,9 +112,9 @@ describe('the caveat line', () => {
   });
 
   test('a note that explains itself keeps one line, the rest behind Why?, alone or gathered with others', () => {
-    const accrued: Caveat = { ...c('a', 'info', 'accrued interest left out'), body: 'Leaves out $612.40 of accrued interest on a student loan.', why: 'Plaid reports it apart.' };
+    const accrued: Caveat = { ...c('a', 'info', 'accrued interest left out'), body: 'Leaves out accrued interest on a student loan.', why: 'Plaid reports it apart.' };
     const alone = renderToStaticMarkup(<TotalCaveats items={[accrued]} />);
-    expect(alone).toContain('Leaves out $612.40 of accrued interest on a student loan.<details class="why"><summary>Why?</summary><div class="why-body">Plaid reports it apart.</div></details>');
+    expect(alone).toContain('Leaves out accrued interest on a student loan.<details class="why"><summary>Why?</summary><div class="why-body">Plaid reports it apart.</div></details>');
     const gathered = renderToStaticMarkup(<TotalCaveats items={[accrued, c('b', 'caution', 'history paused')]} />);
     expect(gathered).toContain('<details class="why"><summary>Why?</summary><div class="why-body">Plaid reports it apart.</div></details>');
     // One without its own Why says it all in its body, as before.
