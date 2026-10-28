@@ -834,8 +834,8 @@ function DebtRow({
   const minimumText = typed.minimum ?? (fallback !== null ? cents(fallback) : '');
   const minimumNeeded = minimum.value === null && !minimum.error;
   // Why a term is needed, said only where Plaid has nothing usable for it. A
-  // field the person cleared shows "Needed" with Plaid's figure a tap away
-  // instead (TermSource), and a held payment says why below.
+  // field the person cleared shows "Needed for the plan" with Plaid's figure
+  // a tap away instead (TermSource), and a held payment says why below.
   const noPlaid =
     (apr.value === null && !apr.error && plaidApr === null) ||
     (minimumNeeded && fallback === null && !a.minimumHold);
@@ -950,13 +950,13 @@ function DebtRow({
             </Masked>
           </p>
           {a.workedOut && (
-            <button className="link-btn" onClick={() => onTerm('minimum', cents(a.workedOut!.cents))}>
+            <button className="btn ghost payoff-choice-btn" onClick={() => onTerm('minimum', cents(a.workedOut!.cents))}>
               Use <Masked>{money(a.workedOut.cents)}</Masked>, worked out from the original <Masked>{money(Math.round(a.workedOut.principal * 100))}</Masked>{' '}
               over {durationLabel(a.workedOut.months)} at {a.workedOut.apr}%
             </button>
           )}
           {a.minimumHold === 'escrow-unknown' && (
-            <button className="link-btn" onClick={() => onTerm('minimum', cents(plaidPayment))}>
+            <button className="btn ghost payoff-choice-btn" onClick={() => onTerm('minimum', cents(plaidPayment))}>
               No escrow? Use Plaid&apos;s <Masked>{money(plaidPayment)}</Masked>
             </button>
           )}
@@ -1010,10 +1010,10 @@ function SharedNote({
           Plaid shows the same <Masked>{total}</Masked> minimum on {s.loans} loans here. Some servicers bill one payment across
           an account&apos;s loans and show it on each loan; others bill each loan its own. Which is it here?
         </p>
-        <button className="link-btn" onClick={() => onShared(true)}>
+        <button className="btn ghost payoff-choice-btn" onClick={() => onShared(true)}>
           One <Masked>{total}</Masked> payment for {all}: split it by balance
         </button>
-        <button className="link-btn" onClick={() => onShared(false)}>
+        <button className="btn ghost payoff-choice-btn" onClick={() => onShared(false)}>
           Each loan pays <Masked>{total}</Masked>
         </button>
       </div>
@@ -1031,11 +1031,11 @@ function SharedNote({
           </Masked>
         </p>
         {s.named ? (
-          <button className="link-btn" onClick={() => onTerm('minimum', fieldAmount(s.totalCents / 100))}>
+          <button className="btn ghost payoff-choice-btn" onClick={() => onTerm('minimum', fieldAmount(s.totalCents / 100))}>
             Billed separately? Use <Masked>{total}</Masked> for this loan
           </button>
         ) : (
-          <button className="link-btn" onClick={() => onShared(false)}>
+          <button className="btn ghost payoff-choice-btn" onClick={() => onShared(false)}>
             Each loan pays <Masked>{total}</Masked> instead
           </button>
         )}
@@ -1045,7 +1045,7 @@ function SharedNote({
   return (
     <div className="payoff-hold">
       <p className="panel-note">You said each of these {s.loans} loans pays the <Masked>{total}</Masked> Plaid shows.</p>
-      <button className="link-btn" onClick={() => onShared(true)}>
+      <button className="btn ghost payoff-choice-btn" onClick={() => onShared(true)}>
         One <Masked>{total}</Masked> payment for {all} instead: split it
       </button>
     </div>
@@ -1066,13 +1066,11 @@ function TermSource({
   restore: string | null;
   onRestore: () => void;
 }) {
+  // The way back, a ghost button on its own line under the words.
   const back = restore && (
-    <>
-      {' '}
-      <button className="link-btn" onClick={onRestore}>
-        <Masked>{restore}</Masked>
-      </button>
-    </>
+    <button className="btn ghost payoff-choice-btn" onClick={onRestore}>
+      <Masked>{restore}</Masked>
+    </button>
   );
   if (term.error) {
     return (

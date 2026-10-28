@@ -18,7 +18,7 @@
 // Each action that has a sheet of its own closes this one first, so no sheet
 // opens on top of another.
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
@@ -196,10 +196,13 @@ export type TransactionSheetProps = {
   review?: ReviewControls;
   shared?: SharedRowHooks;
   ruleSentenceOf?: (id: string) => string | null;
-  onRecategorize: (transaction_id: string, choice: CategoryChoice) => void;
+  /** May return a promise that resolves true once the change is saved: the
+   *  status line says so only then (components/transaction-edits.ts). */
+  onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
   onRename: (vendor_key: string, name: string) => void;
   onEditTransaction?: (t: Txn) => void;
-  onToggleExcluded?: (t: Txn, excluded: boolean) => void;
+  /** As onRecategorize: a promise of true once saved. */
+  onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
   onChangeTags?: (t: Txn, change: TagChange) => void;
   onSaveNote?: (t: Txn, note: string) => void;
   onCreateRule?: (t: Txn, category_id?: string) => void;
@@ -266,8 +269,13 @@ function TxnSheet({
   const [offer, setOffer] = useState<string | null>(null);
   // The row whose category Looks right just kept, said in the status line.
   const [kept, setKept] = useState<string | null>(null);
-  // What Exclude or Include just did, and to which row, said there too.
+  // What Exclude or Include just did, and to which row, said there too once
+  // it is saved.
   const [toggled, setToggled] = useState<{ id: string; excluded: boolean } | null>(null);
+  // Include on a pending row takes its row away (exclusionOffer: it can't be
+  // excluded again until it posts): focus goes to the line said in its place.
+  const waitRef = useRef<HTMLParagraphElement>(null);
+  const focusWait = useRef(false);
   // Rename vendor, a second level of the sheet, and what is typed there.
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(t.name);
@@ -278,6 +286,11 @@ function TxnSheet({
   };
   const c = currencyOf(t) ?? currency;
   const exclusion = exclusionOffer(t);
+  useEffect(() => {
+    if (!focusWait.current || exclusion === 'toggle') return;
+    focusWait.current = false;
+    waitRef.current?.focus();
+  }, [exclusion]);
   // "Check category" answered: the category it has, chosen as the person's
   // through the same path as picking one (app/api/recategorize), which takes
   // Plaid's doubt off it. Only where the category field below is the row's
@@ -376,10 +389,11 @@ function TxnSheet({
       </label>
     );
 
-  // Its actions, one list (components/ActionRows.tsx). Each that opens
-  // another sheet closes this one first; Exclude acts in place, so focus
-  // stays on its row (its key holds while its title flips) and the status
-  // line below says what it did.
+  // Its actions, one list (components/ActionRows.tsx), and "Create a rule
+  // from this" in a list of its own after the rules that match it. Each that
+  // opens another sheet closes this one first; Exclude acts in place, so
+  // focus stays on its row (its key holds while its title flips) and the
+  // status line below says what it did once it is saved.
   const split = onSplitsChanged
     ? splitActions(t, {
         onSplit: act(() => onSplit(t)),
@@ -407,14 +421,20 @@ function TxnSheet({
                 : 'For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan.',
             onSelect: () => {
               const excluded = t.excluded !== true;
-              onToggleExcluded!(t, excluded);
-              setToggled({ id: t.transaction_id, excluded });
+              const id = t.transaction_id;
+              focusWait.current = exclusionOffer({ ...t, excluded: excluded ? true : undefined, excluded_by_rule: undefined }) !== 'toggle';
+              setToggled(null);
+              // Said only once the server has it (a refusal puts it back and says why).
+              void Promise.resolve(onToggleExcluded!(t, excluded)).then((saved) => {
+                if (saved === true) setToggled({ id, excluded });
+              });
             },
           },
         ]
       : []),
-    ...(onCreateRule && !t.group_members ? [{ key: 'rule', title: 'Create a rule from this', opens: true, onSelect: act(() => onCreateRule(t)) }] : []),
   ];
+  // A rule from it, after the rules that already match it.
+  const ruleRow: SheetAction[] = onCreateRule && !t.group_members ? [{ key: 'rule', title: 'Create a rule from this', opens: true, onSelect: act(() => onCreateRule(t)) }] : [];
 
   return (
     <Sheet open={open} title={shownName(t)} onClose={onClose} footer={more.length > 0 ? <Menu label={`More for ${shownName(t)}`} items={more} /> : undefined}>
@@ -439,8 +459,11 @@ function TxnSheet({
                   <button
                     className="btn ghost"
                     onClick={() => {
-                      onRecategorize(t.transaction_id, confirm);
-                      setKept(t.transaction_id);
+                      const id = t.transaction_id;
+                      // Said only once the server has it.
+                      void Promise.resolve(onRecategorize(id, confirm)).then((saved) => {
+                        if (saved === true) setKept(id);
+                      });
                       // The button goes with the mark: focus to the field it was about.
                       categoryRef.current?.focus();
                     }}
@@ -456,7 +479,7 @@ function TxnSheet({
           <p className="visually-hidden" role="status">
             {kept === t.transaction_id
               ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
-              : toggled?.id === t.transaction_id
+              : toggled?.id === t.transaction_id && toggled.excluded === (t.excluded === true)
                 ? toggled.excluded
                   ? 'Excluded from budgets and reports.'
                   : 'Included in budgets and reports again.'
@@ -507,12 +530,12 @@ function TxnSheet({
 
         {/* What can be done with it, one action to a row: splitting it or
             grouping it with others (#39), sharing it or what it paid back
-            (#49), leaving it out of budgets, and a rule from it. */}
+            (#49), and leaving it out of budgets. */}
         <ActionRows rows={actions} />
         {split?.said && <p className="helper">{split.said}</p>}
         {/* Offered once a pending row has posted (exclusionOffer), one a rule hides too. */}
         {countable && exclusion !== 'toggle' && (
-          <p className="helper">
+          <p className="helper" ref={waitRef} tabIndex={-1}>
             {exclusion === 'wait-rule'
               ? 'A rule hides it. Once it posts, it can be put back in budgets and reports.'
               : 'Once it posts, it can be excluded from budgets and reports.'}
@@ -534,6 +557,7 @@ function TxnSheet({
             </ul>
           </div>
         )}
+        <ActionRows rows={ruleRow} />
 
         {/* Its receipts and documents (#47), read as it opens. */}
         {onAttachmentsChanged && <AttachmentSection t={t} rows={list} onChanged={onAttachmentsChanged} />}
@@ -602,12 +626,11 @@ function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsCha
             />
           </label>
         )}
+        {/* Its one action, a row as the transaction's are (components/ActionRows.tsx). */}
         {!p.split_remainder && parent.excluded !== true && (
-          <div className="btn-row">
-            <button className="btn secondary" onClick={() => patch({ excluded: !p.split_excluded })}>
-              {p.split_excluded ? 'Count this part again' : 'Leave this part out of budgets and reports'}
-            </button>
-          </div>
+          <ActionRows
+            rows={[{ key: 'exclude', title: p.split_excluded ? 'Count this part again' : 'Leave this part out of budgets and reports', onSelect: () => patch({ excluded: !p.split_excluded }) }]}
+          />
         )}
       </div>
     </Sheet>

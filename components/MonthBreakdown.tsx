@@ -343,7 +343,9 @@ export default function MonthBreakdown({
   /** Your categories (components/categories-state.ts): the list to choose
    *  one from, and the groups top spending rolls up to. Null until loaded. */
   taxonomy?: Taxonomy | null;
-  onRecategorize: (transaction_id: string, choice: CategoryChoice) => void;
+  /** May return a promise that resolves true once the change is saved, so
+   *  the sheet says it was kept only then. */
+  onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
   onRename: (vendor_key: string, name: string) => void;
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
@@ -354,7 +356,7 @@ export default function MonthBreakdown({
   /** Opens a manual row's edit form. */
   onEditTransaction?: (t: Txn) => void;
   /** Leaves a transaction out of budgets and reports, or puts it back. */
-  onToggleExcluded?: (t: Txn, excluded: boolean) => void;
+  onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
   /** Why the last change to a transaction didn't save. */
   actionError?: string | null;
   /** Connections that bring in no transactions (lib/no-transactions.ts): an

@@ -1773,12 +1773,14 @@ button:disabled:where(:not([class*="cl-"])) {
 
 /* The line itself (its category and account) is cut short with an ellipsis
    rather than wrapping, so a row is two lines; its sheet has it in full. The
-   chips never squeeze it: they sit beside it where it fits whole, and go
-   under it where it doesn't. Its account name comes before any institution
-   (txn-words.ts rowAccountNames), so what is cut is the least of it. */
+   chips sit beside it, the line giving way to them down to 6em (about 11
+   characters, most categories' first word or two), and only past that go
+   under it.
+   Its account name comes before any institution (txn-words.ts
+   rowAccountNames), so what is cut is the least of it. */
 .txn-row-line {
-  flex: 0 0 auto;
-  max-width: 100%;
+  flex: 1 1 0;
+  min-width: min(100%, 6em);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3000,6 +3002,8 @@ span.meter-fill {
 .invite-link input {
   flex: 1;
   min-width: 0;
+  /* Its box (.invite-link, with the copy button) is the 44px target. */
+  min-height: 0;
   border: none;
   background: transparent;
   padding: 6px 0;
@@ -3638,10 +3642,20 @@ button.danger-outline {
   color: var(--down);
 }
 
-/* A debt's choices (leave it out, include it, its accrued interest): ghost
-   buttons, their words lined up with the text above. */
+/* A debt's choices (leave it out, include it, its accrued interest, a held
+   payment's answers, the way back to Plaid's figure): ghost buttons, 44px
+   tall, each on its own line, their words lined up with the text above and
+   wrapping from its left edge in a narrow column. */
 .payoff-choice-btn {
+  display: flex;
+  justify-content: flex-start;
   margin-inline-start: calc(-1 * var(--sp-2));
+  text-align: left;
+}
+
+/* Under a field, at the size of the line it follows. */
+.payoff-source .payoff-choice-btn {
+  font-size: var(--fs-2);
 }
 
 /* The comparison: the chosen order's row in full ink, the others muted. */
@@ -3719,11 +3733,6 @@ button.danger-outline {
 }
 
 /* A held payment's reason, then each figure offered for it on its own line. */
-.payoff-hold .link-btn {
-  display: block;
-  margin-top: 6px;
-  text-align: left;
-}
 
 /* --- download my data (components/DownloadMyData.tsx) --- */
 
