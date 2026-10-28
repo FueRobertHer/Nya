@@ -6,7 +6,11 @@
 // WHO IS THE ADMIN: whoever the deployment's own container belongs to
 // (lib/sessions.ts deploymentContainer): normally the primary container, so the
 // account that signed in first with Clerk, or the password holder without it;
-// CONTAINER_ID, if set, names a different one. Nobody else
+// CONTAINER_ID, if set, names a different one. Never a demo account
+// (lib/demo.ts, Preview and local development only): while one owns that
+// container, nobody is the admin, since everyone who presses its button would
+// be. Decided once, in lib/admin-gate.ts isAdminContainer, which the proxy's
+// gate asks too, so the two never answer differently. Nobody else
 // gets to list other accounts' connections, let alone remove one.
 //
 // Removal is the only thing here that changes anything, and it is fenced:
@@ -21,17 +25,18 @@
 
 import { NextResponse } from 'next/server';
 import { dataCtx } from './data-ctx';
-import { deploymentContainer } from './sessions';
+import { isAdminContainer } from './admin-gate';
 import { clerkEnabled } from './auth-mode';
 import { kEnv, getItems, redis } from './storage';
 import { listContainers, isContainerId, type Ctx, type ContainerId } from './containers';
 import { checkItemUsage, readFlagged, type FlagKind } from './item-usage';
 import { disconnectItem } from './disconnect-item';
 
-/** Whether this container is the deployment's own, i.e. its owner is the admin. */
+/** Whether this container's owner is the admin (lib/admin-gate.ts
+ *  isAdminContainer: the deployment's own container, unless a demo account
+ *  owns it). */
 export async function isAdmin(ctx: Ctx): Promise<boolean> {
-  const dep = await deploymentContainer();
-  return dep.kind === 'container' && dep.container === ctx.container;
+  return isAdminContainer(ctx.container);
 }
 
 /** The signed-in admin's container, or null for anyone else. */

@@ -255,7 +255,7 @@ The public pages (Security, Privacy, Developers, Open a protected download, the 
 ### Header and tab bar
 
 - **Header**: brand, then hide amounts, refresh, and the avatar (or a gear in password mode). The avatar menu leads with Settings and carries a dot when something in Settings needs attention. The brand's logo is a two-ink mark (since the look and feel's step 4): the app icon's ring and cat face in one ink, `--brand-mark` (the logo gold on dark, its navy on light and in print), with the disc and the cat's features cut away, so the page is its disc. `BrandLogo` (`components/Brand.tsx`) draws it as one inline SVG through a mask, so it follows the theme with no image to swap; in forced colors it takes the forced text color. The filled coin (`app/icon.svg`) stays the favicon and the installed icon.
-- **Tab bar**: five tabs, icons with `--fs-1` labels (12px, up from 11px), `--glass` with a blur. The current tab (`aria-current="page"`) has a 3px `--accent` bar over it and a bold label, not only its color (`--accent` is about 1.1:1 from `--text-2` in dark).
+- **Tab bar**: five tabs, icons with `--fs-1` labels (12px, up from 11px), `--glass` with a blur. The current tab (`aria-current="page"`) has a 3px `--accent` bar over it and a bold label, not only its color (`--accent` is about 1.1:1 from `--text-2` in dark). On a wide window the glass still spans it, but the tabs keep to the 760px content column, so they never sit far apart.
 
 ## Status and honesty
 

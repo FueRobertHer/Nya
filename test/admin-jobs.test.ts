@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { NextResponse } from 'next/server';
 import { mockForFile } from './scoped-mock';
-import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX } from './fake-redis';
 
 // The route behind the admin's Nightly jobs page (app/api/admin/jobs):
@@ -42,7 +41,6 @@ const saved = { ...process.env };
 beforeEach(() => {
   fake.reset();
   process.env = { ...saved };
-  clerk.signedIn = null;
   admin = true;
   holdUntil = null;
   ran.length = 0;
@@ -93,17 +91,6 @@ describe('the nightly jobs route', () => {
   test('JSON only, so a form on another site can’t send it', async () => {
     expect((await post({ job: 'backup' }, 'text/plain')).status).toBe(415);
     expect((await post({ job: 'backup' }, 'application/x-www-form-urlencoded')).status).toBe(415);
-    expect(ran).toEqual([]);
-  });
-
-  test('never for one of Preview’s demo accounts, which anyone may sign in as', async () => {
-    process.env.VERCEL_ENV = 'preview';
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
-    process.env.CLERK_SECRET_KEY = 'sk_test_x';
-    process.env.DEMO_USER_IDS = 'user_demo:Alex';
-    clerk.signedIn = 'user_demo';
-    const res = await post({ job: 'backup' });
-    expect(res.status).toBe(403);
     expect(ran).toEqual([]);
   });
 
