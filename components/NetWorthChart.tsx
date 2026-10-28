@@ -31,11 +31,21 @@
 // the whole note is in the list. For keyboard and screen reader, the notes in
 // the range are listed under the chart as buttons that select their day, and
 // the selection is announced.
+//
+// As Home's hero (`hero`, look and feel step 5) it runs edge to edge under
+// the figure: drawn at its own width (components/drawn-width.ts), with no
+// gridlines and no money ticks, the months under it; a pointer's scrub moves
+// the hero's figure (components/hero-scrub.ts) instead of the readout, which
+// keeps the range's change; and every point in the range is behind "Show as
+// a table". Elsewhere (an account's sheet, a shared net worth) it is drawn
+// as before.
 
-import { useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatMoney, compactMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
+import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
+import { HeroScrub } from './hero-scrub';
 import {
   availableRanges,
   axisTicks,
@@ -52,18 +62,26 @@ type Baseline = { date: string; value: number }[] | null;
 /** A note on the timeline: its day, and what it says. */
 export type ChartNote = { date: string; text: string };
 
-const W = 340;
-const H = 150;
-const PAD_LEFT = 8;
-const PAD_RIGHT = 10;
-const PAD_TOP = 12;
-const PAD_BOTTOM = 20;
+/** The plot's box: the card chart's fixed viewBox, or the hero's, whose
+ *  width is the one it is drawn at. */
+type Frame = { W: number; H: number; left: number; right: number; top: number; bottom: number; hero: boolean };
+const CARD: Frame = { W: 340, H: 150, left: 8, right: 10, top: 12, bottom: 20, hero: false };
+/** The hero's line runs from the screen's edge to the today dot's ring (4 +
+ *  2), 120px of plot over 20 for the months. */
+const heroFrame = (W: number): Frame => ({ W, H: 140, left: 2, right: 8, top: 8, bottom: 20, hero: true });
+/** The hero's months keep to the page's gutter, in line with the text above. */
+const HERO_GUTTER = 16;
+/** How far sideways a finger on the hero goes before it scrubs, in CSS
+ *  pixels: less, and it may be the start of a scroll. */
+const SIDEWAYS = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Closest two axis labels may sit, in viewBox units, before one is dropped. */
+/** Closest two axis labels may sit on the card chart, in viewBox units,
+ *  centre to centre, before one is dropped. */
 const MIN_LABEL_GAP = 30;
 
-// Every figure prints in the series' own currency. No currency (the net-worth
-// total, which has none of its own) formats as "$", as it always did.
+// Every figure prints in the series' own currency. No currency (a shared
+// net-worth total, which has none of its own) formats as "$", as it always
+// did; Home's hero passes the currency its figure is in.
 
 // Signed, for money added and growth: "+$1,200.00" / "-$80.00".
 function signed(n: number, currency?: string | null): string {
@@ -111,6 +129,7 @@ export default function NetWorthChart({
   owed = false,
   reserveSplit = false,
   notes,
+  hero = false,
 }: {
   points: HistoryPoint[];
   label?: string;
@@ -135,8 +154,29 @@ export default function NetWorthChart({
   reserveSplit?: boolean;
   /** Notes on the timeline, marked on their days (see the header). */
   notes?: readonly ChartNote[];
+  /** Home's hero: edge to edge, no ticks, its scrub moving the figure above
+   *  (see the header). */
+  hero?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // The hero is drawn at its own width; the card chart keeps its viewBox.
+  const [drawnRef, drawnW] = useDrawnWidth<SVGSVGElement>();
+  const frame = useMemo(() => (hero ? heroFrame(drawnW) : CARD), [hero, drawnW]);
+  const { W, H } = frame;
+  // The hero's SVG is the one measured: it is wider than its box, by the bleed.
+  const heroRef = useCallback(
+    (el: SVGSVGElement | null) => {
+      svgRef.current = el;
+      drawnRef(el);
+    },
+    [drawnRef],
+  );
+  const report = useContext(HeroScrub);
+  // A pointer on the plot (a finger, a pen, a mouse over it): only its day
+  // moves the hero's figure, never one a note chosen from the list selects.
+  const [scrubbing, setScrubbing] = useState(false);
+  // The table renders its rows only while it is open.
+  const [tableOpen, setTableOpen] = useState(false);
   const [activeState, setActive] = useState<number | null>(null);
   const [measureState, setMeasure] = useState<[number, number] | null>(null);
   const [picked, setPicked] = useState<RangeKey | null>(forcedRange ?? null);
@@ -147,6 +187,8 @@ export default function NetWorthChart({
   // Pointers down on the plot (id -> clientX), and where a mouse drag began.
   const pointers = useRef(new Map<number, number>());
   const dragFrom = useRef<number | null>(null);
+  // Where the first finger or pen went down, to tell a scrub from a scroll.
+  const touchFrom = useRef<{ x: number; y: number } | null>(null);
 
   const ranges = useMemo(() => availableRanges(allPoints, rangeSet), [allPoints, rangeSet]);
   const range =
@@ -195,9 +237,10 @@ export default function NetWorthChart({
     lo -= padV;
     hi += padV;
 
+    const { left, right, top, bottom } = frame;
     const spanT = maxT - minT || 1;
-    const x = (t: number) => PAD_LEFT + ((t - minT) / spanT) * (W - PAD_LEFT - PAD_RIGHT);
-    const y = (v: number) => PAD_TOP + (1 - (v - lo) / (hi - lo)) * (H - PAD_TOP - PAD_BOTTOM);
+    const x = (t: number) => left + ((t - minT) / spanT) * (W - left - right);
+    const y = (v: number) => top + (1 - (v - lo) / (hi - lo)) * (H - top - bottom);
 
     const xs = ts.map(x);
     const pt = (i: number) => `${xs[i].toFixed(1)},${y(vals[i]).toFixed(1)}`;
@@ -230,19 +273,35 @@ export default function NetWorthChart({
     // Time axis: labels at recognisable dates, anchored so none runs off the
     // plot, and dropped where two would collide.
     const xTicks: { x: number; label: string; anchor: 'start' | 'middle' | 'end' }[] = [];
-    for (const t of axisTicks(points[0].date, points[points.length - 1].date)) {
-      const tx = x(Date.parse(`${t.date}T00:00:00Z`));
-      if (tx < PAD_LEFT || tx > W - PAD_RIGHT) continue;
-      if (xTicks.length > 0 && tx - xTicks[xTicks.length - 1].x < MIN_LABEL_GAP) continue;
-      const anchor = tx < PAD_LEFT + 16 ? 'start' : tx > W - PAD_RIGHT - 16 ? 'end' : 'middle';
-      xTicks.push({ x: tx, label: t.label, anchor });
+    if (frame.hero) {
+      // The hero's months at 12px, kept inside the page's gutter (the plot
+      // itself runs to the screen's edges), spaced by their widths.
+      let lastEnd = -Infinity;
+      for (const t of axisTicks(points[0].date, points[points.length - 1].date)) {
+        const tx = x(Date.parse(`${t.date}T00:00:00Z`));
+        if (tx < HERO_GUTTER || tx > W - HERO_GUTTER) continue;
+        const w = labelWidth(t.label);
+        const anchor = tx - w / 2 < HERO_GUTTER ? 'start' : tx + w / 2 > W - HERO_GUTTER ? 'end' : 'middle';
+        const from = anchor === 'start' ? tx : anchor === 'end' ? tx - w : tx - w / 2;
+        if (from - lastEnd < LABEL_GAP) continue;
+        lastEnd = from + w;
+        xTicks.push({ x: tx, label: t.label, anchor });
+      }
+    } else {
+      for (const t of axisTicks(points[0].date, points[points.length - 1].date)) {
+        const tx = x(Date.parse(`${t.date}T00:00:00Z`));
+        if (tx < left || tx > W - right) continue;
+        if (xTicks.length > 0 && tx - xTicks[xTicks.length - 1].x < MIN_LABEL_GAP) continue;
+        const anchor = tx < left + 16 ? 'start' : tx > W - right - 16 ? 'end' : 'middle';
+        xTicks.push({ x: tx, label: t.label, anchor });
+      }
     }
 
     const outline = points.map((_, i) => `${i === 0 ? 'M' : 'L'}${pt(i)}`).join('');
-    const baseY = H - PAD_BOTTOM;
+    const baseY = H - bottom;
     const area = `${outline}L${xs[xs.length - 1].toFixed(1)},${baseY}L${xs[0].toFixed(1)},${baseY}Z`;
     return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi), xTicks, hasGap, base, basePath, baseStart };
-  }, [points, baseline]);
+  }, [points, baseline, frame, W, H]);
 
   // The notes in the range, a day each (several notes on one day join), each
   // at the point on its day, or the first one after it: where its step shows.
@@ -356,6 +415,11 @@ export default function NetWorthChart({
     // Only the main mouse button; a right-click opens the menu, not a drag.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     setChosenNote(null);
+    // A mouse scrubs at once. A finger or a pen on the hero may be starting
+    // to scroll the page (pan-y), which the browser cancels a few pixels
+    // later: it moves the figure only once it goes sideways (onPointerMove).
+    if (e.pointerType === 'mouse') setScrubbing(true);
+    else if (pointers.current.size === 0) touchFrom.current = { x: e.clientX, y: e.clientY };
     // Captured by the chart itself, for every kind of pointer: otherwise a
     // touch is captured by the dot or crosshair it landed on, which is
     // replaced as it moves, and a finger lifted off the chart would never
@@ -389,11 +453,18 @@ export default function NetWorthChart({
       } else {
         setActive(i);
       }
+      setScrubbing(true);
       return;
     }
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, e.clientX);
     fromTouches();
+    // Sideways past a few pixels: a scrub, not the start of a scroll.
+    const from = touchFrom.current;
+    if (from && !scrubbing) {
+      const dx = Math.abs(e.clientX - from.x);
+      if (dx >= SIDEWAYS && dx > Math.abs((e.clientY ?? from.y) - from.y)) setScrubbing(true);
+    }
   }
 
   function onPointerEnd(e: React.PointerEvent<SVGSVGElement>) {
@@ -404,12 +475,19 @@ export default function NetWorthChart({
     }
     if (!pointers.current.delete(e.pointerId)) return; // already ended
     fromTouches();
+    if (pointers.current.size === 0) {
+      setScrubbing(false);
+      touchFrom.current = null;
+    }
   }
 
   function onPointerLeave(e: React.PointerEvent<SVGSVGElement>) {
     // A captured mouse drag keeps its events; a plain hover ends here. Touch
     // ends in onPointerEnd.
-    if (e.pointerType === 'mouse' && dragFrom.current === null) setActive(null);
+    if (e.pointerType === 'mouse' && dragFrom.current === null) {
+      setActive(null);
+      setScrubbing(false);
+    }
   }
 
   function pickRange(key: RangeKey) {
@@ -417,6 +495,7 @@ export default function NetWorthChart({
     setActive(null);
     setMeasure(null);
     setChosenNote(null);
+    setScrubbing(false);
   }
 
   /** A note chosen from the list: its day is scrubbed to, and announced. */
@@ -424,7 +503,25 @@ export default function NetWorthChart({
     setMeasure(null);
     setActive(marked[i].index);
     setChosenNote(i);
+    setScrubbing(false);
   }
+
+  // The hero's figure follows a pointer's day (never a measurement's, which
+  // is too long for its line, nor a note chosen from the list), in the same
+  // frame as the plot; gone when the pointer is, or the chart.
+  const heroDay = hero && scrubbing && !measure && active !== null && points[active] ? active : null;
+  const heroValue = heroDay === null ? null : vals[heroDay];
+  const heroText = heroDay === null ? '' : day(heroDay);
+  const heroEstimated = heroDay !== null && !!points[heroDay].estimated;
+  const heroNote = heroDay === null ? null : noteOn(heroDay);
+  useLayoutEffect(() => {
+    if (!hero || !report) return;
+    report(heroValue === null ? null : { value: heroValue, day: heroText, estimated: heroEstimated, note: heroNote });
+    return () => report(null);
+  }, [hero, report, heroValue, heroText, heroEstimated, heroNote]);
+  // In the hero, the readout keeps the range's change while a pointer moves
+  // the figure; a note chosen from the list still reads its day here.
+  const readActive = hero && scrubbing ? null : active;
 
   let readValue: string;
   let readDate: string;
@@ -432,10 +529,10 @@ export default function NetWorthChart({
   if (measure) {
     readValue = change(measure[0], measure[1]).text;
     readDate = `${day(measure[0])} to ${day(measure[1])}`;
-  } else if (active !== null) {
-    readValue = formatMoney(vals[active], currency);
-    readNote = noteOn(active);
-    readDate = `${day(active)}${points[active].estimated ? ' · estimated' : ''}`;
+  } else if (readActive !== null) {
+    readValue = formatMoney(vals[readActive], currency);
+    readNote = noteOn(readActive);
+    readDate = `${day(readActive)}${points[readActive].estimated ? ' · estimated' : ''}`;
   } else {
     readValue = rangeChange.text;
     readDate = rangeLabel(range, points[0].date, points[last].date);
@@ -478,8 +575,8 @@ export default function NetWorthChart({
       )}
 
       <svg
-        ref={svgRef}
-        className="chart-svg"
+        ref={hero ? heroRef : svgRef}
+        className={hero ? 'chart-svg hero-chart' : 'chart-svg'}
         viewBox={`0 0 ${W} ${H}`}
         role="img"
         aria-label={spoken(
@@ -492,29 +589,31 @@ export default function NetWorthChart({
         onLostPointerCapture={onPointerEnd}
         onPointerLeave={onPointerLeave}
       >
-        {/* recessive hairline gridlines with clean tick values */}
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
-            <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
-              {compactMoney(t, currency)}
-            </text>
-          </g>
-        ))}
+        {/* recessive hairline gridlines with clean tick values; the hero has
+            none, nor money on its plot (look and feel, step 5) */}
+        {!hero &&
+          ticks.map((t) => (
+            <g key={t}>
+              <line x1={frame.left} x2={W - frame.right} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
+              <text className="chart-tick" x={frame.left} y={y(t) - 3}>
+                {compactMoney(t, currency)}
+              </text>
+            </g>
+          ))}
 
         {/* the measured stretch, shaded between its two days */}
         {measure && (
           <rect
             x={xs[measure[0]]}
-            y={PAD_TOP}
+            y={frame.top}
             width={xs[measure[1]] - xs[measure[0]]}
-            height={baseY - PAD_TOP}
+            height={baseY - frame.top}
             fill="var(--accent)"
             opacity={0.12}
           />
         )}
 
-        <path d={area} fill="var(--accent)" opacity={0.1} />
+        <path d={area} fill="var(--accent)" opacity={hero ? 0.12 : 0.1} />
         {basePath && (
           <path
             className="chart-baseline"
@@ -546,7 +645,7 @@ export default function NetWorthChart({
           const on = active === m.index;
           return (
             <g key={m.date} className="chart-note-mark" opacity={on ? 1 : 0.6}>
-              <line x1={xs[m.index]} x2={xs[m.index]} y1={PAD_TOP} y2={baseY} stroke="var(--warn)" strokeWidth={1} strokeDasharray="1 3" />
+              <line x1={xs[m.index]} x2={xs[m.index]} y1={frame.top} y2={baseY} stroke="var(--warn)" strokeWidth={1} strokeDasharray="1 3" />
               <path d={`M${xs[m.index].toFixed(1)},${baseY - 7}l3.5,3.5l-3.5,3.5l-3.5,-3.5Z`} fill="var(--warn)" />
             </g>
           );
@@ -554,12 +653,13 @@ export default function NetWorthChart({
 
         {/* crosshairs: one while scrubbing, two while measuring */}
         {(measure ?? (active !== null ? [active] : [])).map((i) => (
-          <line key={i} x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />
+          <line key={i} x1={xs[i]} x2={xs[i]} y1={frame.top} y2={baseY} stroke="var(--border-strong)" strokeWidth={1} />
         ))}
 
-        {/* end-dot (or the active or measured dots) with a 2px surface ring */}
+        {/* end-dot (or the active or measured dots) with a 2px ring in what
+            is behind it: the card, or the page under the hero */}
         {(measure ?? [active ?? last]).map((i) => (
-          <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--accent)" stroke="var(--card)" strokeWidth={2} />
+          <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--accent)" stroke={hero ? 'var(--canvas)' : 'var(--card)'} strokeWidth={2} />
         ))}
 
         {/* time axis */}
@@ -592,6 +692,41 @@ export default function NetWorthChart({
           ? spoken(`${fmtDay(marked[chosenNote].date, true)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} on ${day(marked[chosenNote].index)}.`)
           : ''}
       </p>
+
+      {/* The hero's plot has no money on it: every point in the range, newest
+          first, for anyone who can't read the line. Its rows render only
+          while it is open, and through Masked each time, so hide amounts
+          masks them. */}
+      {hero && (
+        <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
+          <summary>Show as a table</summary>
+          {tableOpen && (
+            <table>
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th className="num">{label}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {points
+                  .map((p, i) => (
+                    <tr key={p.date}>
+                      <td>
+                        {day(i)}
+                        {p.estimated ? ' · estimated' : ''}
+                      </td>
+                      <td className="num">
+                        <Masked>{formatMoney(p.value, currency)}</Masked>
+                      </td>
+                    </tr>
+                  ))
+                  .reverse()}
+              </tbody>
+            </table>
+          )}
+        </details>
+      )}
 
       {/* In the markup even while closed (hidden), so it is one tap to show and
           the page never shifts while loading it. */}

@@ -288,7 +288,9 @@ a:not([class]) {
   max-width: 760px;
   margin: 0 auto;
   /* bottom padding clears the fixed tab bar */
-  padding: calc(24px + env(safe-area-inset-top)) 16px
+  /* The side gutter is --sp-4, which the hero's chart bleeds through
+     (.hero-chart). */
+  padding: calc(24px + env(safe-area-inset-top)) var(--sp-4)
     calc(92px + env(safe-area-inset-bottom));
 }
 
@@ -375,15 +377,71 @@ h1,
   line-height: 1.15;
 }
 
-/* Home's Net worth card (components/NetWorthCard.tsx): its title is a real
-   heading, drawn as the label it was. */
+/* Home's hero (components/NetWorthCard.tsx, look and feel step 5): on the
+   page, not in a card, with more room under it than a card's margin gave,
+   before the card under it. Its title is a real heading, drawn as the label
+   it was. */
+.net-worth-hero {
+  margin-bottom: var(--sp-6);
+}
+
 h2.total-label {
   margin: 0;
   font-weight: var(--fw-regular);
 }
 
-.net-worth-card .notice {
+/* The hero's figure at the hero size (32px on a phone, 40px from about
+   445px), never wrapping: a scrubbed day's value is the same length, so the
+   chart under the finger never moves. */
+.net-worth-hero .total-value {
+  font-size: var(--fs-hero);
+  white-space: nowrap;
+}
+
+/* The change line's place: while a day is scrubbed, the day sits over it,
+   one line cut to fit, and the change line keeps the height it had. */
+.hero-line {
+  position: relative;
+  margin-top: 6px;
+  min-height: calc(var(--fs-2) * var(--lh-body));
+}
+
+.hero-line > .hero-delta {
+  margin-top: 0;
+}
+
+/* No change line yet (fewer than two days of history): no line held. */
+.hero-line:empty {
+  margin-top: 0;
+  min-height: 0;
+}
+
+.hero-line.scrubbed > .hero-delta {
+  visibility: hidden;
+}
+
+.hero-day {
+  position: absolute;
+  inset: 0 0 auto;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.net-worth-hero .notice {
   overflow-wrap: anywhere;
+}
+
+/* On the page a notice's fill is close to the canvas (an information one is
+   about 1.0:1 in light), so each keeps an edge; a critical one has its own. */
+.net-worth-hero .notice:not(.critical) {
+  border-color: var(--border-subtle);
 }
 
 /* When it was updated, History paused, and the chart notes, on one row that
@@ -1912,6 +1970,17 @@ button:disabled:where(:not([class*="cl-"])) {
   -webkit-user-select: none;
 }
 
+/* Home's hero chart (NetWorthChart's `hero`) runs to the screen's edges,
+   through the page's gutter (.wrap's --sp-4), drawn at that width. Across
+   the whole screen it leaves no gutter to scroll from, so a vertical drag
+   scrolls the page (and ends the scrub); a sideways one scrubs. */
+.chart-svg.hero-chart {
+  width: calc(100% + 2 * var(--sp-4));
+  max-width: none;
+  margin-inline: calc(-1 * var(--sp-4));
+  touch-action: pan-y;
+}
+
 .chart-tick {
   fill: var(--muted);
   font-size: 10px;
@@ -3185,9 +3254,9 @@ button.danger-outline {
 
 /* --- loading placeholders (components/LoadingSkeletons.tsx) --- */
 
-/* Home's Net worth card: each placeholder about as wide as what it stands
-   for, in the line that will hold it, so the card keeps its height; the plot
-   at the chart's own proportions (components/NetWorthChart.tsx W and H). */
+/* Home's hero: each placeholder about as wide as what it stands for, in
+   the line that will hold it, so the hero keeps its height; the plot as the
+   hero chart is drawn (below). */
 .home-skeleton-total {
   width: 5.5em;
 }
@@ -3211,11 +3280,15 @@ button.danger-outline {
   border-radius: var(--r-pill);
 }
 
+/* The hero's plot (.hero-chart): through the gutter to the screen's edges,
+   and as tall as it is drawn (120px and the months under it), so the first
+   load moves nothing down or sideways. */
 .home-skeleton-plot {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 340 / 150;
-  border-radius: var(--r-md);
+  width: calc(100% + 2 * var(--sp-4));
+  max-width: none;
+  height: 140px;
+  margin-inline: calc(-1 * var(--sp-4));
+  border-radius: 0;
 }
 
 /* The range switch's placeholder: one 44px item across, over its rule. */
@@ -3228,6 +3301,15 @@ button.danger-outline {
 
 .home-skeleton-ranges {
   width: 100%;
+}
+
+/* The hero's Show as a table: a line as tall as its 44px summary. */
+.home-skeleton-table-line {
+  line-height: var(--tap);
+}
+
+.home-skeleton-table {
+  width: 8em;
 }
 
 .home-skeleton-as-of {
@@ -3324,8 +3406,8 @@ button.danger-outline {
   border-radius: 5px;
 }
 
-/* Upcoming's Cash forecast and a Plan segment's chart, at the proportions
-   of Home's (components/NetWorthChart.tsx W and H). */
+/* Upcoming's Cash forecast and a Plan segment's chart, at the card net
+   worth chart's proportions (components/NetWorthChart.tsx, CARD). */
 .upcoming-skeleton-chart,
 .plan-skeleton-chart {
   width: 100%;
@@ -4092,9 +4174,12 @@ button.plan-edit:disabled {
   font-size: 12px;
 }
 
+/* A 44px target: one line as tall as a tap, so it stays a list item and
+   keeps its disclosure marker. */
 .plan-table-view summary {
   cursor: pointer;
-  padding: 4px 0;
+  padding: 0;
+  line-height: var(--tap);
 }
 
 .plan-table-view td,

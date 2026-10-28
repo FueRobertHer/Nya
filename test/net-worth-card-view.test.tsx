@@ -36,6 +36,17 @@ const render = (over: Partial<Props> = {}) =>
 const caveat = (key: string, severity: Caveat['severity'], summary: string): Caveat => ({ key, severity, summary, body: `${summary} in full` });
 
 describe('the card', () => {
+  // Look and feel, step 5: the hero stands on the page, not in a card; what
+  // it holds, and in what order, is as it was.
+  test('on the page, not in a card: the total, its change line, what qualifies it, the chart, the foot', () => {
+    const html = render({ caveats: [caveat('rates', 'info', 'Converted at old rates')], delta: <div className="hero-delta up">past 30 days</div> });
+    expect(html).toContain('<section class="stack net-worth-hero" aria-labelledby="net-worth-title">');
+    expect(html).not.toMatch(/class="[^"]*\bcard\b/);
+    const order = ['net-worth-title', 'total-value', 'class="hero-line"', 'past 30 days', 'Converted at old rates', 'chart-placeholder', 'net-worth-foot'].map((s) => html.indexOf(s));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
   test('a heading, the total, and the foot row', () => {
     const html = render();
     expect(html).toContain('<h2 id="net-worth-title" class="total-label" tabindex="-1">Net worth</h2>');
