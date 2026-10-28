@@ -28,6 +28,8 @@ export const chevron = (d: string) => (
 export const LEFT = 'm15 18-6-6 6-6';
 export const RIGHT = 'm9 18 6-6-6-6';
 const DOWN = 'm6 9 6 6 6-6';
+// This month's: back along the way the months stepped.
+const RETURN = 'M9 14 5 10l4-4M5 10h11a4 4 0 0 1 0 8h-1';
 
 export default function MonthStepper({
   month,
@@ -121,6 +123,7 @@ export default function MonthStepper({
             back.onBack();
           }}
         >
+          {chevron(RETURN)}
           {back.label}
         </button>
       )}

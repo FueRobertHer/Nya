@@ -103,6 +103,11 @@ describe('the month stepper', () => {
     expect(back.getAttribute('class')).toBe('btn ghost month-stepper-back');
     // On the stepper's second line, its own (app/globals.css), not inside the name.
     expect((back.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper');
+    // A return arrow before its words, unheard: the button is named by its words alone.
+    const arrow = back.childNodes[0] as FakeElement;
+    expect(arrow.tagName.toLowerCase()).toBe('svg');
+    expect(arrow.getAttribute('aria-hidden')).toBe('true');
+    expect(back.textContent).toBe('This month');
     press(back);
     expect(v.title().textContent).toBe('October 2026');
     expect(v.back()).toBeNull();
@@ -139,10 +144,10 @@ describe('the month stepper', () => {
       const at = css.indexOf(`\n${selector} {`);
       return at < 0 ? '' : css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at));
     };
-    // Two rows, each at least a 44px target, with the arrows and the name on the first.
+    // Two rows, the arrows and the name on a 44px first, This month on a 32px second.
     expect(rule('.month-stepper')).toContain('display: grid;');
     expect(rule('.month-stepper')).toContain('grid-template-columns: var(--tap) minmax(0, 1fr) var(--tap);');
-    expect(rule('.month-stepper')).toContain('grid-template-rows: minmax(var(--tap), auto) minmax(var(--tap), auto);');
+    expect(rule('.month-stepper')).toContain('grid-template-rows: minmax(var(--tap), auto) minmax(32px, auto);');
     expect(rule('.month-stepper')).not.toContain('row-gap');
     expect(rule('.month-stepper-back')).toContain('grid-row: 2;');
     expect(rule('.month-stepper-back')).toContain('grid-column: 2;');
@@ -150,7 +155,7 @@ describe('the month stepper', () => {
     expect(css).not.toMatch(/\.month-stepper\.[\w-]+ \{/);
     expect(css).not.toContain('.month-stepper-mid');
     // The rows without a month are as tall, so the segments under them never move.
-    expect(rule('.activity-month,\n.budgets-heading')).toContain('min-height: calc(2 * var(--tap));');
+    expect(rule('.activity-month,\n.budgets-heading')).toContain('min-height: calc(var(--tap) + 32px);');
   });
 
   test('with one month there is no list, and focus after the return button goes to the name', () => {
