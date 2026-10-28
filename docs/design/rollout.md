@@ -891,7 +891,7 @@ The same review found Activity saying In, Out and Net three times (Out unsigned)
 
 ## After the light accent review
 
-A review of the light theme on 2026-10-28 (the design system artifact's audit.md, "Light accent review") found the logo's navy only in the small header mark and the primary button, so light read as gold on grey while dark is gold on navy. The accent now acts and gold measures: every control in light is navy, gold keeps the measures, and both logo inks show in both themes. Dark looks the same apart from the solid washes, the unfaded estimates and the measured slice. One PR, branch `design/light-accent-split`.
+A review of the light theme on 2026-10-28 (the design system artifact's audit.md, "Light accent review") found the logo's navy only in the small header mark and the primary button, so light read as gold on grey while dark is gold on navy. The accent now acts and gold measures: every control in light is navy, gold keeps the measures, and both logo inks show in both themes. Dark looks the same apart from the solid washes, the unfaded estimates and the measured slice. One PR, branch `design/light-accent`.
 
 **Built:**
 
