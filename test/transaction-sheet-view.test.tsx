@@ -340,6 +340,31 @@ describe('a transaction’s sheet', () => {
     refused.unmount();
   });
 
+  // The audit after the screen review: "Category kept" outlived the category
+  // it kept, and hid what Exclude did next.
+  test('the status line says only the last thing saved: never "kept" once the category changes, and Exclude after Looks right', async () => {
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    const onRecategorize = () => Promise.resolve(true);
+    const onToggleExcluded = () => Promise.resolve(true);
+    const v = mount({ txns: served().map(low), onRecategorize, onToggleExcluded });
+    await v.open('Whole Foods');
+    const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    await settle();
+    expect(status()).toBe('Category kept: groceries.');
+    // Another category chosen afterwards: nothing says it was kept.
+    const household = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_name: 'household' } : t);
+    v.render({ onRecategorize, onToggleExcluded, txns: served().map(household) });
+    expect(status()).toBe('');
+    // Exclude afterwards is said, not hidden behind the earlier answer.
+    const exclude = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'list-row' && e.textContent.startsWith('Exclude from'))[0]!;
+    act(() => click(exclude));
+    v.render({ onRecategorize, onToggleExcluded, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...household(t), excluded: true } : t)) });
+    await settle();
+    expect(status()).toBe('Excluded from budgets and reports.');
+    v.unmount();
+  });
+
   test('a pending row keeps its mark without Looks right: a choice is kept by id, and it gets a new one when it posts', async () => {
     const v = mount({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'UNKNOWN', pending: true } : t)) });
     await v.open('Whole Foods');

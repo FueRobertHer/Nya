@@ -121,6 +121,9 @@ function fmtTime(iso: string | null): string | null {
 }
 
 /** "Thu, Oct 22, 2026". */
+// The category a row shows, in the words the status line says it kept.
+const keptName = (t: Pick<Txn, 'category_name' | 'category'>) => t.category_name ?? t.category ?? 'uncategorized';
+
 function longDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -267,11 +270,10 @@ function TxnSheet({
 }: Inner & { t: Txn }) {
   // The category just chosen, while the offer to make a rule of it stands.
   const [offer, setOffer] = useState<string | null>(null);
-  // The row whose category Looks right just kept, said in the status line.
-  const [kept, setKept] = useState<string | null>(null);
-  // What Exclude or Include just did, and to which row, said there too once
-  // it is saved.
-  const [toggled, setToggled] = useState<{ id: string; excluded: boolean } | null>(null);
+  // What the status line says: the last of Looks right or Exclude / Include
+  // to be saved, and on which row. Looks right is said only while the row
+  // still has the category it kept, so choosing another never reads as kept.
+  const [announced, setAnnounced] = useState<{ id: string; kept: string } | { id: string; excluded: boolean } | null>(null);
   // Include on a pending row takes its row away (exclusionOffer: it can't be
   // excluded again until it posts): focus goes to the line said in its place.
   const waitRef = useRef<HTMLParagraphElement>(null);
@@ -423,10 +425,10 @@ function TxnSheet({
               const excluded = t.excluded !== true;
               const id = t.transaction_id;
               focusWait.current = exclusionOffer({ ...t, excluded: excluded ? true : undefined, excluded_by_rule: undefined }) !== 'toggle';
-              setToggled(null);
+              setAnnounced(null);
               // Said only once the server has it (a refusal puts it back and says why).
               void Promise.resolve(onToggleExcluded!(t, excluded)).then((saved) => {
-                if (saved === true) setToggled({ id, excluded });
+                if (saved === true) setAnnounced({ id, excluded });
               });
             },
           },
@@ -460,9 +462,11 @@ function TxnSheet({
                     className="btn ghost"
                     onClick={() => {
                       const id = t.transaction_id;
+                      const kept = keptName(t);
+                      setAnnounced(null);
                       // Said only once the server has it.
                       void Promise.resolve(onRecategorize(id, confirm)).then((saved) => {
-                        if (saved === true) setKept(id);
+                        if (saved === true) setAnnounced({ id, kept });
                       });
                       // The button goes with the mark: focus to the field it was about.
                       categoryRef.current?.focus();
@@ -477,13 +481,17 @@ function TxnSheet({
           {/* Said once Looks right is pressed, since the button goes, or
               once Exclude or Include is, whose row stays where it was. */}
           <p className="visually-hidden" role="status">
-            {kept === t.transaction_id
-              ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
-              : toggled?.id === t.transaction_id && toggled.excluded === (t.excluded === true)
-                ? toggled.excluded
-                  ? 'Excluded from budgets and reports.'
-                  : 'Included in budgets and reports again.'
-                : ''}
+            {announced?.id !== t.transaction_id
+              ? ''
+              : 'kept' in announced
+                ? announced.kept === keptName(t)
+                  ? `Category kept: ${announced.kept}.`
+                  : ''
+                : announced.excluded === (t.excluded === true)
+                  ? announced.excluded
+                    ? 'Excluded from budgets and reports.'
+                    : 'Included in budgets and reports again.'
+                  : ''}
           </p>
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}
           <TxnNotes t={t} whole={t} shared={shared} as="p" />
