@@ -437,6 +437,13 @@ describe('the Currency card', () => {
       <CurrencyCardBody load={load} busy={false} confirm={null} error={null} onChoose={noop} onConfirm={noop} onStop={noop} onRepair={noop} onRemove={noop} onEdit={noop} onRateFor={noop} {...over} />
     );
 
+  test('while it loads: its lines as placeholders, said once, never "Loading…"', () => {
+    const html = card({ kind: 'loading' });
+    expect(html).not.toContain('Loading…');
+    expect(html.match(/class="skeleton lines-skeleton-/g)).toHaveLength(2);
+    expect(html).toContain('<p class="visually-hidden" role="status">Loading your currency settings</p>');
+  });
+
   test('without a home currency: what Nya does now, and the way to choose one', () => {
     const html = card(ready({}));
     expect(text(html)).toContain('adds your net worth up in the currency most of your accounts are in, unconverted');

@@ -260,7 +260,8 @@ export default function DataInventory() {
 
   return (
     <main className="wrap report-wrap">
-      <PageHeader />
+      {/* Back to Settings > Your data, where it is opened from (lib/dashboard-tab.ts). */}
+      <PageHeader back="/?settings=data" />
       <h1>Your data</h1>
       <p className="sub">
         Every kind of thing Nya keeps about you: how much of it there is, whether it is encrypted and with which key, whether it is in your download, how long it is

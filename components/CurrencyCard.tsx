@@ -19,6 +19,7 @@ import { rateDay } from './currency-text';
 import { formatRate } from '@/lib/format';
 import { rateTextError } from '@/lib/fx/rate-text';
 import type { OwnRate } from '@/lib/fx/rates';
+import { LinesSkeleton } from './LoadingSkeletons';
 
 type Props = {
   /** The person's accounts' currencies, most first. */
@@ -109,7 +110,8 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
         <div className="inst-name">Currency</div>
         {view && !view.problem && <div className="inst-total">{view.home ?? 'not converting'}</div>}
       </div>
-      {load.kind === 'loading' && <p className="panel-note">Loading…</p>}
+      {/* Its two lines still to come: the home currency, then the rates. */}
+      {load.kind === 'loading' && <LinesSkeleton status="Loading your currency settings" lines={2} />}
       {load.kind === 'error' && <div className="error">{load.message}</div>}
       {view?.problem ? (
         <>

@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { DEFAULT_WEEKDAY, SENDS_NOW_PER_DAY, WEEKDAY_NAMES, type Weekday, type WeeklySetting } from '@/lib/weekly-summary/settings';
 import { RUN_TEXT, nextDelivery, sameClock, timeOfDay } from '@/lib/weekly-summary/when';
+import { LinesSkeleton } from './LoadingSkeletons';
 
 export type Loaded =
   | { kind: 'loading' }
@@ -223,7 +224,13 @@ export function WeeklySummaryView({ loaded, clerk, onOpen }: { loaded: Loaded; c
         connections that need you and months that may be missing transactions. It never includes balances, amounts or account numbers: open Nya
         for those. It goes to {clerk ? 'the email address you sign in with, once it is verified' : 'the address this copy of Nya sends its notices to'}.
       </p>
-      {loaded.kind === 'loading' && <p className="panel-note">Loading…</p>}
+      {/* When it goes, then its button, still to come, each as tall as it will be. */}
+      {loaded.kind === 'loading' && (
+        <>
+          <LinesSkeleton status="Loading your weekly summary" lines={1} />
+          <span className="skeleton block weekly-summary-skeleton-button" aria-hidden="true" />
+        </>
+      )}
       {loaded.kind === 'error' && (
         <div className="error">
           {loaded.message}

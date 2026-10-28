@@ -1,9 +1,11 @@
 // components/AccountsSummary.tsx
 //
-// One line under the Accounts tab's bar: what is held and owed by kind
-// (components/account-groups.ts), with what it can't count said under it.
-// A total that is short says so in red, naming the institutions, as the
-// cards do; figures that are only last known say so in amber.
+// A card under the Accounts tab's bar: what is held and owed by kind
+// (components/account-groups.ts) as a stat strip
+// (docs/design/design-system.md#stat-strip), with what it can't count said
+// under the figures. A total that is short says so in red, naming the
+// institutions, as the cards do; figures that are only last known say so in
+// amber.
 
 import { joinNames } from '@/lib/month-coverage';
 import type { PageFx } from '@/lib/fx/view';
@@ -27,13 +29,15 @@ export default function AccountsSummary({
   // One kind would only repeat the cards' subtotals.
   if (s.groups.length < 2) return null;
   return (
-    <div className="accounts-summary stack tight">
-      {/* The role keeps a list styled without bullets read as one. */}
-      <ul className="accounts-summary-line" role="list" aria-label="Totals by kind">
+    <div className="card stack">
+      {/* The role keeps a list styled without bullets read as one. Up to five
+          kinds: two to a row on a phone, and a fifth (Other) starts a second
+          row on a wide screen too. */}
+      <ul className="stat-strip" role="list" aria-label="Totals by kind">
         {s.groups.map((g) => (
-          <li key={g.key}>
-            {g.label}{' '}
-            <span className="money">{g.mixed ? 'Mixed' : <Masked>{fmt(g.total, g.currency)}</Masked>}</span>
+          <li key={g.key} className="stat">
+            <span className="stat-label">{g.label}</span>
+            <span className="stat-value money">{g.mixed ? 'Mixed' : <Masked>{fmt(g.total, g.currency)}</Masked>}</span>
             {g.incomplete && <span className="badge neg">Incomplete</span>}
           </li>
         ))}
