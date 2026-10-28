@@ -134,6 +134,12 @@ describe('design guard: controls and states read without color', () => {
     ['.cal-dot.due {', 'border-radius: 1px', "the calendar's payment due dot is a square"],
     ['.brand-mark {', 'forced-color-adjust: none', "forced colors leaves the logo's mask as drawn"],
     ['.brand-mark {', 'color: var(--brand-mark)', "the logo's ink is --brand-mark"],
+    // Look and feel, step 5: the hero on the page.
+    ['.net-worth-hero .notice:not(.critical) {', 'border-color: var(--border-subtle)', 'a notice on the page keeps an edge'],
+    ['.net-worth-hero .total-value {', 'white-space: nowrap', "the hero's figure never wraps under a finger"],
+    ['.chart-svg.hero-chart {', 'margin-inline: calc(-1 * var(--sp-4))', "the hero's chart bleeds through the gutter"],
+    ['.chart-svg.hero-chart {', 'touch-action: pan-y', "the hero's chart still lets the page scroll"],
+    ['.plan-table-view summary {', 'line-height: var(--tap)', 'Show as a table is a 44px target'],
   ];
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);

@@ -7,11 +7,17 @@
 // and a foot row with when it was updated, History paused, and the chart
 // notes (components/TimelineNotes.tsx), which open in a sheet. It was a hero
 // card, an "Over time" card and a notes card. Every note keeps its words.
+//
+// Since the look and feel's step 5 it is Home's hero: on the page, not in a
+// card, its chart running edge to edge. Dragging across the chart moves the
+// figure to the day under the finger, and the change line's place says which
+// day (and whether it is an estimate) until the finger lifts.
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import { fmtAsOf, fmtDay, fmtInstantDay } from './accounts-format';
 import { CAUTION } from './ConnectionStatus';
+import { HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
 import { formatMoney, moneyRuns } from '@/lib/format';
 import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
@@ -110,21 +116,38 @@ export default function NetWorthCard({
   notesCount: number;
   onNotes: () => void;
 }) {
+  // The day a finger is on in the chart (components/hero-scrub.ts), or none.
+  const [reading, setReading] = useState<HeroReading | null>(null);
+  const shown = reading ? reading.value : worth;
   return (
-    <section className="card stack net-worth-card" aria-labelledby="net-worth-title">
+    <section className="stack net-worth-hero" aria-labelledby="net-worth-title">
       <div>
         {/* Focus lands here when the last Needs attention row goes. */}
         <h2 id="net-worth-title" className="total-label" tabIndex={-1}>
           Net worth
         </h2>
-        <div className={`total-value${worth < 0 ? ' negative' : ''}`}>
-          <HeroFigure worth={worth} currency={currency} />
+        <div className={`total-value${shown < 0 ? ' negative' : ''}`}>
+          <HeroFigure worth={shown} currency={currency} />
         </div>
-        {delta}
+        {/* The change line, about today; while a day is scrubbed, that day
+            in its place, the line keeping its height so the chart under the
+            finger never moves. */}
+        <div className={`hero-line${reading ? ' scrubbed' : ''}`}>
+          {delta}
+          {reading && (
+            <p className="hero-day">
+              {reading.day}
+              {reading.estimated ? ' · estimated' : ''}
+              {reading.note ? ` · ${reading.note}` : ''}
+            </p>
+          )}
+        </div>
       </div>
       <TotalCaveats items={caveats} />
 
-      <div>{chart}</div>
+      <HeroScrub.Provider value={setReading}>
+        <div>{chart}</div>
+      </HeroScrub.Provider>
       {pausedSince && (
         <Caution>
           No net-worth total has been saved since {fmtDay(pausedSince)}. A day is only saved when every institution refreshes

@@ -94,6 +94,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 /* Components */
 .app .card { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .app .card.flush { padding: 4px 0; gap: 0; }
+/* Home's hero (look and feel, step 5): on the page, its chart through the gutter to the edges. */
+.app .hero-page { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 6px; }
+.app .hero-page .chart { width: calc(100% + 28px); margin-inline: -14px; }
 .app .card-header { display: flex; align-items: center; gap: 8px; }
 .app .card.flush .card-header { padding: 8px 14px 4px; }
 .app .card-header h2 { font-family: var(--f-app-display); font-size: 15px; font-weight: 600; margin: 0; flex: 1; display: flex; align-items: center; gap: 6px; }
@@ -330,13 +333,13 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app aria-label="Home proposed">
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"><span class="dot"></span></span></div>
-            <div class="card">
+            <div class="hero-page">
               <div class="hero-label">Net worth</div>
               <div class="hero money">$1,275,289.77</div>
               <div class="small pos">▲ $21,406.12 (1.7%) past 30 days</div>
               <div class="notice crit"><svg><use href="#i-alert"/></svg><span>Chase needs reconnecting; its balances are from Oct 21. This total is short by 1 account.</span></div><div class="notice warn"><svg><use href="#i-alert"/></svg><span style="flex:1">2 notes: old exchange rates and accrued interest left out</span><svg><use href="#i-chev"/></svg></div>
+              <svg class="chart" viewBox="0 0 300 84" aria-hidden="true"><path class="area" d="M0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22 300,84 0,84Z"/><polyline class="line" points="0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22"/><circle class="marker" cx="120" cy="50" r="3.5"/><circle class="marker" cx="240" cy="34" r="3.5"/></svg>
               <div class="seg"><span>1M</span><span>3M</span><span class="on">6M</span><span>YTD</span><span>1Y</span><span>All</span></div>
-              <svg class="chart" viewBox="0 0 300 84" aria-hidden="true"><line class="grid" x1="0" y1="20" x2="300" y2="20"/><line class="grid" x1="0" y1="50" x2="300" y2="50"/><path class="area" d="M0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22 300,84 0,84Z"/><polyline class="line" points="0,66 40,62 80,64 120,50 160,48 200,40 240,34 300,22"/><circle class="marker" cx="120" cy="50" r="3.5"/><circle class="marker" cx="240" cy="34" r="3.5"/></svg>
               <div class="btn-row" style="justify-content:space-between"><span class="xs t3">Updated 9:14 AM</span><span class="badge warn">History paused</span><span class="why">Chart notes (2)</span></div>
             </div>
             <div class="card flush">

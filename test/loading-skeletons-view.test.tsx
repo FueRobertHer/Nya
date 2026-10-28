@@ -31,11 +31,20 @@ describe('Home while it loads', () => {
   const html = renderToStaticMarkup(<HomeSkeleton />);
 
   test('the Net worth card, busy, its title in words and its figures as placeholders', () => {
-    expect(html).toContain('<section class="card stack net-worth-card" aria-busy="true" aria-labelledby="net-worth-loading">');
+    expect(html).toContain('<section class="stack net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">');
     expect(html).toContain('<h2 id="net-worth-loading" class="total-label">Net worth</h2>');
     expect(html).toContain('<p class="visually-hidden" role="status">Loading</p>');
     // No figure, and nothing a screen reader reads but the title and the status.
     expect(text(html)).toBe('Net worth Loading');
+  });
+
+  // Look and feel, step 5: the hero's shape, so the first load moves nothing:
+  // on the page, the change line's place, and Show as a table's line under
+  // the range switch.
+  test('the hero’s shape: no card, the change line’s place, and the table’s line', () => {
+    expect(html).not.toMatch(/class="[^"]*\bcard\b/);
+    expect(html).toContain('<div class="hero-line" aria-hidden="true"><div class="hero-delta">');
+    expect(html).toMatch(/chart-range-switch[\s\S]*<div class="plan-table-view"><div class="home-skeleton-table-line">/);
   });
 
   test('drawn on the classes of the card and chart it stands for, so it is as tall as they are', () => {
@@ -47,7 +56,7 @@ describe('Home while it loads', () => {
           currency="USD"
           delta={<div className="hero-delta up">up</div>}
           caveats={[]}
-          chart={<NetWorthChart points={points} />}
+          chart={<NetWorthChart hero points={points} />}
           pausedSince={null}
           notesProblem={null}
           backupProblem={null}

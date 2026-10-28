@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthChart from '@/components/NetWorthChart';
+import { DrawnWidth, MIN_LABEL_GAP, labelWidth } from '@/components/drawn-width';
 
 type P = { date: string; value: number; estimated?: boolean };
 
@@ -305,5 +306,63 @@ describe('NetWorthChart time ranges', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={year} />);
     const labels = [...html.matchAll(/class="chart-xlabel"[^>]*>([^<]*)</g)].map((m) => m[1]);
     expect(labels).toEqual(['May', 'Jul', 'Sep']);
+  });
+});
+
+// Home's hero (look and feel, step 5): edge to edge, drawn at its own width,
+// no gridlines and no money on its plot, its months spaced by their widths.
+// A chart elsewhere (an account's) is drawn as before.
+describe('NetWorthChart as the hero', () => {
+  function daily(first: string, last: string, start = 100) {
+    const out: P[] = [];
+    for (let t = Date.parse(`${first}T00:00:00Z`); t <= Date.parse(`${last}T00:00:00Z`); t += 86_400_000) {
+      out.push({ date: new Date(t).toISOString().slice(0, 10), value: start + out.length });
+    }
+    return out;
+  }
+  const year = daily('2025-08-03', '2026-09-24');
+  const at = (width: number, node: React.ReactNode) => renderToStaticMarkup(<DrawnWidth.Provider value={width}>{node}</DrawnWidth.Provider>);
+
+  test('drawn at its width, with no gridline and no money tick on the plot', () => {
+    const html = at(352, <NetWorthChart hero points={year} />);
+    expect(html).toContain('class="chart-svg hero-chart"');
+    expect(html).toContain('viewBox="0 0 352 140"');
+    expect(html).not.toContain('chart-tick');
+    expect(html).not.toContain('stroke="var(--border-subtle)"');
+    // Its wash, and the today dot ringed in the page it stands on.
+    expect(html).toContain('opacity="0.12"');
+    expect(html).toMatch(/<circle [^>]*stroke="var\(--canvas\)"/);
+  });
+
+  test('its months keep inside the gutter and never overlap, at a phone’s width and a wide one', () => {
+    for (const width of [352, 760]) {
+      const html = at(width, <NetWorthChart hero points={year} />);
+      const labels = [...html.matchAll(/<text class="chart-xlabel" x="([\d.]+)"[^>]*text-anchor="(start|middle|end)"[^>]*>([^<]*)</g)].map((m) => {
+        const x = Number(m[1]);
+        const w = labelWidth(m[3]);
+        const from = m[2] === 'start' ? x : m[2] === 'end' ? x - w : x - w / 2;
+        return [from, from + w] as const;
+      });
+      expect(labels.length).toBeGreaterThanOrEqual(2);
+      for (const [from, to] of labels) {
+        expect(from).toBeGreaterThanOrEqual(16);
+        expect(to).toBeLessThanOrEqual(width - 16);
+      }
+      for (let i = 1; i < labels.length; i++) expect(labels[i][0] - labels[i - 1][1]).toBeGreaterThanOrEqual(MIN_LABEL_GAP);
+    }
+  });
+
+  test('every point is behind Show as a table, rendered only once it is opened', () => {
+    const html = at(352, <NetWorthChart hero points={year} />);
+    expect(html).toContain('<summary>Show as a table</summary>');
+    expect(html).not.toContain('<table>');
+  });
+
+  test('an account’s chart keeps its card look: its viewBox, gridlines and ticks, and no table', () => {
+    const html = at(352, <NetWorthChart points={year} />);
+    expect(html).toContain('class="chart-svg"');
+    expect(html).toContain('viewBox="0 0 340 150"');
+    expect(html).toContain('chart-tick');
+    expect(html).not.toContain('Show as a table');
   });
 });
