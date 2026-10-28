@@ -258,6 +258,42 @@ describe('the hero, scrubbed', () => {
     expect(hidden[0]).toContain(MASK);
   });
 
+  // The screen review: every net worth chart has the table, an account's too.
+  test('an account’s chart has Show as a table too, opened on demand, amounts masked when hidden', () => {
+    const open = (v: ReturnType<typeof mount>) => {
+      const details = v.host.findAll((e) => e.tagName.toLowerCase() === 'details')[0];
+      expect(details.findAll((e) => e.tagName.toLowerCase() === 'tr')).toHaveLength(0);
+      act(() => {
+        (details as unknown as { open: boolean }).open = true;
+        details.dispatchEvent(new FakeEvent('toggle', false));
+      });
+      return details.findAll((e) => e.tagName.toLowerCase() === 'tr').slice(1).map((r) => r.textContent);
+    };
+    const rows = open(mount(<NetWorthChart points={POINTS} label="Balance" currency="USD" />));
+    expect(rows).toHaveLength(10);
+    expect(rows[0]).toBe(`Oct 10${money(POINTS[9].value)}`);
+    expect(rows[7]).toBe(`Oct 3 · estimated${money(POINTS[2].value)}`);
+    const plain = money(POINTS[9].value);
+    setAmountsHidden(true);
+    const hidden = open(mount(<NetWorthChart points={POINTS} label="Balance" currency="USD" />));
+    expect(hidden[0]).not.toContain(plain);
+    expect(hidden[0]).toContain(MASK);
+  });
+
+  // Every day estimated but today, as a demo's history is: the line is solid,
+  // the readout says "estimated" once for the range, and a scrubbed day keeps
+  // its own word in the change line's place.
+  test('a history estimated throughout: the readout says so once, and a scrubbed day still says it', () => {
+    const estimated = POINTS.map((p, i) => (i < 9 ? { ...p, estimated: true } : { date: p.date, value: p.value }));
+    const v = mount(card(<NetWorthChart hero points={estimated} currency="USD" />));
+    const date = () => v.host.findAll((e) => e.getAttribute('class') === 'chart-readout-date')[0].textContent;
+    expect(date().match(/estimated/g)).toHaveLength(1);
+    expect(date()).toMatch(/ · estimated$/);
+    v.scrub(4);
+    expect(v.day()).toBe('Oct 5 · estimated');
+    expect(date().match(/estimated/g)).toHaveLength(1);
+  });
+
   test('a chart that isn’t the hero never moves the figure', () => {
     const v = mount(card(<NetWorthChart points={POINTS} currency="USD" />));
     v.scrub(4);

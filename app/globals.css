@@ -1950,14 +1950,15 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 /* Holds a chart's place while its history loads, about as tall as the chart:
-   the readout, the split line and the range buttons (about 110px) plus the plot,
-   which is 150/340 of the width. Sized from the box's own width so it fits a
-   phone and a desktop card alike, and the chart arriving moves nothing. */
+   the readout, the split line and the range buttons (about 110px), Show as a
+   table's 44px line, and the plot, which is 150/340 of the width. Sized from
+   the box's own width so it fits a phone and a desktop card alike, and the
+   chart arriving moves nothing. */
 .chart-loading {
   container-type: inline-size;
 }
 .chart-loading-box {
-  min-height: calc(110px + 44.1cqw);
+  min-height: calc(110px + var(--tap) + 44.1cqw);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1997,6 +1998,13 @@ button:disabled:where(:not([class*="cl-"])) {
 .chart-xlabel {
   fill: var(--muted);
   font-size: 10px;
+}
+
+/* A rule's name in words at its left end, inside the plot (the cash
+   forecast's Zero and Warning): the plot carries no amounts. */
+.chart-rule-label {
+  fill: var(--text-2);
+  font-size: var(--fs-1);
 }
 
 /* A chart drawn at its own width (components/drawn-width.ts) has a viewBox
@@ -3420,8 +3428,9 @@ button.danger-outline {
   border-radius: 5px;
 }
 
-/* Upcoming's Cash forecast and a Plan segment's chart, at the card net
-   worth chart's proportions (components/NetWorthChart.tsx, CARD). */
+/* Upcoming's Cash forecast and a Plan segment's chart, in the shape the
+   charts draw at (150 to 340, components/NetWorthChart.tsx's cardFrame and
+   components/ForecastChart.tsx). */
 .upcoming-skeleton-chart,
 .plan-skeleton-chart {
   width: 100%;
@@ -4286,14 +4295,24 @@ button.plan-edit:disabled {
   font-size: 12px;
 }
 
-/* The grid: figures centred in single-hue cells two pixels apart (the
-   surface gap), the plan's own outlined. It runs to the card's edges, as
-   the calendar's days do (6d): at 320px six columns inside the card's
-   padding are 39px, too narrow for a column head at 12px. */
+/* What the rows are (the cash forecast's "every day after now is an
+   estimate"), set as the table's first line. */
+.plan-table-view caption {
+  padding: 4px;
+  text-align: start;
+  caption-side: top;
+}
+
+/* The grid: figures centred in neutral cells two pixels apart (the surface
+   gap), the plan's own outlined. It runs into the card's padding to 8px
+   from its border on either side (since the screen review: at the border
+   itself the last column's cells met the card's edge): at 320px six
+   columns inside the padding would be 39px, too narrow for a column head
+   at 12px, and are about 42px here. */
 .plan-grid {
   margin-top: 10px;
-  margin-inline: calc(-1 * var(--sp-5));
-  width: calc(100% + 2 * var(--sp-5));
+  margin-inline: calc(var(--sp-2) - var(--sp-5));
+  width: calc(100% + 2 * (var(--sp-5) - var(--sp-2)));
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 2px;
@@ -4324,8 +4343,9 @@ button.plan-edit:disabled {
 /* A flexible rule's second figure in a cell: the lowest year's spending,
    "low 85%", which wraps after "low" where a cell is narrower than its
    46px (a 320px phone). */
-/* --text-1, as text-2 is short of 4.5:1 on the strongest cells (up to 46%
-   --accent); its size and weight keep it secondary. */
+/* --text-1, the cell's own figure's color, which is 10:1 or more on the
+   strongest cell (--border-strong) in both themes; its size and weight keep
+   it secondary. */
 .plan-grid-low {
   display: block;
   white-space: normal;
@@ -4340,6 +4360,18 @@ button.plan-edit:disabled {
   border-radius: 6px;
 }
 
+/* Shaded by success, from --elevated at 50% or less to --border-strong at
+   100% (--shade, set on the cell): a neutral ramp, since brass behind a
+   figure is ruled out (the screen review). Its ends are about 1.3:1 apart,
+   a cue only: the figures carry the value. Text passes 4.5:1 on the
+   strongest cell in both themes, which the guard checks. A cell still being
+   worked out, or one that couldn't be, has no fill. */
+.plan-grid td.plan-grid-cell.scored {
+  background: color-mix(in srgb, var(--border-strong) var(--shade), var(--elevated));
+}
+
+/* The plan's own cell: the only brass in the grid, an outline (3:1 or more
+   on the strongest cell). */
 .plan-grid td.plan-grid-cell.own {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -4753,6 +4785,15 @@ button.plan-edit:disabled {
 /* List or Calendar: two short words, capped as the mockup draws it. */
 .upcoming-views {
   max-width: 180px;
+}
+
+/* Activity > Spending's period (1M, 3M, 12M, YTD), as the switch and as its
+   placeholder: held to the width its four items need, so it reads as a
+   control on the segment rather than a second row of tabs under the bar's,
+   and spaced from the bar and the card under it as the chips were. */
+.spending-period {
+  max-width: 240px;
+  margin: var(--sp-2) 0 var(--sp-3);
 }
 
 /* Recurring's Bills and Income: a quiet heading over each kind's rows, nearer

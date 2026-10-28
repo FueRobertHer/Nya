@@ -15,10 +15,17 @@
 // (components/drawn-width.ts), in the shape it has always had, so its text is
 // the 12px it says on a phone and on a wide card; the card's chart and the
 // what-if sheet's each measure their own.
+//
+// No gridlines and no money on the plot (the screen review after step 5, as
+// every net worth chart): the readout says the lowest point or the day under
+// the finger, the label says where it starts, ends and dips, and every day
+// is behind "Show as a table". Zero and the warning are named in words at
+// their left end, never with an amount (the card's Warns below row says it).
+// The line stays dashed: a forecast is all estimate, and says so.
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import type { Forecast } from '@/lib/forecast';
-import { compactMoney, formatMoney, signedMoney, spoken } from '@/lib/format';
+import { formatMoney, signedMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { LegendLine } from './LegendLine';
@@ -27,8 +34,8 @@ import { LegendLine } from './LegendLine';
 const ASPECT = 150 / FALLBACK_WIDTH;
 const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
-// Room over the top tick for its 12px figure.
-const PAD_TOP = 14;
+// Room over the line's top for its dot's ring.
+const PAD_TOP = 8;
 // Room under the baseline for the 12px dates.
 const PAD_BOTTOM = 24;
 // The forecast in brass dashes; a what-if in --text-2 dots, by dash as well
@@ -36,33 +43,10 @@ const PAD_BOTTOM = 24;
 // lengthen each dash by the stroke's width, so "0 4" draws dots.
 const MAIN = { color: 'var(--accent)', dash: '5 4' };
 const ALT = { color: 'var(--text-2)', dash: '0 4' };
-
-// Neighbouring gridlines are at least this far apart, in CSS pixels (a
-// viewBox unit at the chart's width): each has its 12px figure over it, the
-// figure's baseline 3 above the line, with room left under the line above.
-const MIN_TICK_GAP = 20;
-
-// 2-3 clean tick values (1/2/5 x 10^n steps) inside [min, max], on a plot
-// `height` tall. Where they would be closer than MIN_TICK_GAP (a phone's
-// short plot), the step goes on up the same sequence until they aren't.
-function niceTicks(min: number, max: number, height: number): number[] {
-  const span = max - min || 1;
-  const rough = span / 2.5;
-  let mag = Math.pow(10, Math.floor(Math.log10(rough)));
-  const norm = rough / mag;
-  let lead = norm >= 5 ? 5 : norm >= 2 ? 2 : 1;
-  // 1 to 2, 2 to 5, 5 to 10.
-  while (height > 0 && ((lead * mag) / span) * height < MIN_TICK_GAP) {
-    if (lead === 5) mag *= 10;
-    lead = lead === 1 ? 2 : lead === 2 ? 5 : 1;
-  }
-  const step = lead * mag;
-  const out: number[] = [];
-  // `|| 0`: an axis starting just under zero starts at Math.ceil(-0.8), which
-  // is -0, and would be labelled "-$0".
-  for (let v = Math.ceil(min / step) * step || 0; v <= max + 1e-9; v += step) out.push(v);
-  return out;
-}
+/** A rule's name sits this far over it (its baseline), or under it by its
+ *  12px height and as much again where there is no room over it. */
+const RULE_LABEL_GAP = 4;
+const RULE_LABEL_HEIGHT = 12;
 
 export function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -118,19 +102,36 @@ export default function ForecastChart({
     const x = (u: number) => PAD_LEFT + (n <= 0 ? 0 : (u / n) * plotW);
     const y = (v: number) => PAD_TOP + (1 - (v - bottom) / (top - bottom)) * plotH;
     const path = (f: Forecast) => points(f).map((v, k) => `${k === 0 ? 'M' : 'L'}${x(at(k)).toFixed(1)},${y(v).toFixed(1)}`).join('');
+    // Each rule drawn is named at its left end: over it, unless that would
+    // leave the plot's top, then under it. The warning's rule is above
+    // zero's, so its name goes over and zero's under when the two are too
+    // close for both over.
+    const rules: { y: number; name: string }[] = [];
+    if (showThreshold) rules.push({ y: y(threshold), name: 'Warning' });
+    if (showZero) rules.push({ y: y(0), name: 'Zero' });
+    const crowded = rules.length === 2 && rules[1].y - rules[0].y < RULE_LABEL_HEIGHT + RULE_LABEL_GAP * 2;
+    const ruleLabels = rules.map((r, k) => {
+      const over = r.y - RULE_LABEL_GAP;
+      const under = r.y + RULE_LABEL_GAP + RULE_LABEL_HEIGHT;
+      const roomOver = over - RULE_LABEL_HEIGHT >= 0;
+      const below = (crowded && k === 1) || !roomOver;
+      return { name: r.name, y: below && under <= H - PAD_BOTTOM ? under : over };
+    });
     return {
       x,
       y,
       plotW,
-      ticks: niceTicks(bottom, top, plotH),
       main: path(forecast),
       alt: whatIf ? path(whatIf) : null,
       showZero,
       showThreshold,
+      ruleLabels,
     };
   }, [forecast, whatIf, threshold, W, H]);
 
-  const { x, y, plotW, ticks, main, alt, showZero, showThreshold } = geo;
+  const { x, y, plotW, main, alt, showZero, showThreshold, ruleLabels } = geo;
+  // The table renders its rows only while it is open.
+  const [tableOpen, setTableOpen] = useState(false);
   const shown = whatIf ?? forecast;
   const shownLow = shown.lowest;
   const today = forecast.days[0].date;
@@ -209,30 +210,28 @@ export default function ForecastChart({
         onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(t)} y2={y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
-            <text className="chart-tick" x={PAD_LEFT} y={y(t) - 3}>
-              {compactMoney(t, currency)}
-            </text>
-          </g>
-        ))}
         {showZero && <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(0)} y2={y(0)} stroke="var(--down)" strokeOpacity={0.6} strokeWidth={1} />}
         {showThreshold && (
           <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(threshold)} y2={y(threshold)} stroke="var(--warn)" strokeOpacity={0.6} strokeWidth={1} strokeDasharray="2 3" />
         )}
+        {/* Each rule named in words at its left end, never an amount. */}
+        {ruleLabels.map((r) => (
+          <text key={r.name} className="chart-rule-label" x={PAD_LEFT} y={r.y}>
+            {r.name}
+          </text>
+        ))}
 
         <path d={main} fill="none" stroke={MAIN.color} strokeWidth={2} strokeDasharray={MAIN.dash} strokeLinejoin="round" strokeLinecap="round" />
         {alt && <path d={alt} fill="none" stroke={ALT.color} strokeWidth={2} strokeDasharray={ALT.dash} strokeLinejoin="round" strokeLinecap="round" />}
 
         {(lowNow || lowDay >= 0) && (
-          <circle cx={x(lowAt)} cy={y(shownLow.balance)} r={4} fill={tone(shownLow.balance) ?? (whatIf ? ALT : MAIN).color} stroke="var(--card)" strokeWidth={2} />
+          <circle cx={x(lowAt)} cy={y(shownLow.balance)} r={4} fill={tone(shownLow.balance) ?? (whatIf ? ALT : MAIN).color} stroke="var(--surface)" strokeWidth={2} />
         )}
         {i !== null && value !== null && (
           <>
             <line x1={x(i)} x2={x(i)} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-strong)" strokeWidth={1} />
-            <circle cx={x(i)} cy={y(value)} r={4} fill={MAIN.color} stroke="var(--card)" strokeWidth={2} />
-            {altValue !== null && <circle cx={x(i)} cy={y(altValue)} r={4} fill={ALT.color} stroke="var(--card)" strokeWidth={2} />}
+            <circle cx={x(i)} cy={y(value)} r={4} fill={MAIN.color} stroke="var(--surface)" strokeWidth={2} />
+            {altValue !== null && <circle cx={x(i)} cy={y(altValue)} r={4} fill={ALT.color} stroke="var(--surface)" strokeWidth={2} />}
           </>
         )}
 
@@ -263,6 +262,60 @@ export default function ForecastChart({
               : 'Slide along the line to read a day'}
         </Masked>
       </div>
+
+      {/* The plot has no money on it: every day, for anyone who can't read
+          the line. Its low (once the day's money out is counted, as the
+          readout's lowest is) and its end; under a what-if, the line with the
+          purchase and each day's end without it, as the readout gives them.
+          Rows render only while it is open, and through Masked each time. */}
+      <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
+        <summary>Show as a table</summary>
+        {tableOpen && (
+          <table>
+            <caption>{whatIf ? 'With the purchase, and each day’s end without it. ' : ''}Every day after now is an estimate.</caption>
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="num">Low</th>
+                <th className="num">End of day</th>
+                {whatIf && <th className="num">Without it</th>}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Now</td>
+                <td className="num">
+                  <Masked>{formatMoney(shown.start, currency)}</Masked>
+                </td>
+                <td className="num">
+                  <Masked>{formatMoney(shown.start, currency)}</Masked>
+                </td>
+                {whatIf && (
+                  <td className="num">
+                    <Masked>{formatMoney(forecast.start, currency)}</Masked>
+                  </td>
+                )}
+              </tr>
+              {shown.days.map((d, k) => (
+                <tr key={d.date}>
+                  <td>{fmtDay(d.date)}</td>
+                  <td className="num">
+                    <Masked>{formatMoney(d.low, currency)}</Masked>
+                  </td>
+                  <td className="num">
+                    <Masked>{formatMoney(d.balance, currency)}</Masked>
+                  </td>
+                  {whatIf && (
+                    <td className="num">
+                      <Masked>{formatMoney(forecast.days[k].balance, currency)}</Masked>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </details>
     </div>
   );
 }

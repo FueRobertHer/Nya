@@ -63,6 +63,7 @@ const { default: CashFlowSankey } = await import('@/components/CashFlowSankey');
 const { default: ForecastChart, fmtDay } = await import('@/components/ForecastChart');
 const { NO_INPUTS, PayoffPanel, monthLabel } = await import('@/components/DebtPayoff');
 const { buildForecast, withPurchase } = await import('@/lib/forecast');
+const { formatMoney, MASK, setAmountsHidden } = await import('@/lib/format');
 const { addMonths } = await import('@/lib/payoff');
 const { localMonth } = await import('@/lib/local-date');
 type Txn = import('@/components/MonthBreakdown').Txn;
@@ -134,8 +135,10 @@ const CHASE: DebtInstitutionInput = { institution_name: 'Chase', liabilities: 'o
 const payoff = (institution: DebtInstitutionInput) => <PayoffPanel institutions={[institution]} inputs={NO_INPUTS} onChange={() => {}} startMonth={START} />;
 
 /** Budgets' two charts, each with its shape (its height to 340 wide), what
- *  its readout says with a finger mid-chart on a 248-wide one, and the lines
- *  across its plot besides the gridlines. */
+ *  its readout says with a finger mid-chart on a 248-wide one, where its
+ *  plot starts under the chart's top, and the rules across its plot (the
+ *  forecast has no gridlines since the screen review; the payoff plan's are
+ *  drawn besides). */
 const CHARTS = [
   {
     name: 'the forecast',
@@ -144,6 +147,8 @@ const CHARTS = [
     // 124 of 248 is 116 of its 230 units of plot: the end of the day 15 days
     // on. Read as 170 of 340, the same finger would be 21 days on.
     mid: `end of ${fmtDay('2026-10-24')}, estimated`,
+    // 8 under its top: room for a dot's ring, no top tick's figure to clear.
+    top: 8,
     // The low-balance warning, which the line comes near.
     rules: ['var(--warn)'],
   },
@@ -153,6 +158,8 @@ const CHARTS = [
     shape: 140,
     // The same 116 of 230: month 28 of 56. Read as 170 of 340, month 39.
     mid: `owed in ${monthLabel(addMonths(START, 28))}`,
+    // 14 under its top, for its top tick's figure.
+    top: 14,
     rules: [],
   },
 ];
@@ -279,9 +286,9 @@ describe('a chart drawn at its width', () => {
       v.point(124);
       expect(v.readout()).toEqual([c.mid]);
       expect(v.readout()).not.toEqual(atRest);
-      // The crosshair runs the plot's height: 14 under the chart's top, for
-      // the top tick's figure, to 24 over its bottom, for the dates.
-      expect(v.crosshair()).toEqual([['14', String(Math.round((248 * c.shape) / 340) - 24)]]);
+      // The crosshair runs the plot's height: from its top (see CHARTS) to 24
+      // over the chart's bottom, for the dates.
+      expect(v.crosshair()).toEqual([[String(c.top), String(Math.round((248 * c.shape) / 340) - 24)]]);
       v.unmount();
     });
 
@@ -332,41 +339,122 @@ describe('a chart drawn at its width', () => {
     expect(html).toMatch(/<path[^>]*stroke="var\(--text-2\)"[^>]*stroke-dasharray="0 4"/);
     expect(html).not.toMatch(/<path[^>]*stroke="var\(--warn\)"/);
     const samples = [...html.matchAll(/<svg class="chart-legend-line"[^>]*><line[^>]*stroke="([^"]+)"[^>]*stroke-dasharray="([^"]+)"/g)].map((m) => [m[1], m[2]]);
+    // The legend is the two lines' alone: the warning's rule is named on
+    // the plot, at its left end (the screen review), not as a third entry.
     expect(samples).toEqual([
       ['var(--accent)', '5 4'],
       ['var(--text-2)', '0 4'],
     ]);
+    expect(html).toContain('<text class="chart-rule-label" x="8"');
     // Its low point sits on the what-if line, so it takes that line's color
-    // while it is above the warning (a threshold of 0 keeps it there).
+    // while it is above the warning (a threshold of 0 keeps it there), ringed
+    // in the card it stands on.
     const calm = renderToStaticMarkup(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={0} />);
-    expect(calm).toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--text-2\)"/);
+    expect(calm).toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--text-2\)"[^>]*stroke="var\(--surface\)"/);
     expect(calm).not.toMatch(/<circle[^>]*r="4"[^>]*fill="var\(--accent\)"/);
   });
 
-  test('on a phone their gridlines are 20 or more apart, and a wide card keeps each one the 1, 2, 5 rule gives', () => {
+  // The screen review: the forecast's "$125K" sat on its line. It has no
+  // gridlines and no money on its plot at any width, and names its rules in
+  // words; the payoff plan keeps its gridlines, 20 or more apart on a phone
+  // and each one the 1, 2, 5 rule gives on a wide card.
+  test('the forecast has no gridlines or money ticks at any width; the payoff plan keeps its gridlines, spaced', () => {
+    setObserver(true);
+    laidOut = 248;
+    const f = mount(CHARTS[0].node());
+    expect([f.gridlines(), f.ticks()]).toEqual([[], []]);
+    f.resize(600);
+    expect([f.gridlines(), f.ticks()]).toEqual([[], []]);
+    f.unmount();
+
     const big: DebtInstitutionInput = {
       ...CHASE,
       accounts: [{ ...SAPPHIRE, balance: 11_550, liability: { kind: 'credit', apr: 21.24, apr_label: 'Purchase APR', minimum_payment: 300 } }],
     };
-    const cases = [
-      // A span the rule steps in 500s: five lines, 15 apart at 248.
-      { name: 'the forecast', node: CHARTS[0].node, wide: ['$1K', '$1.5K', '$2K', '$2.5K', '$3K'] },
-      // A peak of $11,550, which it steps in 2Ks: seven lines, 10 apart at 248.
-      { name: 'the payoff plan', node: () => payoff(big), wide: ['$0', '$2K', '$4K', '$6K', '$8K', '$10K', '$12K'] },
-    ];
-    for (const c of cases) {
-      setObserver(true);
-      laidOut = 248;
-      const v = mount(c.node());
-      const apart = () => v.gridlines().flatMap((y, k, all) => (k === 0 ? [] : [y - all[k - 1]]));
-      const narrow = v.ticks();
-      expect([c.name, narrow.length >= 2]).toEqual([c.name, true]);
-      expect([c.name, apart().filter((gap) => gap < 20)]).toEqual([c.name, []]);
-      v.resize(600);
-      expect([c.name, v.ticks()]).toEqual([c.name, c.wide]);
-      expect(c.wide.length).toBeGreaterThanOrEqual(narrow.length);
-      expect([c.name, apart().filter((gap) => gap < 20)]).toEqual([c.name, []]);
+    // A peak of $11,550, which it steps in 2Ks: seven lines, 10 apart at 248.
+    const wide = ['$0', '$2K', '$4K', '$6K', '$8K', '$10K', '$12K'];
+    laidOut = 248;
+    const v = mount(payoff(big));
+    const apart = () => v.gridlines().flatMap((y, k, all) => (k === 0 ? [] : [y - all[k - 1]]));
+    const narrow = v.ticks();
+    expect(narrow.length).toBeGreaterThanOrEqual(2);
+    expect(apart().filter((gap) => gap < 20)).toEqual([]);
+    v.resize(600);
+    expect(v.ticks()).toEqual(wide);
+    expect(wide.length).toBeGreaterThanOrEqual(narrow.length);
+    expect(apart().filter((gap) => gap < 20)).toEqual([]);
+    v.unmount();
+  });
+
+  // Zero and the warning, named at their left end in words (no amount), each
+  // inside the plot and clear of the other in a card on a 320px phone (246
+  // wide): a balance that goes below zero, with the warning at $100 just over it.
+  test('the forecast names its rules at their left end, inside the plot, clear of each other at 320px', () => {
+    setObserver(true);
+    laidOut = 246;
+    const low = buildForecast(400, EVENTS, TODAY, 30, 0, 'USD');
+    const v = mount(<ForecastChart forecast={low} currency="USD" threshold={100} />);
+    const H = Math.round((246 * 150) / 340);
+    const names = v.svg()!.findAll((e) => e.getAttribute('class') === 'chart-rule-label').map((e) => [e.textContent, e.getAttribute('x'), Number(e.getAttribute('y'))] as const);
+    expect(names.map(([n, x]) => [n, x])).toEqual([
+      ['Warning', '8'],
+      ['Zero', '8'],
+    ]);
+    const [warning, zero] = names.map(([, , y]) => y);
+    // A 12px name's top is 12 over its baseline.
+    for (const y of [warning, zero]) {
+      expect(y - 12).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(H - 24);
+    }
+    expect(zero - warning).toBeGreaterThanOrEqual(12);
+    // Words only: no amount on the plot.
+    expect(v.svg()!.textContent).not.toMatch(/\$/);
+    v.unmount();
+  });
+
+  // With no money on the plot, every day is in a table: rendered once opened,
+  // each day's low (as the readout's lowest is) and its end, masked under
+  // hidden amounts; under a what-if, the line with the purchase and each
+  // day's end without it, as the readout gives them.
+  test('the forecast’s Show as a table: rows once opened, low and end, masked when hidden, and a column without the purchase', () => {
+    setObserver(false);
+    laidOut = 0;
+    const open = (node: React.ReactNode) => {
+      const v = mount(node);
+      const details = v.host.findAll((e) => e.tagName.toLowerCase() === 'details')[0];
+      expect(details.findAll((e) => e.tagName.toLowerCase() === 'tr')).toHaveLength(0);
+      act(() => {
+        (details as unknown as { open: boolean }).open = true;
+        details.dispatchEvent(new FakeEvent('toggle', false));
+      });
+      const rows = details.findAll((e) => e.tagName.toLowerCase() === 'tr').map((r) => r.findAll((e) => /^t[hd]$/.test(e.tagName.toLowerCase())).map((c) => c.textContent));
+      const caption = details.findAll((e) => e.tagName.toLowerCase() === 'caption')[0]?.textContent;
       v.unmount();
+      return { rows, caption };
+    };
+    const usd = (n: number) => formatMoney(n, 'USD');
+    const plain = open(<ForecastChart forecast={FORECAST} currency="USD" threshold={1000} />);
+    expect(plain.caption).toBe('Every day after now is an estimate.');
+    expect(plain.rows[0]).toEqual(['Day', 'Low', 'End of day']);
+    expect(plain.rows[1]).toEqual(['Now', usd(2400), usd(2400)]);
+    // Rent on the 15th: the day's low and its end.
+    const rent = FORECAST.days.findIndex((d) => d.date === '2026-10-15');
+    expect(plain.rows[rent + 2]).toEqual([fmtDay('2026-10-15'), usd(FORECAST.days[rent].low), usd(FORECAST.days[rent].balance)]);
+    expect(plain.rows).toHaveLength(FORECAST.days.length + 2);
+
+    const alt = open(<ForecastChart forecast={FORECAST} whatIf={WHAT_IF} currency="USD" threshold={1000} />);
+    expect(alt.caption).toBe('With the purchase, and each day’s end without it. Every day after now is an estimate.');
+    expect(alt.rows[0]).toEqual(['Day', 'Low', 'End of day', 'Without it']);
+    expect(alt.rows[rent + 2]).toEqual([fmtDay('2026-10-15'), usd(WHAT_IF.days[rent].low), usd(WHAT_IF.days[rent].balance), usd(FORECAST.days[rent].balance)]);
+
+    const shown = usd(2400);
+    setAmountsHidden(true);
+    try {
+      const hidden = open(<ForecastChart forecast={FORECAST} currency="USD" threshold={1000} />);
+      expect(hidden.rows[1][2]).not.toBe(shown);
+      expect(hidden.rows[1][2]).toContain(MASK);
+    } finally {
+      setAmountsHidden(false);
     }
   });
 

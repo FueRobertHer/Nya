@@ -20,8 +20,10 @@ export function Segmented<T extends string | number>({
   tabs,
   className,
 }: {
-  /** Each item's value and its words. */
-  options: readonly (readonly [T, string])[];
+  /** Each item's value and its words, and, where the words are short (a
+   *  period's "YTD"), its name for a screen reader, which starts with them
+   *  so speech input can say what it sees ("YTD, year to date"). */
+  options: readonly (readonly [T, string] | readonly [T, string, string])[];
   value: T;
   onChange: (v: T) => void;
   /** What the group is, for a screen reader. */
@@ -56,7 +58,7 @@ export function Segmented<T extends string | number>({
       aria-label={label}
       onKeyDown={onKeyDown}
     >
-      {options.map(([v, text], i) => (
+      {options.map(([v, text, name], i) => (
         <button
           key={String(v)}
           ref={(el) => {
@@ -68,6 +70,7 @@ export function Segmented<T extends string | number>({
           aria-controls={tabs?.panel}
           aria-selected={tabs ? v === value : undefined}
           aria-checked={tabs ? undefined : v === value}
+          aria-label={name}
           // The chosen item takes the tab stop; with none chosen, the first.
           tabIndex={v === value || (at < 0 && i === 0) ? 0 : -1}
           disabled={disabled}
