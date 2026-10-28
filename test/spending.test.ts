@@ -252,15 +252,15 @@ describe('the Activity tab', () => {
   test('offers to add a transaction only when there is a manual account to add to, empty or not', () => {
     const render = (txns: Txn[], onAddTransaction?: () => void) =>
       renderToStaticMarkup(createElement(MonthBreakdown, { txns, notes: [], loading: false, onRecategorize: () => {}, onRename: () => {}, onAddTransaction }));
-    // With transactions, in the bar's ⋯ (its items are in test/activity-segments-view.test.tsx).
-    expect(render(MONTH, () => {})).toContain('aria-label="Activity options"');
-    expect(render(MONTH)).not.toContain('aria-label="Activity options"');
+    // With transactions, in the Transactions card's ⋯ (its items and place are in test/activity-segments-view.test.tsx).
+    expect(render(MONTH, () => {})).toContain('aria-label="Options for transactions"');
+    expect(render(MONTH)).not.toContain('aria-label="Options for transactions"');
     expect(text(render(MONTH))).not.toContain('Add a transaction');
     // With none, as buttons in view, and what adding one does.
     expect(text(render([], () => {}))).toContain('Add a transaction');
     expect(text(render([], () => {}))).toContain('No transactions in the last 12 months.');
     expect(text(render([], () => {}))).toContain("It doesn't change the account's balance unless you ask.");
-    expect(render([], () => {})).not.toContain('aria-label="Activity options"');
+    expect(render([], () => {})).not.toContain('aria-label="Options for transactions"');
   });
 
   test('a manual row says where it came from, beside its account and category', () => {

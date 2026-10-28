@@ -208,6 +208,9 @@ describe('every tab while it loads', () => {
     // The month's row held, its name still to come.
     expect(activity).toContain('<h2 class="month-stepper-title" tabindex="-1" aria-live="polite"><span class="skeleton activity-skeleton-month" aria-hidden="true"></span></h2>');
     expect(activity).not.toContain('<select');
+    // The list's title row as tall as the real one with its ⋯ (components/MonthBreakdown.tsx), which the bar no longer holds.
+    expect(renderToStaticMarkup(<ActivitySkeleton />)).toContain('<div class="card-header txn-list-header"><h2>Transactions</h2>');
+    expect(activity).not.toContain('aria-haspopup');
     // Shared isn't by month: the month's row is held all the same, empty, as the tab draws it.
     const shared = renderToStaticMarkup(<ActivitySkeleton segment="shared" />);
     expect(shared).not.toContain('month-stepper');

@@ -10,11 +10,13 @@
 // that returns there. The select's name holds the month it lies over (WCAG
 // 2.5.3), so "October 2026" spoken or clicked by voice reaches it.
 //
-// At 320px the return button doesn't fit beside the name, so it wraps under
-// it (app/globals.css .month-stepper-mid), with the arrows kept on the first
-// line, where a second tap finds them again.
+// The return button has a line of its own under the name, at every width
+// (app/globals.css .month-stepper, a grid of two rows), with the arrows on
+// the first. That line is held while the button isn't there,
+// so the row is as tall on every month and nothing under it moves as the
+// months step, the calendar's in its card too.
 
-import { useRef, type ReactNode, type RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
 
 /** An arrow's icon, by its path; ActivityBar passes these on to the rest of
  *  the app's arrows. */
@@ -26,6 +28,8 @@ export const chevron = (d: string) => (
 export const LEFT = 'm15 18-6-6 6-6';
 export const RIGHT = 'm9 18 6-6-6-6';
 const DOWN = 'm6 9 6 6 6-6';
+// This month's: back along the way the months stepped.
+const RETURN = 'M9 14 5 10l4-4M5 10h11a4 4 0 0 1 0 8h-1';
 
 export default function MonthStepper({
   month,
@@ -39,7 +43,6 @@ export default function MonthStepper({
   listLabel = 'Month to show',
   disabled = false,
   skeleton,
-  end,
 }: {
   /** The month shown, YYYY-MM; null while it is still coming: a placeholder
    *  in its name's place, in the same elements, so nothing moves when it
@@ -53,7 +56,8 @@ export default function MonthStepper({
   optionLabel?: (m: string) => string;
   onMonth: (m: string) => void;
   /** Away from where the caller returns to: the button's words and what it
-   *  does. Focus goes to the list (or the name) first, since the button goes. */
+   *  does, on the line under the name. Focus goes to the list (or the name)
+   *  first, since the button goes. */
   back?: { label: string; onBack: () => void } | null;
   /** The name's element: a heading on a tab's bar, a span in a card. */
   heading?: 'h2' | 'span';
@@ -65,8 +69,6 @@ export default function MonthStepper({
   disabled?: boolean;
   /** The placeholder's class, sized as the name it stands for. */
   skeleton?: string;
-  /** What follows the later arrow on the same line (Activity's ⋯). */
-  end?: ReactNode;
 }) {
   const title = useRef<HTMLElement | null>(null);
   const list = useRef<HTMLSelectElement | null>(null);
@@ -78,52 +80,53 @@ export default function MonthStepper({
   const Title = heading;
 
   return (
+    // In the order they are seen, so Tab goes the same way: the earlier
+    // arrow, the name, the later arrow, then the return button on the line
+    // under the name.
     <div className="month-stepper">
       <button type="button" className="icon-btn" aria-label="Earlier month" aria-disabled={earlier === null} onClick={earlier === null ? undefined : () => onMonth(earlier)}>
         {chevron(LEFT)}
       </button>
-      <div className="month-stepper-mid">
-        <div className="month-stepper-name">
-          <Title
-            ref={title as RefObject<never>}
-            id={titleId}
-            className="month-stepper-title"
-            tabIndex={-1}
-            aria-live="polite"
-          >
-            {month === null ? <span className={`skeleton${skeleton ? ` ${skeleton}` : ''}`} aria-hidden="true" /> : label(month)}
-          </Title>
-          {listed && (
-            <>
-              {chevron(DOWN)}
-              <select ref={list} value={month} onChange={(e) => onMonth(e.target.value)} aria-label={`${listLabel}: ${label(month)}`}>
-                {months.map((m) => (
-                  <option key={m} value={m}>
-                    {optionLabel(m)}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-        </div>
-        {back && (
-          <button
-            type="button"
-            className="btn ghost month-stepper-back"
-            onClick={() => {
-              // Before the button goes, or focus would fall to the page.
-              (list.current ?? title.current)?.focus();
-              back.onBack();
-            }}
-          >
-            {back.label}
-          </button>
+      <div className="month-stepper-name">
+        <Title
+          ref={title as RefObject<never>}
+          id={titleId}
+          className="month-stepper-title"
+          tabIndex={-1}
+          aria-live="polite"
+        >
+          {month === null ? <span className={`skeleton${skeleton ? ` ${skeleton}` : ''}`} aria-hidden="true" /> : label(month)}
+        </Title>
+        {listed && (
+          <>
+            {chevron(DOWN)}
+            <select ref={list} value={month} onChange={(e) => onMonth(e.target.value)} aria-label={`${listLabel}: ${label(month)}`}>
+              {months.map((m) => (
+                <option key={m} value={m}>
+                  {optionLabel(m)}
+                </option>
+              ))}
+            </select>
+          </>
         )}
       </div>
       <button type="button" className="icon-btn" aria-label="Later month" aria-disabled={later === null} onClick={later === null ? undefined : () => onMonth(later)}>
         {chevron(RIGHT)}
       </button>
-      {end}
+      {back && (
+        <button
+          type="button"
+          className="btn ghost month-stepper-back"
+          onClick={() => {
+            // Before the button goes, or focus would fall to the page.
+            (list.current ?? title.current)?.focus();
+            back.onBack();
+          }}
+        >
+          {chevron(RETURN)}
+          {back.label}
+        </button>
+      )}
     </div>
   );
 }

@@ -169,6 +169,10 @@ describe('design guard: controls and states read without color', () => {
     // Plaid's doubt on a row: neutral, and drawn so forced colors keep it.
     ['.txn-check {', 'border: 4px solid currentColor', "a row's unsure-category dot is a border in its text color"],
     ['.txn-check {', 'color: var(--text-2)', "a row's unsure-category dot is neutral, never caution's orange"],
+    // The month row never moves: This month's line held on a tab's bar, and
+    // the rows without a month as tall.
+    ['.month-stepper {', 'grid-template-rows: minmax(var(--tap), auto) minmax(32px, auto)', "the month stepper holds This month's line"],
+    ['.activity-month,', 'min-height: calc(var(--tap) + 32px)', "Activity's and Budgets' rows without a month are as tall as the month's"],
   ];
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);

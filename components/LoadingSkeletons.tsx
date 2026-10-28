@@ -326,7 +326,9 @@ export function ActivityListSkeleton({ segment }: { segment: ActivitySegment }) 
         <>
           {summary}
           <div className="card" inert>
-            <div className="card-header">
+            {/* As tall as the real header with its ⋯, so the list doesn't
+                drop when the ⋯ comes with it. */}
+            <div className="card-header txn-list-header">
               <h2>Transactions</h2>
               <span className="meta">
                 <span className="skeleton rows-skeleton-value" />
@@ -348,7 +350,7 @@ export function ActivitySkeleton({ segment = 'transactions' }: { segment?: Activ
   return (
     <>
       <div inert>
-        <ActivityBar month={null} monthPending={segment !== 'shared'} segment={segment} onSegment={nothing} menu={[]} />
+        <ActivityBar month={null} monthPending={segment !== 'shared'} segment={segment} onSegment={nothing} />
       </div>
       {segment === 'shared' ? <CardSkeleton label="Loading" /> : <ActivityListSkeleton segment={segment} />}
     </>

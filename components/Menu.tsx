@@ -5,12 +5,14 @@
 // red. Follows the WAI-ARIA menu button pattern: opening moves focus to the
 // first item, the arrow keys, Home and End move between items, Escape closes
 // it and returns focus to the button, and so does choosing an item, so a
-// sheet the item opens gives focus back to the button when it closes. An item
+// sheet the item opens gives focus back to the button when it closes (or,
+// the button gone by then, to what focusInstead names). An item
 // can instead be a link to a file to save (Reports' Download as CSV): a real
 // <a download>, so it saves with no script and keeps the browser's own
 // "save link as"; as a link it is chosen with Enter, not Space.
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { focusInsteadOf } from './Sheet';
 
 export type MenuItem = {
   label: string;
@@ -66,7 +68,18 @@ export function menuPlacement(
   return { up, left: kept === aligned ? null : kept - button.left };
 }
 
-export function Menu({ label, items }: { label: string; items: (MenuItem | MenuLink)[] }) {
+export function Menu({
+  label,
+  items,
+  focusInstead,
+}: {
+  label: string;
+  items: (MenuItem | MenuLink)[];
+  /** Where focus goes when a sheet an item opened closes after the ⋯ has
+   *  left the page (its card drawn anew meanwhile, as the Transactions card
+   *  is when an import reads the list again). Left out, nowhere. */
+  focusInstead?: RefObject<HTMLElement | null>;
+}) {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState<{ up: boolean; left: number | null }>({ up: false, left: null });
   const id = useId();
@@ -96,6 +109,14 @@ export function Menu({ label, items }: { label: string; items: (MenuItem | MenuL
     }
     itemEls().find(enabled)?.focus();
   }, [open]);
+
+  // Where focus goes instead of the button, for a sheet an item opens
+  // (components/Sheet.tsx), read as the sheet closes. Not undone when the
+  // menu goes: that is the case it is for, and the entry goes with the button.
+  useEffect(() => {
+    const button = trigger.current;
+    if (button && focusInstead) focusInsteadOf(button, () => focusInstead.current);
+  }, [focusInstead]);
 
   // A press anywhere else closes it, leaving focus where the press put it.
   useEffect(() => {
