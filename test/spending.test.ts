@@ -266,8 +266,10 @@ describe('the Activity tab', () => {
   test('a manual row says where it came from, beside its account and category', () => {
     const manual = txn({ transaction_id: 'manual-txn:1', name: 'Farmers market', institution_name: 'Cash', account_name: 'Wallet', source: 'manual', vendor_key: '', account_id: 'manual_w' });
     const t = text(renderToStaticMarkup(createElement(MonthBreakdown, { txns: [manual], notes: [], loading: false, onRecategorize: () => {}, onRename: () => {} })));
-    // Its category's name as the list shows names (lib/categories.ts displayName).
-    expect(t).toContain('Food and drink · Cash · Wallet · entered by hand');
+    // Its category's name as the list shows names (lib/categories.ts
+    // displayName), its account by its name, and where it came from as a
+    // badge after them (the institution is in its sheet).
+    expect(t).toContain('Food and drink · Wallet Entered by hand');
   });
 });
 

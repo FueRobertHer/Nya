@@ -240,9 +240,11 @@ export function useTransactionEdits({
   /** A new category for one transaction: Plaid's is overridden, a manual
    *  row's is changed on the row (sent with its account, so the server reads
    *  only that book). Shown at once as it will be filed: the category's id,
-   *  name and kind, and the words it is stored as (lib/categories.ts). */
+   *  name and kind, and the words it is stored as (lib/categories.ts).
+   *  Resolves true once the server has it, so a sheet says it was kept only
+   *  then. */
   const recategorize = useCallback(
-    async (transaction_id: string, choice: CategoryChoice) => {
+    async (transaction_id: string, choice: CategoryChoice): Promise<boolean> => {
       setError(null);
       changes.current++;
       const t = current.current?.find((x) => x.transaction_id === transaction_id);
@@ -264,20 +266,22 @@ export function useTransactionEdits({
         if (res.ok) {
           // Its other side, a pair no more, as the server now shows it.
           if (t?.paired) void refreshQuietly();
-          return;
+          return true;
         }
       } catch {
         res = null;
       }
       await undo(res, 'Could not change the category. Please try again.');
+      return false;
     },
     [setTxns, undo, taxonomy, refreshQuietly]
   );
 
   /** Leaves a transaction out of budgets and reports, or puts it back: shown at
-   *  once, so every total follows (lib/spending.ts). */
+   *  once, so every total follows (lib/spending.ts). Resolves true once the
+   *  server has it. */
   const toggleExcluded = useCallback(
-    async (t: Txn, excluded: boolean) => {
+    async (t: Txn, excluded: boolean): Promise<boolean> => {
       setError(null);
       changes.current++;
       // The person's choice now decides, over a rule's hide either way; on a
@@ -305,11 +309,12 @@ export function useTransactionEdits({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ transaction_id: t.transaction_id, excluded }),
         });
-        if (res.ok) return;
+        if (res.ok) return true;
       } catch {
         res = null;
       }
       await undo(res, 'Could not save that. Please try again.');
+      return false;
     },
     [setTxns, undo]
   );

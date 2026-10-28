@@ -13,6 +13,7 @@
 
 import type { Txn } from './MonthBreakdown';
 import type { SheetTarget } from './TransactionSheet';
+import type { SheetAction } from './ActionRows';
 import { Masked } from './HideAmounts';
 import { signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
@@ -123,64 +124,38 @@ export function groupGoneText(t: Pick<Txn, 'group_missing' | 'group_removed' | '
  *  one counted on its own, Edit split on a split one, Edit group on a
  *  group's row, and Ungroup on one of a group that no longer applies (the
  *  list has no row for it). Not on a pending one, which gets a new id when it
- *  posts, nor on one shared whole or paying something back. */
-export function SplitActions({
-  t,
-  onSplit,
-  onGroup,
-  onUngroup,
-}: {
-  t: Txn;
-  onSplit: (t: Txn) => void;
-  onGroup: (t: Txn) => void;
-  /** Ungroups the group by its id. */
-  onUngroup: (id: string) => void;
-}) {
+ *  posts, nor on one shared whole or paying something back: for those,
+ *  `said` is why, shown in their place. Rows of the sheet's one list of
+ *  actions (components/ActionRows.tsx). */
+export function splitActions(
+  t: Txn,
+  { onSplit, onGroup, onUngroup }: { onSplit: (t: Txn) => void; onGroup: (t: Txn) => void; /** Ungroups the group by its id. */ onUngroup: (id: string) => void }
+): { rows: SheetAction[]; said: string | null } {
+  const none = (said: string | null = null) => ({ rows: [], said });
   // In a group the list has no row for: one that no longer applies, or one
-  // counted on a day before what is shown.
+  // counted on a day before what is shown. Ungrouping acts at once.
   const listless = t.group_unapplied ?? t.group_outside;
-  if (listless) {
-    return (
-      <div className="btn-row">
-        <button className="btn secondary" onClick={() => onUngroup(listless.id)}>
-          Ungroup “{listless.name}”
-        </button>
-      </div>
-    );
-  }
-  if (t.group_members) {
-    return (
-      <div className="btn-row">
-        <button className="btn secondary" onClick={() => onGroup(t)}>
-          Edit group
-        </button>
-      </div>
-    );
-  }
-  if (t.split_unread) return null;
-  if (t.pending) return <p className="helper">Once it posts, it can be split or grouped with others.</p>;
+  if (listless) return { rows: [{ key: 'ungroup', title: `Ungroup “${listless.name}”`, onSelect: () => onUngroup(listless.id) }], said: null };
+  if (t.group_members) return { rows: [{ key: 'group', title: 'Edit group', opens: true, onSelect: () => onGroup(t) }], said: null };
+  if (t.split_unread) return none();
+  if (t.pending) return none('Once it posts, it can be split or grouped with others.');
   // Shared whole, or paying something back, under Shared expenses (its own
   // or carried to it across a re-link): that says how it counts, so it is
   // changed there first, as the server asks (lib/shared-expenses/edits.ts
   // sharesBlock).
   if (!t.split_parts && (t.shared || t.shared_unapplied)) {
-    return <p className="helper">It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.</p>;
+    return none('It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.');
   }
   if (!t.split_parts && (t.settles || t.settles_unapplied)) {
-    return <p className="helper">It pays something back under Shared expenses: reopen that payment to split it or group it.</p>;
+    return none('It pays something back under Shared expenses: reopen that payment to split it or group it.');
   }
-  return (
-    <div className="btn-row">
-      <button className="btn secondary" onClick={() => onSplit(t)}>
-        {t.split_parts ? 'Edit split' : 'Split'}
-      </button>
-      {!t.split_parts && (
-        <button className="btn secondary" onClick={() => onGroup(t)}>
-          Group with others
-        </button>
-      )}
-    </div>
-  );
+  return {
+    rows: [
+      { key: 'split', title: t.split_parts ? 'Edit split' : 'Split', opens: true, onSelect: () => onSplit(t) },
+      ...(t.split_parts ? [] : [{ key: 'group', title: 'Group with others', opens: true, onSelect: () => onGroup(t) }]),
+    ],
+    said: null,
+  };
 }
 
 /** Sends a change to a split or a group: null when it was made, else what
@@ -242,7 +217,16 @@ export function PartRows({ parent, onOpen }: { parent: Txn; onOpen: (target: She
  * its own amount and day. A tap opens it in the transaction's sheet, where
  * it can be taken out of the group.
  */
-export function MemberRows({ group, onOpen }: { group: Txn; onOpen: (target: SheetTarget) => void }) {
+export function MemberRows({
+  group,
+  onOpen,
+  accountName = (t) => t.account_name,
+}: {
+  group: Txn;
+  onOpen: (target: SheetTarget) => void;
+  /** Each account's name on a row, as the list gives it (txn-words.ts rowAccountNames). */
+  accountName?: (t: Pick<Txn, 'institution_name' | 'account_name'>) => string;
+}) {
   const members = group.group_members ?? [];
   const currency = currencyOf(group);
   return (
@@ -258,7 +242,7 @@ export function MemberRows({ group, onOpen }: { group: Txn; onOpen: (target: She
             <span className="list-row-text">
               <span className="list-row-title">{shownName(m)}</span>
               <span className="list-row-sub">
-                {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {m.institution_name} · {m.account_name}
+                {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {accountName(m)}
               </span>
               {/* What was said of it on its own doesn't change the group's net. */}
               {m.excluded === true && <span className="txn-row-note">{m.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</span>}

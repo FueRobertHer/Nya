@@ -12,7 +12,7 @@ import IouSheet from '@/components/IouSheet';
 import PersonSheet from '@/components/PersonSheet';
 import { messageMoney } from '@/lib/shared-expenses/links';
 import { canPayBack, canShare, SharedRowLine, type SharedRowHooks } from '@/components/SharedRows';
-import { SplitActions } from '@/components/SplitRows';
+import { splitActions } from '@/components/SplitRows';
 import { balanceText, letGoText, reasonsText, rowLine, splitUnits, whoseText } from '@/components/shared-expenses-text';
 import type { Proposal } from '@/lib/shared-expenses/match';
 import { localDate } from '@/lib/local-date';
@@ -365,7 +365,11 @@ describe('what waits after a disconnect or a re-link, and a shared row’s other
   });
 
   test('a row shared whole, or paying something back, offers no split or group; a split one with a shared part keeps Edit split', () => {
-    const actions = (t: Txn) => text(renderToStaticMarkup(<SplitActions t={t} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />)).trim();
+    // Its rows' titles, or why there are none (splitActions).
+    const actions = (t: Txn) => {
+      const a = splitActions(t, { onSplit: () => {}, onGroup: () => {}, onUngroup: () => {} });
+      return [...a.rows.map((r) => r.title), ...(a.said ? [a.said] : [])].join(' ');
+    };
     const shared_ = txn({ transaction_id: 'n-d', amount: 60, shared: { your_part: 60, people: [{ person: 'alex', item: 'e', amount: 60 }], counted: true }, shared_carried_from: 't-d' });
     expect(actions(shared_)).toBe('It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.');
     const paying = txn({ transaction_id: 'n-v', amount: 0, settles: { rest: 0, people: [{ person: 'alex', item: 'e', amount: 35, direction: 'to_you' }], counted: true, kept_under: 't-v' } });

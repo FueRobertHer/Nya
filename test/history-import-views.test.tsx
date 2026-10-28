@@ -259,10 +259,14 @@ describe('a month’s totals on the Activity tab', () => {
 
   test('say how many of the month’s rows came from imported files, and mark each', () => {
     const imported = row({ transaction_id: 'imported-txn:6b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d', name: 'Old corner shop', source: 'import:ofx' });
-    const t = text(renderToStaticMarkup(<MonthBreakdown txns={[row({}), imported]} notes={[]} loading={false} onRecategorize={noop} onRename={noop} />));
+    const html = renderToStaticMarkup(<MonthBreakdown txns={[row({}), imported]} notes={[]} loading={false} onRecategorize={noop} onRename={noop} />);
+    const t = text(html);
     expect(t).toContain('1 of this month’s transactions was imported from files, not sent by the bank.');
-    // Its category as the person's categories name it, as any row's is.
-    expect(t).toContain('Groceries · Chase · Checking · imported from OFX');
+    // Its category as the person's categories name it, as any row's is, its
+    // account by its name (the bank and the file's kind are in its sheet),
+    // and where it came from as a badge on its line.
+    expect(t).toContain('Old corner shop Groceries · Checking Imported');
+    expect(html).toContain('<span class="badge">Imported</span>');
     expect(importedRowsNote([row({})])).toBeNull();
   });
 });

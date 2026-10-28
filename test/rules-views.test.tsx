@@ -168,8 +168,8 @@ describe('on the Activity tab', () => {
     const t = text(renderToStaticMarkup(<MonthBreakdown txns={txns} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />));
     expect(t).toContain('and 1 transaction you left out, and 1 transaction a rule hides.');
     // Each row's badge says which; its sheet says it in full.
-    expect(t).toContain('Hidden by rule Shopping · Chase · Checking Hidden by a rule -$10.00');
-    expect(t).toContain('Excluded by hand Shopping · Chase · Checking Excluded -$10.00');
+    expect(t).toContain('Hidden by rule Shopping · Checking Hidden by a rule -$10.00');
+    expect(t).toContain('Excluded by hand Shopping · Checking Excluded -$10.00');
   });
 });
 
