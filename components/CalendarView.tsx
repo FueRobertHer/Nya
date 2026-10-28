@@ -281,7 +281,9 @@ export default function CalendarView({
       {badge && <NoticeBadge tone={badge} />}
 
       {/* Its own month, not the tabs': it runs ahead into months to come.
-          Its list is named apart from Budgets' bar, which is on the page too. */}
+          Its list is named apart from Budgets' bar, which is on the page too.
+          This month's line is there only while it shows, so the card
+          carries no empty line on the month it opens on. */}
       <MonthStepper
         month={month}
         months={months}
@@ -290,6 +292,7 @@ export default function CalendarView({
         onMonth={go}
         heading="span"
         listLabel="Calendar month"
+        holdBack={false}
         back={
           month !== thisMonth
             ? {

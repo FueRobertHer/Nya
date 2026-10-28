@@ -1,4 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { installDom, click, type, type FakeElement } from './mini-dom';
 
 // The one month control (look and feel, step 2b1): components/MonthStepper.tsx,
@@ -99,12 +101,64 @@ describe('the month stepper', () => {
     const v = mount(<Harness start="2026-08" />);
     const back = v.back()!;
     expect(back.getAttribute('class')).toBe('btn ghost month-stepper-back');
-    expect((back.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper-mid');
+    // On the stepper's second line, its own (app/globals.css), not inside the name.
+    expect((back.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper');
     press(back);
     expect(v.title().textContent).toBe('October 2026');
     expect(v.back()).toBeNull();
     expect(dom.document.activeElement).toBe(v.list());
     v.unmount();
+  });
+
+  test('in the order they are seen, so Tab goes the same way: the earlier arrow, the name, the later arrow, then This month', () => {
+    const v = mount(<Harness start="2026-09" />);
+    const stepper = v.host.findAll((e) => (e.getAttribute('class') ?? '').startsWith('month-stepper'))[0];
+    const kids = stepper.childNodes as FakeElement[];
+    expect(kids.map((k) => k.getAttribute('aria-label') ?? k.getAttribute('class'))).toEqual(['Earlier month', 'month-stepper-name', 'Later month', 'btn ghost month-stepper-back']);
+    v.unmount();
+  });
+
+  test('on the month it returns to, no return button: its line is held by the grid, with nothing in it to reach or hear', () => {
+    const v = mount(<Harness />);
+    expect(v.back()).toBeNull();
+    const stepper = v.host.findAll((e) => (e.getAttribute('class') ?? '').startsWith('month-stepper'))[0];
+    // A tab's bar holds the line (the default): nothing hidden, no slot, just the grid's second row.
+    expect(stepper.getAttribute('class')).toBe('month-stepper');
+    expect((stepper.childNodes as FakeElement[]).map((k) => k.getAttribute('aria-label') ?? k.getAttribute('class'))).toEqual(['Earlier month', 'month-stepper-name', 'Later month']);
+    // Pending too, so nothing moves when the month comes.
+    const pending = mount(<Harness start={null} />);
+    expect(pending.host.findAll((e) => e.getAttribute('class') === 'month-stepper')).toHaveLength(1);
+    pending.unmount();
+    v.unmount();
+  });
+
+  test('holdBack false (the calendar): the line only while the button is there', () => {
+    const v = mount(<MonthStepper month="2026-10" months={MONTHS} label={words} onMonth={() => {}} holdBack={false} />);
+    expect(v.host.findAll((e) => e.getAttribute('class') === 'month-stepper back-when-away')).toHaveLength(1);
+    expect(v.back()).toBeNull();
+    v.rerender(<MonthStepper month="2026-09" months={MONTHS} label={words} onMonth={() => {}} holdBack={false} back={{ label: 'This month', onBack: () => {} }} />);
+    expect((v.back()!.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper back-when-away');
+    v.unmount();
+  });
+
+  test('the stylesheet holds the second line on a bar and lets it go on the calendar, with no wrap', () => {
+    const css = readFileSync(join(import.meta.dir, '../app/globals.css'), 'utf8').replace(/\r/g, '');
+    // The body of the rule whose selector is `selector` alone.
+    const rule = (selector: string) => {
+      const at = css.indexOf(`\n${selector} {`);
+      return at < 0 ? '' : css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at));
+    };
+    // Two rows, each at least a 44px target, with the arrows and the name on the first.
+    expect(rule('.month-stepper')).toContain('display: grid;');
+    expect(rule('.month-stepper')).toContain('grid-template-columns: var(--tap) minmax(0, 1fr) var(--tap);');
+    expect(rule('.month-stepper')).toContain('grid-template-rows: minmax(var(--tap), auto) minmax(var(--tap), auto);');
+    expect(rule('.month-stepper')).not.toContain('row-gap');
+    expect(rule('.month-stepper-back')).toContain('grid-row: 2;');
+    expect(rule('.month-stepper-back')).toContain('grid-column: 2;');
+    expect(rule('.month-stepper.back-when-away')).toContain('grid-template-rows: minmax(var(--tap), auto);');
+    expect(css).not.toContain('.month-stepper-mid');
+    // The rows without a month are as tall, so the segments under them never move.
+    expect(rule('.activity-month,\n.budgets-heading')).toContain('min-height: calc(2 * var(--tap));');
   });
 
   test('with one month there is no list, and focus after the return button goes to the name', () => {

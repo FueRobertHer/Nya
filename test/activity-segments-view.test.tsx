@@ -9,8 +9,8 @@ import { categoriesFor } from './category-fixture';
 // (react-dom/client over test/mini-dom.ts): the tab opens on Transactions
 // with the month's In / Out / Net over the list; Spending holds the analysis
 // and Reports; Shared the Shared expenses card. The month steps with the
-// bar's arrows, the ⋯ adds or imports, and a pick on the cash flow lists its
-// transactions on Transactions.
+// bar's arrows, the Transactions card's ⋯ adds or imports, and a pick on the
+// cash flow lists its transactions on Transactions.
 
 const dom = installDom();
 afterAll(() => dom.uninstall());
@@ -20,6 +20,7 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
+const { Sheet } = await import('@/components/Sheet');
 const { segmentKey } = await import('@/components/ActivityBar');
 const { localMonth } = await import('@/lib/local-date');
 const { addMonths } = await import('@/lib/rollover');
@@ -289,10 +290,18 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
-  test('the ⋯ adds or imports where a manual account takes them, and is left out where none does', () => {
+  test('the Transactions card’s ⋯ adds or imports where a manual account takes them, and is left out where none does', () => {
     const calls: string[] = [];
     const v = mount({ onAddTransaction: () => calls.push('add'), onImport: () => calls.push('import') });
-    const trigger = v.button('Activity options');
+    const trigger = v.button('Options for transactions');
+    // In the list's title row, after its count, as an institution card's ⋯
+    // is in its header; never on the bar, the same row as Budgets'.
+    const [header] = v.all((e) => e.getAttribute('class') === 'card-header txn-list-header');
+    expect((header.childNodes as FakeElement[]).map((c) => c.tagName)).toEqual(['H2', 'SPAN', 'DIV']);
+    // By identity: a fake element's diff never finishes printing.
+    expect((trigger.parentNode as FakeElement).parentNode === header).toBe(true);
+    const [bar] = v.all((e) => e.getAttribute('class') === 'activity-bar');
+    expect(bar.findAll((e) => e.getAttribute('aria-haspopup') === 'menu')).toHaveLength(0);
     act(() => click(trigger));
     const items = v.all((e) => e.getAttribute('role') === 'menuitem');
     expect(items.map((i) => i.textContent)).toEqual(['Add a transaction', 'Import a file']);
@@ -300,22 +309,57 @@ describe('Activity: the bar and its segments', () => {
     act(() => click(trigger));
     act(() => click(v.all((e) => e.getAttribute('role') === 'menuitem')[0]));
     expect(calls).toEqual(['import', 'add']);
-    v.unmount();
-    const none = mount();
-    expect(none.button('Activity options')).toBeUndefined();
-    // On Shared, which isn't by month, the month's row stays, as tall,
-    // so the segments don't move: with nothing in it here.
-    act(() => click(none.tab('Shared')));
-    const rows = none.all((e) => e.getAttribute('class') === 'activity-month');
+    // Not on Spending, which is analysis, nor on Shared, whose card has its
+    // own Add someone. Shared's row, which has no month, stays as tall, so
+    // the segments don't move, with nothing in it.
+    act(() => click(v.tab('Spending')));
+    expect(v.all((e) => e.getAttribute('aria-haspopup') === 'menu')).toHaveLength(0);
+    act(() => click(v.tab('Shared')));
+    expect(v.all((e) => e.getAttribute('aria-haspopup') === 'menu')).toHaveLength(0);
+    const rows = v.all((e) => e.getAttribute('class') === 'activity-month');
     expect(rows).toHaveLength(1);
     expect(rows[0].childNodes).toHaveLength(0);
+    v.unmount();
+    // No manual account: no ⋯, and the title row as tall all the same.
+    const none = mount();
+    expect(none.button('Options for transactions')).toBeUndefined();
+    expect(none.all((e) => e.getAttribute('class') === 'card-header txn-list-header')).toHaveLength(1);
     none.unmount();
-    // With a ⋯, the row holds it.
-    const some = mount({ onAddTransaction: () => {} });
-    act(() => click(some.tab('Shared')));
-    const [row] = some.all((e) => e.getAttribute('class') === 'activity-month');
-    expect(row.findAll((e) => e.getAttribute('aria-label') === 'Activity options')).toHaveLength(1);
-    some.unmount();
+  });
+
+  test('a sheet the ⋯ opened gives focus to the list’s heading when an import drew the card anew meanwhile', () => {
+    function Importing({ open, loading }: { open: boolean; loading: boolean }) {
+      return (
+        <>
+          <MonthBreakdown txns={ROWS} notes={[]} loading={loading} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} onAddTransaction={() => {}} onImport={() => {}} />
+          <Sheet open={open} title="Import a file" onClose={() => {}}>
+            <p>Imported</p>
+          </Sheet>
+        </>
+      );
+    }
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    const draw = (open: boolean, loading: boolean) => act(() => root.render(<Importing open={open} loading={loading} />));
+    const heading = () => host.findAll((e) => e.tagName === 'H2' && e.textContent === 'Transactions')[0];
+    draw(false, false);
+    const trigger = host.findAll((e) => e.getAttribute('aria-label') === 'Options for transactions')[0];
+    trigger.focus();
+    act(() => click(trigger));
+    act(() => click(host.findAll((e) => e.getAttribute('role') === 'menuitem' && e.textContent === 'Import a file')[0]));
+    // Choosing gives focus back to the ⋯, which the sheet opens from.
+    expect(dom.document.activeElement === trigger).toBe(true);
+    draw(true, false);
+    // The import reads the list again: the card goes, ⋯ and all, and comes back anew.
+    draw(true, true);
+    expect(trigger.isConnected).toBe(false);
+    draw(true, false);
+    const now = heading();
+    expect(now.isConnected).toBe(true);
+    draw(false, false);
+    expect(dom.document.activeElement === now).toBe(true);
+    act(() => root.unmount());
   });
 
   test('the bar shows while the transactions load, and Shared doesn’t wait for them', () => {
@@ -383,7 +427,7 @@ describe('Activity: the bar and its segments', () => {
   test('with nothing to list, the bar is there and adding stays in view as buttons', () => {
     const v = mount({ txns: [], onAddTransaction: () => {} });
     expect(v.all((e) => e.getAttribute('role') === 'tablist')).toHaveLength(1);
-    expect(v.button('Activity options')).toBeUndefined();
+    expect(v.button('Options for transactions')).toBeUndefined();
     expect(v.all((e) => e.localName === 'button' && e.textContent === 'Add a transaction')).toHaveLength(1);
     // And Reports at Spending's foot, which needs no transactions.
     act(() => click(v.tab('Spending')));

@@ -354,10 +354,13 @@ describe('the calendar, redrawn', () => {
       expect(title()).toBe('November 2026');
       const today = button('This month')!;
       expect(today.getAttribute('class')).toBe('btn ghost month-stepper-back');
-      // After the month's name, outside what is announced as it changes and
-      // outside the list laid over the name.
+      // On its own line under the month's name, outside what is announced as
+      // it changes and outside the list laid over the name. The calendar has
+      // that line only while the button shows (holdBack false), so its card
+      // carries no empty line on the month it opens on.
       const live = host.findAll((e) => e.getAttribute('aria-live') === 'polite')[0]!;
       expect(today.parentElement).toBe(live.parentElement!.parentElement);
+      expect((today.parentNode as FakeElement).getAttribute('class')).toBe('month-stepper back-when-away');
       expect(live.textContent).toBe('November 2026');
       press(today);
       expect(title()).toBe('October 2026');
