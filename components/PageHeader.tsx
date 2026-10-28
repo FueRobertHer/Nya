@@ -8,8 +8,9 @@ import { BrandLogo } from './Brand';
 // AdminStorage.tsx). The logo and name are the way back into the app, a 44px
 // target named for where it goes; `back` is where that is (Reports goes back
 // to Activity, where it is opened from), and `end` holds a control at the
-// row's other end (Reports' hide amounts). No state or hooks, so it renders
-// on the server and inside client components alike.
+// row's other end (Reports' hide amounts). No state or effects (the logo
+// only takes an id from useId), so it renders on the server and inside client
+// components alike.
 export function PageHeader({ back = '/', end }: { back?: string; end?: ReactNode }) {
   return (
     <header className="page-header">

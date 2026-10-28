@@ -154,7 +154,7 @@ describe('the ⋯ menu', () => {
     unmount();
   });
 
-  test('a file to save is a link item: reached by the keys, it closes the menu and gives focus back as it is chosen', () => {
+  test('a file to save is a link item: reached by the keys, it closes the menu and gives focus back once the browser has followed it', async () => {
     const { host, unmount } = mount(
       <Menu
         label="More for this report"
@@ -181,6 +181,11 @@ describe('the ⋯ menu', () => {
     key(items[1], 'ArrowUp');
     expect(dom.document.activeElement).toBe(items[0]);
     act(() => click(items[0]));
+    // Still in the page as the browser runs the download; closed on the next tick.
+    expect(find(host, (e) => e.getAttribute('role') === 'menu')).toHaveLength(1);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
     expect(find(host, (e) => e.getAttribute('role') === 'menu')).toHaveLength(0);
     expect(dom.document.activeElement).toBe(trigger);
     unmount();

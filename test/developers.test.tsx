@@ -132,6 +132,11 @@ describe('the page', () => {
       const endpoints = html.slice(html.indexOf('id="endpoints"'));
       for (const op of OPERATION_SPECS) expect(endpoints).toContain(`<a href="#${op.name}"><code>GET /api/v1/${op.name}</code></a>`);
       for (const spec of RESOURCE_SPECS) expect([spec.name, endpoints.includes(`<a href="#${spec.name}">`)]).toEqual([spec.name, on === '1']);
+      // Where tokens can write, each kind of endpoint under a heading of its own.
+      expect(endpoints.includes('<h3>Endpoints that read your data</h3><ul class="info-index" role="list">')).toBe(on === '1');
+      expect(endpoints.match(/<ul class="info-index" role="list">/g)).toHaveLength(on === '1' ? 2 : 1);
+      // A list without bullets is still read as a list.
+      expect(html).toContain('<ol role="list">');
       // In Nya's voice: never "we", "our" or "us" ("US" is the country).
       expect(page().match(/\b(?:[Ww]e|[Oo]urs?|us)\b/g)).toBeNull();
     }

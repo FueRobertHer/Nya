@@ -179,8 +179,12 @@ export function Menu({ label, items }: { label: string; items: (MenuItem | MenuL
                 className="menu-item"
                 href={item.href}
                 download
-                // The browser saves the file; the menu closes and gives focus back.
-                onClick={() => close(true)}
+                // The browser saves the file, then the menu closes and gives
+                // focus back: on the next tick, so the link is still in the
+                // page when the browser follows it.
+                onClick={() => {
+                  setTimeout(() => close(true));
+                }}
               >
                 {item.label}
               </a>

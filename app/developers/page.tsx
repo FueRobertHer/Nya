@@ -417,8 +417,11 @@ export default function DevelopersPage() {
       title: 'Endpoints',
       body: (
         <>
-          {/* An index of every endpoint, each a link to its own part below. */}
-          <ul className="info-index">
+          {/* An index of every endpoint, each a link to its own part below:
+              where tokens can write, the two kinds each under a heading of
+              its own. The role keeps a list styled without bullets read as one. */}
+          {writes && <h3>Endpoints that read your data</h3>}
+          <ul className="info-index" role="list">
             {OPERATION_SPECS.map((op) => (
               <li key={op.name}>
                 <a href={`#${op.name}`}>
@@ -430,7 +433,7 @@ export default function DevelopersPage() {
           {writes && (
             <>
               <h3>Endpoints that change your data</h3>
-              <ul className="info-index">
+              <ul className="info-index" role="list">
                 {RESOURCE_SPECS.map((spec) => (
                   <li key={spec.name}>
                     <a href={`#${spec.name}`}>

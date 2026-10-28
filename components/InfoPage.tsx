@@ -63,7 +63,8 @@ function InfoContents({ sections }: { sections: InfoPart[] }) {
   return (
     <nav className="info-contents" aria-labelledby="info-contents-title">
       <h2 id="info-contents-title">On this page</h2>
-      <ol>
+      {/* The role keeps a list styled without bullets read as one. */}
+      <ol role="list">
         {sections.map((s) => (
           <li key={s.id}>
             <a href={`#${s.id}`}>{s.title}</a>
