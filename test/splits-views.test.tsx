@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/SplitSheet';
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
-import { entryLabel, entryNotice, groupGoneText, heldInGroupAs, splitKeptUnder, SplitActions } from '@/components/SplitRows';
+import { entryLabel, entryNotice, groupGoneText, heldInGroupAs, splitActions, splitKeptUnder } from '@/components/SplitRows';
 import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
 import { pastPayeeRows } from '@/components/ManualTxnSheet';
 import { splitChangedText } from '@/components/SplitChangedNote';
@@ -114,13 +114,21 @@ function served({ grouped = true }: { grouped?: boolean } = {}): Txn[] {
 const list = (rows: Txn[]) =>
   text(renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} />));
 
+// What a transaction's sheet offers for its split or group: its rows' titles, or why none (splitActions).
+const actionWords = (t: Txn) => {
+  const a = splitActions(t, { onSplit: () => {}, onGroup: () => {}, onUngroup: () => {} });
+  return [...a.rows.map((r) => r.title), ...(a.said ? [a.said] : [])].join(' ');
+};
+
 describe('the Activity tab’s list', () => {
   test('a split transaction is listed once, its parts under it; a group’s row with its transactions under it', () => {
     const page = list(served());
-    expect(page).toContain('Costco Split into 3 · Chase · Card Note -$150.00');
+    expect(page).toContain('Costco Split into 3 · Card Note -$150.00');
     expect(page.match(/Costco/g)).toHaveLength(1);
     expect(page).toContain('Groceries food -$100.01 Household -$30.00 Auto -$19.99');
-    expect(page).toContain('Dinner with Sam Group of 2 · Restaurants · Chase · Card -$60.00 Bistro');
+    expect(page).toContain('Dinner with Sam Group of 2 · Restaurants · Card -$60.00 Bistro');
+    // A group's transaction: its day and its account, by its name.
+    expect(page).toMatch(/Bistro [A-Z][a-z]{2} \d{1,2} · Card /);
     expect(page).toContain('Venmo from Sam');
     // The day's figure counts the parts and the net: 150 + 60 + 4.50 out.
     expect(page).toContain('-$214.50');
@@ -183,7 +191,7 @@ describe('the Activity tab’s list', () => {
     // One of a group that no longer applies says which, and offers to ungroup it.
     const stale = txn('x', { group_unapplied: { id: 'g9', name: 'Trip' } });
     expect(entryNotice(stale)).toBe('It is in the group “Trip”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.');
-    expect(text(renderToStaticMarkup(<SplitActions t={stale} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />))).toBe('Ungroup “Trip”');
+    expect(actionWords(stale)).toBe('Ungroup “Trip”');
     expect(entryNotice(txn('x', { group_members: [txn('a')], group_removed: 1 }))).toContain('1 of its transactions isn’t here');
   });
 
@@ -224,7 +232,7 @@ describe('the Activity tab’s list', () => {
     // The day's figure is the coffee's alone; the month's money in, nothing.
     expect(page).toContain('-$4.50');
     expect(page).not.toContain('+$55.50');
-    expect(text(renderToStaticMarkup(<SplitActions t={rows[0]} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />))).toBe('Ungroup “Trip”');
+    expect(actionWords(rows[0])).toBe('Ungroup “Trip”');
     // Nor offered to join another group.
     expect(groupCandidates(rows, { currency: 'USD', near: today, exclude: new Set(), query: '' }).map((t) => t.name)).toEqual(['Coffee']);
     // The calendar lists it, outside the day's figure, and the Plan leaves it out.

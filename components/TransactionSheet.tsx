@@ -27,8 +27,9 @@ import CategoryPicker from './CategoryPicker';
 import TxnTagsNote, { type TagChange } from './TxnTagsNote';
 import ReviewNote from './ReviewNote';
 import AttachmentSection from './AttachmentSection';
-import { SharedRowActions, SharedRowLine, type SharedRowHooks } from './SharedRows';
-import { bankKept, entryNotice, heldInGroupAs, sendChange, splitKeptUnder, SplitActions } from './SplitRows';
+import { sharedActions, SharedRowLine, type SharedRowHooks } from './SharedRows';
+import { bankKept, entryNotice, heldInGroupAs, sendChange, splitActions, splitKeptUnder } from './SplitRows';
+import ActionRows, { type SheetAction } from './ActionRows';
 import type { ReviewControls } from './review-state';
 import type { CategoryChoice } from './transaction-edits';
 import type { Txn } from './MonthBreakdown';
@@ -135,6 +136,10 @@ function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) 
   const rows: { label: string; value: ReactNode }[] = [];
   const time = fmtTime(t.datetime);
 
+  // Plaid's finer category, which the row leaves out to keep to two lines.
+  // Only on a row from Plaid: a pair Nya worked out between SimpleFIN
+  // accounts carries one Nya set (lib/manual-txns.ts), not the bank's.
+  if (t.subcategory && !t.paired && !t.source) rows.push({ label: 'Bank’s category', value: displayName(t.subcategory) });
   if (t.counterparty) rows.push({ label: 'Merchant', value: t.counterparty });
   if (t.payment_processor) rows.push({ label: 'Processed by', value: t.payment_processor });
   if (t.payment_channel) rows.push({ label: 'Channel', value: CHANNEL_WORDS[t.payment_channel] ?? displayName(t.payment_channel) });
@@ -261,6 +266,8 @@ function TxnSheet({
   const [offer, setOffer] = useState<string | null>(null);
   // The row whose category Looks right just kept, said in the status line.
   const [kept, setKept] = useState<string | null>(null);
+  // What Exclude or Include just did, and to which row, said there too.
+  const [toggled, setToggled] = useState<{ id: string; excluded: boolean } | null>(null);
   // Rename vendor, a second level of the sheet, and what is typed there.
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(t.name);
@@ -369,6 +376,46 @@ function TxnSheet({
       </label>
     );
 
+  // Its actions, one list (components/ActionRows.tsx). Each that opens
+  // another sheet closes this one first; Exclude acts in place, so focus
+  // stays on its row (its key holds while its title flips) and the status
+  // line below says what it did.
+  const split = onSplitsChanged
+    ? splitActions(t, {
+        onSplit: act(() => onSplit(t)),
+        onGroup: act(() => (t.group_members ? onGroup(null, t) : onGroup(t, null))),
+        onUngroup: (id) => {
+          onClose();
+          void sendChange('/api/transaction-groups', 'DELETE', { id }).then((failed) => {
+            onSplitError(failed);
+            onSplitsChanged();
+          });
+        },
+      })
+    : null;
+  const actions: SheetAction[] = [
+    ...(split?.rows ?? []),
+    ...(shared ? sharedActions(t, shared, onClose) : []),
+    ...(countable && exclusion === 'toggle'
+      ? [
+          {
+            key: 'exclude',
+            title: t.excluded === true ? 'Include in budgets and reports' : 'Exclude from budgets and reports',
+            sub:
+              t.excluded === true
+                ? 'Puts it back in totals, budgets, insights, bills and the Plan.'
+                : 'For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan.',
+            onSelect: () => {
+              const excluded = t.excluded !== true;
+              onToggleExcluded!(t, excluded);
+              setToggled({ id: t.transaction_id, excluded });
+            },
+          },
+        ]
+      : []),
+    ...(onCreateRule && !t.group_members ? [{ key: 'rule', title: 'Create a rule from this', opens: true, onSelect: act(() => onCreateRule(t)) }] : []),
+  ];
+
   return (
     <Sheet open={open} title={shownName(t)} onClose={onClose} footer={more.length > 0 ? <Menu label={`More for ${shownName(t)}`} items={more} /> : undefined}>
       <div className="stack">
@@ -404,9 +451,16 @@ function TxnSheet({
               )}
             </p>
           )}
-          {/* Said once Looks right is pressed, since the button goes. */}
+          {/* Said once Looks right is pressed, since the button goes, or
+              once Exclude or Include is, whose row stays where it was. */}
           <p className="visually-hidden" role="status">
-            {kept === t.transaction_id ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.` : ''}
+            {kept === t.transaction_id
+              ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
+              : toggled?.id === t.transaction_id
+                ? toggled.excluded
+                  ? 'Excluded from budgets and reports.'
+                  : 'Included in budgets and reports again.'
+                : ''}
           </p>
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}
           <TxnNotes t={t} whole={t} shared={shared} as="p" />
@@ -451,24 +505,11 @@ function TxnSheet({
           />
         )}
 
-        {/* Splitting it, or grouping it with others (#39). */}
-        {onSplitsChanged && (
-          <SplitActions
-            t={t}
-            onSplit={act(() => onSplit(t))}
-            onGroup={act(() => (t.group_members ? onGroup(null, t) : onGroup(t, null)))}
-            onUngroup={(id) => {
-              onClose();
-              void sendChange('/api/transaction-groups', 'DELETE', { id }).then((failed) => {
-                onSplitError(failed);
-                onSplitsChanged();
-              });
-            }}
-          />
-        )}
-        {/* Sharing it, or what it paid back (#49): each opens a Shared sheet. */}
-        {shared && <SharedRowActions t={t} hooks={shared} onDone={onClose} />}
-
+        {/* What can be done with it, one action to a row: splitting it or
+            grouping it with others (#39), sharing it or what it paid back
+            (#49), leaving it out of budgets, and a rule from it. */}
+        <ActionRows rows={actions} />
+        {split?.said && <p className="helper">{split.said}</p>}
         {/* Offered once a pending row has posted (exclusionOffer), one a rule hides too. */}
         {countable && exclusion !== 'toggle' && (
           <p className="helper">
@@ -476,20 +517,6 @@ function TxnSheet({
               ? 'A rule hides it. Once it posts, it can be put back in budgets and reports.'
               : 'Once it posts, it can be excluded from budgets and reports.'}
           </p>
-        )}
-        {countable && exclusion === 'toggle' && (
-          <div className="stack tight">
-            <div className="btn-row">
-              <button className="btn secondary" onClick={() => onToggleExcluded!(t, t.excluded !== true)}>
-                {t.excluded === true ? 'Include in budgets and reports' : 'Exclude from budgets and reports'}
-              </button>
-            </div>
-            <p className="helper">
-              {t.excluded === true
-                ? 'Puts it back in totals, budgets, insights, bills and the Plan.'
-                : 'For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan.'}
-            </p>
-          </div>
         )}
 
         {ruleSentenceOf && (t.rule_ids?.length ?? 0) > 0 && (
@@ -505,13 +532,6 @@ function TxnSheet({
                 ) : null;
               })}
             </ul>
-          </div>
-        )}
-        {onCreateRule && !t.group_members && (
-          <div className="btn-row">
-            <button className="btn secondary" onClick={act(() => onCreateRule(t))}>
-              Create a rule from this
-            </button>
           </div>
         )}
 

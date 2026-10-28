@@ -236,6 +236,8 @@ describe('emptyListWords', () => {
     expect(emptyListWords({ ...none, query: true })).toBe('No transactions match your search.');
     expect(emptyListWords({ ...none, query: true, review: true })).toBe('No transactions match your search and filters.');
     expect(emptyListWords({ ...none, tag: true, receipt: 'with' })).toBe('No transactions match these filters.');
+    expect(emptyListWords({ ...none, unsure: true })).toBe('No category listed is one Plaid was unsure of.');
+    expect(emptyListWords({ ...none, unsure: true, review: true })).toBe('No transactions match these filters.');
   });
 });
 
@@ -253,5 +255,68 @@ describe('names on the list', () => {
     expect(titles).toContain('IKEA');
     expect(titles).toContain('MY LANDLORD');
     m.unmount();
+  });
+});
+
+// The screen review: rows ran three and four lines ("Transportation › taxis
+// and ride shares · First Platypus Bank · Plaid Checking"), and seven of ten
+// carried an orange Check category. A row is its name, then one line: its
+// category and its account, the institution only where two accounts share a
+// name, after the name, as the line may be cut.
+describe('a row’s line', () => {
+  const lines = (v: ReturnType<typeof mount>) => v.all((e) => e.getAttribute('class') === 'txn-row-line').map((e) => e.textContent);
+  test('its category and its account; the bank, Plaid’s finer category and a connector’s name are left to its sheet', () => {
+    const v = mount({
+      txns: [
+        row('Taxi', 18, { account_name: 'Plaid Checking', institution_name: 'First Platypus Bank', subcategory: 'taxis and ride shares' }),
+        row('Bus', 3, { account_name: 'Plaid Checking', institution_name: 'Tartan Bank' }),
+        row('Interest', -1, { account_name: 'Savings', institution_name: 'Tartan Bank' }),
+        row('Gas', 40, { account_name: 'Visa', institution_name: 'My Bank', source: 'simplefin' }),
+        row('Farmers market', 12, { account_name: 'Wallet', institution_name: 'Cash', source: 'manual' }),
+      ],
+    });
+    expect(lines(v)).toEqual(['Groceries · Plaid Checking, First Platypus Bank', 'Groceries · Plaid Checking, Tartan Bank', 'Groceries · Savings', 'Groceries · Visa', 'Groceries · Wallet']);
+    expect(v.text()).not.toContain('›');
+    expect(v.text()).not.toContain('taxis');
+    expect(v.text()).not.toContain('SimpleFIN');
+    // Typed in, or from a file: a badge on the line, which is never cut.
+    const badges = v.all((e) => e.getAttribute('class') === 'badge').map((e) => e.textContent);
+    expect(badges).toEqual(['Entered by hand']);
+    v.unmount();
+  });
+
+  test('Plaid’s doubt: a quiet mark on the rows it can be answered for, counted by a chip that narrows the list', () => {
+    const rows = [
+      row('Whole Foods', 41.3, { category_confidence: 'LOW' }),
+      row('Blue Bottle', 4.5, { category_confidence: 'UNKNOWN' }),
+      // Pending: its sheet can't answer it until it posts, so not marked or counted.
+      row('Hardware store', 120, { category_confidence: 'LOW', pending: true }),
+      row('Corner shop', 9, { category_confidence: 'HIGH' }),
+    ];
+    const v = mount({ txns: rows });
+    const marked = () =>
+      v.all((e) => e.getAttribute('class') === 'list-row-text' && e.findAll((x) => x.getAttribute('class') === 'txn-check').length > 0).map((e) => NAMES.find((m) => e.textContent.startsWith(m)));
+    expect(marked()).toEqual(['Whole Foods', 'Blue Bottle']);
+    // Words for a screen reader with the mark; Information, so no caution badge on a row.
+    expect(v.text()).toContain('Unsure category: Groceries · Checking');
+    expect(v.all((e) => (e.getAttribute('class') ?? '').startsWith('badge') && e.textContent === 'Check category')).toEqual([]);
+
+    const chip = () => v.chip('Unsure category (2)') ?? v.chip('Unsure category (0)');
+    expect(chip()!.getAttribute('aria-pressed')).toBe('false');
+    act(() => click(chip()!));
+    expect(chip()!.getAttribute('aria-pressed')).toBe('true');
+    expect(v.names()).toEqual(['Whole Foods', 'Blue Bottle']);
+    expect(v.all((e) => e.getAttribute('class') === 'meta')[0].textContent).toBe('2 of 4');
+
+    // Answered (Looks right, or a category chosen) while it is on: the chip
+    // stays, at nothing, and the empty list says why.
+    v.render({ txns: rows.map((t) => (t.category_confidence === 'HIGH' || t.pending ? t : { ...t, category_confidence: null })) });
+    expect(v.chip('Unsure category (0)')!.getAttribute('aria-pressed')).toBe('true');
+    expect(v.text()).toContain('No category listed is one Plaid was unsure of.');
+    act(() => click(v.chip('Unsure category (0)')!));
+    expect(v.chip('Unsure category (0)')).toBeNull();
+    expect(v.group()).toBeNull();
+    expect(v.names().length).toBe(4);
+    v.unmount();
   });
 });

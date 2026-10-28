@@ -3,14 +3,17 @@
 // tag names hold the text typed, in any case, among those carrying the tag
 // chosen, and, with the To review chip on, among those that need review
 // (lib/review-layer.ts needsReview: a part of a transaction that does, a
-// group's row holding one). A part of a split transaction is found by its
-// transaction's note too, and a group's row by its transactions' names and
-// notes (#39). Pure, so the views and the tests share it.
+// group's row holding one); with the Unsure category chip on, among those
+// whose category Plaid wasn't sure of (txn-words.ts unsureCategory). A part
+// of a split transaction is found by its transaction's note too, and a
+// group's row by its transactions' names and notes (#39). Pure, so the views
+// and the tests share it.
 
 import { displayName } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
 import { needsReview } from '@/lib/review-layer';
 import { tagNames } from './tags-state';
+import { unsureCategory } from './txn-words';
 
 /** What the search reads of a row. */
 export type Searchable = {
@@ -24,6 +27,12 @@ export type Searchable = {
   split_parent?: { note?: string | null };
   group_members?: readonly { name: string; note?: string | null; needs_review?: true }[];
   needs_review?: true;
+  // For the Unsure category chip (unsureCategory); optional, as other
+  // callers' rows don't carry them.
+  category_confidence?: string | null;
+  pending?: boolean;
+  split_parts?: unknown;
+  group_outside?: unknown;
 };
 
 /**
@@ -32,7 +41,7 @@ export type Searchable = {
  * the transaction is listed whole, all its parts under it, and editing its
  * split starts from all of them. In the rows' order.
  */
-export function searchEntries<T extends Searchable & { split_of?: string }>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean }, tags: readonly Tag[]): readonly T[] {
+export function searchEntries<T extends Searchable & { split_of?: string }>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean; unsure?: boolean }, tags: readonly Tag[]): readonly T[] {
   const kept = searchRows(rows, opts, tags);
   const split = new Set(kept.flatMap((t) => (t.split_of !== undefined ? [t.split_of] : [])));
   if (split.size === 0) return kept;
@@ -41,10 +50,12 @@ export function searchEntries<T extends Searchable & { split_of?: string }>(rows
 }
 
 /** The rows the search and the filters keep, in their order. `tag` is a
- *  tag's id, or "" for every row; `review`, only those that need review. */
-export function searchRows<T extends Searchable>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean }, tags: readonly Tag[]): readonly T[] {
+ *  tag's id, or "" for every row; `review`, only those that need review;
+ *  `unsure`, only those whose category Plaid wasn't sure of. */
+export function searchRows<T extends Searchable>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean; unsure?: boolean }, tags: readonly Tag[]): readonly T[] {
   const q = opts.query.trim().toLowerCase();
-  const waiting = opts.review ? rows.filter(needsReview) : rows;
+  const reviewed = opts.review ? rows.filter(needsReview) : rows;
+  const waiting = opts.unsure ? reviewed.filter(unsureCategory) : reviewed;
   const tagged = opts.tag ? waiting.filter((t) => t.tags?.includes(opts.tag)) : waiting;
   if (!q) return tagged;
   return tagged.filter((t) => {

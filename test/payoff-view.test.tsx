@@ -102,6 +102,12 @@ describe('the payoff planner', () => {
     const html = panel([chase([sapphire]), ...alliant]);
     expect(html).toContain('Add the missing rate or payment for 1 debt below, or leave it out, to see the plan.');
     expect(html).toContain('Needed');
+    // The screen review: "Needed" in orange under both fields of every debt.
+    // The caution line above counts them once; each field's hint is plain.
+    expect(html).toContain('<div class="payoff-source">Needed for the plan</div>');
+    expect(html).not.toContain('payoff-source needed');
+    // Leaving it out is a 44px ghost button.
+    expect(html).toContain('<button class="btn ghost payoff-choice-btn">Leave out of the plan</button>');
     expect(html).toContain('A manual account has no terms from a bank');
     expect(html).not.toContain('Debt-free');
     expect(html).toContain('updated'); // a typed balance says when it was set
@@ -138,6 +144,9 @@ describe('the payoff planner', () => {
     const html = panel([chase([sapphire]), ...alliant], { leftOut: { manual_auto: true } });
     expect(html).toContain('Left out of the plan.');
     expect(html).toContain('>Include it<');
+    // Its Include it, after the line rather than inside it, the same ghost
+    // button as the accrued interest's.
+    expect(html).toContain('<p class="panel-note">Left out of the plan.</p><button class="btn ghost payoff-choice-btn">Include it</button>');
     // Not "Debt-free": the auto loan is still owed.
     expect(html).toContain('<div class="total-label">Paid off</div>');
     expect(html).toContain(', 1 left out</div>');
@@ -260,6 +269,9 @@ describe('the payoff planner', () => {
     const without = panel([chase([loan])], { withoutAccrued: { student: true } });
     expect(without).toContain('$65,262.00');
     expect(without).toContain('$6,227.36 of accrued interest left out.');
+    // Both choices are ghost buttons, as a debt's other choices are.
+    expect(html).toContain('<button class="btn ghost payoff-choice-btn">Leave it out</button>');
+    expect(without).toContain('<button class="btn ghost payoff-choice-btn">Include it</button>');
   });
 
   test('a $0 minimum from Plaid is needed, with the likely reasons, by the headline and on the row', () => {

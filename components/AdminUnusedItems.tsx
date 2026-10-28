@@ -111,7 +111,7 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
 
         {data.items.length === 0 ? (
           <div className="account-link-row">
-            <p className="chart-note">
+            <p className="empty-note">
               Nothing to review. A connection shows up here, from any account, once Plaid has been unable to read
               it, or every account in it has been hidden, for {data.flag_after_days} days. Each connection costs a
               little every month whether or not it is used. Nothing is removed without your confirmation.
@@ -127,7 +127,7 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
                   : `has had every account hidden since ${fmtDay(f.since)}.`}
               </p>
               <div className="manual-row-actions">
-                <button className="link-btn danger-link" onClick={() => open(f)}>
+                <button className="btn ghost" onClick={() => open(f)}>
                   Review and disconnect
                 </button>
               </div>
@@ -137,7 +137,7 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
 
         <div className="account-link-row">
           <div className="manual-row-actions">
-            <button className="link-btn" disabled={checking} onClick={checkNow}>
+            <button className="btn ghost" disabled={checking} onClick={checkNow}>
               {checking ? 'Checking…' : 'Check all accounts now'}
             </button>
           </div>

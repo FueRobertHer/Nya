@@ -17,8 +17,11 @@ export type NamedAccount = { id: string; name: string; institution: string; mask
 
 /** Each account's name in the list, by id (see the header). `mask: false`
  *  never adds the mask, for a caller that writes "••mask" after every name
- *  itself (the payoff plan), so it isn't written twice. */
-export function distinctAccountNames(list: readonly NamedAccount[], opts: { mask?: boolean } = {}): Map<string, string> {
+ *  itself (the payoff plan), so it isn't written twice. `nameFirst` puts the
+ *  institution after the name ("Checking, Chase"), for a line that may be
+ *  cut short with an ellipsis (Activity's rows): what tells two apart is
+ *  then the part that is cut, so the account's own name comes first. */
+export function distinctAccountNames(list: readonly NamedAccount[], opts: { mask?: boolean; nameFirst?: boolean } = {}): Map<string, string> {
   const withMask = opts.mask !== false;
   const byName = new Map<string, NamedAccount[]>();
   for (const a of list) byName.set(a.name, [...(byName.get(a.name) ?? []), a]);
@@ -29,7 +32,7 @@ export function distinctAccountNames(list: readonly NamedAccount[], opts: { mask
       continue;
     }
     for (const a of same) {
-      const full = a.institution ? `${a.institution} ${name}` : name;
+      const full = !a.institution ? name : opts.nameFirst ? `${name}, ${a.institution}` : `${a.institution} ${name}`;
       const twin = same.some((b) => b !== a && b.institution === a.institution);
       out.set(a.id, twin && withMask && a.mask ? `${full} ••${a.mask}` : full);
     }

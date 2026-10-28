@@ -159,10 +159,31 @@ describe('design guard: controls and states read without color', () => {
     ['.plan-table-view summary {', 'line-height: var(--tap)', 'Show as a table is a 44px target'],
     // The screen review: brass behind a figure is ruled out.
     ['.plan-grid td.plan-grid-cell.scored {', 'var(--border-strong) var(--shade), var(--elevated)', "the Plan grid's shade is neutral, never brass behind a figure"],
+    // The screen review: every field 42px, the review queue's radios 13px.
+    [':where(input:not(', 'min-height: var(--tap)', 'a plain field is a 44px target'],
+    ['.text-input {', 'min-height: var(--tap)', 'a .text-input is a 44px target'],
+    ['.visually-hidden {', 'min-height: 0', 'a field hidden for a screen reader stays 1px, whatever the fields’ minimum'],
+    ['.review-start-choice {', 'min-height: var(--tap)', "a review start choice's label is its radio's 44px target"],
+    // Plaid's doubt on a row: neutral, and drawn so forced colors keep it.
+    ['.txn-check {', 'border: 4px solid currentColor', "a row's unsure-category dot is a border in its text color"],
+    ['.txn-check {', 'color: var(--text-2)', "a row's unsure-category dot is neutral, never caution's orange"],
   ];
   test('each control has its edge and each state more than a color', () => {
     const missing = NEEDS.filter(([start, needs]) => !rules(start).some((body) => body.includes(needs))).map(([, , what]) => what);
     expect(missing).toEqual([]);
+  });
+
+  // The screen review: the sheet moved on its own duration and easing, over a
+  // blurred page. It takes the motion tokens, and comes off the page (its
+  // CLOSE_MS) as its slide finishes.
+  test('the sheet moves on the motion tokens, over no blur', () => {
+    expect(rules('.sheet {').some((b) => b.includes('transition: transform var(--dur-base) var(--ease)'))).toBe(true);
+    const backdrop = rules('.sheet-backdrop {').join('');
+    expect(backdrop).toContain('transition: opacity var(--dur-base) var(--ease)');
+    expect(backdrop).not.toContain('backdrop-filter');
+    const dur = /--dur-base:\s*(\d+)ms/.exec(css)?.[1];
+    const close = /const CLOSE_MS = (\d+);/.exec(read('components/Sheet.tsx'))?.[1];
+    expect(close).toBe(dur!);
   });
 
   // Look and feel, step 3: each title and figure the design draws in Red Hat
