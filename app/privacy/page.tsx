@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import { InfoPage, InfoSection } from '@/components/InfoPage';
+import { InfoPage, type InfoPart } from '@/components/InfoPage';
 import { backupRetention, databaseBackupDays } from '@/lib/backup';
 import { masterKeyConfigured } from '@/lib/crypto';
 import { backupDaysAtMost, keyDeletionText, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
@@ -90,7 +90,7 @@ function receiptsCommitment(files: AttachmentsMode): Commitment {
 
 const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean, writes: boolean, files: AttachmentsMode): Commitment[] => [
   {
-    promise: 'We never sell or share your financial data.',
+    promise: 'Nya never sells or shares your financial data.',
     today:
       'Nya shows no ads, uses no analytics or tracking tools, and sends your data only to the services listed under Who processes your data, each for the one job named there. Sharing with people you choose is up to you.',
     next: { label: 'Not written yet', text: 'A formal privacy policy that puts this in writing.' },
@@ -129,7 +129,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
       'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, as an amount, and your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; a net worth lists no account whose balance you don’t share. Once you choose a home currency, what you share is shown in it, converted at the European Central Bank’s daily rates alone, never at your own rates, and they see that it is converted at those rates, never a rate itself; what only a rate of your own would convert is left out of what is converted, and named by its currency. If the European Central Bank doesn’t publish your home currency, what you share isn’t converted at all. Before you save, Sharing says what Nya knows they could work out from it all together (what your other accounts add up to beside your net worth, your income from your net worth and spending, what goes into a goal each month, and amounts from percentages beside an amount of the same money), and that this isn’t every way. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account. The people you split costs with under Shared expenses are never shown to anyone you share with, nor named in an email: their names and usernames are encrypted in your account, and seen only by you, in your download, and by a program you give an API token to, through its shared expenses answer. Forget someone and their name and usernames are deleted, and the amounts stay. Nya never sends, receives or holds money, and keeps no payment app’s login, card or account number: asking someone to pay you opens Venmo with the request filled in, or gives you a message to send yourself.',
   },
   {
-    promise: 'You can see who can read what, including us.',
+    promise: 'You can see who can read what, including whoever runs Nya.',
     today: (
       <>
         The <a href="/security">Security page</a> lists everyone who can read your data, what each can read, and what
@@ -363,162 +363,197 @@ export default function PrivacyPage() {
   // Whether receipts and documents can be kept here, from the settings alone
   // (filesHere).
   const files = filesHere();
-  return (
-    <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
-      <section className="card info-section info-notice">
-        <p>This page is a plain-language summary, not a legal privacy policy.</p>
-      </section>
-
-      <h2>Our commitments</h2>
-      {commitments(backups, mail, keys, restore, writes, files).map((c) => (
-        <section className="card info-section" key={c.promise}>
-          <h3>{c.promise}</h3>
-          <dl className="info-status">
-            <dt>True today</dt>
-            <dd>{c.today}</dd>
-            {c.next && (
-              <>
-                <dt>{c.next.label}</dt>
-                <dd>{c.next.text}</dd>
-              </>
-            )}
-          </dl>
-        </section>
-      ))}
-
-      <InfoSection title="Who processes your data">
-        <table className="info-table">
-          <tbody>
-            {processors(backups, mail, dbDays, writes, files).map(([name, what]) => (
-              <tr key={name}>
-                <th scope="row">{name}</th>
-                <td>{what}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p>
-          {mail
-            ? 'Not used yet: no billing provider, since Nya charges nothing yet.'
-            : 'Not used yet: no billing provider, since Nya charges nothing yet, and no email provider, since this copy of Nya sends no email of its own.'}
-        </p>
-        <p>
-          Public data Nya uses: the exchange rates a home currency converts with are the European Central Bank’s euro reference rates, which
-          Nya’s server downloads once a day, the same for everyone. The ECB is sent nothing about you, and can’t tell who uses them.
-        </p>
-      </InfoSection>
-
-      <InfoSection title="How long things are kept">
-        <table className="info-table">
-          <thead>
-            <tr>
-              <th scope="col">What</th>
-              <th scope="col">How long</th>
-            </tr>
-          </thead>
-          <tbody>
-            {retention(backups, mail, keys, writes, files).map(([what, howLong]) => (
-              <tr key={what}>
-                <th scope="row">{what}</th>
-                <td>{howLong}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </InfoSection>
-
-      <InfoSection title="Download your data">
-        <p>
-          Open Settings (the account menu, or the gear), then Your data and privacy, then Download my data. Choose everything, as one JSON file, or
-          your transactions or your balance history, each as a CSV file for a spreadsheet, or one bank account’s or
-          card’s transactions as an OFX file, which other money apps import. The values come decrypted.
-        </p>
-        <p>
-          A fresh sign-in comes first: with Clerk accounts, one from the last ten minutes, or Clerk asks you to confirm
-          it is you; with the shared password, the password again. Each account can download {DOWNLOADS_PER_WINDOW} times
-          an hour. {downloadEmail(mail)}
-        </p>
-        <p>
-          Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe. Protected,
-          it is saved encrypted in the age format: open it on the <a href="/open-download">Open a protected download</a>{' '}
-          page, in your browser, without signing in and without the file leaving your device, or with the age app. Nya
-          never keeps the passphrase, so a lost one can’t be recovered.
-        </p>
-        <p>
-          The file leaves out the tokens that reach your banks, the access a SimpleFIN account gives Nya and the Lunch
-          Flow API key you give it, which are credentials rather than your data, your API tokens themselves (each one’s
-          name and dates are in), your sign-in, and other people’s data; the JSON file lists what it leaves out.
-        </p>
-        {files.connected && (
+  // The page's parts, in order, each with its address on the page: InfoPage
+  // draws them and the contents list from this one list, so the two agree.
+  const parts: (InfoPart | false)[] = [
+    {
+      id: 'commitments',
+      title: 'Nya’s commitments',
+      body: (
+        <>
+          {commitments(backups, mail, keys, restore, writes, files).map((c) => (
+            <section className="info-commitment" key={c.promise}>
+              <h3>{c.promise}</h3>
+              <dl className="info-status">
+                <dt>True today</dt>
+                <dd>{c.today}</dd>
+                {c.next && (
+                  <>
+                    <dt>{c.next.label}</dt>
+                    <dd>{c.next.text}</dd>
+                  </>
+                )}
+              </dl>
+            </section>
+          ))}
+        </>
+      ),
+    },
+    {
+      id: 'processors',
+      title: 'Who processes your data',
+      body: (
+        <>
+          <table className="info-table">
+            <tbody>
+              {processors(backups, mail, dbDays, writes, files).map(([name, what]) => (
+                <tr key={name}>
+                  <th scope="row">{name}</th>
+                  <td>{what}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
           <p>
-            Your receipts and documents come as a download of their own: in Settings, Your data and privacy, Receipts and documents, as ZIP
-            files of about 50 MB each, decrypted, behind the same fresh sign-in and counted as one download. Protect them
-            with a passphrase, since they show what you bought. The JSON file lists them, without the files themselves.
+            {mail
+              ? 'Not used yet: no billing provider, since Nya charges nothing yet.'
+              : 'Not used yet: no billing provider, since Nya charges nothing yet, and no email provider, since this copy of Nya sends no email of its own.'}
           </p>
-        )}
-        {restore && (
           <p>
-            Bring back a download, beside it, brings a JSON download into an account with nothing in it yet, in this copy of
-            Nya or another. The file is read in your browser and never stored: only what it holds is written, into your
-            account, encrypted as the rest of your data is. A fresh sign-in comes first, and{' '}
-            {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
-            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again.
-            {files.connected ? ' Nor, yet, do your receipts and documents: keep your ZIP download of them.' : ''} Undo,
-            offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
+            Public data Nya uses: the exchange rates a home currency converts with are the European Central Bank’s euro reference rates, which
+            Nya’s server downloads once a day, the same for everyone. The ECB is sent nothing about you, and can’t tell who uses them.
           </p>
-        )}
-      </InfoSection>
-
-      <InfoSection title="Delete your account">
-        <p>
-          If you sign in with your own account, open your account menu (your picture or initial, at the top right),
-          choose Manage account, then Data &amp; privacy, and use Delete my account. It disconnects your banks at Plaid,
-          deletes everything stored for you, ends all sharing both ways, and deletes your sign-in. It cannot be undone. It
-          ends with a receipt, to copy or save: what was deleted, when the last backup holding your data is gone, and what
-          stays and why.
-        </p>
-        <ul>
-          <li>
-            {deletedInBackups(backups)}
-            {backups?.kept ? ' The receipt gives the date.' : ''}
-          </li>
-          {keys.key.length > 0 && <li>{keys.key.join(' ')}</li>}
+        </>
+      ),
+    },
+    {
+      id: 'kept',
+      title: 'How long things are kept',
+      body: (
+        <>
+          <table className="info-table">
+            <thead>
+              <tr>
+                <th scope="col">What</th>
+                <th scope="col">How long</th>
+              </tr>
+            </thead>
+            <tbody>
+              {retention(backups, mail, keys, writes, files).map(([what, howLong]) => (
+                <tr key={what}>
+                  <th scope="row">{what}</th>
+                  <td>{howLong}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ),
+    },
+    {
+      id: 'download',
+      title: 'Download your data',
+      body: (
+        <>
+          <p>
+            Open Settings (the account menu, or the gear), then Your data and privacy, then Download my data. Choose everything, as one JSON file, or
+            your transactions or your balance history, each as a CSV file for a spreadsheet, or one bank account’s or
+            card’s transactions as an OFX file, which other money apps import. The values come decrypted.
+          </p>
+          <p>
+            A fresh sign-in comes first: with Clerk accounts, one from the last ten minutes, or Clerk asks you to confirm
+            it is you; with the shared password, the password again. Each account can download {DOWNLOADS_PER_WINDOW} times
+            an hour. {downloadEmail(mail)}
+          </p>
+          <p>
+            Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe. Protected,
+            it is saved encrypted in the age format: open it on the <a href="/open-download">Open a protected download</a>{' '}
+            page, in your browser, without signing in and without the file leaving your device, or with the age app. Nya
+            never keeps the passphrase, so a lost one can’t be recovered.
+          </p>
+          <p>
+            The file leaves out the tokens that reach your banks, the access a SimpleFIN account gives Nya and the Lunch
+            Flow API key you give it, which are credentials rather than your data, your API tokens themselves (each one’s
+            name and dates are in), your sign-in, and other people’s data; the JSON file lists what it leaves out.
+          </p>
           {files.connected && (
-            <li>
-              Your receipts and documents are deleted from the file store (part of them by a later nightly run if the store
-              can’t be reached), and the key that would open them is destroyed.
-            </li>
+            <p>
+              Your receipts and documents come as a download of their own: in Settings, Your data and privacy, Receipts and documents, as ZIP
+              files of about 50 MB each, decrypted, behind the same fresh sign-in and counted as one download. Protect them
+              with a passphrase, since they show what you bought. The JSON file lists them, without the files themselves.
+            </p>
           )}
-          {keys.notReached.length > 0 && (
-            <li>
-              What deleting your key doesn’t reach:{' '}
-              {keys.notReached.map((line) => line.charAt(0).toLowerCase() + line.slice(1).replace(/\.$/, '')).join('; ')}.
-            </li>
+          {restore && (
+            <p>
+              Bring back a download, beside it, brings a JSON download into an account with nothing in it yet, in this copy of
+              Nya or another. The file is read in your browser and never stored: only what it holds is written, into your
+              account, encrypted as the rest of your data is. A fresh sign-in comes first, and{' '}
+              {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
+              Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again.
+              {files.connected ? ' Nor, yet, do your receipts and documents: keep your ZIP download of them.' : ''} Undo,
+              offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
+            </p>
           )}
-          <li>
-            Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
-            own within 72 hours.
-          </li>
-          <li>
-            Plaid keeps its own record of the connections you made through it. To see what Plaid holds about you, or
-            delete it, use the{' '}
-            <a href={PLAID_PORTAL} target="_blank" rel="noopener noreferrer">
-              Plaid Portal (my.plaid.com)
-            </a>
-            .
-          </li>
-          <li>
-            SimpleFIN keeps your bank connections under its own terms. Deleting your account deletes the access it gave
-            Nya; to end it on SimpleFIN’s side too, remove Nya in your SimpleFIN account.
-          </li>
-          <li>
-            Lunch Flow keeps your bank connections under its own terms. Deleting your account deletes the API key you gave
-            Nya; to end it on Lunch Flow’s side too, delete its API destination in Lunch Flow.
-          </li>
-          <li>The first account on a copy of Nya, the operator’s own, cannot be deleted from the app.</li>
-          <li>With the shared password there is no delete button: ask the operator.</li>
-        </ul>
-      </InfoSection>
-    </InfoPage>
+        </>
+      ),
+    },
+    {
+      id: 'delete',
+      title: 'Delete your account',
+      body: (
+        <>
+          <p>
+            If you sign in with your own account, open your account menu (your picture or initial, at the top right),
+            choose Manage account, then Data &amp; privacy, and use Delete my account. It disconnects your banks at Plaid,
+            deletes everything stored for you, ends all sharing both ways, and deletes your sign-in. It cannot be undone. It
+            ends with a receipt, to copy or save: what was deleted, when the last backup holding your data is gone, and what
+            stays and why.
+          </p>
+          <ul>
+            <li>
+              {deletedInBackups(backups)}
+              {backups?.kept ? ' The receipt gives the date.' : ''}
+            </li>
+            {keys.key.length > 0 && <li>{keys.key.join(' ')}</li>}
+            {files.connected && (
+              <li>
+                Your receipts and documents are deleted from the file store (part of them by a later nightly run if the store
+                can’t be reached), and the key that would open them is destroyed.
+              </li>
+            )}
+            {keys.notReached.length > 0 && (
+              <li>
+                What deleting your key doesn’t reach:{' '}
+                {keys.notReached.map((line) => line.charAt(0).toLowerCase() + line.slice(1).replace(/\.$/, '')).join('; ')}.
+              </li>
+            )}
+            <li>
+              Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
+              own within 72 hours.
+            </li>
+            <li>
+              Plaid keeps its own record of the connections you made through it. To see what Plaid holds about you, or
+              delete it, use the{' '}
+              <a href={PLAID_PORTAL} target="_blank" rel="noopener noreferrer">
+                Plaid Portal (my.plaid.com)
+              </a>
+              .
+            </li>
+            <li>
+              SimpleFIN keeps your bank connections under its own terms. Deleting your account deletes the access it gave
+              Nya; to end it on SimpleFIN’s side too, remove Nya in your SimpleFIN account.
+            </li>
+            <li>
+              Lunch Flow keeps your bank connections under its own terms. Deleting your account deletes the API key you gave
+              Nya; to end it on Lunch Flow’s side too, delete its API destination in Lunch Flow.
+            </li>
+            <li>The first account on a copy of Nya, the operator’s own, cannot be deleted from the app.</li>
+            <li>With the shared password there is no delete button: ask the operator.</li>
+          </ul>
+        </>
+      ),
+    },
+  ];
+  const sections = parts.filter((s) => s !== false);
+
+  return (
+    <InfoPage
+      page="privacy"
+      title="Privacy"
+      intro="How Nya handles your data, in plain language."
+      // Said first, before the contents and the commitments.
+      notice="This page is a plain-language summary, not a legal privacy policy."
+      sections={sections}
+    />
   );
 }

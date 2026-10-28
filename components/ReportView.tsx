@@ -151,12 +151,15 @@ export function ReportView({ report }: { report: Report }) {
           </div>
         )}
 
+        {/* Each cell names its column (data-label), so on a phone's screen
+            the tables stack into rows that say what each line is
+            (.report-sources in app/globals.css); printed, they are tables. */}
         <section className="report-asof" aria-label="Where the data comes from">
           <h2>Where the data comes from</h2>
           {report.institutions.length === 0 && report.manual.length === 0 && <p className="report-note">Nothing is connected or tracked yet.</p>}
           {report.institutions.length > 0 && (
             <div className="report-scroll">
-              <table className="report-table">
+              <table className="report-table report-sources">
                 <thead>
                   <tr>
                     <th>Connection</th>
@@ -171,11 +174,11 @@ export function ReportView({ report }: { report: Report }) {
                     const gaps = gapsOf(i.item_id);
                     return (
                       <tr key={i.item_id}>
-                        <td>
+                        <td data-label="Connection">
                           {i.institution_name}
                           {i.connector?.host ? ` at ${i.connector.host}` : ''}
                         </td>
-                        <td>
+                        <td data-label="State">
                           {i.no_transactions
                             ? NO_TRANSACTIONS_WORDS[i.no_transactions]
                             : i.connector
@@ -186,13 +189,13 @@ export function ReportView({ report }: { report: Report }) {
                                   ? 'Its records couldn’t all be read'
                                   : 'No problem recorded'}
                         </td>
-                        <td>{i.no_transactions ? '' : i.synced_at ? reportTime(i.synced_at, tz) : 'Not known'}</td>
-                        <td>
+                        <td data-label="Transactions as of">{i.no_transactions ? '' : i.synced_at ? reportTime(i.synced_at, tz) : 'Not known'}</td>
+                        <td data-label="In Nya from">
                           {[i.first_date ? reportDay(i.first_date) : null, ...(i.imported ?? []).map((a) => `${a.account} from ${reportDay(a.from)}, imported from files`)]
                             .filter(Boolean)
                             .join('; ')}
                         </td>
-                        <td>
+                        <td data-label="May be missing">
                           {gaps.length > 0
                             ? gaps.join('. ')
                             : i.no_transactions
@@ -212,7 +215,7 @@ export function ReportView({ report }: { report: Report }) {
             <>
               <h3>Manual accounts</h3>
               <div className="report-scroll">
-                <table className="report-table">
+                <table className="report-table report-sources">
                   <thead>
                     <tr>
                       <th>Account</th>
@@ -223,11 +226,11 @@ export function ReportView({ report }: { report: Report }) {
                   <tbody>
                     {report.manual.map((m) => (
                       <tr key={m.account_id}>
-                        <td>
+                        <td data-label="Account">
                           {m.institution}: {m.name}
                         </td>
-                        <td>{m.transactions === null ? 'Couldn’t be read' : m.transactions === 0 ? 'None in this period' : m.transactions}</td>
-                        <td>{m.updated_at ? reportTime(m.updated_at, tz) : 'Not recorded'}</td>
+                        <td data-label="Transactions in this period">{m.transactions === null ? 'Couldn’t be read' : m.transactions === 0 ? 'None in this period' : m.transactions}</td>
+                        <td data-label="Balance last updated">{m.updated_at ? reportTime(m.updated_at, tz) : 'Not recorded'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -240,7 +243,7 @@ export function ReportView({ report }: { report: Report }) {
             <>
               <h3>Accounts that ended</h3>
               <div className="report-scroll">
-                <table className="report-table">
+                <table className="report-table report-sources">
                   <thead>
                     <tr>
                       <th>Account</th>
@@ -251,9 +254,9 @@ export function ReportView({ report }: { report: Report }) {
                   <tbody>
                     {report.ended.map((e, i) => (
                       <tr key={i}>
-                        <td>{e.institution ? `${e.institution}: ${e.account}` : e.account}</td>
-                        <td>{endedWords(e, reportDay)}</td>
-                        <td>{endedCounted(e, reportDay)}</td>
+                        <td data-label="Account">{e.institution ? `${e.institution}: ${e.account}` : e.account}</td>
+                        <td data-label="Ended">{endedWords(e, reportDay)}</td>
+                        <td data-label="In this report">{endedCounted(e, reportDay)}</td>
                       </tr>
                     ))}
                   </tbody>

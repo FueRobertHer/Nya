@@ -82,7 +82,7 @@ describe('which report', () => {
     const v = await mount();
     expect(v.group('Which report')?.getAttribute('role')).toBe('tablist');
     expect(v.group('Which report')?.getAttribute('class')).toBe('segmented report-choice');
-    const tab = v.item('Which report', 'For your accountant')!;
+    const tab = v.item('Which report', 'Accountant')!;
     expect(tab.getAttribute('role')).toBe('tab');
     expect(tab.getAttribute('aria-selected')).toBe('true');
     expect(tab.getAttribute('aria-controls')).toBe('report-panel');
@@ -115,10 +115,65 @@ describe('Runway’s window', () => {
     await press(v.item('Which report', 'Runway'));
     await settle();
     expect(v.group('Spending over')?.getAttribute('role')).toBe('radiogroup');
-    expect(v.item('Spending over', 'Last 6 months')?.getAttribute('aria-checked')).toBe('true');
-    await press(v.item('Spending over', 'Last 3 months'));
-    expect(v.item('Spending over', 'Last 3 months')?.getAttribute('aria-checked')).toBe('true');
-    expect(v.item('Spending over', 'Last 6 months')?.getAttribute('aria-checked')).toBe('false');
+    expect(v.item('Spending over', '6 months')?.getAttribute('aria-checked')).toBe('true');
+    await press(v.item('Spending over', '3 months'));
+    expect(v.item('Spending over', '3 months')?.getAttribute('aria-checked')).toBe('true');
+    expect(v.item('Spending over', '6 months')?.getAttribute('aria-checked')).toBe('false');
+    // The short items keep their meaning: the window's name is on screen over
+    // them, as a field's is, and named for a screen reader once, on the group.
+    const field = v.group('Spending over')!.parentNode as unknown as FakeElement;
+    expect(field.getAttribute('class')).toBe('field');
+    const name = elements(field)[0];
+    expect([name.textContent, name.getAttribute('aria-hidden')]).toEqual(['Spending over', 'true']);
+    await v.unmount();
+  });
+});
+
+/** An element's own element children. */
+const elements = (e: FakeElement) => e.childNodes.filter((n) => n.nodeType === 1) as unknown as FakeElement[];
+
+/** The buttons of a report's action row, by their words, with their class. */
+const actionRow = (host: FakeElement) => {
+  const row = host.findAll((e) => (e.getAttribute('class') ?? '').includes('report-actions'))[0];
+  if (!row) throw new Error('no action row');
+  return row;
+};
+const buttons = (row: FakeElement) =>
+  row
+    .findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-haspopup') !== 'menu')
+    .map((b) => [b.textContent.trim(), b.getAttribute('class')]);
+
+describe('a report’s buttons on a phone', () => {
+  test('the accountant’s: Print, the one filled button, last; the CSV, marking and stopped accounts under its ⋯', async () => {
+    const v = await mount();
+    const row = actionRow(v.host);
+    expect(buttons(row)).toEqual([['Print or save as PDF', 'btn']]);
+    const more = row.findAll((e) => e.getAttribute('aria-label') === 'More for this report')[0];
+    expect(more?.getAttribute('aria-haspopup')).toBe('menu');
+    expect(elements(row).at(-1)?.textContent.trim()).toBe('Print or save as PDF');
+    // No report here (the route answers with an error), so the CSV waits.
+    await press(more);
+    const items = row.findAll((e) => e.getAttribute('role') === 'menuitem');
+    expect(items.map((i) => [i.textContent.trim(), i.tagName, i.getAttribute('disabled') !== null])).toEqual([
+      ['Download as CSV', 'BUTTON', true],
+      ['Mark categories', 'BUTTON', true],
+    ]);
+    // Make report is tonal: Print is the one filled button in the card.
+    await press(v.item('Kind of report', 'Date range'));
+    const make = v.host.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Make report')[0];
+    expect(make?.getAttribute('class')).toBe('btn secondary btn-block');
+    await v.unmount();
+  });
+
+  test('Runway’s: Start over quiet, Save as a scenario tonal, Print filled and last', async () => {
+    const v = await mount();
+    await press(v.item('Which report', 'Runway'));
+    await settle();
+    expect(buttons(actionRow(v.host))).toEqual([
+      ['Start over', 'btn ghost'],
+      ['Save as a scenario', 'btn secondary'],
+      ['Print or save as PDF', 'btn'],
+    ]);
     await v.unmount();
   });
 });

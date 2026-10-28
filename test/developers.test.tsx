@@ -113,6 +113,35 @@ describe('the page', () => {
     }
   });
 
+  test('a long document: prose under headings, a contents list of its parts, and an index of every endpoint, writing on or off', () => {
+    for (const on of ['0', '1']) {
+      process.env.API_WRITES_ENABLED = on;
+      const html = renderToStaticMarkup(<DevelopersPage />);
+      expect(html).not.toContain('class="card');
+      expect(html).toContain('<header class="page-header"><nav aria-label="Back to Nya"><a class="brand page-brand" href="/">');
+      const nav = html.slice(html.indexOf('<nav class="info-contents"'), html.indexOf('</nav>', html.indexOf('<nav class="info-contents"')));
+      const contents = [...nav.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]);
+      const sections = [...html.matchAll(/<section class="info-section info-prose" id="([^"]+)"/g)].map((m) => m[1]);
+      expect(contents).toEqual(sections);
+      expect(contents.includes('writing')).toBe(on === '1');
+      // Every id once, and every link on the page lands on one.
+      const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const [, target] of html.matchAll(/href="#([^"]+)"/g)) expect([target, ids.includes(target)]).toEqual([target, true]);
+      // The index names every endpoint, linking to its part.
+      const endpoints = html.slice(html.indexOf('id="endpoints"'));
+      for (const op of OPERATION_SPECS) expect(endpoints).toContain(`<a href="#${op.name}"><code>GET /api/v1/${op.name}</code></a>`);
+      for (const spec of RESOURCE_SPECS) expect([spec.name, endpoints.includes(`<a href="#${spec.name}">`)]).toEqual([spec.name, on === '1']);
+      // Where tokens can write, each kind of endpoint under a heading of its own.
+      expect(endpoints.includes('<h3>Endpoints that read your data</h3><ul class="info-index" role="list">')).toBe(on === '1');
+      expect(endpoints.match(/<ul class="info-index" role="list">/g)).toHaveLength(on === '1' ? 2 : 1);
+      // A list without bullets is still read as a list.
+      expect(html).toContain('<ol role="list">');
+      // In Nya's voice: never "we", "our" or "us" ("US" is the country).
+      expect(page().match(/\b(?:[Ww]e|[Oo]urs?|us)\b/g)).toBeNull();
+    }
+  });
+
   test('while this copy lets no token write, the page says nothing of writing', () => {
     delete process.env.API_WRITES_ENABLED;
     const p = page();

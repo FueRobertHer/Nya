@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { plainNumber } from '@/lib/format';
+import { PageHeader } from './PageHeader';
 
 type Encryption =
   | { kind: 'plain' }
@@ -259,11 +260,7 @@ export default function DataInventory() {
 
   return (
     <main className="wrap report-wrap">
-      <div className="report-top">
-        <nav className="report-nav" aria-label="Back to Nya">
-          <a href="/">← Nya</a>
-        </nav>
-      </div>
+      <PageHeader />
       <h1>Your data</h1>
       <p className="sub">
         Every kind of thing Nya keeps about you: how much of it there is, whether it is encrypted and with which key, whether it is in your download, how long it is

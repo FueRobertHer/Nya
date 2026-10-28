@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NextRequest } from 'next/server';
 import { ReportView, reportDay, reportTime, reportHeading, footerCss } from '@/components/ReportView';
-import { MarkCategoriesView, formFrom, reportQuery, csvQuery } from '@/components/ReportsPage';
+import { MarkCategoriesView, formFrom, reportQuery, csvQuery, accountantMenu } from '@/components/ReportsPage';
 import ReportsEntry from '@/components/ReportsEntry';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
 import { resolvePeriod, type Period, type ReportRequest } from '@/lib/report/period';
@@ -277,6 +277,43 @@ describe('review: the page says what it can’t show', () => {
     expect(printRule('@bottom-right')).toContain('content: "Page " counter(page) " of " counter(pages)');
   });
 
+  test('on a phone’s screen, each source’s cell names its column, so the tables can stack into rows', () => {
+    const s = html();
+    const tables = [...s.matchAll(/<table class="report-table report-sources">([\s\S]*?)<\/table>/g)].map((m) => m[1]);
+    // Connections and manual accounts here.
+    expect(tables.length).toBe(2);
+    for (const t of tables) {
+      const heads = [...t.matchAll(/<th>([^<]*)<\/th>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
+      for (const r of t.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+        if (r[1].startsWith('<th>')) continue;
+        const labels = [...r[1].matchAll(/<td data-label="([^"]*)"/g)].map((m) => m[1]);
+        expect(labels).toEqual(heads);
+      }
+    }
+    // And the accounts that ended: every cell of the three tables carries one.
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'ReportView.tsx'), 'utf8');
+    const sources = source.slice(source.indexOf('<section className="report-asof"'), source.indexOf('{report.removed.length > 0'));
+    expect(sources.match(/report-table report-sources/g)?.length).toBe(3);
+    expect(sources).not.toContain('<td>');
+  });
+
+  test('the CSV under the report’s ⋯ is a link to save the report on screen; marking and stopped accounts beside it', () => {
+    const r = buildReport(input());
+    const calls: string[] = [];
+    const items = accountantMenu(r, false, 2, () => calls.push('mark'), () => calls.push('stopped'));
+    expect(items[0]).toEqual({ label: 'Download as CSV', href: `/api/reports?${csvQuery(r)}`, download: true });
+    expect(items.slice(1).map((i) => i.label)).toEqual(['Mark categories', 'Accounts you stopped tracking (2)']);
+    for (const i of items.slice(1)) if ('onSelect' in i) i.onSelect();
+    expect(calls).toEqual(['mark', 'stopped']);
+    // While it loads, or before there is one, the CSV waits and so does marking.
+    const waiting = accountantMenu(r, true, 0, () => {}, () => {});
+    expect(waiting.map((i) => [i.label, 'href' in i, 'disabled' in i && !!i.disabled])).toEqual([
+      ['Download as CSV', false, true],
+      ['Mark categories', false, true],
+    ]);
+    expect(accountantMenu(null, false, 0, () => {}, () => {})[0]).not.toHaveProperty('href');
+  });
+
   test('the CSV link asks for the report on screen, whatever the form says since', () => {
     const r = buildReport(input({ period: period({ kind: 'range', start: '2025-02-01', end: '2025-03-31' }) }));
     expect(csvQuery(r)).toBe('kind=range&start=2025-02-01&end=2025-03-31&currency=USD&tz=America%2FNew_York&format=csv');
@@ -298,6 +335,19 @@ function printRules(selector: string): string[] {
 
 /** The first rule of a selector inside `@media print`. */
 const printRule = (selector: string): string => printRules(selector)[0] ?? '';
+
+describe('the phone styles', () => {
+  test('the sources stack into rows on a screen 480px wide or less, never in print', () => {
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const at = css.indexOf('@media screen and (max-width: 480px)');
+    expect(at).toBeGreaterThan(-1);
+    // Before the print block, which the print tests read from the first one.
+    expect(at).toBeLessThan(css.indexOf('@media print'));
+    const block = css.slice(at, css.indexOf('@media print'));
+    expect(block).toMatch(/\.report-sources td::before\s*\{[^}]*content: attr\(data-label\)/);
+    expect(printRules('.report-sources td')).toEqual([]);
+  });
+});
 
 describe('the print styles', () => {
   test('page breaks between parts, never inside a row; the header of a long table on every page', () => {
