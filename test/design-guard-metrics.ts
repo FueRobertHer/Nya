@@ -267,8 +267,12 @@ export function contrastPairs(): [string, string, number][] {
   // The header logo's one ink, on the page and on a card.
   pairs.push(['brand-mark', 'canvas', UI], ['brand-mark', 'surface', UI]);
   pairs.push(['focus', 'surface', UI], ['focus', 'canvas', UI]);
+  // Gold for what Nya measures (the light accent review): drawn only, as a
+  // line, a fill or a ring, never text, so 3:1 on every surface and on its
+  // own tint (a meter's track, the wash under a line).
+  for (const bg of ['canvas', 'surface', 'elevated', 'data-tint']) pairs.push(['data', bg, UI]);
   // The Plan grid's strongest cell (a neutral ramp to --border-strong, since
-  // the screen review): its figures, and the plan's own brass outline.
+  // the screen review): its figures, and the plan's own accent outline.
   pairs.push(['text-1', 'border-strong', TEXT], ['text-2', 'border-strong', TEXT], ['accent', 'border-strong', UI]);
   // A tag's text on its tint, and its swatch (the text step) on a card.
   for (const tag of TAG_COLORS) pairs.push([`tag-${tag}`, `tag-${tag}-tint`, TEXT], [`tag-${tag}`, 'surface', UI]);

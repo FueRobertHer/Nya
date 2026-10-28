@@ -20,7 +20,7 @@
 // (components/drawn-width.ts), so its labels are the 12px they say, laid out
 // by a pure function (lib/sankey.ts), its colors the app's
 // own variables: money in and what is left over in the up hue, spending in
-// the accent, what came from savings or debt in the down hue. Labels sit
+// gold (--data), what came from savings or debt in the down hue. Labels sit
 // outside their nodes, which are too thin to hold them, cut to fit. Where a
 // label goes, on how many lines, and where it can be tapped are worked out
 // beside the room the widest amount could take (amountSamples), never the
@@ -369,7 +369,7 @@ export default function CashFlowSankey({
               In{flow.left_over > 0 ? ', left over' : ''}
             </span>
             <span className="chart-legend-item">
-              <span className="chart-legend-dot" style={{ background: 'var(--accent)' }} />
+              <span className="chart-legend-dot" style={{ background: 'var(--data)' }} />
               Spending
             </span>
             {flow.from_savings_or_debt > 0 && (

@@ -39,12 +39,12 @@ Also:
 
 ## Color
 
-- Use only `var(--…)` colors: the tokens on `:root` in `app/globals.css` (`--canvas`, `--surface`, `--elevated`, `--border-subtle`, `--text-1`, `--accent`, `--neg-tint`, `--accent-fill`, ...; the table is in [design-system.md](design-system.md#color)).
+- Use only `var(--…)` colors: the tokens on `:root` in `app/globals.css` (`--canvas`, `--surface`, `--elevated`, `--border-subtle`, `--text-1`, `--accent`, `--data`, `--data-tint`, `--neg-tint`, `--accent-fill`, ...; the table is in [design-system.md](design-system.md#color)).
 - New rules use the token names. Today's names (`--bg`, `--card`, `--raised`, `--border`, `--line`, `--text`, `--muted`, `--up`, `--down`) are aliases kept so older rules keep working; don't add new uses of them.
 - **No color literals** (`#hex`, `rgb()`, `hsl()`) in components or in new CSS rules. Charts pass `var(--…)` strings to `fill` and `stroke`.
 - The app is light or dark (rollout phase 7), so a color that only reads in one of them is a bug. Code that can't read a CSS variable (`themeColor`, the web manifest) imports `lib/theme.ts`; Clerk takes the variables themselves.
 - A token at an alpha is `color-mix(in srgb, var(--token) N%, transparent)`, never the token's color restated as `rgba()`.
-- **Meaning, not decoration.** Brass (`--accent`) is for actions and the current selection. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Orange (`--warn`) is only for something that needs the person. Red is for a number that is wrong or short. Brass is close to orange, coral and body text in lightness, so it never carries a meaning alone: underline a link inside a sentence, and tell two chart lines apart by dash as well as color.
+- **Meaning, not decoration.** The accent acts, `--data` measures. `--accent` (brass in dark, navy in light) is for actions and the current selection. `--data` (gold in both themes) is for what Nya measures: chart lines and fills, meters, category bars; it is drawn only, never text, and the wash under a line is the solid `--data-tint`, never `--data` at an alpha. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Orange (`--warn`) is only for something that needs the person. Red is for a number that is wrong or short. The accent is close to body text in lightness, and gold to orange and coral, so neither carries a meaning alone: underline a link inside a sentence, and tell two chart lines apart by dash as well as color.
 - **Never color alone**: a state shown in color also has a word or an icon.
 
 ## Type

@@ -767,6 +767,10 @@ describe('the fan chart', () => {
     const bands = { p10: [100, 80, 0], p25: [100, 90, 50], p50: [100, 105, 110], p75: [100, 120, 150], p90: [100, 140, 200] };
     const html = renderToStaticMarkup(<PlanFanChart bands={bands} startAge={60} currency="USD" />);
     expect(html.match(/<path /g)).toHaveLength(3);
+    // The outer band is the solid --data-tint, drawn before the gridlines,
+    // which it would otherwise hide (the light accent review).
+    expect(html.indexOf('fill="var(--data-tint)"')).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf('stroke="var(--border-subtle)"')).toBeGreaterThan(html.indexOf('fill="var(--data-tint)"'));
     expect(text(html)).toContain('Median $110');
     expect(text(html)).toContain('at the end (age 62) · middle 80%: $0 to $200');
     expect(text(html)).toContain('Show as a table');

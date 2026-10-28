@@ -148,6 +148,10 @@ export default function PlanPathChart(props: PathChartProps) {
   return (
     <div className="plan-path">
       <svg ref={drawnRef} className="chart-svg at-width" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={spoken(summary(props, stopped))}>
+        {/* The wash first: it is solid (gold drawn see-through over the
+            light canvas turns a grey beige), so the axis, the FI line and
+            its label go over it. */}
+        <path d={geo.area} fill="var(--data-tint)" />
         <line x1={PAD_X} x2={W - PAD_X} y1={geo.baseY} y2={geo.baseY} stroke="var(--border-subtle)" strokeWidth={1} />
         {geo.fiY !== null && (
           <>
@@ -159,8 +163,7 @@ export default function PlanPathChart(props: PathChartProps) {
             </text>
           </>
         )}
-        <path d={geo.area} fill="var(--accent)" opacity={0.12} />
-        <path d={geo.line} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={geo.line} fill="none" stroke="var(--data)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         {geo.stopX !== null && <line x1={geo.stopX} x2={geo.stopX} y1={PAD_TOP} y2={geo.baseY} stroke="var(--text-3)" strokeWidth={1} />}
         {geo.todayX !== null && <line x1={geo.todayX} x2={geo.todayX} y1={PAD_TOP} y2={geo.baseY} stroke="var(--border-subtle)" strokeWidth={1} />}
         {geo.plannedLine && <path d={geo.plannedLine} fill="none" stroke="var(--text-2)" strokeWidth={2} strokeDasharray="2 4" strokeLinecap="round" />}

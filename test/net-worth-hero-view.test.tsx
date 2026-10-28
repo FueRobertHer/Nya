@@ -186,6 +186,24 @@ describe('the hero, scrubbed', () => {
     expect(v.figure()).toContain(money(WORTH));
     expect(v.day()).toBeNull();
     expect(v.host.textContent).toContain('Oct 2 to Oct 7');
+    // The light accent review: the measured stretch deepens the gold under
+    // the line, drawn over the solid wash (not under it, where it would be
+    // hidden, nor over the page above the line).
+    const plot = v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'img')[0];
+    const paths = plot.findAll((e) => e.tagName.toLowerCase() === 'path');
+    const wash = paths.findIndex((e) => e.getAttribute('fill') === 'var(--data-tint)');
+    const slice = paths.findIndex((e) => e.getAttribute('fill') === 'var(--data)' && e.getAttribute('opacity') === '0.16');
+    expect(wash).toBeGreaterThanOrEqual(0);
+    expect(slice).toBeGreaterThan(wash);
+    // Its shape: from the axis under Oct 2, through the six days to Oct 7,
+    // and back down to the axis, both ends on the same baseline.
+    const d = paths[slice].getAttribute('d')!;
+    const m = /^M([\d.]+),([\d.]+)((?:L[\d.]+,[\d.]+){6})L([\d.]+),([\d.]+)Z$/.exec(d);
+    expect(m).not.toBeNull();
+    expect(m![2]).toBe(m![5]);
+    expect(m![3].startsWith(`L${m![1]},`)).toBe(true);
+    expect(m![3].includes(`L${m![4]},`)).toBe(true);
+    expect(plot.findAll((e) => e.tagName.toLowerCase() === 'rect')).toHaveLength(0);
   });
 
   test('a negative day is drawn as one, and today’s figure comes back as it was', () => {

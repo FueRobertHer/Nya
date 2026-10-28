@@ -10,7 +10,7 @@
 // point after the first is an estimate. Zero and the low-balance warning are
 // drawn when the line comes near them, and the lowest point is marked. With a
 // what-if, its line is drawn over the forecast's in --text-2 dots (look and
-// feel, step 4: not the warning colour, which is close to brass), with a
+// feel, step 4: not the warning colour, which is close to gold), with a
 // legend of each line's dash, and the readout gives both. It is drawn at its own width
 // (components/drawn-width.ts), in the shape it has always had, so its text is
 // the 12px it says on a phone and on a wide card; the card's chart and the
@@ -39,10 +39,10 @@ const PAD_RIGHT = 10;
 const PAD_TOP = 8;
 // Room under the baseline for the 12px dates.
 const PAD_BOTTOM = 24;
-// The forecast in brass dashes; a what-if in --text-2 dots, by dash as well
-// as color (--warn is for caution, and is close to brass). Round caps
+// The forecast in gold (--data) dashes; a what-if in --text-2 dots, by dash as well
+// as color (--warn is for caution, and is close to gold). Round caps
 // lengthen each dash by the stroke's width, so "0 4" draws dots.
-const MAIN = { color: 'var(--accent)', dash: '5 4' };
+const MAIN = { color: 'var(--data)', dash: '5 4' };
 const ALT = { color: 'var(--text-2)', dash: '0 4' };
 /** A rule's name sits this far over it (its baseline), or under it by its
  *  12px height and as much again where there is no room over it. */

@@ -90,6 +90,8 @@
 
   /* Meaning, as a background tint (text in the matching color sits on it) */
   --accent-tint: #2a2a24;
+  --data: #d4b680; /* what Nya measures: chart series, meters, bars (gold) */
+  --data-tint: #2a2a24;
   --pos-tint: #15302c;
   --neg-tint: #352229;
   --warn-tint: #35281e;
@@ -142,11 +144,13 @@
     --text-1: #111826;
     --text-2: #4f5869;
     --text-3: #5e6777;
-    --accent: #846326;
+    --accent: #22488a;
     --pos: #047857;
     --neg: #b91c1c;
     --warn: #a3410b;
-    --accent-tint: #f6f0e4;
+    --accent-tint: #dde4f1;
+    --data: #96732c;
+    --data-tint: #f5eedf;
     --pos-tint: #e8f5ef;
     --neg-tint: #fbecec;
     --warn-tint: #fcefe6;
@@ -157,7 +161,7 @@
     --on-fill: #ffffff;
     --logo-tile: #ffffff;
     --brand-mark: #18243d;
-    --focus: #846326;
+    --focus: #22488a;
     --scrim: rgba(17, 24, 38, 0.4);
     --shadow: rgba(17, 24, 38, 0.16);
     --tag-gray: #4b5262;
@@ -193,11 +197,13 @@
   --text-1: #111826;
   --text-2: #4f5869;
   --text-3: #5e6777;
-  --accent: #846326;
+  --accent: #22488a;
   --pos: #047857;
   --neg: #b91c1c;
   --warn: #a3410b;
-  --accent-tint: #f6f0e4;
+  --accent-tint: #dde4f1;
+  --data: #96732c;
+  --data-tint: #f5eedf;
   --pos-tint: #e8f5ef;
   --neg-tint: #fbecec;
   --warn-tint: #fcefe6;
@@ -208,7 +214,7 @@
   --on-fill: #ffffff;
   --logo-tile: #ffffff;
   --brand-mark: #18243d;
-  --focus: #846326;
+  --focus: #22488a;
   --scrim: rgba(17, 24, 38, 0.4);
   --shadow: rgba(17, 24, 38, 0.16);
   --tag-gray: #4b5262;
@@ -274,9 +280,9 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* A link inside a sentence is underlined: brass is close to body text in
-   lightness (1.65:1 dark, 3.21:1 light), so its hue alone can't mark it
-   (look and feel, step 4). A link with a class (a button, a row, the quiet
+/* A link inside a sentence is underlined: the accent is close to body text
+   in lightness (brass 1.65:1 in dark, navy 2.0:1 in light), so its hue alone
+   can't mark it (look and feel, step 4). A link with a class (a button, a row, the quiet
    navigation in .trust-links, the page header's brand) draws itself. */
 a:not([class]) {
   color: var(--accent);
@@ -903,7 +909,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 /* Set apart by a 3px --accent bar and weight, not only by color (--accent is
-   4.6:1 or more on canvas, surface and elevated). A border, not a shadow, and
+   7.7:1 or more on canvas, surface and elevated). A border, not a shadow, and
    on the current item alone, so forced colors draw it there and nowhere
    else. */
 .segmented > button:is([aria-selected="true"], [aria-checked="true"]) {
@@ -1970,7 +1976,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 /* The current tab: a bar over it and a heavier label as well as the color
-   (--accent is about 1.1:1 from --text-2 in dark). */
+   (--accent is 1.29:1 from --text-2 in dark, 1.24:1 in light). */
 .tab-bar button.active {
   color: var(--accent);
   font-weight: var(--fw-bold);
@@ -2335,7 +2341,7 @@ button:disabled:where(:not([class*="cl-"])) {
 .cat-bar {
   height: 14px;
   min-width: 2px;
-  background: var(--accent);
+  background: var(--data);
   /* rounded data-end, square at the baseline (left) */
   border-radius: 0 4px 4px 0;
 }
@@ -2448,11 +2454,12 @@ button:disabled:where(:not([class*="cl-"])) {
 /* --- budgets (Budgets tab) --- */
 
 /* Meter: the fill carries severity; the track is a lighter step of the
-   same hue so state reads across the whole bar. */
+   same hue so state reads across the whole bar. On track it is a measure,
+   so gold (--data on --data-tint), not the accent. */
 .meter-track {
   height: 10px;
   border-radius: 5px;
-  background: var(--accent-tint);
+  background: var(--data-tint);
   overflow: hidden;
   margin-top: 8px;
 }
@@ -2474,14 +2481,14 @@ span.meter-fill {
 .meter-fill {
   height: 100%;
   border-radius: 5px 0 0 5px;
-  background: var(--accent);
+  background: var(--data);
   min-width: 2px;
 }
 
 /* A meter at caution (a budget from 85%, BudgetsCard's meterState, with no
    word until Over's badge; a card's credit use from 50%, AccountSheet):
-   hatched, so caution reads apart from the brass fill by more than hue
-   (brass and orange are about 1.1:1 apart). */
+   hatched, so caution reads apart from the gold fill by more than hue
+   (gold and orange are about 1.1:1 apart in dark, 1.44:1 in light). */
 .meter-fill.warn {
   background: repeating-linear-gradient(135deg, var(--warn) 0 4px, var(--warn-tint) 4px 6px);
 }
@@ -4377,22 +4384,24 @@ button.plan-edit:disabled {
   width: 14px;
   height: 2px;
   border-radius: 1px;
-  background: var(--accent);
+  background: var(--data);
 }
 
 .plan-legend-swatch {
   width: 12px;
   height: 9px;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--data);
 }
 
+/* Solid, as the fan's bands are (components/PlanFanChart.tsx): gold drawn
+   see-through over the light canvas turns a grey beige. */
 .plan-legend-swatch.inner {
-  opacity: 0.34;
+  background: color-mix(in srgb, var(--data) 22%, var(--data-tint));
 }
 
 .plan-legend-swatch.outer {
-  opacity: 0.12;
+  background: var(--data-tint);
 }
 
 .plan-table-view {
@@ -4479,7 +4488,7 @@ button.plan-edit:disabled {
 }
 
 /* Shaded by success, from --elevated at 50% or less to --border-strong at
-   100% (--shade, set on the cell): a neutral ramp, since brass behind a
+   100% (--shade, set on the cell): a neutral ramp, since a color behind a
    figure is ruled out (the screen review). Its ends are about 1.3:1 apart,
    a cue only: the figures carry the value. Text passes 4.5:1 on the
    strongest cell in both themes, which the guard checks. A cell still being
@@ -4488,7 +4497,7 @@ button.plan-edit:disabled {
   background: color-mix(in srgb, var(--border-strong) var(--shade), var(--elevated));
 }
 
-/* The plan's own cell: the only brass in the grid, an outline (3:1 or more
+/* The plan's own cell: the only accent in the grid, an outline (3:1 or more
    on the strongest cell). */
 .plan-grid td.plan-grid-cell.own {
   outline: 2px solid var(--accent);
@@ -5132,11 +5141,11 @@ button.plan-edit:disabled {
   background: var(--down);
 }
 
-/* Planned and due are brass and orange, about 1.1:1 apart, so each has its
-   own shape too: a ring, and a square. */
+/* Planned and due are gold and orange, about 1.1:1 apart in dark, so each
+   has its own shape too: a ring, and a square. */
 .cal-dot.planned {
   box-sizing: border-box;
-  border: 1.5px solid var(--accent);
+  border: 1.5px solid var(--data);
 }
 
 .cal-dot.due {
@@ -5714,11 +5723,13 @@ button.import-choice {
     --text-1: #111826;
     --text-2: #4f5869;
     --text-3: #5e6777;
-    --accent: #846326;
+    --accent: #22488a;
     --pos: #047857;
     --neg: #b91c1c;
     --warn: #a3410b;
-    --accent-tint: #f6f0e4;
+    --accent-tint: #dde4f1;
+    --data: #96732c;
+    --data-tint: #f5eedf;
     --pos-tint: #e8f5ef;
     --neg-tint: #fbecec;
     --warn-tint: #fcefe6;
@@ -5729,7 +5740,7 @@ button.import-choice {
     --on-fill: #ffffff;
     --logo-tile: #ffffff;
     --brand-mark: #18243d;
-    --focus: #846326;
+    --focus: #22488a;
     --scrim: rgba(17, 24, 38, 0.4);
     --shadow: rgba(17, 24, 38, 0.16);
     --tag-gray: #4b5262;
@@ -6788,7 +6799,7 @@ button.split-small {
 /* --- cash flow (#41): the Activity tab's Sankey (components/CashFlowSankey.tsx,
    laid out by lib/sankey.ts), its table, and the list showing a node's
    transactions (components/MonthBreakdown.tsx). The app's own colors: money in
-   and what is left over in the up hue, spending in the accent, what came from
+   and what is left over in the up hue, spending in gold (--data), what came from
    savings or debt in the down hue, the middle in the muted gray. --- */
 
 .sankey-svg {
@@ -6814,7 +6825,7 @@ button.split-small {
 }
 
 .sankey-link.out {
-  fill: var(--accent);
+  fill: var(--data);
 }
 
 .sankey-link.sub {
@@ -6844,7 +6855,7 @@ button.split-small {
 }
 
 .sankey-node.out .sankey-bar {
-  fill: var(--accent);
+  fill: var(--data);
 }
 
 .sankey-node.deficit .sankey-bar {

@@ -2,8 +2,8 @@
 
 // Single-series net-worth-over-time line chart. Dependency-free inline SVG.
 //
-// Follows the house dataviz specs: 2px round-capped line in the accent hue,
-// area wash at ~10% opacity, >=8px end-dot with a 2px surface ring, muted
+// Follows the house dataviz specs: 2px round-capped line in --data (gold),
+// a solid --data-tint wash under it, >=8px end-dot with a 2px surface ring, muted
 // text tokens for all labels (never the series color), no legend for a
 // single series. Every net worth chart (Home's hero, an account's sheet, a
 // shared net worth) is drawn at its own width (components/drawn-width.ts),
@@ -635,19 +635,21 @@ export default function NetWorthChart({
       >
         {/* No gridlines and no money on the plot: the scale is in the
             readout, the label and the table. */}
-        {/* the measured stretch, shaded between its two days */}
+        {/* The wash is solid: gold drawn see-through over the light canvas
+            turns a grey beige. */}
+        <path d={area} fill="var(--data-tint)" />
+        {/* the measured stretch: the wash between its two days, in a deeper
+            gold, over the tint rather than over the page */}
         {measure && (
-          <rect
-            x={xs[measure[0]]}
-            y={frame.top}
-            width={xs[measure[1]] - xs[measure[0]]}
-            height={baseY - frame.top}
-            fill="var(--accent)"
-            opacity={0.12}
+          <path
+            d={`M${xs[measure[0]].toFixed(1)},${baseY}${xs
+              .slice(measure[0], measure[1] + 1)
+              .map((mx, k) => `L${mx.toFixed(1)},${y(vals[measure[0] + k]).toFixed(1)}`)
+              .join('')}L${xs[measure[1]].toFixed(1)},${baseY}Z`}
+            fill="var(--data)"
+            opacity={0.16}
           />
         )}
-
-        <path d={area} fill="var(--accent)" opacity={hero ? 0.12 : 0.1} />
         {basePath && (
           <path
             className="chart-baseline"
@@ -664,12 +666,11 @@ export default function NetWorthChart({
             key={i}
             d={run.d}
             fill="none"
-            stroke="var(--accent)"
+            stroke="var(--data)"
             strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
             strokeDasharray={run.est ? '5 4' : undefined}
-            opacity={run.est ? 0.75 : 1}
           />
         ))}
 
@@ -693,7 +694,7 @@ export default function NetWorthChart({
         {/* end-dot (or the active or measured dots) with a 2px ring in what
             is behind it: the card, or the page under the hero */}
         {(measure ?? [active ?? last]).map((i) => (
-          <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--accent)" stroke={hero ? 'var(--canvas)' : 'var(--surface)'} strokeWidth={2} />
+          <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--data)" stroke={hero ? 'var(--canvas)' : 'var(--surface)'} strokeWidth={2} />
         ))}
 
         {/* time axis */}
