@@ -115,6 +115,10 @@ describe('where it is read and written', () => {
     expect(read1).toBeLessThan(write);
   });
 
+  test('Your data, opened from Settings > Your data, goes back to it', () => {
+    expect(read('components/DataInventory.tsx')).toContain('<PageHeader back="/?settings=data" />');
+  });
+
   test('Reports, opened from Activity, goes back to it', () => {
     // The shared header's link back (components/PageHeader.tsx), to Activity.
     expect(read('components/ReportsPage.tsx')).toContain('<PageHeader back="/?tab=activity"');

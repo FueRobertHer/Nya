@@ -14,14 +14,30 @@
 
 import { useUser } from '@clerk/nextjs';
 import { useProfileWindow } from './ProfileWindow';
-import { RowsSkeleton } from './LoadingSkeletons';
 
 /** Who is signed in: their picture, their name (full, else their username,
  *  else their email), and their email under it when that isn't the name.
- *  A row of the same height while Clerk loads; nothing without a user. */
+ *  The same row in placeholders while Clerk loads; nothing without a user. */
 export function Identity() {
   const { isLoaded, user } = useUser();
-  if (!isLoaded) return <RowsSkeleton count={1} />;
+  if (!isLoaded)
+    return (
+      <ul className="list-rows" aria-hidden="true">
+        <li>
+          <div className="list-row account-identity">
+            <span className="skeleton block" />
+            <span className="list-row-text">
+              <span className="list-row-title">
+                <span className="skeleton rows-skeleton-title" />
+              </span>
+              <span className="list-row-sub">
+                <span className="skeleton rows-skeleton-sub" />
+              </span>
+            </span>
+          </div>
+        </li>
+      </ul>
+    );
   if (!user) return null;
   const email = user.primaryEmailAddress?.emailAddress ?? null;
   const name = user.fullName || user.username || email;

@@ -2271,7 +2271,7 @@ export default function Dashboard({
           // whole page then grows from; Settings as it will be, when the
           // address has it open.
           settings ? (
-            <SettingsSkeleton view={settings} />
+            <SettingsSkeleton view={settings} sharing={clerk} />
           ) : (
             <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
           )

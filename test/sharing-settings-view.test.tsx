@@ -31,16 +31,19 @@ const { SharingSettings } = await import('@/components/Sharing');
 
 const pat = { id: 'c1', label: 'Pat', introduced_as: 'Patricia', since: '2026-09-28', sharing: { a: 'balance' }, expires_at: null };
 let connections = [pat];
+let blocked = [{ id: 'c8', label: 'Ex' }, { id: 'c9', label: 'Old' }];
 const asked: string[] = [];
 globalThis.fetch = (async (url: string, init?: RequestInit) => {
   const method = init?.method ?? 'GET';
   const path = String(url).split('?')[0];
   asked.push(`${method} ${path}`);
   if (path === '/api/connections' && method === 'DELETE') {
-    connections = connections.filter((c) => c.id !== JSON.parse(String(init?.body)).id);
+    const id = JSON.parse(String(init?.body)).id;
+    connections = connections.filter((c) => c.id !== id);
+    blocked = blocked.filter((b) => b.id !== id);
     return Response.json({});
   }
-  if (path === '/api/connections') return Response.json({ enabled: true, connections, blocked: [], accounts: [{ id: 'a', label: 'Chase Checking ••1111' }] });
+  if (path === '/api/connections') return Response.json({ enabled: true, connections, blocked, accounts: [{ id: 'a', label: 'Chase Checking ••1111' }] });
   if (path === '/api/connections/access-log') return Response.json({ damaged: [], maybe_connected: false });
   if (path === '/api/connections/records') return Response.json({ connection: 'c1', record_id: null, record_since: null, shown_to_them: { days: [], total_days: 0 }, shown_to_me: { days: [], total_days: 0 } });
   if (path === '/api/connections/preview') return Response.json({ connection: 'c1', view: null });
@@ -62,8 +65,8 @@ describe('Settings > Sharing', () => {
     await settle();
     expect(asked).toEqual(['GET /api/connections', 'GET /api/connections/access-log']);
 
-    // In place: the invite and the people, no sheet open.
-    expect(all(host, (e) => e.tagName === 'H2').map((h) => h.textContent)).toEqual(['Invite someone', 'People']);
+    // In place: the invite, the people and the blocked, no sheet open.
+    expect(all(host, (e) => e.tagName === 'H2').map((h) => h.textContent.trim())).toEqual(['Invite someone', 'People', 'Blocked']);
     expect(dialog()).toBeUndefined();
     const row = all(host, (e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'list-row')[0];
     expect(row.getAttribute('aria-haspopup')).toBe('dialog');
@@ -107,6 +110,21 @@ describe('Settings > Sharing', () => {
     const status = all(host, (e) => e.getAttribute('role') === 'status')[0];
     expect(status.textContent).toBe('Removed.');
     expect(host.textContent).toContain('No one yet.');
+
+    // Unblocked: the row is gone with them, so focus goes to the Blocked
+    // card's title while it has someone, then to People once it is gone.
+    const unblock = () => all(host, (e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Unblock');
+    unblock()[0].focus();
+    act(() => click(unblock()[0]));
+    await settle(20);
+    expect(unblock()).toHaveLength(1);
+    expect(dom.document.activeElement.getAttribute('id')).toBe('sharing-blocked-title');
+    expect(status.textContent).toBe('Unblocked.');
+    unblock()[0].focus();
+    act(() => click(unblock()[0]));
+    await settle(20);
+    expect(all(host, (e) => e.getAttribute('id') === 'sharing-blocked-title')).toHaveLength(0);
+    expect(dom.document.activeElement.getAttribute('id')).toBe('sharing-people-title');
 
     act(() => root.unmount());
     await settle(360);

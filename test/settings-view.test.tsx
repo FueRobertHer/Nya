@@ -129,7 +129,7 @@ describe('the dashboard', () => {
   });
 
   test('a reload in Settings shows Settings loading, not the tab under it', () => {
-    expect(dashboard).toContain('settings ? (\n            <SettingsSkeleton view={settings} />\n          ) : (\n            <TabSkeleton');
+    expect(dashboard).toContain('settings ? (\n            <SettingsSkeleton view={settings} sharing={clerk} />\n          ) : (\n            <TabSkeleton');
   });
 
   // The institution's card and its rows (components/InstitutionCard.tsx).

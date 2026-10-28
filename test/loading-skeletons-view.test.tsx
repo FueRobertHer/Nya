@@ -202,11 +202,11 @@ describe('every tab while it loads', () => {
     expect(renderToStaticMarkup(<AccountsSkeleton />)).toContain('<div class="accounts-bar" inert="">');
   });
 
-  test('Accounts: Add account tonal at the right, then the totals as a strip of three', () => {
+  test('Accounts: Add account tonal at the right, then the totals as a strip of two, the common case', () => {
     const html = renderToStaticMarkup(<AccountsSkeleton />);
     expect(html).toContain('<div class="accounts-bar" inert=""><span class="btn secondary">');
     expect(html).toContain('<div class="card stack" aria-hidden="true"><ul class="stat-strip">');
-    expect(html.match(/<li class="stat">/g)).toHaveLength(3);
+    expect(html.match(/<li class="stat">/g)).toHaveLength(2);
     expect(html).not.toContain('accounts-summary');
   });
 
@@ -217,6 +217,9 @@ describe('every tab while it loads', () => {
     expect(list).toContain('<h2 id="settings-loading-title">Settings</h2>');
     expect(list).toContain('<ul class="card list-rows" aria-hidden="true">');
     expect(list.match(/<li>/g)).toHaveLength(6);
+    // Without Clerk there is no Sharing: one row fewer, as the list will draw.
+    expect(renderToStaticMarkup(<SettingsSkeleton view="list" sharing={false} />).match(/<li>/g)).toHaveLength(5);
+    expect(renderToStaticMarkup(<AppLoading account="password" settings="list" />).match(/<li>/g)).toHaveLength(5);
     const data = renderToStaticMarkup(<SettingsSkeleton view="data" />);
     expect(data).toContain('aria-label="Back to Settings"');
     expect(data).toContain('<h2 id="settings-loading-title">Your data and privacy</h2>');

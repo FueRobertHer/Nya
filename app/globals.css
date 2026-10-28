@@ -2038,13 +2038,14 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 /* Its hit area is 44px each way, the icon and its place in the row as they
-   were: centered on the 24px button, reaching 10px past each edge, as
-   .chip::after does. Above it there is at least the readout's margin and the
-   hero's gap (18px) before the next control. */
+   were, as .chip::after does, kept inside the readout: 4px up, into the
+   readout's own 6px top margin, so it never reaches a control above the
+   chart (the Link history row over a preview in Settings > Connections, the
+   hero's notes); 16px down, over the date line under it; 10px either side. */
 .chart-info-btn::after {
   content: "";
   position: absolute;
-  inset: min(0px, calc((100% - var(--tap)) / 2));
+  inset: -4px -10px -16px;
 }
 
 .chart-info-btn svg {
@@ -3045,7 +3046,8 @@ span.meter-fill {
 
 /* Settings > Account: who is signed in (components/AccountSettings.tsx),
    with Clerk's picture of them. */
-.account-identity img {
+.account-identity img,
+.account-identity > .skeleton.block {
   width: 36px;
   height: 36px;
   border-radius: 50%;

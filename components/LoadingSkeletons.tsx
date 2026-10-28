@@ -227,8 +227,10 @@ export function SharedWithMeSkeleton() {
 
 /** The Accounts tab while the accounts are on their way: its bar with Add
  *  account (unavailable until they are in), the totals by kind as a strip of
- *  three, and two institution cards (components/InstitutionCard.tsx) with
- *  their rows. */
+ *  two, and two institution cards (components/InstitutionCard.tsx) with
+ *  their rows. Two kinds (cash and credit) is the common case, one row on a
+ *  phone; with three or more a second row of figures still comes in when the
+ *  accounts do, and with one kind, or none, the strip goes. */
 export function AccountsSkeleton() {
   useInStep();
   return (
@@ -243,7 +245,7 @@ export function AccountsSkeleton() {
       </div>
       <div className="card stack" aria-hidden="true">
         <ul className="stat-strip">
-          {[0, 1, 2].map((i) => (
+          {[0, 1].map((i) => (
             <li key={i} className="stat">
               <span className="stat-label">
                 <span className="skeleton accounts-skeleton-label" />
@@ -461,8 +463,9 @@ export function PlanSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
 /** Settings while the dashboard's first load is on its way, when the address
  *  has it open (a reload there, lib/dashboard-tab.ts): its bar with the title
  *  it will have, then its list's rows, or a section's first card, still to
- *  come (components/Settings.tsx). */
-export function SettingsSkeleton({ view }: { view: SettingsView }) {
+ *  come (components/Settings.tsx). `sharing`: whether its list has Sharing,
+ *  which it has only with Clerk, so the rows are as many as it will draw. */
+export function SettingsSkeleton({ view, sharing = true }: { view: SettingsView; sharing?: boolean }) {
   useInStep();
   return (
     <section className="settings" aria-busy="true" aria-labelledby="settings-loading-title">
@@ -473,7 +476,7 @@ export function SettingsSkeleton({ view }: { view: SettingsView }) {
         <h2 id="settings-loading-title">{view === 'list' ? 'Settings' : SETTINGS_TITLES[view]}</h2>
       </div>
       {view === 'list' ? (
-        <RowsSkeleton count={Object.keys(SETTINGS_TITLES).length} className="card list-rows" />
+        <RowsSkeleton count={Object.keys(SETTINGS_TITLES).length - (sharing ? 0 : 1)} className="card list-rows" />
       ) : (
         <section className="card stack" aria-hidden="true">
           <div className="card-header">
@@ -544,7 +547,7 @@ export function AppLoading({ account, tab = 'home', settings = null }: { account
           )}
         </div>
       </div>
-      {settings ? <SettingsSkeleton view={settings} /> : <TabSkeleton tab={tab} />}
+      {settings ? <SettingsSkeleton view={settings} sharing={account === 'clerk'} /> : <TabSkeleton tab={tab} />}
     </main>
   );
 }

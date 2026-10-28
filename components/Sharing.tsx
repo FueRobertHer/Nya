@@ -241,8 +241,19 @@ export function SharingSettings() {
   const askedRecords = useRef(0);
   const [damaged, setDamaged] = useState<DamagedRecords | null>(null);
   // The People card's title, where focus goes once a person is removed or
-  // blocked: the row that opened their sheet is gone with them.
+  // blocked: the row that opened their sheet is gone with them. The Blocked
+  // card's, where it goes once someone is unblocked (People's, when that was
+  // the last and the card is gone).
   const people = useRef<HTMLHeadingElement>(null);
+  const blockedTitle = useRef<HTMLHeadingElement>(null);
+  // Which of the two focus goes to, once the list that follows the change is
+  // drawn: only then is it known whether the Blocked card is still there.
+  const [landing, setLanding] = useState<'people' | 'blocked' | null>(null);
+  useEffect(() => {
+    if (!landing) return;
+    (landing === 'blocked' ? (blockedTitle.current ?? people.current) : people.current)?.focus();
+    setLanding(null);
+  }, [landing]);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/connections').catch(() => null);
@@ -353,9 +364,9 @@ export function SharingSettings() {
         : 'Remove them? Everything shared both ways ends.';
       if (block !== null && !window.confirm(what)) return;
       const done = await act('DELETE', '/api/connections', { id, block: block === true }, block ? 'Blocked.' : block === null ? 'Unblocked.' : 'Removed.');
-      if (!done || block === null) return;
-      setSelected(null);
-      requestAnimationFrame(() => people.current?.focus());
+      if (!done) return;
+      if (block !== null) setSelected(null);
+      setLanding(block === null ? 'blocked' : 'people');
     },
     [act]
   );
@@ -382,6 +393,7 @@ export function SharingSettings() {
         notice={selected ? '' : notice}
         damaged={damaged}
         peopleRef={people}
+        blockedRef={blockedTitle}
         onOpen={openConnection}
         onInvite={async (fromName, theirLabel) => {
           const body = await act('POST', '/api/connections/invite', { from_name: fromName, their_label: theirLabel }, '');
@@ -476,6 +488,7 @@ export function SharingListView({
   notice,
   damaged,
   peopleRef,
+  blockedRef,
   onOpen,
   onInvite,
   onClearDamaged,
@@ -491,6 +504,8 @@ export function SharingListView({
   damaged: DamagedRecords | null;
   /** The People card's title, for focus to land on. */
   peopleRef?: Ref<HTMLHeadingElement>;
+  /** The Blocked card's title, for focus to land on. */
+  blockedRef?: Ref<HTMLHeadingElement>;
   onOpen: (id: string) => void;
   onInvite: (fromName: string, theirLabel: string) => void;
   /** Clears my unreadable records that belong to no connection now (after
@@ -641,7 +656,9 @@ export function SharingListView({
       {blocked.length > 0 && (
         <section className="card stack" aria-labelledby="sharing-blocked-title">
           <div className="card-header">
-            <h2 id="sharing-blocked-title">Blocked</h2>
+            <h2 id="sharing-blocked-title" ref={blockedRef} tabIndex={-1}>
+              Blocked
+            </h2>
           </div>
           <ul className="list-rows">
             {blocked.map((b) => (

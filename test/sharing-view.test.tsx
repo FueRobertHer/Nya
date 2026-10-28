@@ -158,7 +158,7 @@ describe('Settings > Sharing, the list in place, and a person’s sheet', () => 
 
   test('the blocked: each a row with Unblock beside it, never a button inside a button', () => {
     const html = panel({ enabled: true, connections: [], blocked: [{ id: 'c9', label: 'Ex' }], accounts });
-    expect(html).toContain('<h2 id="sharing-blocked-title">Blocked</h2>');
+    expect(html).toContain('<h2 id="sharing-blocked-title" tabindex="-1">Blocked</h2>');
     const row = html.slice(html.indexOf('<div class="list-row">'), html.indexOf('</li>', html.indexOf('<div class="list-row">')));
     expect(row).toContain('<span class="list-row-title">Ex</span>');
     expect(row).toContain('<button class="btn secondary">Unblock</button>');
