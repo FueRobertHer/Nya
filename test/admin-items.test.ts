@@ -52,8 +52,13 @@ async function aged(ctx: typeof admin) {
 const ids = async (ctx: typeof admin) => (await getItems(ctx)).map((i) => i.item_id).sort();
 
 const errors = console.error;
+const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
+  process.env = { ...saved };
+  // Demo accounts (lib/demo.ts) off unless a test turns them on.
+  delete process.env.VERCEL_ENV;
+  delete process.env.DEMO_USER_IDS;
   plaid.fail = {};
   plaid.removed = [];
   plaid.read = [];
@@ -64,6 +69,7 @@ beforeEach(async () => {
   });
 });
 afterEach(() => {
+  process.env = { ...saved };
   console.error = errors;
 });
 
@@ -71,6 +77,19 @@ describe('who is the admin', () => {
   test('the deployment\'s own (primary) container, and no other', async () => {
     expect(await isAdmin(admin)).toBe(true);
     expect(await isAdmin(OTHER)).toBe(false);
+  });
+
+  test('never while a demo account owns that container: then nobody is', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    process.env.DEMO_USER_IDS = 'user_demo:Alex';
+    await fake.hset(testKey('owners'), { user_demo: admin.container });
+    expect(await isAdmin(admin)).toBe(false);
+    expect(await isAdmin(OTHER)).toBe(false);
+    // The same mapping, with no demo accounts: it is the demo, not the mapping.
+    delete process.env.DEMO_USER_IDS;
+    expect(await isAdmin(admin)).toBe(true);
   });
 });
 
