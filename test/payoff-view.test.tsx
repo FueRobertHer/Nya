@@ -102,6 +102,12 @@ describe('the payoff planner', () => {
     const html = panel([chase([sapphire]), ...alliant]);
     expect(html).toContain('Add the missing rate or payment for 1 debt below, or leave it out, to see the plan.');
     expect(html).toContain('Needed');
+    // The screen review: "Needed" in orange under both fields of every debt.
+    // The caution line above counts them once; each field's hint is plain.
+    expect(html).toContain('<div class="payoff-source">Needed for the plan</div>');
+    expect(html).not.toContain('payoff-source needed');
+    // Leaving it out is a 44px ghost button.
+    expect(html).toContain('<button class="btn ghost payoff-choice-btn">Leave out of the plan</button>');
     expect(html).toContain('A manual account has no terms from a bank');
     expect(html).not.toContain('Debt-free');
     expect(html).toContain('updated'); // a typed balance says when it was set
@@ -114,6 +120,8 @@ describe('the payoff planner', () => {
     expect(html).toContain('value="19.99"');
     expect(html).toContain('Typed');
     expect(html).toContain("Use Plaid's 21.24%");
+    // The way back is a ghost button on its own line under the source.
+    expect(html).not.toContain('link-btn');
     expect(html).toContain('Debt-free');
     const plan = expected([chase([sapphire]), ...alliant], inputs).avalanche;
     expect(html).toContain(monthLabel(plan.month!));
@@ -138,6 +146,9 @@ describe('the payoff planner', () => {
     const html = panel([chase([sapphire]), ...alliant], { leftOut: { manual_auto: true } });
     expect(html).toContain('Left out of the plan.');
     expect(html).toContain('>Include it<');
+    // Its Include it, after the line rather than inside it, the same ghost
+    // button as the accrued interest's.
+    expect(html).toContain('<p class="panel-note">Left out of the plan.</p><button class="btn ghost payoff-choice-btn">Include it</button>');
     // Not "Debt-free": the auto loan is still owed.
     expect(html).toContain('<div class="total-label">Paid off</div>');
     expect(html).toContain(', 1 left out</div>');
@@ -239,6 +250,9 @@ describe('the payoff planner', () => {
     const html = panel([chase([plain])]);
     expect(html).toContain("Plaid's $3,141.54 is the whole monthly payment and may include escrow");
     expect(html).toContain("No escrow? Use Plaid's $3,141.54");
+    // A held payment's answer is a 44px ghost button, as a debt's other choices are.
+    expect(html).not.toContain('link-btn');
+    expect(html).toMatch(/<button class="btn ghost payoff-choice-btn">No escrow\? Use Plaid/);
     const confirmed = panel([chase([plain])], { typed: { home: { minimum: '3141.54' } } });
     expect(confirmed).toContain('Monthly payment from Plaid, with no escrow');
   });
@@ -260,6 +274,9 @@ describe('the payoff planner', () => {
     const without = panel([chase([loan])], { withoutAccrued: { student: true } });
     expect(without).toContain('$65,262.00');
     expect(without).toContain('$6,227.36 of accrued interest left out.');
+    // Both choices are ghost buttons, as a debt's other choices are.
+    expect(html).toContain('<button class="btn ghost payoff-choice-btn">Leave it out</button>');
+    expect(without).toContain('<button class="btn ghost payoff-choice-btn">Include it</button>');
   });
 
   test('a $0 minimum from Plaid is needed, with the likely reasons, by the headline and on the row', () => {
@@ -319,6 +336,8 @@ describe('the payoff planner', () => {
     const each = panel([nelnet], { sharedSplit: { 'a b': false } });
     expect(each).toContain('You said each of these 2 loans pays the $400.00 Plaid shows.');
     expect(each).toContain('One $400.00 payment for both instead: split it');
+    // Every answer to the question is a ghost button, never a 16px text link.
+    for (const shown of [asked, split, each]) expect(shown).not.toContain('link-btn');
     expect(each).toContain('value="400.00"');
     expect(each).toContain(`On top of the payments below: ${formatMoney(800, 'USD')} a month in all.`);
   });

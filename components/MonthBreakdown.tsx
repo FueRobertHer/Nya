@@ -32,7 +32,6 @@ import type { FxTable } from "@/lib/fx/rates";
 import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
-import { sourceLabel } from "@/lib/manual-txn-input";
 import { importedRowsNote } from "@/lib/history-import/view";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
@@ -57,7 +56,7 @@ import ReviewBar from "./ReviewBar";
 import CardMode from "./CardMode";
 import type { SharedRowHooks } from "./SharedRows";
 import TransactionSheet, { findTarget, TxnNotes, type SheetTarget } from "./TransactionSheet";
-import { isLowConfidence } from "./txn-words";
+import { provenanceWords, rowAccountNames, unsureCategory } from "./txn-words";
 import { shownName } from "@/lib/merchant-name";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 import { activityMonth, activityOpensOn, writeMonth, type ViewMonth } from "./view-month-state";
@@ -186,11 +185,12 @@ export type Txn = {
  * looked for; the search, or more than one, says nothing matches them; none,
  * that the month (or the cash flow's pick) has nothing.
  */
-export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; receipt: ReceiptChoice; pick: boolean }): string {
-  const count = [on.query, on.tag, on.review, on.receipt !== ""].filter(Boolean).length;
+export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean }): string {
+  const count = [on.query, on.tag, on.review, !!on.unsure, on.receipt !== ""].filter(Boolean).length;
   if (count === 0) return on.pick ? "Nothing to list." : "No transactions this month.";
   if (count > 1) return on.query ? "No transactions match your search and filters." : "No transactions match these filters.";
   if (on.review) return "Nothing listed needs review.";
+  if (on.unsure) return "No category listed is one Plaid was unsure of.";
   if (on.receipt === "with") return "No transaction listed has a receipt or document.";
   if (on.receipt === "without") return "Nothing listed over that amount is missing a receipt.";
   if (on.tag) return "No transaction listed has that tag.";
@@ -343,7 +343,9 @@ export default function MonthBreakdown({
   /** Your categories (components/categories-state.ts): the list to choose
    *  one from, and the groups top spending rolls up to. Null until loaded. */
   taxonomy?: Taxonomy | null;
-  onRecategorize: (transaction_id: string, choice: CategoryChoice) => void;
+  /** May return a promise that resolves true once the change is saved, so
+   *  the sheet says it was kept only then. */
+  onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
   onRename: (vendor_key: string, name: string) => void;
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
@@ -354,7 +356,7 @@ export default function MonthBreakdown({
   /** Opens a manual row's edit form. */
   onEditTransaction?: (t: Txn) => void;
   /** Leaves a transaction out of budgets and reports, or puts it back. */
-  onToggleExcluded?: (t: Txn, excluded: boolean) => void;
+  onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
   /** Why the last change to a transaction didn't save. */
   actionError?: string | null;
   /** Connections that bring in no transactions (lib/no-transactions.ts): an
@@ -444,6 +446,9 @@ export default function MonthBreakdown({
   const [reviewOnly, setReviewOnly] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(false);
   const reviewing = reviewOnly && !!review?.view?.on;
+  // The filter to the rows whose category Plaid wasn't sure of
+  // (txn-words.ts unsureCategory), from the chip that counts them.
+  const [unsureOnly, setUnsureOnly] = useState(false);
   // The filter by receipt (#47, components/receipt-filter.ts), and the amount
   // a transaction without one is over.
   const [receiptChoice, setReceiptChoice] = useState<ReceiptChoice>("");
@@ -641,12 +646,17 @@ export default function MonthBreakdown({
   const listed = picked ?? monthTxns;
   // A split transaction is kept whole, every part of it, when any part is
   // (#39): its parts are listed under it, and its split edited from all.
-  const searched = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags), [listed, query, filterTag, reviewing, tags]);
+  const searched = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing, unsure: unsureOnly }, tags), [listed, query, filterTag, reviewing, unsureOnly, tags]);
   // Then the filter by receipt (#47): every part of a split transaction has
   // its transaction's mark and amount, so it keeps them all or none.
   const receipted = useMemo(() => receiptRows(searched, byReceipt, receiptOver), [searched, byReceipt, receiptOver]);
   const visible = receipted.rows;
-  const filtering = !!(query || filterTag || reviewing || byReceipt);
+  const filtering = !!(query || filterTag || reviewing || byReceipt || unsureOnly);
+  // How many rows listed (the month, or a pick) Plaid wasn't sure of, as
+  // the list shows them: its chip is there while there are any, or while it
+  // is on, so answering the last one under an open sheet doesn't snap the
+  // list back.
+  const unsureCount = useMemo(() => bankRows(listed, { groups: "keep", ious: "keep" }).filter(unsureCategory).length, [listed]);
   // Once a pick has filled the list: the list into view, and focus on the
   // line saying what it shows, so a pick made from the chart's table by
   // keyboard goes on from the list rather than from the button left above.
@@ -687,6 +697,9 @@ export default function MonthBreakdown({
   // from all of them, never from those the list happens to show.
   const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
   const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
+  // Each account's name on a row: its institution only where two share a
+  // name (txn-words.ts rowAccountNames), from every row loaded.
+  const accountName = useMemo(() => rowAccountNames(txns ?? []), [txns]);
 
   // What an open sheet shows, found again in every row loaded, put back
   // whole as the list puts them (a split one with all its parts, a group's
@@ -1170,10 +1183,20 @@ export default function MonthBreakdown({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
-              {/* The filters, as chips: what needs review (while the queue is
-                  on), a tag, and a receipt (with a file store). */}
-              {(review?.view?.on || tags.length > 0 || onAttachmentsChanged) && (
+              {/* The filters, as chips: categories Plaid was unsure of (while
+                  any are listed), what needs review (while the queue is on),
+                  a tag, and a receipt (with a file store). */}
+              {(review?.view?.on || tags.length > 0 || onAttachmentsChanged || unsureCount > 0 || unsureOnly) && (
                 <div className="chip-row" role="group" aria-label="Filter the list">
+                  {/* Plaid's doubt, counted: Information, so not "N to check"
+                      (the Accounts pill's caution words) nor "To review" (the
+                      queue's). Its dot is the one each such row leads with. */}
+                  {(unsureCount > 0 || unsureOnly) && (
+                    <button type="button" className="chip" aria-pressed={unsureOnly} onClick={() => setUnsureOnly(!unsureOnly)}>
+                      <span className="txn-check" aria-hidden="true" />
+                      Unsure category ({unsureCount})
+                    </button>
+                  )}
                   {review?.view?.on && (
                     <button type="button" className="chip" aria-pressed={reviewing} onClick={() => setReviewOnly(!reviewing)}>
                       To review
@@ -1213,7 +1236,7 @@ export default function MonthBreakdown({
               {actionError && <div className="error">{actionError}</div>}
               {splitError && <div className="error">{splitError}</div>}
               {visible.length === 0 ? (
-                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, receipt: byReceipt, pick: !!flowPick })}</p>
+                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, unsure: unsureOnly, receipt: byReceipt, pick: !!flowPick })}</p>
               ) : (
                 <ul className="list-rows txn-list">
                   {days.map((g) => (
@@ -1226,12 +1249,17 @@ export default function MonthBreakdown({
                       </li>
                       {g.entries.map((t) => {
                         // A split one's parts or a group's size, its category
-                        // (a split one's are its parts'), where it is, and
-                        // where it came from: one line.
-                        const filed = !t.split_parts && categoryLabel(t) ? `${categoryLabel(t)}${t.subcategory ? ` › ${t.subcategory}` : ""}` : null;
+                        // (a split one's are its parts') and its account: one
+                        // line, cut short rather than wrapping (the screen
+                        // review found rows of three and four lines). The
+                        // bank, Plaid's finer category and a connector's name
+                        // are in its sheet.
+                        const filed = !t.split_parts ? categoryLabel(t) : null;
                         // An IOU's row is on no account (#49).
-                        const where = t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`;
-                        const sub = [entryLabel(whole(t)), filed, where, t.source && !t.shared_iou ? sourceLabel(t.source) : null].filter(Boolean).join(" · ");
+                        const where = t.shared_iou ? "An IOU, on no account" : accountName(t);
+                        const sub = [entryLabel(whole(t)), filed, where].filter(Boolean).join(" · ");
+                        const provenance = t.shared_iou ? null : provenanceWords(t.source);
+                        const unsure = unsureCategory(t);
                         const body = (
                           <>
                             {t.logo_url || t.category_icon_url ? (
@@ -1247,11 +1275,21 @@ export default function MonthBreakdown({
                                 {shownName(t)}
                                 <TagChips ids={t.tags} tags={tags} />
                               </span>
-                              {/* Where it came from as chips (design-system.md#list-row). */}
+                              {/* Where it came from as chips (design-system.md#list-row).
+                                  Plaid's doubt about its category leads the line as a
+                                  quiet mark (txn-words.ts unsureCategory). */}
                               <span className="list-row-sub">
-                                <span>{sub}</span>
+                                <span className="txn-row-line">
+                                  {unsure && (
+                                    <>
+                                      <span className="txn-check" aria-hidden="true" />
+                                      <span className="visually-hidden">Unsure category: </span>
+                                    </>
+                                  )}
+                                  {sub}
+                                </span>
+                                {provenance && <span className="badge">{provenance}</span>}
                                 {t.pending && <span className="badge">Pending</span>}
-                                {isLowConfidence(t) && <span className="badge warn">Check category</span>}
                                 {review?.view?.on && needsReview(t) && <span className="badge warn">To review</span>}
                                 {t.excluded === true && <span className="badge">{t.excluded_by_rule ? "Hidden by a rule" : "Excluded"}</span>}
                                 {t.note && <span className="badge">Note</span>}
@@ -1293,7 +1331,7 @@ export default function MonthBreakdown({
                               )}
                             </li>
                             {t.split_parts && <PartRows parent={t} onOpen={openSheet} />}
-                            {t.group_members && <MemberRows group={t} onOpen={openSheet} />}
+                            {t.group_members && <MemberRows group={t} onOpen={openSheet} accountName={accountName} />}
                           </Fragment>
                         );
                       })}

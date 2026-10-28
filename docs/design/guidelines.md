@@ -100,6 +100,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | A form in a sheet | `.sheet-form` | |
 | A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`) | a `.button-pair` at the end of the body |
 | An object's rare actions (⋯) | `Menu` (`.menu` of `.menu-item`) | an Options button that opens an action sheet |
+| An object's actions in its sheet | `ActionRows` (`.card.list-rows` of `.list-row` buttons) | a `.btn-row` of secondaries in the body |
 | An explanation behind "Why?" | `Why` (`.why`) | a second paragraph on screen |
 | A card that opens and closes on its title | `CollapsibleHeader` (`.section-toggle` in an `<h2>`) | `.holdings-toggle` with `.holdings-title` |
 <!-- /design-guard:classes -->

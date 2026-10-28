@@ -8,7 +8,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-const CLOSE_MS = 320; // the slide-out transition
+// The slide-out transition: --dur-base in app/globals.css (the guard checks
+// they match), so it comes off the page as it finishes sliding.
+const CLOSE_MS = 220;
 
 export function Sheet({
   open,

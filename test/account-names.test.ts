@@ -44,6 +44,16 @@ describe('distinct account names', () => {
     expect(names.get('b')).toBe('Chase Checking');
   });
 
+  // Activity's rows cut their second line with an ellipsis: the account's own
+  // name first, so what is cut is the institution, never the name.
+  test('name first, for a line that may be cut: the institution after a comma', () => {
+    const names = distinctAccountNames([acct('a', 'Plaid Checking', 'First Platypus Bank'), acct('b', 'Plaid Checking', 'Tartan Bank'), acct('c', 'Savings', 'Tartan Bank'), acct('d', 'Cash', '')], { nameFirst: true });
+    expect(names.get('a')).toBe('Plaid Checking, First Platypus Bank');
+    expect(names.get('b')).toBe('Plaid Checking, Tartan Bank');
+    expect(names.get('c')).toBe('Savings');
+    expect(names.get('d')).toBe('Cash');
+  });
+
   test('an account with no institution or no mask has nothing of it written', () => {
     const names = distinctAccountNames([acct('a', 'Cash', ''), acct('b', 'Cash', 'Ally'), acct('c', 'Cash', 'Ally')]);
     expect(names.get('a')).toBe('Cash');

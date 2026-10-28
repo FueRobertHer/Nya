@@ -778,15 +778,19 @@ function DebtRow({
   );
   // Plaid reports a student loan's accrued interest apart from its balance;
   // it is owed, so it is planned unless the person leaves it out.
+  // Its choice is a ghost button after the line, 44px tall, as the plan's
+  // other choices on a debt are.
   const accrued = a.accruedInterestCents !== null && status !== 'nothing-owed' && status !== 'no-balance' && (
-    <div className="payoff-sub">
-      <Masked>
-        {row.accruedIncluded ? `Includes ${money(a.accruedInterestCents)} of accrued interest. ` : `${money(a.accruedInterestCents)} of accrued interest left out. `}
-      </Masked>
-      <button className="link-btn" onClick={() => onAccrued(row.accruedIncluded)}>
+    <>
+      <div className="payoff-sub">
+        <Masked>
+          {row.accruedIncluded ? `Includes ${money(a.accruedInterestCents)} of accrued interest.` : `${money(a.accruedInterestCents)} of accrued interest left out.`}
+        </Masked>
+      </div>
+      <button className="btn ghost payoff-choice-btn" onClick={() => onAccrued(row.accruedIncluded)}>
         {row.accruedIncluded ? 'Leave it out' : 'Include it'}
       </button>
-    </div>
+    </>
   );
 
   if (status === 'nothing-owed') return <div className="payoff-debt">{head}</div>;
@@ -805,12 +809,12 @@ function DebtRow({
         {accrued}
         <p className="panel-note">
           {status === 'paid-in-full'
-            ? "Paid in full at its last statement: no interest is charged while that continues, so it's left out. "
-            : 'Left out of the plan. '}
-          <button className="link-btn" onClick={() => onLeftOut(false)}>
-            Include it
-          </button>
+            ? "Paid in full at its last statement: no interest is charged while that continues, so it's left out."
+            : 'Left out of the plan.'}
         </p>
+        <button className="btn ghost payoff-choice-btn" onClick={() => onLeftOut(false)}>
+          Include it
+        </button>
       </div>
     );
   }
@@ -830,8 +834,8 @@ function DebtRow({
   const minimumText = typed.minimum ?? (fallback !== null ? cents(fallback) : '');
   const minimumNeeded = minimum.value === null && !minimum.error;
   // Why a term is needed, said only where Plaid has nothing usable for it. A
-  // field the person cleared shows "Needed" with Plaid's figure a tap away
-  // instead (TermSource), and a held payment says why below.
+  // field the person cleared shows "Needed for the plan" with Plaid's figure
+  // a tap away instead (TermSource), and a held payment says why below.
   const noPlaid =
     (apr.value === null && !apr.error && plaidApr === null) ||
     (minimumNeeded && fallback === null && !a.minimumHold);
@@ -946,13 +950,13 @@ function DebtRow({
             </Masked>
           </p>
           {a.workedOut && (
-            <button className="link-btn" onClick={() => onTerm('minimum', cents(a.workedOut!.cents))}>
+            <button className="btn ghost payoff-choice-btn" onClick={() => onTerm('minimum', cents(a.workedOut!.cents))}>
               Use <Masked>{money(a.workedOut.cents)}</Masked>, worked out from the original <Masked>{money(Math.round(a.workedOut.principal * 100))}</Masked>{' '}
               over {durationLabel(a.workedOut.months)} at {a.workedOut.apr}%
             </button>
           )}
           {a.minimumHold === 'escrow-unknown' && (
-            <button className="link-btn" onClick={() => onTerm('minimum', cents(plaidPayment))}>
+            <button className="btn ghost payoff-choice-btn" onClick={() => onTerm('minimum', cents(plaidPayment))}>
               No escrow? Use Plaid&apos;s <Masked>{money(plaidPayment)}</Masked>
             </button>
           )}
@@ -971,7 +975,7 @@ function DebtRow({
       {interestLine}
 
       {/* A card paid in full goes back to starting out; anything else is left out. */}
-      <button className="link-btn payoff-leave" onClick={() => onLeftOut(a.paidInFull ? undefined : true)}>
+      <button className="btn ghost payoff-choice-btn" onClick={() => onLeftOut(a.paidInFull ? undefined : true)}>
         Leave out of the plan
       </button>
     </div>
@@ -1006,10 +1010,10 @@ function SharedNote({
           Plaid shows the same <Masked>{total}</Masked> minimum on {s.loans} loans here. Some servicers bill one payment across
           an account&apos;s loans and show it on each loan; others bill each loan its own. Which is it here?
         </p>
-        <button className="link-btn" onClick={() => onShared(true)}>
+        <button className="btn ghost payoff-choice-btn" onClick={() => onShared(true)}>
           One <Masked>{total}</Masked> payment for {all}: split it by balance
         </button>
-        <button className="link-btn" onClick={() => onShared(false)}>
+        <button className="btn ghost payoff-choice-btn" onClick={() => onShared(false)}>
           Each loan pays <Masked>{total}</Masked>
         </button>
       </div>
@@ -1027,11 +1031,11 @@ function SharedNote({
           </Masked>
         </p>
         {s.named ? (
-          <button className="link-btn" onClick={() => onTerm('minimum', fieldAmount(s.totalCents / 100))}>
+          <button className="btn ghost payoff-choice-btn" onClick={() => onTerm('minimum', fieldAmount(s.totalCents / 100))}>
             Billed separately? Use <Masked>{total}</Masked> for this loan
           </button>
         ) : (
-          <button className="link-btn" onClick={() => onShared(false)}>
+          <button className="btn ghost payoff-choice-btn" onClick={() => onShared(false)}>
             Each loan pays <Masked>{total}</Masked> instead
           </button>
         )}
@@ -1041,7 +1045,7 @@ function SharedNote({
   return (
     <div className="payoff-hold">
       <p className="panel-note">You said each of these {s.loans} loans pays the <Masked>{total}</Masked> Plaid shows.</p>
-      <button className="link-btn" onClick={() => onShared(true)}>
+      <button className="btn ghost payoff-choice-btn" onClick={() => onShared(true)}>
         One <Masked>{total}</Masked> payment for {all} instead: split it
       </button>
     </div>
@@ -1062,13 +1066,11 @@ function TermSource({
   restore: string | null;
   onRestore: () => void;
 }) {
+  // The way back, a ghost button on its own line under the words.
   const back = restore && (
-    <>
-      {' '}
-      <button className="link-btn" onClick={onRestore}>
-        <Masked>{restore}</Masked>
-      </button>
-    </>
+    <button className="btn ghost payoff-choice-btn" onClick={onRestore}>
+      <Masked>{restore}</Masked>
+    </button>
   );
   if (term.error) {
     return (
@@ -1101,9 +1103,13 @@ function TermSource({
       </div>
     );
   }
+  // Still needed: said plainly under the field. The plan's one caution line
+  // at the top (Waiting) counts the debts that need a term, so each empty
+  // field isn't orange too (the screen review found it under both fields of
+  // all 16 debts).
   return (
-    <div className="payoff-source needed">
-      Needed
+    <div className="payoff-source">
+      Needed for the plan
       {back}
     </div>
   );

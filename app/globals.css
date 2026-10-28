@@ -1402,6 +1402,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   border-radius: var(--r-sm);
   padding: 10px 12px;
   min-width: 0;
+  /* A finger's target, whatever the padding and type around it set. */
+  min-height: var(--tap);
 }
 
 :where(input, select, textarea)::placeholder {
@@ -1613,6 +1615,7 @@ button.danger {
 
 .text-input {
   width: 100%;
+  min-height: var(--tap);
   padding: 12px 14px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border-input);
@@ -1767,6 +1770,41 @@ button:disabled:where(:not([class*="cl-"])) {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-1) var(--sp-2);
+}
+
+/* The line itself (its category and account) is cut short with an ellipsis
+   rather than wrapping, so a row is two lines; its sheet has it in full. The
+   chips sit beside it, the line giving way to them down to 6em (about 11
+   characters, most categories' first word or two), and only past that go
+   under it.
+   Its account name comes before any institution (txn-words.ts
+   rowAccountNames), so what is cut is the least of it. */
+.txn-row-line {
+  flex: 1 1 0;
+  min-width: min(100%, 6em);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A category Plaid wasn't sure of (components/txn-words.ts unsureCategory):
+   a quiet dot leading the row's line, and the same dot in the list's chip
+   that counts them. Information, so neutral, never caution's orange; drawn
+   as a border in the text's color so forced colors keep it. */
+.txn-check {
+  flex-shrink: 0;
+  display: inline-block;
+  width: var(--sp-2);
+  height: var(--sp-2);
+  border: 4px solid currentColor;
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+}
+
+/* On the row, first in its line, so the ellipsis never takes it. */
+.txn-row-line .txn-check {
+  margin-inline-end: var(--sp-2);
+  vertical-align: 0.05em;
 }
 
 /* The notes that bear on what a transaction counts as, under its line on
@@ -2815,10 +2853,9 @@ span.meter-fill {
   inset: 0;
   z-index: 40;
   background: var(--scrim);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
   opacity: 0;
-  transition: opacity 0.25s ease;
+  /* The motion tokens, as the sheet's: one duration and one easing. */
+  transition: opacity var(--dur-base) var(--ease);
 }
 
 .sheet-backdrop[data-open="true"] {
@@ -2848,7 +2885,7 @@ span.meter-fill {
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   box-shadow: 0 -12px 40px var(--shadow);
   transform: translateY(100%);
-  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--dur-base) var(--ease);
   padding-bottom: env(safe-area-inset-bottom);
   outline: none;
 }
@@ -3011,6 +3048,8 @@ span.meter-fill {
 .invite-link input {
   flex: 1;
   min-width: 0;
+  /* Its box (.invite-link, with the copy button) is the 44px target. */
+  min-height: 0;
   border: none;
   background: transparent;
   padding: 6px 0;
@@ -3603,16 +3642,24 @@ button.danger-outline {
   line-height: 1.35;
 }
 
-.payoff-source.needed {
-  color: var(--warn);
-}
-
 .payoff-source.invalid {
   color: var(--down);
 }
 
-.payoff-leave {
-  margin-top: 8px;
+/* A debt's choices (leave it out, include it, its accrued interest, a held
+   payment's answers, the way back to Plaid's figure): ghost buttons, 44px
+   tall, each on its own line, their words lined up with the text above and
+   wrapping from its left edge in a narrow column. */
+.payoff-choice-btn {
+  display: flex;
+  justify-content: flex-start;
+  margin-inline-start: calc(-1 * var(--sp-2));
+  text-align: left;
+}
+
+/* Under a field, at the size of the line it follows. */
+.payoff-source .payoff-choice-btn {
+  font-size: var(--fs-2);
 }
 
 /* The comparison: the chosen order's row in full ink, the others muted. */
@@ -3690,11 +3737,6 @@ button.danger-outline {
 }
 
 /* A held payment's reason, then each figure offered for it on its own line. */
-.payoff-hold .link-btn {
-  display: block;
-  margin-top: 6px;
-  text-align: left;
-}
 
 /* --- download my data (components/DownloadMyData.tsx) --- */
 
@@ -6133,6 +6175,8 @@ button.tag-suggestion.chosen {
   position: absolute;
   width: 1px;
   height: 1px;
+  /* A field hidden so stays 1px: the field rule's 44px minimum is not for it. */
+  min-height: 0;
   margin: -1px;
   padding: 0;
   overflow: hidden;
@@ -7007,6 +7051,7 @@ button.review-keys-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: var(--tap);
   margin-top: 6px;
   color: var(--text);
 }
@@ -7273,12 +7318,14 @@ button.review-keys-toggle {
   margin: 0 0 12px;
 }
 
+/* Each choice's label is its radio's 44px target. */
 .review-start-choice {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: var(--tap);
   padding: 6px 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 /* The Defaults list under Manage. */

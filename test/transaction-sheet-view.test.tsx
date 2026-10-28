@@ -310,11 +310,13 @@ describe('a transaction’s sheet', () => {
     const { recategorizedRow } = await import('@/components/transaction-edits');
     const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
     const changes: { id: string; choice: unknown }[] = [];
-    const v = mount({ txns: served().map(low), onRecategorize: (id, choice) => changes.push({ id, choice }), onCreateRule: () => {} });
+    // Saved: the dashboard's recategorize resolves true once the server has it.
+    const v = mount({ txns: served().map(low), onRecategorize: (id, choice) => (changes.push({ id, choice }), Promise.resolve(true)), onCreateRule: () => {} });
     await v.open('Whole Foods');
     const badges = () => v.dialog()!.findAll((e) => (e.getAttribute('class') ?? '').startsWith('badge')).map((e) => e.textContent);
     expect(badges()).toEqual(['Check category']);
     act(() => click(v.button('Looks right', v.dialog()!)!));
+    await settle();
     expect(changes).toEqual([{ id: 'Whole Foods', choice: { category_id: cat('groceries') } }]);
     // No offer to make a rule: nothing was changed.
     expect(v.dialog()!.textContent).not.toContain('Do the same for every transaction');
@@ -328,6 +330,14 @@ describe('a transaction’s sheet', () => {
     expect(v.button('Looks right', v.dialog()!)).toBeNull();
     expect(status()).toBe('Category kept: groceries.');
     v.unmount();
+
+    // Refused: nothing is said to have been kept (the dashboard says why).
+    const refused = mount({ txns: served().map(low), onRecategorize: () => Promise.resolve(false) });
+    await refused.open('Whole Foods');
+    act(() => click(refused.button('Looks right', refused.dialog()!)!));
+    await settle();
+    expect(refused.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent).toBe('');
+    refused.unmount();
   });
 
   test('a pending row keeps its mark without Looks right: a choice is kept by id, and it gets a new one when it posts', async () => {
@@ -364,6 +374,112 @@ describe('a transaction’s sheet', () => {
     act(() => click(v.button('Edit or delete')!));
     expect(said[1]).toBe('edit Cash market');
     expect(v.dialog()).toBeNull();
+    v.unmount();
+  });
+
+  // The screen review: Split, Group with others, Share the cost and Exclude
+  // from budgets were four tonal buttons of four widths, wrapping raggedly.
+  test('its actions, one to a row in one list; those that open another sheet end in a chevron', async () => {
+    const shared = { names: new Map(), onShare: () => {}, onPaidBack: () => {}, onIou: () => {}, owes: false };
+    const v = mount({ shared, onToggleExcluded: () => {}, onCreateRule: () => {} });
+    await v.open('Whole Foods');
+    // Its actions, then Create a rule from this in a list of its own (after
+    // the rules that match it, when any do).
+    const lists = v.dialog()!.findAll((e) => e.tagName === 'UL' && e.getAttribute('class') === 'card list-rows');
+    expect(lists).toHaveLength(2);
+    const rows = lists.flatMap((l) => l.findAll((e) => e.tagName === 'BUTTON'));
+    const title = (b: FakeElement) => b.findAll((e) => e.getAttribute('class') === 'list-row-title')[0].textContent;
+    expect(lists.map((l) => l.findAll((e) => e.tagName === 'BUTTON').map(title))).toEqual([['Split', 'Group with others', 'Share the cost', 'Exclude from budgets and reports'], ['Create a rule from this']]);
+    expect(rows.map((b) => b.getAttribute('class'))).toEqual(Array(5).fill('list-row'));
+    // A chevron, and a dialog for a screen reader, on all but Exclude, which acts in place.
+    expect(rows.map((b) => b.findAll((e) => e.tagName === 'svg').length)).toEqual([1, 1, 1, 0, 1]);
+    expect(rows.map((b) => b.getAttribute('aria-haspopup'))).toEqual(['dialog', 'dialog', 'dialog', null, 'dialog']);
+    // What Exclude does, under it, as before.
+    expect(rows[3].textContent).toBe('Exclude from budgets and reportsFor a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan.');
+    expect(v.dialog()!.findAll((e) => (e.getAttribute('class') ?? '').includes('btn secondary'))).toHaveLength(0);
+    v.unmount();
+
+    // With rules that match it: Create a rule from this follows them.
+    const ruled = mount({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, rule_ids: ['r1'] } : t)), ruleSentenceOf: () => 'Name is Whole Foods: Groceries', onCreateRule: () => {} });
+    await ruled.open('Whole Foods');
+    const order = ruled.dialog()!.findAll((e) => (e.tagName === 'DIV' && e.getAttribute('class') === 'helper' && e.textContent.startsWith('A rule matches it')) || (e.tagName === 'BUTTON' && e.textContent === 'Create a rule from this'));
+    expect(order.map((e) => e.tagName)).toEqual(['DIV', 'BUTTON']);
+    ruled.unmount();
+
+    // A pending one: why it can't be split yet, after the list, in place of its rows.
+    const pending = mount({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, pending: true } : t)), onCreateRule: () => {} });
+    await pending.open('Whole Foods');
+    expect(pending.dialog()!.textContent).toContain('Once it posts, it can be split or grouped with others.');
+    expect(pending.button('Split', pending.dialog()!)).toBeNull();
+    pending.unmount();
+  });
+
+  test('Exclude acts in place: focus stays on its row as its title flips, and the status line says what it did', async () => {
+    const toggled: boolean[] = [];
+    // Saved: the dashboard's toggle resolves true once the server has it.
+    const onToggleExcluded = (_t: Txn, excluded: boolean) => (toggled.push(excluded), Promise.resolve(true));
+    const v = mount({ onToggleExcluded });
+    await v.open('Whole Foods');
+    const exclude = (view = v) =>
+      view.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'list-row' && /^(Exclude|Include) in|^Exclude from/.test(e.textContent))[0] ?? null;
+    const status = (view = v) => view.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    const before = exclude()!;
+    before.focus();
+    act(() => click(before));
+    expect(toggled).toEqual([true]);
+    // The dashboard's change comes back, and the save resolves.
+    v.render({ onToggleExcluded, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, excluded: true } : t)) });
+    await settle();
+    expect(exclude()).toBe(before);
+    expect(before.textContent.startsWith('Include in budgets and reports')).toBe(true);
+    expect(dom.document.activeElement).toBe(before as never);
+    expect(status()).toBe('Excluded from budgets and reports.');
+    // Put back as it was (a refusal read again): the line no longer says it.
+    v.render({ onToggleExcluded, txns: served() });
+    expect(status()).toBe('');
+    v.unmount();
+
+    // Refused: nothing is said to have been done.
+    const refused = mount({ onToggleExcluded: () => Promise.resolve(false) });
+    await refused.open('Whole Foods');
+    act(() => click(exclude(refused)!));
+    await settle();
+    expect(status(refused)).toBe('');
+    refused.unmount();
+  });
+
+  test('Include on a pending row takes its row away until it posts: focus goes to the line said in its place', async () => {
+    const pendingOut = (excluded: boolean) => served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, pending: true, excluded: excluded ? true : undefined } : t));
+    const v = mount({ txns: pendingOut(true), onToggleExcluded: () => Promise.resolve(true) });
+    await v.open('Whole Foods');
+    const include = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Include in budgets and reports'))[0]!;
+    include.focus();
+    act(() => click(include));
+    v.render({ txns: pendingOut(false), onToggleExcluded: () => Promise.resolve(true) });
+    await settle();
+    const wait = v.dialog()!.findAll((e) => e.tagName === 'P' && e.textContent === 'Once it posts, it can be excluded from budgets and reports.')[0]!;
+    expect(dom.document.activeElement).toBe(wait as never);
+    expect(wait.getAttribute('tabindex')).toBe('-1');
+    v.unmount();
+  });
+
+  test('the bank and Plaid’s finer category, which the row leaves out, are in its sheet; a pair Nya worked out has no bank’s category', async () => {
+    const v = mount({
+      txns: [
+        txn('Taxi', { subcategory: 'taxis and ride shares', account_name: 'Plaid Checking', institution_name: 'First Platypus Bank' }),
+        txn('Card payment', { subcategory: 'credit card payment', source: 'simplefin', paired: 'card', account_name: 'Checking', institution_name: 'My Bank', counterparty: 'My Bank' }),
+      ],
+    });
+    const detail = () =>
+      Object.fromEntries(v.dialog()!.findAll((e) => e.getAttribute('class') === 'txn-detail-row').map((r) => [r.findAll((e) => e.tagName === 'DT')[0].textContent, r.findAll((e) => e.tagName === 'DD')[0].textContent]));
+    await v.open('Taxi');
+    expect(v.dialog()!.textContent).toContain('First Platypus Bank · Plaid Checking');
+    expect(detail()['Bank’s category']).toBe('Taxis and ride shares');
+    act(() => click(v.button('Close', v.dialog()!)!));
+    await settle(400);
+    await v.open('Card payment');
+    expect(detail()['Merchant']).toBe('My Bank');
+    expect(detail()['Bank’s category']).toBeUndefined();
     v.unmount();
   });
 

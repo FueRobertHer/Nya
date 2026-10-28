@@ -404,7 +404,7 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
     const mount = source.slice(source.indexOf('<CashFlowSankey'), source.indexOf('/>', source.indexOf('<CashFlowSankey')));
     // The rows as the totals count them: converted, with a home currency (lib/fx/totals.ts).
     for (const prop of ['txns={counted.rows}', 'taxonomy={taxonomy}', 'currency={currency}', 'incomplete={incomplete}', 'stopped={stopped}', 'withoutTransactions={withoutTransactions}', 'pick={flowPick}']) expect(mount).toContain(prop);
-    expect(source).toContain('searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags)');
+    expect(source).toContain('searchEntries(listed, { query, tag: filterTag, review: reviewing, unsure: unsureOnly }, tags)');
     expect(source).toContain('<FlowShown pick={flowPick}');
   });
 

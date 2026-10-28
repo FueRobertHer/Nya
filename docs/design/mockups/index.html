@@ -117,6 +117,12 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .row .sub { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .app .row .end { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .app .chev { color: var(--text-3); width: 14px; height: 14px; flex: none; }
+/* A category Plaid was unsure of: a neutral dot leading the row's line, and the chip that counts them. */
+.app .unsure { display: inline-block; width: 8px; height: 8px; border: 4px solid currentColor; border-radius: 999px; color: var(--text-2); flex: none; box-sizing: border-box; }
+.app .chip .unsure { margin-right: 4px; vertical-align: 0.05em; }
+.app .row .sub .line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* An object's actions in its sheet: one card of rows. */
+.app .sheet .card.flush .row { padding-left: 14px; padding-right: 14px; }
 .app .row-ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--elevated); color: var(--text-2); font-size: 13px; font-weight: 600; }
 .app .row-ico.crit { background: var(--neg-tint); color: var(--neg); }
 .app .row-ico.warn { background: var(--warn-tint); color: var(--warn); }
@@ -567,7 +573,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="xs t3">Transfers and loan payments left out</div>
             </div>
             <div class="field"><svg><use href="#i-search"/></svg>Search transactions</div>
-            <div class="chips"><span class="chip on">To review</span><span class="chip">Tag</span><span class="chip">Receipt</span></div>
+            <div class="chips"><span class="chip"><span class="unsure"></span>Unsure category (1)</span><span class="chip on">To review</span><span class="chip">Tag</span><span class="chip">Receipt</span></div>
             <div class="card flush">
               <div class="daybar"><span>Thu, Oct 22</span><span class="money">-$84.17</span></div>
               <div class="row"><span class="row-ico">W</span><div class="main"><span class="title">Whole Foods Market</span><span class="sub">Groceries · Chase ••4421</span></div><div class="end"><span class="money">-$62.40</span></div></div>
@@ -575,7 +581,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="daybar"><span>Wed, Oct 21</span><span class="money pos">+$3,146.31</span></div>
               <div class="row"><span class="row-ico">A</span><div class="main"><span class="title">Acme Corp payroll</span><span class="sub">Income · Alpine ••0071</span></div><div class="end"><span class="money pos">+$3,210.00</span></div></div>
               <div class="row"><span class="row-ico">N</span><div class="main"><span class="title">Netflix</span><span class="sub">Subscriptions <span class="badge accent">Rule</span></span></div><div class="end"><span class="money">-$15.49</span></div></div>
-              <div class="row"><span class="row-ico">A</span><div class="main"><span class="title">Amazon</span><span class="sub"><span class="badge warn">Check category</span> Shopping</span></div><div class="end"><span class="money">-$48.20</span></div></div>
+              <div class="row"><span class="row-ico">A</span><div class="main"><span class="title">Amazon</span><span class="sub"><span class="unsure"></span><span class="line">Shopping · Plaid Checking, Tartan Bank</span></span></div><div class="end"><span class="money">-$48.20</span></div></div>
             </div>
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
@@ -634,13 +640,19 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="notice info"><span>Do the same for every transaction named “WHOLEFDS MKT”, past and future? A rule does it, and you can change or turn it off later.</span></div>
             <div class="btn-row"><span class="btn sm secondary">Make a rule</span><span class="btn sm ghost">No thanks</span></div>
             <div class="field">Add a tag</div>
-            <div class="btn-row"><span class="btn sm secondary">Split</span><span class="btn sm secondary">Group with others</span><span class="btn sm secondary">Share the cost</span></div>
-            <div class="btn-row"><span class="btn sm secondary">Exclude from budgets and reports</span><span class="btn sm secondary">Create a rule from this</span></div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Split</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Group with others</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Share the cost</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Exclude from budgets and reports</span><span class="sub">For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan.</span></div></div>
+            </div>
+            <div class="xs muted">A rule matches it, in the order they run (what you set here wins): Name contains “WHOLEFDS”: Groceries.</div>
+            <div class="card flush"><div class="row"><div class="main"><span class="title">Create a rule from this</span></div><svg class="chev"><use href="#i-chev"/></svg></div></div>
             <div class="small" style="font-weight:600;color:var(--text-2)">Bank details</div>
             <div class="sheet-foot"><span class="btn secondary" style="flex:none"><svg width="16" height="16"><use href="#i-dots"/></svg></span></div>
           </div>
         </div></div>
-        <figcaption><b>TRANSACTION SHEET</b>Replaces the inline editor, shown just after a new category: the offer to make a rule sits under it, and the sheet stays open. Rename vendor is in its ⋯; Edit or delete appears for manual transactions. A split's parts and a group's transactions open it on themselves.</figcaption>
+        <figcaption><b>TRANSACTION SHEET</b>Replaces the inline editor, shown just after a new category: the offer to make a rule sits under it, and the sheet stays open. Its actions are one list of rows, a chevron on those that open another sheet; Create a rule from this follows the rules that match it. Rename vendor is in its ⋯; Edit or delete appears for manual transactions. A split's parts and a group's transactions open it on themselves.</figcaption>
       </figure>
     </div>
   </section>
