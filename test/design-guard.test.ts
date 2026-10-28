@@ -138,6 +138,7 @@ describe('design guard: controls and states read without color', () => {
     ['.icon-btn {', '1px solid transparent', 'an icon button has an edge forced colors draw'],
     ['.chip {', 'var(--border-input)', 'a chip is edged in --border-input'],
     ['h1,', 'font-family: var(--font-display)', 'titles and figures are in Red Hat Display (look and feel, step 3)'],
+    ['.upcoming-skeleton-chart,', 'aspect-ratio: 340 / 150', "Upcoming's chart skeleton keeps the chart's shape"],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'border-bottom: 3px solid var(--accent)', 'the current item of a switch has a bar'],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-semibold)', 'the current item of a switch is heavier'],
     ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],

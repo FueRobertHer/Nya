@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, click, type, type FakeElement } from './mini-dom';
 import { categoriesFor } from './category-fixture';
+import type { CategoryChoice } from '@/components/transaction-edits';
 
 // A transaction's sheet on Activity's Transactions (rollout phase 5e,
 // docs/design/information-architecture.md#activity), used as a person would
@@ -338,6 +339,70 @@ describe('a transaction’s sheet', () => {
     await settle();
     expect(refused.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent).toBe('');
     refused.unmount();
+  });
+
+  // The audit after the screen review: "Category kept" outlived the category
+  // it kept, and hid what Exclude did next.
+  test('the status line says only the last thing saved: never "kept" once the category changes, and Exclude after Looks right', async () => {
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    const onRecategorize = () => Promise.resolve(true);
+    const onToggleExcluded = () => Promise.resolve(true);
+    const v = mount({ txns: served().map(low), onRecategorize, onToggleExcluded });
+    await v.open('Whole Foods');
+    const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    await settle();
+    expect(status()).toBe('Category kept: groceries.');
+    // Another category picked afterwards: nothing says it was kept.
+    act(() => type(v.field('Category')!, cat('household')));
+    const household = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_id: cat('household'), category_name: 'household' } : t);
+    v.render({ onRecategorize, onToggleExcluded, txns: served().map(household) });
+    expect(status()).toBe('');
+    // Nor when the kept one is picked again: that is a pick, not Looks right.
+    act(() => type(v.field('Category')!, cat('groceries')));
+    v.render({ onRecategorize, onToggleExcluded, txns: served().map(low) });
+    expect(status()).toBe('');
+    // Exclude afterwards is said, not hidden behind the earlier answer.
+    const exclude = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'list-row' && e.textContent.startsWith('Exclude from'))[0]!;
+    act(() => click(exclude));
+    v.render({ onRecategorize, onToggleExcluded, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...household(t), excluded: true } : t)) });
+    await settle();
+    expect(status()).toBe('Excluded from budgets and reports.');
+    v.unmount();
+  });
+
+  test('a pick made while Looks right is still saving is never said to be kept', async () => {
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    let resolve: (saved: boolean) => void = () => {};
+    const onRecategorize = (_id: string, choice: CategoryChoice) =>
+      'category_id' in choice && choice.category_id === cat('groceries') ? new Promise<boolean>((r) => (resolve = r)) : Promise.resolve(true);
+    const v = mount({ txns: served().map(low), onRecategorize });
+    await v.open('Whole Foods');
+    const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    // Household picked before the server answers Looks right.
+    act(() => type(v.field('Category')!, cat('household')));
+    v.render({ onRecategorize, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, category_id: cat('household'), category_name: 'household' } : t)) });
+    act(() => resolve(true));
+    await settle();
+    expect(status()).toBe('');
+    v.unmount();
+  });
+
+  test('without the categories read, Looks right is still said once its words are saved', async () => {
+    const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
+    const { recategorizedRow } = await import('@/components/transaction-edits');
+    const choices: CategoryChoice[] = [];
+    const onRecategorize = (_id: string, choice: CategoryChoice) => (choices.push(choice), Promise.resolve(true));
+    const v = mount({ taxonomy: null, txns: served().map(low), onRecategorize });
+    await v.open('Whole Foods');
+    act(() => click(v.button('Looks right', v.dialog()!)!));
+    // The row as the dashboard shows it once saved by its words: no id now.
+    v.render({ taxonomy: null, onRecategorize, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...low(t), ...recategorizedRow(low(t), choices[0], null) } : t)) });
+    await settle();
+    expect(choices).toEqual([{ category: 'groceries' }]);
+    expect(v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent).toBe('Category kept: groceries.');
+    v.unmount();
   });
 
   test('a pending row keeps its mark without Looks right: a choice is kept by id, and it gets a new one when it posts', async () => {
