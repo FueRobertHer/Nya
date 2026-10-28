@@ -75,41 +75,43 @@
   color-scheme: dark;
 
   /* Surfaces */
-  --canvas: #0d0f14;
-  --surface: #151821;
-  --elevated: #1c202b;
-  --glass: rgba(21, 24, 33, 0.88); /* header and tab bar, over a blur */
+  --canvas: #0b1019;
+  --surface: #131a27;
+  --elevated: #1b2333;
+  --glass: rgba(19, 26, 39, 0.88); /* header and tab bar, over a blur */
 
   /* Lines */
-  --border-subtle: #232834; /* dividers between rows */
-  --border-strong: #2b3140; /* card and sheet edges */
-  --border-input: #707889; /* a control's edge (fields, chips, a secondary button on a fill of its own): 3:1 on canvas, surface and elevated */
+  --border-subtle: #222b3c; /* dividers between rows */
+  --border-strong: #2e384c; /* card and sheet edges */
+  --border-input: #6f7b91; /* a control's edge (fields, chips, a secondary button on a fill of its own): 3:1 on canvas, surface and elevated */
 
   /* Text */
-  --text-1: #eceef2;
-  --text-2: #9499a6;
-  --text-3: #868c9b;
+  --text-1: #eeece7;
+  --text-2: #9ba4b5;
+  --text-3: #8b94a6;
 
   /* Meaning, as text or icon color */
-  --accent: #5b8def; /* links, selected states, focus */
-  --pos: #34d399;
-  --neg: #f87171;
-  --warn: #fbbf24;
+  --accent: #d4b680; /* links, selected states, focus */
+  --pos: #4ade9b;
+  --neg: #f7857a;
+  --warn: #fb9a4b;
 
   /* Meaning, as a background tint (text in the matching color sits on it) */
-  --accent-tint: #1d263a;
-  --pos-tint: #192e2f;
-  --neg-tint: #30232b;
-  --warn-tint: #312c21;
-  --caveat-surface: #191d27; /* neutral information notices */
+  --accent-tint: #2a2a24;
+  --pos-tint: #15302c;
+  --neg-tint: #352229;
+  --warn-tint: #35281e;
+  --caveat-surface: #182031; /* neutral information notices */
 
-  /* Fills with white labels */
-  --accent-fill: #2563eb;
+  /* Fills, each with its label: --on-accent-fill on the primary, --on-fill on danger */
+  --accent-fill: #cdae74;
+  --on-accent-fill: #0b1019; /* the primary button's label: ink on brass */
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
   --logo-tile: #ffffff;
+  --brand-mark: #bfa271; /* the header logo's one ink: the logo gold */
 
-  --focus: #5b8def;
+  --focus: #d4b680;
   --scrim: rgba(0, 0, 0, 0.55);
   --shadow: rgba(0, 0, 0, 0.45); /* under a sheet */
 
@@ -138,32 +140,34 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-    --canvas: #f6f7f9;
+    --canvas: #f4f5f8;
     --surface: #ffffff;
-    --elevated: #f0f2f6;
+    --elevated: #eef0f4;
     --glass: rgba(255, 255, 255, 0.88);
-    --border-subtle: #e6e8ef;
-    --border-strong: #d5d9e2;
-    --border-input: #757c8a;
-    --text-1: #11141c;
-    --text-2: #525866;
-    --text-3: #636a77;
-    --accent: #2563eb;
+    --border-subtle: #e3e6ec;
+    --border-strong: #d3d8e1;
+    --border-input: #737c8c;
+    --text-1: #111826;
+    --text-2: #4f5869;
+    --text-3: #5e6777;
+    --accent: #846326;
     --pos: #047857;
     --neg: #b91c1c;
-    --warn: #92400e;
-    --accent-tint: #eef3fd;
-    --pos-tint: #ebf4f2;
-    --neg-tint: #fceeee;
-    --warn-tint: #fcf4eb;
-    --caveat-surface: #f1f3f8;
-    --accent-fill: #2563eb;
+    --warn: #a3410b;
+    --accent-tint: #f6f0e4;
+    --pos-tint: #e8f5ef;
+    --neg-tint: #fbecec;
+    --warn-tint: #fcefe6;
+    --caveat-surface: #f1f3f7;
+    --accent-fill: #18243d;
+    --on-accent-fill: #ffffff;
     --danger-fill: #dc2626;
     --on-fill: #ffffff;
     --logo-tile: #ffffff;
-    --focus: #2563eb;
-    --scrim: rgba(17, 20, 28, 0.4);
-    --shadow: rgba(17, 20, 28, 0.16);
+    --brand-mark: #18243d;
+    --focus: #846326;
+    --scrim: rgba(17, 24, 38, 0.4);
+    --shadow: rgba(17, 24, 38, 0.16);
     --tag-gray: #4b5262;
     --tag-gray-tint: #eef0f3;
     --tag-red: #b42323;
@@ -187,32 +191,34 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --canvas: #f6f7f9;
+  --canvas: #f4f5f8;
   --surface: #ffffff;
-  --elevated: #f0f2f6;
+  --elevated: #eef0f4;
   --glass: rgba(255, 255, 255, 0.88);
-  --border-subtle: #e6e8ef;
-  --border-strong: #d5d9e2;
-  --border-input: #757c8a;
-  --text-1: #11141c;
-  --text-2: #525866;
-  --text-3: #636a77;
-  --accent: #2563eb;
+  --border-subtle: #e3e6ec;
+  --border-strong: #d3d8e1;
+  --border-input: #737c8c;
+  --text-1: #111826;
+  --text-2: #4f5869;
+  --text-3: #5e6777;
+  --accent: #846326;
   --pos: #047857;
   --neg: #b91c1c;
-  --warn: #92400e;
-  --accent-tint: #eef3fd;
-  --pos-tint: #ebf4f2;
-  --neg-tint: #fceeee;
-  --warn-tint: #fcf4eb;
-  --caveat-surface: #f1f3f8;
-  --accent-fill: #2563eb;
+  --warn: #a3410b;
+  --accent-tint: #f6f0e4;
+  --pos-tint: #e8f5ef;
+  --neg-tint: #fbecec;
+  --warn-tint: #fcefe6;
+  --caveat-surface: #f1f3f7;
+  --accent-fill: #18243d;
+  --on-accent-fill: #ffffff;
   --danger-fill: #dc2626;
   --on-fill: #ffffff;
   --logo-tile: #ffffff;
-  --focus: #2563eb;
-  --scrim: rgba(17, 20, 28, 0.4);
-  --shadow: rgba(17, 20, 28, 0.16);
+  --brand-mark: #18243d;
+  --focus: #846326;
+  --scrim: rgba(17, 24, 38, 0.4);
+  --shadow: rgba(17, 24, 38, 0.16);
   --tag-gray: #4b5262;
   --tag-gray-tint: #eef0f3;
   --tag-red: #b42323;

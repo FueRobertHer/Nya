@@ -5,11 +5,11 @@
 // if a value here, or the manifest's, differs from the token it names.
 
 export const DARK = {
-  canvas: '#0d0f14',
+  canvas: '#0b1019',
 } as const;
 
 export const LIGHT = {
-  canvas: '#f6f7f9',
+  canvas: '#f4f5f8',
 } as const;
 
 /** A theme chosen in Settings > Preferences. None follows the system: dark
@@ -59,7 +59,7 @@ const MENU_ROW = { minHeight: 'var(--tap)', padding: 'var(--sp-2) var(--sp-3)', 
 export const CLERK_APPEARANCE = {
   variables: {
     colorPrimary: 'var(--accent)',
-    colorPrimaryForeground: 'var(--on-fill)',
+    colorPrimaryForeground: 'var(--on-accent-fill)',
     colorBackground: 'var(--surface)',
     colorForeground: 'var(--text-1)',
     colorMutedForeground: 'var(--text-2)',
@@ -79,9 +79,10 @@ export const CLERK_APPEARANCE = {
   },
   elements: {
     // Clerk takes one color for its buttons and its links (colorPrimary), so
-    // that stays --accent, which passes as link text; its primary button alone
-    // takes the deeper --accent-fill, as Nya's own primary does, so its white
-    // label passes too (5.17:1, where white on --accent is 3.23:1 in dark).
+    // that stays --accent, which passes as link text, with --on-accent-fill on
+    // it (ink on brass, 9.80:1, in dark; white on brass, 5.54:1, in light).
+    // Its primary button alone takes --accent-fill, as Nya's own primary does
+    // (ink on brass, 8.98:1; white on navy, 15.46:1).
     formButtonPrimary: {
       backgroundColor: 'var(--accent-fill)',
       '&:hover, &:active': { backgroundColor: 'var(--accent-fill)', filter: 'brightness(0.92)' },
@@ -97,5 +98,10 @@ export const CLERK_APPEARANCE = {
     // adds (Settings, Sharing) take separate keys.
     userButtonPopoverActionButton: MENU_ROW,
     userButtonPopoverCustomItemButton: MENU_ROW,
+    // A link inside a sentence is underlined, as Nya's own are ("Don't have an
+    // account? Sign up", a field's "Forgot password?"): brass is close to
+    // body text in lightness.
+    footerActionLink: { textDecoration: 'underline', textUnderlineOffset: '2px' },
+    formFieldAction: { textDecoration: 'underline', textUnderlineOffset: '2px' },
   },
 };

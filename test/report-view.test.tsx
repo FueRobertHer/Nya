@@ -313,7 +313,7 @@ describe('the print styles', () => {
     // The light theme, then black and white over it, for the root with a
     // theme chosen or without (phase 7).
     const [light, root] = printRules(':root:not([data-theme]), :root[data-theme]');
-    expect(light).toContain('--canvas: #f6f7f9');
+    expect(light).toContain('--canvas: #f4f5f8');
     for (const d of ['--text-1: #000', '--canvas: #fff', '--surface: #fff', '--warn: #000']) expect(root).toContain(d);
     // No fixed paper size: A4 or Letter, as the print window says.
     expect(printRule('@page')).not.toMatch(/(^|;)\s*size\s*:/);
