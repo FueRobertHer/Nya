@@ -185,6 +185,17 @@ describe('a transaction’s sheet', () => {
     v.unmount();
   });
 
+  // The screen review: "Channel online".
+  test("Plaid's channel reads in words in its bank details", async () => {
+    for (const [channel, words] of [['online', 'Online'], ['in store', 'In store'], ['other', 'Other']]) {
+      const v = mount({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, payment_channel: channel } : t)) });
+      await v.open('Whole Foods');
+      const row = v.dialog()!.findAll((e) => (e.getAttribute('class') ?? '') === 'txn-detail-row').find((e) => e.textContent.startsWith('Channel'));
+      expect(row?.textContent).toBe(`Channel${words}`);
+      v.unmount();
+    }
+  });
+
   test('a category chosen stays open, and offers a rule for every transaction with its name; Make a rule closes it for the rule sheet', async () => {
     const changes: string[] = [];
     const v = mount({

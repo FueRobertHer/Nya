@@ -12,6 +12,7 @@ import { tidy } from '../totals';
 import { convertedText, leftOutWhy } from '../fx/totals';
 import { forecastConvertedText } from '../forecast';
 import { joinNames } from '../month-coverage';
+import { shownName } from '../merchant-name';
 import { noSpending, type RunwayProjection, type RunwayWhatIf, type WindowSpending } from './runway';
 import type { RunwayReport } from './runway-read';
 import { gapSentences, type DayFormat } from './words';
@@ -49,7 +50,7 @@ export function runwayCaveats(
   if (left) lines.push(left);
   for (const c of w.card_payments) {
     lines.push(
-      `${c.name}${c.account ? ` from ${c.account}` : ''} looks like a card’s payment, and no card in Nya shows it arriving, so its ${money(c.amount)} over these months counts as spending here: what you charge on that card isn’t in Nya. If the card is in Nya, it is counted twice.`
+      `${shownName(c)}${c.account ? ` from ${c.account}` : ''} looks like a card’s payment, and no card in Nya shows it arriving, so its ${money(c.amount)} over these months counts as spending here: what you charge on that card isn’t in Nya. If the card is in Nya, it is counted twice.`
     );
   }
   if (hasMovedOut(w)) lines.push(movedOutWords(w, money, projection.what_if.count_moved_out));

@@ -9,6 +9,8 @@
 import { useEffect, useState } from 'react';
 import { amountsHidden, formatMoney, hiddenMoney } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import { readableName } from '@/lib/merchant-name';
+import { displayName } from '@/lib/categories';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -149,10 +151,10 @@ export default function InvestmentActivity({
               <tr key={t.investment_transaction_id}>
                 <td>
                   <div className="txn-text">
-                    {t.name}
+                    {readableName(t.name)}
                     <div className="type-tag">
-                      {fmtDay(t.date)} · {t.subtype}
-                      {t.security ? ` · ${t.security}` : ''}
+                      {fmtDay(t.date)} · {displayName(t.subtype)}
+                      {t.security ? ` · ${readableName(t.security)}` : ''}
                     </div>
                   </div>
                 </td>

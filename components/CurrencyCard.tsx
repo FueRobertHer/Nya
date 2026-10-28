@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { Why } from './Why';
 import CurrencyChoiceSheet, { type ManualCurrency } from './CurrencyChoiceSheet';
 import { ecbCross, errorOf, useCurrencySettings, type CurrencyLoad, type CurrencySettingsView } from './currency-state';
 import { rateDay } from './currency-text';
@@ -136,10 +137,11 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
       ) : (
         view && (
           <>
+            {/* One line; the rest is behind "About the rates", at the card's end. */}
             <p className="panel-note">
               {view.home
-                ? `Your net worth is shown in ${view.home}, with accounts in other currencies converted at the European Central Bank’s daily reference rates${view.own.length > 0 ? ', or your own' : ''}. Your budgets, goals and the Plan stay as they are, in their own currencies.`
-                : 'Nya shows each balance in its own currency, and adds your net worth up in the currency most of your accounts are in, unconverted. Choose a home currency to see your net worth converted into it at the European Central Bank’s daily reference rates.'}
+                ? `Your net worth is shown in ${view.home}, with accounts in other currencies converted at the European Central Bank’s daily reference rates${view.own.length > 0 ? ', or your own' : ''}.`
+                : 'Nya shows each balance in its own currency, and adds your net worth up in the currency most of your accounts are in, unconverted.'}
             </p>
             <p className="as-of">
               {view.ecb.date
@@ -184,7 +186,7 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
 
             <h3 className="section-label currency-rates-title">Your rates</h3>
             {view.own.length === 0 ? (
-              <p className="panel-note">None. Set one for a currency the ECB doesn’t publish (a cryptocurrency, say), or to use your bank’s rate instead of the ECB’s.</p>
+              <p className="panel-note">None yet.</p>
             ) : (
               <ul className="own-rates">
                 {view.own.map((o) => (
@@ -221,11 +223,19 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
             <button className="secondary" onClick={() => on.onEdit()} disabled={busy}>
               Add a rate
             </button>
-            <p className="panel-note">
-              The ECB’s rates are reference rates, published for information each working day around 16:00 CET; a weekend or a holiday takes the last working
-              day’s. A bank’s own rate can differ: that is what your own rates are for. Changing a rate changes every figure it reaches, past days included, since
-              Nya’s server keeps nothing converted. Each total converts each currency once, so the parts of one can differ from it by a cent.
-            </p>
+            <Why label="About the rates">
+              <p>
+                {view.home
+                  ? 'Your budgets, goals and the Plan stay as they are, in their own currencies.'
+                  : 'Choose a home currency to see your net worth converted into it at the European Central Bank’s daily reference rates.'}
+              </p>
+              <p>
+                The ECB’s rates are reference rates, published for information each working day around 16:00 CET; a weekend or a holiday takes the last working
+                day’s. A bank’s own rate can differ: that is what your own rates are for. Set one for a currency the ECB doesn’t publish (a cryptocurrency, say), or
+                to use your bank’s rate instead of the ECB’s. Changing a rate changes every figure it reaches, past days included, since Nya’s server keeps nothing
+                converted. Each total converts each currency once, so the parts of one can differ from it by a cent.
+              </p>
+            </Why>
           </>
         )
       )}
@@ -310,7 +320,8 @@ export function OwnRateForm({
       )}
       <p className="panel-note">
         {draft.every ? 'It is used for every day, past ones too, instead of the ECB’s.' : 'From that day on it is used instead of the ECB’s; before it, the ECB’s rate where it publishes one.'} A
-        rate in a currency other than the euro goes through the ECB’s rate for that currency each day.
+        rate in a currency other than the euro goes through the ECB’s rate for that currency each day. Changing a rate changes every figure it reaches, past days
+        included.
       </p>
       <div className="button-pair">
         <button onClick={onSave} disabled={busy || problem !== null}>

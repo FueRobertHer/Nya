@@ -112,20 +112,27 @@ function expectMasked(html: string) {
 }
 
 describe("Upcoming's list", () => {
+  test("a series named by the bank's own text reads readably, as its rows do", () => {
+    const bank = RENT_AND_PAY.map((s) => (s.name === 'Rent' ? { ...s, name: 'AUTOMATIC PAYMENT - RENT *//', name_from_bank: true as const } : s));
+    const t = text(list({ series: bank }));
+    expect(t).toContain('Thu, Oct 15 -$1,500.00 Automatic Payment - Rent Bill · Monthly -$1,500.00');
+    expect(t).not.toContain('AUTOMATIC PAYMENT');
+  });
+
   test('a bar for each day from today, with its expected figure, then a plain row for each entry in the calendar\'s words', () => {
     const html = list();
     const t = text(html);
     // Today: pay that varies and a card's own charge, both listed, neither in the day's figure.
     expect(t).toContain(
-      "Fri, Oct 9 Gig pay income · Every 2 weeks · its amount varies, not in the day's figure +$1,768.18 Spotify bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash -$10.99"
+      "Fri, Oct 9 Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18 Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash -$10.99"
     );
-    expect(t).toContain("Mon, Oct 12 Gym bill · Monthly · on an account of unknown type, not in the day's figure -$45.00");
-    expect(t).toContain('Thu, Oct 15 -$1,500.00 Rent bill · Monthly -$1,500.00');
-    expect(t).toContain('Tue, Oct 20 -$212.50 Car registration planned · Once -$212.50');
+    expect(t).toContain("Mon, Oct 12 Gym Bill · Monthly · On an account of unknown type, not in the day's figure -$45.00");
+    expect(t).toContain('Thu, Oct 15 -$1,500.00 Rent Bill · Monthly -$1,500.00');
+    expect(t).toContain('Tue, Oct 20 -$212.50 Car registration Planned · Once -$212.50');
     // A payment due: badged, its minimum's size, never in a figure.
-    expect(t).toContain('Thu, Oct 22 Sapphire Due minimum due, not in the figures $35.00');
-    expect(t).toContain('Sun, Oct 25 +$2,000.00 Payroll income · Monthly +$2,000.00');
-    expect(t).toContain('Fri, Oct 30 +$1,200.00 Tax refund planned · Once +$1,200.00');
+    expect(t).toContain('Thu, Oct 22 Sapphire Due Minimum due, not in the figures $35.00');
+    expect(t).toContain('Sun, Oct 25 +$2,000.00 Payroll Income · Monthly +$2,000.00');
+    expect(t).toContain('Fri, Oct 30 +$1,200.00 Tax refund Planned · Once +$1,200.00');
     expect(t).toContain('Fri, Nov 6 Gig pay');
     // The range ends on Nov 8: Spotify's next, on the 9th, is past it; pay that stopped isn't listed.
     expect(t).not.toContain('Nov 9');
@@ -150,18 +157,18 @@ describe("Upcoming's list", () => {
     // A day the calendar's list is opened on: the list badges the payment due, as it has no "Payment due" bar over it.
     const due = rows(list()).find((r) => r.includes('>Sapphire<'))!;
     expect(due.replace('<span class="badge warn">Due</span>', '')).toBe(
-      '<li><div class="list-row upcoming-row"><span class="list-row-text"><span class="list-row-title">Sapphire</span><span class="list-row-sub"><span>minimum due, not in the figures</span></span></span><span class="list-row-value upcoming-amount uncounted">$35.00</span></div></li>'
+      '<li><div class="list-row upcoming-row"><span class="list-row-text"><span class="list-row-title">Sapphire</span><span class="list-row-sub"><span>Minimum due, not in the figures</span></span></span><span class="list-row-value upcoming-amount uncounted">$35.00</span></div></li>'
     );
   });
 
   test('a late one, and what is in another currency, converted or not', () => {
     // Rent was due on the 15th: expected today, the 17th.
-    expect(text(list({ today: '2026-10-17' }))).toContain('Sat, Oct 17 -$1,500.00 Rent bill · Monthly · due Oct 15, not in yet -$1,500.00');
+    expect(text(list({ today: '2026-10-17' }))).toContain('Sat, Oct 17 -$1,500.00 Rent Bill · Monthly · Due Oct 15, not in yet -$1,500.00');
     const eur = { ...CAR, currency: 'EUR' };
-    expect(text(list({ planned: [eur] }))).toContain("Car registration planned · Once · in EUR, not in the day's figure -€212.50");
+    expect(text(list({ planned: [eur] }))).toContain("Car registration Planned · Once · In EUR, not in the day's figure -€212.50");
     // With a home currency, at the newest rates (1 EUR = 1.1551 USD, test/fx-fixture.ts).
     expect(text(list({ planned: [eur], fx: ecbTable({ home: 'EUR' }) }))).toContain(
-      "Tue, Oct 20 -$245.46 Car registration planned · Once · -$245.46 in the day's figure, at today's rates -€212.50"
+      "Tue, Oct 20 -$245.46 Car registration Planned · Once · -$245.46 in the day's figure, at today's rates -€212.50"
     );
   });
 
@@ -246,10 +253,10 @@ describe('the calendar, redrawn', () => {
     const t = text(html);
     expect(t).toContain('Friday, October 9');
     expect(t).toContain('Posted · -$34.50 Corner shop -$30.00');
-    expect(t).toContain("Ramen in JPY, not in the day's figure -¥3,200");
-    expect(t).toContain("Work trip excluded, not in the day's figure -$400.00");
-    expect(t).toContain('Coffee pending -$4.50');
-    expect(t).toContain("Expected Gig pay income · Every 2 weeks · its amount varies, not in the day's figure +$1,768.18");
+    expect(t).toContain("Ramen In JPY, not in the day's figure -¥3,200");
+    expect(t).toContain("Work trip Excluded, not in the day's figure -$400.00");
+    expect(t).toContain('Coffee Pending -$4.50');
+    expect(t).toContain("Expected Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18");
     expect(html).not.toContain('<table');
     expect(html).toContain('<li class="txn-day"><span>Posted · -$34.50</span></li>');
     expect(html).toContain('<div class="card-header"><h3>Friday, October 9</h3></div>');
@@ -381,7 +388,7 @@ describe('the calendar, redrawn', () => {
       const bars = day.findAll((e) => e.getAttribute('class') === 'txn-day').map((e) => e.textContent);
       expect(bars).toEqual(['Payment due']);
       const row = day.findAll((e) => e.getAttribute('class') === 'list-row upcoming-row')[0]!;
-      expect(row.textContent).toBe('Sapphireminimum due, not in the figures$35.00');
+      expect(row.textContent).toBe('SapphireMinimum due, not in the figures$35.00');
       expect(day.findAll((e) => e.getAttribute('class') === 'badge warn')).toEqual([]);
       press(cell('Thursday, October 15')!);
       expect(day.findAll((e) => e.getAttribute('class') === 'txn-day').map((e) => e.textContent)).toEqual(['Expected · -$1,500.00']);

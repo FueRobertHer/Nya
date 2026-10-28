@@ -41,7 +41,7 @@ export function shareTargets(t: Txn): { key: string; part: string | null; label:
       .filter((p) => !p.shared_part && p.transaction_id.startsWith(PART_PREFIX))
       .map((p) => ({ key: p.transaction_id, part: p.transaction_id.slice(PART_PREFIX.length), label: p.category_name ?? p.category ?? 'Part', amount: whole(p), row: p }));
   }
-  return [{ key: t.transaction_id, part: null, label: t.name, amount: whole(t), row: t }];
+  return [{ key: t.transaction_id, part: null, label: shownName(t), amount: whole(t), row: t }];
 }
 
 /** Where a share of `t` is kept: the transaction's id, that of the row
@@ -286,7 +286,7 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
       {stored && confirming && (
         <>
           <p className="panel-note">
-            Stop sharing {t.name}? It counts whole again, and {stored.entries.map((e) => nameOf(e.person)).join(' and ')} no longer owe{stored.entries.length === 1 ? 's' : ''} you for
+            Stop sharing {shownName(t)}? It counts whole again, and {stored.entries.map((e) => nameOf(e.person)).join(' and ')} no longer owe{stored.entries.length === 1 ? 's' : ''} you for
             it.
           </p>
           <div className="button-pair">

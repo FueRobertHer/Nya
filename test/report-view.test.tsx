@@ -146,17 +146,17 @@ describe('the printed report', () => {
     expect(later.map((p) => p.text.trim().split(' ').slice(0, 3).join(' '))).toEqual(['Totals by category', 'By month These', 'Categories you marked', 'Appendix: transactions in']);
     const [categories, months, marked, appendix] = later;
     expect(categories.text).toContain('These figures may be incomplete: see what may be missing on the first page.');
-    expect(categories.text).toContain('rent and utilities $1,500.00 1');
-    expect(categories.text).toContain('income $4,000.00 1');
+    expect(categories.text).toContain('Rent and utilities $1,500.00 1');
+    expect(categories.text).toContain('Income $4,000.00 1');
     // A card's payment is no category's money out.
-    expect(categories.text).not.toContain('loan payments $');
+    expect(categories.text).not.toContain('Loan payments $');
     // Twelve months, each saying what it may be missing, in words.
     expect(months.text).toContain('Jan 2025 $4,000.00 $0.00 $4,000.00 1 May be missing transactions from Wells Fargo');
     expect(months.text).toContain('Oct 2025 $0.00 $0.00 $0.00 0 May be missing transactions from Citi');
     expect(marked.text).toContain('You marked these categories as ones that matter for your taxes. Nya doesn’t judge how any of them is taxed');
-    expect(marked.text).toContain('medical $0.00 $67.50 2');
-    expect(appendix.text).toContain('Feb 3, 2025 Pharmacy medical Chase: Checking (from the bank) -$42.50');
-    expect(appendix.text).toContain('Mar 3, 2025 Co-pay medical Cash: Wallet (entered by hand) -$25.00 receipt kept');
+    expect(marked.text).toContain('Medical $0.00 $67.50 2');
+    expect(appendix.text).toContain('Feb 3, 2025 Pharmacy Medical Chase: Checking (from the bank) -$42.50');
+    expect(appendix.text).toContain('Mar 3, 2025 Co-pay Medical Cash: Wallet (entered by hand) -$25.00 receipt kept');
   });
 
   test('an account that ended is named among the sources, as closed, no longer yours or not followed on its day, and its gaps said with the rest', () => {
@@ -263,9 +263,14 @@ describe('review: the page says what it can’t show', () => {
     expect(first.text).toContain('Activity inside investment accounts, such as trades, dividends and interest, isn’t in it.');
   });
 
+  test("a transaction named by the bank's own text reads readably, under its category as the app writes it", () => {
+    const appendix = parts(html({ rows: [row('CVS PHARMACY #123', '2025-02-02', 12, { category: 'medical', name_from_bank: true })] })).at(-1)!;
+    expect(appendix.text).toContain('Feb 2, 2025 CVS Pharmacy #123 Medical Chase: Checking (from the bank) -$12.00');
+  });
+
   test('a zero amount is never written as minus zero', () => {
     const appendix = parts(html({ rows: [row('Zero fee', '2025-02-02', 0, { category: 'medical' })] })).at(-1)!;
-    expect(appendix.text).toContain('Zero fee medical Chase: Checking (from the bank) $0.00');
+    expect(appendix.text).toContain('Zero fee Medical Chase: Checking (from the bank) $0.00');
     expect(appendix.text).not.toContain('-$0.00');
   });
 

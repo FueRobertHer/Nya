@@ -1084,7 +1084,16 @@ export async function waitingAccounts(ctx: Ctx, opts: { readOnly?: boolean } = {
  *  `currency`: its ISO code, Plaid's unofficial one (a cryptocurrency), or a
  *  manual row's own; null only for a bank's row stored before its currency
  *  was kept, which is taken to be in the main currency (lib/spending.ts). */
-export type SharedTxn = { date: string; name: string; amount: number; pending: boolean; currency: string | null };
+export type SharedTxn = {
+  date: string;
+  name: string;
+  amount: number;
+  pending: boolean;
+  currency: string | null;
+  /** `name` is the bank's own descriptor (no merchant name from Plaid), which
+   *  the card shows readably (lib/merchant-name.ts). */
+  name_from_bank?: true;
+};
 export type SharedAccount = {
   id: string;
   label: string;
@@ -1303,7 +1312,14 @@ async function sharedAccounts(theirs: Ctx, share: Share, now: number): Promise<S
         for (const t of await readStoredTxns(theirs, item.item_id, { shown: true })) {
           if (!withTxns.has(t.account_id) || t.date < since) continue;
           const list = txns.get(t.account_id) ?? [];
-          list.push({ date: t.date, name: t.merchant_name ?? t.name, amount: t.amount, pending: t.pending, currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null });
+          list.push({
+            date: t.date,
+            name: t.merchant_name ?? t.name,
+            ...(t.merchant_name ? {} : { name_from_bank: true as const }),
+            amount: t.amount,
+            pending: t.pending,
+            currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
+          });
           txns.set(t.account_id, list);
         }
       }

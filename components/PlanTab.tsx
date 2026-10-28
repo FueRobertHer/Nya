@@ -1276,6 +1276,7 @@ export default function PlanTab({
               startBalance={engine.sim.startBalance}
               money={money}
               badge={stressBadge}
+              sayHypothetical={!simulationAnswered(engine, outcome)}
             />
           )}
 
@@ -2133,6 +2134,13 @@ export function SimulationCard({
   );
 }
 
+/** Whether "Will it last?" shows an answer, and with it that the figures are
+ *  hypothetical: then the grid under it doesn't say so again. Working it out,
+ *  or with no answer, it doesn't, and the grid does. */
+export function simulationAnswered(engine: EnginePlan | { missing: Missing }, outcome: Outcome | null): boolean {
+  return 'sim' in engine && outcome !== null && 'result' in outcome;
+}
+
 export function GridCard({
   scenarioName = null,
   plan,
@@ -2146,7 +2154,11 @@ export function GridCard({
   startBalance,
   money,
   badge = null,
+  sayHypothetical = true,
 }: {
+  /** That its figures are hypothetical, from US history: false when "Will it
+   *  last?" above it says so (simulationAnswered), so one view says it once. */
+  sayHypothetical?: boolean;
   scenarioName?: string | null;
   plan: FirePlan;
   cells: GridCell[] | null;
@@ -2209,15 +2221,19 @@ export function GridCard({
         </>
       )}
       {plan.method === 'historical' ? (
-        <p className="plan-definition">
-          Each length starts in every month that leaves all of it inside the data, so a longer one has fewer, earlier starts
-          {spans.length ? `: ${spans.join('; ')}` : ''}. A longer column leaves out the latest starts, which is why it can read
-          safer than a shorter one.
-        </p>
+        <>
+          <p className="plan-definition">A longer column leaves out the latest starts, which is why it can read safer than a shorter one.</p>
+          <Why label="Which starts">
+            <p>
+              Each length starts in every month that leaves all of it inside the data, so a longer one has fewer, earlier starts
+              {spans.length ? `: ${spans.join('; ')}` : ''}.
+            </p>
+          </Why>
+        </>
       ) : (
         <p className="plan-definition">Every column uses the same runs, each extended to the longer lengths.</p>
       )}
-      <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
+      {sayHypothetical && <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>}
     </div>
   );
 }

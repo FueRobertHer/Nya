@@ -19,6 +19,7 @@
 
 import { csvRow, UTF8_BOM, type CsvValue } from '../csv';
 import { endedBefore, type Report } from './build';
+import { displayName } from '../categories';
 import {
   caveatLines,
   endedConnection,
@@ -83,8 +84,9 @@ export function reportCsv(report: Report): string {
   const converted = reportConvertedText(report, iso);
   if (converted) line('conversion', `Converted into ${report.currency}`, null, null, null, null, converted);
   line('total', 'Everything counted', t.money_in, t.money_out, t.net, t.counted, totalsNote(report));
-  for (const x of report.money_in) line('money_in', x.category, x.amount, null, null, x.transactions);
-  for (const x of report.money_out) line('money_out', x.category, null, x.amount, null, x.transactions);
+  // Each category as the page (components/ReportView.tsx) and the app write it.
+  for (const x of report.money_in) line('money_in', displayName(x.category), x.amount, null, null, x.transactions);
+  for (const x of report.money_out) line('money_out', displayName(x.category), null, x.amount, null, x.transactions);
   for (const m of report.months) {
     if (m.future) {
       line('month', m.month, null, null, null, null, 'Still to come');
@@ -94,7 +96,7 @@ export function reportCsv(report: Report): string {
     line('month', m.month, m.money_in, m.money_out, m.net, m.transactions, m.start.slice(8) === '01' && m.end === lastDay(m.month) ? note : [`${m.start} to ${m.end}`, note].filter(Boolean).join('. '));
   }
   if (report.marked) {
-    for (const x of report.marked.categories) line('marked', x.category, x.money_in, x.money_out, null, x.transactions);
+    for (const x of report.marked.categories) line('marked', displayName(x.category), x.money_in, x.money_out, null, x.transactions);
     line('marked_total', 'Marked categories', report.marked.money_in, report.marked.money_out, null, null, 'Categories you marked as mattering for your taxes. Nya doesn’t judge how any of them is taxed.');
   }
   for (const i of report.institutions) {

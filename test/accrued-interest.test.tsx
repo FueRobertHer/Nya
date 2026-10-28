@@ -110,7 +110,12 @@ const home = (institutions: unknown) => {
   return lines;
 };
 const today = () => new Date().toISOString().slice(0, 10);
-const LEFT_OUT_ONE = 'Leaves out $612.40 of accrued interest on a student loan, which Plaid reports apart from its balance. The payoff plan counts it, unless you leave it out there.';
+// One line on the total, and why it is apart behind "Why?" (the screen review:
+// four lines between Home's figure and its chart).
+const LEFT_OUT_ONE = {
+  line: 'Leaves out $612.40 of accrued interest on a student loan.',
+  why: 'Plaid reports it apart from the loan’s balance. The payoff plan counts it, unless you leave it out there.',
+};
 const UNREAD_ONE = 'The accrued interest on your student loan at Nelnet couldn’t be read, so how much interest the total leaves out for it isn’t known.';
 
 describe('Home, from what the server sends', () => {
@@ -121,7 +126,9 @@ describe('Home, from what the server sends', () => {
     expect(body.history.at(-1)).toEqual({ date: today(), value: -7000 });
     expect(await getHistory(ctx)).toEqual([{ date: today(), value: -7000 }]);
     expect(body.institutions[0].accounts.find((a: any) => a.account_id === 'stu').liability).toMatchObject({ kind: 'student', outstanding_interest: 612.4 });
-    expect(home(body.institutions)).toEqual([{ amber: false, text: LEFT_OUT_ONE }]);
+    expect(home(body.institutions)).toEqual([{ amber: false, text: LEFT_OUT_ONE.line }]);
+    // Why it is apart, behind its disclosure, in the same notice.
+    expect(accruedCaveats(body.institutions, 'USD').map((c) => c.why)).toEqual([LEFT_OUT_ONE.why]);
   });
 
   test('the liabilities call fails: the total doesn’t move, and the line says the interest couldn’t be read', async () => {
@@ -191,10 +198,10 @@ describe('Home, from what the server sends', () => {
     const { body } = await load();
     const text = (html: string) => html.replace(/<[^>]+>/g, '');
     // Most accounts in euros: the loan's interest is still its dollars.
-    expect(text(renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} main="EUR" />))).toBe(LEFT_OUT_ONE);
+    expect(text(renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} main="EUR" />))).toBe(LEFT_OUT_ONE.line);
     const fx = { home: 'EUR', latest: { date: '2026-09-14', rates: { USD: '1.1551' } }, own: [] };
     expect(text(renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} main="USD" fx={fx} />))).toBe(
-      'Leaves out €530.17 (converted from USD) of accrued interest on a student loan, which Plaid reports apart from its balance. The payoff plan counts it, unless you leave it out there.'
+      'Leaves out €530.17 (converted from USD) of accrued interest on a student loan.'
     );
   });
 
@@ -347,9 +354,10 @@ describe('the lines', () => {
 
   test('how much the total leaves out, on how many loans, as a figure owed, never signed', () => {
     expect(lines(612.4, 1)).toEqual({ leftOut: LEFT_OUT_ONE, unread: [] });
-    expect(lines(1200, 2).leftOut).toBe(
-      'Leaves out $1200.00 of accrued interest on 2 student loans, which Plaid reports apart from their balances. The payoff plan counts it, unless you leave it out there.'
-    );
+    expect(lines(1200, 2).leftOut).toEqual({
+      line: 'Leaves out $1200.00 of accrued interest on 2 student loans.',
+      why: 'Plaid reports it apart from their balances. The payoff plan counts it, unless you leave it out there.',
+    });
   });
 
   test('loans whose interest couldn’t be read: named by where they are, alone or beside the ones that could', () => {
@@ -386,6 +394,6 @@ describe('the lines', () => {
   test('nothing to say without any, and never an em or en dash', () => {
     expect(lines(0, 0)).toEqual({ leftOut: null, unread: [] });
     const all = lines(5, 3, [{ institution: 'Nelnet', loans: 2 }, { institution: 'MOHELA', loans: 1, why: 'not-enabled' }, { institution: 'A', loans: 1, why: 'loading' }, { institution: 'B', loans: 1, why: 'unreachable' }]);
-    expect(`${all.leftOut} ${all.unread.join(' ')}`).not.toMatch(/[\u2013\u2014]/);
+    expect(`${all.leftOut?.line} ${all.leftOut?.why} ${all.unread.join(' ')}`).not.toMatch(/[\u2013\u2014]/);
   });
 });

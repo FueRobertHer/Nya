@@ -44,6 +44,8 @@ export type CalendarTxn = {
   transaction_id: string;
   date: string;
   name: string;
+  /** `name` is the bank's own descriptor, shown readably (lib/merchant-name.ts). */
+  name_from_bank?: true;
   amount: number;
   pending: boolean;
   iso_currency_code: string | null;
@@ -82,6 +84,9 @@ export type CalendarEntry = {
   kind: 'posted' | 'expected' | 'due';
   date: string;
   name: string;
+  /** The row's or the series' name is the bank's own descriptor, shown
+   *  readably (lib/merchant-name.ts shownName). */
+  name_from_bank?: true;
   /** Positive is money in, as the calendar shows it. A payment due shows its
    *  minimum as money out, or null when there is none. */
   amount: number | null;
@@ -222,6 +227,7 @@ export function calendarMonth(opts: {
       kind: 'posted',
       date: t.date,
       name: t.name,
+      ...(t.name_from_bank ? { name_from_bank: true as const } : {}),
       amount: t.amount === 0 ? 0 : -t.amount,
       currency: currencyOf(t),
       ref: t.transaction_id,
@@ -260,6 +266,7 @@ export function calendarMonth(opts: {
           kind: 'expected',
           date: d.date,
           name: s.name,
+          ...(s.name_from_bank ? { name_from_bank: true as const } : {}),
           amount: s.kind === 'income' ? s.amount : -s.amount,
           currency: s.currency,
           ref: s.id,

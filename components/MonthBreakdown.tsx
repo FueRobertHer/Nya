@@ -1068,7 +1068,7 @@ export default function MonthBreakdown({
                 <div className="cat-list">
                   {categories.map(([cat, sum]) => (
                     <div className="cat-row" key={cat}>
-                      <span className="cat-name">{cat}</span>
+                      <span className="cat-name">{displayName(cat)}</span>
                       <div className="cat-track">
                         <div
                           className="cat-bar"

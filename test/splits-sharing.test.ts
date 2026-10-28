@@ -130,7 +130,12 @@ describe('what a share shows of a split or grouped transaction', () => {
         ['Hardware store', 40],
         ['VENMO CASHOUT', -60],
       ]);
-      for (const t of txns) expect(Object.keys(t).sort()).toEqual(['amount', 'currency', 'date', 'name', 'pending']);
+      // Those five, and for a bank's own text (no merchant name) the flag
+      // that has the card show it readably: never anything else.
+      for (const t of txns) {
+        expect(Object.keys(t).filter((k) => k !== 'name_from_bank').sort()).toEqual(['amount', 'currency', 'date', 'name', 'pending']);
+        if ('name_from_bank' in t) expect(t.name_from_bank).toBe(true);
+      }
       expect(JSON.stringify(view)).not.toMatch(/SECRET|split|group|travel|food/i);
     }
   });

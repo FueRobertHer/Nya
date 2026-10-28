@@ -203,11 +203,16 @@ export function countedPart(series: readonly RecurringSeries[], rows: readonly R
   return out;
 }
 
-/** A single large outflow or inflow, listed (see ONE-OFFS). */
-export type OneOff = { date: string; name: string; amount: number };
+/** A single large outflow or inflow, listed (see ONE-OFFS). `name_from_bank`
+ *  when its name is the bank's own descriptor, which the report shows
+ *  readably (lib/merchant-name.ts); the read-only API leaves it out. */
+export type OneOff = { date: string; name: string; amount: number; name_from_bank?: true };
 
 /** Payments from cash to a card Nya doesn't see, by payment and account. */
-export type CardPayments = { name: string; account: string; amount: number; count: number };
+export type CardPayments = { name: string; account: string; amount: number; count: number; name_from_bank?: true };
+
+/** The flag a row's or a series' name carries when it is the bank's text. */
+const bankName = (x: { name_from_bank?: true }) => (x.name_from_bank ? { name_from_bank: true as const } : {});
 
 /** A month of a window that may be short of transactions: a gap of the
  *  report's reaches into it (lib/report/build.ts), with the institutions it
@@ -492,7 +497,7 @@ export function windowSpending(
     const id = t.split_of ?? t.transaction_id ?? `${t.date}|${t.name}|${t.amount}`;
     const of = into.get(key) ?? new Map<string, OneOff>();
     const cur = of.get(id);
-    of.set(id, cur ? { ...cur, amount: cur.amount + amount } : { date: t.date, name: t.name, amount });
+    of.set(id, cur ? { ...cur, amount: cur.amount + amount } : { date: t.date, name: t.name, amount, ...bankName(t) });
     into.set(key, of);
   };
 
@@ -518,7 +523,7 @@ export function windowSpending(
     const f = fates.get(t);
     if (f === 'unseen_card') {
       const key = `${t.name}\n${t.account_name ?? ''}`;
-      const c = cards.get(key) ?? { name: t.name, account: t.account_name ?? '', amount: 0, count: 0 };
+      const c = cards.get(key) ?? { name: t.name, account: t.account_name ?? '', amount: 0, count: 0, ...bankName(t) };
       c.amount += t.amount;
       c.count++;
       cards.set(key, c);
@@ -806,7 +811,7 @@ export type OwnAmount = { amount: number; currency: string };
 
 /** A detected bill the runway adds on its dates (paymentsOutsideSpending,
  *  infrequentBills), in the runway's currency; `own` when converted. */
-export type RunwayPayment = { name: string; institution: string; account: string; amount: number; cadence: Cadence; next: string | null; own?: OwnAmount };
+export type RunwayPayment = { name: string; institution: string; account: string; amount: number; cadence: Cadence; next: string | null; own?: OwnAmount; name_from_bank?: true };
 /** A planned item the runway adds, in the runway's currency, with its next
  *  day; `own` when converted. */
 export type RunwayPlanned = { name: string; kind: PlannedKind; amount: number; cadence: PlannedCadence; next: string; own?: OwnAmount };
@@ -843,6 +848,7 @@ type InRunway = { amount: number; own?: OwnAmount };
  *  its amount in the runway's currency (`at`). */
 const asPayment = (s: RecurringSeries, today: string, until: string, at: InRunway): RunwayPayment => ({
   name: s.name,
+  ...bankName(s),
   institution: s.institution,
   account: s.account,
   amount: tidy(at.amount),
@@ -930,6 +936,7 @@ export function buildRunwayInputs(opts: {
       date: d.date,
       amount: -at.amount,
       name: s.name,
+      ...bankName(s),
       source: 'bill' as const,
       ref: s.id,
       cadence: s.cadence,

@@ -198,9 +198,11 @@ export function fmtStaleDay(date: string, at?: string): string {
   return local ?? fmtDay(date);
 }
 
-// A due date as liabilitySummary says it: "Nov 15", with its year when that
-// isn't today's year ("Nov 15, 2025"). Parsed at local midnight, as fmtDay.
-function dueDay(iso: string, today: string): string {
+// A day as a row says it: "Nov 15", with its year when that isn't today's
+// year ("Nov 15, 2025"), so a day of another year never reads as this year's.
+// liabilitySummary's due dates, the rule preview's and a shared account's
+// transactions. Parsed at local midnight, as fmtDay.
+export function fmtDayInYear(iso: string, today: string = localDate()): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -227,7 +229,7 @@ export function liabilitySummary(a: Account, today: string = localDate()): strin
   if (l.apr != null) parts.push(`${l.apr.toFixed(2)}% APR`);
   if (l.minimum_payment != null) parts.push(`min ${fmt(l.minimum_payment, a.currency)}`);
   if (l.next_due_date) {
-    const day = dueDay(l.next_due_date, today);
+    const day = fmtDayInYear(l.next_due_date, today);
     if (l.next_due_date >= today) parts.push(`${l.is_overdue ? 'next due' : 'due'} ${day}`);
     else if (l.is_overdue) parts.push(`was due ${day}`);
   }
@@ -255,17 +257,122 @@ export function fmtAsOf(iso: string): string {
   });
 }
 
-/** What kind of account it is: its bank's own name for it when that differs,
- *  its type (left out when that name already says it: "Gold Standard 0%
- *  Interest Checking", not "... Checking · checking"), and the currency
- *  chosen for a typed balance when it isn't the one shown. */
-export function accountKind(a: Account, inst: Institution, shownCurrency: string | null): string {
+/** Plaid's subtypes (and Nya's manual ones) that don't read as words with
+ *  their first letter up: acronyms, plan numbers, a loan's kind, a brand. */
+const SUBTYPE_WORDS: Readonly<Record<string, string>> = {
+  '401a': '401(a)',
+  '401k': '401(k)',
+  '403b': '403(b)',
+  '457b': '457(b)',
+  '529': '529 plan',
+  auto: 'Auto loan',
+  business: 'Business loan',
+  commercial: 'Commercial loan',
+  construction: 'Construction loan',
+  consumer: 'Consumer loan',
+  'home equity': 'Home equity loan',
+  student: 'Student loan',
+  'cash isa': 'Cash ISA',
+  cd: 'CD',
+  ebt: 'EBT',
+  gic: 'GIC',
+  hsa: 'HSA',
+  ira: 'IRA',
+  isa: 'ISA',
+  keogh: 'Keogh plan',
+  lif: 'LIF',
+  lira: 'LIRA',
+  lrif: 'LRIF',
+  lrsp: 'LRSP',
+  paypal: 'PayPal',
+  prif: 'PRIF',
+  qshr: 'QSHR',
+  rdsp: 'RDSP',
+  resp: 'RESP',
+  rlif: 'RLIF',
+  roth: 'Roth IRA',
+  'roth 401k': 'Roth 401(k)',
+  rrif: 'RRIF',
+  rrsp: 'RRSP',
+  sarsep: 'SARSEP',
+  'sep ira': 'SEP IRA',
+  'simple ira': 'SIMPLE IRA',
+  sipp: 'SIPP',
+  tfsa: 'TFSA',
+  'thrift savings plan': 'Thrift Savings Plan',
+  ugma: 'UGMA',
+  utma: 'UTMA',
+};
+
+/** An account's type when it has no subtype, or only "other". */
+const TYPE_WORDS: Readonly<Record<string, string>> = {
+  depository: 'Bank account',
+  credit: 'Credit',
+  loan: 'Loan',
+  investment: 'Investment',
+  brokerage: 'Brokerage',
+  other: 'Other',
+};
+
+const firstUp = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Words that are names or letters, which keep their capitals inside a
+ *  sentence ("from its type, Roth IRA"); every other kind is written lower
+ *  case there ("from its type, brokerage"). */
+const KEEPS_CAPITALS = /^(?:[0-9]|[A-Z]{2}|Roth|Keogh|PayPal|Thrift)/;
+
+/** What kind of account it is, in words, the one place Plaid's subtype is
+ *  made readable: "Auto loan", "IRA", "401(k)", "Money market". A subtype of
+ *  "other" says the type's word ("Loan"), as does none. As a label by
+ *  default; `inSentence` for the middle of one ("auto loan", "IRA"). */
+export function subtypeWords(subtype: string | null | undefined, type: string, inSentence = false): string {
+  const s = (subtype ?? '').trim().toLowerCase();
+  const t = type.trim().toLowerCase();
+  const words = s && s !== 'other' ? (SUBTYPE_WORDS[s] ?? firstUp(s)) : (TYPE_WORDS[t] ?? firstUp(t));
+  return inSentence && !KEEPS_CAPITALS.test(words) ? words.charAt(0).toLowerCase() + words.slice(1) : words;
+}
+
+/** A name's words, to see whether it says a kind: lower case, a mark inside a
+ *  word dropped ("401(k)" is "401k"), a plural s ignored ("Saving" says
+ *  "savings"), so whole words match and "Checkingplus" doesn't say checking. */
+function nameWords(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[()'’.]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((w) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w));
+}
+
+/** Whether any of these names already says the kind, word for word. */
+export function saysKind(names: readonly (string | null | undefined)[], kind: string): boolean {
+  const want = nameWords(kind);
+  if (want.length === 0) return false;
+  return names.some((name) => {
+    const have = name ? nameWords(name) : [];
+    return have.some((_, i) => want.every((w, j) => have[i + j] === w));
+  });
+}
+
+/** The account's kind in words, or null when its name or its bank's own name
+ *  for it already says it ("Plaid Checking", "Northwind 401(k)"). The words
+ *  or the raw subtype may say it: "Plaid IRA" says "ira". */
+export function kindWords(a: { name: string; official_name?: string | null; subtype: string | null; type: string }): string | null {
+  const words = subtypeWords(a.subtype, a.type);
+  const names = [a.name, a.official_name];
+  return saysKind(names, words) || (a.subtype && saysKind(names, a.subtype)) ? null : words;
+}
+
+/** What kind of account it is, as the parts of a line, for its caller to join
+ *  with what else it says (an institution, a day), so a part left out never
+ *  leaves a stray "·": its bank's own name for it when that differs, its kind
+ *  in words unless a name already says it ("Gold Standard 0% Interest
+ *  Checking", not "... Checking · Checking"), and the currency chosen for a
+ *  typed balance when it isn't the one shown. Possibly none. */
+export function accountKindParts(a: Account, inst: Institution, shownCurrency: string | null): string[] {
   const official = a.official_name && a.official_name !== a.name ? a.official_name : null;
-  const kind = a.subtype || a.type;
-  const words = (s: string) => ` ${s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join(' ')} `;
-  const said = official !== null && words(official).includes(words(kind));
-  const currency = inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : '';
-  return `${[official, said ? null : kind].filter(Boolean).join(' · ')}${currency}`;
+  const currency = inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? `in ${a.currency}` : null;
+  return [official, kindWords(a), currency].filter((p): p is string => !!p);
 }
 
 /** When a balance that isn't fetched now was set: typed by hand, or as a

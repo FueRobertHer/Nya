@@ -29,6 +29,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { addDays, cadenceLabel, expectedDates, type RecurringSeries } from '@/lib/recurring';
 import { formatMoney } from '@/lib/format';
+import { shownName } from '@/lib/merchant-name';
 import { leftOutText } from '@/lib/spending';
 import { countsInMonthly, recurringMonthly, type MonthlyConverted } from '@/lib/totals';
 import { leftOutWhy } from '@/lib/fx/totals';
@@ -291,7 +292,7 @@ export default function RecurringCard({
                 </span>
               )}
               <span className="list-row-text">
-                <span className="list-row-title">{s.name}</span>
+                <span className="list-row-title">{shownName(s)}</span>
                 <span className="list-row-sub">{line(r)}</span>
               </span>
               <span className={`list-row-value money recurring-amount${s.kind === 'income' ? ' inflow' : ''}`}>
@@ -380,7 +381,7 @@ export default function RecurringCard({
                   <li key={s.id}>
                     <div className="list-row">
                       <span className="list-row-text">
-                        <span className="list-row-title">{s.name}</span>
+                        <span className="list-row-title">{shownName(s)}</span>
                         <span className="list-row-sub">
                           {where(s)} · {cadenceLabel(s.cadence)}
                         </span>
@@ -413,7 +414,7 @@ export default function RecurringCard({
         <Sheet
           key={sheet.n}
           open={sheetOpen}
-          title={opened.name}
+          title={shownName(opened)}
           onClose={close}
           footer={
             <button type="button" className="btn secondary" disabled={!canEdit} onClick={() => void dismiss(opened)}>

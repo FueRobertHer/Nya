@@ -16,6 +16,8 @@ import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import CategoryPicker from './CategoryPicker';
 import { signedMoney } from '@/lib/format';
+import { shownName } from '@/lib/merchant-name';
+import { fmtDayInYear } from './accounts-format';
 import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, sortedRules, type RuleField } from '@/lib/rules';
 import type { Taxonomy } from '@/lib/categories';
 import { shownColor, type Tag } from '@/lib/tags';
@@ -49,7 +51,24 @@ const SOURCES: [string, string][] = [
   ['lunchflow', 'from Lunch Flow'],
 ];
 
-type Preview = { matches: number; keep_category: number; keep_name: number; keep_approved?: number; samples: { transaction_id: string; date: string; name: string; amount: number; currency: string | null; account_name: string }[] };
+type Sample = { transaction_id: string; date: string; name: string; name_from_bank?: true; amount: number; currency: string | null; account_name: string };
+type Preview = { matches: number; keep_category: number; keep_name: number; keep_approved?: number; samples: Sample[] };
+
+/** One transaction the rule would match, as the app's rows say it: its day
+ *  ("Oct 24", with the year when it isn't this one), its name (the bank's
+ *  text readable), its account and its amount. */
+export function RuleSample({ s }: { s: Sample }) {
+  return (
+    <li>
+      <span>
+        {fmtDayInYear(s.date)} {shownName(s)} <span className="type-tag">· {s.account_name}</span>
+      </span>
+      <span className="num">
+        <Masked>{signedMoney(-s.amount, s.currency, { always: true })}</Masked>
+      </span>
+    </li>
+  );
+}
 
 /** How long the form rests before it is previewed. */
 const PREVIEW_MS = 400;
@@ -340,14 +359,7 @@ export default function RuleSheet({
               {preview.samples.length > 0 && (
                 <ul className="rule-samples">
                   {preview.samples.map((s) => (
-                    <li key={s.transaction_id}>
-                      <span>
-                        {s.date} {s.name} <span className="type-tag">· {s.account_name}</span>
-                      </span>
-                      <span className="num">
-                        <Masked>{signedMoney(-s.amount, s.currency, { always: true })}</Masked>
-                      </span>
-                    </li>
+                    <RuleSample key={s.transaction_id} s={s} />
                   ))}
                 </ul>
               )}

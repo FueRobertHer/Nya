@@ -133,6 +133,15 @@ export function cssSmallFonts(css: string): number {
   }).length;
 }
 
+/** On-screen text set in capitals or title case by CSS: uppercase micro-labels
+ *  and `capitalize`, which turns "in store" into "In Store". Words are written
+ *  in sentence case where they are made instead (guidelines.md "Type"). */
+export function cssCaseTransforms(css: string): string[] {
+  return onScreen(css)
+    .filter((d) => d.property === 'text-transform' && /uppercase|capitalize/.test(d.value))
+    .map((d) => d.selector);
+}
+
 /** Whether a class appears in some rule's selector. */
 export function hasClass(css: string, cls: string): boolean {
   const re = new RegExp(`\\.${cls}(?![\\w-])`);

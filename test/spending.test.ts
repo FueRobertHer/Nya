@@ -157,7 +157,7 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(t).toContain('In $100.00 Out $30.00 Net $70.00');
     expect(t).toContain('Transfers and loan payments excluded, and 1 transaction you left out.');
     // Top spending, where you spent and online vs in store count the shop only.
-    expect(t).toContain(`Top spending ${CAPTION} food and drink $30.00`);
+    expect(t).toContain(`Top spending ${CAPTION} Food and drink $30.00`);
     expect(t).not.toContain('general merchandise $80.00');
     expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
     expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
@@ -282,7 +282,7 @@ describe('no total adds up amounts in two currencies', () => {
     const t = text(activity([...MONTH, RAMEN, MAPLE, DOGE]));
     expect(t).toContain('In $100.00 Out $30.00 Net $70.00');
     expect(t).toContain("1 transaction in CAD, 1 in DOGE and 1 in JPY aren't in these totals, which are in USD.");
-    expect(t).toContain(`Top spending ${CAPTION} food and drink $30.00`);
+    expect(t).toContain(`Top spending ${CAPTION} Food and drink $30.00`);
     expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
     expect(t).not.toContain('Tokyo $');
     expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);

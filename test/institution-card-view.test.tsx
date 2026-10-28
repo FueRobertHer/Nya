@@ -173,11 +173,17 @@ describe('the institution card notices, words and color', () => {
     expect(text(sub.slice(0, sub.indexOf('</button>')))).toMatch(/^Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24(, 2026)?( |$)/);
   });
 
-  test('overdue with nothing else reported: the badge still shows, beside the kind of account', () => {
+  test('overdue with nothing else reported: the badge still shows, beside the kind of account unless its name says it', () => {
     const loan = account({ account_id: 'acc_loan', name: 'Plaid Mortgage', type: 'loan', subtype: 'mortgage', balance: 56302.06, liability: { kind: 'mortgage', apr: null, apr_label: null, minimum_payment: null, next_due_date: null, last_statement_balance: null, last_payment_amount: null, last_payment_date: null, is_overdue: true } });
-    const html = render(institution({ accounts: [loan] }));
-    const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
-    expect(sub.slice(0, sub.indexOf('</button>'))).toContain('<span class="badge neg">Overdue</span>');
+    const subOf = (html: string) => {
+      const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
+      return sub.slice(0, sub.indexOf('<span class="list-row-value">'));
+    };
+    const said = subOf(render(institution({ accounts: [loan] })));
+    expect(said).toContain('<span class="badge neg">Overdue</span>');
+    // Its name says mortgage: the badge alone, with no "·" after it.
+    expect(text(said)).toBe('Overdue');
+    expect(text(subOf(render(institution({ accounts: [{ ...loan, name: 'House' }] }))))).toBe('Overdue · Mortgage');
   });
 
   // The screen review: "Overdue · ... · due Nov 15" read as overdue and due
@@ -249,13 +255,15 @@ describe('the account rows', () => {
     for (const row of rows) expect(row.slice(0, row.indexOf('</button>'))).not.toContain('<button');
     // No Hide, Mark as closed… or Delete on the card: they are in the account's sheet.
     for (const word of ['Hide', 'Mark as closed…', 'Delete', 'Update', 'Add transaction', 'Import']) expect(text(html)).not.toContain(word);
-    expect(text(rows[0].slice(rows[0].indexOf('>') + 1))).toStartWith('Total Checking ••4421 checking $1,200.00');
+    // Its name says checking, so the row says no more under it.
+    expect(text(rows[0].slice(rows[0].indexOf('>') + 1))).toStartWith('Total Checking ••4421 $1,200.00');
+    expect(rows[0].slice(0, rows[0].indexOf('</button>'))).not.toContain('list-row-sub');
   });
 
   test('a typed balance says when it was set, and its currency when not the one shown', () => {
     const html = render(manual());
     const row = text(html.slice(html.indexOf('<button class="list-row"')));
-    expect(row).toContain('checking · in EUR');
+    expect(row).toContain('Cash Checking · in EUR');
     expect(row).toMatch(/Updated Oct 8, \d+:05 [AP]M/);
   });
 

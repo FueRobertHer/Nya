@@ -97,6 +97,8 @@ export async function POST(req: Request) {
         transaction_id: t.transaction_id,
         date: t.date,
         name: t.name,
+        // The bank's own descriptor: the sheet shows it readably (lib/merchant-name.ts).
+        ...(t.name_from_bank ? { name_from_bank: true as const } : {}),
         amount: t.amount,
         currency: currencyOf(t),
         account_name: t.account_name,

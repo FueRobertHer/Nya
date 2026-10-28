@@ -16,6 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { Masked } from './HideAmounts';
+import { shownName } from '@/lib/merchant-name';
 import type { Txn } from './MonthBreakdown';
 import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
@@ -200,9 +201,8 @@ export default function SharedExpensesCard({
       </div>
 
       {card.people.length === 0 && (
-        <p className="panel-note">
-          Keep track of what people owe you and what you owe them. Nya keeps the list; the money moves in Venmo, Cash App or however you pay each other.
-        </p>
+        // How the money moves is the card's last line, for everyone: said once.
+        <p className="panel-note">Keep track of what people owe you and what you owe them.</p>
       )}
       {card.settings_unread && <p className="stale-note">Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.</p>}
       {unread.length > 0 && (
@@ -344,7 +344,7 @@ export default function SharedExpensesCard({
               return (
                 <li key={`${pr.row}:${pr.person}`} className="shared-proposal">
                   <div>
-                    {t.name} · {shownDay(t.date)} ·{' '}
+                    {shownName(t)} · {shownDay(t.date)} ·{' '}
                     <span className={pr.amount < 0 ? 'inflow' : undefined}>
                       <Masked>{signedMoney(-pr.amount, pr.currency, { always: true })}</Masked>
                     </span>
@@ -411,7 +411,7 @@ export default function SharedExpensesCard({
                   disabled={busy}
                   onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'move', transaction_id: s.transaction_id, to: m.transaction_id, account: m.account_id })}
                 >
-                  Move to {m.t.name}, {shownDay(m.t.date)}, {m.t.account_name}
+                  Move to {shownName(m.t)}, {shownDay(m.t.date)}, {m.t.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'keep', transaction_id: s.transaction_id }, false)}>
@@ -437,7 +437,7 @@ export default function SharedExpensesCard({
                   disabled={busy}
                   onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'move', transaction_id: p.transaction_id, to: m.transaction_id, account: m.account_id })}
                 >
-                  Move to {m.t.name}, {shownDay(m.t.date)}, {m.t.account_name}
+                  Move to {shownName(m.t)}, {shownDay(m.t.date)}, {m.t.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
@@ -489,7 +489,7 @@ export default function SharedExpensesCard({
         const t = byId.get(tw.bank);
         return (
           <div key={`twice:${tw.bank}`} className="stale-note">
-            {t ? `${t.name}, ${shownDay(t.date)}` : 'A transaction'} is shared twice: as the bank’s, and as the row imported from a file that it stands for. The bank’s share
+            {t ? `${shownName(t)}, ${shownDay(t.date)}` : 'A transaction'} is shared twice: as the bank’s, and as the row imported from a file that it stands for. The bank’s share
             counts.
             <div className="card-actions">
               <button
@@ -604,7 +604,7 @@ export default function SharedExpensesCard({
         </div>
       )}
 
-      <div className="chart-note">Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.</div>
+      <p className="helper">Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.</p>
     </div>
   );
 }

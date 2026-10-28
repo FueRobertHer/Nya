@@ -19,6 +19,7 @@ import { gapSentences, reportConvertedText, scopeLine } from '@/lib/report/words
 import type { Change, YoyCategory, YoyCompare, YoyGroup, YoyPeriod } from '@/lib/report/year-over-year';
 import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read';
 import { joinNames } from '@/lib/month-coverage';
+import { displayName } from '@/lib/categories';
 
 /** "Oct 2026": a month's name. */
 const monthWords = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
@@ -149,7 +150,7 @@ function GroupTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
   const groups = r.groups.filter((g) => g[measure].this !== 0 || g[measure].last !== 0);
   const row = (c: YoyCategory | YoyGroup, group: boolean) => (
     <tr key={`${group ? 'g' : 'c'}:${c.id ?? c.name}`} className={group ? 'report-total-row' : undefined}>
-      <td className={group ? undefined : 'yoy-category'}>{c.name}</td>
+      <td className={group ? undefined : 'yoy-category'}>{displayName(c.name)}</td>
       <td className="num">
         <Masked>{money(c[measure].this)}</Masked>
       </td>
