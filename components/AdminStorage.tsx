@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { sizeText } from './DataInventory';
+import { PageHeader } from './PageHeader';
 
 type AdminItem = {
   item_id: string;
@@ -244,11 +245,7 @@ export default function AdminStorage() {
 
   return (
     <main className="wrap report-wrap">
-      <div className="report-top">
-        <nav className="report-nav" aria-label="Back to Nya">
-          <a href="/">← Nya</a>
-        </nav>
-      </div>
+      <PageHeader />
       <h1>Storage across accounts</h1>
       <p className="sub">
         Each account on this copy of Nya, by its id: its bank connections and how they are doing, its connections to SimpleFIN or Lunch Flow, how large its stored

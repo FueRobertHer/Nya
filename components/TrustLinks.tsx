@@ -24,9 +24,10 @@ export function CoverageNote() {
   );
 }
 
-/** Links to the Security and Privacy pages; `current` marks the one being read,
- *  and `home` adds a way back into the app. */
-export function TrustLinks({ current, home = false }: { current?: 'security' | 'privacy'; home?: boolean }) {
+/** Links to the Security and Privacy pages; `current` marks the one being
+ *  read. The way back into the app is the page's header
+ *  (components/PageHeader.tsx). */
+export function TrustLinks({ current }: { current?: 'security' | 'privacy' }) {
   return (
     <nav className="trust-links" aria-label="How Nya handles your data">
       <a href="/security" aria-current={current === 'security' ? 'page' : undefined}>
@@ -35,7 +36,6 @@ export function TrustLinks({ current, home = false }: { current?: 'security' | '
       <a href="/privacy" aria-current={current === 'privacy' ? 'page' : undefined}>
         Privacy
       </a>
-      {home && <a href="/">Open Nya</a>}
     </nav>
   );
 }

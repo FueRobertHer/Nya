@@ -154,6 +154,38 @@ describe('the ⋯ menu', () => {
     unmount();
   });
 
+  test('a file to save is a link item: reached by the keys, it closes the menu and gives focus back as it is chosen', () => {
+    const { host, unmount } = mount(
+      <Menu
+        label="More for this report"
+        items={[
+          { label: 'Download as CSV', href: '/api/reports?kind=year&year=2025&format=csv', download: true },
+          { label: 'Mark categories', onSelect: () => {} },
+        ]}
+      />
+    );
+    const [trigger] = find(host, (e) => e.getAttribute('aria-haspopup') === 'menu');
+    act(() => click(trigger));
+    const items = find(host, (e) => e.getAttribute('role') === 'menuitem');
+    expect(items.map((i) => [i.tagName, i.textContent, i.getAttribute('class')])).toEqual([
+      ['A', 'Download as CSV', 'menu-item'],
+      ['BUTTON', 'Mark categories', 'menu-item'],
+    ]);
+    expect(items[0].getAttribute('href')).toBe('/api/reports?kind=year&year=2025&format=csv');
+    expect(items[0].getAttribute('download')).not.toBeNull();
+    expect(items[0].getAttribute('tabindex')).toBe('-1');
+    // Opening focuses it, first and enabled; the keys move off it and back.
+    expect(dom.document.activeElement).toBe(items[0]);
+    key(items[0], 'ArrowDown');
+    expect(dom.document.activeElement).toBe(items[1]);
+    key(items[1], 'ArrowUp');
+    expect(dom.document.activeElement).toBe(items[0]);
+    act(() => click(items[0]));
+    expect(find(host, (e) => e.getAttribute('role') === 'menu')).toHaveLength(0);
+    expect(dom.document.activeElement).toBe(trigger);
+    unmount();
+  });
+
   test('a press outside closes it', () => {
     const { host, unmount } = mount(<Menu label="Options" items={[{ label: 'Rename', onSelect: () => {} }]} />);
     const [trigger] = find(host, (e) => e.getAttribute('aria-haspopup') === 'menu');

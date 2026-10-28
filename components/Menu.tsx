@@ -5,7 +5,10 @@
 // red. Follows the WAI-ARIA menu button pattern: opening moves focus to the
 // first item, the arrow keys, Home and End move between items, Escape closes
 // it and returns focus to the button, and so does choosing an item, so a
-// sheet the item opens gives focus back to the button when it closes.
+// sheet the item opens gives focus back to the button when it closes. An item
+// can instead be a link to a file to save (Reports' Download as CSV): a real
+// <a download>, so it saves with no script and keeps the browser's own
+// "save link as"; as a link it is chosen with Enter, not Space.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 
@@ -17,8 +20,12 @@ export type MenuItem = {
   disabled?: boolean;
 };
 
+/** A file to save (Reports' Download as CSV): drawn as a link with
+ *  `download`, never disabled or destructive. */
+export type MenuLink = { label: string; href: string; download: true; danger?: undefined };
+
 /** The items in the order they are drawn: a destructive one always last. */
-export function menuOrder(items: MenuItem[]): MenuItem[] {
+export function menuOrder<T extends MenuItem | MenuLink>(items: T[]): T[] {
   return [...items.filter((i) => !i.danger), ...items.filter((i) => i.danger)];
 }
 
@@ -59,17 +66,19 @@ export function menuPlacement(
   return { up, left: kept === aligned ? null : kept - button.left };
 }
 
-export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
+export function Menu({ label, items }: { label: string; items: (MenuItem | MenuLink)[] }) {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState<{ up: boolean; left: number | null }>({ up: false, left: null });
   const id = useId();
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const itemRefs = useRef<(HTMLButtonElement | HTMLAnchorElement | null)[]>([]);
   const shown = menuOrder(items);
 
-  const itemEls = () => itemRefs.current.slice(0, shown.length).filter((el): el is HTMLButtonElement => !!el);
+  const itemEls = () => itemRefs.current.slice(0, shown.length).filter((el): el is HTMLButtonElement | HTMLAnchorElement => !!el);
+  // A link is never disabled; a button may be.
+  const enabled = (el: HTMLButtonElement | HTMLAnchorElement) => !(el as HTMLButtonElement).disabled;
   const close = (refocus: boolean) => {
     setOpen(false);
     if (refocus) trigger.current?.focus();
@@ -85,7 +94,7 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
     if (menu && button && typeof window.innerHeight === 'number' && typeof window.innerWidth === 'number') {
       setPlace(menuPlacement(button, menu, { width: window.innerWidth, height: window.innerHeight }));
     }
-    itemEls().find((el) => !el.disabled)?.focus();
+    itemEls().find(enabled)?.focus();
   }, [open]);
 
   // A press anywhere else closes it, leaving focus where the press put it.
@@ -114,7 +123,7 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
     const to = nextIndex(
       e.key,
       els.indexOf(document.activeElement as HTMLButtonElement),
-      els.map((el) => !el.disabled)
+      els.map(enabled)
     );
     if (to !== null) {
       e.preventDefault();
@@ -158,25 +167,43 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
           // Moved in from the screen's edge (menuPlacement): its position only.
           style={place.left === null ? undefined : { left: place.left, right: 'auto' }}
         >
-          {shown.map((item, i) => (
-            <button
-              key={item.label}
-              ref={(el) => {
-                itemRefs.current[i] = el;
-              }}
-              type="button"
-              role="menuitem"
-              tabIndex={-1}
-              className={`menu-item${item.danger ? ' danger' : ''}`}
-              disabled={item.disabled}
-              onClick={() => {
-                close(true);
-                item.onSelect();
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+          {shown.map((item, i) =>
+            'href' in item ? (
+              <a
+                key={item.label}
+                ref={(el) => {
+                  itemRefs.current[i] = el;
+                }}
+                role="menuitem"
+                tabIndex={-1}
+                className="menu-item"
+                href={item.href}
+                download
+                // The browser saves the file; the menu closes and gives focus back.
+                onClick={() => close(true)}
+              >
+                {item.label}
+              </a>
+            ) : (
+              <button
+                key={item.label}
+                ref={(el) => {
+                  itemRefs.current[i] = el;
+                }}
+                type="button"
+                role="menuitem"
+                tabIndex={-1}
+                className={`menu-item${item.danger ? ' danger' : ''}`}
+                disabled={item.disabled}
+                onClick={() => {
+                  close(true);
+                  item.onSelect();
+                }}
+              >
+                {item.label}
+              </button>
+            )
+          )}
         </div>
       )}
     </div>

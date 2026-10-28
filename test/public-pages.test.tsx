@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import SecurityPage from '@/app/security/page';
 import PrivacyPage from '@/app/privacy/page';
+import UnsubscribePage from '@/app/unsubscribe/page';
+import OpenDownloadPage from '@/app/open-download/page';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
 import { writingIn } from './writing-words';
 import nextConfig from '@/next.config.js';
@@ -384,7 +386,7 @@ describe('the privacy page', () => {
   test('says first that it is a plain-language summary, not a legal policy, and nothing of internal plans', () => {
     const page = privacy();
     expect(page.indexOf('This page is a plain-language summary, not a legal privacy policy.')).toBeGreaterThan(-1);
-    expect(page.indexOf('not a legal privacy policy')).toBeLessThan(page.indexOf('Our commitments'));
+    expect(page.indexOf('not a legal privacy policy')).toBeLessThan(page.indexOf('Nya’s commitments'));
     expect(page).not.toContain('legal entity');
     expect(page).not.toContain('lawyer');
   });
@@ -392,11 +394,11 @@ describe('the privacy page', () => {
   test('makes the eight commitments, each with what is true today and, where some of it is to come, what is not', () => {
     const html = privacyHtml();
     const promises = [
-      'We never sell or share your financial data.',
+      'Nya never sells or shares your financial data.',
       'You can download everything stored about you, in open formats, whenever you like.',
       'You can delete everything, and it reaches backups and connected services.',
       'You decide what anyone else sees, and you can see what they see about you.',
-      'You can see who can read what, including us.',
+      'You can see who can read what, including whoever runs Nya.',
       'Receipts and documents are never shared.',
       'AI features are opt-in and act only on what you point them at.',
       'You can leave.',
@@ -918,6 +920,107 @@ describe('receipts and documents', () => {
       const sec = security();
       expect(sec).not.toContain('Receipts and documents you attach to transactions are encrypted');
       expect(sec).not.toContain('Never your receipts or documents.');
+    }
+  });
+});
+
+/** Every way this copy can be set up that changes which parts the pages
+ *  have: a master key or not, backups kept, none or invalid, mail on or off,
+ *  bringing a download back on or off. */
+function* setups() {
+  for (const master of [undefined, MASTER]) {
+    for (const backups of ['none', 'kept', 'invalid'] as const) {
+      for (const mail of [false, true]) {
+        for (const restore of [false, true]) {
+          process.env = { ...saved };
+          if (master) process.env.MASTER_KEY = master;
+          else delete process.env.MASTER_KEY;
+          backupsAre(backups);
+          mailIs(mail);
+          if (restore) process.env.RESTORE_ENABLED = '1';
+          else delete process.env.RESTORE_ENABLED;
+          yield `${master ? 'key' : 'no key'}, backups ${backups}, mail ${mail}, restore ${restore}`;
+        }
+      }
+    }
+  }
+}
+
+/** A page's contents links, its sections' ids, and every id on it. */
+function anchors(html: string) {
+  const nav = html.slice(html.indexOf('<nav class="info-contents"'), html.indexOf('</nav>', html.indexOf('<nav class="info-contents"')));
+  return {
+    contents: [...nav.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]),
+    sections: [...html.matchAll(/<section class="info-section info-prose" id="([^"]+)"/g)].map((m) => m[1]),
+    ids: [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]),
+  };
+}
+
+describe('the public pages as documents', () => {
+  test('in Nya’s voice: never “we”, “our” or “us”, however this copy is set up', () => {
+    // "US" (the country) is in capitals; the first person never is.
+    for (const setup of setups()) {
+      for (const page of [security(), privacy()]) expect([setup, page.match(/\b(?:[Ww]e|[Oo]urs?|us)\b/g)]).toEqual([setup, null]);
+    }
+  });
+
+  test('prose under headings, never a card around a part', () => {
+    for (const html of [securityHtml(), privacyHtml()]) {
+      expect(html).not.toContain('class="card');
+      expect(html).toContain('<section class="info-section info-prose" id="');
+    }
+  });
+
+  test('a contents list of links to every part, each landing on exactly one part, however this copy is set up', () => {
+    for (const setup of setups()) {
+      for (const html of [securityHtml(), privacyHtml()]) {
+        const { contents, sections, ids } = anchors(html);
+        expect([setup, contents]).toEqual([setup, sections]);
+        expect(contents.length).toBeGreaterThanOrEqual(5);
+        for (const id of contents) expect([setup, id, ids.filter((x) => x === id).length]).toEqual([setup, id, 1]);
+        expect([setup, new Set(ids).size]).toEqual([setup, ids.length]);
+      }
+    }
+    // The parts that come and go with the setup come and go in the contents too.
+    delete process.env.RESTORE_ENABLED;
+    mailIs(false);
+    expect(anchors(securityHtml()).contents).not.toContain('bringing-back');
+    expect(anchors(securityHtml()).contents).not.toContain('weekly-summary');
+  });
+
+  test('privacy’s plain-language note comes first, before the contents, as an information notice', () => {
+    const html = privacyHtml();
+    const note = html.indexOf('This page is a plain-language summary, not a legal privacy policy.');
+    expect(note).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(html.indexOf('<nav class="info-contents"'));
+    expect(html.lastIndexOf('<div class="notice info">', note)).toBeGreaterThan(-1);
+    expect(html).toContain('<span class="visually-hidden">Note: </span>This page is a plain-language summary');
+  });
+
+  test('one shared header, the way back into the app, and no “Open Nya” at the foot', () => {
+    for (const html of [securityHtml(), privacyHtml(), renderToStaticMarkup(<UnsubscribePage />), renderToStaticMarkup(<OpenDownloadPage />)]) {
+      expect(html).toContain('<header class="page-header"><nav aria-label="Back to Nya"><a class="brand page-brand" href="/">');
+      expect(html).not.toContain('Open Nya');
+    }
+  });
+
+  test('the short pages: no contents, their prose off the cards, their forms still in one', () => {
+    const unsub = renderToStaticMarkup(<UnsubscribePage />);
+    expect(unsub).not.toContain('info-contents');
+    expect(unsub).toContain('<section class="info-section info-prose" id="what-it-is"><h2>What it is</h2>');
+    expect(unsub).toContain('class="card info-section unsubscribe-card"');
+    const open = renderToStaticMarkup(<OpenDownloadPage />);
+    expect(open).not.toContain('info-contents');
+    expect(open).toContain('<div class="notice info">');
+    expect(text(open)).toContain('Your file is opened on your device, by this page: it is never uploaded, and nothing about it is sent anywhere.');
+    expect(open).toContain('class="card info-section open-download"');
+    expect(open.match(/class="card/g)).toHaveLength(1);
+  });
+
+  test('every page outside the tabs heads with the shared header, and none says “← Nya”', () => {
+    for (const file of ['components/InfoPage.tsx', 'components/DataInventory.tsx', 'components/AdminJobs.tsx', 'components/AdminStorage.tsx', 'components/ReportsPage.tsx']) {
+      expect([file, source(file).includes('<PageHeader')]).toEqual([file, true]);
+      expect([file, source(file).includes('← Nya')]).toEqual([file, false]);
     }
   });
 });

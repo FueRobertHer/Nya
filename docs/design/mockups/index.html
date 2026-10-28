@@ -1008,6 +1008,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <ul class="changes">
         <li>The sign-in page is laid out from the top: Clerk's form arriving, or changing step, no longer moves the name and the demo card above it.</li>
         <li>Until the form loads, a placeholder of its size holds its place; the form fades in over it.</li>
+        <li>Under the name, one line on what Nya is. Clerk's Continue is the one filled button: the demo accounts are tonal, each saying what it is set up to hold, above the form; which banks connect is folded under it, behind Which banks work?</li>
         <li>A demo button signs in on the page, with no page loaded again. From its press, and on Home from the moment a sign-in moves there, the app loading: the dashboard's header and the Net worth card in placeholders, which the dashboard then draws itself while its first load is on its way.</li>
       </ul>
     </div>
@@ -1016,10 +1017,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="auth">
             <span class="brand" style="flex:none"><span class="logo"></span>Nya</span>
+            <span class="small muted" style="text-align:center">Your net worth, spending and budgets, across every account.</span>
             <div class="card">
               <div class="card-header"><h2>Try the demo</h2></div>
               <span class="small muted">Sign in as a demo account, with pretend banks from Plaid's sandbox.</span>
-              <div class="btn-row"><span class="btn primary" style="flex:1">Alex</span><span class="btn primary" style="flex:1">Sam</span></div>
+              <div style="display:grid;gap:8px;margin-top:12px">
+                <span class="btn secondary" style="justify-content:flex-start;text-align:left;display:grid;gap:2px">Alex<span class="xs muted">One income, renting, student loan</span></span>
+                <span class="btn secondary" style="justify-content:flex-start;text-align:left;display:grid;gap:2px">Sam<span class="xs muted">Two incomes, a child, a mortgage</span></span>
+              </div>
             </div>
             <div class="signin-sk" aria-label="The sign-in form loading">
               <div class="in">
@@ -1028,10 +1033,10 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               </div>
               <div class="foot"><span class="sk" style="width:40%"></span></div>
             </div>
-            <span class="xs muted" style="text-align:center">Bank connections through Plaid work for US institutions only…</span>
+            <span class="small" style="align-self:stretch;color:var(--accent);font-weight:600">Which banks work?</span>
           </div>
         </div></div>
-        <figcaption><b>SIGN-IN, FORM LOADING</b>The name and the demo card sit where they will stay; the placeholder is the form's width and about its height.</figcaption>
+        <figcaption><b>SIGN-IN, FORM LOADING</b>The name, what Nya is, and the demo card sit where they will stay; the placeholder is the form's width and about its height. The demo's buttons are tonal: the form's Continue is the one filled button.</figcaption>
       </figure>
 
       <figure class="shot">

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { AttachmentSweepProblem, BackupProblem, JobView } from '@/lib/backup';
 import { CAUTION } from './ConnectionStatus';
 import { backupWords, filesWords } from './NetWorthCard';
+import { PageHeader } from './PageHeader';
 
 type Job = JobView['job'];
 
@@ -159,11 +160,7 @@ export default function AdminJobs() {
 
   return (
     <main className="wrap report-wrap">
-      <div className="report-top">
-        <nav className="report-nav" aria-label="Back to Nya">
-          <a href="/">← Nya</a>
-        </nav>
-      </div>
+      <PageHeader />
       <h1>Nightly jobs</h1>
       <p className="sub">The jobs that keep a copy of everything and tidy the file store. When one fails, see its reason here, then run it again now rather than waiting a night.</p>
       <div className="stack">

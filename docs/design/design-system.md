@@ -222,6 +222,8 @@ A small popover for an object's rare actions (the institution ⋯ menu, a transa
 
 Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="menu"`, opening a `.menu` of `.menu-item` buttons on `--elevated` with a `--border-strong` edge, aligned to the button's right edge (moved in when that would take it past the screen's edge), below it or above it when there is no room below. Its ⋯ is a bare icon button, as the header's are. It follows the WAI-ARIA menu button pattern: focus moves to the first item, the arrow keys, Home and End move between items, Escape closes it (and only it, inside a sheet), and focus returns to the button after Escape or a choice. A press outside closes it. It is drawn in place, so inside a sheet it belongs in the footer or the header, not in the scrolling body, which would clip it.
 
+An item can be a link to a file to save (a report's **Download as CSV**): a real `<a download>` with `role="menuitem"`, drawn as the other items are, so it saves with no script and keeps the browser's own "save link as". As a link it is chosen with Enter, not Space.
+
 Clerk's account menu (the avatar's) takes the same row metrics through `CLERK_APPEARANCE` in `lib/theme.ts` (look and feel step 2c), and Clerk's corners are `--r-sm`.
 
 ### Empty state
@@ -243,6 +245,12 @@ What a screen shows while what fills it is on its way: the screen itself, with p
 - **Only for what will come.** A placeholder holds the place of something that is coming, never of something that may not exist: Shared with me is held only on a device whose last read had shares, and Needs attention, which shows only when something does, has none.
 
 **The sign-in page** is laid out from the top, not centered: Clerk's form arrives after the page and changes height from step to step, and centered, every change moved the name and the demo card above it. The pages that share its layout (an invite link's, Not allowed yet) are laid out from the top too, so the name stays put from one to the next. Until Clerk's form loads, a placeholder of its width and about its height holds its place, and the form fades in where it was. From a demo button's press the page shows the app loading in its place. Once Clerk signs someone in, it moves to Home, which streams the same view at once while the server reads the session, and the dashboard then draws it again while its first load is on its way: one view from the sign-in to the figures.
+
+Under the name, one line says what Nya is (`lib/tagline.ts`, 60 characters at most), on the password login too. Clerk's Continue is the page's one filled button: the demo accounts are tonal `.btn.secondary` buttons of two lines, the name over what the account is set up to hold (from the seed's scenarios, `lib/demo-seed/scenarios.ts`), and they sit above the form, since the form changes height from step to step and nothing below it should hold a button. Which banks connect is folded under the form behind **Which banks work?** (`Why`), left-aligned.
+
+### The pages outside the tabs
+
+The public pages (Security, Privacy, Developers, Open a protected download, the weekly summary's Turn off) are documents, so they read as prose under headings, not in cards: each part an `<h2>` at `--fs-5`, 32px apart (`.info-body`), code on `--surface` with a hairline. A page of five parts or more opens with a contents list (**On this page**), a 44px link to each part, two columns from 600px wide; its parts and the list are drawn from one list in the page, so they can't drift. A plain-language note said first (Privacy's, the download's) is an information notice before the contents. A form on one of them is a control and keeps its card. Every page outside the tabs (these, Your data, Reports, the admin's pages) has the same header, `components/PageHeader.tsx`: the logo and name as a 44px link back into the app (Reports' back to Activity, named "Back to Nya"), and Reports' hide amounts at the other end.
 
 ### Header and tab bar
 

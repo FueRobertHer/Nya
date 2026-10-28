@@ -21,7 +21,7 @@ export default function UnsubscribePage() {
   return (
     <InfoPage page="unsubscribe" title="Weekly summary" intro="Turn off the weekly summary email Nya sends you.">
       <UnsubscribeForm />
-      <InfoSection title="What it is">
+      <InfoSection id="what-it-is" title="What it is">
         <p>
           The weekly summary says what changed in your week and what needs your attention: spending against a usual week,
           budgets over or close, bills due, goals, bank connections and months that may be missing transactions. It never
