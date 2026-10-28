@@ -25,7 +25,9 @@ export function accruedCaveats(
 ): Caveat[] {
   const { leftOut, unread } = accruedLines(homeAccrued(institutions), (amounts) => accruedAmountsText(amounts, fx, main, (n, c) => formatMoney(n, c)));
   const out: Caveat[] = [];
-  if (leftOut) out.push({ key: 'accrued', severity: 'info', summary: 'accrued interest left out', body: <Masked>{leftOut}</Masked> });
+  // One line on the total; why it is apart, behind "Why?" (the screen review:
+  // four lines between the figure and the chart).
+  if (leftOut) out.push({ key: 'accrued', severity: 'info', summary: 'accrued interest left out', body: <Masked>{leftOut.line}</Masked>, why: leftOut.why });
   for (const line of unread) out.push({ key: `accrued-unread:${line}`, severity: 'caution', summary: 'accrued interest not known', body: <Masked>{line}</Masked> });
   return out;
 }

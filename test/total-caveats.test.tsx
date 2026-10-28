@@ -111,6 +111,16 @@ describe('the caveat line', () => {
     expect(html).toContain('<div class="notice caution">');
   });
 
+  test('a note that explains itself keeps one line, the rest behind Why?, alone or gathered with others', () => {
+    const accrued: Caveat = { ...c('a', 'info', 'accrued interest left out'), body: 'Leaves out $612.40 of accrued interest on a student loan.', why: 'Plaid reports it apart.' };
+    const alone = renderToStaticMarkup(<TotalCaveats items={[accrued]} />);
+    expect(alone).toContain('Leaves out $612.40 of accrued interest on a student loan.<details class="why"><summary>Why?</summary><div class="why-body">Plaid reports it apart.</div></details>');
+    const gathered = renderToStaticMarkup(<TotalCaveats items={[accrued, c('b', 'caution', 'history paused')]} />);
+    expect(gathered).toContain('<details class="why"><summary>Why?</summary><div class="why-body">Plaid reports it apart.</div></details>');
+    // One without its own Why says it all in its body, as before.
+    expect(gathered.match(/class="why"/g)).toHaveLength(1);
+  });
+
   test('only neutral ones: the line is neutral too', () => {
     const html = renderToStaticMarkup(<TotalCaveats items={[c('a', 'info', 'converted into USD'), c('b', 'info', 'accrued interest left out')]} />);
     expect(html).toContain('<summary class="notice info">');

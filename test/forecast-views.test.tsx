@@ -161,6 +161,21 @@ describe('the forecast', () => {
     expect(t).toContain('Warns below $100.00');
   });
 
+  // The screen review: ten accounts listed in seven lines.
+  test('two accounts are named where it starts; from three on it counts them, and names them behind Which accounts', () => {
+    const two = [chase({ accounts: [chase().accounts[0], { account_id: 'sav', name: 'Savings', type: 'depository', subtype: 'savings', balance: 100, currency: 'USD' }] })];
+    expect(card({ institutions: two })).toContain('Starts from $1,000.00 in Checking and Savings at Chase.');
+    const three = [...two, chase({ institution_name: 'Ally', item_id: 'item_2', accounts: [{ account_id: 'ally', name: 'Online Savings', type: 'depository', subtype: 'savings', balance: 50, currency: 'USD' }] })];
+    const html = renderToStaticMarkup(<ForecastCard institutions={three} series={series()} planned={EMPTY_PLANNED} today={TODAY} balancesAsOf="2026-10-07T15:12:00" balancesSaved />);
+    const helper = html.slice(html.indexOf('<p class="helper">Starts from'), html.indexOf('</p>', html.indexOf('<p class="helper">Starts from')));
+    expect(text(helper).trim()).toMatch(/^Starts from \$1,050\.00 in 3 cash accounts\. Those are the balances saved on Oct 7 at 3:12\sPM, the last time they loaded; anything since isn't in it\. Expected to end near/);
+    // The names, behind the disclosure that follows the line, never inside it.
+    const why = html.slice(html.indexOf('<details class="why"><summary>Which accounts</summary>'));
+    expect(why).not.toBe(html);
+    expect(text(why)).toContain('Checking and Savings at Chase and Online Savings at Ally.');
+    expect(helper).not.toContain('<details');
+  });
+
   test('starts from the balance less what is still pending, and says when the balances are from', () => {
     const pending = [txn({ transaction_id: 'p1', amount: 143.27, pending: true }), txn({ transaction_id: 'p2', amount: 20, pending: true, account_name: 'Sapphire', account_type: 'credit' })];
     const t = card({ txns: pending, balancesAsOf: '2026-10-09T14:15:00' });

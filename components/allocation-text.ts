@@ -22,7 +22,7 @@
 
 import { isMoney, shareLabel, type AccountGap, type AllocCaveat, type PlanMix } from '@/lib/allocation/allocation';
 import type { BucketSlot } from '@/lib/allocation/buckets';
-import { CLASS_WORDS, splitText, type Classified, type Slot } from '@/lib/allocation/classes';
+import { CLASS_WORDS, splitText, type Classified, type Slot, type UnclassifiedWhy } from '@/lib/allocation/classes';
 import { wholeMoney } from './plan-text';
 
 export const UNCLASSIFIED_COLOR = 'var(--border-input)';
@@ -71,17 +71,39 @@ export function classifiedText(k: Classified): string {
         return `${what}, by its type`;
     }
   }
-  switch (k.why) {
-    case 'fund':
-      return "Unclassified: a fund whose mix Nya doesn't know (a target-date fund, whose mix moves every year, or an actively managed one, say)";
-    case 'leveraged':
-      return "Unclassified: a leveraged or inverse fund, which moves by a multiple of what it tracks, or against it, so it isn't counted as what it tracks";
-    case 'unknown':
-      return "Unclassified: Plaid doesn't say what kind of security it is";
-    case 'bad-split':
-      return "Unclassified: the split saved for it doesn't add up to 100%";
-  }
+  return `Unclassified: ${UNCLASSIFIED_WHY[k.why]}`;
 }
+
+/** Why a holding is unclassified, as the middle of a sentence. */
+const UNCLASSIFIED_WHY: Record<UnclassifiedWhy, string> = {
+  fund: "a fund whose mix Nya doesn't know (a target-date fund, whose mix moves every year, or an actively managed one, say)",
+  leveraged: "a leveraged or inverse fund, which moves by a multiple of what it tracks, or against it, so it isn't counted as what it tracks",
+  unknown: "Plaid doesn't say what kind of security it is",
+  'bad-split': "the split saved for it doesn't add up to 100%",
+};
+
+/** The same in a few words, for a holding's row in a list whose holdings are
+ *  unclassified for more than one reason (each said in full once, behind
+ *  "Why unclassified?"). */
+const UNCLASSIFIED_SHORT: Record<UnclassifiedWhy, string> = {
+  fund: 'Mix not known',
+  leveraged: 'Leveraged or inverse',
+  unknown: 'Type not given',
+  'bad-split': "Split doesn't add up to 100%",
+};
+
+export const unclassifiedShort = (why: UnclassifiedWhy): string => UNCLASSIFIED_SHORT[why];
+
+/** Said once over a list of unclassified holdings that share one reason, so
+ *  no row repeats it: "For each holding here: a fund whose mix ...". Only of
+ *  the holdings, whatever accounts the list also has. */
+export const sharedUnclassifiedText = (why: UnclassifiedWhy): string => `For each holding here: ${UNCLASSIFIED_WHY[why]}.`;
+
+/** One reason in full, as its own sentence, for "Why unclassified?". */
+export const unclassifiedWhyText = (why: UnclassifiedWhy): string => {
+  const w = UNCLASSIFIED_WHY[why];
+  return `${unclassifiedShort(why)}: ${w}.`;
+};
 
 /** Why account money is unclassified, or how it is classified, for its row. */
 export function gapText(g: AccountGap, fmtDay: (day: string, at: string | null) => string): string {

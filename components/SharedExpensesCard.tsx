@@ -201,9 +201,8 @@ export default function SharedExpensesCard({
       </div>
 
       {card.people.length === 0 && (
-        <p className="panel-note">
-          Keep track of what people owe you and what you owe them. Nya keeps the list; the money moves in Venmo, Cash App or however you pay each other.
-        </p>
+        // How the money moves is the card's last line, for everyone: said once.
+        <p className="panel-note">Keep track of what people owe you and what you owe them.</p>
       )}
       {card.settings_unread && <p className="stale-note">Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.</p>}
       {unread.length > 0 && (
@@ -605,7 +604,7 @@ export default function SharedExpensesCard({
         </div>
       )}
 
-      <div className="chart-note">Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.</div>
+      <p className="helper">Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.</p>
     </div>
   );
 }

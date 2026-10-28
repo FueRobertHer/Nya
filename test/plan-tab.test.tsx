@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, unreadText, windowText, type Outcome } from '@/components/PlanTab';
+import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, simulationAnswered, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import PlanFanChart from '@/components/PlanFanChart';
 import { DrawnWidth } from '@/components/drawn-width';
@@ -409,6 +409,17 @@ describe('the simulation card', () => {
   };
   const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string } = {}) => text(render(p, m, opts));
 
+  // The grid under it says it then instead (simulationAnswered, below).
+  test('says its figures are hypothetical only with an answer: not while working it out, nor when it has none', () => {
+    const LABEL = 'Hypothetical, from US history: not a prediction, and not advice.';
+    const p = plan({ targetAge: 65, horizon: 30 });
+    expect(read(p)).toContain(LABEL);
+    expect(read(p, measured, { pending: true })).toContain(LABEL);
+    expect(read(p, measured, { noOutcome: true })).not.toContain(LABEL);
+    expect(read(p, measured, { outcome: { error: 'no data' } })).not.toContain(LABEL);
+    expect(read(p, measured, { outcome: { error: 'unavailable', unavailable: true } })).not.toContain(LABEL);
+  });
+
   // Since rollout 6d its settings are the Assumptions sheet's (below), the
   // full statement and the data are About these numbers', and the card
   // keeps the short label and what it takes from Your path.
@@ -656,6 +667,40 @@ describe('the grid', () => {
     expect(t).toContain('The share of starts that lasted, each starting with $1,000,000');
     expect(t).toContain('30 years, 1,470 starts over 123 years (to Jun 1993); 50 years, 1,230 starts over 103 years (to Jun 1973)');
     expect(t).toContain('which is why it can read safer than a shorter one');
+  });
+
+  // The screen review: the grid's footnote ran seven lines.
+  test("its footnote is one line, with each column's starts behind Which starts", () => {
+    const p = plan({ horizon: 30 });
+    const e = enginePlan(p, fiView(p, measured)) as { sim: any };
+    const cells = successGrid('historical', e.sim, usMarket(), [0.03, 0.04], [30, 50]);
+    const html = renderToStaticMarkup(
+      <GridCard plan={p} cells={cells} rates={[0.03, 0.04]} years={[30, 50]} current={{ rate: 0.04, years: 30 }} startBalance={e.sim.startBalance} money={money} />
+    );
+    expect(html).toContain('<p class="plan-definition">A longer column leaves out the latest starts, which is why it can read safer than a shorter one.</p>');
+    const why = html.slice(html.indexOf('<details class="why"><summary>Which starts</summary>'));
+    expect(why).not.toBe(html);
+    expect(text(why)).toContain('Each length starts in every month that leaves all of it inside the data, so a longer one has fewer, earlier starts: 30 years, 1,470 starts');
+  });
+
+  // The screen review: "Hypothetical, from US history" twice in one view.
+  test('the grid says its figures are hypothetical only while "Will it last?" above it has no answer to say it with', () => {
+    const p = plan({ horizon: 30 });
+    const e = enginePlan(p, fiView(p, measured));
+    if (!('sim' in e)) throw new Error('expected a simulation');
+    const grid = (say: boolean) =>
+      renderToStaticMarkup(<GridCard plan={p} cells={null} rates={[0.04]} years={[30]} current={{ rate: 0.04, years: 30 }} startBalance={1} money={money} sayHypothetical={say} />);
+    const LABEL = 'Hypothetical, from US history: not a prediction, and not advice.';
+    // An answer: "Will it last?" says it, the grid doesn't.
+    const answered: Outcome = { result: simulate(p.method, e.sim, usMarket()) };
+    expect(simulationAnswered(e, answered)).toBe(true);
+    expect(grid(!simulationAnswered(e, answered))).not.toContain(LABEL);
+    // Working it out, or no answer it could give: the grid says it.
+    for (const outcome of [null, { error: 'no data' }, { error: 'unavailable', unavailable: true }] as (Outcome | null)[]) {
+      expect(simulationAnswered(e, outcome)).toBe(false);
+      expect(grid(!simulationAnswered(e, outcome))).toContain(LABEL);
+    }
+    expect(simulationAnswered({ missing: 'spending' }, answered)).toBe(false);
   });
 
   test('VPW gets one row, by length', () => {

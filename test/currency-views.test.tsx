@@ -457,6 +457,23 @@ describe('the Currency card', () => {
     expect(text(card(ready({ home: 'EUR' }), { confirm: 'stop' }))).toContain('Every figure goes back to its own currency, as before you chose one. Your own rates are kept.');
   });
 
+  // The screen review: Currency was four paragraphs.
+  test('one line on screen, and the rest behind About the rates; what is out of date stays on screen', () => {
+    const html = card(ready({}));
+    const why = html.slice(html.indexOf('<details class="why"><summary>About the rates</summary>'));
+    expect(why).not.toBe(html);
+    const shown = text(html.slice(0, html.indexOf('<details class="why">')));
+    expect(shown).toContain('Nya shows each balance in its own currency, and adds your net worth up in the currency most of your accounts are in, unconverted.');
+    expect(shown).not.toContain('Choose a home currency to see');
+    expect(shown).toContain('Your rates None yet.');
+    expect(text(why)).toContain('Choose a home currency to see your net worth converted into it at the European Central Bank’s daily reference rates.');
+    expect(text(why)).toContain('The ECB’s rates are reference rates, published for information each working day around 16:00 CET');
+    expect(text(why)).toContain('Set one for a currency the ECB doesn’t publish (a cryptocurrency, say)');
+    // Out of date: said on screen, in its words.
+    const stale = card(ready({ ecb: { ...ready({}).view.ecb, stale: true } }));
+    expect(text(stale.slice(0, stale.indexOf('<details class="why">')))).toContain('Nya couldn’t fetch newer ones, so converted figures may be out of date.');
+  });
+
   test('a home currency the ECB doesn’t publish asks for a rate for it, and stops asking once there is one', () => {
     const html = card(ready({ home: 'ARS' }));
     expect(text(html)).toContain('The ECB doesn’t publish ARS, so nothing can be converted into it until you set a rate of your own for ARS.');
@@ -499,6 +516,8 @@ describe('the Currency card', () => {
       <OwnRateForm draft={{ ...draft, rate: '0.92' }} onDraft={noop} view={ready({}).view} currencies={['USD']} busy={false} error={null} onSave={noop} onCancel={noop} />
     );
     expect(text(html)).toContain('The ECB’s of Sep 14, 2026: 1 USD = 0.86573 EUR');
+    // Said where a rate is changed, now the card keeps it behind About the rates.
+    expect(text(html)).toContain('Changing a rate changes every figure it reaches, past days included.');
     expect(ownRateText(BTC_RATE)).toBe('1 BTC = 61,000 USD, every day, past ones included');
     expect(ecbBeside({ currency: 'GBP', quote: 'USD' }, ready({}).view.ecb)).toBe('The ECB’s of Sep 14, 2026: 1 GBP = 1.3494 USD');
   });

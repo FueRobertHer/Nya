@@ -37,6 +37,9 @@ import {
   caveatText,
   classifiedText,
   gapText,
+  sharedUnclassifiedText,
+  unclassifiedShort,
+  unclassifiedWhyText,
   mixBasisText,
   mixLeftOutText,
   mixText,
@@ -87,6 +90,7 @@ import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocati
 import type { FirePlan } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
+import { Why } from './Why';
 
 /** Allocation's two views, by asset class or tax bucket, as tabs. */
 const allocationTabId = (v: string) => `allocation-tab-${v}`;
@@ -504,6 +508,17 @@ export function ClassView({
   const unclassifiedSecurities = alloc.securities.filter((s) => !s.classified.split && isMoney(s.amount));
   const gaps = alloc.gaps.filter((g) => isMoney(g.amount));
   const accountSplits = overridesOf(settings).accounts;
+  // Why each holding listed is unclassified, said once (the screen review:
+  // the same sentence under six holdings): over the list when two or more
+  // share one reason, else a few words on each row and every reason in full
+  // behind Why. One holding alone says its own.
+  const reasons = [...new Set(unclassifiedSecurities.map((s) => (s.classified.split ? null : s.classified.why)).filter((w) => w !== null))];
+  const shared = unclassifiedSecurities.length > 1 && reasons.length === 1 ? reasons[0] : null;
+  const reasonOf = (s: SecurityRow): string => {
+    if (s.classified.split) return classifiedText(s.classified);
+    if (unclassifiedSecurities.length === 1) return classifiedText(s.classified);
+    return shared ? '' : unclassifiedShort(s.classified.why);
+  };
   return (
     <>
       <ShareTable totals={alloc.classes} order={SLOTS} colors={CLASS_COLORS} label={(s: Slot) => CLASS_NAMES[s]} money={money} />
@@ -514,6 +529,7 @@ export function ClassView({
           </div>
           <p className="panel-note">
             Money Nya can&apos;t place in a class is shown as unclassified, never guessed at. Classify it to count it, here and in the plan&apos;s mix.
+            {shared && ` ${sharedUnclassifiedText(shared)}`}
           </p>
           <div className="plan-rows">
             {unclassifiedSecurities.map((s) => {
@@ -523,7 +539,7 @@ export function ClassView({
                   key={s.key}
                   label={securityLabel(s)}
                   value={money(s.amount)}
-                  note={`${s.name && s.name !== s.ticker ? `${readableName(s.name)}. ` : ''}${classifiedText(s.classified)}. In ${names(s.accounts)}.${unclassifiable(s) ?? ''}`}
+                  note={`${s.name && s.name !== s.ticker ? `${readableName(s.name)}. ` : ''}${reasonOf(s) ? `${reasonOf(s)}. ` : ''}In ${names(s.accounts)}.${unclassifiable(s) ?? ''}`}
                   action={
                     sheet ? (
                       <ActionButton onClick={() => open(sheet)} disabled={!editable} label={`Classify ${securityLabel(s)}`}>
@@ -556,6 +572,13 @@ export function ClassView({
               />
             ))}
           </div>
+          {!shared && unclassifiedSecurities.length > 1 && (
+            <Why label="Why unclassified?">
+              {reasons.map((why) => (
+                <p key={why}>{unclassifiedWhyText(why)}</p>
+              ))}
+            </Why>
+          )}
         </>
       )}
       {alloc.securities.length > 0 && (

@@ -386,6 +386,13 @@ const REWORDED: { was: string; level: string; now: string; moved?: string; why: 
     why: CAPITAL,
   },
   { was: 'bill · Monthly · due Oct 15, not in yet', level: 'tag', now: 'Bill · Monthly · Due Oct 15, not in yet', why: CAPITAL },
+  {
+    was: 'Starts from $1,065.00 in Checking at Chase, Everyday at Wells Fargo, Citi Checking at Citi and Cash jar at Cash. Expected to end near $2,552.50 on Nov 8.',
+    level: 'helper',
+    now: 'Starts from $1,065.00 in 4 cash accounts. Expected to end near $2,552.50 on Nov 8.',
+    moved: 'Checking at Chase, Everyday at Wells Fargo, Citi Checking at Citi and Cash jar at Cash.',
+    why: 'from three accounts on, the line counts them and names them behind "Which accounts" (the screen review: ten accounts ran to seven lines)',
+  },
 ];
 
 describe('every note the segment said is still said, in its words and at its level', () => {

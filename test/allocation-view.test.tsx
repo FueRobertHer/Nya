@@ -63,6 +63,50 @@ const holdings = [
 const alloc = (settings: AllocationSettings | null = null) => allocate({ institutions, holdings, settings, currency: 'USD' });
 
 describe('the allocation by class', () => {
+  // The screen review: "Unclassified: a fund whose mix Nya doesn't know…"
+  // under each of six holdings.
+  test("holdings unclassified for one reason say it once, over the list, and only of the holdings", () => {
+    const funds = allocate({
+      institutions,
+      holdings: [
+        ...holdings,
+        hold('brk', 'FFFHX', 30_000, { security_type: 'mutual fund', name: 'Fidelity Freedom 2050 Fund' }),
+        hold('k', 'TRRMX', 20_000, { security_type: 'mutual fund', name: 'T. Rowe Price Retirement 2050 Fund' }),
+      ],
+      settings: null,
+      currency: 'USD',
+    });
+    const html = renderToStaticMarkup(<ClassView alloc={funds} money={money} editable settings={EMPTY_SETTINGS} open={noop} />);
+    const t = text(html);
+    const WHY = "a fund whose mix Nya doesn't know (a target-date fund, whose mix moves every year, or an actively managed one, say)";
+    expect(t).toContain(`For each holding here: ${WHY}.`);
+    // Once in the list (each holding's own table, opened on purpose, says each).
+    const list = text(html.slice(0, html.indexOf('<details class="plan-table-view">')));
+    expect(list.split(WHY).length - 1).toBe(1);
+    expect(t).toContain('VFIFX $50,000 Vanguard Target Retirement 2050 Fund. In 401(k).');
+    // The manual account in the same list keeps its own reason.
+    expect(t).toContain('Old pension $10,000 Old pension is an account you track by hand, with no positions to go by.');
+    // How each holding is classified still says each one's in full.
+    expect(t).toContain("FFFHX $30,000 Unclassified: a fund whose mix Nya doesn't know");
+  });
+
+  test('holdings unclassified for different reasons say a few words each, and each reason in full once, behind Why unclassified?', () => {
+    const mixed = allocate({
+      institutions,
+      holdings: [...holdings, hold('brk', 'TQQQ', 5_000, { security_type: 'etf', name: 'ProShares UltraPro QQQ' })],
+      settings: null,
+      currency: 'USD',
+    });
+    const html = renderToStaticMarkup(<ClassView alloc={mixed} money={money} editable settings={EMPTY_SETTINGS} open={noop} />);
+    const t = text(html);
+    expect(t).not.toContain('For each holding here');
+    expect(t).toContain('VFIFX $50,000 Vanguard Target Retirement 2050 Fund. Mix not known. In 401(k).');
+    expect(t).toContain('TQQQ $5,000 ProShares UltraPro QQQ. Leveraged or inverse. In Brokerage.');
+    const why = text(html.slice(html.indexOf('<summary>Why unclassified?</summary>')));
+    expect(why).toContain("Mix not known: a fund whose mix Nya doesn't know");
+    expect(why).toContain('Leveraged or inverse: a leveraged or inverse fund');
+  });
+
   // The screen review: "NH PORTFOLIO 1055 (FIDELITY INDEX)".
   test("a holding with no ticker is named readably, its broker's capitals made words", () => {
     const nh = allocate({
