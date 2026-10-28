@@ -331,8 +331,8 @@ describe('NetWorthChart estimated throughout', () => {
     expect(runs(points)).toEqual(['solid']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
     expect(readDate(html)).toBe('Since Sep 1, 2026 · estimated');
-    expect(label(html)).toContain('Estimated from transactions, not recorded.');
-    expect(html).toContain('Estimated from transactions, not recorded. No stretch of this range is recorded, so the line is solid.');
+    expect(label(html)).toContain('Estimated, not recorded.');
+    expect(html).toContain('Estimated, not recorded. No stretch of this range is recorded, so the line is solid.');
     expect(html).not.toContain('Dashed: estimated');
   });
 
@@ -341,7 +341,7 @@ describe('NetWorthChart estimated throughout', () => {
     expect(runs(points)).toEqual(['solid']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
     expect(readDate(html)).toBe('Since Sep 1, 2026 · estimated');
-    expect(label(html)).toContain('Estimated from transactions, not recorded, except Sep 20.');
+    expect(label(html)).toContain('Estimated, not recorded, except Sep 20.');
   });
 
   test('a recorded stretch: dashed and solid as before, and the range is not called estimated', () => {
@@ -349,7 +349,7 @@ describe('NetWorthChart estimated throughout', () => {
     expect(runs(points)).toEqual(['dashed', 'solid']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
     expect(readDate(html)).toBe('Since Sep 1, 2026');
-    expect(html).not.toContain('Estimated from transactions');
+    expect(html).not.toContain('Estimated, not recorded');
     expect(html).toContain('Dashed: estimated');
   });
 
@@ -366,7 +366,31 @@ describe('NetWorthChart estimated throughout', () => {
     expect(runs(points)).toEqual(['dashed']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
     expect(readDate(html)).not.toContain('estimated');
-    expect(html).not.toContain('Estimated from transactions');
+    expect(html).not.toContain('Estimated, not recorded');
+  });
+
+  // The same weekly line read on a Monday: 25 recorded Sundays, the 26th
+  // estimated, and Monday's own point. Its one segment over consecutive days
+  // (Sunday to Monday) touches the estimate, but recorded weeks are joined
+  // all along it: it stays dashed and is never called estimated.
+  test('25 recorded weeks, an estimated Sunday and a recorded Monday stay dashed, and the range is not called estimated', () => {
+    const sundays = Array.from({ length: 26 }, (_, i) => ({
+      date: new Date(Date.parse('2026-05-03T00:00:00Z') + i * 7 * 86_400_000).toISOString().slice(0, 10),
+      value: 1000 + i,
+      ...(i === 25 ? { estimated: true } : {}),
+    }));
+    const points = [...sundays, { date: '2026-10-26', value: 1100 }];
+    expect(runs(points)).toEqual(['dashed']);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} />);
+    expect(readDate(html)).not.toContain('estimated');
+    expect(html).not.toContain('Estimated, not recorded');
+  });
+
+  // A day bridged between two recorded ones is a straight line, not worked
+  // out from transactions: the words say only that it is estimated.
+  test('the words hold for a bridged day too: estimated, not recorded, never "from transactions"', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={days(20, () => true)} />);
+    expect(html).not.toContain('from transactions, not recorded');
   });
 });
 
@@ -432,6 +456,17 @@ describe('NetWorthChart as the hero', () => {
     expect(months(320)).toEqual(['Nov', '2026', 'Mar', 'May', 'Jul', 'Sep']);
     expect(months(375)).toEqual(['Nov', '2026', 'Mar', 'May', 'Jul', 'Sep']);
     expect(months(760)).toEqual(['Oct', 'Nov', 'Dec', '2026', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep']);
+  });
+
+  // Twelve years on a phone: every second year fits once the last label,
+  // pushed in from the edge, is left out rather than failing the step (it
+  // gave 2015, 2020 and 2025 when it did).
+  test('twelve years on a phone take every second year, an edge label that would crowd left out', () => {
+    const long = daily('2014-01-01', '2026-10-27');
+    const years = (width: number, hero: boolean) =>
+      [...at(width, <NetWorthChart hero={hero} points={long} initialRange="ALL" />).matchAll(/class="chart-xlabel"[^>]*>([^<]*)</g)].map((m) => m[1]);
+    expect(years(320, true)).toEqual(['2016', '2018', '2020', '2022', '2024']);
+    expect(years(280, false)).toEqual(['2016', '2018', '2020', '2022', '2024', '2026']);
   });
 
   test('every point is behind Show as a table, rendered only once it is opened', () => {

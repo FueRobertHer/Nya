@@ -296,7 +296,7 @@ describe('on the card of the one it is shared with', () => {
     expect(html).not.toContain('chart-tick');
     expect(html).toContain('<summary>Show as a table</summary>');
     expect([...html.matchAll(/<path [^>]*stroke-width="2"[^>]*>/g)].every((m) => m[0].includes('stroke-dasharray'))).toBe(true);
-    expect(html).not.toContain('Estimated from transactions');
+    expect(html).not.toContain('Estimated, not recorded');
   });
 
   test('a net worth with one point of history says when it begins, not a chart of one', () => {

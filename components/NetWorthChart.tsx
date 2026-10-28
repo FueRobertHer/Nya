@@ -26,14 +26,15 @@
 // straight line across days nothing was recorded (bridgeInteriorEstimates in
 // lib/history.ts). A segment joining two points more than a day apart draws
 // dashed too, even between real points: every day it spans is unmeasured.
-// When the range has no recorded stretch at all (every segment over
-// consecutive days touches an estimate, as in a history estimated up to a
+// When the range has no recorded stretch at all (no segment joins two
+// recorded points, however far apart, as in a history estimated up to a
 // recorded today), dashes would set nothing apart: the line is drawn solid,
 // and the readout, the label and the info say once that it is estimated,
 // so an estimate never reads as recorded. The look can change with the
 // range: a range that reaches a recorded stretch is dashed and solid again.
 // A run of recorded points that is dashed only for the days between them
-// (a shared net worth, one point a week) stays dashed.
+// (a shared net worth, one point a week) stays dashed, whatever estimates
+// sit among them.
 //
 // Notes on the timeline (#50, lib/timeline-notes.ts) mark their days: a
 // dotted rule and a small marker, never a change to the line, so a step (an
@@ -255,20 +256,16 @@ export default function NetWorthChart({
     // three weeks of measurements that were never taken.
     //
     // Unless no stretch of the range is recorded (`uniform`, see the header):
-    // every segment over consecutive days touches an estimate, and there is
-    // at least one such segment, so a line of recorded points a week apart
-    // (all of its segments skipping days) never qualifies through one
-    // estimated week. Then the line is one solid run, said in words instead.
+    // no segment, of any length, joins two recorded points. A segment between
+    // two recorded points is recorded at both its ends, so a line of recorded
+    // points a week apart never qualifies through an estimated week (or an
+    // estimated Sunday beside a recorded Monday). Then the line is one solid
+    // run, said in words instead.
     const gaps = points.map((_, i) => i > 0 && ts[i] - ts[i - 1] > DAY_MS);
     const touches = (i: number) => !!(points[i].estimated || points[i - 1].estimated);
-    let daily = 0;
-    let dailyEstimated = 0;
-    for (let i = 1; i < points.length; i++) {
-      if (gaps[i]) continue;
-      daily++;
-      if (touches(i)) dailyEstimated++;
-    }
-    const uniform = daily > 0 && dailyEstimated === daily;
+    let recordedSegment = false;
+    for (let i = 1; i < points.length; i++) if (!touches(i)) recordedSegment = true;
+    const uniform = points.length > 1 && !recordedSegment;
     const runs: { est: boolean; d: string }[] = [];
     const hasGap = gaps.some(Boolean);
     for (let i = 1; i < points.length; i++) {
@@ -308,8 +305,13 @@ export default function NetWorthChart({
         const anchor = tx - w / 2 < frame.inset ? 'start' : tx + w / 2 > W - frame.inset ? 'end' : 'middle';
         const from = anchor === 'start' ? tx : anchor === 'end' ? tx - w : tx - w / 2;
         if (from - lastEnd < AXIS_GAP) {
-          if (!drop) return null;
-          continue;
+          // An end label, pushed in from the edge, that crowds the one
+          // before it is left out: the step is still evenly spaced. So is a
+          // first label pushed in from the start, when it crowds this one.
+          if (anchor === 'end') continue;
+          if (out.length === 1 && out[0].anchor === 'start') out.pop();
+          else if (!drop) return null;
+          else continue;
         }
         lastEnd = from + w;
         out.push({ x: tx, label: t.label, anchor });
@@ -363,7 +365,9 @@ export default function NetWorthChart({
   if (uniform) {
     const recorded = points.flatMap((p, i) => (p.estimated ? [] : [i]));
     const except = recorded.length === 0 ? '' : recorded.length === 1 ? `, except ${day(recorded[0])}` : `, except ${recorded.length} recorded days`;
-    estimatedWords = `Estimated from transactions, not recorded${except}.`;
+    // Not "from transactions": a day bridged between two others is a
+    // straight line across days with no data (lib/history.ts).
+    estimatedWords = `Estimated, not recorded${except}.`;
   }
 
   /**

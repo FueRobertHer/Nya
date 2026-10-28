@@ -412,6 +412,31 @@ describe('a chart drawn at its width', () => {
     v.unmount();
   });
 
+  // The review's case: a $300 balance, the warning at $200, and rent taking
+  // it to -$3,000 on the 15th. Both rules sit near the plot's top, so the
+  // warning's name has no room over its rule and goes under it, where zero's
+  // name was forced too: they must still never overlap, and are drawn over
+  // the line (after it), haloed, so it never hides them.
+  test('the forecast’s rule names never overlap, near the plot’s top in a 246-wide card, and sit over the line', () => {
+    setObserver(true);
+    laidOut = 246;
+    const steep = buildForecast(300, [ev('2026-10-15', -3300, 'Rent')], TODAY, 30, 0, 'USD');
+    const v = mount(<ForecastChart forecast={steep} currency="USD" threshold={200} />);
+    const H = Math.round((246 * 150) / 340);
+    const names = v.svg()!.findAll((e) => e.getAttribute('class') === 'chart-rule-label');
+    expect(names.map((e) => e.textContent).sort()).toEqual(['Warning', 'Zero']);
+    const [a, b] = names.map((e) => Number(e.getAttribute('y'))).sort((p, q) => p - q);
+    // 12px names, a line apart baseline to baseline, inside the plot.
+    expect(b - a).toBeGreaterThanOrEqual(14);
+    expect(a - 12).toBeGreaterThanOrEqual(0);
+    expect(b).toBeLessThanOrEqual(H - 24);
+    // After the forecast's line in the drawing order, so over it.
+    const kids = v.svg()!.findAll((e) => e.tagName.toLowerCase() === 'path' || e.getAttribute('class') === 'chart-rule-label');
+    const line = kids.findIndex((e) => e.getAttribute('stroke') === 'var(--accent)');
+    expect(kids.findIndex((e) => e.getAttribute('class') === 'chart-rule-label')).toBeGreaterThan(line);
+    v.unmount();
+  });
+
   // With no money on the plot, every day is in a table: rendered once opened,
   // each day's low (as the readout's lowest is) and its end, masked under
   // hidden amounts; under a what-if, the line with the purchase and each

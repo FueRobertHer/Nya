@@ -47,6 +47,8 @@ const ALT = { color: 'var(--text-2)', dash: '0 4' };
  *  12px height and as much again where there is no room over it. */
 const RULE_LABEL_GAP = 4;
 const RULE_LABEL_HEIGHT = 12;
+/** Two names are at least this far apart, baseline to baseline. */
+const RULE_LABEL_LINE = 14;
 
 export function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -105,18 +107,27 @@ export default function ForecastChart({
     // Each rule drawn is named at its left end: over it, unless that would
     // leave the plot's top, then under it. The warning's rule is above
     // zero's, so its name goes over and zero's under when the two are too
-    // close for both over.
+    // close for both over. Then, whatever the arrangement, the two names are
+    // kept a line apart (RULE_LABEL_LINE, baseline to baseline): the lower
+    // goes down, and where that would take it under the plot, both go up.
     const rules: { y: number; name: string }[] = [];
     if (showThreshold) rules.push({ y: y(threshold), name: 'Warning' });
     if (showZero) rules.push({ y: y(0), name: 'Zero' });
     const crowded = rules.length === 2 && rules[1].y - rules[0].y < RULE_LABEL_HEIGHT + RULE_LABEL_GAP * 2;
-    const ruleLabels = rules.map((r, k) => {
-      const over = r.y - RULE_LABEL_GAP;
-      const under = r.y + RULE_LABEL_GAP + RULE_LABEL_HEIGHT;
-      const roomOver = over - RULE_LABEL_HEIGHT >= 0;
-      const below = (crowded && k === 1) || !roomOver;
-      return { name: r.name, y: below && under <= H - PAD_BOTTOM ? under : over };
-    });
+    const plotBottom = H - PAD_BOTTOM;
+    const ruleLabels = rules
+      .map((r, k) => {
+        const over = r.y - RULE_LABEL_GAP;
+        const under = r.y + RULE_LABEL_GAP + RULE_LABEL_HEIGHT;
+        const roomOver = over - RULE_LABEL_HEIGHT >= 0;
+        const below = (crowded && k === 1) || !roomOver;
+        return { name: r.name, y: below && under <= plotBottom ? under : over };
+      })
+      .sort((a, b) => a.y - b.y);
+    if (ruleLabels.length === 2 && ruleLabels[1].y - ruleLabels[0].y < RULE_LABEL_LINE) {
+      ruleLabels[1].y = Math.min(ruleLabels[0].y + RULE_LABEL_LINE, plotBottom);
+      ruleLabels[0].y = Math.min(ruleLabels[0].y, ruleLabels[1].y - RULE_LABEL_LINE);
+    }
     return {
       x,
       y,
@@ -214,15 +225,17 @@ export default function ForecastChart({
         {showThreshold && (
           <line x1={PAD_LEFT} x2={W - PAD_RIGHT} y1={y(threshold)} y2={y(threshold)} stroke="var(--warn)" strokeOpacity={0.6} strokeWidth={1} strokeDasharray="2 3" />
         )}
-        {/* Each rule named in words at its left end, never an amount. */}
+        <path d={main} fill="none" stroke={MAIN.color} strokeWidth={2} strokeDasharray={MAIN.dash} strokeLinejoin="round" strokeLinecap="round" />
+        {alt && <path d={alt} fill="none" stroke={ALT.color} strokeWidth={2} strokeDasharray={ALT.dash} strokeLinejoin="round" strokeLinecap="round" />}
+
+        {/* Each rule named in words at its left end, never an amount: over
+            the lines, haloed in the card's color (.chart-rule-label), so a
+            line crossing it never hides the word. */}
         {ruleLabels.map((r) => (
           <text key={r.name} className="chart-rule-label" x={PAD_LEFT} y={r.y}>
             {r.name}
           </text>
         ))}
-
-        <path d={main} fill="none" stroke={MAIN.color} strokeWidth={2} strokeDasharray={MAIN.dash} strokeLinejoin="round" strokeLinecap="round" />
-        {alt && <path d={alt} fill="none" stroke={ALT.color} strokeWidth={2} strokeDasharray={ALT.dash} strokeLinejoin="round" strokeLinecap="round" />}
 
         {(lowNow || lowDay >= 0) && (
           <circle cx={x(lowAt)} cy={y(shownLow.balance)} r={4} fill={tone(shownLow.balance) ?? (whatIf ? ALT : MAIN).color} stroke="var(--surface)" strokeWidth={2} />

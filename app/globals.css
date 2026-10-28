@@ -1951,14 +1951,15 @@ button:disabled:where(:not([class*="cl-"])) {
 
 /* Holds a chart's place while its history loads, about as tall as the chart:
    the readout, the split line and the range buttons (about 110px), Show as a
-   table's 44px line, and the plot, which is 150/340 of the width. Sized from
-   the box's own width so it fits a phone and a desktop card alike, and the
-   chart arriving moves nothing. */
+   table's 44px line with the 8px over it (.plan-table-view's margin), and
+   the plot, which is 150/340 of the width. Sized from the box's own width so
+   it fits a phone and a desktop card alike, and the chart arriving moves
+   nothing. */
 .chart-loading {
   container-type: inline-size;
 }
 .chart-loading-box {
-  min-height: calc(110px + var(--tap) + 44.1cqw);
+  min-height: calc(110px + 8px + var(--tap) + 44.1cqw);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2001,10 +2002,16 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 /* A rule's name in words at its left end, inside the plot (the cash
-   forecast's Zero and Warning): the plot carries no amounts. */
+   forecast's Zero and Warning): the plot carries no amounts. Drawn over the
+   lines with a halo in the card's color, so a line crossing it never hides
+   the word. */
 .chart-rule-label {
   fill: var(--text-2);
   font-size: var(--fs-1);
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke;
 }
 
 /* A chart drawn at its own width (components/drawn-width.ts) has a viewBox
