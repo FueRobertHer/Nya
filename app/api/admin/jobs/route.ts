@@ -4,8 +4,6 @@ import { adminCtx, notAdmin } from '@/lib/admin-items';
 import { cronHoldUntil, nightlyJobs, runNightlyBackup } from '@/lib/backup';
 import { runNightlySweep } from '@/lib/attachment-sweep';
 import { manualRunCount } from '@/lib/nightly-run-limit';
-import { clerkEnabled } from '@/lib/auth-mode';
-import { isDemoUser } from '@/lib/demo';
 
 // The admin's Nightly jobs page (/admin/jobs, app/admin-view/jobs): the
 // backup (lib/backup.ts runNightlyBackup) and the clean-up of receipts and
@@ -25,9 +23,8 @@ import { isDemoUser } from '@/lib/demo';
 // within five minutes of another run started here (lib/nightly-run-limit.ts):
 // either answers 409 and says when to try again.
 //
-// Never for one of Preview's demo accounts (lib/demo.ts), which anyone may
-// sign in as: 403. The POST takes JSON only, so a form on another site can't
-// send it.
+// A demo account is never the admin (lib/admin-gate.ts), so none gets this
+// far. The POST takes JSON only, so a form on another site can't send it.
 
 // As the crons' own routes: a run takes up to their limit.
 export const maxDuration = 300;
@@ -50,13 +47,6 @@ export async function GET() {
   }
 }
 
-async function isDemo(): Promise<boolean> {
-  if (!clerkEnabled()) return false;
-  const { auth } = await import('@clerk/nextjs/server');
-  const { userId } = await auth();
-  return !!userId && isDemoUser(userId);
-}
-
 const tryIn = (ms: number) => {
   const minutes = Math.max(1, Math.ceil(ms / 60_000));
   return `Try again in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`;
@@ -66,7 +56,6 @@ export async function POST(req: Request) {
   try {
     const admin = await adminCtx();
     if (!admin) return notAdmin();
-    if (await isDemo()) return NextResponse.json({ error: 'Demo accounts can’t run the nightly jobs.' }, { status: 403 });
     if (!(req.headers.get('content-type') ?? '').startsWith('application/json')) return NextResponse.json({ error: 'Send JSON' }, { status: 415 });
     const body = await req.json().catch(() => ({}));
     const job: unknown = body?.job;

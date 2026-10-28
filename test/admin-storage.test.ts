@@ -28,16 +28,17 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => ({ ...storageMock(fake), redis: () => recorded, rawRedis: () => recorded }));
 
 const { encrypt } = await import('@/lib/crypto');
-const { saveItem } = await import('@/lib/storage');
+const { saveItem, getItems } = await import('@/lib/storage');
 const { readAdminStorage, MAX_PAGE } = await import('@/lib/admin-storage');
 const { maxBlobChars } = await import('@/lib/blob');
 const { forgetEpochs } = await import('@/lib/sessions');
 const route = await import('@/app/api/admin/storage/route');
+const unused = await import('@/app/api/admin/unused/route');
 const { default: AdminStoragePage, generateMetadata } = await import('@/app/admin-view/storage/page');
 const jobsPage = await import('@/app/admin-view/jobs/page');
 const { proxy } = await import('@/proxy');
 const { isAdminSignIn } = await import('@/lib/admin-gate');
-const { isAdmin } = await import('@/lib/admin-items');
+const { isAdmin, adminCtx } = await import('@/lib/admin-items');
 const { NextRequest } = await import('next/server');
 
 const admin = TEST_CTX;
@@ -51,6 +52,10 @@ beforeEach(async () => {
   sent.length = 0;
   forgetEpochs();
   console.error = () => {};
+  // Demo accounts (lib/demo.ts) off unless a test turns them on, whatever
+  // .env files bun loaded.
+  delete process.env.VERCEL_ENV;
+  delete process.env.DEMO_USER_IDS;
   await registerTestContainer(fake);
   await fake.hset(testKey('containers'), {
     [OTHER.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-02-01T00:00:00.000Z' }),
@@ -332,6 +337,99 @@ describe('the route', () => {
     fake.reset();
     forgetEpochs();
     expect(await isAdminSignIn(null)).toBe(false);
+  });
+
+  /** Preview with its demo accounts on (lib/demo.ts): Clerk on, user_demo is Alex. */
+  function demosOn() {
+    process.env.VERCEL_ENV = 'preview';
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_a,user_b';
+    process.env.DEMO_USER_IDS = 'user_demo:Alex';
+  }
+  /** The reads of the whole owners map sent so far. */
+  const ownersReads = () => sent.filter(([command, args]) => command === 'hgetall' && args[0] === testKey('owners')).length;
+
+  test('a demo account that owns the deployment’s container is not the admin, and while it does, nobody is', async () => {
+    demosOn();
+    await seed();
+    await fake.hset(testKey('owners'), { user_demo: admin.container, user_b: OTHER.container });
+    expect([await isAdminSignIn('user_demo'), await isAdmin(admin)]).toEqual([false, false]);
+    expect([await isAdminSignIn('user_b'), await isAdmin(OTHER)]).toEqual([false, false]);
+    expect(await isAdminSignIn(null)).toBe(false); // Clerk is on
+
+    // Everywhere the admin's things are, the demo gets what anyone else gets.
+    clerk.signedIn = 'user_demo';
+    expect(await adminCtx()).toBeNull();
+    const open = (path: string) => proxy(new NextRequest(`https://nya.test${path}`, { headers: { accept: 'text/html' } }), {} as any);
+    for (const path of ['/admin/storage', '/admin/jobs']) expect([path, (await open(path)).headers.get('x-middleware-rewrite')]).toEqual([path, null]);
+    expect((await open('/admin-view/storage')).headers.get('x-middleware-rewrite')).toBe('https://nya.test/__nya-no-such-page__');
+    expect((await route.GET(new Request('http://x/api/admin/storage'))).status).toBe(404);
+    await expect(AdminStoragePage()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    await expect(jobsPage.default()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    const items = JSON.stringify(await getItems(admin));
+    expect((await unused.GET()).status).toBe(404);
+    expect((await unused.POST()).status).toBe(404);
+    const del = await unused.DELETE(new Request('http://x/api/admin/unused', { method: 'DELETE', body: JSON.stringify({ container: admin.container, item_id: 'item1' }) }));
+    expect(del.status).toBe(404);
+    expect(JSON.stringify(await getItems(admin))).toBe(items);
+
+    // A demo account elsewhere changes nothing for the owner of the deployment's container.
+    fake.hashes.delete(testKey('owners'));
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_demo: OTHER.container });
+    expect([await isAdminSignIn('user_a'), await isAdmin(admin)]).toEqual([true, true]);
+    expect([await isAdminSignIn('user_demo'), await isAdmin(OTHER)]).toEqual([false, false]);
+  });
+
+  test('a container mapped by hand to a real account and a demo one: nobody is the admin, the real one included', async () => {
+    demosOn();
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_demo: admin.container });
+    expect([await isAdminSignIn('user_a'), await isAdmin(admin)]).toEqual([false, false]);
+    expect(await isAdminSignIn('user_demo')).toBe(false);
+  });
+
+  test('with demo accounts on, a container nobody is mapped to is not the admin’s: an empty list of owners is a read to doubt', async () => {
+    demosOn();
+    await fake.hset(testKey('owners'), { user_b: OTHER.container });
+    expect(await isAdmin(admin)).toBe(false);
+    // The same mapping without demo accounts: the deployment's container, as ever.
+    delete process.env.DEMO_USER_IDS;
+    expect(await isAdmin(admin)).toBe(true);
+  });
+
+  test('owners that can’t be read: nobody is the admin, and the routes answer their usual 404, not an error', async () => {
+    demosOn();
+    await fake.hset(testKey('owners'), { user_a: admin.container });
+    // Only the owners map fails; the registry (also a whole-hash read) still answers.
+    const real = fake.hgetall.bind(fake);
+    (fake as any).hgetall = async (key: string) => {
+      if (key === testKey('owners')) throw new Error('Redis is down');
+      return real(key);
+    };
+    try {
+      expect([await isAdminSignIn('user_a'), await isAdmin(admin)]).toEqual([false, false]);
+      clerk.signedIn = 'user_a';
+      expect(await adminCtx()).toBeNull();
+      const res = await route.GET(new Request('http://x/api/admin/storage'));
+      expect([res.status, await res.json()]).toEqual([404, { error: 'Not found' }]);
+      expect((await unused.GET()).status).toBe(404);
+    } finally {
+      delete (fake as any).hgetall;
+    }
+  });
+
+  test('no read of the owners map where demo accounts can’t exist, nor for a container that isn’t the deployment’s', async () => {
+    // Production, with DEMO_USER_IDS set there by mistake: it does nothing.
+    demosOn();
+    process.env.VERCEL_ENV = 'production';
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_b: OTHER.container });
+    sent.length = 0;
+    expect([await isAdminSignIn('user_a'), await isAdmin(admin)]).toEqual([true, true]);
+    expect(ownersReads()).toBe(0);
+    // Preview, asked about anyone else's container.
+    process.env.VERCEL_ENV = 'preview';
+    expect([await isAdminSignIn('user_b'), await isAdmin(OTHER)]).toEqual([false, false]);
+    expect(ownersReads()).toBe(0);
   });
 
   test('the page too: anyone else gets the 404 page, the admin the view', async () => {
