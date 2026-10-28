@@ -3544,15 +3544,16 @@ button.danger-outline {
   border-radius: 5px;
 }
 
-/* Upcoming's Cash forecast and a Plan segment's chart, in the shape the
-   charts draw at (150 to 340, components/NetWorthChart.tsx's cardFrame and
-   components/ForecastChart.tsx). */
-.upcoming-skeleton-chart,
+/* Your path's answer, at the hero's size (components/Hero.tsx). */
 .plan-skeleton-answer {
   width: 6em;
   max-width: 100%;
 }
 
+/* Upcoming's Cash forecast and a Plan segment's chart, in the shape the
+   charts draw at (150 to 340, components/NetWorthChart.tsx's cardFrame and
+   components/ForecastChart.tsx). */
+.upcoming-skeleton-chart,
 .plan-skeleton-chart {
   width: 100%;
   height: auto;
