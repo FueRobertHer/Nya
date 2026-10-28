@@ -178,10 +178,15 @@ export function gapText(g: CurrencyGap, as: 'figure' | 'year' | 'rate' = 'figure
 }
 
 /** What isn't worked out because an input isn't measured, and why: the
- *  figures that rest on it are left out, never worked out from zero. */
-export function notWorkedOutText(view: Pick<FiView, 'spending' | 'savings' | 'assets'>, where: 'below' | 'above'): string | null {
+ *  figures that rest on it are left out, never worked out from zero. Under a
+ *  value that already says what it needs ("Needs your invested assets", the
+ *  Plan's answer and its At age row), `lead: false` leaves out the "Not
+ *  worked out: " that would say it again. */
+export function notWorkedOutText(view: Pick<FiView, 'spending' | 'savings' | 'assets'>, where: 'below' | 'above', lead = true): string | null {
   const what = notMeasuredWhat(view);
-  return what ? `Not worked out: ${what} measured (${where}), and a figure that isn’t measured is never counted as zero.` : null;
+  if (!what) return null;
+  const why = `${what} measured (${where}), and a figure that isn’t measured is never counted as zero.`;
+  return lead ? `Not worked out: ${why}` : why.charAt(0).toUpperCase() + why.slice(1);
 }
 
 /** "your invested assets aren’t", "your savings aren’t", or both: what a

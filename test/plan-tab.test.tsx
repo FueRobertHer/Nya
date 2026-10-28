@@ -296,6 +296,24 @@ describe('the FI card', () => {
     expect(text(typed)).not.toContain("Schwab couldn't be reached");
   });
 
+  // The screen review: what qualifies the answer sits under it by the hero's
+  // rules, one note in full, two or more gathered on one line that opens to
+  // each in its words, before the progress and the FI number.
+  test('what qualifies the answer sits under it: one note in full, two gathered', () => {
+    const short = assets({ caveats: [{ kind: 'unreachable', institution: 'Schwab' }] });
+    const one = cardHtml(plan(), { a: short });
+    const hero = one.slice(one.indexOf('plan-hero'), one.indexOf('plan-rows'));
+    expect(hero).toMatch(/<div class="notice caution">.{0,600}Invested assets may be low \(below\)\./);
+    expect(hero).not.toContain('notice-summary');
+    expect(hero.indexOf('Invested assets may be low')).toBeLessThan(hero.indexOf('meter-track'));
+    const two = cardHtml(plan(), { a: short, currencyNote: 'Your investments are in EUR and your spending in USD.' });
+    const both = two.slice(two.indexOf('plan-hero'), two.indexOf('plan-rows'));
+    expect(both).toMatch(/<details class="notice-summary"><summary class="notice caution">.{0,600}2 notes: invested assets may be low and currency/);
+    expect(text(both)).toContain('Invested assets may be low (below).');
+    expect(text(both)).toContain('Your investments are in EUR and your spending in USD.');
+    expect(both.indexOf('notice-summary')).toBeLessThan(both.indexOf('meter-track'));
+  });
+
   test('savings say what was added for each workplace plan and what counted, what was not and why, and what could not be measured', () => {
     const opts: Opts = {
       workplaceCount: 5,
@@ -350,15 +368,27 @@ describe('the FI card', () => {
     const t = text(html);
     expect(t).toContain('Needs your annual spending');
     expect(text(figureRow(html, 'Annual spending'))).toContain('Annual spending Not enough transactions yet --');
-    expect(t).toContain('Needs your age and stop age.');
+    // The answer and Coast FI name what they need, never "--" (since the
+    // screen review); the line on the FI number says how, once.
+    expect(t).toContain('Financial independence Needs your annual spending Needs your annual spending: connect accounts with transactions, or type it below.');
+    expect(t).toContain('Coast FI Needs your ages');
+    expect(t.slice(0, t.indexOf('Your figures'))).not.toContain('--');
     expect(t).not.toContain('$0');
+  });
+
+  test('Coast FI says which age it needs', () => {
+    expect(card(plan({ age: null, targetAge: 55 }))).toContain('Coast FI Needs your age Your figures');
+    expect(card(plan({ age: 35, targetAge: null }))).toContain('Coast FI Needs your stop age Your figures');
   });
 
   test('Coast FI and the years to FI, with ages', () => {
     const t = card(plan({ age: 35, targetAge: 50 }));
     expect(t).toContain('With this much invested today you could stop saving now: growing 5% a year after inflation, it reaches your FI number by age 50.');
-    expect(t).toMatch(/about \d+(\.\d)? years/);
-    expect(t).toContain('Around age');
+    // The years are the answer's, said once: no Years to FI row repeats
+    // them, and how it is worked out sits under it without its age again.
+    expect(t).toMatch(/Financial independence Around age \d+ \d+ years? before you stop at 50 Saving \$30,000 a year, growing a steady 5% a year after inflation\./);
+    expect(t).not.toContain('Years to FI');
+    expect(t.match(/Around age/g)?.length).toBe(1);
     // The simulation is on another segment (rollout phase 6b).
     expect(t).toContain("Real markets don't move steadily; the simulation on Stress test shows how much that matters.");
   });
@@ -829,7 +859,8 @@ describe('a saved plan this version cannot use as it is', () => {
         />
       )
     );
-    expect(t).toContain('Financial independence --');
+    expect(t).toContain('Financial independence Needs other assumptions');
+    expect(t).toContain('Coast FI Needs other assumptions');
     expect(t).toContain("Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions.");
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthCard, { HeroDelta } from '@/components/NetWorthCard';
+import { Hero } from '@/components/Hero';
 import { allHiddenCaveats, type Caveat } from '@/components/TotalCaveats';
 import { MASK, setAmountsHidden } from '@/lib/format';
 
@@ -40,7 +41,7 @@ describe('the card', () => {
   // it holds, and in what order, is as it was.
   test('on the page, not in a card: the total, its change line, what qualifies it, the chart, the foot', () => {
     const html = render({ caveats: [caveat('rates', 'info', 'Converted at old rates')], delta: <div className="hero-delta up">past 30 days</div> });
-    expect(html).toContain('<section class="stack net-worth-hero" aria-labelledby="net-worth-title">');
+    expect(html).toContain('<section class="stack hero net-worth-hero" aria-labelledby="net-worth-title">');
     expect(html).not.toMatch(/class="[^"]*\bcard\b/);
     const order = ['net-worth-title', 'total-value', 'class="hero-line"', 'past 30 days', 'Converted at old rates', 'chart-placeholder', 'net-worth-foot'].map((s) => html.indexOf(s));
     expect(order.every((at) => at >= 0)).toBe(true);
@@ -176,5 +177,22 @@ describe('the change line', () => {
       setAmountsHidden(false);
       if (none) delete g.window;
     }
+  });
+});
+
+// The hero's shell (components/Hero.tsx, since the screen review), which
+// Home, the Plan's answer and the runway's months share.
+describe('the hero', () => {
+  test('Home draws the shell as it drew its own: the same markup, with the shared class', () => {
+    const html = render({ worth: -5, delta: <div className="hero-delta down">past 30 days</div> });
+    expect(html.startsWith('<section class="stack hero net-worth-hero" aria-labelledby="net-worth-title"><div><h2 id="net-worth-title" class="total-label" tabindex="-1">Net worth</h2><div class="total-value negative">')).toBe(true);
+    expect(html).toContain('</div><div class="hero-line"><div class="hero-delta down">past 30 days</div></div></div>');
+  });
+
+  test('nothing for a missing top slot; a level 3 label is an h3 focus can’t land on', () => {
+    const bare = renderToStaticMarkup(<Hero id="h" label="Label" className="x-hero" figure="Figure" />);
+    expect(bare).toBe('<section class="stack hero x-hero" aria-labelledby="h"><div><h2 id="h" class="total-label">Label</h2><div class="total-value">Figure</div></div></section>');
+    const topped = renderToStaticMarkup(<Hero id="h" label="Label" level={3} className="x-hero" figure="Figure" figureClass="plan-answer" top={<div className="tag">Tag</div>} line={<p>Line</p>}><p>Child</p></Hero>);
+    expect(topped).toBe('<section class="stack hero x-hero" aria-labelledby="h"><div class="tag">Tag</div><div><h3 id="h" class="total-label">Label</h3><div class="total-value plan-answer">Figure</div><p>Line</p></div><p>Child</p></section>');
   });
 });

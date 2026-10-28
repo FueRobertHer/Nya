@@ -49,7 +49,7 @@ function useInStep() {
 export function HomeSkeleton() {
   useInStep();
   return (
-    <section className="stack net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">
+    <section className="stack hero net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">
       <div>
         <h2 id="net-worth-loading" className="total-label">
           Net worth

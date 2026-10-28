@@ -304,6 +304,22 @@ describe('the runway from stored data', () => {
       without_income: { income: 'none', runs_out: '2027-01-24', days: 93, months: 3.06, outcome: 'runs_out' },
       with_income: { income: 'ongoing', runs_out: '2027-06-05', days: 225, months: 7.39, outcome: 'runs_out' },
     });
+    // The notes word for word and in order, as before the page gathered
+    // them by kind (the screen review): a fixture with many kinds, its
+    // array taken from main.
+    expect(plain.body.notes).toEqual([
+      '2026-08 and 2026-09 may be missing transactions from Citi, so the spending, and the income, may be low.',
+      'Citi hasn’t synced since 2026-08-20, so this report may be missing some of its transactions.',
+      '1 transaction in EUR isn\'t in these totals, which are in USD.',
+      'Over these months, money went out of your checking and savings that isn’t in the spending: $200.00 in cash taken out. Categorize what was spending as such, or count it in the what-if.',
+      '1 cash account in EUR isn\'t in this runway, which is in USD.',
+      '1 expected payment in EUR isn\'t in this runway, which is in USD.',
+      'Wallet at Cash has no transactions in the last 12 months, so what you spend from it isn’t in your spending.',
+      'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.',
+      'Hidden accounts are left out, their balances and their transactions.',
+      'Your cards owe $600.00: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.',
+    ]);
+    expect(plain.body).not.toHaveProperty('note_items');
     expect(plain.body.spending.months_short).toEqual([
       { month: '2026-08', institutions: ['Citi'] },
       { month: '2026-09', institutions: ['Citi'] },
@@ -413,6 +429,13 @@ describe('the runway from stored data', () => {
     expect(body.runway).toMatchObject({ start: 0, has_cash: false, cash_accounts: [], outside: [], planned: [] });
     expect(body.runway.windows.map((w: any) => w.transactions)).toEqual([0, 0, 0]);
     expect(body.runway.notes).toContain('No checking, savings or cash on hand is in Nya, so there is no cash to start from.');
+    // The page's notes with their kinds, beside the words kept as they were.
+    expect(body.runway.note_items.map((n: any) => n.text)).toEqual(body.runway.notes);
+    expect(body.runway.note_items.find((n: any) => n.text.startsWith('No checking'))).toEqual({
+      text: 'No checking, savings or cash on hand is in Nya, so there is no cash to start from.',
+      level: 'caution',
+      kind: 'no cash to start from',
+    });
     // The API and MCP: no cash, never "covered".
     const a = (await quiet(() => api(apiRunway, 'runway'))).body;
     for (const line of [a.without_income, a.with_income]) expect(line).toMatchObject({ outcome: 'no_cash', runs_out: null, days: null, months: null });
@@ -427,6 +450,8 @@ describe('the runway from stored data', () => {
     expect(r).toMatchObject({ start: 40, has_cash: true });
     expect(r.cash_accounts.map((x: any) => x.name)).toEqual(['Wallet']);
     expect(r.notes).toContain('Health at HSA Bank is a health savings account, for health costs, so it isn’t counted as cash.');
+    expect(r.note_items.map((n: any) => n.text)).toEqual(r.notes);
+    expect(r.note_items.find((n: any) => n.text.startsWith('Health at'))?.kind).toBe('a health savings account');
     const a = (await quiet(() => api(apiRunway, 'runway', 'months=3'))).body;
     for (const line of [a.without_income, a.with_income]) expect(line).toMatchObject({ outcome: 'no_spending', runs_out: null, days: null, months: null });
     expect(a.notes[0]).toBe('There are no transactions in these months to go by, so no runway is given: link the accounts you spend from, or add their transactions.');

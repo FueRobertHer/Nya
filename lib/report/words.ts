@@ -47,7 +47,15 @@ const LOOSE: Readonly<Record<'removed_unknown' | 'own_categories' | 'own_exclusi
  * own day, and their own sentence.
  */
 export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
+  return gapItems(gaps, day).map((i) => i.text);
+}
+
+/** The same sentences, in the same order, each with the kind of gap it
+ *  says, for a page that gathers them under a line naming their kinds (the
+ *  runway, lib/report/runway-words.ts). */
+export function gapItems(gaps: readonly Gap[], day: DayFormat): { kind: Gap['kind']; text: string }[] {
   const out: string[] = [];
+  const kinds: Gap['kind'][] = [];
   const grouped = new Set<string>();
   const namesOf = (kind: Gap['kind']) => [...new Set(gaps.filter((g) => g.kind === kind).map((g) => g.institution ?? ''))];
   for (const g of gaps) {
@@ -136,8 +144,9 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         );
         break;
     }
+    while (kinds.length < out.length) kinds.push(g.kind);
   }
-  return out;
+  return out.map((text, i) => ({ kind: kinds[i], text }));
 }
 
 /** Where an institution's transactions begin, in words: on the day its own

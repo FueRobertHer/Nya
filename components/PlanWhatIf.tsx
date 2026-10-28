@@ -19,6 +19,7 @@ import { EventForm, type Checked } from './PlanEvents';
 import { scenarioOutcome } from './PlanScenarios';
 import { chevron, RIGHT } from './ActivityBar';
 import { EVENT_PART_TEXT } from './plan-scenario-text';
+import { askAgesText } from './plan-text';
 import type { ScenarioClient, ScenariosState } from './plan-scenarios';
 import { WHAT_IF_TEMPLATES, fiWhen, lifeChoiceText, previewText, whatIfName, type FiWhen, type WhatIfTemplate } from './plan-what-if';
 import { MAX_PLAN_SCENARIOS, NO_CHANGES, resolveScenario } from '@/lib/fire/scenarios';
@@ -54,6 +55,10 @@ export function WhatIfCard({
   canOpen,
   money,
   onOpen,
+  onAskAge,
+  reloading = false,
+  askRef,
+  firstRef,
 }: {
   /** The card is drawn: your plan is shown. Its sheet stays mounted either
    *  way, so one closing as its scenario opens slides out. */
@@ -75,6 +80,16 @@ export function WhatIfCard({
   money: (n: number) => string;
   /** Opens a scenario under the scenario bar. */
   onOpen: (id: string) => void;
+  /** Opens the Ages sheet (the same as the ask under the answer), from the
+   *  prompt that leads the card while your age isn't typed. */
+  onAskAge?: () => void;
+  /** The plan is being read again: the prompt does nothing meanwhile. */
+  reloading?: boolean;
+  /** The prompt, for focus to come back to as the sheet closes. */
+  askRef?: (el: HTMLElement | null) => void;
+  /** Where focus goes once the age is saved and the prompt is gone: the
+   *  first life choice when it can be tried, otherwise the card's title. */
+  firstRef?: (el: HTMLElement | null) => void;
 }) {
   const [template, setTemplate] = useState<WhatIfTemplate | null>(null);
   // What the sheet shows while it slides out, and a new form each time.
@@ -153,18 +168,33 @@ export function WhatIfCard({
       {shown && (
         <section className="card plan-what-if" aria-labelledby="plan-what-if-title">
           <div className="card-header">
-            <h3 id="plan-what-if-title">What if…</h3>
+            <h3 id="plan-what-if-title" tabIndex={-1} ref={canTry ? undefined : firstRef}>
+              What if…
+            </h3>
           </div>
           <div className="stack">
             <p className="helper">Try a life choice with your own figures. It becomes a scenario, and your plan stays as it is.</p>
-            <div className="chip-row" role="group" aria-label="Try a life choice">
-              {WHAT_IF_TEMPLATES.map((t) => (
-                <button key={t.id} type="button" className="chip" aria-haspopup="dialog" onClick={() => pick(t)} disabled={!canTry}>
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            {noAge && <p className="helper">Type your age first (Ages, under Your figures): a life choice is placed by age.</p>}
+            {/* Why the choices are off, read before them (since the screen
+                review): your age first, with the same ask as the answer's,
+                opening the same Ages sheet. */}
+            {noAge && (
+              <div>
+                <p className="helper">A life choice is placed by age.</p>
+                {onAskAge && (
+                  <button
+                    type="button"
+                    className="btn ghost hero-ask"
+                    ref={askRef}
+                    aria-disabled={reloading ? 'true' : undefined}
+                    onClick={() => {
+                      if (!reloading) onAskAge();
+                    }}
+                  >
+                    {askAgesText('age')}
+                  </button>
+                )}
+              </div>
+            )}
             {!planCurrencyKnown ? (
               <p className="helper">Say which currency your plan’s figures are in first (above): a scenario’s amounts are in it.</p>
             ) : (
@@ -186,6 +216,13 @@ export function WhatIfCard({
               </div>
             )}
             {ready && full && <p className="helper">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one in Scenarios to try another.</p>}
+            <div className="chip-row" role="group" aria-label="Try a life choice">
+              {WHAT_IF_TEMPLATES.map((t, i) => (
+                <button key={t.id} type="button" className="chip" aria-haspopup="dialog" onClick={() => pick(t)} disabled={!canTry} ref={i === 0 && canTry ? firstRef : undefined}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
           {ready && list.length > 0 && (
             <ul className="list-rows" aria-label="Your scenarios">

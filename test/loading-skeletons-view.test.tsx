@@ -31,7 +31,7 @@ describe('Home while it loads', () => {
   const html = renderToStaticMarkup(<HomeSkeleton />);
 
   test('the Net worth card, busy, its title in words and its figures as placeholders', () => {
-    expect(html).toContain('<section class="stack net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">');
+    expect(html).toContain('<section class="stack hero net-worth-hero" aria-busy="true" aria-labelledby="net-worth-loading">');
     expect(html).toContain('<h2 id="net-worth-loading" class="total-label">Net worth</h2>');
     expect(html).toContain('<p class="visually-hidden" role="status">Loading</p>');
     // No figure, and nothing a screen reader reads but the title and the status.

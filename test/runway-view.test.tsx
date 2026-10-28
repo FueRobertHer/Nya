@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { RunwayView, SavedScenarios, lastsWords, scenarioToSave } from '@/components/RunwayReport';
-import { whatIfWords } from '@/lib/report/runway-words';
-import { reportDay } from '@/components/ReportView';
+import { runwayCaveatItems, whatIfWords } from '@/lib/report/runway-words';
+import { reportDay, reportTime } from '@/components/ReportView';
 import { parseRunwayScenario } from '@/lib/report/runway-scenarios';
 import { YearOverYearView, pctWords } from '@/components/YearOverYearReport';
 import { reportChoice } from '@/components/ReportsPage';
@@ -62,6 +62,8 @@ function runway(over: Partial<RunwayReport> = {}): RunwayReport {
   };
 }
 const three = (over: Partial<RunwayWhatIf> = {}): RunwayWhatIf => ({ ...DEFAULT_WHAT_IF, months: 3, ...over });
+/** The page's own formats (components/RunwayReport.tsx FORMATS). */
+const PAGE = { day: reportDay, time: (iso: string) => reportTime(iso, 'America/New_York'), month: (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' }) };
 const draw = (r: RunwayReport = runway(), w: RunwayWhatIf = three()) => renderToStaticMarkup(<RunwayView runway={r} projection={projectRunway(r, w)} />);
 
 describe('the runway, drawn', () => {
@@ -83,9 +85,11 @@ describe('the runway, drawn', () => {
     expect(t).toContain('With your income, 225 days, to around Jun 4, 2027; runs out around Jun 5, 2027. An estimate.');
     expect(t).toContain('Worked out with spending over the last 3 full months and what you planned in.');
     // The chart: both lines, and the day each runs out marked.
-    const html = draw();
-    expect(html.match(/<path d="M/g)?.length).toBe(2);
-    expect(html.match(/<circle /g)?.length).toBe(2);
+    const chart = draw().slice(draw().indexOf('class="runway-chart"'));
+    expect(chart.match(/<path d="M/g)?.length).toBe(2);
+    expect(chart.match(/<circle /g)?.length).toBe(2);
+    // On the page, its marks are ringed in the page's color.
+    expect(chart.match(/stroke="var\(--canvas\)"/g)?.length).toBe(2);
   });
 
   test('what it is worked out from, listed', () => {
@@ -102,7 +106,7 @@ describe('the runway, drawn', () => {
     expect(t).toContain('Money out as the Activity tab counts it: $9,200.00');
   });
 
-  test('what it can’t see, said first', () => {
+  test('what it can’t see, said under the answer: every note in full, in amber', () => {
     const t = text(draw());
     expect(t).toContain('What it can’t see:');
     expect(t).toContain('Aug 2026 may be missing transactions from Citi, so the spending, and the income, may be low.');
@@ -112,6 +116,90 @@ describe('the runway, drawn', () => {
     expect(t).toContain('Cash inside investment accounts');
     // The window it reads: July isn't short.
     expect(text(draw(runway(), three({ months: 12 })))).toContain('Aug 2026 may be missing');
+  });
+
+  // The screen review: the answer first. The months are the report's hero, on
+  // the page, with what it can't see right under them, then the cash and the
+  // line with income, the chart, and the what-if.
+  test('the months first, as the hero; then what it can’t see; then the cash, the line with income and the chart; then the what-if', () => {
+    const html = renderToStaticMarkup(<RunwayView runway={runway()} projection={projectRunway(runway(), three())} controls={<div className="card no-print runway-controls">What-if</div>} />);
+    expect(html).toContain('<section class="stack hero runway-hero" aria-labelledby="runway-hero-title"><div><h2 id="runway-hero-title" class="total-label">Without income</h2><div class="total-value">3.0 months</div>');
+    expect(html).not.toMatch(/class="[^"]*\bcard\b[^"]*"[^>]*>(?:(?!What-if).)*runway-hero/);
+    const order = ['runway-hero-title', '3.0 months', 'If your income stopped, your cash would last 93 days', 'notice-summary', 'Cash now', 'With your income', 'class="runway-chart"', 'What-if', 'What it is worked out from'].map((s) => html.indexOf(s));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The what-if is in the first page, never a page of its own between two.
+    const first = html.slice(0, html.indexOf('</section><section'));
+    expect(first).toContain('What-if');
+    // The strip is two figures now, the months being the hero.
+    expect(html).toContain('<div class="report-bottom-line runway-bottom-line">');
+    expect(html.match(/<div class="report-figure">/g)?.length).toBe(2);
+  });
+
+  test('on screen, every note a caution, two or more on one amber line that opens to each in full; on paper, every one in the box, in the same order', () => {
+    const html = draw();
+    const items = runwayCaveatItems(runway(), projectRunway(runway(), three()), PAGE);
+    expect(items.length).toBeGreaterThan(1);
+    expect(items.every((c) => c.level === 'caution')).toBe(true);
+    // The screen: no critical notice, one gathered line in amber.
+    const screen = html.slice(html.indexOf('<div class="no-print">'), html.indexOf('runway-print-caveats'));
+    expect(screen).not.toContain('notice critical');
+    expect(screen).toMatch(new RegExp(`<details class="notice-summary"><summary class="notice caution">.{0,600}${items.length} notes: months that may be short, a bank not syncing, another currency left out and \\d+ more`));
+    for (const c of items) expect(text(screen)).toContain(text(c.text));
+    // Paper: the box under the months, with every note as a line, in order.
+    const paper = html.slice(html.indexOf('runway-print-caveats'));
+    expect(paper.startsWith('runway-print-caveats report-status-short" role="note"><p class="report-headline">What it can’t see:</p>')).toBe(true);
+    const lines = [...paper.slice(0, paper.indexOf('</ul>')).matchAll(/<li>(.*?)<\/li>/g)].map((m) => text(m[1]).trim());
+    expect(lines).toEqual(items.map((c) => text(c.text).trim()));
+    // Inside the hero, so the notices on the page keep their edge.
+    expect(html.indexOf('runway-print-caveats')).toBeLessThan(html.indexOf('Cash now'));
+  });
+
+  test('one note is said in full; none says so, on screen and on paper', () => {
+    const one = runway({ gaps: RUNWAY_WINDOWS.map((months) => ({ months, gaps: [] })), notes: [], owed_on_cards: 0 });
+    const r1 = { ...one, windows: one.windows.map((w) => ({ ...w, short: [], left_out_text: null, transfers_out: 0, cash_out: 0, card_payments: [] })) };
+    const lone = runwayCaveatItems(r1, projectRunway(r1, three()), { day: reportDay, time: (iso) => iso, month: (m) => m });
+    const shared = { ...r1, shared_bills: 1 };
+    const html1 = draw(shared);
+    expect(lone).toEqual([]);
+    expect(html1).toContain('<div class="notice caution">');
+    expect(html1).not.toContain('notice-summary');
+    expect(text(html1)).toContain('1 bill is shared with others: only your part of it is added on its dates, as your spending counts your part.');
+    const none = text(draw(r1));
+    expect(none.match(/Nothing is known to be missing from it\./g)?.length).toBe(2);
+  });
+
+  test('the read’s own notes keep their kinds, and a runway read before it sent them still says each', () => {
+    const noted = runway({
+      notes: ['Your accounts at Ally couldn’t be read, so any cash there isn’t in this.', 'Hidden accounts are left out, their balances and their transactions.'],
+      note_items: [
+        { text: 'Your accounts at Ally couldn’t be read, so any cash there isn’t in this.', level: 'caution', kind: 'accounts not read' },
+        { text: 'Hidden accounts are left out, their balances and their transactions.', level: 'caution', kind: 'hidden accounts' },
+      ],
+    });
+    const f = { day: reportDay, time: (iso: string) => iso, month: (m: string) => m };
+    const kinds = runwayCaveatItems(noted, projectRunway(noted, three()), f).map((c) => c.kind);
+    expect(kinds).toContain('accounts not read');
+    expect(kinds).toContain('hidden accounts');
+    const old = runwayCaveatItems(runway(), projectRunway(runway(), three()), f);
+    expect(old.find((c) => c.text.startsWith('Cash inside investment accounts'))?.kind).toBe('what Nya can’t see');
+    // Unread cash is a caution, as the box said it, never lowered or raised.
+    expect(draw(noted)).not.toContain('notice critical');
+  });
+
+  test('the screen hides the paper’s box before any print rule, and the print rules size the months over the report’s headings', () => {
+    const css = readFileSync(join(ROOT, 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const print = css.indexOf('@media print');
+    const screen = css.indexOf('@media screen {');
+    expect(screen).toBeGreaterThan(-1);
+    expect(screen).toBeLessThan(print);
+    const block = css.slice(screen, print);
+    expect(block).toMatch(/\.runway-print-caveats\s*\{\s*display: none;\s*\}/);
+    expect(block).toMatch(/\.runway-report \.report-first\s*\{[^}]*background: none/);
+    // Never hidden in print: no rule after the first print block names it.
+    expect(css.slice(print)).not.toContain('.runway-print-caveats');
+    expect(css.slice(print)).toMatch(/\.report \.runway-hero \.total-value\s*\{[^}]*font-size: 20pt/);
+    expect(css.slice(print)).toMatch(/\.report \.runway-hero \.total-label\s*\{[^}]*font-size: 9pt/);
   });
 
   // Look and feel, step 4: brass beside coral is about 1.3:1, so without
@@ -182,7 +270,7 @@ describe('the runway, drawn', () => {
     expect(t).toContain('Without income Not known');
     expect(t).not.toContain('Doesn’t run out');
     expect(t).not.toContain('Nothing is known to be missing');
-    expect(draw(r)).not.toContain('<svg');
+    expect(draw(r)).not.toContain('runway-chart');
   });
 
   test('income that stopped on a day gone is labelled so, never as income', () => {

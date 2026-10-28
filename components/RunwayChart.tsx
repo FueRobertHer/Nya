@@ -150,7 +150,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
         <path d={geo.without} fill="none" stroke="var(--down)" strokeWidth={2} strokeDasharray={WITHOUT_DASH} strokeLinejoin="round" strokeLinecap="round" />
         {marks.map((m) => {
           const p = points.find((q) => q.date === m.date)!;
-          return <circle key={m.key} cx={x(days(m.date))} cy={y(p[m.key])} r={4} fill={m.color} stroke="var(--card)" strokeWidth={2} />;
+          return <circle key={m.key} cx={x(days(m.date))} cy={y(p[m.key])} r={4} fill={m.color} stroke="var(--canvas)" strokeWidth={2} />;
         })}
         {shown && <line x1={x(days(shown.date))} x2={x(days(shown.date))} y1={PAD_TOP} y2={H - PAD_BOTTOM} stroke="var(--border-strong)" strokeWidth={1} />}
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 6}>
