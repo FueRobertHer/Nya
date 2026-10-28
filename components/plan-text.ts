@@ -151,14 +151,27 @@ export function askAgesText(ask: NonNullable<FiHeadline['ask']>): string {
  *  formulasTake), where the FI number says which and where to change them. */
 export const ASSUMPTIONS_NEED = 'Needs other assumptions';
 
+/** Said in place of a figure the spending isn't there for. */
+export const SPENDING_NEED = 'Needs your annual spending';
+
 /** What a figure resting on the FI number waits for, said as its value in
- *  place of "--" (the Plan's answer and its At age row): other assumptions,
+ *  place of "--" (the Plan's answer): other assumptions,
  *  the spending, or the invested assets or savings that aren't measured or
  *  aren't there. Null when nothing is missing. `takes`: the saved rates can
  *  be worked with. */
 export function figuresNeed(view: Pick<FiView, 'fiNumber' | 'spending' | 'savings' | 'assets'>, takes: boolean): string | null {
   if (!takes) return ASSUMPTIONS_NEED;
-  if (view.fiNumber === null) return 'Needs your annual spending';
+  if (view.fiNumber === null) return SPENDING_NEED;
+  return projectionNeed(view, takes);
+}
+
+/** What a balance projected from today's invested assets and savings waits
+ *  for (the Plan's balance at the stop age, lib/fire/plan.ts projectFrom),
+ *  which never rests on the spending: other assumptions, or the invested
+ *  assets or savings that aren't measured or aren't there. Null when nothing
+ *  is missing. */
+export function projectionNeed(view: Pick<FiView, 'savings' | 'assets'>, takes: boolean): string | null {
+  if (!takes) return ASSUMPTIONS_NEED;
   const assetsOff = view.assets.source === 'unmeasured';
   const savingsOff = view.savings.source === 'unmeasured';
   if (assetsOff && savingsOff) return 'Needs your invested assets and savings';
@@ -175,7 +188,7 @@ export function coastNeed(ages: { age: number | null; targetAge: number | null }
   if (ages.age === null && ages.targetAge === null) return 'Needs your ages';
   if (ages.age === null) return 'Needs your age';
   if (ages.targetAge === null) return 'Needs your stop age';
-  return figuresNeed(view, takes) ?? 'Needs your annual spending';
+  return figuresNeed(view, takes) ?? SPENDING_NEED;
 }
 
 /** What savings from bank data can't see, said the same way wherever a

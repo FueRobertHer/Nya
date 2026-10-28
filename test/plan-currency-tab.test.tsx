@@ -644,9 +644,9 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     const tab = await render({ institutions: dollars, txns: highEarner });
     expect(tab.text()).toMatch(/Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
     // The answer names what it needs; the line on the FI number says why,
-    // once (no line under the answer to say it again).
-    expect(tab.text()).toContain('Financial independenceNeeds your annual spendingAdd your age and when you’d like to stopNeeds your annual spending, which isn’t measured (below).Coast FI');
-    expect(tab.text().match(/Needs your annual spending, which isn’t measured/g)?.length).toBe(1);
+    // once, without the need again.
+    expect(tab.text()).toContain('Financial independenceNeeds your annual spendingAdd your age and when you’d like to stopYour annual spending isn’t measured (below).Coast FI');
+    expect(tab.text().match(/Needs your annual spending/g)?.length).toBe(1);
     expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
     expect(tab.text()).not.toContain('connect accounts with transactions');
     expect(tab.text()).not.toContain('$1,097');

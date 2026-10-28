@@ -369,11 +369,26 @@ describe('the FI card', () => {
     expect(t).toContain('Needs your annual spending');
     expect(text(figureRow(html, 'Annual spending'))).toContain('Annual spending Not enough transactions yet --');
     // The answer and Coast FI name what they need, never "--" (since the
-    // screen review); the line on the FI number says how, once.
-    expect(t).toContain('Financial independence Needs your annual spending Needs your annual spending: connect accounts with transactions, or type it below.');
+    // screen review); the line on the FI number under it says how, without
+    // saying the need again.
+    expect(t).toContain('Financial independence Needs your annual spending Connect accounts with transactions, or type it below.');
+    expect(t.match(/Needs your annual spending/g)?.length).toBe(1);
     expect(t).toContain('Coast FI Needs your ages');
     expect(t.slice(0, t.indexOf('Your figures'))).not.toContain('--');
     expect(t).not.toContain('$0');
+  });
+
+  // The balance at the stop age is projected from the invested assets and
+  // savings alone (lib/fire/plan.ts projectFrom): it never waits for the
+  // spending, and names only what it does wait for.
+  test('the balance at the stop age needs only the invested assets and savings, never the spending', () => {
+    const p = plan({ age: 40, targetAge: 55, spending: null });
+    const unmeasured = card(p, { m: { ...measured, spending: null, unmeasured: ['assets'] } });
+    expect(unmeasured).toContain('At age 55 Needs your invested assets Your invested assets aren’t measured (below)');
+    expect(unmeasured).not.toMatch(/At age 55 Needs your annual spending/);
+    const measuredAssets = card(p, { m: { ...measured, spending: null } });
+    expect(measuredAssets).toContain('Financial independence Needs your annual spending');
+    expect(measuredAssets).toMatch(/At age 55 \$[\d,]+ Projected growing a steady 5% a year after inflation/);
   });
 
   test('Coast FI says which age it needs', () => {

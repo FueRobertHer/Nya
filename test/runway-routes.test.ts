@@ -373,6 +373,38 @@ describe('the runway from stored data', () => {
     }
   });
 
+  test('the API’s notes with a card Nya doesn’t see and a connection not read: word for word and in order, as before the page gathered them', async () => {
+    const card = { primary: 'LOAN_PAYMENTS', detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT', confidence_level: 'VERY_HIGH' };
+    await seed([on('2026-08-12', 'amex-pay', 'acc_chk', 450, { name: 'AMEX EPAYMENT', category: 'loan payments', personal_finance_category: card })]);
+    // A connection whose accounts haven't been loaded: its cash isn't in it.
+    await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt(TEST_CTX, 'a5') });
+    const { body } = await quiet(() => api(apiRunway, 'runway', 'months=3'));
+    // Taken from main: a gap, a card's payment and unread cash among them.
+    expect(body.notes).toEqual([
+      '2026-07, 2026-08 and 2026-09 may be missing transactions from NewBank and Citi, so the spending, and the income, may be low.',
+      'Doesn’t include NewBank: its transactions couldn’t be loaded, so this report may be incomplete.',
+      'Citi hasn’t synced since 2026-08-20, so this report may be missing some of its transactions.',
+      '1 transaction in EUR isn\'t in these totals, which are in USD.',
+      'AMEX EPAYMENT from Checking looks like a card’s payment, and no card in Nya shows it arriving, so its $450.00 over these months counts as spending here: what you charge on that card isn’t in Nya. If the card is in Nya, it is counted twice.',
+      'Over these months, money went out of your checking and savings that isn’t in the spending: $200.00 in cash taken out. Categorize what was spending as such, or count it in the what-if.',
+      'Your accounts at NewBank couldn’t be read, so any cash there isn’t in this.',
+      '1 cash account in EUR isn\'t in this runway, which is in USD.',
+      '1 expected payment in EUR isn\'t in this runway, which is in USD.',
+      'Wallet at Cash has no transactions in the last 12 months, so what you spend from it isn’t in your spending.',
+      'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.',
+      'Hidden accounts are left out, their balances and their transactions.',
+      'Your cards owe $600.00: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.',
+    ]);
+    // The page's own read says the same words, with their kinds beside them.
+    const page = (await quiet(() => get(runwayRoute, '/api/reports/runway', 'tz=UTC'))).body.runway;
+    expect(page.note_items.map((n: any) => n.text)).toEqual(page.notes);
+    expect(page.note_items.find((n: any) => n.text.startsWith('Your accounts at NewBank'))).toEqual({
+      text: 'Your accounts at NewBank couldn’t be read, so any cash there isn’t in this.',
+      level: 'caution',
+      kind: 'accounts not read',
+    });
+  });
+
   test('a refund filed in your categories lowers the spending and isn’t income, while money in stays the Activity tab’s', async () => {
     await seed([on('2026-09-12', 'refund', 'acc_chk', -150, { name: 'Shop refund' })]);
     const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;

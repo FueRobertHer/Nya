@@ -3492,6 +3492,11 @@ button.danger-outline {
    charts draw at (150 to 340, components/NetWorthChart.tsx's cardFrame and
    components/ForecastChart.tsx). */
 .upcoming-skeleton-chart,
+.plan-skeleton-answer {
+  width: 6em;
+  max-width: 100%;
+}
+
 .plan-skeleton-chart {
   width: 100%;
   height: auto;
@@ -5599,6 +5604,16 @@ button.import-choice {
 
   .runway-print-caveats {
     display: none;
+  }
+
+  /* Its notices on the page keep the hero's edge (.hero .notice) with no
+     cash to start from too, where there is no hero to hold them. */
+  .runway-report .report-first .notice {
+    overflow-wrap: anywhere;
+  }
+
+  .runway-report .report-first .notice:not(.critical) {
+    border-color: var(--border-subtle);
   }
 }
 

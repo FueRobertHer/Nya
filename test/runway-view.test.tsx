@@ -196,6 +196,8 @@ describe('the runway, drawn', () => {
     const block = css.slice(screen, print);
     expect(block).toMatch(/\.runway-print-caveats\s*\{\s*display: none;\s*\}/);
     expect(block).toMatch(/\.runway-report \.report-first\s*\{[^}]*background: none/);
+    // Its notices keep their edge on the page, with no hero to hold them too.
+    expect(block).toMatch(/\.runway-report \.report-first \.notice:not\(\.critical\)\s*\{[^}]*border-color: var\(--border-subtle\)/);
     // Never hidden in print: no rule after the first print block names it.
     expect(css.slice(print)).not.toContain('.runway-print-caveats');
     expect(css.slice(print)).toMatch(/\.report \.runway-hero \.total-value\s*\{[^}]*font-size: 20pt/);
@@ -302,6 +304,12 @@ describe('the runway, drawn', () => {
     const t = text(draw(empty));
     expect(t).toContain('A runway starts from your checking, savings and cash on hand.');
     expect(t).not.toContain('Without income');
+    // No hero, and its notes still in the first part, on the page, where
+    // its notices keep their edge (the CSS test below).
+    const html = draw(empty);
+    expect(html).not.toContain('runway-hero');
+    const first = html.slice(html.indexOf('report-first'), html.indexOf('</section>'));
+    expect(first).toContain('class="notice caution"');
   });
 
   test('with amounts hidden: no figure, and the months and days stay, since they say no amount', () => {

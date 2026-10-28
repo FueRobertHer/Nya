@@ -75,6 +75,8 @@ import {
   askAgesText,
   coastNeed,
   figuresNeed,
+  projectionNeed,
+  SPENDING_NEED,
   fiHeadline,
 } from './plan-text';
 import { Hero } from './Hero';
@@ -1085,7 +1087,7 @@ export default function PlanTab({
   const panel = (s: PlanSegment, body: React.ReactNode) => (
     <div className="plan-panel" id={planPanelId(s)} role="tabpanel" aria-labelledby={planTabId(s)} hidden={s !== segment} ref={s === segment ? panelRef : undefined}>
       {firstLoad ? (
-        <PlanPanelSkeleton />
+        <PlanPanelSkeleton segment={s} />
       ) : (
         <div className="stack loose">{body}</div>
       )}
@@ -1647,7 +1649,13 @@ export function FiCard({
             ? `FI number ${money(view.fiNumber)}: ${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
             : !takes
               ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
-              : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
+              : // With the answer just over it saying "Needs your annual
+                // spending", this says only why, or how, not that again.
+                head.headline === SPENDING_NEED
+                ? view.spending.source === 'unmeasured'
+                  ? 'Your annual spending isn’t measured (below).'
+                  : 'Connect accounts with transactions, or type it below.'
+                : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
       {scenarioNotes.map((n) => (
@@ -1694,7 +1702,9 @@ export function FiCard({
         {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && plan.targetAge !== null && (
           <Row
             label={`At age ${plan.targetAge}`}
-            value={notWorkedOut ? (figuresNeed(view, takes) ?? 'Not worked out') : 'Not projected'}
+            // Projected from the invested assets and savings alone, so what
+            // it needs is one of them, never the spending.
+            value={notWorkedOut ? (projectionNeed(view, takes) ?? 'Not worked out') : 'Not projected'}
             note={(notWorkedOut ?? stopShort) as string}
           />
         )}
