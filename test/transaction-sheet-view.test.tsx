@@ -352,9 +352,14 @@ describe('a transaction’s sheet', () => {
     act(() => click(v.button('Looks right', v.dialog()!)!));
     await settle();
     expect(status()).toBe('Category kept: groceries.');
-    // Another category chosen afterwards: nothing says it was kept.
-    const household = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_name: 'household' } : t);
+    // Another category picked afterwards: nothing says it was kept.
+    act(() => type(v.field('Category')!, cat('household')));
+    const household = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_id: cat('household'), category_name: 'household' } : t);
     v.render({ onRecategorize, onToggleExcluded, txns: served().map(household) });
+    expect(status()).toBe('');
+    // Nor when the kept one is picked again: that is a pick, not Looks right.
+    act(() => type(v.field('Category')!, cat('groceries')));
+    v.render({ onRecategorize, onToggleExcluded, txns: served().map(low) });
     expect(status()).toBe('');
     // Exclude afterwards is said, not hidden behind the earlier answer.
     const exclude = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'list-row' && e.textContent.startsWith('Exclude from'))[0]!;
