@@ -161,6 +161,21 @@ describe('the forecast', () => {
     expect(t).toContain('Warns below $100.00');
   });
 
+  // The screen review: ten accounts listed in seven lines.
+  test('two accounts are named where it starts; from three on it counts them, and names them behind Which accounts', () => {
+    const two = [chase({ accounts: [chase().accounts[0], { account_id: 'sav', name: 'Savings', type: 'depository', subtype: 'savings', balance: 100, currency: 'USD' }] })];
+    expect(card({ institutions: two })).toContain('Starts from $1,000.00 in Checking and Savings at Chase.');
+    const three = [...two, chase({ institution_name: 'Ally', item_id: 'item_2', accounts: [{ account_id: 'ally', name: 'Online Savings', type: 'depository', subtype: 'savings', balance: 50, currency: 'USD' }] })];
+    const html = renderToStaticMarkup(<ForecastCard institutions={three} series={series()} planned={EMPTY_PLANNED} today={TODAY} balancesAsOf="2026-10-07T15:12:00" balancesSaved />);
+    const helper = html.slice(html.indexOf('<p class="helper">Starts from'), html.indexOf('</p>', html.indexOf('<p class="helper">Starts from')));
+    expect(text(helper).trim()).toMatch(/^Starts from \$1,050\.00 in 3 cash accounts\. Those are the balances saved on Oct 7 at 3:12\sPM, the last time they loaded; anything since isn't in it\. Expected to end near/);
+    // The names, behind the disclosure that follows the line, never inside it.
+    const why = html.slice(html.indexOf('<details class="why"><summary>Which accounts</summary>'));
+    expect(why).not.toBe(html);
+    expect(text(why)).toContain('Checking and Savings at Chase and Online Savings at Ally.');
+    expect(helper).not.toContain('<details');
+  });
+
   test('starts from the balance less what is still pending, and says when the balances are from', () => {
     const pending = [txn({ transaction_id: 'p1', amount: 143.27, pending: true }), txn({ transaction_id: 'p2', amount: 20, pending: true, account_name: 'Sapphire', account_type: 'credit' })];
     const t = card({ txns: pending, balancesAsOf: '2026-10-09T14:15:00' });
@@ -280,7 +295,7 @@ describe('the calendar', () => {
   test('a card\'s own charge is listed on its day but not added, and says why', () => {
     const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
     const t = view({ series: spotify, txns: [] });
-    expect(t).toContain("Spotify bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
+    expect(t).toContain("Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
     expect(t).not.toContain('Expected · -$10.99');
   });
 
@@ -288,7 +303,7 @@ describe('the calendar', () => {
   test('a card whose name already says card isn’t called a card twice', () => {
     const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Plaid Credit Card', account_type: 'credit' })));
     const t = view({ series: spotify, txns: [] });
-    expect(t).toContain("Spotify bill · Monthly · on the Plaid Credit Card, not in the day's figure");
+    expect(t).toContain("Spotify Bill · Monthly · On the Plaid Credit Card, not in the day's figure");
     expect(t).not.toContain('Card card');
   });
 
@@ -301,8 +316,8 @@ describe('the calendar', () => {
       ],
     });
     expect(t).toContain('Posted · -$30.00');
-    expect(t).toContain("Ramen in JPY, not in the day's figure");
-    expect(t).toContain("Work trip excluded, not in the day's figure");
+    expect(t).toContain("Ramen In JPY, not in the day's figure");
+    expect(t).toContain("Work trip Excluded, not in the day's figure");
   });
 
   test('each day\'s cell carries its figure: what posted before today, what is expected after', () => {

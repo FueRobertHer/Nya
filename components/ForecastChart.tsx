@@ -26,6 +26,7 @@
 import { useMemo, useState, type PointerEvent } from 'react';
 import type { Forecast } from '@/lib/forecast';
 import { formatMoney, signedMoney, spoken } from '@/lib/format';
+import { shownName } from '@/lib/merchant-name';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { LegendLine } from './LegendLine';
@@ -263,7 +264,7 @@ export default function ForecastChart({
             ? moves.length > 0
               ? `${moves
                   // One in another currency: its own amount, and what it counts as here.
-                  .map((e) => (e.own ? `${e.name} ${signedMoney(e.own.amount, e.own.currency)} (${signedMoney(e.amount, currency)})` : `${e.name} ${signedMoney(e.amount, currency)}`))
+                  .map((e) => (e.own ? `${shownName(e)} ${signedMoney(e.own.amount, e.own.currency)} (${signedMoney(e.amount, currency)})` : `${shownName(e)} ${signedMoney(e.amount, currency)}`))
                   .join(' · ')}${
                   (altDay ?? day).low < (altDay ?? day).balance && moves.some((e) => e.amount < 0)
                     ? ` · as low as ${formatMoney((altDay ?? day).low, currency)} before the money in`

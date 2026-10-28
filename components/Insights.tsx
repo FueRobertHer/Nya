@@ -16,6 +16,7 @@ import type { FxTable } from '@/lib/fx/rates';
 import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
 import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { shownName } from '@/lib/merchant-name';
 import { useAmountsHidden } from './hide-amounts';
 import { Masked } from './HideAmounts';
 import { SpendingNotes } from './NeedsAttention';
@@ -414,7 +415,7 @@ export default function Insights({
         const amount = `~${formatMoney(b.amount, b.currency ?? displayCurrency)}`;
         out.push({
           key: `bill-${b.name}`,
-          text: late ? `Expected: ${b.name} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${b.name} (${amount}) around ${day(due)}`,
+          text: late ? `Expected: ${shownName(b)} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${shownName(b)} (${amount}) around ${day(due)}`,
         });
         if (seen.size >= 2) break;
       }
@@ -468,7 +469,7 @@ export default function Insights({
         const own = bankRows(txns, { groups: 'keep' }).find((t) => t.transaction_id === biggest.transaction_id) ?? biggest;
         out.push({
           key: 'biggest',
-          text: `Biggest purchase this month: ${own.name}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,
+          text: `Biggest purchase this month: ${shownName(own)}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,
         });
       }
     }

@@ -297,10 +297,11 @@ describe('Budgets: the bar and its segments', () => {
     // Once loaded, Goals is the same panel, its goals the same: a goal being
     // added while the rest loaded isn't lost.
     const goals = v.panelOf('Goals');
-    const add = v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add Goal')[0];
+    const add = v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add goal')[0];
+    expect(add).toBeDefined();
     v.render({ loading: false });
     expect(v.panelOf('Goals') === goals).toBe(true);
-    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add Goal')[0] === add).toBe(true);
+    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add goal')[0] === add).toBe(true);
     expect(v.pick()).toBeDefined();
     v.unmount();
   });

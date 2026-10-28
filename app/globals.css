@@ -326,7 +326,7 @@ h1,
 }
 
 .sub {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 14px;
   margin-bottom: 24px;
 }
@@ -342,7 +342,7 @@ h1,
 }
 
 .total-label {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -1404,7 +1404,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 :where(input, select, textarea)::placeholder {
-  color: var(--muted);
+  color: var(--text-2);
   opacity: 1;
 }
 
@@ -1452,7 +1452,7 @@ td {
 }
 
 th {
-  color: var(--muted);
+  color: var(--text-2);
   font-weight: 500;
   font-size: var(--fs-1);
 }
@@ -1502,22 +1502,20 @@ th.num {
 
 .inst-total {
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 14px;
 }
 
 .type-tag select {
   font-size: 12px;
-  text-transform: none;
   padding-top: 4px;
   padding-bottom: 4px;
   margin-left: 4px;
 }
 
 .type-tag {
-  color: var(--muted);
-  font-size: 11px;
-  text-transform: uppercase;
+  color: var(--text-2);
+  font-size: var(--fs-1);
 }
 
 .top-row {
@@ -1577,11 +1575,9 @@ button.danger {
   padding: 2px 7px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  font-weight: 500;
   vertical-align: middle;
 }
 
@@ -1609,7 +1605,7 @@ button.danger {
 }
 
 .manual-id code {
-  font-size: 11px;
+  font-size: var(--fs-1);
   word-break: break-all;
   color: var(--text);
 }
@@ -1653,7 +1649,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .as-of {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   margin-top: 6px;
 }
@@ -1833,7 +1829,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .empty-note {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 14px;
   margin: 12px 0 0;
 }
@@ -1916,7 +1912,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .chart-readout-date {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -1944,7 +1940,7 @@ button:disabled:where(:not([class*="cl-"])) {
 /* Money added vs growth, under the readout on an investment account's chart.
    Tabular figures so the two amounts don't jitter while scrubbing. */
 .chart-readout-split {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   margin: -4px 0 8px;
@@ -1995,13 +1991,13 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .chart-tick {
-  fill: var(--muted);
+  fill: var(--text-2);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
 .chart-xlabel {
-  fill: var(--muted);
+  fill: var(--text-2);
   font-size: 10px;
 }
 
@@ -2035,7 +2031,7 @@ button:disabled:where(:not([class*="cl-"])) {
   background: none;
   border: none;
   padding: 4px;
-  color: var(--muted);
+  color: var(--text-2);
   line-height: 0;
 }
 
@@ -2049,7 +2045,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .chart-info {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   margin-top: 8px;
 }
@@ -2064,8 +2060,8 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 .chart-note {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
   margin-top: 6px;
 }
 
@@ -2081,7 +2077,7 @@ button:disabled:where(:not([class*="cl-"])) {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .chart-legend-dot {
@@ -2146,7 +2142,6 @@ button:disabled:where(:not([class*="cl-"])) {
   flex: 0 0 34%;
   font-size: 13px;
   color: var(--text);
-  text-transform: capitalize;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2167,7 +2162,7 @@ button:disabled:where(:not([class*="cl-"])) {
 .cat-val {
   flex: 0 0 auto;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2180,7 +2175,7 @@ button:disabled:where(:not([class*="cl-"])) {
 /* --- holdings gain/loss --- */
 
 .gain {
-  font-size: 11px;
+  font-size: var(--fs-1);
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }
@@ -2249,14 +2244,14 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .trend-val {
   font-size: var(--fs-1);
-  color: var(--muted);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .trend-label {
   font-size: var(--fs-1);
-  color: var(--muted);
+  color: var(--text-2);
   padding-bottom: 2px;
 }
 
@@ -2356,7 +2351,6 @@ span.meter-fill {
   color: var(--text-2);
   background: var(--elevated);
   box-shadow: none;
-  text-transform: uppercase;
 }
 
 .txn-text {
@@ -2383,7 +2377,7 @@ span.meter-fill {
 }
 
 .rename-hint {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: var(--fs-1);
 }
 
@@ -2403,7 +2397,7 @@ span.meter-fill {
 
 .txn-detail-row dt {
   flex: 0 0 84px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .txn-detail-row dd {
@@ -2414,7 +2408,7 @@ span.meter-fill {
 
 /* Account last-4 and credit-utilization meter on the Accounts tab. */
 .acct-mask {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -2423,8 +2417,8 @@ span.meter-fill {
 }
 
 .util-label {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
 }
 
 .budget-row {
@@ -2458,12 +2452,11 @@ span.meter-fill {
 .budget-name {
   font-size: 14px;
   font-weight: 500;
-  text-transform: capitalize;
 }
 
 .budget-amounts {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2532,10 +2525,8 @@ span.meter-fill {
   padding: 2px 7px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--fs-1);
+  font-weight: 500;
   vertical-align: middle;
 }
 
@@ -2576,7 +2567,7 @@ span.meter-fill {
 }
 
 .holdings-count {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 500;
 }
@@ -2585,7 +2576,7 @@ span.meter-fill {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
@@ -2929,11 +2920,9 @@ span.meter-fill {
 }
 
 .section-label {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-2);
+  font-size: var(--fs-2);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   margin: 0 0 10px;
 }
 
@@ -2942,7 +2931,7 @@ span.meter-fill {
 }
 
 .panel-note {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.45;
   margin: 8px 0 0;
@@ -2954,7 +2943,7 @@ span.meter-fill {
   gap: 6px;
   margin-bottom: 12px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .field input {
@@ -3036,7 +3025,7 @@ span.meter-fill {
 
 .peer-item-meta {
   display: block;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 400;
   margin-top: 2px;
@@ -3045,7 +3034,7 @@ span.meter-fill {
 .peer-item .chevron {
   width: 16px;
   height: 16px;
-  color: var(--muted);
+  color: var(--text-2);
   flex-shrink: 0;
 }
 
@@ -3066,7 +3055,6 @@ span.meter-fill {
   color: var(--accent);
   font-size: 15px;
   font-weight: 700;
-  text-transform: uppercase;
 }
 
 .avatar.small {
@@ -3145,9 +3133,9 @@ button.danger-outline {
 }
 
 .pill {
-  font-size: 11px;
+  font-size: var(--fs-1);
   font-weight: 600;
-  color: var(--muted);
+  color: var(--text-2);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 2px 8px;
@@ -3170,7 +3158,7 @@ button.danger-outline {
 }
 
 .incoming-account-date {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -3189,7 +3177,7 @@ button.danger-outline {
   justify-content: space-between;
   gap: 12px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
   padding: 6px 0 0;
 }
 
@@ -3606,7 +3594,7 @@ button.danger-outline {
 
 /* Where a term came from: Plaid, typed, or still needed. */
 .payoff-source {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -3625,7 +3613,7 @@ button.danger-outline {
 
 /* The comparison: the chosen order's row in full ink, the others muted. */
 .payoff-compare td {
-  color: var(--muted);
+  color: var(--text-2);
   vertical-align: top;
 }
 
@@ -3677,7 +3665,7 @@ button.danger-outline {
 
 /* The line under a month or a debt: how long, and what it costs. */
 .payoff-sub {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 400;
   margin-top: 2px;
@@ -3740,7 +3728,7 @@ button.danger-outline {
 .download-format-note {
   display: block;
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -3957,7 +3945,6 @@ button.danger-outline {
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
-  text-transform: none;
 }
 
 .info-table th,
@@ -3996,11 +3983,9 @@ button.danger-outline {
 
 .info-status dt {
   margin-top: 12px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-2);
+  font-size: var(--fs-2);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .info-status dd {
@@ -4018,7 +4003,7 @@ button.danger-outline {
 }
 
 .trust-links a {
-  color: var(--muted);
+  color: var(--text-2);
   text-decoration: none;
 }
 
@@ -4104,7 +4089,7 @@ button.danger-outline {
   align-items: flex-start;
   gap: 12px;
   margin-top: 3px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -4130,7 +4115,7 @@ button.plan-edit {
 }
 
 button.plan-edit:disabled {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* The Plan's currency when nothing about it needs the person: one line,
@@ -4188,11 +4173,9 @@ button.plan-edit:disabled {
 
 .plan-subhead {
   margin-top: 18px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-2);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .plan-choice {
@@ -4235,7 +4218,7 @@ button.plan-edit:disabled {
 }
 
 .plan-working {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   padding: 40px 0;
   text-align: center;
@@ -4247,12 +4230,12 @@ button.plan-edit:disabled {
 }
 
 .plan-stat-label {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
 .plan-definition {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 1.4;
   margin: 6px 0 4px;
@@ -4288,7 +4271,7 @@ button.plan-edit:disabled {
 
 .plan-table-view {
   margin-top: 8px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -4340,7 +4323,6 @@ button.plan-edit:disabled {
    than running into each other on a narrow phone. */
 .plan-grid thead th {
   font-size: var(--fs-1);
-  text-transform: none;
   white-space: normal;
 }
 
@@ -4348,7 +4330,6 @@ button.plan-edit:disabled {
 .plan-grid-span {
   display: block;
   font-weight: 400;
-  text-transform: none;
 }
 
 /* A flexible rule's second figure in a cell: the lowest year's spending,
@@ -4393,7 +4374,6 @@ button.plan-edit:disabled {
 .plan-grid th.plan-grid-rate {
   color: var(--text);
   font-size: 13px;
-  text-transform: none;
 }
 
 .plan-worst,
@@ -4432,14 +4412,14 @@ button.plan-edit:disabled {
 }
 
 .plan-assumptions li {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 1.45;
   margin-top: 6px;
 }
 
 .plan-muted {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .plan-check {
@@ -4566,14 +4546,14 @@ button.plan-edit:disabled {
 /* A transaction left out of budgets and reports: still listed, marked, and
    its amount quieter, since no total counts it. */
 .excluded-tag {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
   font-style: italic;
   margin-top: 2px;
 }
 
 .num.excluded {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* --- API tokens (components/ApiTokens.tsx) --- */
@@ -4706,13 +4686,13 @@ button.plan-edit:disabled {
 
 .alloc-share {
   width: 52px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* Under a class in the drift table: how far from its target, in money. */
 .alloc-sub {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -4931,7 +4911,7 @@ button.plan-edit:disabled {
 
 .cal-dow {
   padding: 4px 0;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: var(--fs-1);
   text-align: center;
 }
@@ -4966,7 +4946,7 @@ button.plan-edit:disabled {
 }
 
 .cal-day.past .cal-num {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .cal-day.today .cal-num {
@@ -4985,7 +4965,7 @@ button.plan-edit:disabled {
   max-width: 100%;
   min-height: calc(var(--fs-1) * var(--lh-tight));
   overflow: hidden;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: var(--fs-1);
   font-variant-numeric: tabular-nums;
   line-height: var(--lh-tight);
@@ -5043,7 +5023,7 @@ button.plan-edit:disabled {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 8px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: var(--fs-1);
 }
 
@@ -5117,7 +5097,7 @@ button.import-choice {
 }
 
 .import-choice-meta {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 400;
 }
@@ -5164,7 +5144,7 @@ button.import-choice {
 }
 
 .import-row-meta {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 1.4;
   margin-top: 2px;
@@ -5182,7 +5162,7 @@ button.import-choice {
 }
 
 .import-problems li {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.45;
   padding: 4px 0;
@@ -5351,19 +5331,17 @@ button.import-choice {
   font-size: 13px;
   font-weight: 600;
   margin: 16px 0 4px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .report-kicker {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .report-meta,
 .report-note {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.45;
   margin: 6px 0 0;
@@ -5789,15 +5767,11 @@ button.rollup-toggle {
   border-radius: 6px;
 }
 
-.cat-name.rollup-name {
-  text-transform: none;
-}
-
 .rollup-caret {
   display: inline-block;
   width: 14px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
 }
 
 .rollup-child {
@@ -5805,7 +5779,7 @@ button.rollup-toggle {
 }
 
 .rollup-child .cat-name {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .cat-bar.rollup-child-bar {
@@ -5831,14 +5805,14 @@ button.cat-manage-group {
 }
 
 .cat-manage-group-name {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .cat-manage-kind {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -5866,16 +5840,14 @@ button.cat-manage-row {
 }
 
 button.cat-manage-row.archived {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .cat-manage-tag {
   flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 /* --- the rest of the download's promise: an account's OFX statement and a
@@ -6060,7 +6032,7 @@ button.tag-color.chosen {
 
 .rule-is {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 14px;
   margin-bottom: 12px;
 }
@@ -6109,7 +6081,7 @@ button.tag-suggestion.chosen {
 }
 
 .rule-row.off .rule-sentence {
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .rule-sentence {
@@ -6190,7 +6162,7 @@ button.tag-suggestion.chosen {
   border: none;
   padding: 4px 0;
   border-radius: 6px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 400;
   text-align: left;
@@ -6256,7 +6228,7 @@ button.tag-suggestion.chosen {
 
 .lifecycle-choice-note {
   display: block;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -6323,7 +6295,7 @@ button.tag-suggestion.chosen {
 }
 
 .lifecycle-note {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   margin-top: 2px;
 }
@@ -6412,7 +6384,7 @@ button.tag-suggestion.chosen {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* Underfunded: short of its target date, or nothing went in lately. The
@@ -6437,7 +6409,7 @@ button.tag-suggestion.chosen {
   gap: 8px;
   margin-bottom: 12px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .goal-check input {
@@ -6471,7 +6443,7 @@ button.tag-suggestion.chosen {
    overspending carried, the hole the next months climb out of. */
 .budget-carry {
   margin-top: 4px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -6531,7 +6503,6 @@ button.tag-suggestion.chosen {
 .pool-table th[scope='row'] {
   color: inherit;
   font-weight: 400;
-  text-transform: none;
 }
 
 .pool-uncertain {
@@ -6697,7 +6668,7 @@ button.split-small {
 }
 
 .sankey-bar {
-  fill: var(--muted);
+  fill: var(--text-2);
 }
 
 .sankey-node.in .sankey-bar,
@@ -6730,7 +6701,7 @@ button.split-small {
 }
 
 .sankey-amount {
-  fill: var(--muted);
+  fill: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
@@ -6750,7 +6721,7 @@ button.split-small {
 
 .cash-flow-table {
   margin-top: 10px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -6792,14 +6763,14 @@ button.cash-flow-show {
   font-weight: 400;
   text-align: left;
   text-decoration: underline;
-  text-decoration-color: var(--muted);
+  text-decoration-color: var(--text-2);
   text-underline-offset: 3px;
   border-radius: 4px;
 }
 
 .cash-flow-tag {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--text-2);
+  font-size: var(--fs-1);
 }
 
 /* Above the Activity list: which node's transactions it shows, and the way
@@ -6810,7 +6781,7 @@ button.cash-flow-show {
   justify-content: space-between;
   gap: 10px;
   margin-top: 10px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -6894,7 +6865,7 @@ button.cash-flow-show {
    text, wrapped to the sheet's width. */
 .weekly-summary-status {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .weekly-summary-card > button,
@@ -6982,7 +6953,7 @@ button.review-keys-toggle {
   border: none;
   padding: 4px 0;
   margin-top: 4px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 400;
   text-decoration: underline;
@@ -6998,7 +6969,7 @@ button.review-keys-toggle {
 .review-keys {
   margin: 4px 0 0;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .review-keys > div,
@@ -7040,7 +7011,7 @@ button.review-keys-toggle {
   align-items: center;
   gap: 8px;
   margin: 4px 0 8px;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -7093,7 +7064,7 @@ button.review-keys-toggle {
 
 .card-mode-position {
   flex: 1 1 auto;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -7176,7 +7147,7 @@ button.review-keys-toggle {
 }
 
 .card-mode-meta {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   margin-top: 6px;
 }
@@ -7212,7 +7183,7 @@ button.review-keys-toggle {
 }
 
 .card-mode-hint {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 12px;
   margin-top: 8px;
 }
@@ -7269,7 +7240,7 @@ button.review-keys-toggle {
 }
 
 .card-mode-end p {
-  color: var(--muted);
+  color: var(--text-2);
   margin: 0 0 20px;
 }
 
@@ -7347,7 +7318,7 @@ button.review-keys-toggle {
   margin: 12px 0 2px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .incoming-kind .peer-row {
@@ -7370,7 +7341,7 @@ button.review-keys-toggle {
 .incoming-sub {
   padding-left: 12px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .incoming-meter {
@@ -7440,7 +7411,7 @@ button.review-keys-toggle {
 
 .migration-how summary {
   cursor: pointer;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* --- bringing a download back (components/RestoreCard.tsx, RestoreBanner.tsx) --- */
@@ -7460,7 +7431,7 @@ button.review-keys-toggle {
 }
 
 .restore-list li {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.45;
   margin-bottom: 4px;
@@ -7640,7 +7611,7 @@ button.review-keys-toggle {
   content: "\203A" / "";
   display: inline-block;
   margin-left: 8px;
-  color: var(--muted);
+  color: var(--text-2);
   transition: transform 0.15s ease;
 }
 
@@ -7664,7 +7635,7 @@ button.review-keys-toggle {
 
 .inventory-figures {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
   text-align: right;
 }
@@ -7684,7 +7655,7 @@ button.review-keys-toggle {
 }
 
 .inventory-none > summary {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -7815,7 +7786,7 @@ button.review-keys-toggle {
 
 .plan-working-line {
   min-height: 0;
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -7860,7 +7831,7 @@ button.review-keys-toggle {
 
 .plan-compare-diff {
   width: 28%;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .plan-compare-detail {
@@ -7902,7 +7873,7 @@ button.review-keys-toggle {
 
 .api-change-state,
 .api-change-why {
-  color: var(--muted);
+  color: var(--text-2);
   font-size: 13px;
 }
 
@@ -8048,9 +8019,9 @@ button.attach-thumb {
   justify-content: center;
   gap: 2px;
   height: 100%;
-  font-size: 11px;
+  font-size: var(--fs-1);
   font-weight: 500;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .attach-doc-icon {
@@ -8072,7 +8043,7 @@ button.attach-thumb {
   gap: 10px;
   margin-top: 8px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .attach-progress progress {
@@ -8122,7 +8093,7 @@ button.attach-thumb {
 
 .attach-viewer-sub {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
   overflow-wrap: anywhere;
 }
 
@@ -8168,14 +8139,14 @@ button.attach-thumb {
 .attach-viewer-doc .attach-doc-icon {
   width: 56px;
   height: 56px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .attach-viewer-note {
   margin: 0;
   padding: 0 16px;
   font-size: 14px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .attach-viewer-doc .attach-viewer-note,
@@ -8223,7 +8194,7 @@ button.attach-reveal {
 
 .attach-viewer-count {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .attach-picker-list {
@@ -8257,7 +8228,7 @@ button.attach-picker-item {
 .attach-picker-day {
   font-size: 12px;
   font-weight: 400;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .receipts-filters {
@@ -8306,7 +8277,7 @@ button.receipts-item {
   overflow: hidden;
   border-radius: 6px;
   background: var(--raised);
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .receipts-thumb img {
@@ -8328,7 +8299,7 @@ button.receipts-item {
 
 .receipts-sub {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 .receipts-why {
@@ -8355,7 +8326,7 @@ button.receipts-item {
   display: block;
   margin-top: 4px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* --- stack: spacing set by the container, not by each child ---

@@ -289,6 +289,11 @@ export function ForecastView({
     (inst) => `${joinNames(included.filter((a) => a.institution === inst).map((a) => a.name))} at ${inst}`
   );
   const where = joinNames(byInstitution) || 'no account';
+  // Two accounts are named on the line; from three on it counts them, and
+  // names them behind "Which accounts" (the screen review: ten accounts ran
+  // to seven lines).
+  const listed = included.length > 2;
+  const said = listed ? `${included.length} cash accounts` : where;
   const money = (n: number) => formatMoney(n, position.currency);
 
   // The warning as typed: blank is none (only below zero warns).
@@ -388,7 +393,7 @@ export function ForecastView({
 
       <p className="helper">
         Starts from <Masked>{money(forecast.start)}</Masked>
-        <Masked>{position.pending.count > 0 ? `: ${money(position.balances)} in ${where}, less ${money(position.pending.amount)} still pending.` : ` in ${where}.`}</Masked>
+        <Masked>{position.pending.count > 0 ? `: ${money(position.balances)} in ${said}, less ${money(position.pending.amount)} still pending.` : ` in ${said}.`}</Masked>
         {balancesAsOf && balancesSaved
           ? ` Those are the balances saved on ${fmtLoaded(balancesAsOf, today)}, the last time they loaded; anything since isn't in it.`
           : balancesAsOf
@@ -396,6 +401,11 @@ export function ForecastView({
             : ''}{' '}
         Expected to end near <Masked>{money(forecast.end)}</Masked> on {fmtDay(forecast.days[forecast.days.length - 1].date)}.
       </p>
+      {listed && (
+        <Why label="Which accounts">
+          <p>{where}.</p>
+        </Why>
+      )}
       {/* What may be off about where it starts, on the figure it qualifies. */}
       <TotalCaveats items={start} />
 

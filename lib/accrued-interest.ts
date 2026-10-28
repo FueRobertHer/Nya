@@ -179,18 +179,24 @@ export function accruedAmountsText(
 const WHY_ORDER: readonly UnreadWhy[] = ['not-enabled', 'loading', 'unreachable', 'not-reported'];
 
 /**
- * The lines under the total: how much accrued interest it leaves out, as
- * Plaid reports it apart from the balances (`leftOut`), and, one for each
+ * The lines under the total: how much accrued interest it leaves out (`leftOut`:
+ * the line, and `why` it is apart, said behind "Why?" on Home), and, one for each
  * reason, the loans whose interest isn't known on this load, with what to do
  * when there is something (`unread`). Null, or none, when there is nothing to
  * say. `amountsText` writes the amounts (accruedAmountsText).
  */
-export function accruedLines(view: HomeAccrued, amountsText: (amounts: HomeAccrued['amounts']) => string): { leftOut: string | null; unread: string[] } {
+export function accruedLines(
+  view: HomeAccrued,
+  amountsText: (amounts: HomeAccrued['amounts']) => string
+): { leftOut: { line: string; why: string } | null; unread: string[] } {
   const one = view.loans === 1;
   const owed = view.amounts.filter((a) => a.total > 0);
   const leftOut =
     view.loans > 0 && owed.length > 0
-      ? `Leaves out ${amountsText(owed)} of accrued interest on ${one ? 'a student loan' : `${view.loans} student loans`}, which Plaid reports apart from ${one ? 'its balance' : 'their balances'}. The payoff plan counts it, unless you leave it out there.`
+      ? {
+          line: `Leaves out ${amountsText(owed)} of accrued interest on ${one ? 'a student loan' : `${view.loans} student loans`}.`,
+          why: `Plaid reports it apart from ${one ? 'the loan’s balance' : 'their balances'}. The payoff plan counts it, unless you leave it out there.`,
+        }
       : null;
   const unreadLoans = view.unread.reduce((sum, u) => sum + u.loans, 0);
   // "Your student loan" only when it is the one student loan counted: beside

@@ -3,7 +3,7 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "smallFonts": 16
+    "smallFonts": 2
   },
   "app/not-allowed/page.tsx": {
     "inlineLayoutStyles": 1

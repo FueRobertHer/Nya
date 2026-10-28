@@ -265,7 +265,7 @@ export function GoalsCardView({
 
       <div className="card-actions" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={() => edit(null)} disabled={goals.length >= MAX_GOALS}>
-          Add Goal
+          Add goal
         </button>
       </div>
       {goals.length >= MAX_GOALS && <p className="panel-note">{MAX_GOALS} goals is the most, archived ones included: delete an archived one to add another.</p>}

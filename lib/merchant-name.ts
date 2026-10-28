@@ -6,13 +6,33 @@
 // it reads "Credit Card 3333 Payment". Only the shown name changes: search,
 // rules, renames and exports keep the bank's text, and a name with any
 // lowercase letter, or one the person or a rule gave, is shown as it is
-// (lib/transactions.ts, `name_from_bank`).
+// (lib/transactions.ts, `name_from_bank`). A security's name, which brokers
+// send in capitals as often ("NH PORTFOLIO 1055 (FIDELITY INDEX)"), is shown
+// through readableName too, so the funds' own letter words are kept below.
 
 /** Short words kept lowercase inside a name. */
 const SMALL = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to', 'via', 'with']);
 
-/** Words with vowels that are still read letter by letter. */
-const ACRONYMS = new Set(['AAA', 'ACH', 'AMC', 'ATM', 'EFT', 'ESPN', 'HBO', 'IOU', 'IRS', 'POS', 'UPS', 'USA', 'USPS']);
+/** Words with vowels that are still read letter by letter: a bank's
+ *  ("ACH", "ATM"), a fund's ("ETF", "REIT", "MSCI EAFE", "USD"), and the
+ *  brokers and fund houses that write their names in capitals ("PIMCO"). */
+const ACRONYMS = new Set([
+  'AAA', 'ACH', 'AMC', 'ATM', 'EFT', 'ESPN', 'HBO', 'IOU', 'IRS', 'POS', 'UPS', 'USA', 'USAA', 'USPS',
+  'ADR', 'EAFE', 'ESG', 'ETF', 'ETN', 'EUR', 'FTSE', 'HSA', 'IRA', 'MSCI', 'REIT', 'USD',
+  'AQR', 'CREF', 'NVIDIA', 'PGIM', 'PIMCO', 'SPDR', 'TIAA', 'TRP',
+]);
+
+/** Words a brand writes its own way. */
+const CASED: ReadonlyMap<string, string> = new Map([
+  ['BLACKROCK', 'BlackRock'],
+  ['DOUBLELINE', 'DoubleLine'],
+  ['ISHARES', 'iShares'],
+  ['JPMORGAN', 'JPMorgan'],
+  ['PROSHARES', 'ProShares'],
+  ['TROWE', 'T. Rowe'],
+  ['VANECK', 'VanEck'],
+  ['WISDOMTREE', 'WisdomTree'],
+]);
 
 /** One run of letters: capitalised, or kept in capitals when it reads as
  *  letters (no vowel, like "CVS" or "SQ", or a known acronym), or is two
@@ -20,6 +40,8 @@ const ACRONYMS = new Set(['AAA', 'ACH', 'AMC', 'ATM', 'EFT', 'ESPN', 'HBO', 'IOU
  *  which a state at the end ("PORTLAND OR") is not. */
 function word(w: string, first: boolean, last: boolean): string {
   const lower = w.toLowerCase();
+  const cased = CASED.get(w);
+  if (cased) return cased;
   if (!first && !last && SMALL.has(lower)) return lower;
   if (w.length === 2 || (/^[^aeiou]+$/i.test(w) && w.length <= 4) || ACRONYMS.has(w)) return w;
   return lower.charAt(0).toUpperCase() + lower.slice(1);

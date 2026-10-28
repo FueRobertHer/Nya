@@ -186,6 +186,9 @@ export type RecurringRow = {
    *  investment), as /api/transactions sends them. */
   account_name?: string;
   account_type?: string | null;
+  /** `name` is the bank's own descriptor (lib/transactions.ts), shown
+   *  readably (lib/merchant-name.ts shownName). */
+  name_from_bank?: true;
 };
 
 export type Cadence =
@@ -258,6 +261,9 @@ export type RecurringSeries = {
   currency: string | null;
   /** The merchant's logo, if any charge in the series carried one. */
   logo_url: string | null;
+  /** Its name is the bank's own descriptor, as its latest row's was: shown
+   *  readably (lib/merchant-name.ts shownName), kept as it is everywhere else. */
+  name_from_bank?: true;
   firstDate: string;
   /** The latest charge or deposit counted in the series. */
   lastDate: string;
@@ -901,6 +907,7 @@ function toSeries(
     group,
     kind,
     name: latest.name,
+    ...(latest.name_from_bank ? { name_from_bank: true as const } : {}),
     institution: latest.institution_name,
     account: latest.account_name ?? '',
     accountType: latest.account_type ?? null,

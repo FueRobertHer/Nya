@@ -91,10 +91,10 @@ Red Hat (since the look and feel's step 3), taken with the ink and brass directi
 | `--fs-2` | 13px | 400 | Secondary lines, notices, helper text |
 | `--fs-1` | 12px | 500 | Meta: dates, chips, chart ticks |
 
-- **Nothing on screen under 12px.** Today 38 declarations are 9 to 11px, including the tab bar labels; they move to `--fs-1`.
+- **Nothing on screen under 12px.** Since the words pass after the screen review, the only declarations under it are the ticks of the charts still drawn on a fixed viewBox (`.chart-tick`, `.chart-xlabel`, 10px: Runway and the allocation views), which go when those charts are drawn at their own width.
 - **Money is tabular** everywhere it is in a column or can change in place: one rule on a `.money` class (and `.num` cells) instead of 27 separate `tabular-nums` declarations. Both Red Hat families carry true tabular figures. The hero keeps proportional figures, as now.
 - **The hero's cents** are half its size (`--fs-5` of its 40px) in `--text-2`, on Home's net worth alone (`moneyRuns` in `lib/format.ts` marks them, wherever the locale puts them; with amounts hidden there are none). It is drawn in runs a screen reader would pause between, so the whole figure is said apart, as `Masked` does.
-- **No uppercase micro-labels.** Fourteen uppercase styles today (`th`, `.type-tag`, `.section-label`, `.health-badge` and more) become sentence-case `--fs-1` or `--fs-2` in `--text-2`. Uppercase at 10 to 11px is the hardest text in the app to read.
+- **No uppercase micro-labels.** None is left (since the words pass after the screen review; the guard holds it, with `capitalize`): a sheet's section heading (`.section-label`, `.plan-subhead`) is sentence case at `--fs-2`, weight 600, in `--text-2`, and a meta line (`.type-tag`, the reports' kicker) at `--fs-1`. Words are written in sentence case where they are made, never cased by CSS. Uppercase at 10 to 11px was the hardest text in the app to read.
 - **Headings are headings.** Card titles are `<h2>`, sections inside a card `<h3>`. Today 65 card titles are `<div class="inst-name">`.
 
 ## Space, shape and motion

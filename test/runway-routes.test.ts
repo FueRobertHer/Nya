@@ -239,7 +239,8 @@ describe('the runway from stored data', () => {
     // Nothing to add or take away, but the cash taken out, named: the move to
     // savings arrived there.
     expect(three).toMatchObject({ refunds: 0, infrequent: 0, card_payments: [], card_payments_total: 0, transfers_out: 0, cash_out: 200, spending: 9200, income: 6440 });
-    expect(three.one_offs).toEqual([{ date: '2026-08-15', name: 'Midas', amount: 2000 }]);
+    // Midas has no merchant name: the bank's text, which the report shows readably.
+    expect(three.one_offs).toEqual([{ date: '2026-08-15', name: 'Midas', amount: 2000, name_from_bank: true }]);
     expect(three.one_offs_in).toEqual([]);
     expect([r.has_cash, r.infrequent]).toEqual([true, []]);
     expect(three.left_out).toEqual([{ currency: 'EUR', count: 1 }]);
@@ -248,7 +249,7 @@ describe('the runway from stored data', () => {
       { month: '2026-08', institutions: ['Citi'] },
       { month: '2026-09', institutions: ['Citi'] },
     ]);
-    expect(r.outside).toEqual([{ name: 'Home Loans', institution: 'Chase', account: 'Checking', amount: 800, cadence: 'monthly', next: '2026-11-05' }]);
+    expect(r.outside).toEqual([{ name: 'Home Loans', institution: 'Chase', account: 'Checking', amount: 800, cadence: 'monthly', next: '2026-11-05', name_from_bank: true }]);
     expect(r.planned.map((p: any) => p.name)).toEqual(['Car registration', 'Tax refund']);
     expect(r.events_left_out).toEqual([{ currency: 'EUR', count: 1 }]);
     // What it can't see.
@@ -273,6 +274,8 @@ describe('the runway from stored data', () => {
     await seed();
     const plain = await quiet(() => api(apiRunway, 'runway', 'months=3'));
     expect(plain.res.status).toBe(200);
+    // The name as the bank gave it, without the report's flag for showing it.
+    expect(JSON.stringify(plain.body)).not.toContain('name_from_bank');
     expect(plain.body).toMatchObject({
       today: '2026-10-22',
       currency: 'USD',
@@ -376,7 +379,15 @@ describe('the runway from stored data', () => {
     const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
     const twelve = r.windows.find((w: any) => w.months === 12);
     expect(twelve.start).toBe('2025-10-01');
-    expect(twelve.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 640, count: 1 }]);
+    expect(twelve.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 640, count: 1, name_from_bank: true }]);
+    // The API gives the bank's text as the bank wrote it, in its list and in
+    // its notes alike; only the page shows it readably.
+    const a = (await quiet(() => api(apiRunway, 'runway', 'months=12'))).body;
+    expect(a.spending.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 640, count: 1 }]);
+    expect(a.notes.filter((n: string) => n.includes('looks like a card’s payment'))).toEqual([
+      expect.stringMatching(/^AMEX EPAYMENT from Checking looks like a card’s payment/),
+    ]);
+    expect(JSON.stringify(a)).not.toMatch(/Amex Epayment|name_from_bank/);
   });
 
   test('takes only a time zone: a what-if is never sent, and nothing is written', async () => {

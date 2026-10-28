@@ -28,6 +28,7 @@ import { Notice } from './TotalCaveats';
 import MonthStepper from './MonthStepper';
 import { NoticeBadge, type UpcomingBadge } from './upcoming-notes';
 import type { FxTable } from '@/lib/fx/rates';
+import { shownName } from '@/lib/merchant-name';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -67,6 +68,15 @@ function cellFigure(n: number): string {
 /** "the Sapphire card", or "the Plaid Credit Card" for a name that already
  *  says it is one: never "the Plaid Credit Card card". */
 const theCard = (name: string) => (/\bcard$/i.test(name.trim()) ? `the ${name.trim()}` : `the ${name} card`);
+
+/** A row's line of parts, "Bill · Monthly · Due Oct 15, not in yet": each
+ *  part starts with a capital, as a label of its own, whatever wrote it. */
+export function metaLine(parts: readonly (string | null | false | undefined)[]): string {
+  return parts
+    .filter((p): p is string => !!p)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' · ');
+}
 
 /** Why an expected amount isn't in its day's figure (lib/calendar.ts). */
 function offText(e: CalendarEntry): string | null {
@@ -117,7 +127,7 @@ function dotsOf(entries: CalendarEntry[]): string[] {
 /** Why a posted row is quieter: pending, excluded, or in another currency,
  *  and so not in the day's figure. */
 function postedTags(e: CalendarEntry, currency: string | null): string {
-  return [
+  return metaLine([
     e.pending ? 'pending' : null,
     // One charge, split (#39): what of it the day's figure counts when a part is left out.
     e.parts ? `split into ${e.parts}` : null,
@@ -130,9 +140,7 @@ function postedTags(e: CalendarEntry, currency: string | null): string {
       : null,
     e.excluded ? "excluded, not in the day's figure" : null,
     !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  ]);
 }
 
 /** An expected entry's words: what it is and how often, then that it is
@@ -140,10 +148,13 @@ function postedTags(e: CalendarEntry, currency: string | null): string {
 function ExpectedWords({ e, currency }: { e: CalendarEntry; currency: string | null }) {
   return (
     <>
-      {e.source === 'planned' ? 'planned' : e.source === 'income' ? 'income' : 'bill'} · {cadenceText(e.cadence, e.source)}
-      {e.late && e.due ? ` · due ${fmtDay(e.due)}, not in yet` : ''}
-      {offText(e) ? ` · ${offText(e)}` : ''}
-      {e.figure !== undefined ? <Masked>{` · ${signedMoney(e.figure, currency)} in the day's figure, at today's rates`}</Masked> : ''}
+      {metaLine([
+        e.source === 'planned' ? 'planned' : e.source === 'income' ? 'income' : 'bill',
+        cadenceText(e.cadence, e.source),
+        e.late && e.due ? `due ${fmtDay(e.due)}, not in yet` : null,
+        offText(e),
+      ])}
+      {e.figure !== undefined ? <Masked>{` · ${metaLine([`${signedMoney(e.figure, currency)} in the day's figure, at today's rates`])}`}</Masked> : ''}
     </>
   );
 }
@@ -161,7 +172,7 @@ export function EntryRow({ entry: e, currency, badgeDue = false }: { entry: Cale
     <li>
       <div className="list-row upcoming-row">
         <span className="list-row-text">
-          <span className="list-row-title">{e.name}</span>
+          <span className="list-row-title">{shownName(e)}</span>
           {e.kind === 'expected' && (
             <span className="list-row-sub">
               <span>
@@ -172,7 +183,7 @@ export function EntryRow({ entry: e, currency, badgeDue = false }: { entry: Cale
           {e.kind === 'due' && (
             <span className="list-row-sub">
               {badgeDue && <span className="badge warn">Due</span>}
-              <span>{e.amount === null ? 'due, minimum not reported' : 'minimum due, not in the figures'}</span>
+              <span>{e.amount === null ? 'Due, minimum not reported' : 'Minimum due, not in the figures'}</span>
             </span>
           )}
           {tags !== '' && (

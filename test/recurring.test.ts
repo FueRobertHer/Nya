@@ -854,3 +854,14 @@ describe("the verification's other cases", () => {
     expect(only(rows)).toMatchObject({ paysCard: true, paysCardOf: { institution: 'Capital One', account: 'Quicksilver' } });
   });
 });
+
+describe("a series named by the bank's own text", () => {
+  // Shown readably wherever the series is (lib/merchant-name.ts shownName),
+  // as its rows are; its name itself stays the bank's.
+  test("carries its latest row's flag, and only that", () => {
+    const bank = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 25, { name: 'CREDIT CARD 3333 PAYMENT *//', name_from_bank: true })));
+    expect(bank.map((s) => [s.name, s.name_from_bank])).toEqual([['CREDIT CARD 3333 PAYMENT *//', true]]);
+    const merchant = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 15.49)));
+    expect(merchant.map((s) => 'name_from_bank' in s)).toEqual([false]);
+  });
+});

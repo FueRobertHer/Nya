@@ -20,7 +20,7 @@ import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import { dominantCurrency } from '@/lib/format';
 import { institutionCash } from '@/lib/cash';
 import {
-  accountKind,
+  accountKindParts,
   balanceDay,
   canEnableLiabilities,
   fmt,
@@ -197,6 +197,10 @@ export default function InstitutionCard({
             // Its own fact, never waiting on the terms line, which can be
             // empty (no rate, minimum or date reported).
             const overdue = !!a.liability?.is_overdue;
+            // What kind it is, unless its terms line says more, or its name
+            // already says it: then there may be nothing at all to say.
+            const kind = liabLine ? null : accountKindParts(a, inst, shownCurrency).join(' · ') || null;
+            const sub = overdue || !!liabLine || !!kind || !!held || !!day || (!!cash && cash.cash > 0);
             return (
               <li key={a.account_id}>
                 <button className="list-row" onClick={() => onOpenAccount(a.account_id)}>
@@ -205,30 +209,32 @@ export default function InstitutionCard({
                       {a.name}
                       {a.mask && <span className="acct-mask"> ••{a.mask}</span>}
                     </span>
-                    <span className="list-row-sub">
-                      {overdue && (
-                        <>
-                          <span className="badge neg">Overdue</span>
-                          {' · '}
-                        </>
-                      )}
-                      {liabLine ? <Masked>{liabLine}</Masked> : accountKind(a, inst, shownCurrency)}
-                      {/* Amber at its last known balance; red when not counted at all (lib/accounts-status.ts). */}
-                      {held && <> <span className={`badge ${a.balance == null ? 'neg' : 'warn'}`}>{held}</span></>}
-                      {day && <> <span className="badge">{day}</span></>}
-                      {/* Money in the settlement fund rather than invested;
-                          amber only for an amount worth acting on
-                          (lib/cash.ts). Its share is in the sheet. */}
-                      {cash && cash.cash > 0 && (
-                        <>
-                          {' '}
-                          <span className={`badge${cash.flagged ? ' warn' : ''}`}>
-                            <Masked>{fmt(cash.cash, a.currency)}</Masked>
-                            {cash.flagged ? ' uninvested' : ' in cash'}
-                          </span>
-                        </>
-                      )}
-                    </span>
+                    {sub && (
+                      <span className="list-row-sub">
+                        {overdue && (
+                          <>
+                            <span className="badge neg">Overdue</span>
+                            {liabLine || kind ? ' · ' : ''}
+                          </>
+                        )}
+                        {liabLine ? <Masked>{liabLine}</Masked> : kind}
+                        {/* Amber at its last known balance; red when not counted at all (lib/accounts-status.ts). */}
+                        {held && <> <span className={`badge ${a.balance == null ? 'neg' : 'warn'}`}>{held}</span></>}
+                        {day && <> <span className="badge">{day}</span></>}
+                        {/* Money in the settlement fund rather than invested;
+                            amber only for an amount worth acting on
+                            (lib/cash.ts). Its share is in the sheet. */}
+                        {cash && cash.cash > 0 && (
+                          <>
+                            {' '}
+                            <span className={`badge${cash.flagged ? ' warn' : ''}`}>
+                              <Masked>{fmt(cash.cash, a.currency)}</Masked>
+                              {cash.flagged ? ' uninvested' : ' in cash'}
+                            </span>
+                          </>
+                        )}
+                      </span>
+                    )}
                   </span>
                   <span className="list-row-value">
                     <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>

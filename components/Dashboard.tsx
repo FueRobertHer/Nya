@@ -133,7 +133,7 @@ import type { PlanSegment } from './PlanBar';
 // loaded the same way, after Home paints.
 import FiProgressLoader from './FiProgressLoader';
 import InstitutionCard, { cardHeadingId, institutionMenu } from './InstitutionCard';
-import { fmt, fmtInstantDay, fmtStaleDay, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
+import { fmt, fmtInstantDay, fmtStaleDay, kindWords, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
 
 
 
@@ -2514,7 +2514,7 @@ export default function Dashboard({
                               <span className="list-row-text">
                                 <span className="list-row-title">{account.name}</span>
                                 <span className="list-row-sub">
-                                  {institution_name} · {account.subtype || account.type}
+                                  {[institution_name, kindWords(account)].filter(Boolean).join(' · ')}
                                 </span>
                               </span>
                               {/* An unresolved account has no balance to

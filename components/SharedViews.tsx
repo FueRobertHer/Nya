@@ -15,6 +15,7 @@
 
 import { useState } from 'react';
 import { formatMoney } from '@/lib/format';
+import { readableName } from '@/lib/merchant-name';
 import { dayLabel, monthLabel } from '@/lib/goal-text';
 import {
   isUnreadable,
@@ -279,8 +280,8 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
           {v.positions.map((p, i) => (
             <div key={`${p.ticker ?? p.name ?? ''}-${i}`} className="peer-row">
               <span>
-                <span className="incoming-account-name">{p.ticker ?? p.name ?? 'A holding'}</span>
-                <span className="incoming-account-date"> · {p.ticker && p.name ? `${p.name}, ` : ''}{p.class}</span>
+                <span className="incoming-account-name">{p.ticker ?? (p.name ? readableName(p.name) : 'A holding')}</span>
+                <span className="incoming-account-date"> · {p.ticker && p.name ? `${readableName(p.name)}, ` : ''}{p.class}</span>
               </span>
               <span className="incoming-account-value">{amounts && p.amount !== undefined ? <Masked>{formatMoney(p.amount, v.currency)}</Masked> : p.label}</span>
             </div>

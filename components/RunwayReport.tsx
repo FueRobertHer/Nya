@@ -26,6 +26,7 @@ import type { RunwayReport as Runway } from '@/lib/report/runway-read';
 import { MAX_SCENARIOS, SCENARIO_NAME_MAX, scenarioWhatIf, type RunwayScenario } from '@/lib/report/runway-scenarios';
 import { hasMovedOut, hasOneOffs, runwayCaveats, runwayConvertedText, whatIfWords, type RunwayFormats } from '@/lib/report/runway-words';
 import { cadenceLabel } from '@/lib/recurring';
+import { shownName } from '@/lib/merchant-name';
 import { plannedCadenceLabel } from '@/lib/planned';
 import { isCurrencyCode, minorDigits, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import { joinNames } from '@/lib/month-coverage';
@@ -174,7 +175,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
               <ul className="report-list">
                 {w.card_payments.map((c, i) => (
                   <li key={i}>
-                    <Masked>{`${c.name}${c.account ? ` from ${c.account}` : ''}: ${money(c.amount)} over ${c.count === 1 ? 'one payment' : `${c.count} payments`}`}</Masked>
+                    <Masked>{`${shownName(c)}${c.account ? ` from ${c.account}` : ''}: ${money(c.amount)} over ${c.count === 1 ? 'one payment' : `${c.count} payments`}`}</Masked>
                   </li>
                 ))}
               </ul>
@@ -188,7 +189,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
               <ul className="report-list">
                 {w.one_offs.map((o, i) => (
                   <li key={i}>
-                    <Masked>{`${o.name}, ${reportDay(o.date)}: ${money(o.amount)}`}</Masked>
+                    <Masked>{`${shownName(o)}, ${reportDay(o.date)}: ${money(o.amount)}`}</Masked>
                   </li>
                 ))}
               </ul>
@@ -212,7 +213,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
               <ul className="report-list">
                 {w.one_offs_in.map((o, i) => (
                   <li key={i}>
-                    <Masked>{`${o.name}, ${reportDay(o.date)}: ${money(o.amount)}`}</Masked>
+                    <Masked>{`${shownName(o)}, ${reportDay(o.date)}: ${money(o.amount)}`}</Masked>
                   </li>
                 ))}
               </ul>
@@ -231,7 +232,7 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
               <ul className="report-list">
                 {[...runway.outside, ...runway.infrequent].map((o, i) => (
                   <li key={i}>
-                    <Masked>{`${o.name} from ${o.account || o.institution}: ${money(o.amount)}${ownToo(o.own)}, ${cadenceLabel(o.cadence).toLowerCase()}, next around ${o.next ? reportDay(o.next) : 'not known'}`}</Masked>
+                    <Masked>{`${shownName(o)} from ${o.account || o.institution}: ${money(o.amount)}${ownToo(o.own)}, ${cadenceLabel(o.cadence).toLowerCase()}, next around ${o.next ? reportDay(o.next) : 'not known'}`}</Masked>
                   </li>
                 ))}
               </ul>

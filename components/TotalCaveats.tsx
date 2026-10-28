@@ -14,12 +14,15 @@ import type { Severity } from '@/lib/accounts-status';
 import { joinNames } from '@/lib/month-coverage';
 import { CAUTION, levelIcon } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
+import { Why } from './Why';
 
 export type CaveatSeverity = Severity | 'info';
 
 /** One caveat: its color, a few words for the summary line (never an
- *  amount), and what it says in full. */
-export type Caveat = { key: string; severity: CaveatSeverity; summary: string; body: ReactNode };
+ *  amount), and what it says in full; for an information note, what explains
+ *  it can wait behind "Why?" (`why`). A caution or critical one says
+ *  everything in its body. */
+export type Caveat = { key: string; severity: CaveatSeverity; summary: string; body: ReactNode; why?: ReactNode };
 
 /** Every account hidden, so the Home total counts nothing: said under it
  *  (the header said it once, under the name). None while one is shown. */
@@ -74,7 +77,12 @@ export function Notice({ level, children }: { level: CaveatSeverity; children: R
 }
 
 function CaveatNotice({ caveat }: { caveat: Caveat }) {
-  return <Notice level={caveat.severity}>{caveat.body}</Notice>;
+  return (
+    <Notice level={caveat.severity}>
+      {caveat.body}
+      {caveat.why && <Why>{caveat.why}</Why>}
+    </Notice>
+  );
 }
 
 export default function TotalCaveats({ items }: { items: readonly Caveat[] }) {

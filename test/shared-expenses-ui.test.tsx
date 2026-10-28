@@ -139,7 +139,10 @@ describe('the card', () => {
 
   test('the first time: what it is for, and how to begin', () => {
     const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf({ people: [], items: [], shares: [], balances: {} }))} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />));
-    expect(said).toContain('Keep track of what people owe you and what you owe them. Nya keeps the list; the money moves in Venmo, Cash App or however you pay each other.');
+    expect(said).toContain('Keep track of what people owe you and what you owe them.');
+    // How the money moves, once (the screen review: it was said twice).
+    expect(said).toContain('Nya never sends, receives or holds money: it keeps the list, and the money moves however you pay each other.');
+    expect(said.split('the money moves').length - 1).toBe(1);
     expect(said).toContain('Add someone');
   });
 
