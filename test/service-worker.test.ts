@@ -60,14 +60,17 @@ function worker() {
 
   /** A fetch event for `path`: what the page was answered (null if the
    *  worker left it to the browser), once the worker has finished. */
-  async function request(path: string, init: { mode?: string; method?: string; preload?: Response } = {}) {
+  async function request(path: string, init: { mode?: string; method?: string; preload?: Response; refuseWait?: boolean } = {}) {
     const answered: { with?: Promise<Response | undefined> } = {};
     const after: Promise<unknown>[] = [];
     listeners.fetch({
       request: { url: path.startsWith('http') ? path : `${ORIGIN}${path}`, mode: init.mode ?? 'cors', method: init.method ?? 'GET' },
       preloadResponse: init.preload ? Promise.resolve(init.preload) : undefined,
       respondWith: (p: Promise<Response | undefined>) => (answered.with = p),
-      waitUntil: (p: Promise<unknown>) => after.push(p),
+      waitUntil: (p: Promise<unknown>) => {
+        if (init.refuseWait) throw new DOMException('The event handler is already finished.', 'InvalidStateError');
+        after.push(p);
+      },
     });
     if (!answered.with) return null;
     const res = await answered.with;
@@ -165,6 +168,13 @@ describe('pages', () => {
     w.net.online = false;
     expect(await w.request('/?tab=budgets', { mode: 'navigate' })).toBe('home');
     expect(await w.request('/x.png?v=2')).toBeUndefined();
+  });
+
+  test('a browser that won’t wait for the copy still gets the network’s answer', async () => {
+    const w = worker();
+    expect(await w.request('/', { mode: 'navigate', preload: new Response('preloaded'), refuseWait: true })).toBe('preloaded');
+    w.net.answers.set(`${ORIGIN}${chunk}`, { body: 'chunk', cacheControl: IMMUTABLE });
+    expect(await w.request(chunk, { refuseWait: true })).toBe('chunk');
   });
 
   test('a cache that can’t be written to doesn’t fail the answer', async () => {
