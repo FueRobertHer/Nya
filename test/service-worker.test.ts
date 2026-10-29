@@ -10,7 +10,7 @@ import { join } from 'node:path';
 const ORIGIN = 'https://nya.test';
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
-type Answer = { status?: number; body?: string; cacheControl?: string; type?: string };
+type Answer = { status?: number; body?: string; cacheControl?: string; type?: string; vary?: string };
 
 type Stores = Map<string, Map<string, { req: { url: string }; res: Response }>>;
 
@@ -25,12 +25,14 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     if (!stores.has(name)) stores.set(name, new Map());
     const entries = stores.get(name)!;
     return {
-      match: async (req: { url: string; mode?: string } | string, opts?: { ignoreSearch?: boolean }) => {
+      match: async (req: { url: string; mode?: string } | string, opts?: { ignoreSearch?: boolean; ignoreVary?: boolean }) => {
         if (broken.match) throw new Error('UnknownError: Unexpected internal error');
         const url = full(req);
         // A page load never matches an RSC payload: Next sends those with
-        // Vary: RSC, a header page loads don't carry.
-        const fits = (e: { res: Response }) => typeof req === 'string' || req.mode !== 'navigate' || !e.res.headers.get('Content-Type')?.includes('x-component');
+        // Vary: RSC, a header page loads don't carry. A bare address carries
+        // no headers, so it misses whatever varies on one.
+        const fits = (e: { res: Response }) =>
+          typeof req === 'string' ? !!opts?.ignoreVary || !e.res.headers.get('Vary') : req.mode !== 'navigate' || !e.res.headers.get('Content-Type')?.includes('x-component');
         const exact = entries.get(url);
         const hit = (exact && fits(exact) ? exact : undefined) ?? (opts?.ignoreSearch ? [...entries].find(([k, e]) => without(k) === without(url) && fits(e))?.[1] : undefined);
         return hit?.res.clone();
@@ -54,7 +56,7 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     keys: async () => [...stores.keys()],
     delete: async (name: string) => stores.delete(name),
     // Every cache, as the browser's does, the tidy's notes included.
-    match: async (req: { url: string; mode?: string } | string, opts?: { ignoreSearch?: boolean }) => {
+    match: async (req: { url: string; mode?: string } | string, opts?: { ignoreSearch?: boolean; ignoreVary?: boolean }) => {
       for (const name of stores.keys()) {
         const hit = await open(name).match(req, opts);
         if (hit) return hit;
@@ -72,7 +74,7 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     const a = net.answers.get(req.url) ?? {};
     return new Response(a.body ?? 'from the network', {
       status: a.status ?? 200,
-      headers: { ...(a.cacheControl ? { 'Cache-Control': a.cacheControl } : {}), ...(a.type ? { 'Content-Type': a.type } : {}) },
+      headers: { ...(a.cacheControl ? { 'Cache-Control': a.cacheControl } : {}), ...(a.type ? { 'Content-Type': a.type } : {}), ...(a.vary ? { Vary: a.vary } : {}) },
     });
   };
   const clock = from?.clock ?? { now: Date.parse('2026-10-01T12:00:00Z') };
@@ -547,6 +549,76 @@ describe('the daily tidy', () => {
     w.net.answers.set(at(js('main')), { body: 'l("static/chunks/later.js")', ...dev });
     await w.load('/', [js('main')]);
     expect((await notes(w))!.unused).toEqual({});
+  });
+
+  test('reads the build from a root row holding a line break, in a page or a payload', async () => {
+    let w = worker();
+    const row = (build: string) => `0:{"t":"a\\nb","b":"${build}"}`;
+    const page = (build: string, src: string) => `<html><script src="${src}"></script><script>self.__next_f.push([1,${JSON.stringify(`${row(build)}\n`)}])</script></html>`;
+    w.net.answers.set(at('/?tab=plan'), { body: page('build-1', js('a1')), type: 'text/html' });
+    w.net.answers.set(at('/?_rsc=1'), { body: `${row('build-1')}\n`, type: 'text/x-component' });
+    w.net.answers.set(at('/?_rsc=2'), { body: `${row('build-2')}\n`, type: 'text/x-component' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '', [js('a2')]: '' });
+    await w.load('/?tab=plan', [js('a1')]);
+    await w.request('/?_rsc=1');
+    w = later(w, 1);
+    w.net.answers.set(at('/'), { body: page('build-2', js('a2')), type: 'text/html' });
+    await w.load('/', [js('a2')]);
+    await w.request('/?_rsc=2');
+    w = later(w, 1);
+    await w.load('/', [js('a2')]);
+    expect(Object.keys((await notes(w))!.unused).sort()).toEqual([at('/?_rsc=1'), at('/?tab=plan')]);
+  });
+
+  test('reads a segment prefetch’s build, so an old one doesn’t keep its files', async () => {
+    let w = twoDeploys();
+    const segment = (build: string) => `1:I[1,[],"x"]\n0:{"buildId":"${build}","rsc":"$@1"}\n`;
+    w.net.answers.set(at('/?_rsc=seg'), { body: segment('build-1'), type: 'text/x-component' });
+    await w.load('/', [js('a1')]);
+    await w.request('/?_rsc=seg');
+    w = later(w, 1);
+    deploy(w, 'build-2', { '/': [js('a2')] });
+    w.net.answers.set(at('/?_rsc=seg2'), { body: segment('build-2'), type: 'text/x-component' });
+    await w.load('/', [js('a2')]);
+    await w.request('/?_rsc=seg2');
+    w = later(w, 1);
+    await w.load('/', [js('a2')]);
+    expect((await notes(w))!.unused).toHaveProperty([at('/?_rsc=seg')]);
+  });
+
+  test('follows names with any characters a path can hold', async () => {
+    let w = worker();
+    const img = '/_next/static/media/logo@2x+[dark].0a1.png';
+    deploy(w, 'build-1', { '/': [js('main')] }, { [js('main')]: `"static/media/logo@2x+[dark].0a1.png"` });
+    w.net.answers.set(at(img), { body: 'png', cacheControl: IMMUTABLE });
+    await w.load('/', [js('main')]);
+    await w.request(img);
+    w = later(w, 1);
+    await w.load('/', [js('main')]);
+    expect((await notes(w))!.unused).toEqual({});
+  });
+
+  test('a file kept under two addresses goes under both', async () => {
+    let w = twoDeploys();
+    await w.load('/', [js('a1')]);
+    w.net.answers.set(at(`${js('a1')}?dpl=2`), { body: '', cacheControl: IMMUTABLE });
+    await w.request(`${js('a1')}?dpl=2`);
+    w = later(w, 1);
+    deploy(w, 'build-2', { '/': [js('a2')] });
+    await w.load('/', [js('a2')]);
+    for (const day of [3, 3, 1]) {
+      w = later(w, day);
+      await w.load('/', [js('a2')]);
+    }
+    expect(await kept(w, js('a1'))).toBe(false);
+    expect(await kept(w, `${js('a1')}?dpl=2`)).toBe(false);
+  });
+
+  test('finds the page’s own files whatever they vary on', async () => {
+    let w = twoDeploys();
+    w.net.answers.set(at(js('a1')), { body: '', cacheControl: IMMUTABLE, vary: 'Accept' });
+    await w.load('/', [js('a1')]);
+    expect(await notes(w)).toBeDefined();
   });
 
   test('a tidy that fails leaves the page’s answer alone', async () => {

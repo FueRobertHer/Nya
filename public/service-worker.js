@@ -242,9 +242,12 @@ async function tidyOnce(request, clientId) {
  *  deployment id it carries instead when there is one. */
 function buildOf(text) {
   // The build id is the last key of the payload's root row (row 0):
-  // ..."b":"<id>"} and the row's end, escaped inside a page's script. A
-  // segment prefetch names it "buildId".
-  for (const [, row] of text.matchAll(/(?:^|\n|\\n|\[1,")0:(\{.*?)(?=\\n|\n)/g)) {
+  // ..."b":"<id>"} and the row's end. A payload's rows end at a newline; in
+  // a page they are in a script's string, where a row ends at the escape \n
+  // and other escapes (a line break in some text, \\n) are part of the row.
+  // A segment prefetch names it "buildId".
+  const rows = [...text.matchAll(/(?:^|\n)0:(\{[^\n]*)/g), ...text.matchAll(/(?:\[1,"|\\n)0:(\{(?:[^\\"]|\\[^n])*)/g)];
+  for (const [, row] of rows) {
     const id = row.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}$/)?.[1];
     if (id) return id;
   }
