@@ -142,3 +142,17 @@ export function ConnectButtonsView({
     </div>
   );
 }
+
+/** The way into the switch from another app (components/MigrationSheet.tsx)
+ *  on the first screen, with nothing connected. Here, not beside the sheet,
+ *  so that screen doesn't bring the sheet's code with it. */
+export function SwitchingLink({ onOpen }: { onOpen: () => void }) {
+  return (
+    <p className="panel-note migration-link">
+      Switching from another app?{' '}
+      <button className="link-btn" onClick={onOpen}>
+        Bring your history from Monarch, YNAB, Lunch Money, Actual Budget or ZeroSum
+      </button>
+    </p>
+  );
+}

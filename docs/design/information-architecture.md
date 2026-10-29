@@ -311,6 +311,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 - online (useOfflineCaveats): whether the device is online, and the caution on Home's total while it isn't ("Offline. Showing balances from 9:41 AM."), through TotalCaveats.
 - upcoming-notes (NoticeBadge): what Budgets > Upcoming says it may be missing (the notice at its top, through TotalCaveats, and the forecast's notes on where it starts), and the badge on each card the notice bears on (6a3).
+- lazy-part (PartUnavailable, PartBoundary), BudgetsTabLoader, LazySheets, SettingsCardsLoader (settings-cards): code loaded when first needed, or once Home has its figures, not with Home: the Budgets tab, the payoff, switching and import sheets, and Settings' cards. Each draws its skeleton while its code is on its way (a sheet opens without it after 300ms), and says in its own place when it couldn't be loaded or stopped, with Try again. The Plan tab and Home's FI card load the same way, each with its own loader.
 
 ## Vocabulary
 
