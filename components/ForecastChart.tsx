@@ -23,9 +23,9 @@
 // their left end, never with an amount (the card's Warns below row says it).
 // The line stays dashed: a forecast is all estimate, and says so.
 //
-// The plot is read by the keys too (components/chart-keys.ts): from now, the
-// arrows move the readout a day's end at a time, and Escape goes back to the
-// lowest.
+// The plot is read by the keys too (components/chart-keys.ts): from the
+// lowest, the arrows move the readout a day's end at a time, and Escape goes
+// back to the lowest.
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import type { Forecast } from '@/lib/forecast';
@@ -184,7 +184,10 @@ export default function ForecastChart({
     count: forecast.days.length + 1,
     active,
     setActive,
-    rest: 0,
+    // At rest the readout shows the lowest: the keys start from the end of
+    // its day (now, when the lowest is now).
+    rest: lowNow ? 0 : lowDay + 1,
+    restSaid: `${formatMoney(shownLow.balance, currency)} lowest, ${lowWhen}${lowNow ? '' : ', estimated'}`,
     say: (k) => {
       const v = k === 0 ? forecast.start : forecast.days[k - 1].balance;
       const alt = !whatIf ? null : k === 0 ? whatIf.start : whatIf.days[k - 1].balance;

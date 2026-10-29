@@ -178,7 +178,7 @@ export default function MonthFlowChart({
     count: days.length,
     active,
     setActive,
-    say: (k) => `In ${formatMoney(cumIn[k], currency)}, out ${formatMoney(cumOut[k], currency)}, through ${dayLabel(days[k])}`,
+    say: (k) => `In ${formatMoney(cumIn[k], currency)}, out ${formatMoney(cumOut[k], currency)}, through ${dayLabel(days[k], true)}`,
   });
 
   return (

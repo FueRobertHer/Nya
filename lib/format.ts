@@ -32,6 +32,8 @@
 // THE MASK is four dots whatever the amount's size, so it never says how
 // large a hidden one is.
 
+import { localDate } from './local-date';
+
 /** What a hidden amount's figures are written as: four dots, whatever the
  *  amount's size. */
 export const MASK = '••••';
@@ -325,9 +327,6 @@ export function formatRate(rate: number, from: string, to: string): string {
   return `1 ${from} = ${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(rate)} ${to}`;
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-const calendarDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-
 /**
  * A day (YYYY-MM-DD, a calendar day as the bank or the person gives it) as a
  * person reads it: "Today" and "Yesterday", then "Aug 7" within the current
@@ -340,9 +339,9 @@ const calendarDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-$
 export function formatDay(iso: string, opts: DayOptions = {}): string {
   const now = new Date(opts.now ?? Date.now());
   const day = iso.slice(0, 10);
-  const today = calendarDay(now);
+  const today = localDate(now);
   if (day === today) return opts.sentence ? 'today' : 'Today';
-  if (day === calendarDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return opts.sentence ? 'yesterday' : 'Yesterday';
+  if (day === localDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return opts.sentence ? 'yesterday' : 'Yesterday';
   return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, {
     ...(opts.weekday ? { weekday: opts.weekday } : {}),
     month: 'short',
@@ -366,7 +365,7 @@ export type DayOptions = { now?: Date | number; sentence?: boolean; weekday?: 's
 export function formatInstantDay(iso: string, opts: DayOptions = {}): string | null {
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return formatDay(iso, opts);
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : formatDay(calendarDay(d), opts);
+  return Number.isNaN(d.getTime()) ? null : formatDay(localDate(d), opts);
 }
 
 /** A day formatDay wrote mid sentence, after "on": "on Aug 7", but "today"

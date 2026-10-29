@@ -110,8 +110,11 @@ const MIX_DAYS: SeriesDay[] = ['2026-10-01', '2026-10-08', '2026-10-15'].map((da
   left_out: [],
 })) as unknown as SeriesDay[];
 
+// Rent on the 15th is its lowest: the end of that day, point 7.
+const LOW = FORECAST.days.findIndex((d) => d.date === '2026-10-15') + 1;
+
 /** Each chart, the point it rests on, and what its readout says at a point. */
-const CHARTS: { name: string; node: () => React.ReactNode; rest: 'first' | 'last'; at: (i: number) => string }[] = [
+const CHARTS: { name: string; node: () => React.ReactNode; rest: 'first' | 'last' | number; at: (i: number) => string }[] = [
   {
     name: 'Income vs spend',
     node: () => <MonthFlowChart txns={ROWS} from="2026-09-01" to="2026-09-05" currency="USD" />,
@@ -121,7 +124,7 @@ const CHARTS: { name: string; node: () => React.ReactNode; rest: 'first' | 'last
   {
     name: 'the cash forecast',
     node: () => <ForecastChart forecast={FORECAST} currency="USD" threshold={0} />,
-    rest: 'first',
+    rest: LOW,
     at: (i) => (i === 0 ? 'now' : i === 1 ? 'end of today, estimated' : `end of ${fmtDay(FORECAST.days[i - 1].date)}, estimated`),
   },
   {
@@ -208,7 +211,7 @@ for (const c of CHARTS) {
       expect(help.textContent).toContain('Home and End go to');
       expect(help.textContent).toContain('Escape goes back to');
       expect(plot.getAttribute('aria-valuemin')).toBe('1');
-      expect(plot.getAttribute('aria-valuenow')).toBe(c.rest === 'first' ? '1' : plot.getAttribute('aria-valuemax'));
+      expect(plot.getAttribute('aria-valuenow')).toBe(c.rest === 'first' ? '1' : c.rest === 'last' ? plot.getAttribute('aria-valuemax') : String(c.rest + 1));
       expect(plot.getAttribute('aria-valuetext')!.length).toBeGreaterThan(0);
     });
 
@@ -273,12 +276,15 @@ describe('the value is said once the keys rest', () => {
     expect(v.said()[0]).toBe('5');
   });
 
-  test('the cash forecast: from now, a day’s end at a time', async () => {
+  test('the cash forecast: from the lowest, as the readout says it, a day’s end at a time', async () => {
     const v = mount(CHARTS[1].node());
-    expect(v.said()).toEqual(['1', `${formatMoney(2400, 'USD')} now`]);
+    expect(v.said()).toEqual([String(LOW + 1), `${formatMoney(FORECAST.lowest.balance, 'USD')} lowest, around ${fmtDay('2026-10-15')}, estimated`]);
     v.key('ArrowRight');
     await settle();
-    expect(v.said()).toEqual(['2', `${formatMoney(FORECAST.days[0].balance, 'USD')} end of today, estimated`]);
+    expect(v.said()).toEqual([String(LOW + 2), `${formatMoney(FORECAST.days[LOW].balance, 'USD')} end of ${fmtDay(FORECAST.days[LOW].date)}, estimated`]);
+    v.key('Home');
+    await settle();
+    expect(v.said()).toEqual(['1', `${formatMoney(2400, 'USD')} now`]);
   });
 
   test('the plan’s fan: the median and the middle 80% at an age', async () => {

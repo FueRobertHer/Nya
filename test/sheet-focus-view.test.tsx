@@ -26,10 +26,28 @@ function mount() {
   const root = createRoot(host as unknown as HTMLElement);
   act(() =>
     root.render(
-      <Sheet open title="Edit" onClose={() => {}} footer={<button type="button">Save</button>}>
+      <Sheet
+        open
+        title="Edit"
+        onClose={() => {}}
+        footer={
+          <>
+            <button type="button">Save</button>
+            <button type="button" style={{ display: 'none' }}>
+              Undrawn
+            </button>
+            <button type="button" style={{ visibility: 'hidden' }}>
+              Invisible
+            </button>
+          </>
+        }
+      >
         <input aria-label="Name" />
         <button type="button" disabled>
           Held
+        </button>
+        <button type="button" tabIndex={0} disabled>
+          Held with a stop
         </button>
         <div hidden>
           <button type="button">Unseen</button>
@@ -95,8 +113,9 @@ describe('a sheet keeps Tab inside it', () => {
   test('Tab on its last control goes to its first, Shift+Tab back again', async () => {
     const v = mount();
     await settle();
-    // The close button is first; Save, in the footer, last (Held is disabled
-    // and Unseen hidden, so neither counts).
+    // The close button is first; Save, in the footer, last (the held ones are
+    // disabled, Unseen hidden, Undrawn and Invisible styled out of sight, so
+    // none counts).
     v.named('Save').focus();
     expect(v.tab()).toBe(true);
     expect(v.focused() === v.named('Close')).toBe(true);
@@ -110,6 +129,27 @@ describe('a sheet keeps Tab inside it', () => {
     await settle();
     v.named('Close').focus();
     expect(v.tab()).toBe(false);
+    v.unmount();
+  });
+
+  test('focus in a dialog it opened (the receipt viewer) is kept in that dialog', async () => {
+    const v = mount();
+    await settle();
+    const viewer = dom.document.createElement('div');
+    viewer.setAttribute('role', 'dialog');
+    viewer.setAttribute('aria-modal', 'true');
+    const [first, last] = ['Back', 'Next'].map((label) => {
+      const b = dom.document.createElement('button');
+      b.textContent = label;
+      viewer.appendChild(b);
+      return b;
+    });
+    dom.document.body.appendChild(viewer);
+    last.focus();
+    expect(v.tab()).toBe(true);
+    expect(v.focused() === first).toBe(true);
+    expect(v.tab()).toBe(false);
+    dom.document.body.removeChild(viewer);
     v.unmount();
   });
 

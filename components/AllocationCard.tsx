@@ -1376,7 +1376,7 @@ export function AllocationHistoryChart({
     active,
     setActive,
     say: (k) =>
-      `${dayName(days[k].date)}: ${dayMixText(days[k])}, ${wholeMoney(days[k].total, currency)} counted${days[k].missing.length ? `, leaving out ${missingOn(days[k], answer, nameOf)}` : ''}`,
+      `${dayLabel(days[k].date)}: ${dayMixText(days[k])}, ${wholeMoney(days[k].total, currency)} counted${days[k].missing.length ? `, leaving out ${missingOn(days[k], answer, nameOf)}` : ''}`,
   });
   if (days.length === 0) return null;
   const first = dayNum(days[0].date);

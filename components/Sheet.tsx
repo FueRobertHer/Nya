@@ -21,20 +21,27 @@ const CLOSE_MS = 220;
 // entry with it.
 const insteadOf = new WeakMap<Element, () => HTMLElement | null>();
 
+const CONTROLS = new Set(['INPUT', 'BUTTON', 'SELECT', 'TEXTAREA']);
+
+/** Whether the page draws it: not display: none (nor anything inside it). */
+const drawn = (el: Element) => window.getComputedStyle(el).display !== 'none';
+
 /** Whether Tab can land on the element: a link, an enabled control (none
- *  in a disabled fieldset), a summary, or anything given a tab stop of its
- *  own. */
+ *  in a disabled fieldset, whatever its tab stop), a summary, or anything
+ *  given a tab stop of its own; never one made invisible. */
 function tabbable(el: Element, offFieldset: boolean): boolean {
+  if (CONTROLS.has(el.tagName) && (offFieldset || el.hasAttribute('disabled'))) return false;
+  if (window.getComputedStyle(el).visibility === 'hidden') return false;
   if (el.hasAttribute('tabindex')) return el.getAttribute('tabindex') !== '-1';
   switch (el.tagName) {
     case 'A':
       return el.hasAttribute('href');
     case 'INPUT':
-      return !offFieldset && !el.hasAttribute('disabled') && el.getAttribute('type') !== 'hidden';
+      return el.getAttribute('type') !== 'hidden';
     case 'BUTTON':
     case 'SELECT':
     case 'TEXTAREA':
-      return !offFieldset && !el.hasAttribute('disabled');
+      return true;
     case 'SUMMARY':
       return true;
     default:
@@ -46,7 +53,7 @@ const isRadio = (el: Element) => el.tagName === 'INPUT' && el.getAttribute('type
 const isChecked = (el: Element) => (el as HTMLInputElement).checked === true;
 
 /** The panel's controls in the order Tab stops on them, leaving out any
- *  under a hidden or inert part (a closed level), a closed details' body
+ *  under a hidden, inert or undrawn part (a closed level), a closed details' body
  *  (its summary stays), and all but one radio of a group: the checked one,
  *  or the first while none is (a radio with no name is a group of its own). */
 function tabbables(panel: Element): HTMLElement[] {
@@ -58,7 +65,7 @@ function tabbables(panel: Element): HTMLElement[] {
     for (const node of Array.from(n.childNodes)) {
       if (node.nodeType !== 1) continue;
       const c = node as Element;
-      if (c.hasAttribute('hidden') || c.hasAttribute('inert')) continue;
+      if (c.hasAttribute('hidden') || c.hasAttribute('inert') || !drawn(c)) continue;
       if (closed && c.tagName !== 'SUMMARY') continue;
       const off = offFieldset || (c.tagName === 'FIELDSET' && c.hasAttribute('disabled'));
       visit(c, off);
@@ -83,13 +90,23 @@ function tabbables(panel: Element): HTMLElement[] {
 
 /** Keeps Tab inside the panel: from its last control to its first, and
  *  Shift+Tab from its first (or the panel itself) to its last. Focus that has
- *  left for the page behind comes back in; focus in another dialog (a sheet
- *  this one opened) is that dialog's to keep. */
-function trapTab(e: KeyboardEvent, panel: HTMLElement) {
+ *  left for the page behind comes back in. Focus in another dialog (a sheet
+ *  or the receipt viewer this one opened) is kept inside that dialog the same
+ *  way; a sheet's own listener that got there first has already done it. */
+function trapTab(e: KeyboardEvent, sheet: HTMLElement) {
+  if (e.defaultPrevented) return;
   const at = document.activeElement as HTMLElement | null;
+  let panel = sheet;
+  if (at && !sheet.contains(at)) {
+    for (let n: Element | null = at; n; n = n.parentElement) {
+      if (n.getAttribute('role') === 'dialog') {
+        panel = n as HTMLElement;
+        break;
+      }
+    }
+  }
   const items = tabbables(panel);
   if (!at || !panel.contains(at)) {
-    for (let n: Element | null = at; n; n = n.parentElement) if (n.getAttribute('role') === 'dialog') return;
     e.preventDefault();
     (items[0] ?? panel).focus();
     return;

@@ -34,6 +34,7 @@ export function useChartKeys({
   setActive,
   say,
   rest,
+  restSaid,
 }: {
   /** How many points the keys move between (0 to count - 1). */
   count: number;
@@ -45,6 +46,9 @@ export function useChartKeys({
   /** Where the chart rests with nothing chosen (its readout's own point):
    *  the last, unless said. */
   rest?: number;
+  /** What the readout says at rest, when that is not a point's own reading
+   *  (the forecast's lowest, which can fall inside a day). */
+  restSaid?: string;
 }) {
   const helpId = useId();
   // The point the slider's value says (null: where it rests), once the
@@ -103,7 +107,7 @@ export function useChartKeys({
       'aria-valuemin': 1,
       'aria-valuemax': Math.max(1, count),
       'aria-valuenow': said + 1,
-      'aria-valuetext': count > 0 ? spoken(say(said)) : undefined,
+      'aria-valuetext': count > 0 ? spoken(settled === null && restSaid !== undefined ? restSaid : say(said)) : undefined,
       onKeyDown,
       onBlur: () => setActive(null),
     },
