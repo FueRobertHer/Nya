@@ -366,7 +366,10 @@ export default function Dashboard({
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
   // What the parts read beside the balances read again on, Settings' cards
-  // that ask among them (components/device-cache.ts reloadKeyAfter).
+  // that ask among them (components/device-cache.ts reloadKeyAfter). Not
+  // Restore's: it already reads nothing again on the balances' first time
+  // (components/RestoreCard.tsx), so it keeps `asOf`, where null means
+  // nothing loaded yet.
   const [reloadKey, setReloadKey] = useState<string | null>(null);
   const savedAsOf = useRef<string | null | undefined>(undefined);
   const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null; none?: true } | null>(null);
@@ -2128,7 +2131,7 @@ export default function Dashboard({
               (components/RestoreCard.tsx). The restore banner moves focus
               here. */}
           <div id="bring-back" tabIndex={-1}>
-            <RestoreCard clerk={clerk} onChanged={restoreChanged} refreshKey={reloadKey} />
+            <RestoreCard clerk={clerk} onChanged={restoreChanged} refreshKey={asOf} />
           </div>
           {/* API tokens for the read-only API and the MCP server
               (components/ApiTokens.tsx). */}
@@ -2383,7 +2386,7 @@ export default function Dashboard({
               {/* Bringing back a download goes only into an empty account, so
                   it is offered here first (components/RestoreCard.tsx). */}
               <div id="bring-back">
-                <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan refreshKey={reloadKey} />
+                <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan refreshKey={asOf} />
               </div>
               {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
               <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
