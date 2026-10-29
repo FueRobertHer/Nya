@@ -139,7 +139,10 @@ export function withDraft(events: readonly LifeEvent[], draft: LifeEvent): LifeE
  *  that scenario as it is now. Part-time work counts from the stop age,
  *  never in the FI date: when it leaves the age where it is, it says why. */
 export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kind: LifeEventKind | null = null, missing = true, where: 'what-if' | 'scenario' = 'what-if'): string {
-  if (when === null) return missing ? 'Fill in the figures to see how it moves your FI age.' : 'Once the figures are in range, this says how they move your FI age.';
+  if (when === null) {
+    const whose = where === 'scenario' ? 'this scenario’s' : 'your';
+    return missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`;
+  }
   if (where === 'scenario') return scenarioPreviewText(when, plan, money, kind);
   if (when.kind === 'age' && plan.kind === 'age') {
     if (when.age !== plan.age) return `In this what-if, FI moves from around ${plan.age} to around ${when.age} (${moveText(when.age, plan.age)}).`;

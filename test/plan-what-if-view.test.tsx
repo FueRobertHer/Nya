@@ -474,7 +474,7 @@ describe('life choices stacked in a scenario', () => {
     const sheet = tab.dialog() as FakeElement;
     expect(sheet.textContent).toContain('A career break (Buy a home at 45)');
     expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A career break');
-    expect(preview(sheet)).toBe('Fill in the figures to see how it moves your FI age.');
+    expect(preview(sheet)).toBe('Fill in the figures to see how it moves this scenario’s FI age.');
     await fill(sheet, 'From age', '45');
     await fill(sheet, 'For how many years', '2');
     await fill(sheet, 'Saved less a year', '30000');
@@ -585,7 +585,7 @@ describe('its words', () => {
     expect(say({ kind: 'now' })).toBe('In this scenario, you’re at FI.');
     expect(say({ kind: 'never' })).toBe('In this scenario, FI isn’t reached at this savings rate.');
     expect(say({ kind: 'not-run' })).toBe('In this scenario, the figures can’t be worked out: a lasting change takes spending in retirement below zero.');
-    expect(say(null)).toBe('Fill in the figures to see how it moves your FI age.');
+    expect(say(null)).toBe('Fill in the figures to see how it moves this scenario’s FI age.');
     expect(scenarioRowText(0, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
     expect(scenarioRowText(1, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
     expect(scenarioRowText(3, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later (3 life events)');

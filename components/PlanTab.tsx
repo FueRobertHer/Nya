@@ -868,8 +868,9 @@ export default function PlanTab({
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, scenario: entry?.name ?? null, paused };
   const scenarioName = entry?.name ?? null;
   // The open scenario's life events: saved as its own, and each form says how
-  // its event moves the scenario's FI age as it is now (none while it isn't
-  // worked out, so a refused one's fix says it).
+  // its event moves the scenario's FI age as it is now. On a refused one
+  // there is nothing to move from, so its fix says what the event makes of
+  // it: still not worked out, or the FI age it comes to.
   const lifeEvents = entry
     ? {
         scenarioName: entry.name,
