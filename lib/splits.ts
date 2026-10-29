@@ -50,6 +50,7 @@
 // by hand, far under MAX_SPLITS.
 
 import { defineMapStore } from './repo';
+import { stampAfter } from './edit-stamp';
 import type { Ctx } from './containers';
 import { MAX_NOTE_CHARS } from './manual-txn-input';
 import { isTransactionId } from './txn-annotations';
@@ -255,14 +256,6 @@ function checkSeen(current: SplitRecord | null, seen: SeenSplit): void {
   throw new SplitError('This split was changed on another device since you opened it. Close it and open it again to see the change.', 409);
 }
 
-/** The time a save is stamped with, always after the split it replaces:
- *  `updated_at` is what checkSeen compares, so two saves in one millisecond
- *  (or behind a clock that stepped back) must still differ. */
-function stampAfter(current: SplitRecord | null, now: Date): string {
-  const was = current ? Date.parse(current.updated_at) : Number.NaN;
-  return new Date(was >= now.getTime() ? was + 1 : now.getTime()).toISOString();
-}
-
 /**
  * Saves a transaction's split, replacing any it had, in one compare-and-set,
  * and returns it as saved. A new split past MAX_SPLITS is refused; changing
@@ -283,7 +276,7 @@ export async function saveSplit(
   }
   return (await splitStore.update(ctx, transaction_id, (current) => {
     checkSeen(current, seen);
-    return { version: SPLITS_VERSION, amount: parent.amount, currency: parent.currency, parts, updated_at: stampAfter(current, now) };
+    return { version: SPLITS_VERSION, amount: parent.amount, currency: parent.currency, parts, updated_at: stampAfter(current?.updated_at, now) };
   }))!;
 }
 
@@ -315,7 +308,7 @@ export async function changePart(ctx: Ctx, transaction_id: string, part_id: stri
       else if (change.excluded === false) delete next.excluded;
       return next;
     });
-    return { ...current, parts, updated_at: stampAfter(current, now) };
+    return { ...current, parts, updated_at: stampAfter(current.updated_at, now) };
   });
   return found ? saved : null;
 }

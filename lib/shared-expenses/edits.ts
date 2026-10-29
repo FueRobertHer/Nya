@@ -30,6 +30,7 @@ import { groupStore, memberIndex } from '../groups';
 import { addDays, isCalendarDay, isCurrencyCode, knownCurrency, MAX_AMOUNT } from '../manual-txn-input';
 import { isSplitOrGroupId, toUnits, unitScale } from '../split-rows';
 import { splitStore } from '../splits';
+import { stampAfter } from '../edit-stamp';
 import { findTransactions, type FoundTxn } from '../txn-lookup';
 import { assembleBankRows, finishActivity } from '../activity';
 import { IMPORTED_TXN_PREFIX } from '../history-import/view';
@@ -448,7 +449,7 @@ export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareIn
       what,
       entries,
       created_at: cur?.created_at ?? now.toISOString(),
-      updated_at: now.toISOString(),
+      updated_at: stampAfter(cur?.updated_at, now),
     };
   };
   if (!carriedFrom) return (await expenseSharesStore.update(ctx, transaction_id, build))!;
@@ -560,7 +561,7 @@ export async function moveShare(ctx: Ctx, from: string, to: string, account: unk
     if (cur.get(to)) return fail('That transaction is shared already.', 409);
     const was = cur.get(from);
     if (!was) return fail('Nothing is shared under that transaction.', 404);
-    const moved: Share = { ...was, account_id: found.account_id, date: found.date, amount_was: found.amount, updated_at: now.toISOString() };
+    const moved: Share = { ...was, account_id: found.account_id, date: found.date, amount_was: found.amount, updated_at: stampAfter(was.updated_at, now) };
     delete moved.kept_gone;
     delete moved.carry_key;
     return new Map<string, Share | null>([
@@ -898,7 +899,7 @@ export async function closeItems(ctx: Ctx, input: CloseInput, now = new Date()):
       for (const sid of ids) {
         const s = cur.get(sid) ?? shares.get(sid);
         if (!cur.get(sid)) return fail('Something it closes is no longer kept. Reload to see it as it is.', 409);
-        next.set(sid, { ...s!, entries: s!.entries.map((e) => (wanted.has(e.id) ? { ...e, closed: [...(e.closed ?? []), closing(wanted.get(e.id)!)] } : e)), updated_at: now.toISOString() });
+        next.set(sid, { ...s!, entries: s!.entries.map((e) => (wanted.has(e.id) ? { ...e, closed: [...(e.closed ?? []), closing(wanted.get(e.id)!)] } : e)), updated_at: stampAfter(s!.updated_at, now) });
       }
       return next;
     });
@@ -938,7 +939,7 @@ export async function reopenClosed(ctx: Ctx, item: string, event: string, now = 
           if (closed.length === 0) delete next.closed;
           return next;
         }),
-        updated_at: now.toISOString(),
+        updated_at: stampAfter(cur.updated_at, now),
       };
     });
   } else {

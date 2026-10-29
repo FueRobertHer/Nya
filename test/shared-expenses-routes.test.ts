@@ -168,6 +168,23 @@ describe('the loop, through the routes', () => {
     expect(dinner.amount).toBe(90);
   });
 
+  test('changes saved in one millisecond still move a share on, so an edit opened before them is refused', async () => {
+    const { person, entry } = await seeded();
+    const { saveShare, closeItems, reopenClosed, removeShare } = await import('@/lib/shared-expenses/edits');
+    const stamp = async () => (await store.expenseSharesStore.get(ctx, 't_dinner'))!.updated_at;
+    // Every change below in the same millisecond.
+    const at = new Date();
+    const saved = await saveShare(ctx, 't_dinner', { entries: [{ person, amount: 50 }], updated_at: await stamp() }, at);
+    const { event } = await closeItems(ctx, { kind: 'outside', items: [{ item: entry, amount: 10 }], date: daysAgo(2) }, at);
+    const closed = await stamp();
+    expect(closed > saved.updated_at).toBe(true);
+    await expect(saveShare(ctx, 't_dinner', { entries: [{ person, amount: 40 }], updated_at: saved.updated_at }, at)).rejects.toMatchObject({ status: 409 });
+    expect(await reopenClosed(ctx, entry, event, at)).toBe(true);
+    expect((await stamp()) > closed).toBe(true);
+    await expect(removeShare(ctx, 't_dinner', closed)).rejects.toMatchObject({ status: 409 });
+    expect(await removeShare(ctx, 't_dinner', await stamp())).toBe(true);
+  });
+
   test('forget keeps the money: the name and handle go, the balance stays', async () => {
     const { person } = await seeded();
     expect((await route('shared-expenses/people', 'PATCH', { id: person, action: 'forget' })).status).toBe(200);
