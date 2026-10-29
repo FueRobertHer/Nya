@@ -2359,7 +2359,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
 }
 
 /* A stat strip (docs/design/design-system.md#stat-strip): labelled figures,
-   two to a row on a phone, all in one row from 640px, or three to a row when
+   two to a row on a phone, all in one row from 720px, or three to a row when
    there are five (the Accounts tab's totals by kind with Other). A cell may
    shrink below its figure (min-width: 0), so a long one wraps inside its own
    cell rather than running into the next. The figure is sized by its own
