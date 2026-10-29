@@ -255,6 +255,14 @@ function checkSeen(current: SplitRecord | null, seen: SeenSplit): void {
   throw new SplitError('This split was changed on another device since you opened it. Close it and open it again to see the change.', 409);
 }
 
+/** The time a save is stamped with, always after the split it replaces:
+ *  `updated_at` is what checkSeen compares, so two saves in one millisecond
+ *  (or behind a clock that stepped back) must still differ. */
+function stampAfter(current: SplitRecord | null, now: Date): string {
+  const was = current ? Date.parse(current.updated_at) : Number.NaN;
+  return new Date(was >= now.getTime() ? was + 1 : now.getTime()).toISOString();
+}
+
 /**
  * Saves a transaction's split, replacing any it had, in one compare-and-set,
  * and returns it as saved. A new split past MAX_SPLITS is refused; changing
@@ -273,10 +281,9 @@ export async function saveSplit(
   if (!(await splitStore.has(ctx, transaction_id)) && (await splitStore.count(ctx)) >= MAX_SPLITS) {
     throw new SplitError(`At most ${MAX_SPLITS.toLocaleString('en-US')} transactions can be split. Unsplit some first.`, 409);
   }
-  const record: SplitRecord = { version: SPLITS_VERSION, amount: parent.amount, currency: parent.currency, parts, updated_at: now.toISOString() };
   return (await splitStore.update(ctx, transaction_id, (current) => {
     checkSeen(current, seen);
-    return record;
+    return { version: SPLITS_VERSION, amount: parent.amount, currency: parent.currency, parts, updated_at: stampAfter(current, now) };
   }))!;
 }
 
@@ -308,7 +315,7 @@ export async function changePart(ctx: Ctx, transaction_id: string, part_id: stri
       else if (change.excluded === false) delete next.excluded;
       return next;
     });
-    return { ...current, parts, updated_at: now.toISOString() };
+    return { ...current, parts, updated_at: stampAfter(current, now) };
   });
   return found ? saved : null;
 }
