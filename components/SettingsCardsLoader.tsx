@@ -9,7 +9,9 @@
 // on Home's first screen among them) draws nothing until its code is in,
 // rather than a card that then goes away; if its code can't be loaded it says
 // so like any other, since it may be what a Needs attention row or the
-// restore banner sent the person to.
+// restore banner sent the person to. The demo account's card and the admin's
+// stay away then too: most people never see them, and a card beside each
+// offers Try again, which brings them back with it.
 
 import type { ComponentProps, ComponentType } from 'react';
 import { CardSkeleton } from './LoadingSkeletons';
