@@ -38,9 +38,12 @@ describe('the dashboard reads them on that key', () => {
     expect(dashboard).toContain('useTimelineNotes(reloadKey)');
     expect(dashboard).toContain('useConnectors(reloadKey)');
     expect(dashboard.match(/<SharedWithMe refreshKey=\{reloadKey\}/g)).toHaveLength(2);
+    // On one line: its onChanged is an arrow, so not up to the first >.
+    expect(dashboard).toMatch(/<AccountLinks [^\n]*refreshKey=\{reloadKey\}/);
   });
 
   test("but Restore keeps the balances' own time, where null means nothing loaded yet", () => {
     expect(dashboard.match(/<RestoreCard [^>]*refreshKey=\{asOf\}/g)).toHaveLength(2);
+    expect(dashboard).not.toMatch(/<RestoreCard [^>]*refreshKey=\{reloadKey\}/);
   });
 });

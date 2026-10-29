@@ -20,7 +20,7 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { lazyPart, onPartShown, preloadParts, useLazyPart, PartBoundary, PartUnavailable } = await import('@/components/lazy-part');
 const { LazySheet, SLOW_MS } = await import('@/components/LazySheets');
 const { default: BudgetsTabLoader, BudgetsUnavailable } = await import('@/components/BudgetsTabLoader');
-const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
+const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
 const { ThemeCard: RealThemeCard } = await import('@/components/ThemeCard');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -241,6 +241,24 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
 
   test('a card that often draws nothing draws nothing until its code is in', () => {
     expect(renderToStaticMarkup(<RestoreCard clerk={false} />)).toBe('');
+  });
+
+  test("when the code can't be loaded, a quiet card says so, and one most people never see stays away", async () => {
+    type Cards = typeof import('@/components/settings-cards');
+    const c = controlled<Cards>();
+    const Restore = settingsCard('RestoreCard', { quiet: true }, c.part);
+    const Demo = settingsCard('DemoDataCard', { rare: true }, c.part);
+    const m = mount(
+      <div>
+        <Restore clerk={false} />
+        <Demo onChanged={noop} />
+      </div>
+    );
+    expect(m.host.textContent).toBe('');
+    await c.fail();
+    expect(m.host.textContent).toContain("This card couldn't be loaded.");
+    expect(m.host.textContent.match(/couldn't be loaded/g)).toHaveLength(1);
+    m.unmount();
   });
 
   test('once its code is in, a card is the card itself', async () => {

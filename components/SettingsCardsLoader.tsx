@@ -13,7 +13,7 @@
 
 import type { ComponentProps, ComponentType } from 'react';
 import { CardSkeleton } from './LoadingSkeletons';
-import { PartBoundary, PartUnavailable, lazyPart, useLazyPart } from './lazy-part';
+import { PartBoundary, PartUnavailable, lazyPart, useLazyPart, type LazyPart } from './lazy-part';
 
 type Cards = typeof import('./settings-cards');
 
@@ -29,11 +29,14 @@ export function CardUnavailable({ reason, onRetry }: { reason: 'load' | 'crash';
 }
 
 /** `quiet`: for a card that often draws nothing at all, so nothing while
- *  its code is on its way. */
-function settingsCard<K extends keyof Cards>(name: K, { quiet = false } = {}) {
+ *  its code is on its way. `rare`: for one most people never see (a demo
+ *  account's, the admin's), so nothing if its code can't be loaded either,
+ *  rather than a failure for a card that wouldn't have been there. `part`:
+ *  where the code comes from (a test's own). */
+export function settingsCard<K extends keyof Cards>(name: K, { quiet = false, rare = false } = {}, part: LazyPart<Cards> = settingsCardsPart) {
   type Props = ComponentProps<Cards[K]>;
   function Card(props: Props) {
-    const { mod, failed, retry } = useLazyPart(settingsCardsPart);
+    const { mod, failed, retry } = useLazyPart(part);
     if (mod) {
       // The card of that name takes these props; TypeScript can't follow a
       // name chosen by a type parameter to its card.
@@ -44,19 +47,19 @@ function settingsCard<K extends keyof Cards>(name: K, { quiet = false } = {}) {
         </PartBoundary>
       );
     }
-    if (failed) return <CardUnavailable reason="load" onRetry={retry} />;
-    return quiet ? null : <CardSkeleton label="Loading" />;
+    if (failed) return rare ? null : <CardUnavailable reason="load" onRetry={retry} />;
+    return quiet || rare ? null : <CardSkeleton label="Loading" />;
   }
   Card.displayName = name;
   return Card;
 }
 
 export const AccountLinks = settingsCard('AccountLinks', { quiet: true });
-export const AdminUnusedItems = settingsCard('AdminUnusedItems', { quiet: true });
+export const AdminUnusedItems = settingsCard('AdminUnusedItems', { rare: true });
 export const ApiTokens = settingsCard('ApiTokens');
 export const CategoriesCard = settingsCard('CategoriesCard');
 export const CurrencyCard = settingsCard('CurrencyCard');
-export const DemoDataCard = settingsCard('DemoDataCard', { quiet: true });
+export const DemoDataCard = settingsCard('DemoDataCard', { rare: true });
 export const ReceiptsCard = settingsCard('ReceiptsCard');
 export const RestoreCard = settingsCard('RestoreCard', { quiet: true });
 export const ReviewSettingsCard = settingsCard('ReviewSettingsCard');
