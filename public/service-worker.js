@@ -144,7 +144,9 @@ async function tidyOnce(request, clientId) {
     .match(NOTES)
     .then((r) => r?.json())
     .catch(() => null);
-  const state = { tidied: 0, refs: {}, unused: {}, ...saved };
+  // Anything unreadable starts afresh, rather than stopping every tidy.
+  const object = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const state = { tidied: Number(saved?.tidied) || 0, refs: object(saved?.refs), unused: object(saved?.unused) };
   const now = Date.now();
   if (now >= state.tidied && now - state.tidied < DAY) return;
   // After the page's own files, not competing with them.
@@ -154,9 +156,11 @@ async function tidyOnce(request, clientId) {
   const page = await cache.match(request);
   if (!page) return;
   const pageText = await page.text();
-  for (const own of ownFiles(pageText, request.url)) if (!(await cache.match(own))) return;
+  for (const own of ownFiles(pageText, request.url)) if (!(await cache.match(own, { ignoreVary: true }))) return;
+  // A browser that doesn't say which window the page opened in: then only
+  // when there is one.
   const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-  if (windows.some((w) => w.id !== clientId)) return;
+  if (clientId ? windows.some((w) => w.id !== clientId) : windows.length > 1) return;
 
   const build = buildOf(pageText);
   const day = Math.floor(now / DAY);
@@ -164,7 +168,7 @@ async function tidyOnce(request, clientId) {
   // Found unused again; true once it has been for long enough to go.
   const due = (key) => {
     const was = state.unused[key];
-    const note = was ? { ...was, days: was.days + (was.last === day ? 0 : 1), last: day } : { since: now, days: 1, last: day };
+    const note = Number.isFinite(was?.since) && Number.isFinite(was?.days) ? { ...was, days: was.days + (was.last === day ? 0 : 1), last: day } : { since: now, days: 1, last: day };
     unused[key] = note;
     return note.days >= 3 && now - note.since >= 7 * DAY;
   };
@@ -174,7 +178,8 @@ async function tidyOnce(request, clientId) {
   for (const key of await cache.keys()) {
     const path = new URL(key.url).pathname;
     if (path.startsWith('/_next/static/')) {
-      built.set(path, key);
+      // One file can be kept under more than one address (a ?dpl= per deploy).
+      built.set(path, [...(built.get(path) ?? []), key]);
       continue;
     }
     const kept = await cache.match(key);
@@ -200,27 +205,34 @@ async function tidyOnce(request, clientId) {
     queue.push(path);
   };
   for (const p of roots) refsIn(p.text, p.path).forEach(reach);
-  // A built file never changes, so what it names is read once.
+  // An immutable file never changes, so what it names is read once.
   const refs = {};
   while (queue.length) {
     const path = queue.pop();
-    const key = built.get(path);
+    const key = built.get(path)?.[0];
     if (!key || !/\.(js|css)$/.test(path)) continue;
-    let named = state.refs[path];
+    let named = Array.isArray(state.refs[path]) ? state.refs[path] : null;
     if (!named) {
       const kept = await cache.match(key);
       if (!kept) continue;
       named = refsIn(await kept.text(), path);
+      if (!immutable(kept)) {
+        named.forEach(reach);
+        continue;
+      }
     }
     refs[path] = named;
     named.forEach(reach);
   }
-  for (const [path, key] of built) {
-    if (reached.has(path) || !due(key.url)) continue;
-    // Checked with nothing awaited before the delete starts.
-    if (asked.has(path)) continue;
-    await cache.delete(key);
-    delete unused[key.url];
+  for (const [path, keys] of built) {
+    if (reached.has(path)) continue;
+    for (const key of keys) {
+      if (!due(key.url)) continue;
+      // Checked with nothing awaited before the delete starts.
+      if (asked.has(path)) continue;
+      await cache.delete(key);
+      delete unused[key.url];
+    }
   }
 
   await notes.put(NOTES, new Response(JSON.stringify({ tidied: now, refs, unused }), { headers: { 'Content-Type': 'application/json' } }));
@@ -229,9 +241,14 @@ async function tidyOnce(request, clientId) {
 /** The deploy a page or RSC payload belongs to: Next's build id, or the
  *  deployment id it carries instead when there is one. */
 function buildOf(text) {
-  // The build id is the last key of the payload's first row: "b":"<id>"}
-  // and the row's end (escaped inside a page's script).
-  return text.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}(?:\\n|\n)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
+  // The build id is the last key of the payload's root row (row 0):
+  // ..."b":"<id>"} and the row's end, escaped inside a page's script. A
+  // segment prefetch names it "buildId".
+  for (const [, row] of text.matchAll(/(?:^|\n|\\n|\[1,")0:(\{.*?)(?=\\n|\n)/g)) {
+    const id = row.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}$/)?.[1];
+    if (id) return id;
+  }
+  return text.match(/\\?"buildId\\?":\\?"([\w-]+)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
 }
 
 /** The scripts and stylesheets a page loads itself (not a noModule
@@ -253,7 +270,7 @@ function ownFiles(html, base) {
  *  relative to `base`. Matching loosely only keeps more. */
 function refsIn(text, base) {
   const found = new Set();
-  for (const m of text.match(/static\/[\w.~%\/-]+/g) ?? []) found.add(`/_next/${m}`);
+  for (const m of text.match(/static\/[^\s"'`()\\<>{}|^,;?#&]+/g) ?? []) found.add(`/_next/${m}`);
   for (const [, ref] of text.matchAll(/url\(\s*['"]?([^'")\s]+)/g)) {
     try {
       const url = new URL(ref, `${self.location.origin}${base}`);

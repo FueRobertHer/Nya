@@ -53,7 +53,14 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     open: async (name: string) => open(name),
     keys: async () => [...stores.keys()],
     delete: async (name: string) => stores.delete(name),
-    match: (req: { url: string; mode?: string } | string, opts?: { ignoreSearch?: boolean }) => open('nya-v3').match(req, opts),
+    // Every cache, as the browser's does, the tidy's notes included.
+    match: async (req: { url: string; mode?: string } | string, opts?: { ignoreSearch?: boolean }) => {
+      for (const name of stores.keys()) {
+        const hit = await open(name).match(req, opts);
+        if (hit) return hit;
+      }
+      return undefined;
+    },
   };
   const puts: string[] = [];
   const deleted: string[] = [];
@@ -69,7 +76,7 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     });
   };
   const clock = from?.clock ?? { now: Date.parse('2026-10-01T12:00:00Z') };
-  const windows = { others: 0 };
+  const windows = { others: 0, uncontrolled: 0, said: true };
   let clientIds = 0;
   const listeners: Record<string, (event: unknown) => void> = {};
   const self = {
@@ -78,7 +85,11 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     skipWaiting: () => {},
     clients: {
       claim: () => {},
-      matchAll: async () => [{ id: `window-${clientIds}` }, ...Array.from({ length: windows.others }, (_, i) => ({ id: `other-${i}` }))],
+      matchAll: async (opts?: { includeUncontrolled?: boolean }) => [
+        { id: `window-${clientIds}` },
+        ...Array.from({ length: windows.others }, (_, i) => ({ id: `other-${i}` })),
+        ...Array.from({ length: opts?.includeUncontrolled ? windows.uncontrolled : 0 }, (_, i) => ({ id: `uncontrolled-${i}` })),
+      ],
     },
     registration: { navigationPreload: { enable: async () => {} } },
   };
@@ -97,7 +108,7 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     const after: Promise<unknown>[] = [];
     listeners.fetch({
       request: { url: path.startsWith('http') ? path : `${ORIGIN}${path}`, mode: init.mode ?? 'cors', method: init.method ?? 'GET' },
-      resultingClientId: init.mode === 'navigate' ? `window-${++clientIds}` : '',
+      resultingClientId: init.mode === 'navigate' ? (++clientIds, windows.said ? `window-${clientIds}` : undefined) : '',
       preloadResponse: init.preload ? Promise.resolve(init.preload) : undefined,
       respondWith: (p: Promise<Response | undefined>) => (answered.with = p),
       waitUntil: (p: Promise<unknown>) => {
@@ -450,6 +461,92 @@ describe('the daily tidy', () => {
     await w.request(js('a1'));
     await w.load('/', [js('a2')]);
     expect(await kept(w, js('a1'))).toBe(true);
+  });
+
+  test('a kept RSC payload keeps what it names', async () => {
+    let w = twoDeploys();
+    w.net.answers.set(at('/reports?_rsc=1'), { body: '1:I[5,["/_next/static/chunks/report.js"],"default"]\n0:{"f":[],"b":"build-1"}\n', type: 'text/x-component' });
+    w.net.answers.set(at(js('report')), { body: '', cacheControl: IMMUTABLE });
+    await w.load('/', [js('a1')]);
+    await w.request('/reports?_rsc=1');
+    await w.request(js('report'));
+    w = later(w, 1);
+    await w.load('/', [js('a1')]);
+    expect((await notes(w))!.unused).toEqual({});
+  });
+
+  test('waits for the page’s stylesheets too, read with &amp; as written in the page', async () => {
+    let w = worker();
+    const css = '/_next/static/chunks/site.css?dpl=1&v=2';
+    w.net.answers.set(at('/'), { body: html('build-1', [js('a1')], '<link rel="stylesheet" href="/_next/static/chunks/site.css?dpl=1&amp;v=2"/>'), type: 'text/html' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '', [js('stray')]: '' });
+    w.net.answers.set(at(css), { body: '', cacheControl: IMMUTABLE, type: 'text/css' });
+    await w.request(js('stray'));
+    await w.load('/', [js('a1')]);
+    expect(await notes(w)).toBeUndefined();
+    await w.load('/', [js('a1'), css]);
+    expect((await notes(w))!.unused).toHaveProperty([at(js('stray'))]);
+  });
+
+  test('counts windows not yet controlled, and without the page’s window id, waits for one window', async () => {
+    let w = twoDeploys();
+    await w.load('/', [js('a1')]);
+    w = later(w, 1);
+    deploy(w, 'build-2', { '/': [js('a2')] });
+    w.windows.uncontrolled = 1;
+    await w.load('/', [js('a2')]);
+    expect((await notes(w))!.unused).toEqual({});
+    w.windows.uncontrolled = 0;
+    w.windows.said = false;
+    w.windows.others = 1;
+    await w.load('/', [js('a2')]);
+    expect((await notes(w))!.unused).toEqual({});
+    w.windows.others = 0;
+    await w.load('/', [js('a2')]);
+    expect((await notes(w))!.unused).toHaveProperty([at(js('a1'))]);
+  });
+
+  test('reads the build from the root row, not another row ending the same way', async () => {
+    let w = worker();
+    const decoy = '<script>self.__next_f.push([1,"1:{\\"b\\":\\"not-a-build\\"}\\n"])</script>';
+    w.net.answers.set(at('/?tab=plan'), { body: html('build-1', [js('a1')], decoy), type: 'text/html' });
+    w.net.answers.set(at('/'), { body: html('build-1', [js('a1')]), type: 'text/html' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '' });
+    await w.load('/?tab=plan', [js('a1')]);
+    await w.load('/', [js('a1')]);
+    w = later(w, 1);
+    await w.load('/', [js('a1')]);
+    expect((await notes(w))!.unused).toEqual({});
+  });
+
+  test('a clock set back, or unreadable notes, don’t stop the tidy', async () => {
+    let w = twoDeploys();
+    await w.load('/', [js('a1')]);
+    w.clock.now -= 3 * DAY;
+    w = later(w, 1);
+    deploy(w, 'build-2', { '/': [js('a2')] });
+    await w.load('/', [js('a2')]);
+    expect((await notes(w))!.unused).toHaveProperty([at(js('a1'))]);
+
+    w = later(w, 1);
+    await w.open('nya-v3-tidy').put(at('/api/service-worker/tidy'), new Response('{"tidied":"x","refs":null,"unused":null}'));
+    await w.load('/', [js('a2')]);
+    expect((await notes(w))!.unused).toHaveProperty([at(js('a1'))]);
+  });
+
+  test('what a file that may change names is read again each time', async () => {
+    let w = worker();
+    const dev = { cacheControl: 'no-cache, must-revalidate' };
+    w.net.answers.set(at('/'), { body: html('build-1', [js('main')]), type: 'text/html' });
+    w.net.answers.set(at(js('main')), { body: '', ...dev });
+    w.net.answers.set(at(js('later')), { body: '', ...dev });
+    await w.load('/', [js('main')]);
+    await w.request(js('later'));
+    w = later(w, 1);
+    // An edit: main now imports later.
+    w.net.answers.set(at(js('main')), { body: 'l("static/chunks/later.js")', ...dev });
+    await w.load('/', [js('main')]);
+    expect((await notes(w))!.unused).toEqual({});
   });
 
   test('a tidy that fails leaves the page’s answer alone', async () => {
