@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { sizeText } from './DataInventory';
 import { PageHeader } from './PageHeader';
+import { Notice } from './TotalCaveats';
 
 type AdminItem = {
   item_id: string;
@@ -253,7 +254,11 @@ export default function AdminStorage() {
         counts, it shows what is kept as plain text: each account’s banks by name, Plaid’s id for each connection and whether Plaid billed transactions on it, the
         daily check’s dates, and the snapshot’s outcome and the reason it gave.
       </p>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {!pages && !error && <p className="empty-note">Measuring…</p>}
       {pages && <AdminStorageView pages={pages} sort={sort} onSort={setSort} />}
       {pages?.next && (

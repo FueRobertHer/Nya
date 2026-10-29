@@ -23,6 +23,7 @@ import {
   type TemplateUndo,
   type UndoKept,
 } from '@/lib/category-templates';
+import { Notice } from './TotalCaveats';
 
 /** A plan as the route sends it: without the set it would make. */
 export type ShownPlan = Omit<TemplatePlan, 'taxonomy' | 'signature'> & { basis: string };
@@ -279,7 +280,11 @@ export function CategoryTemplatesView({
   onUndo: (t: TemplateId, undo: TemplateUndo) => void;
   onList: () => void;
 }) {
-  const failed = error && <div className="error">{error}</div>;
+  const failed = error && (
+    <Notice level="critical" role="alert">
+      {error}
+    </Notice>
+  );
   if (step.at === 'list') {
     return (
       <div className="sheet-form">

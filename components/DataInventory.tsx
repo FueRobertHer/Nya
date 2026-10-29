@@ -14,6 +14,7 @@
 import { useEffect, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { PageHeader } from './PageHeader';
+import { Notice } from './TotalCaveats';
 
 type Encryption =
   | { kind: 'plain' }
@@ -267,7 +268,11 @@ export default function DataInventory() {
         Every kind of thing Nya keeps about you: how much of it there is, whether it is encrypted and with which key, whether it is in your download, how long it is
         kept and who else can see it. Numbers only: nothing here shows what is stored.
       </p>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {!inv && !error && <p className="empty-note">Counting…</p>}
       {inv && <InventoryView inv={inv} />}
     </main>

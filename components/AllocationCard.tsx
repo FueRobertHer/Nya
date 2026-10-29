@@ -26,7 +26,7 @@
 // left out of it: never silently, and never with unclassified money counted
 // as stocks or bonds.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { ScenarioTag } from './ScenarioTag';
 import { Choice } from './PlanForms';
@@ -91,6 +91,8 @@ import type { FirePlan } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
+import { Notice } from './TotalCaveats';
+import FieldError from './FieldError';
 
 /** Allocation's two views, by asset class or tax bucket, as tabs. */
 const allocationTabId = (v: string) => `allocation-tab-${v}`;
@@ -261,26 +263,32 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
   return (
     <div className="card alloc-card">
       <ScenarioTag name={scenarioName} />
-      <div className="inst-header">
-        <div className="inst-name">Allocation</div>
-        {hasAccounts && (
-          <button className="plan-edit" onClick={() => open({ kind: 'target' })} disabled={!editable}>
-            {current.target ? 'Change target' : 'Set a target'}
-          </button>
+      <div className="stack tight">
+        <div className="inst-header">
+          <div className="inst-name">Allocation</div>
+          {hasAccounts && (
+            <button className="plan-edit" onClick={() => open({ kind: 'target' })} disabled={!editable}>
+              {current.target ? 'Change target' : 'Set a target'}
+            </button>
+          )}
+        </div>
+        {settings.status === 'error' && (
+          <>
+            <Notice level="critical" role="alert">
+              {settings.error}
+            </Notice>
+            <p className="panel-note">The figures below leave out the buckets, splits and target you set until they load.</p>
+            <button className="secondary" onClick={() => void allocation.load()}>
+              Try again
+            </button>
+          </>
+        )}
+        {settings.saveError && (
+          <Notice level="critical" role="alert">
+            {settings.saveError}
+          </Notice>
         )}
       </div>
-      {settings.status === 'error' && (
-        <>
-          <div className="error" style={{ marginTop: 0 }}>
-            {settings.error}
-          </div>
-          <p className="panel-note">The figures below leave out the buckets, splits and target you set until they load.</p>
-          <button className="secondary" style={{ marginTop: 8 }} onClick={() => void allocation.load()}>
-            Try again
-          </button>
-        </>
-      )}
-      {settings.saveError && <div className="error">{settings.saveError}</div>}
       {settingsLocked && <p className="panel-note">Your target, fund splits and tax buckets are the same for every plan: change them with your plan open.</p>}
 
       {!hasAccounts ? (
@@ -863,21 +871,32 @@ const FIELD_NAMES: Record<AssetClass, string> = {
 
 /** Percents as typed, into a split: an empty field is none. Throws a message
  *  a person can act on. */
+/** What is wrong with a split as typed: about one class's field, or (no
+ *  `field`) about the shares together. */
+export class SplitProblem extends Error {
+  constructor(
+    message: string,
+    readonly field?: AssetClass
+  ) {
+    super(message);
+  }
+}
+
 export function readSplit(fields: Partial<Record<AssetClass, string>>, opts: { target?: boolean } = {}): Split {
   const split: Split = {};
   for (const c of ASSET_CLASSES) {
     const t = (fields[c] ?? '').trim();
     if (t === '') continue;
     const n = Number(t);
-    if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error(`${FIELD_NAMES[c]} must be a percent from 0 to 100.`);
-    if (tenths(n) === null) throw new Error(`${FIELD_NAMES[c]} can have one decimal at most.`);
+    if (!Number.isFinite(n) || n < 0 || n > 100) throw new SplitProblem(`${FIELD_NAMES[c]} must be a percent from 0 to 100.`, c);
+    if (tenths(n) === null) throw new SplitProblem(`${FIELD_NAMES[c]} can have one decimal at most.`, c);
     if (n > 0) split[c] = n;
   }
   const sum = ASSET_CLASSES.reduce((s, c) => s + (tenths(split[c] ?? 0) ?? 0), 0);
-  if (sum === 0) throw new Error('Give at least one class a share.');
-  if (sum !== 1000) throw new Error(`These add up to ${sum / 10}%: they need to add up to 100%.`);
+  if (sum === 0) throw new SplitProblem('Give at least one class a share.');
+  if (sum !== 1000) throw new SplitProblem(`These add up to ${sum / 10}%: they need to add up to 100%.`);
   if (opts.target && (split.stocks ?? 0) > 0 && ((split['us-stocks'] ?? 0) > 0 || (split['intl-stocks'] ?? 0) > 0)) {
-    throw new Error('Give stocks as one share, or as US and international, not both.');
+    throw new SplitProblem('Give stocks as one share, or as US and international, not both.');
   }
   return split;
 }
@@ -904,7 +923,12 @@ export function SplitForm({
     Object.fromEntries(ASSET_CLASSES.map((c) => [c, initial?.[c] !== undefined ? String(initial[c]) : '']))
   );
   const [error, setError] = useState('');
+  // What Save found wrong with what is typed, said under the fields.
+  const [wrong, setWrong] = useState<SplitProblem | null>(null);
   const [saving, setSaving] = useState(false);
+  const errorId = useId();
+  // A field is invalid when the problem is about it, or about them all.
+  const invalid = (c: AssetClass) => !!wrong && (wrong.field === undefined || wrong.field === c);
   let sum = 0;
   for (const c of ASSET_CLASSES) sum += tenths(Number(fields[c] || 0)) ?? 0;
   const save = async (split: Split | null) => {
@@ -933,7 +957,10 @@ export function SplitForm({
                 setFields((f) => ({ ...f, [c]: e.target.value }));
                 // What Save said is about what was there then.
                 setError('');
+                setWrong(null);
               }}
+              aria-invalid={invalid(c)}
+              aria-describedby={invalid(c) ? errorId : undefined}
               disabled={saving}
             />
           </label>
@@ -944,7 +971,12 @@ export function SplitForm({
       <p className="helper" aria-live="polite">
         {sum / 10}% of 100%
       </p>
-      {error && <div className="error">{error}</div>}
+      {wrong && <FieldError id={errorId}>{wrong.message}</FieldError>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {canRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={!editable || saving} onClick={() => void save(null)}>
           {target ? 'Remove the target' : 'Remove my split'}
@@ -961,9 +993,12 @@ export function SplitForm({
             try {
               split = readSplit(fields, { target });
             } catch (err) {
-              setError((err as Error).message);
+              if (!(err instanceof SplitProblem)) throw err;
+              setError('');
+              setWrong(err);
               return;
             }
+            setWrong(null);
             void save(split);
           }}
         >
@@ -1011,7 +1046,11 @@ export function BucketForm({
           </label>
         ))}
       </div>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={saving}>
           Cancel

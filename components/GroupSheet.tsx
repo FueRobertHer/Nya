@@ -21,6 +21,7 @@ import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex, 
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS, toUnits, unitScale } from '@/lib/split-rows';
 import { groupGoneText, heldInGroupAs } from './SplitRows';
 import { shownName } from '@/lib/merchant-name';
+import { Notice } from './TotalCaveats';
 
 /** How many transactions the list offers at once; the search finds the rest. */
 const OFFERED = 60;
@@ -263,10 +264,16 @@ export default function GroupSheet({
           {toAdd.length === 0 ? <p className="empty-note">{query ? 'No transaction matches.' : 'No other transactions in this currency.'}</p> : toAdd.map(row)}
         </div>
       </div>
-      <p className="split-left" role="status">
-        <Masked>{groupStatus({ count: chosen.size, net, currency, category: category ? { name: category.name, kind: groupOf(ix, category).kind } : null })}</Masked>
-      </p>
-      {error && <div className="error">{error}</div>}
+      <div className="stack">
+        <p className="split-left" role="status">
+          <Masked>{groupStatus({ count: chosen.size, net, currency, category: category ? { name: category.name, kind: groupOf(ix, category).kind } : null })}</Masked>
+        </p>
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={save} disabled={!ready || saving}>
           {saving ? 'Saving…' : group ? 'Save group' : 'Group them'}

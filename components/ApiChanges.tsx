@@ -21,6 +21,7 @@ import { Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 import { cannotUndo, changeSentence, viaWords, type AccountNames, type ListedChange } from './api-change-words';
 import { CHANGES_KEEP_DAYS } from '@/lib/api-limits';
+import { Notice } from './TotalCaveats';
 
 export type ChangeList =
   | { kind: 'loading' }
@@ -142,15 +143,21 @@ export function ApiChangesView({
 
   return (
     <div className="card api-changes-card">
-      <div className="inst-header">
-        <div className="inst-name">Changes made with your tokens</div>
+      <div className="stack tight">
+        <div className="inst-header">
+          <div className="inst-name">Changes made with your tokens</div>
+        </div>
+        <p className="panel-note">
+          Every change a token made in the last {CHANGES_KEEP_DAYS} days, newest first. Undo one while what it changed is still as
+          the change left it. Forget one to remove Nya’s copy of what it changed: it stays listed, and can’t be undone.
+        </p>
+        {list.kind === 'loading' && <p className="panel-note">Loading the changes…</p>}
+        {list.kind === 'error' && (
+          <Notice level="critical" role="alert">
+            {list.message}
+          </Notice>
+        )}
       </div>
-      <p className="panel-note">
-        Every change a token made in the last {CHANGES_KEEP_DAYS} days, newest first. Undo one while what it changed is still as
-        the change left it. Forget one to remove Nya’s copy of what it changed: it stays listed, and can’t be undone.
-      </p>
-      {list.kind === 'loading' && <p className="panel-note">Loading the changes…</p>}
-      {list.kind === 'error' && <div className="error">{list.message}</div>}
       {list.kind === 'ready' && (
         <>
           {list.changes.length === 0 && list.unreadable.length === 0 && list.unrecognised.length === 0 && (
@@ -239,19 +246,25 @@ export function ChangeSheet({
     <Sheet open={!!asking} title={title} onClose={onCancel}>
       {asking && (
         <>
-          {asking.change && (
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              <Masked>{changeSentence(asking.change, names)}</Masked>
+          <div className="stack tight">
+            {asking.change && (
+              <p className="panel-note">
+                <Masked>{changeSentence(asking.change, names)}</Masked>
+              </p>
+            )}
+            <p className="panel-note">
+              {asking.kind === 'undo'
+                ? 'It is changed back only if nothing has changed it since, in the app or by another program; if something has, nothing is changed and you are told what. The undo is listed too.'
+                : asking.kind === 'forget'
+                  ? `Nya keeps a copy of what each change changed, before and after, for ${CHANGES_KEEP_DAYS} days, so it can be undone. Forgetting removes the copy now. The change stays listed, without it, and can no longer be undone.`
+                  : 'Its record can’t be read, so it can’t be undone or shown. Removing it deletes what is left of it.'}
             </p>
-          )}
-          <p className="panel-note">
-            {asking.kind === 'undo'
-              ? 'It is changed back only if nothing has changed it since, in the app or by another program; if something has, nothing is changed and you are told what. The undo is listed too.'
-              : asking.kind === 'forget'
-                ? `Nya keeps a copy of what each change changed, before and after, for ${CHANGES_KEEP_DAYS} days, so it can be undone. Forgetting removes the copy now. The change stays listed, without it, and can no longer be undone.`
-                : 'Its record can’t be read, so it can’t be undone or shown. Removing it deletes what is left of it.'}
-          </p>
-          {error && <div className="error">{error}</div>}
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={onCancel} disabled={busy}>
               Cancel

@@ -9,7 +9,7 @@
 // its reason is shown here when it differs. The form only closes once the
 // server took the change.
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { formatMoney, hideAmountsIn } from '@/lib/format';
@@ -18,7 +18,9 @@ import { goalViews, type GoalAccount } from '@/lib/goal-view';
 import { endedTag, outlookText, sourceNote } from '@/lib/goal-text';
 import { LATEST_TARGET_DATE, MAX_GOAL_NAME_CHARS, type Goal } from '@/lib/goal-model';
 import type { AccountFlow } from '@/lib/goal-projection';
-import { archivedGoal, draftOf, pickAccount, readDraft, type Draft } from './goal-draft';
+import { archivedGoal, draftOf, pickAccount, readDraft, type Draft, type DraftField } from './goal-draft';
+import { Notice } from './TotalCaveats';
+import FieldError from './FieldError';
 
 export default function GoalSheet({
   open,
@@ -51,10 +53,16 @@ export default function GoalSheet({
   const [saving, setSaving] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const errorId = useId();
   const set = (patch: Partial<Draft>) => setD((cur) => ({ ...cur, ...patch }));
 
   const read = readDraft(d, { goal, goals, accounts, today, newId });
   const { entry, account, currency, room } = read;
+  // What is wrong with a field, said under it.
+  const wrong = (field: DraftField) => {
+    const at = read.errorFields.indexOf(field);
+    return at < 0 ? null : read.errors[at];
+  };
   const money = (n: number) => formatMoney(n, currency);
   const nameOf = (id: string) => goals.find((g) => g.id === id)?.name ?? 'another goal';
   // Hidden accounts, ones that ended, cards and loans aren't offered; one a
@@ -104,11 +112,31 @@ export default function GoalSheet({
         </label>
         <label className="field">
           Target{currency ? ` (${currency})` : ''}
-          <input inputMode="decimal" autoComplete="off" value={d.target} onChange={(e) => set({ target: e.target.value })} placeholder="0.00" disabled={saving} />
+          <input
+            inputMode="decimal"
+            autoComplete="off"
+            value={d.target}
+            onChange={(e) => set({ target: e.target.value })}
+            placeholder="0.00"
+            aria-invalid={!!wrong('target')}
+            aria-describedby={wrong('target') ? `${errorId}-target` : undefined}
+            disabled={saving}
+          />
         </label>
+        {wrong('target') && (
+          <FieldError id={`${errorId}-target`}>
+            <Masked>{wrong('target')}</Masked>
+          </FieldError>
+        )}
         <label className="field">
           Account
-          <select value={d.account} onChange={(e) => setD((cur) => pickAccount(cur, e.target.value))} disabled={saving}>
+          <select
+            value={d.account}
+            onChange={(e) => setD((cur) => pickAccount(cur, e.target.value))}
+            aria-invalid={!!wrong('account')}
+            aria-describedby={wrong('account') ? `${errorId}-account` : undefined}
+            disabled={saving}
+          >
             <option value="">No account: not tracked</option>
             {offered.map((a) => (
               <option key={a.account_id} value={a.account_id}>
@@ -120,6 +148,11 @@ export default function GoalSheet({
             {goal?.account_id && !accounts.some((a) => a.account_id === goal.account_id) && <option value={goal.account_id}>Disconnected account</option>}
           </select>
         </label>
+        {wrong('account') && (
+          <FieldError id={`${errorId}-account`}>
+            <Masked>{wrong('account')}</Masked>
+          </FieldError>
+        )}
         <label className="goal-check">
           {/* Never disabled while checked, so it can always be cleared. */}
           <input type="checkbox" checked={d.allocate} onChange={(e) => set({ allocate: e.target.checked })} disabled={saving || (!d.account && !d.allocate)} />
@@ -128,8 +161,22 @@ export default function GoalSheet({
         {d.allocate && !!d.account && (
           <label className="field">
             Set aside{currency ? ` (${currency})` : ''}
-            <input inputMode="decimal" autoComplete="off" value={d.allocation} onChange={(e) => set({ allocation: e.target.value })} placeholder="0.00" disabled={saving} />
+            <input
+              inputMode="decimal"
+              autoComplete="off"
+              value={d.allocation}
+              onChange={(e) => set({ allocation: e.target.value })}
+              placeholder="0.00"
+              aria-invalid={!!wrong('allocation')}
+              aria-describedby={wrong('allocation') ? `${errorId}-allocation` : undefined}
+              disabled={saving}
+            />
           </label>
+        )}
+        {wrong('allocation') && (
+          <FieldError id={`${errorId}-allocation`}>
+            <Masked>{wrong('allocation')}</Masked>
+          </FieldError>
         )}
         {account && room !== null && (
           <p className="panel-note goal-room">
@@ -142,27 +189,56 @@ export default function GoalSheet({
         )}
         <label className="field">
           Monthly target (optional){currency ? ` (${currency})` : ''}
-          <input inputMode="decimal" autoComplete="off" value={d.monthly} onChange={(e) => set({ monthly: e.target.value })} placeholder="0.00" disabled={saving} />
+          <input
+            inputMode="decimal"
+            autoComplete="off"
+            value={d.monthly}
+            onChange={(e) => set({ monthly: e.target.value })}
+            placeholder="0.00"
+            aria-invalid={!!wrong('monthly')}
+            aria-describedby={wrong('monthly') ? `${errorId}-monthly` : undefined}
+            disabled={saving}
+          />
         </label>
+        {wrong('monthly') && (
+          <FieldError id={`${errorId}-monthly`}>
+            <Masked>{wrong('monthly')}</Masked>
+          </FieldError>
+        )}
         <label className="field">
           Target date (optional)
-          <input type="date" value={d.date} min={today} max={LATEST_TARGET_DATE} onChange={(e) => set({ date: e.target.value })} disabled={saving} />
+          <input
+            type="date"
+            value={d.date}
+            min={today}
+            max={LATEST_TARGET_DATE}
+            onChange={(e) => set({ date: e.target.value })}
+            aria-invalid={!!wrong('date')}
+            aria-describedby={wrong('date') ? `${errorId}-date` : undefined}
+            disabled={saving}
+          />
         </label>
+        {wrong('date') && (
+          <FieldError id={`${errorId}-date`}>
+            <Masked>{wrong('date')}</Masked>
+          </FieldError>
+        )}
       </div>
-      {read.errors.map((e) => (
-        <div className="error" key={e}>
-          <Masked>{e}</Masked>
-        </div>
-      ))}
-      {preview && (
+      <div className="stack tight">
+        {preview && (
+          <p className="panel-note">
+            <Masked>{preview}</Masked>
+          </p>
+        )}
         <p className="panel-note">
-          <Masked>{preview}</Masked>
+          An allocation is the part of the account’s balance this goal counts as its own: the money stays in the account, and goals never count more than it holds.
         </p>
-      )}
-      <p className="panel-note">
-        An allocation is the part of the account’s balance this goal counts as its own: the money stays in the account, and goals never count more than it holds.
-      </p>
-      {attempted && saveError && <div className="error"><Masked>{hideAmountsIn(saveError)}</Masked></div>}
+        {attempted && saveError && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(saveError)}</Masked>
+          </Notice>
+        )}
+      </div>
       {confirmDelete && goal ? (
         <>
           <p className="panel-note">Delete {goal.name} for good? Archiving keeps it, with its history.</p>

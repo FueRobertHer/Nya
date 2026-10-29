@@ -289,6 +289,10 @@ describe('the period, kept beside the pick', () => {
 
 describe('what the load couldn’t read, beside the chart', () => {
   const manual = "Manual accounts: couldn't be read, so transactions entered for them aren't shown";
+  // The words of each critical notice, in order (TotalCaveats' Notice, its
+  // level said first for a screen reader).
+  const critical = (html: string) =>
+    [...html.matchAll(/<div class="notice critical" role="alert">.*?<span class="visually-hidden">Critical: <\/span>(.*?)<\/div><\/div>/g)].map((m) => m[1]);
 
   test('said first among what may be missing, as a sentence', () => {
     const html = sankey({ notes: [manual, 'Your rules couldn’t be read, so none are applied until they can be: transactions show as the bank and you have them.'] });
@@ -302,7 +306,7 @@ describe('what the load couldn’t read, beside the chart', () => {
     const render = (segment: 'spending' | 'transactions') =>
       renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment={segment} />);
     expect(render('spending')).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
-    expect(render('transactions')).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
+    expect(critical(render('transactions'))).toEqual([manual.replace(/'/g, '&#x27;')]);
   });
 
   test('where the cash flow isn’t on the screen, the notes go with the figures', () => {
@@ -320,7 +324,7 @@ describe('what the load couldn’t read, beside the chart', () => {
     // chart's full stop, and still under the list.
     for (const cats of [true, false]) {
       expect(render('transactions', cats)).toContain(`<div class="stale-note">${esc}</div>`);
-      expect(render('transactions', cats)).toContain(`<div class="error">${esc}</div>`);
+      expect(critical(render('transactions', cats))).toEqual([esc]);
     }
     // Spending with the chart: the chart says them, once.
     const chart = render('spending', true);
@@ -335,7 +339,7 @@ describe('what the load couldn’t read, beside the chart', () => {
         <MonthBreakdown txns={ROWS} notes={[manual]} asideNotes={[tags, queue]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment={segment} />
       );
     const esc = (n: string) => n.replace(/'/g, '&#x27;');
-    expect(render('transactions')).toContain(`<div class="error">${esc(manual)}</div><div class="error">${esc(tags)}</div><div class="error">${esc(queue)}</div>`);
+    expect(critical(render('transactions'))).toEqual([esc(manual), esc(tags), esc(queue)]);
     const chart = render('spending');
     expect(chart).toContain(`<div class="stale-note">${esc(manual)}.</div>`);
     expect(chart).not.toContain(esc(tags));

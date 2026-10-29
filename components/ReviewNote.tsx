@@ -14,6 +14,7 @@ import type { ReviewControls } from './review-state';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { Masked } from './HideAmounts';
 import { changedSinceWords, defaultWords, suggestionWords } from './review-text';
+import { Notice } from './TotalCaveats';
 
 function day(iso: string): string {
   const d = new Date(iso);
@@ -152,7 +153,11 @@ export default function ReviewNote({
   return (
     <>
       {lines}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
     </>
   );
 }

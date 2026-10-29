@@ -21,6 +21,7 @@ import { bankRows } from '@/lib/split-rows';
 import { activityKey, ACTIVITY_KEYS, type ActivityKey } from './review-keys';
 import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { toReviewWords } from './review-text';
+import { Notice } from './TotalCaveats';
 
 /** The whole transactions among listed rows that need review: a split one
  *  once, whole, and each of a group's on its own (lib/split-rows.ts bankRows). */
@@ -199,7 +200,11 @@ export default function ReviewBar({
           </button>
         </div>
       )}
-      {review.error && <div className="error">{review.error}</div>}
+      {review.error && (
+        <Notice level="critical" role="alert">
+          {review.error}
+        </Notice>
+      )}
       <button className="review-keys-toggle" aria-expanded={help} onClick={() => setHelp((h) => !h)}>
         Keyboard shortcuts
       </button>

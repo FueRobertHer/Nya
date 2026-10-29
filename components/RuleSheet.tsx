@@ -22,6 +22,7 @@ import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, sortedRules, type RuleFie
 import type { Taxonomy } from '@/lib/categories';
 import { shownColor, type Tag } from '@/lib/tags';
 import { blankCondition, draftComplete, draftInput, type DraftCondition, type RuleDraft, type RulesState } from './rules-state';
+import { Notice } from './TotalCaveats';
 
 const FIELD_LABEL: Record<RuleField, string> = {
   name: 'Name',
@@ -321,11 +322,14 @@ export default function RuleSheet({
           </label>
         )}
 
-        <div className="rule-preview" aria-live="polite">
+        {/* Live while it counts; a failure is an alert of its own instead. */}
+        <div className="rule-preview" aria-live={complete && previewError ? undefined : 'polite'}>
           {!complete ? (
             <p className="panel-note">Fill in each condition and choose what it does to see what it matches.</p>
           ) : previewError ? (
-            <div className="error">{previewError}</div>
+            <Notice level="critical" role="alert">
+              {previewError}
+            </Notice>
           ) : !preview ? (
             <p className="panel-note">Counting what it matches…</p>
           ) : (
@@ -367,7 +371,11 @@ export default function RuleSheet({
           )}
         </div>
 
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
         <button onClick={save} disabled={busy || !complete} style={{ marginTop: 12 }}>
           {busy ? 'Saving…' : form.id ? 'Save rule' : 'Make rule'}
         </button>

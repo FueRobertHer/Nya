@@ -37,6 +37,7 @@ import { Masked } from './HideAmounts';
 import { localDate } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
+import { Notice } from './TotalCaveats';
 
 export type EndState = 'closed' | 'left' | 'untracked';
 
@@ -341,7 +342,11 @@ export function LifecycleForm({
           <span>Stop counting what it owes</span>
         </label>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
           Cancel
@@ -750,7 +755,11 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
           version that saved {damage.unrecognised === 1 ? 'it' : 'them'} is back.
         </p>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {n > 0 &&
         (confirming ? (
           <div className="button-pair">

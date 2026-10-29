@@ -45,6 +45,7 @@ import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
 import RestoreAnswers from './RestoreAnswers';
 import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, signRepairLines, turningLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
+import { Notice } from './TotalCaveats';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -348,11 +349,13 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
 
   if (loadError) {
     return (
-      <div className="card download-card restore-card">
+      <div className="card download-card restore-card stack">
         <div className="inst-header">
           <div className="inst-name">Bring back a download</div>
         </div>
-        <div className="error">{loadError}</div>
+        <Notice level="critical" role="alert">
+          {loadError}
+        </Notice>
       </div>
     );
   }
@@ -468,7 +471,11 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
                 Its passphrase
                 <input type="password" autoComplete="off" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
               </label>
-              {phase.error && <div className="error">{phase.error}</div>}
+              {phase.error && (
+                <Notice level="critical" role="alert">
+                  {phase.error}
+                </Notice>
+              )}
               <div className="card-actions">
                 <button className="secondary" onClick={() => setPhase({ kind: 'idle' })}>
                   Cancel
@@ -480,18 +487,24 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             </>
           )}
 
-          <div aria-live="polite">
-            {phase.kind === 'opening' && <p className="panel-note">Opening the file with its passphrase… {Math.round(phase.done * 100)}%</p>}
-            {phase.kind === 'reading' && <p className="panel-note">Reading the file and checking every part of it…</p>}
-            {phase.kind === 'checking' && <p className="panel-note">Checking it with Nya: {plainNumber(phase.batches)} parts so far…</p>}
-            {phase.kind === 'sending' && (
-              <p className="panel-note">
-                Bringing it back: {plainNumber(phase.done)} of {plainNumber(phase.total)} parts written. Keep this page open.
-              </p>
+          <div className="stack tight">
+            <div aria-live="polite">
+              {phase.kind === 'opening' && <p className="panel-note">Opening the file with its passphrase… {Math.round(phase.done * 100)}%</p>}
+              {phase.kind === 'reading' && <p className="panel-note">Reading the file and checking every part of it…</p>}
+              {phase.kind === 'checking' && <p className="panel-note">Checking it with Nya: {plainNumber(phase.batches)} parts so far…</p>}
+              {phase.kind === 'sending' && (
+                <p className="panel-note">
+                  Bringing it back: {plainNumber(phase.done)} of {plainNumber(phase.total)} parts written. Keep this page open.
+                </p>
+              )}
+              {phase.kind === 'finishing' && <p className="panel-note">Finishing…</p>}
+              {phase.kind === 'working' && <p className="panel-note">{phase.what}</p>}
+            </div>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
             )}
-            {phase.kind === 'finishing' && <p className="panel-note">Finishing…</p>}
-            {phase.kind === 'working' && <p className="panel-note">{phase.what}</p>}
-            {error && <div className="error">{error}</div>}
           </div>
 
           {(phase.kind === 'preview' || phase.kind === 'starting') && (

@@ -42,6 +42,7 @@ import { ConfirmPaymentSheet, SettleSheet } from './ConfirmPaymentSheet';
 import PersonSheet from './PersonSheet';
 import IouSheet from './IouSheet';
 import HandoffSheet from './HandoffSheet';
+import { Notice } from './TotalCaveats';
 
 /** What the transactions' read says of shared expenses (lib/activity.ts). */
 export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'> & Partial<Pick<ShareResult, 'away' | 'coming' | 'moves'>>;
@@ -172,11 +173,17 @@ export default function SharedExpensesCard({
 
   if (!card) {
     return (
-      <div className="card">
+      <div className="card stack">
         <div className="inst-header">
           <div className="inst-name">Shared expenses</div>
         </div>
-        {failed ? <p className="error">{failed}</p> : <p className="empty-note">Loading…</p>}
+        {failed ? (
+          <Notice level="critical" role="alert">
+            {failed}
+          </Notice>
+        ) : (
+          <p className="empty-note">Loading…</p>
+        )}
       </div>
     );
   }
@@ -553,9 +560,9 @@ export default function SharedExpensesCard({
       })}
 
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
 
       <div className="card-actions">

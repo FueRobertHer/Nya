@@ -30,6 +30,7 @@ import { Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 import { deleteFile, fileUrl, moveFile, renameFile, saveFile, sizeWords, looseWords, type FileView } from './attachment-client';
 import { candidates, findCandidates, shortDay, type PickRow } from './attachment-pick';
+import { Notice } from './TotalCaveats';
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
@@ -292,9 +293,9 @@ export default function AttachmentViewer({
       <div className="attach-viewer-foot">
         {loose && <p className="attach-viewer-note attach-viewer-loose">{loose}</p>}
         {error && (
-          <div className="error" role="alert">
+          <Notice level="critical" role="alert">
             {error}
-          </div>
+          </Notice>
         )}
 
         {step.kind === 'view' && (

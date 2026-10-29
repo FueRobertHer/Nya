@@ -483,7 +483,7 @@ describe('a recorded currency', () => {
     serve({ ...planServer({ plan: PLAN }).answers, 'POST /api/fire-plan': [500, { error: 'Failed to record the currency of plan assumptions' }] });
     const tab = await render({ institutions: broker([EUR(), USD()]) });
     await press(tab.buttons('They’re in USD')[0]);
-    expect(tab.alerts()).toContain('Failed to record the currency of plan assumptions');
+    expect(tab.alerts()).toContain('Critical: Failed to record the currency of plan assumptions');
     await tab.unmount();
   });
 });

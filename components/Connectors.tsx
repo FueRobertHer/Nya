@@ -39,6 +39,7 @@ import type { ConnectionView, FetchView, OfferView, AccountView } from '@/lib/co
 import type { OwedSign } from '@/lib/connectors/store';
 import { CONNECTOR_WORDS, type ConnectorKind } from '@/lib/connectors/types';
 import type { CarryView } from '@/lib/connectors/continue';
+import { Notice } from './TotalCaveats';
 
 /** What the dashboard asks of the sheet: `connector` is which service a new
  *  connection (or a new token or key for one) is for. */
@@ -304,7 +305,14 @@ export function ConnectorCards({
     [onChanged]
   );
 
-  if (error) return <div className="card"><div className="error">Your own sync’s connections couldn’t be loaded: {error}</div></div>;
+  if (error)
+    return (
+      <div className="card">
+        <Notice level="critical" role="alert">
+          Your own sync’s connections couldn’t be loaded: {error}
+        </Notice>
+      </div>
+    );
   if (!data) return null;
   const shown = (id: string) => !only || only.has(id);
   return (
@@ -978,7 +986,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
         <>
           <ConnectIntro again={!!view.connection_id} connector={view.connector} />
           <CredentialField connector={view.connector} value={token} busy={busy} onChange={setToken} />
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1009,7 +1021,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
           {keep && stoppingUnsure(view, choices).length > 0 && (
             <SignView label={view.label} accounts={stoppingUnsure(view, choices)} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
           )}
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1022,8 +1038,14 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
       )}
       {view?.kind === 'uncarry' && (
         <>
-          <p className="panel-note" style={{ marginTop: 0 }}>{uncarryWords(view.account, view.label)}</p>
-          {error && <div className="error">{error}</div>}
+          <div className="stack">
+            <p className="panel-note">{uncarryWords(view.account, view.label)}</p>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1072,7 +1094,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             Name
             <input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={view.label} disabled={busy} autoCapitalize="off" autoCorrect="off" />
           </label>
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1095,7 +1121,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             </p>
           )}
           <SignView label={view.label} accounts={view.accounts} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Later

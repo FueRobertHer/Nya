@@ -63,6 +63,7 @@ import { provenanceWords, rowAccountNames, unsureCategory } from "./txn-words";
 import { shownName } from "@/lib/merchant-name";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 import { activityMonth, activityOpensOn, writeMonth, type ViewMonth } from "./view-month-state";
+import { Notice } from './TotalCaveats';
 
 // What a row and its sheet say of a transaction (components/txn-words.ts),
 // re-exported for code that imported them from here.
@@ -1226,8 +1227,16 @@ export default function MonthBreakdown({
               {/* The review queue, while it is on: its count, Card Mode and approving what's listed (its filter is the To review chip, and the N key). */}
               {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
 
-              {actionError && <div className="error">{actionError}</div>}
-              {splitError && <div className="error">{splitError}</div>}
+              {actionError && (
+                <Notice level="critical" role="alert">
+                  {actionError}
+                </Notice>
+              )}
+              {splitError && (
+                <Notice level="critical" role="alert">
+                  {splitError}
+                </Notice>
+              )}
               {visible.length === 0 ? (
                 <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, unsure: unsureOnly, receipt: byReceipt, pick: !!flowPick })}</p>
               ) : (
@@ -1333,11 +1342,15 @@ export default function MonthBreakdown({
                 </ul>
               )}
 
-              {[...new Set([...notes, ...asideNotes])].map((n) => (
-                <div className="error" key={n}>
-                  {n}
+              {notes.length + asideNotes.length > 0 && (
+                <div className="stack tight">
+                  {[...new Set([...notes, ...asideNotes])].map((n) => (
+                    <Notice key={n} level="critical" role="alert">
+                      {n}
+                    </Notice>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           </>
         )

@@ -16,6 +16,7 @@ import { formatMoney, hideAmountsIn } from '@/lib/format';
 import type { Tag } from '@/lib/tags';
 import { HANDLE_MAX, PERSON_NAME_MAX, REMOVED_NAME } from '@/lib/shared-expenses/model';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
 type Draft = { name: string; venmo: string; cashtag: string; app: '' | 'venmo' | 'cashapp' | 'other'; tag: string; tagHow: 'half' | 'even'; ways: string };
 
@@ -141,9 +142,9 @@ export default function PersonSheet({ id, open, tags, shared, onClose }: { id: s
         </div>
       )}
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
       {!p?.removed && (
         <div className="button-pair">

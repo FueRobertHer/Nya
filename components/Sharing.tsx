@@ -755,7 +755,11 @@ export function ConnectionView({
   const accounts = data.accounts ?? [];
   const status = (
     <>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {notice && <div className="status-note">{notice}</div>}
     </>
   );
@@ -839,10 +843,12 @@ export function ConnectionView({
         <button onClick={onSave} disabled={busy || (endChoice === 'date' && endFor('date', endDay) === undefined)} style={{ marginTop: 4 }}>
           {busy ? 'Saving…' : 'Save'}
         </button>
-        <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
-          See what {current.label} sees
-        </button>
-        {status}
+        <div className="stack tight">
+          <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
+            See what {current.label} sees
+          </button>
+          {status}
+        </div>
       </section>
       <section className="panel-section">
         <p className="section-label">Shown to them</p>
@@ -915,7 +921,14 @@ export function PreviewView({
   /** The settings have changes not saved yet, which this doesn't show. */
   unsaved: boolean;
 }) {
-  if (!preview) return error ? <div className="error">{error}</div> : <div className="spinner" role="status" aria-label="Loading" />;
+  if (!preview)
+    return error ? (
+      <Notice level="critical" role="alert">
+        {error}
+      </Notice>
+    ) : (
+      <div className="spinner" role="status" aria-label="Loading" />
+    );
   const nothing = preview.unreadable
     ? `Some of what you share can’t be read right now, so ${who} sees nothing of yours.`
     : ended(expiresAt)

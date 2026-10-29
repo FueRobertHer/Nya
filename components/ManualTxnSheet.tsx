@@ -32,7 +32,7 @@
 // saving a note on a row a rule files never makes the rule's category the
 // row's, which turning the rule off would then no longer undo.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { deleteFile, filesOn } from './attachment-client';
@@ -53,6 +53,8 @@ import {
   MAX_NOTE_CHARS,
   MAX_PAYEE_CHARS,
 } from '@/lib/manual-txn-input';
+import { Notice } from './TotalCaveats';
+import FieldError from './FieldError';
 
 /** What the form is open on: a new transaction (on an account, when opened
  *  from its card), or one to edit. */
@@ -217,6 +219,7 @@ export default function ManualTxnSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const dateError = useId();
   // Its receipts and documents (#47), asked about when it is deleted: kept,
   // not on a transaction, unless the person chooses to delete them too.
   const [files, setFiles] = useState<string[] | null>(null);
@@ -517,9 +520,17 @@ export default function ManualTxnSheet({
         )}
         <label className="field">
           Date
-          <input type="date" value={draft.date} max={localDate()} onChange={(e) => set({ date: e.target.value })} disabled={busy} />
+          <input
+            type="date"
+            value={draft.date}
+            max={localDate()}
+            onChange={(e) => set({ date: e.target.value })}
+            aria-invalid={future}
+            aria-describedby={future ? dateError : undefined}
+            disabled={busy}
+          />
         </label>
-        {future && <div className="error">The date can&apos;t be in the future.</div>}
+        {future && <FieldError id={dateError}>The date can&apos;t be in the future.</FieldError>}
         <label className="field">
           Account
           <select value={draft.account_id} onChange={(e) => set({ account_id: e.target.value, updateBalance: false })} disabled={busy}>
@@ -594,9 +605,9 @@ export default function ManualTxnSheet({
 
       {/* The server's words can name a balance (one changed since the form opened). */}
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
 
       {done ? (

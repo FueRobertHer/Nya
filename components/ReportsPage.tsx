@@ -25,7 +25,7 @@
 // (components/Connectors.tsx EndedPointer): `?stopped` in the address opens
 // the list once it has loaded.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ReportView } from './ReportView';
 import RunwayReport from './RunwayReport';
 import YearOverYearReport from './YearOverYearReport';
@@ -39,6 +39,8 @@ import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
 import { HideAmountsToggle, useFiguresWhenPrinted } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
+import { Notice } from './TotalCaveats';
+import FieldError from './FieldError';
 
 /** The accountant's report's ⋯: its CSV, a file to save (disabled until a
  *  report is on screen), marking categories, and the accounts you stopped
@@ -350,9 +352,9 @@ export default function ReportsPage() {
               </label>
             )}
             {error && (
-              <div className="error" role="alert">
+              <Notice level="critical" role="alert">
                 {error}
-              </div>
+              </Notice>
             )}
             {/* Print is the one button; the rest are under the report's ⋯
                 (the CSV as a link to save, so it needs no script). */}
@@ -462,9 +464,9 @@ export function StoppedAccountsView({
         </p>
       )}
       {error && (
-        <p className="error" role="alert">
+        <Notice level="critical" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
     </div>
   );
@@ -541,12 +543,13 @@ export function MarkCategoriesView({
   onToggle: (category: string) => void;
   onSave: () => void;
 }) {
+  const overId = useId();
   if (unreadable) {
     return (
-      <p className="error">
+      <Notice level="critical" role="alert">
         The categories you marked before couldn’t be read, so they can’t be changed here: saving now would replace them. Nothing has been lost; this needs
         fixing on the server.
-      </p>
+      </Notice>
     );
   }
   const over = chosen.length > REPORT_SETTINGS_LIMITS.marked;
@@ -559,7 +562,7 @@ export function MarkCategoriesView({
       {categories.length === 0 ? (
         <p className="empty-note">There are no categories in this period yet.</p>
       ) : (
-        <fieldset className="report-marks" disabled={saving} aria-label="Categories">
+        <fieldset className="report-marks" disabled={saving} aria-label="Categories" aria-invalid={over} aria-describedby={over ? overId : undefined}>
           {categories.map((c) => (
             <label key={c.key} className="report-mark">
               <input type="checkbox" checked={chosen.includes(c.key)} onChange={() => onToggle(c.key)} />
@@ -568,11 +571,11 @@ export function MarkCategoriesView({
           ))}
         </fieldset>
       )}
-      {over && <p className="error">At most {REPORT_SETTINGS_LIMITS.marked} categories can be marked.</p>}
+      {over && <FieldError id={overId}>At most {REPORT_SETTINGS_LIMITS.marked} categories can be marked.</FieldError>}
       {error && (
-        <p className="error" role="alert">
+        <Notice level="critical" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       <button onClick={onSave} disabled={saving || over}>
         {saving ? 'Saving…' : 'Save'}

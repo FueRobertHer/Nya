@@ -39,6 +39,7 @@ import { readImport, type ImportOptions, type ReadResult, type StatementInfo } f
 import { columnsFromNames, DELIMITERS, guessColumns, readCsvTable, type CsvColumns, type CsvSign, type CsvTable, type Delimiter } from '@/lib/import/csv';
 import type { DateOrder } from '@/lib/import/dates';
 import type { DecimalMark } from '@/lib/import/amounts';
+import { Notice } from './TotalCaveats';
 
 /** The linked account the sheet is open on. */
 export type HistoryImportTarget = { account_id: string; name: string; institution_name: string; type: string; currency: string | null };
@@ -574,7 +575,11 @@ export default function HistoryImportSheet({
             </label>
           </div>
           {busy && <p className="panel-note">Reading the file…</p>}
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           {notice && <p className="status-note">{notice}</p>}
           <PastHistoryImports
             past={past}
@@ -595,11 +600,11 @@ export default function HistoryImportSheet({
       )}
 
       {step === 'statement' && read?.status === 'statement' && file && (
-        <>
-          <p className="panel-note" style={{ marginTop: 0 }}>
+        <div className="stack">
+          <p className="panel-note">
             This file holds {read.statements.length} {file.format === 'qif' ? 'accounts' : 'statements'}. Which one is {name}’s?
           </p>
-          <div className="button-stack" style={{ marginTop: 12 }}>
+          <div className="button-stack">
             {read.statements.map((s) => (
               <button key={s.index} className="secondary import-choice" disabled={busy} onClick={() => proceed({ ...options, statement: s.index }, file)}>
                 <span>{s.label}</span>
@@ -611,14 +616,22 @@ export default function HistoryImportSheet({
               </button>
             ))}
           </div>
-          {error && <div className="error">{error}</div>}
-        </>
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
+        </div>
       )}
 
       {step === 'order' && file && (
         <>
           <DateOrderQuestion read={read} options={options} onChange={(o) => setOptions(o)} />
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={chooseAgain} disabled={busy}>
               Another file
@@ -697,23 +710,29 @@ export default function HistoryImportSheet({
             The last year of them shows on the Activity tab, marked as imported. Where {shown.institution_name} later sends the same transactions, its own take their
             place. If this was the wrong file, undo it below.
           </p>
-          <PastHistoryImports
-            past={past}
-            error={pastError}
-            account={name}
-            bank={shown.institution_name}
-            busy={busy}
-            undoing={undoing}
-            plan={undoPlan}
-            onUndo={(i) => void askUndo(i)}
-            onKeep={() => {
-              setUndoing(null);
-              setUndoPlan(null);
-            }}
-            onConfirm={(i) => void undo(i)}
-          />
-          {error && <div className="error">{error}</div>}
-          {notice && <p className="status-note">{notice}</p>}
+          <div className="stack tight">
+            <PastHistoryImports
+              past={past}
+              error={pastError}
+              account={name}
+              bank={shown.institution_name}
+              busy={busy}
+              undoing={undoing}
+              plan={undoPlan}
+              onUndo={(i) => void askUndo(i)}
+              onKeep={() => {
+                setUndoing(null);
+                setUndoPlan(null);
+              }}
+              onConfirm={(i) => void undo(i)}
+            />
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+            {notice && <p className="status-note">{notice}</p>}
+          </div>
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={chooseAgain} disabled={busy}>
               Import another
@@ -1078,7 +1097,11 @@ export function ReviewView({
         from them. You can undo an import from this sheet.
       </p>
       {waiting > 0 && <p className="stale-note">Say what {waiting === 1 ? 'the row above is' : `the ${waiting.toLocaleString()} rows above are`}, then import.</p>}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onBack} disabled={busy}>
           {file.format === 'csv' ? 'Columns' : 'Another file'}
@@ -1171,20 +1194,20 @@ function PastHistoryImports({
               {i.record === 'missing' && <div className="import-row-meta">Its record is gone; Undo still takes its transactions out.</div>}
               {i.record === 'unrecognised' && <div className="import-row-meta">A newer version of Nya saved it, so it can’t be undone here.</div>}
               {confirming && (
-                <div className="import-confirm">
+                <div className="import-confirm stack tight">
                   {!plan ? (
-                    <p className="panel-note" style={{ marginTop: 6 }}>
-                      Working out what undoing it would do…
-                    </p>
+                    <p className="panel-note">Working out what undoing it would do…</p>
                   ) : plan.error || !plan.plan ? (
-                    <div className="error">{plan.error}</div>
+                    <Notice level="critical" role="alert">
+                      {plan.error}
+                    </Notice>
                   ) : (
-                    <p className="panel-note" style={{ marginTop: 6 }}>
+                    <p className="panel-note">
                       {undoText(plan.plan)} What you said about them (a category, an exclusion, a split) goes with them, they leave any group they’re in, and the estimated history is drawn again without them. The
                       balance stays as it is. This can’t be undone.
                     </p>
                   )}
-                  <div className="button-pair" style={{ marginTop: 8 }}>
+                  <div className="button-pair">
                     <button className="secondary" onClick={onKeep} disabled={busy}>
                       Keep it
                     </button>

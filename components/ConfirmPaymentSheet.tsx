@@ -26,6 +26,7 @@ import type { CardAnswer } from '@/lib/shared-expenses/read';
 import { partUnits } from './SplitSheet';
 import { whoseText } from './shared-expenses-text';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
 /** "Oct 5": a day as the list shows it. */
 function shownDay(iso: string): string {
@@ -241,15 +242,17 @@ export function ConfirmPaymentSheet({
   if (confirmed) {
     return (
       <Sheet open title="Paid back" onClose={() => !saving && onClose()}>
-        <p className="panel-note" style={{ marginTop: 0 }}>
-          {shownName(t)}, {shownDay(t.date)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
-          {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
-        </p>
-        {error && (
-          <div className="error">
-            <Masked>{hideAmountsIn(error)}</Masked>
-          </div>
-        )}
+        <div className="stack">
+          <p className="panel-note">
+            {shownName(t)}, {shownDay(t.date)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
+            {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
+          </p>
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
+        </div>
         <div className="button-pair">
           <button className="secondary" onClick={() => void act('DELETE', { transaction_id: keptUnder })} disabled={saving}>
             Reopen it
@@ -279,22 +282,24 @@ export function ConfirmPaymentSheet({
           <input className="text-input" value={note} maxLength={NOTE_MAX} onChange={(e) => setNote(e.target.value)} disabled={saving} />
         </label>
       </div>
-      <p className={`split-left${ready ? ' done' : ''}`} role="status">
-        <Masked>
-          {sum < 0
-            ? `What you chose comes to ${money(-sum)} the other way`
-            : sum > whole
-            ? `That is ${money(sum - whole)} more than the payment`
-            : sum === whole
-              ? 'All of it pays back what you chose.'
-              : `${money(sum)} of it pays back what you chose; the other ${money(whole - sum)} counts as the bank shows it.`}
-        </Masked>
-      </p>
-      {error && (
-        <div className="error">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
-      )}
+      <div className="stack">
+        <p className={`split-left${ready ? ' done' : ''}`} role="status">
+          <Masked>
+            {sum < 0
+              ? `What you chose comes to ${money(-sum)} the other way`
+              : sum > whole
+              ? `That is ${money(sum - whole)} more than the payment`
+              : sum === whole
+                ? 'All of it pays back what you chose.'
+                : `${money(sum)} of it pays back what you chose; the other ${money(whole - sum)} counts as the bank shows it.`}
+          </Masked>
+        </p>
+        {error && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={() => void confirm()} disabled={!ready || saving}>
           {saving ? 'Saving…' : 'Confirm'}
@@ -408,16 +413,18 @@ export function SettleSheet({
           <input className="text-input" value={note} maxLength={NOTE_MAX} onChange={(e) => setNote(e.target.value)} disabled={saving} />
         </label>
       </div>
-      {lettingGoYours && (
-        <p className="panel-note">
-          What {name} owed you of a shared transaction becomes your part, on the day you bought it: your spending that month goes up by it.
-        </p>
-      )}
-      {error && (
-        <div className="error">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
-      )}
+      <div className="stack tight">
+        {lettingGoYours && (
+          <p className="panel-note">
+            What {name} owed you of a shared transaction becomes your part, on the day you bought it: your spending that month goes up by it.
+          </p>
+        )}
+        {error && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={() => void save()} disabled={!ready || saving}>
           {saving ? 'Saving…' : kind === 'forgiven' ? 'Let it go' : 'Mark settled'}

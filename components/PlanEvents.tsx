@@ -13,6 +13,7 @@ import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { EVENT_KINDS, EVENT_LIMITS, parseLifeEvent, type EventNote, type LifeEvent, type LifeEventKind } from '@/lib/fire/events';
 import { EVENT_NAMES, EVENT_PART_TEXT, eventCountsText, eventText } from './plan-scenario-text';
 import { ScenarioTag } from './ScenarioTag';
+import { Notice } from './TotalCaveats';
 
 /** Saves the scenario's whole list of events: true once the server has it,
  *  else false, or why it was refused. */
@@ -399,7 +400,11 @@ export function EventForm({
         )}
       </div>
       {preview && draft && preview(draft)}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {onRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={disabled} onClick={() => void save(onRemove)}>
           Remove from this scenario

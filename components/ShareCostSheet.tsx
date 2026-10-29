@@ -24,6 +24,7 @@ import { partUnits } from './SplitSheet';
 import { splitUnits } from './shared-expenses-text';
 import { shownName } from '@/lib/merchant-name';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
 type Mode = 'half' | 'even' | 'amount';
 type Pick = { person: string; amount: string };
@@ -268,14 +269,16 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
         What it was for
         <input className="text-input" value={what} maxLength={WHAT_MAX} onChange={(e) => setWhat(e.target.value)} disabled={saving} />
       </label>
-      <p className={`split-left${yours >= 0 && picks.length > 0 ? ' done' : ''}`} role="status">
-        <Masked>{yours >= 0 ? `Your part: ${money(yours)}` : `The parts are ${money(-yours)} more than it`}</Masked>
-      </p>
-      {error && (
-        <div className="error">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
-      )}
+      <div className="stack">
+        <p className={`split-left${yours >= 0 && picks.length > 0 ? ' done' : ''}`} role="status">
+          <Masked>{yours >= 0 ? `Your part: ${money(yours)}` : `The parts are ${money(-yours)} more than it`}</Masked>
+        </p>
+        {error && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={() => void save()} disabled={!ready || saving}>
           {saving ? 'Saving…' : 'Save'}

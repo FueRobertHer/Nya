@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { useClerk } from '@clerk/nextjs';
 import type { DeletionReceipt } from '@/lib/deletion-receipt';
 import { DeletionReceiptView, keepPartial, keepReceipt, withEarlierAttempts } from './DeletionReceipt';
+import { Notice } from './TotalCaveats';
 
 type Status = { enabled: boolean; can_delete?: boolean; reason?: string; backup_days?: number | null; own_key?: boolean | null; database_days?: number | null } | 'failed';
 
@@ -104,7 +105,12 @@ export function DeleteAccountView({
   }
   // This is the whole of its page in Clerk's account window: never blank.
   if (status === null) return <div className="spinner" role="status" aria-label="Loading" />;
-  if (status === 'failed') return <p className="error">Could not check this account. Close this window and try again.</p>;
+  if (status === 'failed')
+    return (
+      <Notice level="critical" role="alert">
+        Could not check this account. Close this window and try again.
+      </Notice>
+    );
   if (!status.enabled) return null;
   return (
     <div className="privacy-panel">
@@ -135,10 +141,16 @@ export function DeleteAccountView({
             placeholder="Type DELETE"
             aria-label="Type DELETE to confirm"
           />
-          <button className="danger-outline" onClick={onDelete} disabled={busy || typed !== 'DELETE'}>
-            {busy ? 'Deleting…' : 'Delete my account'}
-          </button>
-          {error && <div className="error">{error}</div>}
+          <div className="stack tight">
+            <button className="danger-outline" onClick={onDelete} disabled={busy || typed !== 'DELETE'}>
+              {busy ? 'Deleting…' : 'Delete my account'}
+            </button>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
         </>
       )}
     </div>

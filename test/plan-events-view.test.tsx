@@ -68,7 +68,8 @@ async function form(kind: Kind, event: LifeEvent | null = null) {
       await act(async () => click(container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]));
       await settle();
     },
-    error: () => container.findAll((e) => e.getAttribute('class') === 'error')[0]?.textContent ?? null,
+    // A critical notice's words, without its level said for a screen reader.
+    error: () => container.findAll((e) => e.getAttribute('class') === 'notice critical')[0]?.textContent.replace(/^Critical: /, '') ?? null,
     text: () => container.textContent,
     unmount: () => act(async () => root.unmount()),
   };

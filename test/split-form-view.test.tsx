@@ -41,9 +41,11 @@ function mount(initial: Split | null = null) {
   );
   const field = (label: string) => host.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith(label))[0]!.findAll((e) => e.tagName === 'INPUT')[0] as FakeElement;
   const total = () => host.findAll((e) => e.getAttribute('aria-live') === 'polite')[0]!;
-  const error = () => host.findAll((e) => e.getAttribute('class') === 'error')[0]?.textContent ?? null;
+  // What Save found wrong, said under the fields (FieldError).
+  const said = () => host.findAll((e) => e.getAttribute('class') === 'field-error')[0];
+  const error = () => said()?.textContent ?? null;
   const save = () => act(() => click(host.findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'Save')[0]!));
-  return { saved, field, total, error, save, unmount: () => act(() => root.unmount()) };
+  return { saved, field, total, error, said, save, unmount: () => act(() => root.unmount()) };
 }
 
 describe('a split’s percents', () => {
@@ -65,9 +67,13 @@ describe('a split’s percents', () => {
     expect(v.total().textContent).toBe('90% of 100%');
     v.save();
     expect(v.error()).toBe('These add up to 90%: they need to add up to 100%.');
+    // About the shares together: every field is marked, and names what is wrong.
+    expect(v.field('Bonds').getAttribute('aria-invalid')).toBe('true');
+    expect(v.field('US stocks').getAttribute('aria-describedby')).toBe(v.said()!.getAttribute('id'));
     expect(v.saved).toEqual([]);
     act(() => type(v.field('Bonds'), '40'));
     expect(v.error()).toBeNull();
+    expect(v.field('Bonds').getAttribute('aria-invalid')).toBe('false');
     expect(v.total().textContent).toBe('100% of 100%');
     v.unmount();
   });

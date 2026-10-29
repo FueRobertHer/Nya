@@ -21,6 +21,7 @@ import { useState, type ReactNode, type RefObject } from 'react';
 import { Sheet } from './Sheet';
 import { everyCurrency, currencyName } from './currency-state';
 import { recordedText, relabelText } from '@/lib/fire/plan-currency';
+import { Notice } from './TotalCaveats';
 
 export type CurrencyCardMode =
   | { kind: 'ask'; text: string; offer: string[]; was: string | null; canAnswer: boolean }
@@ -60,9 +61,9 @@ function AnotherCurrency({ except, disabled, label, verb, onChoose }: { except: 
 
 const Alert = ({ text }: { text: string }) =>
   text ? (
-    <div className="error" role="alert">
+    <Notice level="critical" role="alert">
       {text}
-    </div>
+    </Notice>
   ) : null;
 
 export function PlanCurrencyCard({
@@ -119,12 +120,14 @@ export function PlanCurrencyCard({
   if (mode.kind === 'ask') {
     return region(
       <>
-        <div className="inst-header">
-          <div className="inst-name">Which currency are your plan’s figures in?</div>
+        <div className="stack tight">
+          <div className="inst-header">
+            <div className="inst-name">Which currency are your plan’s figures in?</div>
+          </div>
+          <p className="panel-note">{mode.text}</p>
+          <Alert text={failure ?? ''} />
+          <Alert text={error} />
         </div>
-        <p className="panel-note">{mode.text}</p>
-        <Alert text={failure ?? ''} />
-        <Alert text={error} />
         {mode.canAnswer && (
           <>
             {mode.offer.length > 0 && (
@@ -187,35 +190,35 @@ export function PlanCurrencyCard({
   );
   return region(
     <>
-      {quiet ? (
-        <p className="plan-currency-line">
-          <span>{recordedText(mode.currency)}</span>
-          {change}
-        </p>
-      ) : (
-        <p className="panel-note" style={{ marginTop: 0 }}>
-          {mode.kept ?? recordedText(mode.currency)}
-        </p>
-      )}
-      {mode.previous && mode.previous !== mode.currency && (
-        <p className="panel-note">
-          Changed from {mode.previous}. If that was a mistake, say so and they’re read in {mode.previous} again.{' '}
-          <button className="link-btn" disabled={off} onClick={() => void answer(mode.previous!)}>
-            They’re in {mode.previous}
-          </button>
-        </p>
-      )}
-      {!quiet && (
-        <div className="action-row" style={{ marginTop: 8 }}>
-          {mode.relabelTo && mode.relabelTo !== mode.currency && (
-            <button className="secondary" disabled={off} onClick={() => setChanging({ to: mode.relabelTo })}>
-              They’re in {mode.relabelTo}
+      <div className="stack tight">
+        {quiet ? (
+          <p className="plan-currency-line">
+            <span>{recordedText(mode.currency)}</span>
+            {change}
+          </p>
+        ) : (
+          <p className="panel-note">{mode.kept ?? recordedText(mode.currency)}</p>
+        )}
+        {mode.previous && mode.previous !== mode.currency && (
+          <p className="panel-note">
+            Changed from {mode.previous}. If that was a mistake, say so and they’re read in {mode.previous} again.{' '}
+            <button className="link-btn" disabled={off} onClick={() => void answer(mode.previous!)}>
+              They’re in {mode.previous}
             </button>
-          )}
-          {change}
-        </div>
-      )}
-      {!changing && <Alert text={error} />}
+          </p>
+        )}
+        {!quiet && (
+          <div className="action-row">
+            {mode.relabelTo && mode.relabelTo !== mode.currency && (
+              <button className="secondary" disabled={off} onClick={() => setChanging({ to: mode.relabelTo })}>
+                They’re in {mode.relabelTo}
+              </button>
+            )}
+            {change}
+          </div>
+        )}
+        {!changing && <Alert text={error} />}
+      </div>
       <Sheet open={!!changing} title="The currency your plan’s figures are in" onClose={() => setChanging(null)}>
         {changing && to === null && (
           <>
@@ -236,11 +239,11 @@ export function PlanCurrencyCard({
         )}
         {changing && to !== null && (
           <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              Read your plan’s figures as {to}, not {mode.currency}?
-            </p>
-            <p className="panel-note">{relabelText(mode.currency, to, mode.scenariosIn)}</p>
-            <Alert text={error} />
+            <div className="stack tight">
+              <p className="panel-note">Read your plan’s figures as {to}, not {mode.currency}?</p>
+              <p className="panel-note">{relabelText(mode.currency, to, mode.scenariosIn)}</p>
+              <Alert text={error} />
+            </div>
             <div className="button-pair" style={{ marginTop: 16 }}>
               <button className="secondary" onClick={() => setChanging(null)} disabled={busy}>
                 Cancel

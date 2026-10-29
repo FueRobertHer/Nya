@@ -42,6 +42,7 @@ import { swipeMove, swipeOffset, swipeRelease, swipeStart, type Point, type Swip
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, pickerOn, undoStep, withoutStep, withStep, type Cards, type Picker } from './card-mode-state';
 import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords, suggestionWords } from './review-text';
 import { shownName } from '@/lib/merchant-name';
+import { Notice } from './TotalCaveats';
 
 /** What undoes a card's step: the approval's request, or the recategorize's. */
 type StepUndo = Promise<ApprovalTicket | null> | Promise<CardUndo | null>;
@@ -492,7 +493,11 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
         </div>
       )}
 
-      {review.error && <div className="error card-mode-error">{review.error}</div>}
+      {review.error && (
+        <Notice level="critical" role="alert">
+          {review.error}
+        </Notice>
+      )}
       <button className="review-keys-toggle" aria-expanded={help} onClick={() => setHelp((h) => !h)}>
         Keyboard shortcuts
       </button>
