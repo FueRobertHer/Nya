@@ -1,19 +1,23 @@
 // What the browser loads stays off the server: no module a client component
 // reaches, by a static import, an import() or a worker, is the storage seam,
-// the encryption, the Redis client or a Node builtin. Each would ship to every
-// phone that opens the app (the Redis client and the seam alone are hundreds of
-// kilobytes), and a module that declares a store does so when it loads, so the
-// bundler can't leave it out. A pure helper beside a store goes in its own
-// module (lib/rules.ts and lib/rules-store.ts, lib/tags.ts and
+// the encryption, a server-only package or a Node builtin. Each would ship to
+// every phone that opens the app (the Redis client and the seam alone are
+// hundreds of kilobytes), and a module that declares a store does so when it
+// loads, so the bundler can't leave it out. A pure helper beside a store goes
+// in its own module (lib/rules.ts and lib/rules-store.ts, lib/tags.ts and
 // lib/tags-store.ts, lib/manual-types.ts).
 
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const SERVER_ONLY = ['lib/storage.ts', 'lib/repo.ts', 'lib/crypto.ts'];
-const SERVER_PACKAGES = [/^node:/, /^@upstash\/redis/];
+// The Redis client, Plaid's server SDK and its HTTP client, what only a
+// server can ask Clerk or Next, and Node's builtins, with or without node:.
+const SERVER_PACKAGES = [/^node:/, /^@upstash\/redis/, /^plaid$/, /^axios$/, /^@clerk\/nextjs\/server/, /^next\/(headers|server)$/];
+const BUILTINS = new Set(builtinModules);
 
 const transpilers = { ts: new Bun.Transpiler({ loader: 'ts' }), tsx: new Bun.Transpiler({ loader: 'tsx' }) };
 const rel = (p: string) => relative(ROOT, p).replaceAll('\\', '/');
@@ -67,7 +71,7 @@ describe('client imports', () => {
     while (queue.length) {
       const file = queue.shift()!;
       for (const spec of importsOf(file)) {
-        if (SERVER_PACKAGES.some((re) => re.test(spec))) {
+        if (SERVER_PACKAGES.some((re) => re.test(spec)) || BUILTINS.has(spec.split('/')[0])) {
           found.push(`${chain(file)} -> ${spec}`);
           continue;
         }

@@ -62,12 +62,12 @@
 // screen or answer shows it meanwhile (withLiveTags).
 //
 // THE STORED SHAPE IS CLOSED. One value per container on the storage seam
-// (lib/repo.ts), the `rules` store, encrypted (lib/rules-store.ts). A condition, an action or a
-// field this release doesn't know makes the whole set unrecognised, never
-// partly applied: a rule read without a condition a later release added
-// would match more than it should. So nothing is applied while it can't be
-// read, the Activity tab says so, and nothing is saved over it. A new field
-// ships in two releases, one that reads it and then one that writes it.
+// (lib/repo.ts), the `rules` store, encrypted (lib/rules-store.ts). A
+// condition, an action or a field this release doesn't know makes the whole set
+// unrecognised, never partly applied: a rule read without a condition a later
+// release added would match more than it should. So nothing is applied while it
+// can't be read, the Activity tab says so, and nothing is saved over it. A new
+// field ships in two releases, one that reads it and then one that writes it.
 
 import { categoryById, displayName, isProvisionalId, type CategoryIndex } from './categories';
 import { MAX_AMOUNT, MAX_PAYEE_CHARS } from './manual-txn-input';

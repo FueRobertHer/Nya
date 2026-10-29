@@ -33,7 +33,6 @@
 // rollback still reads the tags rather than losing every one of them; a change
 // of meaning bumps the version instead.
 
-
 /** Bumped only when a field changes meaning. */
 export const TAGS_VERSION = 1;
 

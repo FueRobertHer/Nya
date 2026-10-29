@@ -10,7 +10,7 @@
 //   2. The sweep, each record in its own compare-and-set: the id comes off
 //      what the person said about each transaction and what was carried from
 //      earlier accounts (lib/txn-annotations.ts sweepAnnotationTags), and out
-//      of every rule (lib/rules.ts sweepRuleTags; a rule left adding nothing
+//      of every rule (lib/rules-store.ts sweepRuleTags; a rule left adding nothing
 //      else does nothing, and says so).
 //   3. One compare-and-set on the tags: the note under `deleting` goes.
 //
