@@ -44,7 +44,8 @@ export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; 
           Sign in as a demo account, with pretend banks from Plaid&apos;s sandbox. Everyone who tries it shares these
           accounts, so anything you add is visible to others.
         </p>
-        <div className="stack tight">
+        {/* Side by side, each half the row: a name is all a button says. */}
+        <div className="btn-row demo-accounts">
           {demos.map((u) => (
             <form key={u.id} method="post" action="/api/demo/sign-in" onSubmit={onSubmit}>
               <input type="hidden" name="user" value={u.id} />

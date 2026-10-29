@@ -31,6 +31,10 @@ describe('the demo card', () => {
     expect(forms).toEqual(['user_alex', 'user_sam']);
   });
 
+  test('the accounts side by side, in one button row', () => {
+    expect(html()).toMatch(/<div class="btn-row demo-accounts">(<form [^>]*>[\s\S]*?<\/form>){2}<\/div>/);
+  });
+
   test('each button tonal, never filled, saying only its name', () => {
     // Nothing on what it holds: anyone may reset either account to any
     // scenario, so a line on that could be wrong.
