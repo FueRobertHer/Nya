@@ -12,12 +12,13 @@ import { useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import type { ReviewControls } from './review-state';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { formatInstantDay } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { changedSinceWords, defaultWords, suggestionWords } from './review-text';
 
+/** The local day an instant fell on, mid sentence: "today", "Oct 5". */
 function day(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 }
 
 export default function ReviewNote({

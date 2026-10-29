@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { amountsHidden, formatMoney, spoken } from '@/lib/format';
+import { amountsHidden, formatMoney, onDay, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 import { deleteFile, fileUrl, moveFile, renameFile, saveFile, sizeWords, looseWords, type FileView } from './attachment-client';
@@ -50,8 +50,8 @@ export function fileDay(f: Pick<FileView, 'as_placed' | 'created_at'>): string {
  *  allows (spoken by the caller). */
 export function altText(f: Pick<FileView, 'as_placed' | 'created_at' | 'name'>): string {
   const p = f.as_placed;
-  if (!p) return `Receipt${f.name ? ` ${f.name}` : ''}, added ${shortDay(f.created_at.slice(0, 10))}`;
-  return `Receipt for ${p.name}, ${formatMoney(Math.abs(p.amount), p.currency)} on ${shortDay(p.date)}`;
+  if (!p) return `Receipt${f.name ? ` ${f.name}` : ''}, added ${shortDay(f.created_at, { sentence: true })}`;
+  return `Receipt for ${p.name}, ${formatMoney(Math.abs(p.amount), p.currency)} ${onDay(shortDay(p.date, { sentence: true }))}`;
 }
 
 /** A file's name as saved: its own, else what it is of and the day. */
@@ -252,10 +252,10 @@ export default function AttachmentViewer({
           <div className="attach-viewer-sub">
             {placed ? (
               <>
-                {placed.name} · {shortDay(placed.date)} · <Masked>{formatMoney(Math.abs(placed.amount), placed.currency)}</Masked>
+                {placed.name} · {shortDay(placed.date, { sentence: true })} · <Masked>{formatMoney(Math.abs(placed.amount), placed.currency)}</Masked>
               </>
             ) : (
-              `Added ${shortDay(f.created_at.slice(0, 10))}`
+              `Added ${shortDay(f.created_at, { sentence: true })}`
             )}
             {` · ${f.kind === 'pdf' ? 'PDF' : 'Photo'}, ${sizeWords(f.bytes)}`}
           </div>
@@ -375,7 +375,7 @@ export default function AttachmentViewer({
                   <button
                     className="secondary attach-picker-item"
                     disabled={busy}
-                    onClick={() => run(() => moveFile(f.id, c.id), () => `Moved to ${c.name} on ${shortDay(c.date)}.`, () => setStep({ kind: 'view' }))}
+                    onClick={() => run(() => moveFile(f.id, c.id), () => `Moved to ${c.name} ${onDay(shortDay(c.date, { sentence: true }))}.`, () => setStep({ kind: 'view' }))}
                   >
                     <span className="attach-picker-text">
                       <span>{c.name}</span>

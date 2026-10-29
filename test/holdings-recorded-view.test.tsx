@@ -29,7 +29,7 @@ const view = (state: SummaryState, damagedMonths = 0) =>
 
 describe('HoldingsRecordedLine', () => {
   test('says since when, while recording is current, and never "daily"', () => {
-    expect(line({ ...days('2026-09-12', '2026-10-08'), first_recorded_at: '2026-09-12T13:00:00.000Z' })).toBe('<div class="as-of">Holdings recorded since Sep 12, 2026.</div>');
+    expect(line({ ...days('2026-09-12', '2026-10-08'), first_recorded_at: '2026-09-12T13:00:00.000Z' })).toBe('<div class="as-of">Holdings recorded since Sep 12.</div>');
     // Before today's snapshot has run, yesterday's record is current.
     expect(line(days('2026-09-12', '2026-10-07'))).toContain('since');
     expect(line(days('2026-09-12', '2026-10-07'))).not.toContain('daily');
@@ -37,7 +37,7 @@ describe('HoldingsRecordedLine', () => {
 
   test('says when it stopped, once it has', () => {
     const stopped = { ...days('2026-09-12', '2026-10-06'), first_recorded_at: '2026-09-12T13:00:00.000Z', last_recorded_at: '2026-10-06T13:00:00.000Z' };
-    expect(line(stopped)).toBe('<div class="as-of">Holdings recorded from Sep 12, 2026 to Oct 6, 2026.</div>');
+    expect(line(stopped)).toBe('<div class="as-of">Holdings recorded from Sep 12 to Oct 6.</div>');
     // Across a month and a year.
     expect(line(days('2025-12-01', '2025-12-31'), '2026-01-02')).toContain('to Dec 31, 2025 (UTC)');
     expect(line(days('2025-12-01', '2025-12-31'), '2026-01-01')).toContain('since');
@@ -52,9 +52,9 @@ describe('HoldingsRecordedLine', () => {
     // Recorded at 7pm on August 31 in Los Angeles: already September 1 in UTC.
     const span = { ...days('2026-09-01', '2026-10-08'), first_recorded_at: '2026-09-01T02:00:00.000Z' };
     for (const [tz, shown] of [
-      ['America/Los_Angeles', 'Aug 31, 2026'],
-      ['Pacific/Auckland', 'Sep 1, 2026'],
-      ['UTC', 'Sep 1, 2026'],
+      ['America/Los_Angeles', 'Aug 31'],
+      ['Pacific/Auckland', 'Sep 1'],
+      ['UTC', 'Sep 1'],
     ]) {
       expect([tz, line(span, '2026-10-08', tz)]).toEqual([tz, `<div class="as-of">Holdings recorded since ${shown}.</div>`]);
     }

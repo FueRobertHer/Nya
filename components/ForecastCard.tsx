@@ -57,7 +57,7 @@ import {
   type PendingRow,
 } from '@/lib/forecast';
 import { EMPTY_PLANNED, thresholdOf, type Planned } from '@/lib/planned';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney, onDay } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { Why } from './Why';
@@ -75,12 +75,23 @@ const NO_DISMISSED: ReadonlySet<string> = new Set();
 const NO_ROWS: PendingRow[] = [];
 const NO_CAVEATS: readonly Caveat[] = [];
 
-/** When balances were loaded: the time today, the day and time before. */
+/** When balances were loaded: the time today, the day and time before
+ *  ("yesterday at 3:12 PM", "Oct 7 at 3:12 PM"). */
 function fmtLoaded(iso: string, today: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return localDate(d) === today ? time : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`;
+  return localDate(d) === today ? time : `${formatDay(localDate(d), { sentence: true, now: new Date(`${today}T12:00:00`) })} at ${time}`;
+}
+
+/** The same after "saved": "at 3:12 PM" today, "yesterday at 3:12 PM",
+ *  "on Oct 7 at 3:12 PM". */
+function savedWhen(iso: string, today: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return `on ${iso}`;
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (localDate(d) === today) return `at ${time}`;
+  return `${onDay(formatDay(localDate(d), { sentence: true, now: new Date(`${today}T12:00:00`) }))} at ${time}`;
 }
 
 /** What the forecast is worked out from. */
@@ -397,11 +408,11 @@ export function ForecastView({
         Starts from <Masked>{money(forecast.start)}</Masked>
         <Masked>{position.pending.count > 0 ? `: ${money(position.balances)} in ${said}, less ${money(position.pending.amount)} still pending.` : ` in ${said}.`}</Masked>
         {balancesAsOf && balancesSaved
-          ? ` Those are the balances saved on ${fmtLoaded(balancesAsOf, today)}, the last time they loaded; anything since isn't in it.`
+          ? ` Those are the balances saved ${savedWhen(balancesAsOf, today)}, the last time they loaded; anything since isn't in it.`
           : balancesAsOf
             ? ` Balances as of ${fmtLoaded(balancesAsOf, today)}.`
             : ''}{' '}
-        Expected to end near <Masked>{money(forecast.end)}</Masked> on {fmtDay(forecast.days[forecast.days.length - 1].date)}.
+        Expected to end near <Masked>{money(forecast.end)}</Masked> {onDay(fmtDay(forecast.days[forecast.days.length - 1].date))}.
       </p>
       {listed && (
         <Why label="Which accounts">

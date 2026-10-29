@@ -12,14 +12,15 @@
 // rates and from what day; a currency with no rate is left out and named,
 // with why, never guessed (docs/architecture.md, "Exchange rates").
 
-import { formatMoney, formatRate } from '@/lib/format';
+import { formatDay, formatMoney, formatRate, onDay } from '@/lib/format';
 import type { BalancePart, BalancesIn, HistoryGaps } from '@/lib/fx/net-worth';
 import type { NoRate, OwnRate } from '@/lib/fx/rates';
 import { homeUnrated, reasonText } from '@/lib/fx/words';
 
-/** A day as the notes write it: "Sep 14, 2026" in this locale. */
+/** A day as the notes write it, mid sentence: "today", "Sep 14", "Sep 14,
+ *  2025" in this locale (lib/format.ts formatDay). */
 export function rateDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 /** Why a currency has no rate of its own, in words (lib/fx/words.ts). */
@@ -134,7 +135,7 @@ export type ChartGaps = HistoryGaps & { unknown_currency: number };
 export function chartGapLines(g: ChartGaps, home: string, main: string | null): string[] {
   const out: string[] = [];
   const days = (n: number) => (n === 1 ? '1 day' : `${n} days`);
-  const span = (s: { from: string; to: string }) => (s.from === s.to ? `on ${rateDay(s.from)}` : `from ${rateDay(s.from)} to ${rateDay(s.to)}`);
+  const span = (s: { from: string; to: string }) => (s.from === s.to ? onDay(rateDay(s.from)) : `from ${rateDay(s.from)} to ${rateDay(s.to)}`);
   const many = (n: number) => (n === 1 ? 'one' : 'many');
   if (g.unsplit > 0) out.push(`${days(g.unsplit)} couldn’t be converted: Nya didn’t keep ${g.unsplit === 1 ? 'its balances' : 'their balances'} by account, so ${g.unsplit === 1 ? 'it isn’t' : 'they aren’t'} drawn.`);
   for (const m of g.main_unrated) {

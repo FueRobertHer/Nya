@@ -12,15 +12,16 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
-import { formatMoney, hideAmountsIn } from '@/lib/format';
+import { formatDay, formatMoney, hideAmountsIn } from '@/lib/format';
 import type { Tag } from '@/lib/tags';
 import { HANDLE_MAX, PERSON_NAME_MAX, REMOVED_NAME } from '@/lib/shared-expenses/model';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
 
 type Draft = { name: string; venmo: string; cashtag: string; app: '' | 'venmo' | 'cashapp' | 'other'; tag: string; tagHow: 'half' | 'even'; ways: string };
 
-function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** A day as a row's tag says it ("Today", "Oct 5"), or mid sentence (`sentence`). */
+function shownDay(iso: string, sentence = false): string {
+  return formatDay(iso, { sentence });
 }
 
 export default function PersonSheet({ id, open, tags, shared, onClose }: { id: string | null; open: boolean; tags: readonly Tag[]; shared: SharedExpenses; onClose: () => void }) {
@@ -174,7 +175,7 @@ export default function PersonSheet({ id, open, tags, shared, onClose }: { id: s
                 </span>
                 {i.closed.map((c) => (
                   <span key={c.event} className="type-tag">
-                    <Masked>{`${c.kind === 'outside' ? 'Settled outside your accounts' : 'Let go'} ${shownDay(c.date)}: ${formatMoney(c.amount, i.currency)}`}</Masked>
+                    <Masked>{`${c.kind === 'outside' ? 'Settled outside your accounts' : 'Let go'} ${shownDay(c.date, true)}: ${formatMoney(c.amount, i.currency)}`}</Masked>
                     {c.note ? ` (${c.note})` : ''}{' '}
                     <ReopenButton disabled={saving} onReopen={() => void reopen(i.id, c.event)} />
                   </span>

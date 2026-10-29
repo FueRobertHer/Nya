@@ -309,6 +309,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
 - FieldError: what is wrong with a field and what to do ("Enter an amount, like 120.50"), in `--neg` with the alert icon under it, named by the field's `aria-describedby`, so a field's red edge is never alone: the amounts in IouSheet, SplitSheet, ShareCostSheet and ConfirmPaymentSheet, Planned's sheet (amount, currency, date), the forecast's Warn below and What if I buy, the runway's Spending lower by and Debt payoff's Extra each month.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
+- online (useOfflineCaveats): whether the device is online, and the caution on Home's total while it isn't ("Offline. Showing balances from 9:41 AM."), through TotalCaveats.
 - upcoming-notes (NoticeBadge): what Budgets > Upcoming says it may be missing (the notice at its top, through TotalCaveats, and the forecast's notes on where it starts), and the badge on each card the notice bears on (6a3).
 
 ## Vocabulary

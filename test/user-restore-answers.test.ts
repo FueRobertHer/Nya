@@ -43,6 +43,7 @@ const { NOV, JAN, month, every, shared } = await import('./restore-readers');
 const { countedLines } = await import('@/components/restore-state');
 const linksRoute = await import('@/app/api/account-links/route');
 const { carriedEndNote } = await import('@/components/AccountLinks');
+const { formatDay } = await import('@/lib/format');
 const { hold } = await import('./restore-run');
 
 const ctx = TEST_CTX;
@@ -350,7 +351,7 @@ describe('a later link', () => {
     const offered = await (await linksRoute.GET(new Request('http://localhost/api/account-links'))).json();
     expect(offered.ends).toContainEqual({ old: 'acc_chk', to: 'new_chk', state: 'untracked', day: '2026-01-05' });
     expect(carriedEndNote(offered.ends, 'acc_chk', 'new_chk', 'Chase Checking ••1111')).toBe(
-      'The earlier account wasn’t followed from Jan 5, 2026, and an end follows an account across a link: linked, Chase Checking ••1111 counts in nothing from that day either. To keep it counting, reopen it under Accounts that ended once it is linked.'
+      `The earlier account wasn’t followed from ${formatDay('2026-01-05', { sentence: true })}, and an end follows an account across a link: linked, Chase Checking ••1111 counts in nothing from that day either. To keep it counting, reopen it under Accounts that ended once it is linked.`
     );
     expect((await link('acc_chk', 'new_chk')).status).toBe(200);
     expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual({ state: 'untracked', from: '2026-01-05' });

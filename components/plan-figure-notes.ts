@@ -20,7 +20,7 @@
 
 import { KIND_WORDS } from './budget-notes';
 import { PAYROLL_NOTE, dayName, pct, savingsRateText } from './plan-text';
-import { instantDay } from '@/lib/local-date';
+import { formatInstantDay, onDay } from '@/lib/format';
 import { missingFigureItems, type NoTransactionsView } from '@/lib/no-transactions';
 import type { AssetCaveat, InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from '@/lib/fire/inputs';
 import {
@@ -109,7 +109,7 @@ function fmtInstant(iso: string): string {
 /** The day recovered balances were observed: the local day of the instant
  *  when the server knew it, else the stored UTC day (as Dashboard.tsx does). */
 function staleDay(asOf: string, at: string | null): string {
-  const local = at && at.slice(0, 10) === asOf ? instantDay(at) : null;
+  const local = at && at.slice(0, 10) === asOf ? formatInstantDay(at, { sentence: true }) : null;
   return local ?? dayName(asOf);
 }
 
@@ -246,7 +246,7 @@ function spendingWhy(flows: TrailingFlows, money: (n: number) => string, cashOn:
   // Refunds are taken off, so the total and the largest are said: an odd
   // large one (a deposit returned, an insurance payout) can be seen.
   const big = flows.largestRefund;
-  const refunds = flows.refunds > 0 ? `${money(flows.refunds)} of refunds${big ? ` (the largest, ${money(big.amount)} from ${big.name} on ${dayName(big.date)})` : ''}` : null;
+  const refunds = flows.refunds > 0 ? `${money(flows.refunds)} of refunds${big ? ` (the largest, ${money(big.amount)} from ${big.name} ${onDay(dayName(big.date))})` : ''}` : null;
   const counted = parts.length ? `Includes ${parts.join(' and ')}${refunds ? `, less ${refunds}` : ''}.` : refunds ? `Less ${refunds}.` : null;
   return [counted, cashNote].filter((s): s is string => !!s).join(' ') || null;
 }
@@ -422,7 +422,7 @@ function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureTe
       NOTE_KINDS.added,
       x.added > 0
         ? x.count > 0
-          ? `${x.name}: ${x.count} contribution${x.count === 1 ? '' : 's'} added, ${money(x.added)}${x.largest ? `, the largest ${money(x.largest.amount)} on ${dayName(x.largest.date)}` : ''}${x.paidFrom === 'payroll' ? ', all of them, as it is set as paid through payroll' : ''}.`
+          ? `${x.name}: ${x.count} contribution${x.count === 1 ? '' : 's'} added, ${money(x.added)}${x.largest ? `, the largest ${money(x.largest.amount)} ${onDay(dayName(x.largest.date))}` : ''}${x.paidFrom === 'payroll' ? ', all of them, as it is set as paid through payroll' : ''}.`
           : `${x.name}: ${money(x.added)} added.`
         : null
     );

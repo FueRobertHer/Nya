@@ -26,13 +26,13 @@ import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
 import MonthFigures from "./MonthFigures";
-import { formatDay, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { formatDay, formatInstantDay, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
 import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
-import { instantDay, localDate, localMonth } from "@/lib/local-date";
+import { localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { importedRowsNote } from "@/lib/history-import/view";
@@ -880,7 +880,7 @@ export default function MonthBreakdown({
   const uncategorized = uncategorizedNote(uncategorizedFromConnector(monthTxns), uncategorizedFrom(monthTxns));
   const gapNotes = selected
     ? [
-        ...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)),
+        ...monthGapNotes(selected, incomplete, stopped, (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10)),
         // Not a bank whose files cover the month in its place (#52), as a
         // report and budget rollover count it.
         ...missingMonthNotes(withoutTransactions, selected),
@@ -896,7 +896,7 @@ export default function MonthBreakdown({
   const spendingGaps =
     onSpending && !taxonomy
       ? period
-        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) })
+        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10) })
         : notes
       : [];
   const caption = period ? periodCaption(period, today) : "";

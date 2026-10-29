@@ -7,11 +7,13 @@
 // estimated region dashed already; this says what that part is made of.
 
 import { importedHistoryLines, type ImportedHistoryView } from '@/lib/history-import/view';
+import { formatDay } from '@/lib/format';
 
 type Named = { institution_name: string; accounts: { account_id: string; name: string }[] };
 
-/** A calendar day as the viewer reads one: "Sep 3, 2026". */
-const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** A calendar day as the viewer reads one mid sentence: "today", "Sep 3",
+ *  "Sep 3, 2025" (lib/format.ts formatDay). */
+const fmtDay = (day: string) => formatDay(day, { sentence: true });
 
 export default function ImportedHistoryNote({ view, institutions }: { view: ImportedHistoryView; institutions: Named[] }) {
   const names = new Map<string, string>();

@@ -32,7 +32,7 @@
 // elements (Fanboy's list has ##.share-row).
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
@@ -1102,11 +1102,11 @@ export function sharedTxnAmount(t: { amount: number; currency: string | null }):
   return formatMoney(-t.amount, t.currency);
 }
 
-/** "Closed Mar 12, 2026": an account that ended, as the one it is shared
+/** "Closed Mar 12": an account that ended, as the one it is shared
  *  with reads it. Untracked is said as theirs to say: they stopped following
  *  it, which is not the same as closing it. */
 export function endedText(e: NonNullable<SharedAccount['ended']>): string {
-  const day = new Date(`${e.on}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const day = formatDay(e.on, { sentence: true });
   if (e.state === 'closed') return `Closed ${day}`;
   if (e.state === 'left') return `No longer theirs since ${day}`;
   return `Not followed since ${day}`;
@@ -1168,7 +1168,7 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
         a.transactions?.map((t, i) => (
           <div key={i} className="incoming-txn">
             <span>
-              {shortDate(t.date)} {shownName(t)}
+              {shortDate(t.date, undefined, true)} {shownName(t)}
               {t.pending ? ' (pending)' : ''}
             </span>
             <span>

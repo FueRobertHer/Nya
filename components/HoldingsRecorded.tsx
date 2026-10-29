@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sheet } from './Sheet';
+import { formatDay } from '@/lib/format';
 
 /** What /api/holdings-history?summary=1 answers: UTC days, or null when
  *  nothing was recorded for the account, and the moments behind them, when
@@ -61,13 +62,15 @@ const LONG: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year:
  * recorded at, when that moment is known and is of the stored UTC day (a
  * restored copy keeps another environment's moments); otherwise the UTC day
  * itself, labelled as one, since from a US evening on it is already the next
- * day's date. `timeZone` is for tests; the app leaves it out and gets the
- * viewer's own.
+ * day's date. The local day is said as every day is (lib/format.ts
+ * formatDay, mid sentence: "today", "Sep 12", "Sep 12, 2025"); the UTC day
+ * keeps its year, as it is not the viewer's own calendar. `timeZone` and
+ * `now` are for tests; the app leaves them out and gets the viewer's own.
  */
-export function recordedDay(day: string, at?: string | null, timeZone?: string): string {
+export function recordedDay(day: string, at?: string | null, timeZone?: string, now?: Date): string {
   if (at && at.slice(0, 10) === day) {
     const d = new Date(at);
-    if (!Number.isNaN(d.getTime())) return d.toLocaleDateString(undefined, { ...LONG, ...(timeZone ? { timeZone } : {}) });
+    if (!Number.isNaN(d.getTime())) return formatDay(new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', ...(timeZone ? { timeZone } : {}) }).format(d), { sentence: true, now });
   }
   return `${new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { ...LONG, timeZone: 'UTC' })} (UTC)`;
 }
@@ -82,12 +85,14 @@ export function recordedDay(day: string, at?: string | null, timeZone?: string):
 export function HoldingsRecordedLine({ span, today, timeZone }: { span: RecordedSpan; today: string; timeZone?: string }) {
   const { first_recorded: first, last_recorded: last } = span;
   if (!first || !last) return <div className="as-of">No holdings have been recorded for this account.</div>;
-  const from = recordedDay(first, span.first_recorded_at, timeZone);
+  // Today's year and day, for how the local days are said.
+  const now = new Date(`${today}T12:00:00`);
+  const from = recordedDay(first, span.first_recorded_at, timeZone, now);
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
   if (last < yesterday) {
     return (
       <div className="as-of">
-        Holdings recorded from {from} to {recordedDay(last, span.last_recorded_at, timeZone)}.
+        Holdings recorded from {from} to {recordedDay(last, span.last_recorded_at, timeZone, now)}.
       </div>
     );
   }

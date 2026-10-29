@@ -337,17 +337,42 @@ const calendarDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-$
  * a file, an answer of the API or an attribute a program reads keeps the
  * ISO day.
  */
-export function formatDay(iso: string, opts: { now?: Date | number; sentence?: boolean } = {}): string {
+export function formatDay(iso: string, opts: DayOptions = {}): string {
   const now = new Date(opts.now ?? Date.now());
   const day = iso.slice(0, 10);
   const today = calendarDay(now);
   if (day === today) return opts.sentence ? 'today' : 'Today';
   if (day === calendarDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return opts.sentence ? 'yesterday' : 'Yesterday';
   return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, {
+    ...(opts.weekday ? { weekday: opts.weekday } : {}),
     month: 'short',
     day: 'numeric',
     ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
   });
+}
+
+/** How formatDay says a day: `now` for tests; `sentence` for the middle of
+ *  one ("today"); `weekday` for a day's heading, which names it before any
+ *  other day than today and yesterday ("Sat, Oct 24"). */
+export type DayOptions = { now?: Date | number; sentence?: boolean; weekday?: 'short' | 'long' };
+
+/**
+ * The day an instant (an ISO time: when something was saved, imported or
+ * ended) fell on in the person's own time zone, said as formatDay says a
+ * day: "Today", "Yesterday", "Aug 7", "Aug 7, 2025". Not its UTC day, which
+ * is already tomorrow from a US evening on. A bare YYYY-MM-DD is a calendar
+ * day, said as it is. Null when it is neither.
+ */
+export function formatInstantDay(iso: string, opts: DayOptions = {}): string | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return formatDay(iso, opts);
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : formatDay(calendarDay(d), opts);
+}
+
+/** A day formatDay wrote mid sentence, after "on": "on Aug 7", but "today"
+ *  and "yesterday" alone, so a sentence never says "on today". */
+export function onDay(day: string): string {
+  return day === 'today' || day === 'yesterday' ? day : `on ${day}`;
 }
 
 /**

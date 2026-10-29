@@ -29,7 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import { shownReason } from './ImportSheet';
-import { formatMoney, hideAmountsIn, hideFiguresIn, plainNumber, signedMoney } from '@/lib/format';
+import { formatDay, formatInstantDay, formatMoney, hideAmountsIn, hideFiguresIn, onDay, plainNumber, signedMoney } from '@/lib/format';
 import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
 import { MANUAL_TYPES } from '@/lib/manual';
@@ -179,8 +179,10 @@ export type UndoPreview = {
 type NewAnswer = Extract<AccountAnswer, { to: 'new' }>;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
-const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fmtDay(a) : `${fmtDay(a)} to ${fmtDay(b)}`) : null);
+const fmtDay = (day: string) => formatDay(day);
+/** The same mid sentence: "today", "Sep 3", "Sep 3, 2025". */
+const inDay = (day: string) => formatDay(day, { sentence: true });
+const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? inDay(a) : `${inDay(a)} to ${inDay(b)}`) : null);
 /** An amount in Plaid's sign, as the Activity tab shows it: money in with a plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 const listWords = (words: string[]) => (words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
@@ -1305,7 +1307,7 @@ function TargetSection({
       )}
       {t.ended && t.ended.rows > 0 && (
         <p className="panel-note">
-          {t.ended.state === 'closed' ? `${t.name} closed on ${fmtDay(t.ended.day)}` : t.ended.state === 'left' ? `${t.name} has not been yours since ${fmtDay(t.ended.day)}` : `You stopped following ${t.name} from ${fmtDay(t.ended.day)}`}:{' '}
+          {t.ended.state === 'closed' ? `${t.name} closed ${onDay(inDay(t.ended.day))}` : t.ended.state === 'left' ? `${t.name} has not been yours since ${inDay(t.ended.day)}` : `You stopped following ${t.name} from ${inDay(t.ended.day)}`}:{' '}
           {t.ended.rows === 1 ? 'one of the transactions this file adds is' : `${t.ended.rows.toLocaleString()} of the transactions this file adds are`} dated from then, and {t.ended.rows === 1 ? 'counts' : 'count'} in nothing, as its bank’s own from then don’t.
         </p>
       )}
@@ -1347,7 +1349,7 @@ function TargetSection({
                       <Masked>{fmtAmount(p.file.amount, p.file.currency)}</Masked>
                     </span>
                   </div>
-                  <div className="import-row-meta">In the file, {fmtDay(p.file.date)}</div>
+                  <div className="import-row-meta">In the file, {inDay(p.file.date)}</div>
                   <div className="import-conflict-version">
                     <span className="import-row-name">{p.twin.name}</span>
                     <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}>
@@ -1355,7 +1357,7 @@ function TargetSection({
                     </span>
                   </div>
                   <div className="import-row-meta">
-                    {p.twin.kind === 'bank' ? `${institution ?? 'The bank'}’s` : 'An earlier file’s'}, {fmtDay(p.twin.date)} · {p.days === 0 ? 'the same day' : `${plural(p.days, 'day')} apart`} · {CONFIDENCE[p.confidence]}
+                    {p.twin.kind === 'bank' ? `${institution ?? 'The bank'}’s` : 'An earlier file’s'}, {inDay(p.twin.date)} · {p.days === 0 ? 'the same day' : `${plural(p.days, 'day')} apart`} · {CONFIDENCE[p.confidence]}
                     {chosen === null ? ' · choose one' : ''}
                   </div>
                   <div className="import-choices" role="group" aria-label={`What ${p.file.name} is`}>
@@ -1419,7 +1421,7 @@ export function PastMigrations({ items, error, onUndo }: { items: Listed[] | nul
               {e && (
                 <div className="import-row-meta">
                   {[
-                    new Date(e.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+                    formatInstantDay(e.started_at) ?? e.started_at.slice(0, 10),
                     e.status === 'done'
                       ? e.counts
                         ? plural(e.counts.imported, 'transaction')

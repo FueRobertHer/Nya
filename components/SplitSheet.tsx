@@ -18,7 +18,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideAmountsIn } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import FieldError, { amountExample } from './FieldError';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
@@ -28,9 +28,9 @@ import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/spl
 import { bankKept, splitAtBanksAmount, splitKeptUnder } from './SplitRows';
 import { shownName } from '@/lib/merchant-name';
 
-/** "Oct 5": a transaction's day as the list shows it. */
+/** "Oct 5": a transaction's day mid sentence, "today" and "yesterday" too. */
 function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 /** One part as the form holds it: the amount as typed. */
@@ -196,7 +196,7 @@ export default function SplitSheet({
   return (
     <Sheet open title={split ? 'Edit split' : 'Split transaction'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {shownName(t)}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, on {shownDay(t.date)}. Give each part its own category: the parts
+        {shownName(t)}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, {onDay(shownDay(t.date))}. Give each part its own category: the parts
         count in budgets and reports, and the transaction stays one, as the bank has it.
       </p>
       {changed && changed.split_remainder && (

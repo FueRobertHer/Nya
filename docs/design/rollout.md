@@ -951,6 +951,8 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - **Header icons** at stroke 2, as everything at 20px is; the brand's name at `--fs-5`.
 - **Gold is never see-through:** a group's category bars are the solid wash with a gold edge, not gold at 55%.
 - **Signs:** the hero's change carries its sign as well as its arrow ("▲ +$10.00 (+1.0%)"); percentages take the true minus too.
+- **Dates:** every day read on screen goes through `formatDay`, or `formatInstantDay` for an instant's local day (`lib/format.ts`): "Today" and "Yesterday", "Aug 7" this year and "Aug 7, 2025" outside it, lower case mid sentence and never "on today" (`onDay`). The days that always carried a year (timeline notes, imports, restores, connections, sharing, the Plan's notes) and the instants said through `instantDay`, which never said today, moved to it; Upcoming's day bars, the calendar's day, Card Mode and the transaction sheet keep their weekday. Month names, times, chart axes, the API, MCP, emails, downloads, printed report dates and UTC days stay as they were.
+- **Offline:** a caution on Home's total while the device is offline, "Offline. Showing balances from 9:41 AM.", with the time of the numbers shown (`components/online.ts`, through the hero's caveats), gone once it is back online. Disabling the actions that need the network waits for a single place to do it: there is none yet.
 
 **Kept as the repo decided later** (the artifact still says otherwise): Activity has no hero; the month stepper's layout and its 16px chevron; the hatched caution meter; no blur under a sheet; two lines on one chart told apart by dash; an empty state's heading level; the stat strip's size; 32px logo tiles; the compact switch's 12px labels; the mask keeps its sign and currency.
 
@@ -962,7 +964,7 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - Other "Remove" actions, and the vocabulary table's Close and Hide, are left until the word list is settled.
 - The hero draw-in stays deferred (see the light accent review).
 - The cash flow chart keeps its see-through ribbons (each node's bar carries it at full strength, as the light theme check decided) and its node labels in K (laid out for a short figure; the table under it has every amount in full).
-- Still to move, each its own change: the 147 `.error` lines to notices or field errors; the remaining on-screen dates (about 66 `toLocaleDateString` calls) to `formatDay`; an offline caution on the hero; the spinners left in empty cards; the keys on the other charts that can be scrubbed; the chosen tag suggestion's check.
+- Still to move, each its own change: the 147 `.error` lines to notices or field errors; disabling the actions that need the network while offline, with that as their hint; the spinners left in empty cards; the keys on the other charts that can be scrubbed; the chosen tag suggestion's check.
 
 ## Left from the reviews
 

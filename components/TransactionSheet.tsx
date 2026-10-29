@@ -34,7 +34,7 @@ import type { ReviewControls } from './review-state';
 import type { CategoryChoice } from './transaction-edits';
 import type { Txn } from './MonthBreakdown';
 import { exclusionOffer, isLowConfidence, nameForRules, pairedWords } from './txn-words';
-import { formatMoney, signedMoney } from '@/lib/format';
+import { formatDay, formatMoney, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
 import { MIN_MEMBERS, PART_PREFIX } from '@/lib/split-rows';
@@ -130,9 +130,9 @@ const stillFiled = (kept: Filed, t: Pick<Txn, 'category_id' | 'category'>) => {
   return now.id !== null ? now.id === kept.id : now.words !== null && now.words === kept.words;
 };
 
-/** "Thu, Oct 22, 2026". */
+/** "Today", "Yesterday", "Thu, Oct 22", "Thu, Oct 22, 2025" (lib/format.ts formatDay). */
 function longDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { weekday: 'short' });
 }
 
 /** Plaid's payment_channel in words: "online", "in store", "other". */

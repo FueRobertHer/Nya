@@ -11,6 +11,7 @@
 import { currencyOf } from '@/lib/spending';
 import { isLayerRow } from '@/lib/shared-expenses/rows';
 import { amountTyped, wholeAmount } from './receipt-filter';
+import { formatInstantDay, type DayOptions } from '@/lib/format';
 
 export type PickRow = {
   transaction_id: string;
@@ -45,8 +46,16 @@ export function candidates(rows: readonly PickRow[], except: string | null = nul
   return [...out.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name)));
 }
 
-/** The day as this browser writes it short ("Mar 4"), for the search. */
-export function shortDay(iso: string): string {
+/** A day (or the local day of an instant) as the receipts show it: "Today",
+ *  "Mar 4", "Mar 4, 2025" (lib/format.ts formatDay), `sentence` in the middle
+ *  of one. */
+export function shortDay(iso: string, opts: DayOptions = {}): string {
+  return formatInstantDay(iso, opts) ?? iso;
+}
+
+/** The day as this browser writes it short ("Mar 4"), for the search: a day
+ *  is found by its date whatever the list calls it. Never shown. */
+function searchDay(iso: string): string {
   const d = new Date(`${iso}T00:00:00`);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
@@ -62,6 +71,7 @@ export function findCandidates(all: readonly Candidate[], query: string, limit =
     const hit =
       c.name.toLowerCase().includes(q) ||
       c.date.includes(q) ||
+      searchDay(c.date).toLowerCase().includes(q) ||
       shortDay(c.date).toLowerCase().includes(q) ||
       (figure !== null && (Math.abs(size - figure) < 0.005 || (Number.isInteger(figure) && Math.floor(size) === figure)));
     if (hit) out.push(c);

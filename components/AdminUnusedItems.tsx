@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
+import { formatInstantDay } from '@/lib/format';
 
 type Row = {
   container: string;
@@ -22,8 +23,9 @@ type Row = {
 };
 type Payload = { flag_after_days: number; items: Row[] };
 
+/** The local day an instant fell on, mid sentence: "today", "Oct 5". */
 function fmtDay(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 }
 
 export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void }) {

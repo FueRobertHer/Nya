@@ -21,7 +21,7 @@
 import { useMemo, useState, type PointerEvent } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, totalsCurrency } from '@/lib/spending';
-import { formatMoney, compactMoney, spoken } from '@/lib/format';
+import { formatDay, formatMoney, compactMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { lastDayOf } from '@/lib/cash-flow';
 import { localDate } from '@/lib/local-date';
@@ -141,7 +141,13 @@ export default function MonthFlowChart({
   // With the year when the period reaches into another year than today's.
   const withYear = first.slice(0, 4) !== today.slice(0, 4) || last.slice(0, 4) !== today.slice(0, 4);
 
-  function dayLabel(day: string): string {
+  // A day read on screen: "Today", "Oct 5", "Oct 5, 2025" (lib/format.ts
+  // formatDay, on `today`'s calendar); `sentence` in the middle of one.
+  const now = new Date(`${today}T12:00:00`);
+  const dayLabel = (day: string, sentence = false) => formatDay(day, { now, sentence });
+
+  /** The axis's ends, as a chart's axis names them. */
+  function axisDay(day: string): string {
     return new Date(`${day}T12:00:00Z`).toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -188,7 +194,7 @@ export default function MonthFlowChart({
           <Masked>{formatMoney(cumOut[i], currency)}</Masked>
         </span>
         <span className="chart-readout-date">
-          {active !== null || !toDate ? `through ${dayLabel(days[i])}` : 'to date'}
+          {active !== null || !toDate ? `through ${dayLabel(days[i], true)}` : 'to date'}
         </span>
       </div>
 
@@ -197,7 +203,7 @@ export default function MonthFlowChart({
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={spoken(`Cumulative income and spending for ${dayLabel(days[0])} to ${dayLabel(days[lastAt])}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
+        aria-label={spoken(`Cumulative income and spending for ${dayLabel(days[0], true)} to ${dayLabel(days[lastAt], true)}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
         onPointerMove={scrub}
         onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
@@ -222,10 +228,10 @@ export default function MonthFlowChart({
         <circle cx={xs[i]} cy={y(cumIn[i])} r={4} fill="var(--up)" stroke="var(--card)" strokeWidth={2} />
 
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 6}>
-          {dayLabel(days[0])}
+          {axisDay(days[0])}
         </text>
         <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 6} textAnchor="end">
-          {dayLabel(days[lastAt])}
+          {axisDay(days[lastAt])}
         </text>
       </svg>
 

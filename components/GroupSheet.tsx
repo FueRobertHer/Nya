@@ -15,7 +15,7 @@ import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import { Masked } from './HideAmounts';
 import type { Txn } from './MonthBreakdown';
-import { formatMoney, signedMoney } from '@/lib/format';
+import { formatDay, formatMoney, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS, toUnits, unitScale } from '@/lib/split-rows';
@@ -27,7 +27,7 @@ const OFFERED = 60;
 
 /** "Oct 5": a transaction's day as the list shows it. */
 function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso);
 }
 
 const dayNumber = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;

@@ -30,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { ScenarioTag } from './ScenarioTag';
 import { Choice } from './PlanForms';
-import { dayName, wholeMoney } from './plan-text';
+import { axisDay, dayLabel, dayName, wholeMoney } from './plan-text';
 import {
   BUCKET_COLORS,
   CLASS_COLORS,
@@ -50,10 +50,9 @@ import {
   tenthPct,
 } from './allocation-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { spoken } from '@/lib/format';
+import { formatInstantDay, onDay, spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { distinctAccountNames } from '@/lib/account-names';
-import { instantDay } from '@/lib/local-date';
 import { readableName } from '@/lib/merchant-name';
 import { subtypeWords } from './accounts-format';
 import {
@@ -100,7 +99,7 @@ const ALLOCATION_PANEL = 'allocation-panel';
  *  instant when the server knew it, else the stored UTC day (as the Plan's
  *  invested assets say it). */
 export function fmtDay(day: string, at: string | null): string {
-  const local = at && at.slice(0, 10) === day ? instantDay(at) : null;
+  const local = at && at.slice(0, 10) === day ? formatInstantDay(at, { sentence: true }) : null;
   return local ?? dayName(day);
 }
 
@@ -1150,7 +1149,7 @@ function historyNames(answer: HistoryAnswer, accountNames: Map<string, string>):
  *  "first recorded on Oct 5, 2026", "not recorded that day". */
 export function missingWhy(account: HistoryAccount | undefined, date: string): string {
   if (!account || account.first === null || account.last === null) return 'never recorded';
-  if (date < account.first) return `first recorded on ${dayName(account.first)}`;
+  if (date < account.first) return `first recorded ${onDay(dayName(account.first))}`;
   if (date > account.last) return `not recorded since ${dayName(account.last)}`;
   return 'not recorded that day';
 }
@@ -1250,8 +1249,8 @@ export function HistoryBody({
   return (
     <>
       <p className="as-of">
-        Recorded from {dayName(answer.first_recorded)}
-        {shownFrom ? `, shown from ${dayName(shownFrom)}` : ''}, on {days.length} day{days.length === 1 ? '' : 's'}: nothing is drawn before the first, or on a day
+        Recorded from {axisDay(answer.first_recorded)}
+        {shownFrom ? `, shown from ${axisDay(shownFrom)}` : ''}, on {days.length} day{days.length === 1 ? '' : 's'}: nothing is drawn before the first, or on a day
         nothing was recorded. Each day is counted as the allocation above is, from the positions and balances recorded that day.
       </p>
       <AllocationHistoryChart days={days} currency={answer.currency} answer={answer} nameOf={nameOf} />
@@ -1364,7 +1363,7 @@ export function AllocationHistoryChart({
       <div className={`chart-readout chart-readout-stable alloc-readout${marked ? ' alloc-readout-marked' : ''}`}>
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
-          {dayName(day.date)} · <Masked>{wholeMoney(day.total, currency)}</Masked> counted
+          {dayLabel(day.date)} · <Masked>{wholeMoney(day.total, currency)}</Masked> counted
           <Masked>{isMoney(day.unlisted) ? `, ${wholeMoney(day.unlisted, currency)} of it in no position` : ''}</Masked>
           {day.missing.length ? ` · leaves out ${missingOn(day, answer, nameOf)}` : ''}
         </span>
@@ -1408,11 +1407,11 @@ export function AllocationHistoryChart({
         })}
         {active !== null && <rect x={xs[i] - 1} y={PAD_TOP - 2} width={width + 2} height={plotH + 4} fill="none" stroke="var(--text-3)" strokeWidth={1} />}
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 4} textAnchor="start">
-          {dayName(days[0].date)}
+          {axisDay(days[0].date)}
         </text>
         {days.length > 1 && (
           <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 4} textAnchor="end">
-            {dayName(days[days.length - 1].date)}
+            {axisDay(days[days.length - 1].date)}
           </text>
         )}
       </svg>
@@ -1445,7 +1444,7 @@ export function AllocationHistoryChart({
           <tbody>
             {[...days].reverse().map((d) => (
               <tr key={d.date}>
-                <td>{dayName(d.date)}</td>
+                <td>{dayLabel(d.date)}</td>
                 <td>
                   {dayMixText(d)}
                   {isMoney(d.unlisted) && <div className="alloc-sub"><Masked>{wholeMoney(d.unlisted, currency)}</Masked> of it in no position</div>}

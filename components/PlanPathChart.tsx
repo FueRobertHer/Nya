@@ -22,8 +22,8 @@
 
 import { useMemo } from 'react';
 import type { PathPoint } from '@/lib/fire/path';
-import { spoken } from '@/lib/format';
-import { dayName, pct, wholeMoney } from './plan-text';
+import { onDay, spoken } from '@/lib/format';
+import { dayLabel, dayName, pct, wholeMoney } from './plan-text';
 import { Masked } from './HideAmounts';
 import type { ProgressOverlay } from './PlanProgress';
 import { FALLBACK_WIDTH, MIN_LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -136,7 +136,7 @@ function recordedWords(r: ProgressOverlay, currency: string | null): string {
   const first = r.recorded[0];
   const last = r.recorded[r.recorded.length - 1];
   const planned = r.planned[r.planned.length - 1];
-  return `Since ${dayName(r.from)}, invested assets as recorded went from ${wholeMoney(first.balance, currency)} to ${wholeMoney(last.balance, currency)} on ${dayName(r.days[r.days.length - 1])}, where your plan from ${dayName(r.savedDay)} had ${wholeMoney(planned.balance, currency)}.`;
+  return `Since ${dayName(r.from)}, invested assets as recorded went from ${wholeMoney(first.balance, currency)} to ${wholeMoney(last.balance, currency)} ${onDay(dayName(r.days[r.days.length - 1]))}, where your plan from ${dayName(r.savedDay)} had ${wholeMoney(planned.balance, currency)}.`;
 }
 
 export default function PlanPathChart(props: PathChartProps) {
@@ -215,7 +215,7 @@ export default function PlanPathChart(props: PathChartProps) {
             <tbody>
               {recorded.days.map((d, i) => (
                 <tr key={d}>
-                  <td>{dayName(d)}</td>
+                  <td>{dayLabel(d)}</td>
                   <td className="num">
                     <Masked>{wholeMoney(recorded.recorded[i].balance, currency)}</Masked>
                   </td>

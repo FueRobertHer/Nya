@@ -12,10 +12,9 @@
 // nothing is said then rather than guessed.
 
 import type { ConnectionHealth as Health, HealthState } from '@/lib/connection-state';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { formatDay, formatInstantDay, formatMoney, dominantCurrency, onDay } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
 import { balancesNow, needsConverting, type PageFx } from '@/lib/fx/view';
-import { instantDay } from '@/lib/local-date';
 import { joinNames } from '@/lib/month-coverage';
 
 /** What the view needs of an institution, as /api/net-worth sends it. */
@@ -74,9 +73,10 @@ export function badgeOf(h: Health, now: number = Date.now()): string {
   return BADGES[h.state] ?? BADGES.outage;
 }
 
-const localDay = (iso: string) => instantDay(iso) ?? iso.slice(0, 10);
+/** The local day an instant fell on, mid sentence: "today", "Sep 12". */
+const localDay = (iso: string, now?: number) => formatInstantDay(iso, { sentence: true, now }) ?? iso.slice(0, 10);
 /** "Sep 12" from a YYYY-MM-DD, read at local midnight, as the cards read dates. */
-const calendarDay = (date: string) => new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const calendarDay = (date: string) => formatDay(date, { sentence: true });
 /** A stored snapshot's day, in the viewer's own time when its instant is known
  *  and belongs to that UTC day (as fmtStaleDay in components/Dashboard.tsx). */
 const snapshotDay = (date: string, at?: string) => (at && at.slice(0, 10) === date ? localDay(at) : calendarDay(date));
@@ -84,9 +84,10 @@ const snapshotDay = (date: string, at?: string) => (at && at.slice(0, 10) === da
 /** The day a connection ends, as the badge and the note say it. */
 export function endsText(h: Health, now: number = Date.now()): string {
   if (!h.ends_at) return 'Plaid says this connection will end soon';
-  const day = localDay(h.ends_at);
-  if (endPassed(h, now)) return `Plaid said this connection would end ${h.ends_estimated ? 'around' : 'on'} ${day}`;
-  return `Plaid says this connection ends ${h.ends_estimated ? 'around' : 'on'} ${day}`;
+  const day = localDay(h.ends_at, now);
+  const when = h.ends_estimated ? `around ${day}` : onDay(day);
+  if (endPassed(h, now)) return `Plaid said this connection would end ${when}`;
+  return `Plaid says this connection ends ${when}`;
 }
 
 /** What to do about an end Plaid warned of: before it, or now that it has come. */

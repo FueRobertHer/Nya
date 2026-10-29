@@ -37,6 +37,7 @@ import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
 import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
+import { formatInstantDay, onDay } from '@/lib/format';
 import { HideAmountsToggle, useFiguresWhenPrinted } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 
@@ -410,11 +411,8 @@ export type StoppedList = {
   unrecognised: number;
 };
 
-/** "Sep 3, 2026": the local day an instant fell on. */
-const shownDay = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-};
+/** "Sep 3", "today": the local day an instant fell on, mid sentence. */
+const shownDay = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso;
 
 /** The records of accounts you stopped tracking, each with Forget. */
 export function StoppedAccountsView({
@@ -439,7 +437,7 @@ export function StoppedAccountsView({
           <span>
             {a.institution_name} {a.name}
             <span className="type-tag" style={{ display: 'block' }}>
-              {a.kept ? 'Kept as a manual account' : 'Removed'} on {shownDay(a.ended_at)}, through {a.connector}
+              {a.kept ? 'Kept as a manual account' : 'Removed'} {onDay(shownDay(a.ended_at))}, through {a.connector}
             </span>
           </span>
           <button className="link-btn danger-link" disabled={busy} onClick={() => onForget(a.account_id, `${a.institution_name} ${a.name}`)}>

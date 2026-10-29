@@ -31,6 +31,7 @@ import { isReverificationCancelledError } from '@clerk/nextjs/errors';
 import { Sheet } from './Sheet';
 import ApiChanges from './ApiChanges';
 import { CHANGES_KEEP_DAYS, LABEL_MAX, MAX_TOKENS, REQUESTS_PER_MINUTE, type Access } from '@/lib/api-limits';
+import { formatInstantDay } from '@/lib/format';
 
 export type TokenInfo = { id: string; label: string; hint: string; created_at: string; last_used_at: string | null; access?: Access };
 
@@ -71,9 +72,9 @@ function isHint(v: unknown): v is Hint {
   return !!e && e.type === 'forbidden' && e.reason === 'reverification-error';
 }
 
-/** The day, in the viewer's own time. */
+/** The day, in the viewer's own time, mid sentence: "today", "Oct 5". */
 export function shortDay(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 }
 
 /** What an MCP client is given: the server's address and the token as a

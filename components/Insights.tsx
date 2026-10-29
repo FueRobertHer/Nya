@@ -14,8 +14,8 @@ import { countsInTotals, currencyOf, leftOutByCurrency, leftOutText } from '@/li
 import { leftOutWhy, totalsIn, type TotalsIn } from '@/lib/fx/totals';
 import type { FxTable } from '@/lib/fx/rates';
 import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
-import { instantDay, localDate, localMonth } from '@/lib/local-date';
-import { formatMoney } from '@/lib/format';
+import { localDate, localMonth } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, onDay } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { useAmountsHidden } from './hide-amounts';
 import { Masked } from './HideAmounts';
@@ -72,13 +72,13 @@ export function reconnectAlerts(soon: ReconnectSoon[], now: Date = new Date()): 
     const days = Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime() - midnight) / 86_400_000);
     if (days > RECONNECT_ALERT_DAYS) continue;
     // An estimate (Plaid gave no time) is said as one.
-    const day = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const day = formatInstantDay(s.ends_at, { sentence: true, now })!;
     const when = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${s.ends_estimated ? 'about ' : ''}${days} days`;
     const said =
       days < 0
         ? s.ends_estimated
           ? `Plaid expected its connection to end around ${day}`
-          : `Plaid said its connection would end on ${day}`
+          : `Plaid said its connection would end ${onDay(day)}`
         : s.ends_estimated
           ? `Plaid expects its connection to end ${when}`
           : `Plaid says its connection ends ${when}`;
@@ -308,7 +308,7 @@ export function spendingNotes(
   }
   return {
     leftOut,
-    missing: [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions, thisMonth)],
+    missing: [...monthGapNotes(thisMonth, incomplete, stopped, (at) => formatInstantDay(at, { sentence: true, now }) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions, thisMonth)],
   };
 }
 
@@ -407,7 +407,7 @@ export default function Insights({
     // isn't recurring. One due before today and not in yet says so.
     if (txns) {
       const seen = new Set<string>();
-      const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const day = (iso: string) => formatDay(iso, { sentence: true, now });
       const gone = new Set(dismissedSeries(series, dismissed).keys());
       for (const { series: b, due, late } of upcomingBills(series, 7, localDate(now), gone)) {
         if (seen.has(b.name)) continue;
@@ -415,7 +415,7 @@ export default function Insights({
         const amount = `~${formatMoney(b.amount, b.currency ?? displayCurrency)}`;
         out.push({
           key: `bill-${b.name}`,
-          text: late ? `Expected: ${shownName(b)} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${shownName(b)} (${amount}) around ${day(due)}`,
+          text: late ? `Expected: ${shownName(b)} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${shownName(b)} (${amount}) ${due === localDate(now) ? 'today' : `around ${day(due)}`}`,
         });
         if (seen.size >= 2) break;
       }

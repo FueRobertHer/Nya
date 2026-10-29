@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReviewControls } from './review-state';
 import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { localDate } from '@/lib/local-date';
-import { plainNumber } from '@/lib/format';
+import { formatDay, plainNumber } from '@/lib/format';
 
 /** The first days the queue can start from, as offered: today, a week back,
  *  a month back (lib/review-layer.ts MAX_SINCE_DAYS). */
@@ -41,8 +41,9 @@ export function nearFull(a: ApprovalRoom | null): boolean {
   return !!a && a.kept >= a.max - a.room;
 }
 
+/** A calendar day mid sentence: "today", "Oct 5", "Oct 5, 2025". */
 function day(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 const count = (n: number) => plainNumber(n);

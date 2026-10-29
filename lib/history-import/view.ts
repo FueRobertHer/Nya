@@ -9,6 +9,7 @@
 // accounts' names (importedHistoryLines).
 
 import type { ExcludedImport, WalkState, WalkWhy } from './store';
+import { onDay } from '@/lib/format';
 
 /** The prefix of a row's id imported into a linked account
  *  (lib/history-import/store.ts), here so client code can tell one apart:
@@ -194,7 +195,7 @@ export function importedHistoryLines(view: ImportedHistoryView, name: (account_i
     if (view.gaps.some((g) => g.account_id === u.account_id) || view.excluded.some((x) => x.account_id === u.account_id)) continue;
     lines.push(
       u.why === 'not-counted'
-        ? `${name(u.account_id)}’s imported history isn’t drawn: the chart’s earliest point, on ${day(view.until)}, doesn’t count that account.`
+        ? `${name(u.account_id)}’s imported history isn’t drawn: the chart’s earliest point, ${onDay(day(view.until))}, doesn’t count that account.`
         : u.why === 'held-flat'
           ? `${name(u.account_id)}’s imported history isn’t drawn: the estimate holds it at one balance up to ${day(view.until)}, though it has transactions since, so what it held then isn’t known.`
           : `${name(u.account_id)}’s imported history isn’t drawn: nothing covers ${day(view.until)}, the chart’s earliest day, for it. Import a file that reaches up to then.`

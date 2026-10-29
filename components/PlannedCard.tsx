@@ -23,7 +23,7 @@ import { Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Masked } from './HideAmounts';
 import { segmentKey } from './ActivityBar';
-import { formatMoney, MINUS } from '@/lib/format';
+import { formatDay, formatMoney, MINUS } from '@/lib/format';
 import { isCalendarDay, isCurrencyCode, knownCurrency, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import {
   EARLIEST_PLANNED,
@@ -39,8 +39,9 @@ import {
   type PlannedKind,
 } from '@/lib/planned';
 
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** A day mid sentence: "today", "Oct 5", "Oct 5, 2025", on the card's own today. */
+function fmtDay(iso: string, today: string): string {
+  return formatDay(iso, { sentence: true, now: new Date(`${today}T12:00:00`) });
 }
 
 /** The form's working copy: the amount as typed. */
@@ -249,7 +250,7 @@ export default function PlannedCard({
                     <span className="list-row-text">
                       <span className="list-row-title">{item.name}</span>
                       <span className="list-row-sub">
-                        {plannedCadenceLabel(item.cadence)} · {next ? `next ${fmtDay(next)}` : `was ${fmtDay(item.date)}`}
+                        {plannedCadenceLabel(item.cadence)} · {next ? `next ${fmtDay(next, today)}` : `was ${fmtDay(item.date, today)}`}
                       </span>
                     </span>
                     <span className={`list-row-value money planned-amount${item.kind === 'income' ? ' inflow' : ''}`}>

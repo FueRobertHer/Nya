@@ -25,7 +25,7 @@
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import type { Forecast } from '@/lib/forecast';
-import { formatMoney, signedMoney, spoken } from '@/lib/format';
+import { formatDay, formatMoney, onDay, signedMoney, spoken } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
@@ -51,9 +51,13 @@ const RULE_LABEL_HEIGHT = 12;
 /** Two names are at least this far apart, baseline to baseline. */
 const RULE_LABEL_LINE = 14;
 
+/** A day mid sentence: "today", "Nov 28", "Jan 3, 2027" (lib/format.ts formatDay). */
 export function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
+
+/** The axis's last day, "Nov 28", as a chart's axis names it. */
+const axisDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 export default function ForecastChart({
   forecast,
@@ -217,7 +221,7 @@ export default function ForecastChart({
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={spoken(`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`)}
+        aria-label={spoken(`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} ${onDay(fmtDay(last.date))}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`)}
         onPointerMove={scrub}
         onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
@@ -253,7 +257,7 @@ export default function ForecastChart({
           Now
         </text>
         <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 6} textAnchor="end">
-          {fmtDay(last.date)}
+          {axisDay(last.date)}
         </text>
       </svg>
 
@@ -312,7 +316,7 @@ export default function ForecastChart({
               </tr>
               {shown.days.map((d, k) => (
                 <tr key={d.date}>
-                  <td>{fmtDay(d.date)}</td>
+                  <td>{formatDay(d.date)}</td>
                   <td className="num">
                     <Masked>{formatMoney(d.low, currency)}</Masked>
                   </td>
