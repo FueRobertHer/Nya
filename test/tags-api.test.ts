@@ -31,7 +31,8 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 const { ctx, OTHER, seedPerson, seedOther } = await import('./api-fixture');
 const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
-const { ensureTag, changeTagSet, renameTag } = await import('@/lib/tags');
+const { renameTag } = await import('@/lib/tags');
+const { ensureTag, changeTagSet } = await import('@/lib/tags-store');
 const { changeAnnotation } = await import('@/lib/txn-annotations');
 const mcpRoute = await import('@/app/api/mcp/route');
 

@@ -33,8 +33,9 @@ const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { ensureTaxonomy } = await import('@/lib/category-store');
 const { indexTaxonomy } = await import('@/lib/categories');
-const { addRule, changeRules, newRuleId, enableRule, sortedRules, readRuleSet } = await import('@/lib/rules');
-const { ensureTag, readTagSet } = await import('@/lib/tags');
+const { addRule, newRuleId, enableRule, sortedRules } = await import('@/lib/rules');
+const { changeRules, readRuleSet } = await import('@/lib/rules-store');
+const { ensureTag, readTagSet } = await import('@/lib/tags-store');
 const mcpRoute = await import('@/app/api/mcp/route');
 
 // The file's own clock, the afternoon of a month's 20th: the fixture's rows

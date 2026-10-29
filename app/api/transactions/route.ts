@@ -57,12 +57,29 @@ import { flowFxReader } from '@/lib/fx/read';
 // beside the rows; rates that can't be read leave the rows of other
 // currencies without one (named in every total), never fail the load.
 
+/** A promise begun now and awaited later, its rejection marked handled
+ *  meanwhile, so a failure elsewhere first can't leave it unhandled; awaiting
+ *  it still throws (as in app/api/net-worth/route.ts). */
+function eager<T>(p: Promise<T>): Promise<T> {
+  p.catch(() => {});
+  return p;
+}
+
 export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
     // Begun now, beside the rows' reads (see EXCHANGE RATES).
     const readRates = flowFxReader(ctx, { accounts: true });
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
+    // These depend on nothing the cache or a sync gives, so they are begun
+    // beside it rather than one round trip after another. Which rows have
+    // receipts or documents: this route is the person's own Activity
+    // (lib/activity.ts `attached`), read from the index's field names alone;
+    // one that can't be read says so on each row, never "none".
+    const attachedPromise = attachedIds(ctx).catch(() => null);
+    const filesPromise = eager(personMode());
+    // Wanted only when the cache answers (below).
+    const hiddenPromise = refresh ? null : eager(getHiddenAccounts(ctx));
     const cached = refresh ? null : await readCache<unknown>(ctx, CacheKey.Transactions);
 
     let plaid: PlaidPayload;
@@ -73,7 +90,7 @@ export async function GET(req: Request) {
       // Only the manual accounts' part of the hidden set is needed now (they
       // are never linked, lib/links.ts): one read, and a failure throws, as
       // in the assembly, rather than showing rows the person hid.
-      hidden = new Set((await getHiddenAccounts(ctx)).keys());
+      hidden = new Set((await hiddenPromise!).keys());
     } else {
       const assembled = await assembleBankRows(ctx, { sync: true });
       plaid = assembled.payload;
@@ -82,18 +99,15 @@ export async function GET(req: Request) {
     }
 
     const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note, shared_expenses }, without_transactions] = await Promise.all([
-      // With which rows have receipts or documents: this route is the
-      // person's own Activity (lib/activity.ts `attached`). Read from the
-      // index's field names alone; one that can't be read says so on each
-      // row, never "none".
-      finishActivity(ctx, plaid, hidden, { grow: true, attached: await attachedIds(ctx).catch(() => null) }),
+      // With which rows have receipts or documents (begun above).
+      finishActivity(ctx, plaid, hidden, { grow: true, attached: await attachedPromise }),
       // With what the files imported into each one's accounts cover, for one
       // whose transactions don't come in: a month they cover isn't said to be
       // missing them (lib/history-import/without-files.ts). Read on every
       // load, never cached: the cached part is Plaid's alone.
       withImportedFiles(ctx, plaid.without_transactions ?? []),
     ]);
-    const [fx, files] = await Promise.all([readRates(transactions), personMode()]);
+    const [fx, files] = await Promise.all([readRates(transactions), filesPromise]);
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).

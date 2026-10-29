@@ -21,6 +21,8 @@ const text = (html: string) =>
 const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8').replace(/\r\n/g, '\n');
 /** The Dashboard's <Insights ... /> element, as written. */
 const mount = dashboard.slice(dashboard.indexOf('<Insights'), dashboard.indexOf('/>', dashboard.indexOf('<Insights')));
+/** The accounts it is given, kept while the accounts are. */
+const insightAccounts = dashboard.slice(dashboard.indexOf('const insightAccounts'), dashboard.indexOf('[institutions]', dashboard.indexOf('const insightAccounts')));
 
 describe('the Low balance alert', () => {
   const alerts = (accounts: InsightAccount[]) => text(renderToStaticMarkup(<Insights txns={[]} accounts={accounts} />));
@@ -43,7 +45,8 @@ describe('the Low balance alert', () => {
   });
 
   test("the dashboard passes each account's subtype, so cash on hand can be told apart", () => {
-    expect(mount).toContain('subtype: a.subtype,');
+    expect(mount).toContain('accounts={insightAccounts}');
+    expect(insightAccounts).toContain('subtype: a.subtype,');
   });
 });
 

@@ -20,7 +20,7 @@ const { createToken, revokeToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { decrypt } = await import('@/lib/crypto');
 const { getManualAccount, saveManualAccount } = await import('@/lib/manual');
-const { readTagSet } = await import('@/lib/tags');
+const { readTagSet } = await import('@/lib/tags-store');
 const { ensureTaxonomy, readTaxonomy } = await import('@/lib/category-store');
 const { manualTxnStore, findManualTxn } = await import('@/lib/manual-txns');
 const { txnAnnotationStore } = await import('@/lib/txn-annotations');
@@ -615,7 +615,7 @@ describe('undo of an account a token made, taken out only as the token left it',
   test('a row added in another way, or anything naming the account: refused, saying what', async () => {
     const { setGoals } = await import('@/lib/goals');
     const { linkAccounts } = await import('@/lib/links');
-    const { rulesStore } = await import('@/lib/rules');
+    const { rulesStore } = await import('@/lib/rules-store');
     const { timelineNotesStore } = await import('@/lib/timeline-notes');
     const { setAccountHidden } = await import('@/lib/hidden');
     const cases: [string, (id: string) => Promise<unknown>, string][] = [

@@ -47,8 +47,8 @@ const { rememberAccounts } = await import('@/lib/last-known');
 const { saveManualAccount } = await import('@/lib/manual');
 const { addManualTxn, newManualTxn, manualTxnStore } = await import('@/lib/manual-txns');
 const { clearCaches } = await import('@/lib/cache');
-const { rulesStore } = await import('@/lib/rules');
-const { tagStore } = await import('@/lib/tags');
+const { rulesStore } = await import('@/lib/rules-store');
+const { tagStore } = await import('@/lib/tags-store');
 const { editStart, changedFields } = await import('@/components/ManualTxnSheet');
 const { nameForRules } = await import('@/components/MonthBreakdown');
 

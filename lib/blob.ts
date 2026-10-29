@@ -3,8 +3,9 @@
 // Encoding and size ceiling for the per-Item stores that hold one large JSON
 // document each: cash transactions (lib/transactions.ts) and investment
 // transactions (lib/invstore.ts). Shared so the two can't drift apart on how a
-// blob is written or how big it may be. What each store does when a read or write
-// fails stays with the store.
+// blob is written or how big it may be. The dashboard's cached payloads
+// (lib/cache.ts) are written the same way. What each store does when a read or
+// write fails stays with the store.
 
 import { encrypt, decrypt } from './crypto';
 import type { Ctx } from './containers';
@@ -75,8 +76,12 @@ async function gunzipToString(data: Uint8Array): Promise<string> {
 // encrypt/decrypt operate on UTF-8 strings, so the binary gzip output is
 // base64-wrapped going in and unwrapped coming out (same technique as crypto.ts).
 function bytesToBase64(bytes: Uint8Array): string {
+  // A chunk at a time: a string built one character per byte takes ~10x
+  // longer on a blob of megabytes, and every encrypt of one pays it.
   let binary = '';
-  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
+  }
   return btoa(binary);
 }
 

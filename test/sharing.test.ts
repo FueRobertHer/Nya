@@ -420,8 +420,8 @@ describe('sharing accounts on a connection', () => {
   test('with transactions: an imported row as its file gave it, never a tag, a note or what a rule does to it (#40, #36)', async () => {
     const { importedTxnStore } = await import('@/lib/history-import/store');
     const { txnAnnotationStore } = await import('@/lib/txn-annotations');
-    const { tagStore } = await import('@/lib/tags');
-    const { rulesStore } = await import('@/lib/rules');
+    const { tagStore } = await import('@/lib/tags-store');
+    const { rulesStore } = await import('@/lib/rules-store');
     const at = new Date().toISOString();
     const id = 'imported-txn:a10000-0000';
     await importedTxnStore.set(TEST_CTX, 'acct_joint', {

@@ -22,6 +22,7 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt, sealedAway } from './crypto';
 import { READ_ENTRIES, UPDATE_ENTRY, openStored, type Opened } from './repo';
 import { isOwedType } from './balance';
+import { MANUAL_TYPES, type ManualType } from './manual-types';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
@@ -33,8 +34,7 @@ export const MANUAL_ID_PREFIX = 'manual_';
  *  real Plaid Items (see app/api/disconnect/route.ts). */
 export const MANUAL_ITEM_PREFIX = 'manual:';
 
-export const MANUAL_TYPES = ['depository', 'credit', 'investment', 'loan', 'other'] as const;
-export type ManualType = (typeof MANUAL_TYPES)[number];
+export { MANUAL_TYPES, type ManualType };
 
 /** Guards against a fat-fingered paste blowing up the chart scale. Shared by
  *  every write path so the UI, the PUT and the ingest route agree. */

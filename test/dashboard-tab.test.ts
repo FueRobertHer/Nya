@@ -128,4 +128,12 @@ describe('where it is read and written', () => {
   test('offline, a tab’s address finds the page kept for another', () => {
     expect(read('public/service-worker.js')).toContain("event.request.mode === 'navigate' ? caches.match(event.request, { ignoreSearch: true })");
   });
+
+  test('reloading a tab sends the browser’s own page request, so the session can renew', () => {
+    // A copy made in the worker doesn't read as a page load, so Clerk skips
+    // its renewal and sends a signed-in reload to the sign-in page.
+    const worker = read('public/service-worker.js');
+    expect(worker).toContain('self.registration.navigationPreload?.enable()');
+    expect(worker).toContain('.then((preloaded) => preloaded ?? fetch(event.request))');
+  });
 });

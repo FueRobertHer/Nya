@@ -16,7 +16,11 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+    Promise.all([
+      caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))),
+      // Page loads are sent by the browser itself (see the fetch handler).
+      self.registration.navigationPreload?.enable(),
+    ])
   );
   self.clients.claim();
 });
@@ -36,8 +40,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // A page load uses the browser's own request (navigation preload), not a
+  // copy made here: the sign-in check only renews an expired or half-missing
+  // session for a request that reads as a page load (Sec-Fetch-Dest:
+  // document), and treats anything else as signed out, sending a reload to
+  // the sign-in page. Without preload, or for anything else, fetch it here.
   event.respondWith(
-    fetch(event.request)
+    Promise.resolve(event.preloadResponse)
+      .then((preloaded) => preloaded ?? fetch(event.request))
       .then((response) => {
         if (response.ok) {
           const copy = response.clone();

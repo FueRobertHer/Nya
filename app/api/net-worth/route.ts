@@ -194,12 +194,15 @@ export async function GET(req: Request) {
         // Never throws: a failed read is none. A live load reads it below,
         // once a reconnected account is in the directory.
         const linkOfferPromise = linkOfferForDisplay(ctx);
+        // Begun now, beside the others, rather than once the stale flag (a
+        // few round trips) is in.
+        const basePromise = eager(baseFields(ctx, cached.institutions, history_split, known));
         return NextResponse.json({
           ...shown,
           // A cached payload holds only institutions that answered, when it was made.
           ...healthFields(withNewAccounts(cached.institutions, await newAccountsPromise), await healthPromise, cached.as_of),
           ...(await stalePromise),
-          ...(await baseFields(ctx, cached.institutions, history_split, known)),
+          ...(await basePromise),
           ...linkOfferField(await linkOfferPromise),
           from_cache: true,
         });

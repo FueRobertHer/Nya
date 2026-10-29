@@ -4,13 +4,14 @@
 // so dashboard loads don't wait on live Plaid round trips. Refresh bypasses it
 // with ?refresh=1.
 //
-// The payloads are financial data, so they're encrypted with the same key as
-// everything else (lib/crypto.ts). They live inside the request's container
-// (#53). Callers name a cache (CacheKey), never a Redis key; the key is built
-// here with kc(). A cache must never break the request that uses it.
+// The payloads are financial data, so they're gzipped and encrypted with the
+// same key as everything else (lib/crypto.ts). They live inside the request's
+// container (#53). Callers name a cache (CacheKey), never a Redis key; the key
+// is built here with kc(). A cache must never break the request that uses it.
 
 import { redis, kc, envPrefix } from './storage';
 import { encrypt, decrypt } from './crypto';
+import { decodeJsonBlob, encodeJsonBlob } from './blob';
 import type { Ctx } from './containers';
 
 import { webhooksEnabled } from './webhook-url';
@@ -72,7 +73,7 @@ export async function readCache<T>(ctx: Ctx, which: CacheKey): Promise<T | null>
   try {
     const blob = await redis().get<string>(keyOf(ctx, which));
     if (!blob) return null;
-    return JSON.parse(await decrypt(ctx, blob)) as T;
+    return await decodeJsonBlob<T>(ctx, blob);
   } catch {
     // Decrypt/parse failure (rotated key, corrupted value) is just a miss.
     return null;
@@ -81,7 +82,10 @@ export async function readCache<T>(ctx: Ctx, which: CacheKey): Promise<T | null>
 
 export async function writeCache(ctx: Ctx, which: CacheKey, value: unknown): Promise<void> {
   try {
-    await redis().set(keyOf(ctx, which), await encrypt(ctx, JSON.stringify(value)), { ex: ttlSeconds() });
+    // Gzipped like an Item's blob: a year of transactions or of net worth is
+    // read on every dashboard load, and shrinks about tenfold. An entry
+    // written before this reads as it is (decodeJsonBlob).
+    await redis().set(keyOf(ctx, which), await encodeJsonBlob(ctx, value), { ex: ttlSeconds() });
   } catch {
     // A cache write failure must never break the request that produced the data.
   }

@@ -11,7 +11,7 @@
 
 import type { Ctx } from './containers';
 import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
-import { readTagSet } from './tags';
+import { readTagSet } from './tags-store';
 import { bankRows } from './split-rows';
 import { tagVersion } from './api-versions';
 import { historyCount } from './spending';
