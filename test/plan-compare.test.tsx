@@ -463,12 +463,13 @@ describe('the scenario cards', () => {
     expect(html).toContain('class="plan-compare"');
   });
 
-  test('closed, the sheet draws nothing; while the Plan loads, its list is only why and a spinner, with nothing over the defaults', () => {
+  test('closed, the sheet draws nothing; while the Plan loads, its list is only why and its rows as placeholders, with nothing over the defaults', () => {
     expect(sheet({ open: false })).toBe('');
     const html = sheet({ planState: 'loading', whyNot: 'Your plan is still loading: scenarios open, and are compared, once it has.' });
     const t = text(html);
     expect(t).toContain('Your plan is still loading: scenarios open, and are compared, once it has.');
-    expect(html).toContain('aria-label="Loading your plan"');
+    expect(html).toContain('role="status">Loading your plan</p>');
+    expect(html).not.toContain('spinner');
     for (const absent of ['New scenario', 'What-ifs beside your plan', 'Retire at 45', 'Retirement age: 45', 'No changes yet', 'Choose two to four plans.', 'newer version']) expect(t).not.toContain(absent);
   });
 

@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { useClerk } from '@clerk/nextjs';
 import type { DeletionReceipt } from '@/lib/deletion-receipt';
 import { DeletionReceiptView, keepPartial, keepReceipt, withEarlierAttempts } from './DeletionReceipt';
+import { DeleteAccountSkeleton } from './LoadingSkeletons';
 
 type Status = { enabled: boolean; can_delete?: boolean; reason?: string; backup_days?: number | null; own_key?: boolean | null; database_days?: number | null } | 'failed';
 
@@ -103,7 +104,7 @@ export function DeleteAccountView({
     );
   }
   // This is the whole of its page in Clerk's account window: never blank.
-  if (status === null) return <div className="spinner" role="status" aria-label="Loading" />;
+  if (status === null) return <DeleteAccountSkeleton />;
   if (status === 'failed') return <p className="error">Could not check this account. Close this window and try again.</p>;
   if (!status.enabled) return null;
   return (

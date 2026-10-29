@@ -16,7 +16,8 @@
 // that holds today the x-axis stops at today rather than trailing a flat line
 // to its end (a row dated later in it counts in the period's totals, not
 // here). Every day's two running totals sit behind "Show as a table", for
-// anyone who can't read the lines.
+// anyone who can't read the lines. The plot is read by the keys too
+// (components/chart-keys.ts): the arrows move the readout a day at a time.
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import { type Txn } from './MonthBreakdown';
@@ -26,6 +27,7 @@ import { Masked } from './HideAmounts';
 import { lastDayOf } from '@/lib/cash-flow';
 import { localDate } from '@/lib/local-date';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
+import { keysHelp, useChartKeys } from './chart-keys';
 
 /** Its height for its width: 150 to 340, the shape it has always had. */
 const ASPECT = 150 / FALLBACK_WIDTH;
@@ -166,6 +168,12 @@ export default function MonthFlowChart({
   }
 
   const i = active ?? lastAt;
+  const keys = useChartKeys({
+    count: days.length,
+    active,
+    setActive,
+    say: (k) => `In ${formatMoney(cumIn[k], currency)}, out ${formatMoney(cumOut[k], currency)}, through ${dayLabel(days[k])}`,
+  });
 
   return (
     <div>
@@ -196,7 +204,8 @@ export default function MonthFlowChart({
         ref={drawnRef}
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={spoken(`Cumulative income and spending for ${dayLabel(days[0])} to ${dayLabel(days[lastAt])}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
         onPointerMove={scrub}
         onPointerDown={scrub}
@@ -228,6 +237,9 @@ export default function MonthFlowChart({
           {dayLabel(days[lastAt])}
         </text>
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('day')}
+      </p>
 
       {/* Every day's running totals, oldest first as the lines run. Rows
           render only while it is open, and through Masked each time, so hide

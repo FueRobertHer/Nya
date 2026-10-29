@@ -7,7 +7,7 @@
 // (.skeleton, docs/design/design-system.md#skeleton) where figures and words
 // will go, so nothing moves when they arrive.
 
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { Brand } from './Brand';
 import { HideAmountsToggle } from './HideAmounts';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
@@ -200,29 +200,244 @@ export function SharedWithMeSkeleton() {
       <div inert>
         <CollapsibleHeader title="Shared with me" open onToggle={nothing} controls="shared-with-me-loading" />
       </div>
-      <div id="shared-with-me-loading" className="card" aria-hidden="true">
-        <div className="incoming-head">
-          <span className="skeleton block avatar small" />
-          <h3>
-            <span className="skeleton shared-skeleton-name" />
-          </h3>
-          <span className="pill">Read-only</span>
-        </div>
-        {[0, 1].map((i) => (
-          <div className="incoming-account" key={i}>
-            <div className="peer-row">
-              <span>
-                <span className="skeleton rows-skeleton-title" />
-              </span>
-              <span className="incoming-account-value">
-                <span className="skeleton rows-skeleton-value" />
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
+      <SharedCardSkeleton id="shared-with-me-loading" />
       <Status label="Loading what is shared with you" />
     </section>
+  );
+}
+
+/** A "Shared by" card (components/Sharing.tsx SharedCard) with two accounts
+ *  still to come: its head (the sharer's name a placeholder, or "you" in
+ *  Sharing's preview of what someone sees) over the accounts' rows. */
+function SharedCardSkeleton({ id, you = false }: { id?: string; you?: boolean }) {
+  return (
+    <div id={id} className="card" aria-hidden="true">
+      <div className="incoming-head">
+        {you ? <span className="avatar small">Y</span> : <span className="skeleton block avatar small" />}
+        <h3>{you ? 'Shared by you' : <span className="skeleton shared-skeleton-name" />}</h3>
+        <span className="pill">Read-only</span>
+      </div>
+      {[0, 1].map((i) => (
+        <div className="incoming-account" key={i}>
+          <div className="peer-row">
+            <span>
+              <span className="skeleton rows-skeleton-title" />
+            </span>
+            <span className="incoming-account-value">
+              <span className="skeleton rows-skeleton-value" />
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Sharing's "What they see" while it is read (components/Sharing.tsx
+ *  PreviewView): their card as it will be, the words above it already
+ *  there. */
+export function SharePreviewSkeleton({ who }: { who: string }) {
+  useInStep();
+  return (
+    <div aria-busy="true">
+      <SharedCardSkeleton you />
+      <Status label={`Loading what ${who} sees`} />
+    </div>
+  );
+}
+
+/** An investment account's activity while it is read
+ *  (components/InvestmentActivity.tsx), under the balance chart in its
+ *  sheet: three of its rows, each a name, the line under it and the amount. */
+export function InvestmentActivitySkeleton() {
+  useInStep();
+  return (
+    <div className="inv-activity" aria-busy="true">
+      <table className="txn-table" aria-hidden="true">
+        <tbody>
+          {[0, 1, 2].map((i) => (
+            <tr key={i}>
+              <td>
+                <div className="txn-text">
+                  <span className="skeleton rows-skeleton-title" />
+                  <div className="type-tag">
+                    <span className="skeleton rows-skeleton-sub" />
+                  </div>
+                </div>
+              </td>
+              <td className="num">
+                <span className="skeleton rows-skeleton-value" />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Status label="Loading investment activity" />
+    </div>
+  );
+}
+
+/** Settings > Transactions' Defaults while they are read
+ *  (components/VendorDefaultsCard.tsx), inside the card under its title:
+ *  the line over the list, and two rows, each with its Clear button,
+ *  unavailable. */
+export function VendorDefaultsSkeleton() {
+  useInStep();
+  return (
+    <div aria-busy="true">
+      <div inert aria-hidden="true">
+        <p className="panel-note">
+          <span className="skeleton lines-skeleton-line" />
+          <br />
+          <span className="skeleton lines-skeleton-last" />
+        </p>
+        <ul className="vendor-defaults">
+          {[0, 1].map((i) => (
+            <li key={i}>
+              <div>
+                <div className="inst-name">
+                  <span className="skeleton rows-skeleton-title" />
+                </div>
+                <div className="rename-hint">
+                  <span className="skeleton rows-skeleton-sub" />
+                </div>
+              </div>
+              <button className="secondary" disabled tabIndex={-1}>
+                Clear
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <Status label="Loading defaults" />
+    </div>
+  );
+}
+
+/** A scenario's row in the Plan's Scenarios sheet (components/PlanScenarios.tsx),
+ *  its name and what it changes still to come, its buttons unavailable. */
+export function ScenarioRowsSkeleton({ count, status }: { count: number; status: string }) {
+  useInStep();
+  return (
+    <div aria-busy="true">
+      {count > 0 && (
+        <div className="plan-rows" inert aria-hidden="true">
+          {Array.from({ length: count }, (_, i) => (
+            <div key={i} className="plan-row">
+              <div className="plan-row-main">
+                <span className="plan-row-label">
+                  <span className="skeleton rows-skeleton-title" />
+                </span>
+                <button className="plan-edit" disabled tabIndex={-1}>
+                  Open
+                </button>
+              </div>
+              <div className="plan-row-note">
+                <span className="skeleton rows-skeleton-sub" />
+              </div>
+              <div className="plan-scenario-actions">
+                {['Rename', 'Duplicate', 'Delete'].map((w) => (
+                  <button key={w} className="plan-edit" disabled tabIndex={-1}>
+                    {w}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <Status label={status} />
+    </div>
+  );
+}
+
+/** A report while it is made (the accountant's, year over year, the
+ *  runway; components/ReportsPage.tsx and the reports beside it): its first
+ *  page as it starts, the kicker and the title when it is known, the lines
+ *  under it, then `children` (the runway's months) or the box that says what
+ *  may be missing. For the screen only. */
+export function ReportSkeleton({ title, className, status, children }: { title: string | null; className?: string; status: string; children?: ReactNode }) {
+  useInStep();
+  return (
+    <div className="no-print" aria-busy="true">
+      <article className={className ? `report ${className}` : 'report'} aria-hidden="true">
+        <section className="report-page report-first">
+          <header className="report-head">
+            <div className="report-kicker">Nya</div>
+            <h1>{title ?? <span className="skeleton rows-skeleton-title" />}</h1>
+            <p className="report-meta">
+              <span className="skeleton lines-skeleton-line" />
+              <br />
+              <span className="skeleton lines-skeleton-last" />
+            </p>
+          </header>
+          {children ?? (
+            <div className="report-status">
+              <p className="report-headline">
+                <span className="skeleton rows-skeleton-sub" />
+              </p>
+              <p>
+                <span className="skeleton lines-skeleton-line" />
+                <br />
+                <span className="skeleton lines-skeleton-last" />
+              </p>
+            </div>
+          )}
+        </section>
+      </article>
+      <Status label={status} />
+    </div>
+  );
+}
+
+/** The runway's months while they are worked out (components/RunwayReport.tsx):
+ *  the report's first page with its hero, "Without income" over the months
+ *  and the line under them, then the chart in its shape. */
+export function RunwaySkeleton() {
+  return (
+    <ReportSkeleton title="Runway" className="runway-report" status="Working out the runway">
+      <section className="stack hero runway-hero">
+        <div>
+          <h2 className="total-label">Without income</h2>
+          <div className="total-value">
+            <span className="skeleton plan-skeleton-answer" />
+          </div>
+          <p className="helper">
+            <span className="skeleton home-skeleton-delta" />
+          </p>
+        </div>
+        <span className="skeleton block plan-skeleton-chart" />
+      </section>
+    </ReportSkeleton>
+  );
+}
+
+/** Delete my account while it is read whether this account can be
+ *  (components/DeleteAccount.tsx), the whole of its page in Clerk's account
+ *  window: its heading, its paragraph's lines, and the field and the button,
+ *  unavailable. */
+export function DeleteAccountSkeleton() {
+  useInStep();
+  return (
+    <div className="privacy-panel" aria-busy="true">
+      <h3>Delete my account</h3>
+      <div inert aria-hidden="true">
+        <p className="sub">
+          {[0, 1, 2, 3].map((i) => (
+            <span key={i}>
+              <span className="skeleton lines-skeleton-line" />
+              <br />
+            </span>
+          ))}
+          <span className="skeleton lines-skeleton-last" />
+        </p>
+        <input className="text-input" placeholder="Type DELETE" disabled tabIndex={-1} />
+        <button className="danger-outline" disabled tabIndex={-1}>
+          Delete my account
+        </button>
+      </div>
+      <Status label="Loading" />
+    </div>
   );
 }
 

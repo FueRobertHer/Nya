@@ -77,7 +77,9 @@ describe('Settings > Account', () => {
     const icon = dom.document.createElement('div');
     act(() => page.mount(el as unknown as HTMLDivElement));
     act(() => page.mountIcon(icon as unknown as HTMLDivElement));
-    expect(el.findAll((e: FakeElement) => e.getAttribute('role') === 'status' && e.getAttribute('aria-label') === 'Loading')).toHaveLength(1);
+    // While it reads whether the account can be deleted: the page's skeleton (components/LoadingSkeletons.tsx), said once.
+    expect(el.findAll((e: FakeElement) => e.getAttribute('role') === 'status').map((e: FakeElement) => e.textContent)).toEqual(['Loading']);
+    expect(el.findAll((e: FakeElement) => e.getAttribute('aria-busy') === 'true')).toHaveLength(1);
     expect(icon.findAll((e: FakeElement) => e.tagName === 'svg' || e.tagName === 'SVG')).toHaveLength(1);
     // And gone again when Clerk takes it away.
     act(() => page.unmount());

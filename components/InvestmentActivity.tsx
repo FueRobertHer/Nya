@@ -11,6 +11,7 @@ import { amountsHidden, formatMoney, hiddenMoney, trueMinus } from '@/lib/format
 import { Masked } from './HideAmounts';
 import { readableName } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
+import { InvestmentActivitySkeleton } from './LoadingSkeletons';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -121,9 +122,7 @@ export default function InvestmentActivity({
   }, [accountId, itemId]);
 
   if (failed) return <div className="error">Could not load investment activity.</div>;
-  if (data === null) {
-    return <div className="spinner" role="status" aria-label="Loading investment activity" />;
-  }
+  if (data === null) return <InvestmentActivitySkeleton />;
   // With stored history, a note (institution down, storage problem) no longer
   // means there is nothing to show: say it, then show what is stored.
   if (data.txns.length === 0) {

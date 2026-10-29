@@ -37,7 +37,7 @@ import { shownName } from '@/lib/merchant-name';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
-import { RowsSkeleton, SharedWithMeSkeleton } from './LoadingSkeletons';
+import { RowsSkeleton, SharePreviewSkeleton, SharedWithMeSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
 import { CAUTION, LevelWord } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
@@ -915,8 +915,8 @@ export function PreviewView({
   /** The settings have changes not saved yet, which this doesn't show. */
   unsaved: boolean;
 }) {
-  if (!preview) return error ? <div className="error">{error}</div> : <div className="spinner" role="status" aria-label="Loading" />;
-  const nothing = preview.unreadable
+  if (!preview && error) return <div className="error">{error}</div>;
+  const nothing = preview?.unreadable
     ? `Some of what you share can’t be read right now, so ${who} sees nothing of yours.`
     : ended(expiresAt)
       ? `Your share ended ${endLabel(expiresAt!)}, so ${who} sees nothing of yours.`
@@ -928,7 +928,11 @@ export function PreviewView({
         dates in their own time zone, so one can fall a day apart from here.
       </p>
       {unsaved && <p className="stale-note">You have changes you haven’t saved. This shows what is saved.</p>}
-      {preview.view ? (
+      {/* While it is read: their card as it will be, the words above it
+          already there (components/LoadingSkeletons.tsx). */}
+      {!preview ? (
+        <SharePreviewSkeleton who={who} />
+      ) : preview.view ? (
         <>
           <SharedCard
             name="you"

@@ -20,6 +20,7 @@ import type { Change, YoyCategory, YoyCompare, YoyGroup, YoyPeriod } from '@/lib
 import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read';
 import { joinNames } from '@/lib/month-coverage';
 import { displayName } from '@/lib/categories';
+import { ReportSkeleton } from './LoadingSkeletons';
 
 /** "Oct 2026": a month's name. */
 const monthWords = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
@@ -330,7 +331,7 @@ export default function YearOverYearReport() {
         </div>
         <p className="panel-note">This compares what Nya has stored, so open Nya first to bring your connections up to date.</p>
       </div>
-      {loading && !report && <div className="spinner no-print" role="status" aria-label="Comparing the years" />}
+      {loading && !report && <ReportSkeleton title="Year over year" className="yoy-report" status="Comparing the years" />}
       {report && (
         <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
           <YearOverYearView report={report} />

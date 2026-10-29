@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { defaultListWords } from './review-text';
+import { VendorDefaultsSkeleton } from './LoadingSkeletons';
 
 type Shown = { id: string; name: string; category_id: string; since: string; agree: number; set_at: string };
 
@@ -106,7 +107,7 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
             </button>
           </>
         ) : (
-          <div className="spinner" role="status" aria-label="Loading defaults" />
+          <VendorDefaultsSkeleton />
         )
       ) : defaults.length === 0 ? (
         <p className="empty-note">
