@@ -27,6 +27,7 @@ import {
   RestoreCard,
   ReviewSettingsCard,
   RulesCard,
+  SharingSettings,
   TagsCard,
   ThemeCard,
   VendorDefaultsCard,
@@ -39,7 +40,7 @@ import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import { localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
-import { SharingSettings, SharedWithMe } from './Sharing';
+import { SharedWithMe } from './SharedWithMe';
 import { Sheet } from './Sheet';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import { SettingsSkeleton, TabSkeleton } from './LoadingSkeletons';
@@ -64,7 +65,8 @@ import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
 import { useTransactionEdits } from './transaction-edits';
-import SharedExpensesCard, { SharedSheets, type SharedFacts } from './SharedExpensesCard';
+import SharedExpensesCard, { SharedSheets, sharedExpensesPart } from './SharedExpensesLoader';
+import type { SharedFacts } from './SharedExpensesCard';
 import type { ActivitySegment } from './ActivityBar';
 import { useSharedExpenses } from './shared-expenses-state';
 import type { SharedRowHooks } from './SharedRows';
@@ -881,9 +883,10 @@ export default function Dashboard({
   }, [loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
 
   // Once Home has its figures, the code of what it doesn't draw, while the
-  // browser is idle: the Budgets tab, Settings' cards and the sheets.
+  // browser is idle: the Budgets tab, shared expenses, Settings' cards and
+  // the sheets.
   useEffect(() => {
-    if (!loading && !txnsLoading) preloadParts([budgetsTabPart, settingsCardsPart, debtPayoffPart, importSheetPart, historyImportSheetPart, migrationSheetPart]);
+    if (!loading && !txnsLoading) preloadParts([budgetsTabPart, sharedExpensesPart, settingsCardsPart, debtPayoffPart, importSheetPart, historyImportSheetPart, migrationSheetPart]);
   }, [loading, txnsLoading]);
 
   const renameVendor = useCallback(

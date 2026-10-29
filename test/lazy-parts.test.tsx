@@ -22,6 +22,7 @@ const { LazySheet, SLOW_MS } = await import('@/components/LazySheets');
 const { default: BudgetsTabLoader, BudgetsUnavailable } = await import('@/components/BudgetsTabLoader');
 const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
 const { ThemeCard: RealThemeCard } = await import('@/components/ThemeCard');
+const { default: SharedExpensesCard, SharedUnavailable } = await import('@/components/SharedExpensesLoader');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -102,6 +103,10 @@ describe("Home's code doesn't reach the parts loaded later", () => {
       'components/WeeklySummaryCard.tsx',
       'components/CurrencyCard.tsx',
       'components/PlanTab.tsx',
+      'components/Sharing.tsx',
+      'components/SharedExpensesCard.tsx',
+      'components/ShareCostSheet.tsx',
+      'components/ConfirmPaymentSheet.tsx',
     ];
     expect(reached.filter((f) => later.includes(f) || f.startsWith('lib/age/') || f.startsWith('lib/user-restore/') || f.startsWith('lib/import/'))).toEqual([]);
   });
@@ -266,9 +271,18 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
     expect(renderToStaticMarkup(<ThemeCard />)).toBe(renderToStaticMarkup(<RealThemeCard />));
   });
 
+  test("Activity's shared expenses draw a card of rows still to come", () => {
+    const html = renderToStaticMarkup(<SharedExpensesCard {...({} as Parameters<typeof SharedExpensesCard>[0])} />);
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('class="card stack"');
+  });
+
   test('a failure keeps the rest working', () => {
     expect(text(renderToStaticMarkup(<BudgetsUnavailable reason="load" onRetry={noop} />))).toContain(
       "The Budgets tab couldn't be loaded. It needs a connection the first time it opens after an update. The other tabs work as before."
+    );
+    expect(text(renderToStaticMarkup(<SharedUnavailable reason="load" onRetry={noop} />))).toContain(
+      "Shared expenses couldn't be loaded. It needs a connection the first time it opens after an update. The rest of Activity works as before."
     );
     expect(text(renderToStaticMarkup(<CardUnavailable reason="crash" onRetry={noop} />))).toContain('This card ran into a problem and stopped. The rest of the app works as before.');
   });
