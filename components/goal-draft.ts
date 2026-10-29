@@ -82,21 +82,19 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   const money = (n: number) => formatMoney(n, currency);
 
   const errors: string[] = [];
-  // The field each is about, in the same order: only `fail` adds to them.
+  // The field each is about, in the same order.
   const errorFields: DraftField[] = [];
-  const fail = (field: DraftField, text: string) => {
-    errors.push(text);
-    errorFields.push(field);
-  };
   if (d.target.trim() && target === null) {
-    fail('target', 'Enter a target, like 5000.');
+    errors.push('Enter a target, like 5000.');
+    errorFields.push('target');
   }
   // What the goal has set aside already, kept as it is: the server takes it
   // whatever the balance did since (lib/goal-allocation.ts), so this does too.
   const kept = !!goal && goal.account_id === d.account && goal.plan?.allocation !== undefined && allocation === goal.plan.allocation;
   if (allocate && !kept) {
     if (!account) {
-      fail('account', 'That account isn’t among yours any more: choose another to set part of its balance aside from.');
+      errors.push('That account isn’t among yours any more: choose another to set part of its balance aside from.');
+      errorFields.push('account');
     } else if (!trackable) {
       const why = account.ended
         ? endedWhy(account.ended)
@@ -105,18 +103,23 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
           : account.hidden
             ? 'it is hidden'
             : 'no balance is known for it yet';
-      fail('account', `Nothing can be set aside from ${account.name}: ${why}.`);
+      errors.push(`Nothing can be set aside from ${account.name}: ${why}.`);
+      errorFields.push('account');
     } else if (d.allocation.trim() && allocation === null) {
-      fail('allocation', 'Enter the part of the balance to set aside, like 1500, or 0.');
+      errors.push('Enter the part of the balance to set aside, like 1500, or 0.');
+      errorFields.push('allocation');
     } else if (allocation != null && room !== null && allocation > room) {
-      fail('allocation', `${account.name} has ${money(room)} you can set aside for this goal.`);
+      errors.push(`${account.name} has ${money(room)} you can set aside for this goal.`);
+      errorFields.push('allocation');
     }
   }
   if (d.monthly.trim() && monthly === null) {
-    fail('monthly', 'Enter a monthly target, like 250.');
+    errors.push('Enter a monthly target, like 250.');
+    errorFields.push('monthly');
   }
   if (d.date && !(isCalendarDay(d.date) && d.date <= LATEST_TARGET_DATE && (d.date >= today || dateKept))) {
-    fail('date', 'Pick a target date from today on.');
+    errors.push('Pick a target date from today on.');
+    errorFields.push('date');
   }
 
   const plan: GoalPlan = {
