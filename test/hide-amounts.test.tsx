@@ -1527,7 +1527,7 @@ describe('never the server, the API or a download', () => {
 
   test('only the browser’s switch turns it on, and nothing the server runs reaches the switch', () => {
     const all = [...sources(join(ROOT, 'lib')), ...sources(join(ROOT, 'app')), ...sources(join(ROOT, 'components'))];
-    const callers = all.filter((f) => /\bsetAmountsHidden\(/.test(readFileSync(f, 'utf8'))).map((f) => relative(ROOT, f));
+    const callers = all.filter((f) => /\bsetAmountsHidden\(/.test(readFileSync(f, 'utf8'))).map((f) => relative(ROOT, f).replaceAll('\\', '/'));
     expect(callers.sort()).toEqual(['components/hide-amounts.ts', 'lib/format.ts']);
     // No route, page or library module imports it: only components drawn in
     // the browser do.
