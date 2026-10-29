@@ -6,8 +6,10 @@
 // bar with it; a card's rows are still to come for the moment its code takes.
 // If the code can't be loaded, or a card stops while it runs, that card says
 // so and the rest works as before. A card that often draws nothing (Restore
-// on Home's first screen among them) draws nothing until its code is in, and
-// nothing if it can't be loaded, rather than a card that then goes away.
+// on Home's first screen among them) draws nothing until its code is in,
+// rather than a card that then goes away; if its code can't be loaded it says
+// so like any other, since it may be what a Needs attention row or the
+// restore banner sent the person to.
 
 import type { ComponentProps, ComponentType } from 'react';
 import { CardSkeleton } from './LoadingSkeletons';
@@ -26,7 +28,8 @@ export function CardUnavailable({ reason, onRetry }: { reason: 'load' | 'crash';
   );
 }
 
-/** `quiet`: for a card that often draws nothing at all. */
+/** `quiet`: for a card that often draws nothing at all, so nothing while
+ *  its code is on its way. */
 function settingsCard<K extends keyof Cards>(name: K, { quiet = false } = {}) {
   type Props = ComponentProps<Cards[K]>;
   function Card(props: Props) {
@@ -41,9 +44,8 @@ function settingsCard<K extends keyof Cards>(name: K, { quiet = false } = {}) {
         </PartBoundary>
       );
     }
-    if (quiet) return null;
     if (failed) return <CardUnavailable reason="load" onRetry={retry} />;
-    return <CardSkeleton label="Loading" />;
+    return quiet ? null : <CardSkeleton label="Loading" />;
   }
   Card.displayName = name;
   return Card;

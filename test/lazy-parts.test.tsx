@@ -183,7 +183,10 @@ describe('a part', () => {
     preloadParts([first, part('cards', false), part('sheets')]);
     preloadParts([part('again')]);
     expect(order).toEqual([]);
-    await settle(3500);
+    // One at a time: the next waits for the browser to be idle again.
+    await settle(1500);
+    expect(order).toEqual(['budgets']);
+    await settle(2000);
     expect(order).toEqual(['budgets', 'cards', 'sheets']);
     expect(first.loaded()).toBe('budgets');
   });
@@ -304,6 +307,20 @@ describe('a sheet loaded on demand', () => {
     expect(body.textContent).toContain("This couldn't be loaded. It needs a connection the first time it opens after an update. The rest of the app works as before.");
     act(() => click(button(body, 'Try again')!));
     expect(c.calls()).toBe(2);
+    await c.arrive({ default: RealSheet });
+    expect(m.host.textContent).toContain('open');
+    m.unmount();
+  });
+
+  test('opened again after its code failed, it tries again rather than say so at once', async () => {
+    const c = controlled<Mod>();
+    const m = mount(sheet(c.part, true));
+    await c.fail();
+    m.render(sheet(c.part, false));
+    expect(c.calls()).toBe(1);
+    m.render(sheet(c.part, true));
+    expect(c.calls()).toBe(2);
+    expect(dom.document.body.textContent).not.toContain("couldn't be loaded");
     await c.arrive({ default: RealSheet });
     expect(m.host.textContent).toContain('open');
     m.unmount();

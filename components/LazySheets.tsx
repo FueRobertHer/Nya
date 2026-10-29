@@ -29,6 +29,13 @@ export function LazySheet<M>({ part, open, title, onClose, children }: { part: L
   const [asked, setAsked] = useState(open);
   if (open && !asked) setAsked(true);
   const { mod, failed, retry } = useLazyPart(part, asked);
+  // Opened again after its code couldn't be loaded: try again, as a first
+  // open would, rather than say so again at once.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && failed) retry();
+  }
   const waiting = open && !mod && !failed;
   const [slow, setSlow] = useState(false);
   useEffect(() => {
