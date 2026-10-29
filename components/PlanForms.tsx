@@ -853,6 +853,11 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         Income the plan can count on from an age, such as Social Security or a pension, a year and after tax, in
         today&apos;s dollars. It pays part of each year&apos;s spending, so the portfolio withdraws less.
       </p>
+      <p className="helper">
+        Counts in Will it last?, never in your FI date or FI number. Part-time work is{' '}
+        {props.scenario ? "one of this scenario's life events" : 'a life choice in What if…'}, and Barista FI&apos;s
+        part-time income is in Assumptions.
+      </p>
       <div className="sheet-form">
         <label className="field">
           Name
@@ -940,6 +945,10 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
       <p className="panel-note" style={{ marginTop: 0 }}>
         A cost on top of normal spending in one year, such as a roof, a car or a wedding, in today&apos;s dollars and
         after tax.
+      </p>
+      <p className="helper">
+        Counts in Will it last? once that starts, never in your FI date.{' '}
+        {props.scenario ? "To move this scenario's FI date with it, add it to its life events." : 'To move your FI date with it, try it in What if… as a life choice.'}
       </p>
       <div className="sheet-form">
         <label className="field">

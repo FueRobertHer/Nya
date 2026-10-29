@@ -2400,15 +2400,19 @@ export function EventsCard({
   const leftOut = new Set([...left.income.map((x) => x.id), ...left.expenses.map((x) => x.id)]);
   const beyond = new Set(('beyond' in engine ? engine.beyond : []).map((x) => x.id));
   const end = 'sim' in engine && engine.startAge !== null ? engine.startAge + engine.sim.years : null;
+  // Where these count: in the simulation, from the age it starts at (your
+  // stop age, or today's when it starts from what you have now), never in
+  // the FI walk (lib/fire/plan.ts enginePlan), unlike a life event.
+  const start = 'sim' in engine ? engine.startAge : null;
+  const any = plan.income.length > 0 || plan.expenses.length > 0;
   return (
     <div className="card">
       <ScenarioTag name={scenario?.name} />
       <div className="inst-header">
         <div className="inst-name">Income and one-off expenses</div>
       </div>
-      {plan.income.length === 0 && plan.expenses.length === 0 && (
-        <p className="empty-note">Add Social Security, a pension, or a big one-off cost such as a roof, to see how it changes the plan.</p>
-      )}
+      {!any && <p className="empty-note">Add Social Security, a pension, or a big one-off cost such as a roof, to see how it changes the plan.</p>}
+      {any && start !== null && <p className="helper">They count in Will it last? from age {start}, where it starts, never in your FI date or FI number.</p>}
       <div className="plan-rows">
         {plan.income.map((x) => (
           <Row
@@ -2426,7 +2430,9 @@ export function EventsCard({
             value={money(x.amount)}
             note={`at age ${x.atAge}${
               leftOut.has(x.id)
-                ? '. Not in the simulation: it is before the plan starts, or your age is not set.'
+                ? start !== null
+                  ? `. Before ${start}, where Will it last? starts, so it isn't counted anywhere.`
+                  : '. Not in the simulation: add your age.'
                 : beyond.has(x.id)
                   ? `. After the plan ends${end !== null ? ` at ${end}` : ''}: only the grid's longer columns reach it.`
                   : ''

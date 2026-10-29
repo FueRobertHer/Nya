@@ -1358,7 +1358,7 @@ While a new answer is worked out, the last one keeps its place but is hidden, si
 Each plan year, in order:
 
 1. The rule sets the year's withdrawal from the balance at the start of the year.
-2. Other income (Social Security, a pension, after tax) pays part of that year's spending, so the portfolio withdraws less; income beyond the spending is invested. One-off expenses are added. What the portfolio pays is grossed up for the flat tax.
+2. Other income (Social Security, a pension, after tax) pays part of that year's spending, so the portfolio withdraws less; income beyond the spending is invested. One-off expenses are added. What the portfolio pays is grossed up for the flat tax. Income and one-offs count only here, from the age the simulation starts at, never in the FI date or the FI number, and the Income and one-off expenses card says so in one line. A one-off before that age isn't counted anywhere, and its row says so; its sheet says that to move the FI date with it, it goes in What if… as a life choice (in a scenario, in its life events). The income sheet names the two incomes kept apart from it: part-time work, a life event in a scenario, and Barista FI's part-time income, in Assumptions.
 3. If that is more than the balance, the plan has run out that year.
 4. The rest earns the next twelve months' returns, at your mix, rebalanced every year by default (every month, or never, are the options).
 5. Fund fees are charged (0.1% a year by default).
