@@ -282,7 +282,9 @@ export async function GET(req: Request) {
     // Capture how to render each account while its institution is answering, so a
     // later failure can still draw its card. Per institution, not gated on
     // `clean`: one broken bank shouldn't stop the others' records staying fresh.
-    await rememberAccounts(ctx, institutions);
+    // It never throws. Begun beside the two writes below, which neither read
+    // nor write its records, and awaited before anything that reads them.
+    const remembered = rememberAccounts(ctx, institutions);
     // And in the account directory, which outlives a disconnect so a re-added
     // institution's accounts can be matched to the ones they replace. Awaited
     // before responding so it overlaps the reads below. It never throws.
@@ -290,6 +292,7 @@ export async function GET(req: Request) {
     // And when each connection last answered, for the connection health view
     // and the daily notices (lib/connection-health.ts). It never throws.
     const syncWrite = recordSyncs(ctx, institutions, Date.parse(answeredAt));
+    await remembered;
 
     // Everything from here down is display-only. `visibleNetWorth` excludes hidden
     // accounts and is what ships as `netWorth`: the client never gets the true
