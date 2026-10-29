@@ -88,9 +88,9 @@ describe('a connection’s status on its card', () => {
     expect(t).toContain("On Ally's side");
     // A working connection carries no badge, only when it last synced.
     expect(t).toContain('Citi Last synced Oct 8');
-    // Reconnect for the sign-in, Remove for the one that can't be repaired,
+    // Reconnect for the sign-in, Disconnect for the one that can't be repaired,
     // nothing to tap for an outage or a working connection.
-    expect(buttons(html)).toEqual(['Reconnect', 'Remove Amex']);
+    expect(buttons(html)).toEqual(['Reconnect', 'Disconnect Amex']);
   });
 
   test('the four failures each offer their own action', () => {
@@ -102,7 +102,7 @@ describe('a connection’s status on its card', () => {
       inst('E', health('vanished'), { unconfirmed_missing: 1 }),
       inst('F', health('unsupported')),
     ]);
-    expect(buttons(html)).toEqual(['Reconnect', 'Remove C', 'Remove D', 'Add or remove accounts', 'Remove F']);
+    expect(buttons(html)).toEqual(['Reconnect', 'Disconnect C', 'Disconnect D', 'Add or remove accounts', 'Disconnect F']);
     const t = text(html);
     expect(t).toContain(
       "1 account E used to report isn't in its latest answer. Until you say whether it closed, it is counted at its last known balance and no total is saved. If nobody answers, Nya assumes it closed after three days, and you can say otherwise."

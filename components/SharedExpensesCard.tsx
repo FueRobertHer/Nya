@@ -26,7 +26,7 @@ import { Masked } from './HideAmounts';
 import { shownName } from '@/lib/merchant-name';
 import EmptyState from './EmptyState';
 import type { Txn } from './MonthBreakdown';
-import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
+import { formatDay, formatMoney, hideAmountsIn, onDay, signedMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import type { Taxonomy } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
@@ -42,6 +42,7 @@ import { ConfirmPaymentSheet, SettleSheet } from './ConfirmPaymentSheet';
 import PersonSheet from './PersonSheet';
 import IouSheet from './IouSheet';
 import HandoffSheet from './HandoffSheet';
+import { Notice } from './TotalCaveats';
 
 /** What the transactions' read says of shared expenses (lib/activity.ts). */
 export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'> & Partial<Pick<ShareResult, 'away' | 'coming' | 'moves'>>;
@@ -82,8 +83,9 @@ const STORE_WORDS: Readonly<Record<string, [string, string]>> = {
   'expense-dismissed': ['row set aside', 'rows set aside'],
 };
 
+/** A transaction's day mid sentence: "today", "Oct 5", "Oct 5, 2025". */
 function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 /** Posted money out carrying a tag, with no share yet, nor anything else
@@ -172,11 +174,17 @@ export default function SharedExpensesCard({
 
   if (!card) {
     return (
-      <div className="card">
+      <div className="card stack">
         <div className="inst-header">
           <div className="inst-name">Shared expenses</div>
         </div>
-        {failed ? <p className="error">{failed}</p> : <p className="empty-note">Loading…</p>}
+        {failed ? (
+          <Notice level="critical" role="alert">
+            {failed}
+          </Notice>
+        ) : (
+          <p className="empty-note">Loading…</p>
+        )}
       </div>
     );
   }
@@ -472,7 +480,7 @@ export default function SharedExpensesCard({
         const moves = movesFor(facts?.moves?.payments[p.transaction_id]);
         return (
           <div key={`gone-pay:${p.transaction_id}`} className="stale-note">
-            A payment you confirmed on {shownDay(p.row.date)} isn’t in your accounts any more. What it paid back stays paid, until you say.
+            A payment you confirmed {onDay(shownDay(p.row.date))} isn’t in your accounts any more. What it paid back stays paid, until you say.
             <div className="card-actions">
               {moves.map((m) => (
                 <button
@@ -511,7 +519,7 @@ export default function SharedExpensesCard({
       ))}
       {awayPayments.map((p) => (
         <div key={`away-pay:${p.transaction_id}`} className="stale-note">
-          A payment you confirmed on {shownDay(p.row.date)} is on an account you disconnected. Once you add the bank back and link the account to its earlier one, it carries
+          A payment you confirmed {onDay(shownDay(p.row.date))} is on an account you disconnected. Once you add the bank back and link the account to its earlier one, it carries
           across to the same transaction. What it paid back stays paid meanwhile.
           <div className="card-actions">
             <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
@@ -553,9 +561,9 @@ export default function SharedExpensesCard({
       })}
 
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
 
       <div className="card-actions">

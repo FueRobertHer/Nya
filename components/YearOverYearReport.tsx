@@ -14,12 +14,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Masked } from './HideAmounts';
 import { reportDay, reportTime } from './ReportView';
 import { browserZone } from './RunwayReport';
-import { formatMoney, roundsToNothing, signedMoney } from '@/lib/format';
+import { formatMoney, MINUS, roundsToNothing, signedMoney } from '@/lib/format';
 import { gapSentences, reportConvertedText, scopeLine } from '@/lib/report/words';
 import type { Change, YoyCategory, YoyCompare, YoyGroup, YoyPeriod } from '@/lib/report/year-over-year';
 import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read';
 import { joinNames } from '@/lib/month-coverage';
 import { displayName } from '@/lib/categories';
+import { ReportSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
 
 /** "Oct 2026": a month's name. */
 const monthWords = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
@@ -29,7 +31,7 @@ const spanWords = (p: Pick<YoyPeriod, 'start' | 'end'>) => `${reportDay(p.start)
 /** A change in percent, in words: "+12.5%", "new" when last year's was
  *  zero and this year's isn't, nothing when both are. */
 export function pctWords(c: Change): string {
-  if (c.pct !== null) return `${c.pct > 0 ? '+' : ''}${c.pct.toFixed(1)}%`;
+  if (c.pct !== null) return `${c.pct > 0 ? '+' : c.pct < 0 ? MINUS : ''}${Math.abs(c.pct).toFixed(1)}%`;
   return c.this === 0 ? '' : 'new';
 }
 
@@ -105,13 +107,14 @@ function MonthTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
       <h3>{label}</h3>
       <div className="report-scroll">
         <table className="report-table">
+          <caption className="visually-hidden">{label}</caption>
           <thead>
             <tr>
-              <th>Month</th>
-              <th className="num">This year</th>
-              <th className="num">Last year</th>
-              <th className="num">Change</th>
-              <th>Notes</th>
+              <th scope="col">Month</th>
+              <th scope="col" className="num">This year</th>
+              <th scope="col" className="num">Last year</th>
+              <th scope="col" className="num">Change</th>
+              <th scope="col">Notes</th>
             </tr>
           </thead>
           <tbody>
@@ -171,13 +174,14 @@ function GroupTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
       ) : (
         <div className="report-scroll">
           <table className="report-table">
+            <caption className="visually-hidden">By group and category</caption>
             <thead>
               <tr>
-                <th>Group and category</th>
-                <th className="num">This year</th>
-                <th className="num">Last year</th>
-                <th className="num">Change</th>
-                <th className="num">%</th>
+                <th scope="col">Group and category</th>
+                <th scope="col" className="num">This year</th>
+                <th scope="col" className="num">Last year</th>
+                <th scope="col" className="num">Change</th>
+                <th scope="col" className="num">%</th>
               </tr>
             </thead>
             <tbody>
@@ -317,9 +321,9 @@ export default function YearOverYearReport() {
           </label>
         )}
         {error && (
-          <div className="error" role="alert">
+          <Notice level="critical" role="alert">
             {error}
-          </div>
+          </Notice>
         )}
         <div className="action-row report-actions">
           <button className="secondary" onClick={() => window.print()} disabled={!report || loading}>
@@ -328,7 +332,7 @@ export default function YearOverYearReport() {
         </div>
         <p className="panel-note">This compares what Nya has stored, so open Nya first to bring your connections up to date.</p>
       </div>
-      {loading && !report && <div className="spinner no-print" role="status" aria-label="Comparing the years" />}
+      {loading && !report && <ReportSkeleton title="Year over year" className="yoy-report" status="Comparing the years" />}
       {report && (
         <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
           <YearOverYearView report={report} />

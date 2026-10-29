@@ -19,16 +19,18 @@
 import { useState } from 'react';
 import { ACCESS_LOG_DAYS, RECORD_FIRST_DAYS, type Level, type RecordSummary, type ShownDay } from '@/lib/share-rules';
 import type { DayViews } from '@/lib/share-kinds';
+import { formatDay, onDay } from '@/lib/format';
 
-/** "Sep 28", with the year only when it isn't this one. Takes a YYYY-MM-DD
- *  (a calendar day, shown as it is) or a full ISO time (an instant, shown as the
- *  day it was in the viewer's own time zone, not its UTC day). */
-export function shortDate(iso: string, now: Date = new Date()): string {
+/** "Sep 28", with the year only when it isn't this one, and "today" and
+ *  "yesterday" (lib/format.ts formatDay), mid sentence unless `label` (a row's
+ *  start: "Today"). Takes a YYYY-MM-DD (a calendar day, shown as it is) or a
+ *  full ISO time (an instant, shown as the day it was in the viewer's own time
+ *  zone, not its UTC day). */
+export function shortDate(iso: string, now: Date = new Date(), label = false): string {
   const isInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:/.test(iso);
   const d = isInstant ? new Date(iso) : new Date(`${iso.slice(0, 10)}T12:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
-  const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+  return formatDay(localDay(d), { now, sentence: !label });
 }
 
 /** A day in this device's time zone, as YYYY-MM-DD. */
@@ -218,7 +220,7 @@ export function kindsShown(v: DayViews | undefined): string[] {
  *  accounts and spending as percentages." */
 export function shownText(d: ShownDay, now: Date = new Date()): string {
   const what = inWords([...levelParts(d.levels), ...kindsShown(d.views)]);
-  return `Shown ${timesText(d.times)} on ${shortDate(d.day, now)}${what ? `, ${what}` : ''}.`;
+  return `Shown ${timesText(d.times)} ${onDay(shortDate(d.day, now))}${what ? `, ${what}` : ''}.`;
 }
 
 /**

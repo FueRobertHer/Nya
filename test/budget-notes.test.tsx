@@ -148,7 +148,8 @@ describe('every note the month said is still said, in its words and at its level
     expect(html).not.toContain('meter-fill over');
     expect(html).toContain('<span class="meter-fill warn" style="width:100%">');
     expect(html).toContain('<span class="badge warn">Over</span>');
-    // A card used to 90% of its limit, in its account's sheet: red, as before.
+    // A card used to 90% of its limit, in its account's sheet: caution, since
+    // red is for past the limit (the design system's Meter).
     const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\r/g, '');
     expect(css).toContain('.meter-fill.over {\n  background: var(--down);');
     const noop = () => {};
@@ -172,7 +173,7 @@ describe('every note the month said is still said, in its words and at its level
         onDelete={noop}
       />
     );
-    expect(sheet).toContain('<div class="meter-fill over" style="width:90%">');
+    expect(sheet).toContain('<div class="meter-fill warn" style="width:90%">');
   });
 });
 

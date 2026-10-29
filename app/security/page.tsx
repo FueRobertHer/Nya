@@ -352,6 +352,7 @@ export default function SecurityPage() {
       body: (
         <>
           <table className="info-table">
+            <caption className="visually-hidden">Who can read what</caption>
             <thead>
               <tr>
                 <th scope="col">Who</th>

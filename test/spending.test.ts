@@ -99,7 +99,7 @@ describe('the rule', () => {
     expect(isMoneyMovement(fee)).toBe(false);
     expect(countsInTotals(fee, 'USD')).toBe(true);
     // The Activity tab's totals and the budgets count it.
-    expect(text(activity([fee]))).toContain('Out -$12.00');
+    expect(text(activity([fee]))).toContain('Out −$12.00');
     const budgets = text(renderToStaticMarkup(createElement(BudgetsTab, { ...BUDGET_PROPS, txns: [fee], ...categoriesFor({ 'bank fees': 20 }) })));
     // Rolled up to its group, as the tab opens.
     expect(budgets).toContain('Services and fees $12.00 of $20.00');
@@ -154,7 +154,7 @@ describe('every total leaves an excluded transaction out, and still lists it', (
   test('the Activity tab’s money in, out and net, top categories, places and channels', () => {
     const html = activity(MONTH);
     const t = text(html);
-    expect(t).toContain('In +$100.00 Out -$30.00 Net +$70.00');
+    expect(t).toContain('In +$100.00 Out −$30.00 Net +$70.00');
     expect(t).toContain('Transfers and loan payments excluded, and 1 transaction you left out.');
     // Top spending, where you spent and online vs in store count the shop only.
     expect(t).toContain(`Top spending ${CAPTION} Food and drink $30.00`);
@@ -176,13 +176,13 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     const lastMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 2, 15);
     const earlier = txn({ transaction_id: 'earlier', date: localDate(lastMonth), amount: 5 });
     const t = text(activity([...MONTH, earlier]));
-    // This month's column: +$100 in, -$30 out; the laptop and the transfer left out.
+    // This month's column: +$100 in, −$30 out; the laptop and the transfer left out.
     expect(t).toContain('+$70');
   });
 
   test('one whose exclusion couldn’t be read counts, and the screen says so', () => {
     const t = text(activity([COUNTED, { ...EXCLUDED, excluded: null }, PAY]));
-    expect(t).toContain('Out -$110.00');
+    expect(t).toContain('Out −$110.00');
     expect(t).toContain("Whether you excluded 1 transaction couldn't be read, so it counts here.");
     expect(t).toContain("Couldn't read whether you excluded this");
   });
@@ -282,24 +282,24 @@ describe('no total adds up amounts in two currencies', () => {
 
   test('the Activity tab’s totals, categories, places and channels count the totals’ currency, and name the rest; the rows stay listed in their own', () => {
     const t = text(activity([...MONTH, RAMEN, MAPLE, DOGE]));
-    expect(t).toContain('In +$100.00 Out -$30.00 Net +$70.00');
+    expect(t).toContain('In +$100.00 Out −$30.00 Net +$70.00');
     expect(t).toContain("1 transaction in CAD, 1 in DOGE and 1 in JPY aren't in these totals, which are in USD.");
     expect(t).toContain(`Top spending ${CAPTION} Food and drink $30.00`);
     expect(t).toContain(`Where you spent ${CAPTION} Austin $30.00`);
     expect(t).not.toContain('Tokyo $');
     expect(t).toContain(`Online vs in-store ${CAPTION} Online $0.00 In store $30.00`);
     // Listed, each in its own currency; one Intl doesn't know, with its code.
-    expect(t).toContain('-¥3,200');
-    expect(t).toContain('-CA$40.00');
-    expect(t).toContain('-5.00 DOGE');
+    expect(t).toContain('−¥3,200');
+    expect(t).toContain('−CA$40.00');
+    expect(t).toContain('−5.00 DOGE');
   });
 
   test('the day’s header gives one figure per currency, never a sum across them, and leaves an excluded row out', () => {
     const t = text(activity([...MONTH, RAMEN]));
     // In: $100; out: $30 and the $500 transfer (the day's rows, as listed);
     // the excluded laptop isn't in it; the ramen is its own figure.
-    expect(t).toContain('-$430.00 · -¥3,200');
-    expect(t).not.toContain('-$3,');
+    expect(t).toContain('−$430.00 · −¥3,200');
+    expect(t).not.toContain('−$3,');
   });
 
   test('the trend and the month’s chart count only the totals’ currency', () => {
@@ -307,7 +307,7 @@ describe('no total adds up amounts in two currencies', () => {
     const earlier = txn({ transaction_id: 'earlier', date: localDate(lastMonth), amount: 5 });
     const trend = text(activity([...MONTH, RAMEN, earlier, { ...RAMEN, transaction_id: 'ramen-2', date: localDate(lastMonth) }]));
     expect(trend).toContain('+$70');
-    expect(trend).toContain('-$5');
+    expect(trend).toContain('−$5');
     expect(renderToStaticMarkup(createElement(MonthFlowChart, { txns: [...MONTH, RAMEN], month }))).toContain('Income $100.00, spending $30.00.');
     // Given the tab's currency, the chart uses it.
     expect(renderToStaticMarkup(createElement(MonthFlowChart, { txns: [...MONTH, RAMEN], month, currency: 'JPY' }))).toContain('spending ¥3,200');
@@ -315,8 +315,8 @@ describe('no total adds up amounts in two currencies', () => {
 
   test('a row with no currency code counts, in the totals’ currency, and is shown in it', () => {
     const t = text(activity([txn({ amount: 10 }), txn({ transaction_id: 'old', amount: 5, iso_currency_code: null }), txn({ transaction_id: 'e', amount: 1, iso_currency_code: 'EUR' })]));
-    expect(t).toContain('Out -$15.00');
-    expect(t).toContain('-$5.00');
+    expect(t).toContain('Out −$15.00');
+    expect(t).toContain('−$5.00');
   });
 
   test('the budgets and the bills’ total', () => {
@@ -384,7 +384,7 @@ describe('the Activity tab opens on this month', () => {
     const ahead = txn({ transaction_id: 'ahead', name: 'Rent (entered ahead)', amount: 1800, date: localDate(next), category: 'rent and utilities' });
     const t = text(activity([COUNTED, PAY, ahead]));
     // This month's figures, not the next one's.
-    expect(t).toContain('In +$100.00 Out -$30.00 Net +$70.00');
+    expect(t).toContain('In +$100.00 Out −$30.00 Net +$70.00');
     expect(t).not.toContain('Rent (entered ahead)');
   });
 });
@@ -399,7 +399,7 @@ describe('beside the notes on incomplete months', () => {
 
   test('the Activity tab', () => {
     const t = text(activity([...MONTH, RAMEN, CASH], { incomplete }));
-    expect(t).toContain('Out -$50.00');
+    expect(t).toContain('Out −$50.00');
     expect(t).toContain("1 transaction in JPY isn't in these totals, which are in USD.");
     expect(t).toContain("Doesn't include Chase: its transactions couldn't be loaded, so this month may be incomplete.");
   });

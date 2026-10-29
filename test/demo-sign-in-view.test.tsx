@@ -52,7 +52,8 @@ describe('the demo card', () => {
 
   test('a demo that couldn’t sign in says so, as an alert', () => {
     expect(html()).not.toContain('role="alert"');
-    expect(html(true)).toContain(`<p class="error" role="alert">${DEMO_UNAVAILABLE}</p>`);
+    expect(html(true)).toContain('<div class="notice critical" role="alert">');
+    expect(html(true)).toContain(`<span class="visually-hidden">Critical: </span>${DEMO_UNAVAILABLE}</div></div>`);
   });
 });
 

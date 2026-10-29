@@ -51,8 +51,14 @@ export type DraftRead = {
    *  can't be counted. */
   room: number | null;
   errors: string[];
+  /** The field each of `errors` is about, in the same order, to say it
+   *  under that field. */
+  errorFields: DraftField[];
   ready: boolean;
 };
+
+/** The fields a goal's form can say something is wrong with. */
+export type DraftField = 'target' | 'account' | 'allocation' | 'monthly' | 'date';
 
 /**
  * The form, read: `goal` is the goal edited (null to add one, which gets
@@ -76,13 +82,20 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   const money = (n: number) => formatMoney(n, currency);
 
   const errors: string[] = [];
-  if (d.target.trim() && target === null) errors.push('Enter a target, like 5000.');
+  // The field each is about, in the same order.
+  const errorFields: DraftField[] = [];
+  if (d.target.trim() && target === null) {
+    errors.push('Enter a target, like 5000.');
+    errorFields.push('target');
+  }
   // What the goal has set aside already, kept as it is: the server takes it
   // whatever the balance did since (lib/goal-allocation.ts), so this does too.
   const kept = !!goal && goal.account_id === d.account && goal.plan?.allocation !== undefined && allocation === goal.plan.allocation;
   if (allocate && !kept) {
-    if (!account) errors.push('That account isn’t among yours any more: choose another to set part of its balance aside from.');
-    else if (!trackable) {
+    if (!account) {
+      errors.push('That account isn’t among yours any more: choose another to set part of its balance aside from.');
+      errorFields.push('account');
+    } else if (!trackable) {
       const why = account.ended
         ? endedWhy(account.ended)
         : account.type && isOwedType(account.type)
@@ -91,11 +104,23 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
             ? 'it is hidden'
             : 'no balance is known for it yet';
       errors.push(`Nothing can be set aside from ${account.name}: ${why}.`);
-    } else if (d.allocation.trim() && allocation === null) errors.push('Enter the part of the balance to set aside, like 1500, or 0.');
-    else if (allocation != null && room !== null && allocation > room) errors.push(`${account.name} has ${money(room)} you can set aside for this goal.`);
+      errorFields.push('account');
+    } else if (d.allocation.trim() && allocation === null) {
+      errors.push('Enter the part of the balance to set aside, like 1500, or 0.');
+      errorFields.push('allocation');
+    } else if (allocation != null && room !== null && allocation > room) {
+      errors.push(`${account.name} has ${money(room)} you can set aside for this goal.`);
+      errorFields.push('allocation');
+    }
   }
-  if (d.monthly.trim() && monthly === null) errors.push('Enter a monthly target, like 250.');
-  if (d.date && !(isCalendarDay(d.date) && d.date <= LATEST_TARGET_DATE && (d.date >= today || dateKept))) errors.push('Pick a target date from today on.');
+  if (d.monthly.trim() && monthly === null) {
+    errors.push('Enter a monthly target, like 250.');
+    errorFields.push('monthly');
+  }
+  if (d.date && !(isCalendarDay(d.date) && d.date <= LATEST_TARGET_DATE && (d.date >= today || dateKept))) {
+    errors.push('Pick a target date from today on.');
+    errorFields.push('date');
+  }
 
   const plan: GoalPlan = {
     ...(allocate && allocation != null ? { allocation } : {}),
@@ -104,7 +129,7 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   };
   const entry: Goal = { id, name: d.name.trim(), target: target ?? 0, account_id: d.account || null, plan };
   const ready = !!d.name.trim() && target !== null && (!allocate || allocation != null) && errors.length === 0;
-  return { entry, account, currency, trackable, room, errors, ready };
+  return { entry, account, currency, trackable, room, errors, errorFields, ready };
 }
 
 /**

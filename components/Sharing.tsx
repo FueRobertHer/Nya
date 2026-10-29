@@ -32,14 +32,14 @@
 // elements (Fanboy's list has ##.share-row).
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
-import { RowsSkeleton, SharedWithMeSkeleton } from './LoadingSkeletons';
+import { RowsSkeleton, SharePreviewSkeleton, SharedWithMeSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
-import { CAUTION } from './ConnectionStatus';
+import { CAUTION, LevelWord } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import { cacheKeyFor } from './device-cache';
 import { InferenceNotes, KindsEditor, sameViews, seenText, viewsToSave, type ShareableGoal } from './ShareKinds';
@@ -547,6 +547,7 @@ export function SharingListView({
           <div className="notice caution">
             {CAUTION}
             <div className="stack tight">
+              <LevelWord level="caution" />
               <p>
                 {damaged?.maybe_connected
                   ? unmatched.length === 1
@@ -564,14 +565,22 @@ export function SharingListView({
             </div>
           </div>
         )}
-        {/* One region for what the list's actions did: always on the page, so
-            a line put in it is read out. */}
+        {/* What the list's actions did: a failure is an alert as it appears;
+            what was done goes in a region always on the page, so a line put
+            in it is read out. */}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
         <div role="status">
-          {error && <Notice level="critical">{error}</Notice>}
           {notice && (
             <div className="notice done">
               {CHECK}
-              <div>{notice}</div>
+              <div>
+                <LevelWord level="done" />
+                {notice}
+              </div>
             </div>
           )}
         </div>
@@ -746,7 +755,11 @@ export function ConnectionView({
   const accounts = data.accounts ?? [];
   const status = (
     <>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {notice && <div className="status-note">{notice}</div>}
     </>
   );
@@ -830,10 +843,12 @@ export function ConnectionView({
         <button onClick={onSave} disabled={busy || (endChoice === 'date' && endFor('date', endDay) === undefined)} style={{ marginTop: 4 }}>
           {busy ? 'Saving…' : 'Save'}
         </button>
-        <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
-          See what {current.label} sees
-        </button>
-        {status}
+        <div className="stack tight">
+          <button className="secondary" onClick={onPreview} style={{ marginTop: 8 }}>
+            See what {current.label} sees
+          </button>
+          {status}
+        </div>
       </section>
       <section className="panel-section">
         <p className="section-label">Shown to them</p>
@@ -906,8 +921,13 @@ export function PreviewView({
   /** The settings have changes not saved yet, which this doesn't show. */
   unsaved: boolean;
 }) {
-  if (!preview) return error ? <div className="error">{error}</div> : <div className="spinner" role="status" aria-label="Loading" />;
-  const nothing = preview.unreadable
+  if (!preview && error)
+    return (
+      <Notice level="critical" role="alert">
+        {error}
+      </Notice>
+    );
+  const nothing = preview?.unreadable
     ? `Some of what you share can’t be read right now, so ${who} sees nothing of yours.`
     : ended(expiresAt)
       ? `Your share ended ${endLabel(expiresAt!)}, so ${who} sees nothing of yours.`
@@ -919,7 +939,11 @@ export function PreviewView({
         dates in their own time zone, so one can fall a day apart from here.
       </p>
       {unsaved && <p className="stale-note">You have changes you haven’t saved. This shows what is saved.</p>}
-      {preview.view ? (
+      {/* While it is read: their card as it will be, the words above it
+          already there (components/LoadingSkeletons.tsx). */}
+      {!preview ? (
+        <SharePreviewSkeleton who={who} />
+      ) : preview.view ? (
         <>
           <SharedCard
             name="you"
@@ -1093,11 +1117,11 @@ export function sharedTxnAmount(t: { amount: number; currency: string | null }):
   return formatMoney(-t.amount, t.currency);
 }
 
-/** "Closed Mar 12, 2026": an account that ended, as the one it is shared
+/** "Closed Mar 12": an account that ended, as the one it is shared
  *  with reads it. Untracked is said as theirs to say: they stopped following
  *  it, which is not the same as closing it. */
 export function endedText(e: NonNullable<SharedAccount['ended']>): string {
-  const day = new Date(`${e.on}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const day = formatDay(e.on, { sentence: true });
   if (e.state === 'closed') return `Closed ${day}`;
   if (e.state === 'left') return `No longer theirs since ${day}`;
   return `Not followed since ${day}`;
@@ -1159,7 +1183,7 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
         a.transactions?.map((t, i) => (
           <div key={i} className="incoming-txn">
             <span>
-              {shortDate(t.date)} {shownName(t)}
+              {shortDate(t.date, undefined, true)} {shownName(t)}
               {t.pending ? ' (pending)' : ''}
             </span>
             <span>

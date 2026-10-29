@@ -74,6 +74,17 @@ describe("the app's base button rule", () => {
     const base = declared(':where(button:not([class*="cl-"]))');
     expect(base.get('width')).toBe('100%');
     expect(base.get('background')).toBe('var(--accent-fill)');
-    expect(css).toContain('button:disabled:where(:not([class*="cl-"]))');
+    expect(css).toContain('button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"]))');
+  });
+
+  // A primary keeps its fill on hover (design-system.md, States): the rule
+  // that lifts the dimming must outweigh the one that dims every button,
+  // (0,4,1), or it does nothing.
+  test('a primary keeps its fill on hover', () => {
+    const dims = 'button:hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"])';
+    const keeps = ':is(.btn:not(.secondary, .ghost), button:not([class])):hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"])';
+    expect(css.replace(/\r\n/g, '\n')).toContain(`${dims} {\n    opacity: 0.9;`);
+    expect(css.replace(/\r\n/g, '\n')).toContain(`${keeps} {\n    opacity: 1;`);
+    expect(css.indexOf(keeps)).toBeGreaterThan(css.indexOf(dims));
   });
 });

@@ -75,7 +75,7 @@ const isOver = (spent: number, limit: number) => (limit > 0 ? spent >= limit : s
 function Meter({ spent, limit }: { spent: number; limit: number }) {
   const ratio = limit > 0 ? spent / limit : spent > 0 || limit < 0 ? 1 : 0;
   return (
-    <span className={`meter-track${meterState(ratio)}`}>
+    <span className={`meter-track${meterState(ratio)}`} role="meter" aria-label="Spent of the budget" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(ratio * 100, 100))}>
       <span className={`meter-fill${meterState(ratio)}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
     </span>
   );

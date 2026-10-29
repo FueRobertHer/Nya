@@ -39,12 +39,13 @@ import { makePlan, startBody, sendBatches, finishRestore, RestoreStopped, type F
 import { newUserRestoreId } from '@/lib/user-restore/ids';
 import type { Collected } from '@/lib/user-restore/plan';
 import type { RecordView } from '@/lib/user-restore/store';
-import { formatMoney, plainNumber } from '@/lib/format';
+import { formatDay, formatInstantDay, formatMoney, onDay, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
 import RestoreAnswers from './RestoreAnswers';
 import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, signRepairLines, turningLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
+import { Notice } from './TotalCaveats';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -89,10 +90,11 @@ type Phase =
   | { kind: 'finishing' }
   | { kind: 'working'; what: string };
 
-const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** The local day an instant fell on, mid sentence: "today", "Oct 5". */
+const day = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 /** A day (YYYY-MM-DD) as the Earlier accounts list writes it, on the
  *  viewer's own calendar (components/AccountLinks.tsx). */
-const listedDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+const listedDay = (d: string) => formatDay(d, { sentence: true });
 
 type CardProps = { onChanged?: () => void; autoScan?: boolean; refreshKey?: string | null };
 
@@ -348,11 +350,13 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
 
   if (loadError) {
     return (
-      <div className="card download-card restore-card">
+      <div className="card download-card restore-card stack">
         <div className="inst-header">
           <div className="inst-name">Bring back a download</div>
         </div>
-        <div className="error">{loadError}</div>
+        <Notice level="critical" role="alert">
+          {loadError}
+        </Notice>
       </div>
     );
   }
@@ -468,7 +472,11 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
                 Its passphrase
                 <input type="password" autoComplete="off" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
               </label>
-              {phase.error && <div className="error">{phase.error}</div>}
+              {phase.error && (
+                <Notice level="critical" role="alert">
+                  {phase.error}
+                </Notice>
+              )}
               <div className="card-actions">
                 <button className="secondary" onClick={() => setPhase({ kind: 'idle' })}>
                   Cancel
@@ -480,18 +488,24 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             </>
           )}
 
-          <div aria-live="polite">
-            {phase.kind === 'opening' && <p className="panel-note">Opening the file with its passphrase… {Math.round(phase.done * 100)}%</p>}
-            {phase.kind === 'reading' && <p className="panel-note">Reading the file and checking every part of it…</p>}
-            {phase.kind === 'checking' && <p className="panel-note">Checking it with Nya: {plainNumber(phase.batches)} parts so far…</p>}
-            {phase.kind === 'sending' && (
-              <p className="panel-note">
-                Bringing it back: {plainNumber(phase.done)} of {plainNumber(phase.total)} parts written. Keep this page open.
-              </p>
+          <div className="stack tight">
+            <div aria-live="polite">
+              {phase.kind === 'opening' && <p className="panel-note">Opening the file with its passphrase… {Math.round(phase.done * 100)}%</p>}
+              {phase.kind === 'reading' && <p className="panel-note">Reading the file and checking every part of it…</p>}
+              {phase.kind === 'checking' && <p className="panel-note">Checking it with Nya: {plainNumber(phase.batches)} parts so far…</p>}
+              {phase.kind === 'sending' && (
+                <p className="panel-note">
+                  Bringing it back: {plainNumber(phase.done)} of {plainNumber(phase.total)} parts written. Keep this page open.
+                </p>
+              )}
+              {phase.kind === 'finishing' && <p className="panel-note">Finishing…</p>}
+              {phase.kind === 'working' && <p className="panel-note">{phase.what}</p>}
+            </div>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
             )}
-            {phase.kind === 'finishing' && <p className="panel-note">Finishing…</p>}
-            {phase.kind === 'working' && <p className="panel-note">{phase.what}</p>}
-            {error && <div className="error">{error}</div>}
           </div>
 
           {(phase.kind === 'preview' || phase.kind === 'starting') && (
@@ -556,7 +570,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             <div className="restore-section">
               <div className="section-label">Undo</div>
               <p className="panel-note">
-                Undo empties this account again. Everything in it goes: what the restore brought back{record.started_at ? ` on ${day(record.started_at)}` : ''} and
+                Undo empties this account again. Everything in it goes: what the restore brought back{record.started_at ? ` ${onDay(day(record.started_at))}` : ''} and
                 anything added or changed since. Your sign-in and API tokens stay. Download your data first to keep anything since.
                 {record.status === 'finished' && record.undo_until ? ` Offered until ${day(record.undo_until)}.` : ''}
               </p>
@@ -647,8 +661,8 @@ export function RecordSummary({ record }: { record: RecordView }) {
     <div className="restore-section">
       <p className={record.status === 'finished' ? 'status-note' : 'panel-note'}>
         {record.status === 'finished' && record.finished_at
-          ? `Brought back on ${day(record.finished_at)}, from a download made ${day(record.source.exported_at)}${record.source.protected ? ' (protected)' : ''}.`
-          : `Started on ${day(record.started_at)}, from a download made ${day(record.source.exported_at)}.`}
+          ? `Brought back ${onDay(day(record.finished_at))}, from a download made ${day(record.source.exported_at)}${record.source.protected ? ' (protected)' : ''}.`
+          : `Started ${onDay(day(record.started_at))}, from a download made ${day(record.source.exported_at)}.`}
       </p>
       {record.status === 'finished' && lines.length > 0 && (
         <ul className="restore-list">
@@ -659,7 +673,7 @@ export function RecordSummary({ record }: { record: RecordView }) {
       )}
       {record.earlier.length > 0 && (
         <p className="panel-note">
-          That download was itself brought back into the copy it came from: {record.earlier.map((e) => `on ${day(e.restored_at)}, from one made ${day(e.exported_at)}`).join('; ')}.
+          That download was itself brought back into the copy it came from: {record.earlier.map((e) => `${onDay(day(e.restored_at))}, from one made ${day(e.exported_at)}`).join('; ')}.
         </p>
       )}
     </div>

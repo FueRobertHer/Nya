@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
-import { Notice } from './TotalCaveats';
+import { LevelWord, Notice } from './TotalCaveats';
 import { minutesText } from '@/lib/demo-seed/words';
 
 type ScenarioView = { id: string; title: string; description: string };
@@ -75,10 +75,17 @@ export function DemoDataView({ info, chosen, busy, error, done, onChoose, onAsk 
       {done && (
         <div className="notice done" role="status">
           {CHECK}
-          <div>{done}</div>
+          <div>
+            <LevelWord level="done" />
+            {done}
+          </div>
         </div>
       )}
-      {error && <Notice level="critical">{error}</Notice>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
 
       <label className="field">
         Scenario

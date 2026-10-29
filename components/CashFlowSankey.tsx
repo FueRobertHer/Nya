@@ -43,7 +43,7 @@
 // flow with its amount, each row's name a button that does what a tap does.
 
 import { Fragment, useMemo, type Ref } from 'react';
-import { amountSamples, compactMoney, formatMoney, spoken } from '@/lib/format';
+import { amountSamples, compactMoney, formatInstantDay, formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import {
@@ -65,7 +65,7 @@ import {
 } from '@/lib/cash-flow';
 import { fitBeside, fitText, layoutSankey, textWidth, SANKEY_DEFAULTS, type SankeyNodeBox } from '@/lib/sankey';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
-import { instantDay, localDate } from '@/lib/local-date';
+import { localDate } from '@/lib/local-date';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 
@@ -285,7 +285,7 @@ export default function CashFlowSankey({
   const graph = useMemo(() => flowGraph(flow, { categories }), [flow, categories]);
   const layout = useMemo(() => layoutSankey(graph.nodes, graph.links, layoutAt(width)), [graph, width]);
   const said = useMemo(
-    () => cashFlowNotes({ flow, period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) }),
+    () => cashFlowNotes({ flow, period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10) }),
     [flow, period, txns, notes, incomplete, stopped, withoutTransactions, today]
   );
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);

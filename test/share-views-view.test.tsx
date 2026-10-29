@@ -153,7 +153,7 @@ describe('on the card of the one it is shared with', () => {
       'Holdings',
       'Budgets',
       'Goals',
-      'As of Oct 20',
+      'As of today',
       '$321,480.00',
       '1 account in EUR isn’t in this total',
       'Only the accounts whose balances are shared are listed.',
@@ -321,7 +321,7 @@ describe('a goal’s outlook, in words, never with the rate behind it', () => {
     expect(goal({ status: 'on_track', completion: '2027-03', beyond: false, date_passed: false })).toBe('On track for March 2027');
     expect(goal({ status: 'on_track', completion: '2027-05', beyond: false, date_passed: false }, { target_date: '2027-05-31' })).toBe('On track for May 2027');
     expect(goal({ status: 'behind', completion: '2028-01', beyond: false, date_passed: false }, { target_date: '2027-06-01' })).toBe('Behind its date, June 2027: at this pace, reached in January 2028');
-    expect(goal({ status: 'behind', completion: '2028-01', beyond: false, date_passed: true }, { target_date: '2026-06-01' })).toBe('Its date, Jun 1, 2026, has passed; at this pace, reached in January 2028');
+    expect(goal({ status: 'behind', completion: '2028-01', beyond: false, date_passed: true }, { target_date: '2026-06-01' })).toBe('Its date, Jun 1, has passed; at this pace, reached in January 2028');
     expect(goal({ status: 'on_track', completion: null, beyond: true, date_passed: false })).toBe('Not within 50 years at this pace');
     expect(goal({ status: 'no_recent_contributions', completion: null, beyond: false, date_passed: false })).toBe('Nothing has gone into it lately');
     expect(goal({ status: 'no_rate', completion: null, beyond: false, date_passed: false })).toBe('When it will be reached isn’t known yet');

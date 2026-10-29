@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { currencyName, errorOf, everyCurrency, useCurrencySettings, useRelabelCount, type CurrencySettingsView, type RelabelCount } from './currency-state';
 import { CORRECTION_KEEPS, RELABEL_KEEPS, relabelKeptText, relabelText, relabelUndoText, relabelledText } from './currency-text';
+import { Notice } from './TotalCaveats';
 
 type Props = {
   open: boolean;
@@ -366,7 +367,11 @@ export function CurrencyChoiceBody({
         </button>
       </div>
       {same && !fixing && <p className="panel-note">It is your home currency now.</p>}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <p className="panel-note">You can change it, or stop converting, at any time on the Currency card. Nya’s server never keeps a converted figure, so nothing has to be undone.</p>
     </div>
   );

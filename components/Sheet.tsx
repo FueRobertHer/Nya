@@ -3,9 +3,10 @@
 // A drawer: a sheet up from the bottom on phones, a panel from the right on
 // wider screens (styles in app/globals.css). Closes on the backdrop or the
 // close button; Escape goes back a level if there is one, else closes. While
-// open the page behind it doesn't scroll, and focus moves into it and back to
-// where it was when it closes (if that is still on the page; if not, to what
-// the control's owner named instead, focusInsteadOf).
+// open the page behind it doesn't scroll, focus moves into it, Tab and
+// Shift+Tab stay inside it, and focus goes back to where it was when it
+// closes (if that is still on the page; if not, to what the control's owner
+// named instead, focusInsteadOf).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -19,6 +20,111 @@ const CLOSE_MS = 220;
 // (Menu's focusInstead). Held weakly, so a control gone for good takes its
 // entry with it.
 const insteadOf = new WeakMap<Element, () => HTMLElement | null>();
+
+const CONTROLS = new Set(['INPUT', 'BUTTON', 'SELECT', 'TEXTAREA']);
+
+/** Whether the page draws it: not display: none (nor anything inside it). */
+const drawn = (el: Element) => window.getComputedStyle(el).display !== 'none';
+
+/** Whether Tab can land on the element: a link, an enabled control (none
+ *  in a disabled fieldset, whatever its tab stop), a summary, or anything
+ *  given a tab stop of its own; never one made invisible. */
+function tabbable(el: Element, offFieldset: boolean): boolean {
+  if (CONTROLS.has(el.tagName) && (offFieldset || el.hasAttribute('disabled'))) return false;
+  if (window.getComputedStyle(el).visibility === 'hidden') return false;
+  if (el.hasAttribute('tabindex')) return el.getAttribute('tabindex') !== '-1';
+  switch (el.tagName) {
+    case 'A':
+      return el.hasAttribute('href');
+    case 'INPUT':
+      return el.getAttribute('type') !== 'hidden';
+    case 'BUTTON':
+    case 'SELECT':
+    case 'TEXTAREA':
+      return true;
+    case 'SUMMARY':
+      return true;
+    default:
+      return false;
+  }
+}
+
+const isRadio = (el: Element) => el.tagName === 'INPUT' && el.getAttribute('type') === 'radio';
+const isChecked = (el: Element) => (el as HTMLInputElement).checked === true;
+
+/** The panel's controls in the order Tab stops on them, leaving out any
+ *  under a hidden, inert or undrawn part (a closed level), a closed details' body
+ *  (its summary stays), and all but one radio of a group: the checked one,
+ *  or the first while none is (a radio with no name is a group of its own). */
+function tabbables(panel: Element): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  const checkedGroups = new Set<string>();
+  const seenGroups = new Set<string>();
+  const walk = (n: Element, offFieldset: boolean, visit: (c: Element, off: boolean) => void) => {
+    const closed = n.tagName === 'DETAILS' && !n.hasAttribute('open');
+    for (const node of Array.from(n.childNodes)) {
+      if (node.nodeType !== 1) continue;
+      const c = node as Element;
+      if (c.hasAttribute('hidden') || c.hasAttribute('inert') || !drawn(c)) continue;
+      if (closed && c.tagName !== 'SUMMARY') continue;
+      const off = offFieldset || (c.tagName === 'FIELDSET' && c.hasAttribute('disabled'));
+      visit(c, off);
+      walk(c, off, visit);
+    }
+  };
+  walk(panel, false, (c) => {
+    const group = c.getAttribute('name');
+    if (group !== null && isRadio(c) && isChecked(c)) checkedGroups.add(group);
+  });
+  walk(panel, false, (c, off) => {
+    if (!tabbable(c, off)) return;
+    const group = c.getAttribute('name');
+    if (group !== null && isRadio(c)) {
+      if (seenGroups.has(group) || (checkedGroups.has(group) && !isChecked(c))) return;
+      seenGroups.add(group);
+    }
+    out.push(c as HTMLElement);
+  });
+  return out;
+}
+
+/** Keeps Tab inside the panel: from its last control to its first, and
+ *  Shift+Tab from its first (or the panel itself) to its last. Focus that has
+ *  left for the page behind comes back in. Focus in another dialog (a sheet
+ *  or the receipt viewer this one opened) is kept inside that dialog the same
+ *  way; a sheet's own listener that got there first has already done it. */
+function trapTab(e: KeyboardEvent, sheet: HTMLElement) {
+  if (e.defaultPrevented) return;
+  const at = document.activeElement as HTMLElement | null;
+  let panel = sheet;
+  if (at && !sheet.contains(at)) {
+    for (let n: Element | null = at; n; n = n.parentElement) {
+      if (n.getAttribute('role') === 'dialog') {
+        panel = n as HTMLElement;
+        break;
+      }
+    }
+  }
+  const items = tabbables(panel);
+  if (!at || !panel.contains(at)) {
+    e.preventDefault();
+    (items[0] ?? panel).focus();
+    return;
+  }
+  if (items.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (e.shiftKey && (at === first || at === panel)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && at === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 /** Focus goes to what `to` gives, then, when a sheet opened from `opener`
  *  closes after `opener` has left the page, rather than to nothing. */
@@ -69,7 +175,8 @@ export function Sheet({
   const escape = useRef(onClose);
   escape.current = onBack ?? onClose;
 
-  // Once it is on the page: lock the page behind, take focus, listen for Escape.
+  // Once it is on the page: lock the page behind, take focus, listen for
+  // Escape and Tab.
   const active = open && mounted;
   useEffect(() => {
     if (!active) return;
@@ -80,6 +187,7 @@ export function Sheet({
     panel.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') escape.current();
+      else if (e.key === 'Tab' && panel.current) trapTab(e, panel.current);
     };
     window.addEventListener('keydown', onKey);
     return () => {

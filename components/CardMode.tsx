@@ -32,7 +32,7 @@ import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/c
 import type { Tag } from '@/lib/tags';
 import { bankRows } from '@/lib/split-rows';
 import { currencyOf } from '@/lib/spending';
-import { formatMoney, signedMoney, spoken } from '@/lib/format';
+import { formatDay, formatMoney, signedMoney, spoken } from '@/lib/format';
 import { importedChangedNote } from '@/lib/history-import/view';
 import CategoryPicker from './CategoryPicker';
 import { Masked } from './HideAmounts';
@@ -42,6 +42,7 @@ import { swipeMove, swipeOffset, swipeRelease, swipeStart, type Point, type Swip
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, pickerOn, undoStep, withoutStep, withStep, type Cards, type Picker } from './card-mode-state';
 import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords, suggestionWords } from './review-text';
 import { shownName } from '@/lib/merchant-name';
+import { Notice } from './TotalCaveats';
 
 /** What undoes a card's step: the approval's request, or the recategorize's. */
 type StepUndo = Promise<ApprovalTicket | null> | Promise<CardUndo | null>;
@@ -113,7 +114,8 @@ export function CardCategoryPicker({
   );
 }
 
-const dayText = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+/** "Today", "Yesterday", or "Sat, Oct 24" (lib/format.ts formatDay). */
+const dayText = (iso: string) => formatDay(iso, { weekday: 'short' });
 const categoryText = (t: Pick<Txn, 'category' | 'category_name'>) => {
   const name = t.category_name !== undefined ? t.category_name : t.category;
   return name ? displayName(name) : 'No category';
@@ -492,7 +494,11 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
         </div>
       )}
 
-      {review.error && <div className="error card-mode-error">{review.error}</div>}
+      {review.error && (
+        <Notice level="critical" role="alert">
+          {review.error}
+        </Notice>
+      )}
       <button className="review-keys-toggle" aria-expanded={help} onClick={() => setHelp((h) => !h)}>
         Keyboard shortcuts
       </button>

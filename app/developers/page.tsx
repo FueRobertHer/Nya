@@ -310,6 +310,7 @@ export default function DevelopersPage() {
           <p>Every error has one shape, whatever went wrong, at any path under /api/v1, an endpoint or not:</p>
           <pre>{json({ error: { code: 'invalid_request', message: 'from is a date, YYYY-MM-DD.' } })}</pre>
           <table className="info-table">
+            <caption className="visually-hidden">Errors</caption>
             <thead>
               <tr>
                 <th scope="col">Status</th>
@@ -457,6 +458,7 @@ export default function DevelopersPage() {
                 <p>{op.summary}</p>
                 {args.length > 0 ? (
                   <table className="info-table">
+                    <caption className="visually-hidden">Arguments</caption>
                     <thead>
                       <tr>
                         <th scope="col">Parameter</th>
@@ -484,6 +486,7 @@ export default function DevelopersPage() {
                 <pre>{json(doc.example)}</pre>
                 <h4>Fields</h4>
                 <table className="info-table">
+                  <caption className="visually-hidden">Fields</caption>
                   <tbody>
                     {doc.fields.map(([path, meaning]) => (
                       <tr key={path}>
@@ -520,6 +523,7 @@ export default function DevelopersPage() {
                   </p>
                   {args.length > 0 ? (
                     <table className="info-table">
+                      <caption className="visually-hidden">Arguments</caption>
                       <thead>
                         <tr>
                           <th scope="col">{isBody ? 'Field' : 'Parameter'}</th>
@@ -552,6 +556,7 @@ export default function DevelopersPage() {
                   <pre>{json(doc.example)}</pre>
                   <h4>Fields</h4>
                   <table className="info-table">
+                    <caption className="visually-hidden">Fields</caption>
                     <tbody>
                       {doc.fields.map(([path, meaning]) => (
                         <tr key={path}>
@@ -619,6 +624,7 @@ export default function DevelopersPage() {
             The API tokens card in the app shows this configuration with your new token already in it, once, when you make it.
           </p>
           <table className="info-table">
+            <caption className="visually-hidden">Tools</caption>
             <thead>
               <tr>
                 <th scope="col">Tool</th>
@@ -654,6 +660,7 @@ export default function DevelopersPage() {
           {writes && (
             <>
               <table className="info-table">
+                <caption className="visually-hidden">Write tools</caption>
                 <thead>
                   <tr>
                     <th scope="col">Write tool</th>

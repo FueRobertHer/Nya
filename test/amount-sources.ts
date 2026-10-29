@@ -1702,7 +1702,8 @@ const hasAttr = (tag: string, name: string, value?: string) =>
  * Whether the text of `el` (an element whose text can't hold markup) is said
  * some other way: SVG text and a title in a chart drawn as an image (an svg
  * with role="img", and so with its own label, or one hidden from a screen
- * reader), and a select's option with an aria-label of its own (which
+ * reader) or read by the keys (role="slider", whose children are
+ * presentational too: said by its label and its value), and a select's option with an aria-label of its own (which
  * unspokenLabels holds to spoken()).
  */
 function saidElsewhere(f: ModuleFacts, el: Element): boolean {
@@ -1711,7 +1712,7 @@ function saidElsewhere(f: ModuleFacts, el: Element): boolean {
   let svg: Element | null = null;
   for (const e of f.jsx.elements) if (e.name === 'svg' && e.start < el.start && el.end <= e.end && (!svg || e.start > svg.start)) svg = e;
   const tag = svg ? openTag(f, svg) : '';
-  return !!svg && (hasAttr(tag, 'role', 'img') || hasAttr(tag, 'aria-hidden', 'true'));
+  return !!svg && (hasAttr(tag, 'role', 'img') || hasAttr(tag, 'role', 'slider') || hasAttr(tag, 'aria-hidden', 'true'));
 }
 
 /**

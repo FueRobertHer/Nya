@@ -229,18 +229,18 @@ describe('a budget’s sheet', () => {
     v.unmount();
   });
 
-  test('Remove asks first: Keep it goes back; Remove takes it out, and with its group gone focus goes to + Add budget', async () => {
+  test('Delete asks first: Keep it goes back; Delete takes it out, and with its group gone focus goes to + Add budget', async () => {
     const v = mountCard({ open: [FOOD] });
     await v.open('Groceries');
-    act(() => click(v.button('Remove…', v.dialog()!)!));
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Remove budget');
-    expect(v.dialog()!.textContent).toContain('Remove the budget for Groceries?');
+    act(() => click(v.button('Delete…', v.dialog()!)!));
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Delete budget');
+    expect(v.dialog()!.textContent).toContain('Delete the budget for Groceries?');
     // The safe answer has focus, so a stray Enter keeps the budget.
     expect(v.focused() === v.button('Keep it', v.dialog()!)).toBe(true);
     act(() => click(v.button('Keep it', v.dialog()!)!));
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Groceries');
-    act(() => click(v.button('Remove…', v.dialog()!)!));
-    await act(async () => click(v.button('Remove', v.dialog()!)!));
+    act(() => click(v.button('Delete…', v.dialog()!)!));
+    await act(async () => click(v.button('Delete', v.dialog()!)!));
     await settle();
     expect(v.saved).toEqual([{ categories: {}, groups: {} }]);
     expect(v.row('Food')).toBeNull();
@@ -252,7 +252,7 @@ describe('a budget’s sheet', () => {
   test('a budget that rolls over says, when removed, that its rollover ends with it', async () => {
     const v = mountCard({ open: [FOOD], rollover: settings({ [GROCERIES]: addMonths(NOW, -2) }), onRollover: async () => null, editLevel: 'remove', edit: { kind: 'category', id: GROCERIES } });
     await settle();
-    expect(v.dialog()!.textContent).toContain('Remove the budget for Groceries? Its rollover ends with it: adding it again starts without one.');
+    expect(v.dialog()!.textContent).toContain('Delete the budget for Groceries? Its rollover ends with it: adding it again starts without one.');
     v.unmount();
   });
 
@@ -260,13 +260,13 @@ describe('a budget’s sheet', () => {
     let answer = false;
     const v = mountCard({ open: [FOOD], ok: async () => answer, edit: { kind: 'category', id: GROCERIES }, editLevel: 'remove' });
     await settle();
-    await act(async () => click(v.button('Remove', v.dialog()!)!));
-    expect(v.dialog()!.getAttribute('aria-label')).toBe('Remove budget');
+    await act(async () => click(v.button('Delete', v.dialog()!)!));
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Delete budget');
     expect(v.notices()).toEqual([`Caution: ${REFUSED}`]);
     // Back in the list, as the store puts back what is stored.
     expect(v.row('Food')).not.toBeNull();
     answer = true;
-    await act(async () => click(v.button('Remove', v.dialog()!)!));
+    await act(async () => click(v.button('Delete', v.dialog()!)!));
     await settle();
     expect(v.dialog()).toBeNull();
     expect(v.saved).toHaveLength(2);
@@ -289,7 +289,7 @@ describe('a budget’s sheet', () => {
     const v = mountCard({ open: [FOOD] });
     await v.open('Groceries');
     act(() => type(v.field('Monthly budget for Groceries')!, '999'));
-    act(() => click(v.button('Remove…', v.dialog()!)!));
+    act(() => click(v.button('Delete…', v.dialog()!)!));
     act(() => click(v.button('Close', v.dialog()!)!));
     await settle(400);
     await v.open('Groceries');
@@ -315,8 +315,8 @@ describe('focus after a sheet closes', () => {
     const v = mountCard({ open: [FOOD], ok: () => new Promise<boolean>((r) => (finish = r)) });
     await v.open('Groceries');
     const before = v.row('Groceries')!;
-    act(() => click(v.button('Remove…', v.dialog()!)!));
-    act(() => click(v.button('Remove', v.dialog()!)!));
+    act(() => click(v.button('Delete…', v.dialog()!)!));
+    act(() => click(v.button('Delete', v.dialog()!)!));
     // Its group's last budget: the list shown while it saves has no Food.
     expect(v.row('Food')).toBeNull();
     await act(async () => finish(false));
@@ -501,8 +501,8 @@ describe('a budget on a category since deleted, and Add budget', () => {
     const d = v.dialog()!;
     expect(d.getAttribute('aria-label')).toBe('A category since deleted');
     expect(d.textContent).toContain(money(25));
-    expect(v.button('Remove budget', d)!.getAttribute('class')).toBe('btn danger');
-    await act(async () => click(v.button('Remove budget', d)!));
+    expect(v.button('Delete budget', d)!.getAttribute('class')).toBe('btn danger');
+    await act(async () => click(v.button('Delete budget', d)!));
     await settle();
     expect(v.saved).toEqual([{ categories: {}, groups: {} }]);
     expect(v.focused() === v.add()).toBe(true);
@@ -973,8 +973,8 @@ describe('a month with no budget: the empty state’s Add budget (the screen rev
     expect(v.first()).toBeNull();
     act(() => click(v.row('Food')!));
     await v.open('Groceries');
-    act(() => click(v.button('Remove…', v.dialog()!)!));
-    await act(async () => click(v.button('Remove', v.dialog()!)!));
+    act(() => click(v.button('Delete…', v.dialog()!)!));
+    await act(async () => click(v.button('Delete', v.dialog()!)!));
     await settle(400);
     expect(v.dialog()).toBeNull();
     expect(v.add()).toBeNull();

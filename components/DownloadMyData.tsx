@@ -37,6 +37,7 @@ import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { localDate } from '@/lib/local-date';
 import { FORMAT_LABELS, OPEN_DOWNLOAD_PATH, ofxFilename, type DownloadFormat } from '@/lib/download-options';
 import { OfxAccountPicker, PassphraseFields, chosenAccount, passphraseHint, type DownloadAccount } from './DownloadOptions';
+import { Notice } from './TotalCaveats';
 
 export type Format = DownloadFormat;
 
@@ -416,41 +417,47 @@ export function DownloadMyDataView({
         {busy ? 'Preparing…' : 'Download'}
       </button>
 
-      <div aria-live="polite">
-        {phase.kind === 'confirming' && <p className="panel-note">Confirm it’s you in the window that opened.</p>}
-        {phase.kind === 'preparing' && (
-          <p className="panel-note">Preparing your file. Everything is read and decrypted first, so this can take a few seconds.</p>
-        )}
-        {phase.kind === 'receiving' && (
-          <p className="panel-note">
-            Downloading… {formatBytes(phase.bytes)} of {formatBytes(phase.total)}
-          </p>
-        )}
-        {phase.kind === 'done' && (
-          <>
-            <p className="status-note">
-              Saved {phase.filename} ({formatBytes(phase.bytes)}).
+      <div className="stack tight">
+        <div aria-live="polite">
+          {phase.kind === 'confirming' && <p className="panel-note">Confirm it’s you in the window that opened.</p>}
+          {phase.kind === 'preparing' && (
+            <p className="panel-note">Preparing your file. Everything is read and decrypted first, so this can take a few seconds.</p>
+          )}
+          {phase.kind === 'receiving' && (
+            <p className="panel-note">
+              Downloading… {formatBytes(phase.bytes)} of {formatBytes(phase.total)}
             </p>
-            {phase.protected && (
-              <p className="panel-note">
-                It is protected with your passphrase. Open it on <a href={OPEN_DOWNLOAD_PATH}>Open a protected download</a>{' '}
-                or with the age app.
+          )}
+          {phase.kind === 'done' && (
+            <>
+              <p className="status-note">
+                Saved {phase.filename} ({formatBytes(phase.bytes)}).
               </p>
-            )}
-            {phase.incomplete.length > 0 && (
-              <p className="stale-note">
-                This file is incomplete: some of what Nya keeps for you could not be read, so it isn’t in the file. What’s
-                missing is below. Nothing was changed.
-              </p>
-            )}
-            {phase.notes.map((n, i) => (
-              <p key={i} className="stale-note">
-                {n}
-              </p>
-            ))}
-          </>
+              {phase.protected && (
+                <p className="panel-note">
+                  It is protected with your passphrase. Open it on <a href={OPEN_DOWNLOAD_PATH}>Open a protected download</a>{' '}
+                  or with the age app.
+                </p>
+              )}
+              {phase.incomplete.length > 0 && (
+                <p className="stale-note">
+                  This file is incomplete: some of what Nya keeps for you could not be read, so it isn’t in the file. What’s
+                  missing is below. Nothing was changed.
+                </p>
+              )}
+              {phase.notes.map((n, i) => (
+                <p key={i} className="stale-note">
+                  {n}
+                </p>
+              ))}
+            </>
+          )}
+        </div>
+        {phase.kind === 'error' && (
+          <Notice level="critical" role="alert">
+            {phase.message}
+          </Notice>
         )}
-        {phase.kind === 'error' && <div className="error">{phase.message}</div>}
       </div>
 
       <p className="panel-note">

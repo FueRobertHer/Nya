@@ -30,9 +30,9 @@ describe('the cents of an amount', () => {
     // code after them for one it refuses, a "$" by hand for none.
     const figures = (n: number) => Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const expected = (n: number, currency: string | null | undefined) => {
-      if (!currency) return `${n < 0 ? '-$' : '$'}${figures(n)}`;
-      if (currency === 'DOGE' || currency === 'USDC') return `${n < 0 ? '-' : ''}${figures(n)} ${currency}`;
-      return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n);
+      if (!currency) return `${n < 0 ? '−$' : '$'}${figures(n)}`;
+      if (currency === 'DOGE' || currency === 'USDC') return `${n < 0 ? '\u2212' : ''}${figures(n)} ${currency}`;
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n).replace('-', '\u2212');
     };
     for (const currency of ['USD', 'EUR', 'JPY', 'BHD', null, undefined, 'DOGE', 'USDC']) {
       for (const n of [0, -0, 0.004, -0.004, 0.5, -1234.5, 125000.5, -154328.3]) {

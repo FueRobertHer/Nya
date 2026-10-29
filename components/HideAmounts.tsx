@@ -28,7 +28,7 @@ export function HideAmountsToggle() {
       aria-label="Hide amounts"
       title="Hide amounts"
     >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d={hidden ? EYE_OFF : EYE} />
       </svg>
     </button>
@@ -36,7 +36,7 @@ export function HideAmountsToggle() {
 }
 
 /**
- * Text that may hold hidden amounts, drawn as it is ("$••• of $•••") and
+ * Text that may hold hidden amounts, drawn as it is ("$•••• of $••••") and
  * given to a screen reader with each one said as "hidden" ("hidden of
  * hidden"), never as a row of bullets. Text without one is drawn alone.
  */

@@ -1,10 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CsvMapping, PastImports, PreviewView, countsWith, kindsText, undoText, type Conflict, type ImportSummary, type Picked, type Preview, type UndoPlan } from '@/components/ImportSheet';
 import { decodeFile } from '@/lib/import/text';
 import { readImport, type ImportOptions } from '@/lib/import/read';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // The import sheet's views (components/ImportSheet.tsx), rendered as the
 // sheet renders them: what the preview says before Import, the mapping step
@@ -95,7 +100,7 @@ describe('the preview', () => {
     // The rows as the Activity tab shows amounts: money in signed plus.
     expect(t).toContain('ACME CORP PAYROLL');
     expect(t).toContain('+$2,450.00');
-    expect(t).toContain('-$4.50');
+    expect(t).toContain('−$4.50');
     expect(t).toContain('AT&T *WIRELESS');
     expect(t).toContain('listed twice in the file');
     expect(importButton(html)[1]).toBe('Import 8 transactions');
@@ -106,11 +111,11 @@ describe('the preview', () => {
 
   test('a past statement’s balance is shown, never offered; today’s is offered as a choice, unticked', () => {
     const past = text(preview());
-    expect(past).toContain('The statement’s balance on Sep 30, 2026 was $1,946.05.');
+    expect(past).toContain('The statement’s balance on Sep 30 was $1,946.05.');
     expect(past).toContain('only when it is today’s or yesterday’s');
     expect(past).not.toContain('Also set');
     const today = preview({ balance: { amount: 1946.05, as_of: '2026-10-09', from: 1000, refusal: null } });
-    expect(text(today)).toContain('Also set Checking’s balance to $1,946.05, the statement’s balance on Oct 9, 2026 (now $1,000.00)');
+    expect(text(today)).toContain('Also set Checking’s balance to $1,946.05, the statement’s balance on Oct 9 (now $1,000.00)');
     expect(today).not.toMatch(/type="checkbox"[^>]*checked=""[^>]*\/>\s*<span>Also set/);
     expect(text(today)).toContain('Importing doesn’t change Checking’s balance unless you tick the box.');
   });
@@ -144,7 +149,7 @@ describe('the mapping step of a CSV file', () => {
     const t = text(html);
     expect(t).toContain('How the first rows read');
     expect(t).toContain('AMAZON MKTPL*2X3Y4, AMZN.COM/BILL WA');
-    expect(t).toContain('-$23.99');
+    expect(t).toContain('−$23.99');
     expect(t).toContain('CAPITAL ONE MOBILE PYMT');
     expect(t).toContain('+$500.00');
     // Every row is counted a moment after the taps stop, never once per tap.
@@ -190,7 +195,7 @@ describe('the list of past imports', () => {
     const t = list([item]);
     expect(t).toContain('Past imports into Checking');
     expect(t).toContain('sept.ofx');
-    expect(t).toContain('8 transactions added · Sep 1, 2026 to Sep 30, 2026');
+    expect(t).toContain('8 transactions added · Sep 1 to Sep 30');
     expect(t).toContain('Undo');
   });
 
@@ -263,7 +268,7 @@ describe('rows whose bank id is on another transaction here', () => {
     const t = text(html);
     expect(t).toContain('Bank ids already used in Checking');
     expect(t).toContain('This row has the bank’s id (FITID) of a transaction already in Checking, but doesn’t match it.');
-    expect(t).toContain('In the file (line 9) BISTRO -$60.00 Oct 3, 2026 Already in Checking BISTRO -$50.00 Oct 1, 2026 · the amount and date differ · choose one');
+    expect(t).toContain('In the file (line 9) BISTRO −$60.00 Oct 3 Already in Checking BISTRO −$50.00 Oct 1 · the amount and date differ · choose one');
     expect(t).toContain('1 bank id to decide');
     expect(t).toContain('Choose what to do with the transaction above whose bank id is already here, then import.');
     expect(html).toMatch(/aria-pressed="false"[^>]*>Import as new</);

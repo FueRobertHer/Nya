@@ -389,7 +389,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 - **The cash forecast's chart** (`components/ForecastChart.tsx`) is drawn at its width (`useDrawnWidth`), on its card and in What if I buy…, in the shape it had (150 to 340), with 2px more over its top tick and 4px more under its baseline for the 12px figures and dates, as Income vs spend took in 5d. Its ticks, "Now" and its last day are 12px at every width.
 - **The payoff plan's chart** (`PayoffChart` in `components/DebtPayoff.tsx`) the same, in its shape (140 to 340).
 - **Fewer gridlines where a chart is short.** At 12px on a phone's plot (71px tall on the forecast's card at 320px), five to seven ticks drew their figures 10 to 17px apart, a gridline cutting into the figure over the one below. Both charts now widen the step through 1, 2 and 5 until gridlines are at least 20px apart (`MIN_TICK_GAP`): two or three on a phone, and on a wide card what they drew.
-- **The calendar's figures, weekday letters and legend are 12px.** A cell's figure keeps its sign and drops the currency, which the legend names once on a line of its own ("Day figures in USD, rounded"): whole units under a thousand ("-143"), then two significant figures and K, M, B or T ("+3.5K", "+13K", "+890K", "+1.3M"), in the viewer's digits. With amounts hidden it is the sign and the mask ("+•••"), the sign taken before rounding, so a few cents don't read as "•••" beside the others' "+•••". Each cell's label still says its amounts in full, with the currency, and the day's list has the cents.
+- **The calendar's figures, weekday letters and legend are 12px.** A cell's figure keeps its sign and drops the currency, which the legend names once on a line of its own ("Day figures in USD, rounded"): whole units under a thousand ("−143"), then two significant figures and K, M, B or T ("+3.5K", "+13K", "+890K", "+1.3M"), in the viewer's digits. With amounts hidden it is the sign and the mask ("+•••"), the sign taken before rounding, so a few cents don't read as "•••" beside the others' "+•••". Each cell's label still says its amounts in full, with the currency, and the day's list has the cents.
 - **The calendar's grid runs to the card's edges**, as the day's list's rows do, with no padding at a cell's sides: a cell is 39px wide at 320px (it was 34px) and 44px or more from a 360px phone. Its focus ring is drawn inside, so the outer columns' ring stays on the card.
 - **The source scan** (`test/amount-sources.ts`) reads a number written with significant digits as an amount, as it reads one written with fraction digits or compact notation.
 
@@ -397,7 +397,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 
 - **No currency in the calendar's cells, and a wider grid** (decided 2026-10-25). At 12px "+$3.5K" takes 37px, "-$12.5K" 40px and "+CA$3.5K" 52px, where a cell had 30px inside its padding. Keeping the symbol on the wider grid fits a 320px phone only for dollars, euros, pounds and yen under a hundred thousand, and never a code such as CA$; dots alone on phones would show figures only from about 430px.
 - **K and M, not Intl's compact notation**: in other locales it doesn't shorten thousands or writes a word ("13.000" in German, "13 mil" in Spanish), so a figure under a million would fit only in English. The app's words are English; the digits and the decimal sign are the viewer's.
-- **Two significant figures from a thousand**, rounded before the suffix is chosen, so 999,999 is "1M" and the widest figures under a million are three digits and K, as "+890K" (36px). "-$12.5K" becomes "-13K"; the day's list has the cents.
+- **Two significant figures from a thousand**, rounded before the suffix is chosen, so 999,999 is "1M" and the widest figures under a million are three digits and K, as "+890K" (36px). "-$12.5K" becomes "−13K"; the day's list has the cents.
 
 **Kept narrow in 6a4:**
 
@@ -826,9 +826,9 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 
 **Kept narrow:**
 
-- The line's draw-in on first load is left for a change of its own: `clip-path` on an SVG group differs between engines, and only Chromium could be checked.
+- The line's draw-in on first load is left for a change of its own: `clip-path` on an SVG group differs between engines, and only Chromium could be checked. A dash-offset draw-in (`stroke-dasharray` and `stroke-dashoffset`) was considered since and set aside too: on an estimated stretch it replaces the 5 4 dashes while it draws, or slides them along the line, so the estimate would not read as one until it ends.
 - A figure past about 280px at 320px (an IDR total over about 10 billion) overflows its line by a few pixels on the narrowest phones; at 40px it overflowed more before.
-- Activity's month figure isn't a hero yet; no keyboard scrubbing (the notes list and the table carry it).
+- Activity's month figure isn't a hero yet. Keyboard scrubbing came later: the plot is a slider in the tab order (`role="slider"`, named by its summary), the arrows move the figure a day at a time, Home and End go to the ends, Escape or leaving the plot brings back today, and its value (`aria-valuetext`) follows the day once the keys rest for half a second, so a screen reader says the new figure once movement stops. Every net worth chart takes it; away from the hero it moves the readout, as a pointer does.
 - The account and shared charts keep their ticks and fixed viewBox.
 - The plot starts at the screen's edge, where a phone's own back gesture takes a swipe first; `touch-action` can't stop that.
 
@@ -928,7 +928,51 @@ A review of the light theme on 2026-10-28 (the design system artifact's audit.md
 **Kept narrow:**
 
 - The blue tag suggestion (`.tag-suggestion.chosen`) has no edge or check and now sits closer to a selected chip; it is left for when it is next touched.
-- The hero draw-in stays deferred.
+- The hero draw-in stays deferred (see step 5's Kept narrow: a clip differs between engines, and a dash offset breaks the estimated stretches' dashes while it draws).
+
+## After the design system update (2026-10-29)
+
+The design system artifact was checked rule by rule against the app, its tokens, the brand book's sections and each component's notes and reference styles. The tokens already matched; the rest was brought in line, or recorded here where the repo decided otherwise later. One PR, branch `fue/clever-thompson-j55oms`.
+
+**Built:**
+
+- **States:** a primary keeps its fill on hover; a secondary deepens to `--border-strong` and a ghost raises to `--elevated`; anything disabled or held with `aria-disabled` is at 60%; the focus ring is drawn inside tabs and a switch's items, and the invite link draws it round its box.
+- **Sheet:** Tab and Shift+Tab stay inside it (`components/Sheet.tsx`); its edge is `--border-strong` on `--surface`; a wrapped title keeps the close button by its first line; the footer's buttons sit at its end; it and the tab bar take the `--z-*` layers.
+- **Menu** edged in `--border-input`; **view switch** over a `--border-subtle` rule, its current item bold.
+- **Notices:** every notice starts with its level for a screen reader (`LevelWord`, now with "Done:"); the Plan's two information notices are `Notice`s with their icon; a critical error after an action is `role="alert"`.
+- **Meters** are `role="meter"` with their values, on `--r-pill`; a card's credit meter is red only past its limit (caution from half).
+- **Fields:** an invalid field is edged in `--neg` and says what to do under it (`FieldError`, tied with `aria-describedby`): the shared-expense and IOU amounts, Planned's sheet, the forecast's two sheets, the runway and Debt payoff. The typing errors that were critical notices keep their words. Clerk's fields take `--border-input`, and its primary keeps its fill on hover.
+- **Errors:** the 150 `.error` lines are gone, each in its words, masked where it was. What failed (a save, a load, a delete) is a critical `Notice` with `role="alert"`; a value typed wrong is a `FieldError` under its field, which it describes and marks `aria-invalid`: a goal's fields, a manual transaction's date, the Plan's five forms and a fund split (a save that failed there stays a notice), and the categories marked for taxes. One that sat in a live region (a download's, a restore's, the receipts', an attachment's, the rule preview's, the unsubscribe page's) is out of it, so it is said once. A stack spaces each, or the container that spaces its other parts (the weekly summary, a new API token, the review bar, Card Mode, the Plan's failed save between its cards). The `.error`, `.payoff-field-error` and `.card-mode-error` rules are deleted.
+- **Type** in rem, so it follows the person's text size; the 14px sizes moved to the scale (13 or 15px); the hero's cents are half the figure at every width, the figure tracked -0.025em; the change line's change is the bold, colored part.
+- **Color:** a holding's loss in its table is in the text color with its minus; quieter amounts are `--text-2`, never `--text-3`; radii and motion on their tokens; the stat strip's one row from 720px, the one breakpoint.
+- **Money and dates:** the true minus sign (U+2212) on screen, ASCII kept where text is parsed or downloaded (the API, the MCP server, emails, OFX); four bullets for a hidden figure; full amounts in tables, labels and summaries (axis ticks and the calendar's cells keep K and M); "Today" and "Yesterday" in Activity's day headings and the account sheet's dates.
+- **Tables** carry `scope` on every header and a caption (visually hidden where a heading says it); Income vs spend and the runway have Show as a table.
+- **Net worth chart** read by the keys: it is a slider, arrows a point at a time, Home and End, Escape or leaving it back to today, the value said once the keys rest.
+- **The other charts read by the keys:** Income vs spend, the cash forecast, the payoff plan, the plan's fan, the runway and the allocation's history take the net worth chart's keys through one hook (`useChartKeys`, `components/chart-keys.ts`), driving the state a finger drives, so their readout moves; each rests where its readout does (the latest, now, the lowest, the month the plan is done), and Escape with nothing moved is the page's. `test/chart-keys-view.test.tsx`.
+- **Skeletons for the spinners left in empty cards:** an investment account's activity, Settings' Defaults, Sharing's "What they see", the Scenarios sheet's rows (two spinners), the accountant's report, year over year, the runway, and Delete my account, each on its real classes with one status (`components/LoadingSkeletons.tsx`). An account's history keeps its spinner in the chart's box, and the waits whose content can't be known yet (a connection's sheet before it knows its step, reading a migration's file) keep theirs.
+- **Words:** a budget and an IOU are deleted, a connection that can't be repaired is disconnected.
+- **Header icons** at stroke 2, as everything at 20px is; the brand's name at `--fs-5`.
+- **Gold is never see-through:** a group's category bars are the solid wash with a gold edge, not gold at 55%.
+- **Signs:** the hero's change carries its sign as well as its arrow ("▲ +$10.00 (+1.0%)"); percentages take the true minus too.
+- **Dates:** every day read on screen goes through `formatDay`, or `formatInstantDay` for an instant's local day (`lib/format.ts`): "Today" and "Yesterday", "Aug 7" this year and "Aug 7, 2025" outside it, lower case mid sentence and never "on today" (`onDay`). The days that always carried a year (timeline notes, imports, restores, connections, sharing, the Plan's notes) and the instants said through `instantDay`, which never said today, moved to it; Upcoming's day bars, the calendar's day, Card Mode and the transaction sheet keep their weekday. Month names, times, chart axes, the API, MCP, emails, downloads, printed report dates and UTC days stay as they were.
+- **Offline:** a caution on Home's total while the device is offline, "Offline. Showing balances from 9:41 AM.", with the time of the numbers shown (`components/online.ts`, through the hero's caveats), gone once it is back online. Disabling the actions that need the network waits for a single place to do it: there is none yet.
+
+**The calls made after it** (the second pass, for consistency and polish without taking anything away):
+
+- **Words:** Delete is for good (a damaged record, a token, a change, a target, a disconnected bank's accounts you chose not to keep); Remove takes an item out of what you are editing (a split's part, a rule's condition, a change in a scenario, a person from sharing); a button reading Close only dismisses. The vocabulary in information-architecture.md has both rows.
+- **Card padding** is `--sp-4` on a phone, `--sp-5` from 720px, through one `--inset` that the rows running to a card's edges take as their margin and padding, so they line up at either width (a sheet's is `--sp-5`).
+- **The hero's line draws in once a page load** (`.draw-in`): a clip of the outer plot, which every engine draws alike, so the estimated stretches keep their dashes. It never replays on a new tab or range, and under reduced motion it is simply there.
+- **Tags to pick are chips** in a `.chip-row`, a picked one with its edge and check; every select draws its chevron in `--text-2` from CSS, so it follows the theme; Clerk's fields take `--border-input` and its primary keeps its fill on hover.
+- **A converted error keeps its 12px** above it where its parent isn't a stack (`:where(.notice[role="alert"]…)`), and the caveats a list shows as it loads (Activity's notes, an unreadable scenario) are read in place, not announced.
+- **Same-cause critical notes** were already one note per cause that names each institution and counts the accounts; the artifact now says so, rather than "a count".
+- **Clerk's `colorPrimary` stays `--accent`** for its links, with `--on-accent-fill` on it (9.80:1, 8.89:1) and `--accent-fill` on its button; the artifact now says so.
+
+**Taken by the artifact** (the repo had decided these after it was written): Activity has no hero; the month stepper's two-line grid and its 16px chevron; the hatched caution meter, budgets amber past their limit; no blur under a sheet; two lines on one chart told apart by dash; an empty state's heading level; stat figures sized by their cell; 32px logo tiles; the compact switch's 12px labels; the mask keeping its sign and currency; Clerk's profile in its own window; the shadow's light color; abbreviations on axis ticks, the calendar's cells and the cash flow chart's node labels.
+
+**Kept narrow:**
+
+- The cash flow chart keeps its see-through ribbons (each node's bar carries it at full strength, as the light theme check decided) and its node labels in K (laid out for a short figure; the table under it has every amount in full).
+- Still to move, each its own change: disabling the actions that need the network while offline, with that as their hint (the app has no one place for it yet; each action says its own error meanwhile).
 
 ## Left from the reviews
 

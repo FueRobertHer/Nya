@@ -360,7 +360,8 @@ export function installDom(): { document: FakeDocument; uninstall: () => void } 
       removeItem: (k: string) => store.delete(k),
     },
     location: { href: 'https://nya.test/', origin: 'https://nya.test' },
-    getComputedStyle: () => styleObject(),
+    // An element's own inline style stands for its computed one.
+    getComputedStyle: (el?: { style?: Record<string, unknown> }) => el?.style ?? styleObject(),
     scrollTo: () => {},
   });
   document.defaultView = win;

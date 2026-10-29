@@ -108,7 +108,7 @@ describe('Settings > Sharing', () => {
     expect(all(host, (e) => e.tagName === 'BUTTON' && e.getAttribute('class') === 'list-row')).toHaveLength(0);
     expect(dom.document.activeElement.getAttribute('id')).toBe('sharing-people-title');
     const status = all(host, (e) => e.getAttribute('role') === 'status')[0];
-    expect(status.textContent).toBe('Removed.');
+    expect(status.textContent).toBe('Done: Removed.');
     expect(host.textContent).toContain('No one yet.');
 
     // Unblocked: the row is gone with them, so focus goes to the Blocked
@@ -119,7 +119,7 @@ describe('Settings > Sharing', () => {
     await settle(20);
     expect(unblock()).toHaveLength(1);
     expect(dom.document.activeElement.getAttribute('id')).toBe('sharing-blocked-title');
-    expect(status.textContent).toBe('Unblocked.');
+    expect(status.textContent).toBe('Done: Unblocked.');
     unblock()[0].focus();
     act(() => click(unblock()[0]));
     await settle(20);

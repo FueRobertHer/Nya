@@ -44,7 +44,7 @@ import type { ForecastInput, Forecasting } from './ForecastCard';
 import { forecastNoteItems, type ForecastNote, type ForecastNoteInput, type ForecastNoteKind, type NoteDays } from '@/lib/forecast';
 import { refusedNames, unallowedNames, NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
-import { instantDay } from '@/lib/local-date';
+import { formatInstantDay } from '@/lib/format';
 
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
@@ -105,8 +105,8 @@ export type UpcomingStates = { failed: boolean; loading: boolean; plannedDrawn: 
 
 /** How the notes name a day, on the viewer's calendar. */
 const DAYS: NoteDays = {
-  snapshot: (date, at) => (at ? (instantDay(at) ?? fmtDay(date)) : fmtDay(date)),
-  instant: (iso) => instantDay(iso) ?? iso.slice(0, 10),
+  snapshot: (date, at) => (at ? (formatInstantDay(at, { sentence: true }) ?? fmtDay(date)) : fmtDay(date)),
+  instant: (iso) => formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10),
   day: (date) => fmtDay(date),
 };
 

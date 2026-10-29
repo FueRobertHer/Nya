@@ -46,7 +46,11 @@ function harness(host: FakeElement) {
     within.findAll((e) => e.tagName === 'BUTTON' && (e.textContent.trim() === label || e.getAttribute('aria-label') === label))[0] ?? null;
   /** The sheet on the page (not one sliding out). */
   const dialog = () => all((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0] ?? null;
-  const notices = (within: FakeElement | null = dialog()) => within?.findAll((e) => cls(e)[0] === 'notice' && e.tagName === 'DIV').map((e) => `${cls(e)[1]}: ${e.textContent}`) ?? [];
+  /** The notices, and a field's error (FieldError, "field: ..."), in order. */
+  const notices = (within: FakeElement | null = dialog()) =>
+    within
+      ?.findAll((e) => (cls(e)[0] === 'notice' && e.tagName === 'DIV') || cls(e)[0] === 'field-error')
+      .map((e) => `${cls(e)[0] === 'field-error' ? 'field' : cls(e)[1]}: ${e.textContent}`) ?? [];
   const warnRow = () => all((e) => (e.tagName === 'BUTTON' || e.tagName === 'DIV') && cls(e).includes('list-row') && e.textContent.startsWith('Warns below'))[0] ?? null;
   const warnTitle = () => warnRow()?.findAll((e) => cls(e).includes('list-row-title'))[0]?.textContent ?? null;
   const warnSub = () => warnRow()?.findAll((e) => cls(e).includes('list-row-sub'))[0]?.textContent ?? null;
@@ -229,10 +233,10 @@ describe('the what-if sheet', () => {
     expect(v.dialog()!.getAttribute('aria-label')).toBe('What if I buy…');
     expect(v.dialog()!.textContent).toContain('One purchase, on one day, added to the forecast. Nothing is saved.');
     act(() => type(v.field('Amount')!, 'lots'));
-    expect(v.notices()).toEqual(['critical: Critical: Enter an amount, like 250 or 1,299.99.']);
+    expect(v.notices()).toEqual(['field: Enter an amount, like 250 or 1,299.99.']);
     act(() => type(v.field('Amount')!, '350'));
     act(() => type(v.field('On')!, '2026-12-01'));
-    expect(v.notices()).toEqual(['critical: Critical: Pick a day from today to Nov 8, the end of this 30-day forecast.']);
+    expect(v.notices()).toEqual(['field: Pick a day from today to Nov 8, the end of this 30-day forecast.']);
     // Below the warning with it, not without it: a caution.
     act(() => type(v.field('On')!, '2026-10-10'));
     expect(v.dialog()!.textContent).toContain('Expected lowest $50.00 around Oct 15, $350.00 lower than $400.00 without it.');
@@ -372,9 +376,9 @@ describe('the warning’s sheet, through the store as the dashboard wires it', (
     expect(v.focused() === v.warnRow()).toBe(true);
     await v.open();
     expect(v.field('Warn below')!.value).toBe('100');
-    // Not typed as an amount: said, critical, and Save is off.
+    // Not typed as an amount: said under the field, and Save is off.
     act(() => type(v.field('Warn below')!, 'abc'));
-    expect(v.notices()).toEqual(['critical: Critical: Enter an amount, like 250 or 1,299.99.']);
+    expect(v.notices()).toEqual(['field: Enter an amount, like 250 or 1,299.99.']);
     expect(v.button('Save', v.dialog()!)!.hasAttribute('disabled')).toBe(true);
     // Blank is below zero only.
     act(() => type(v.field('Warn below')!, ''));

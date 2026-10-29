@@ -125,11 +125,11 @@ describe('API tokens, on screen', () => {
     expect(view({ list: ready(full.slice(1)), label: 'Claude' })).toContain('Make a token');
   });
 
-  test('a record that can’t be read: it doesn’t work, and it can be removed; one from another version is only named', () => {
+  test('a record that can’t be read: it doesn’t work, and it can be deleted; one from another version is only named', () => {
     const html = view({ list: ready([], { unreadable: ['00000000000000aa'], unrecognised: ['00000000000000bb'] }) });
     const t = text(html);
     expect(t).toContain('A token’s record couldn’t be read, so that token doesn’t work.');
-    expect(html).toContain('Remove it');
+    expect(html).toContain('Delete it');
     expect(t).toContain('A token was saved by another version of Nya, which this one can’t read, so it doesn’t work here. Nothing was changed.');
     expect(t).not.toContain('No tokens yet.');
     expect(text(view({ list: ready([], { unrecognised: ['a', 'b'] }) }))).toContain('2 tokens were saved by another version of Nya');
@@ -175,11 +175,11 @@ describe('revoking, asked first', () => {
     expect(sheet()).toMatch(/<button class="danger"[^>]*>Revoke<\/button>/);
   });
 
-  test('a record that can’t be read is removed, not revoked', () => {
+  test('a record that can’t be read is deleted, not revoked', () => {
     const t = text(sheet({ revoking: { id: '00000000000000aa', label: 'the token that can’t be read', unreadable: true } }));
-    expect(t).toContain('Remove the token?');
+    expect(t).toContain('Delete the token?');
     expect(t).toContain('Its record can’t be read, so it doesn’t work now.');
-    expect(t).toContain('Remove');
+    expect(t).toContain('Delete');
   });
 
   test('while it works, both buttons wait; a failure is shown', () => {

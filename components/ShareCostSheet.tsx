@@ -9,11 +9,12 @@
 // stops sharing it (after asking). Nothing is sent to anyone: this keeps the
 // list, and the card offers to ask them for it.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
@@ -23,13 +24,14 @@ import { partUnits } from './SplitSheet';
 import { splitUnits } from './shared-expenses-text';
 import { shownName } from '@/lib/merchant-name';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
 type Mode = 'half' | 'even' | 'amount';
 type Pick = { person: string; amount: string };
 
-/** "Oct 5": a transaction's day as the list shows it. */
-function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+/** "on Oct 5", "today": a transaction's day mid sentence. */
+function onShownDay(iso: string): string {
+  return onDay(formatDay(iso, { sentence: true }));
 }
 
 /** What can be shared of a transaction: the transaction itself, or each part
@@ -59,6 +61,7 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   const card = shared.card;
   const targets = useMemo(() => (t ? shareTargets(t) : []), [t]);
   const [targetKey, setTargetKey] = useState<string | null>(null);
+  const errorId = useId();
   const [picks, setPicks] = useState<Pick[]>([]);
   const [mode, setMode] = useState<Mode>('half');
   const [what, setWhat] = useState('');
@@ -171,7 +174,7 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   return (
     <Sheet open title={stored ? 'Who owes what' : 'Share the cost'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {shownName(t)}: <Masked>{formatMoney(target.amount, currency)}</Masked> on {shownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
+        {shownName(t)}: <Masked>{formatMoney(target.amount, currency)}</Masked> {onShownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
         budgets and reports on this day, and theirs is what they owe you. Nya never asks them for it on its own.
       </p>
       {targets.length > 1 && (
@@ -214,10 +217,14 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
                     value={auto ? (auto[at] !== undefined ? fieldAmount(auto[at] / scale, places) : '') : picks[at].amount}
                     onChange={(e) => type(p.id, e.target.value)}
                     placeholder={zeroExample(places)}
-                    aria-invalid={units[at] === null}
+                    aria-invalid={!auto && picks[at].amount.trim() !== '' && units[at] === null}
+                    aria-describedby={!auto && picks[at].amount.trim() !== '' && units[at] === null ? `${errorId}-${p.id}` : undefined}
                     disabled={saving}
                   />
                 </label>
+              )}
+              {at >= 0 && !auto && picks[at].amount.trim() !== '' && units[at] === null && (
+                <FieldError id={`${errorId}-${p.id}`}>Enter an amount, like {amountExample(places)}</FieldError>
               )}
             </div>
           );
@@ -262,14 +269,16 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
         What it was for
         <input className="text-input" value={what} maxLength={WHAT_MAX} onChange={(e) => setWhat(e.target.value)} disabled={saving} />
       </label>
-      <p className={`split-left${yours >= 0 && picks.length > 0 ? ' done' : ''}`} role="status">
-        <Masked>{yours >= 0 ? `Your part: ${money(yours)}` : `The parts are ${money(-yours)} more than it`}</Masked>
-      </p>
-      {error && (
-        <div className="error">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
-      )}
+      <div className="stack">
+        <p className={`split-left${yours >= 0 && picks.length > 0 ? ' done' : ''}`} role="status">
+          <Masked>{yours >= 0 ? `Your part: ${money(yours)}` : `The parts are ${money(-yours)} more than it`}</Masked>
+        </p>
+        {error && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={() => void save()} disabled={!ready || saving}>
           {saving ? 'Saving…' : 'Save'}

@@ -12,8 +12,9 @@
 // so the list is every kind there is, not only the ones in use.
 
 import { useEffect, useState } from 'react';
-import { plainNumber } from '@/lib/format';
+import { formatInstantDay, onDay, plainNumber } from '@/lib/format';
 import { PageHeader } from './PageHeader';
+import { Notice } from './TotalCaveats';
 
 type Encryption =
   | { kind: 'plain' }
@@ -56,7 +57,8 @@ export function sizeText(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** The local day an instant fell on, mid sentence: "today", "Oct 5". */
+const day = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 /** How many of a kind there are, and their size, or why not. */
@@ -90,7 +92,7 @@ export function encryptionText(r: InventoryRow): string {
 export function keyText(key: Inventory['key']): string {
   if (key === null) return 'Which key your account’s encrypted values are under couldn’t be read just now.';
   if (!key.own) return 'Your account’s encrypted values are under keys this copy of Nya shares between accounts: your account doesn’t have a key of its own.';
-  const made = key.since ? ` It was made on ${day(key.since)}.` : '';
+  const made = key.since ? ` It was made ${onDay(day(key.since))}.` : '';
   if (key.moved) return `Your account has a data key of its own, and every encrypted value of yours has been under it since ${day(key.moved)}.${made}`;
   return `Your account has a data key of its own.${made} What was stored before it may still be under a key this copy of Nya shares until whoever runs it moves it: each kind below says which.`;
 }
@@ -267,7 +269,11 @@ export default function DataInventory() {
         Every kind of thing Nya keeps about you: how much of it there is, whether it is encrypted and with which key, whether it is in your download, how long it is
         kept and who else can see it. Numbers only: nothing here shows what is stored.
       </p>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {!inv && !error && <p className="empty-note">Counting…</p>}
       {inv && <InventoryView inv={inv} />}
     </main>

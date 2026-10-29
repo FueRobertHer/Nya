@@ -4,7 +4,7 @@
 
 import type { RuleKind } from '@/lib/fire/rules';
 import type { FiView } from '@/lib/fire/plan';
-import { amountsHidden, hiddenMoney } from '@/lib/format';
+import { amountsHidden, formatDay, hiddenMoney, MINUS, trueMinus } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
 
 /** Whole currency units: plan figures are estimates, and cents would claim
@@ -15,12 +15,12 @@ export function wholeMoney(n: number, currency: string | null): string {
   if (amountsHidden()) return hiddenMoney(value, currency);
   if (currency) {
     try {
-      return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(value);
+      return trueMinus(new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(value));
     } catch {
       // An unknown code falls through to "$", like lib/format.ts.
     }
   }
-  return (value < 0 ? '-$' : '$') + Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return (value < 0 ? `${MINUS}$` : '$') + Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
 /** A fraction as a percent with no trailing zeros: 0.04 "4%", 0.035 "3.5%", 0.0425 "4.25%". */
@@ -49,8 +49,21 @@ export function progressText(p: number): string {
   return p >= 1 ? `${Math.round(p * 100)}%` : successText(p);
 }
 
-/** "Oct 9, 2025" from "2025-10-09", a calendar day shown as it is. */
+/** "Oct 9, 2025" from "2025-10-09", a calendar day shown as it is, mid
+ *  sentence: "today", "yesterday", "Oct 9" this year (lib/format.ts
+ *  formatDay). After "on", through onDay. */
 export function dayName(iso: string): string {
+  return formatDay(iso, { sentence: true });
+}
+
+/** The same as a label, a table's cell or a line's start: "Today", "Oct 9". */
+export function dayLabel(iso: string): string {
+  return formatDay(iso);
+}
+
+/** "Oct 9, 2025", always with its year: a chart's axis, which names its ends
+ *  the same way whatever today is. */
+export function axisDay(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }

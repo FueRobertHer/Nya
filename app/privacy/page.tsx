@@ -395,6 +395,7 @@ export default function PrivacyPage() {
       body: (
         <>
           <table className="info-table">
+            <caption className="visually-hidden">Who processes your data</caption>
             <tbody>
               {processors(backups, mail, dbDays, writes, files).map(([name, what]) => (
                 <tr key={name}>
@@ -422,6 +423,7 @@ export default function PrivacyPage() {
       body: (
         <>
           <table className="info-table">
+            <caption className="visually-hidden">How long things are kept</caption>
             <thead>
               <tr>
                 <th scope="col">What</th>

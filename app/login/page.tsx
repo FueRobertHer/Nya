@@ -7,6 +7,7 @@ import { AppLoading } from '@/components/LoadingSkeletons';
 import { CONNECTIONS_PATH } from '@/lib/connection-state';
 import { TAGLINE } from '@/lib/tagline';
 import { Why } from '@/components/Why';
+import { Notice } from '@/components/TotalCaveats';
 
 /** How long the app loading may stand in for this page before the form comes
  *  back: a session the browser wouldn't keep sends Home back here, where
@@ -78,10 +79,16 @@ export default function LoginPage() {
           placeholder="Password"
           autoFocus
         />
-        <button type="submit" disabled={loading || password.length === 0}>
-          {loading ? 'Checking…' : 'Log In'}
-        </button>
-        {error && <div className="error">{error}</div>}
+        <div className="stack tight">
+          <button type="submit" disabled={loading || password.length === 0}>
+            {loading ? 'Checking…' : 'Log In'}
+          </button>
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
+        </div>
       </form>
       <Why label="Which banks work?">
         <CoverageNote />

@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { CAUTION } from './ConnectionStatus';
-import { LevelWord } from './TotalCaveats';
+import { INFO, LevelWord } from './TotalCaveats';
 import { EventForm, type Checked } from './PlanEvents';
 import { scenarioOutcome } from './PlanScenarios';
 import { chevron, RIGHT } from './ActivityBar';
@@ -144,7 +144,9 @@ export function WhatIfCard({
             const d = draft ? draftOutcome(base, measured, draft) : null;
             return (
               <div className="notice info">
+                {INFO}
                 <div className="stack tight">
+                  <LevelWord level="info" />
                   {/* Only the move is said as it changes, not the lines under it. */}
                   <p role="status">
                     <Masked>{previewText(d ? d.when : null, plan, money, held.kind, 'missing' in checked && !!checked.missing)}</Masked>

@@ -9,6 +9,8 @@
 // A range is offered only when the history reaches past its start: until then
 // it would draw exactly what All draws.
 
+import { formatDay } from './format';
+
 export type RangeKey = '1M' | '3M' | '6M' | 'YTD' | '1Y' | '3Y' | '5Y' | 'ALL';
 export type RangeSet = 'balance' | 'investment';
 
@@ -107,8 +109,7 @@ export function rangeLabel(key: RangeKey, first: string, last: string): string {
     case '5Y':
       return 'Past 5 years';
     case 'ALL': {
-      const d = new Date(`${first}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-      return `Since ${d}`;
+      return `Since ${formatDay(first, { sentence: true })}`;
     }
   }
 }

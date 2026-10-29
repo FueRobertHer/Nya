@@ -28,7 +28,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { addDays, cadenceLabel, expectedDates, type RecurringSeries } from '@/lib/recurring';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { leftOutText } from '@/lib/spending';
 import { countsInMonthly, recurringMonthly, type MonthlyConverted } from '@/lib/totals';
@@ -40,8 +40,10 @@ import { Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { NoticeBadge, type UpcomingBadge } from './upcoming-notes';
 
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+/** A day mid sentence: "today", "Oct 5", "Oct 5, 2025" (lib/format.ts formatDay),
+ *  on the card's own today when it is given. */
+function fmtDay(iso: string, today?: string): string {
+  return formatDay(iso, { sentence: true, now: today ? new Date(`${today}T12:00:00`) : undefined });
 }
 
 /** How far ahead "next" looks: past a yearly series' next date. */
@@ -238,17 +240,17 @@ export default function RecurringCard({
     const s = r.series;
     const when =
       r.status === 'ended'
-        ? `last ${fmtDay(s.lastDate)}, may have ended`
+        ? `last ${fmtDay(s.lastDate, today)}, may have ended`
         : r.status === 'late' && r.due
-          ? `due ${fmtDay(r.due)}, not in yet`
+          ? `due ${fmtDay(r.due, today)}, not in yet`
           : r.next
-            ? `next ~${fmtDay(r.next)}`
+            ? `next ~${fmtDay(r.next, today)}`
             : '';
     return [
       where(s),
       cadenceLabel(s.cadence),
       `seen ${s.seen} times`,
-      s.pending ? `latest ${fmtDay(s.lastDate)}, pending` : null,
+      s.pending ? `latest ${fmtDay(s.lastDate, today)}, pending` : null,
       s.agreement === 'varies' ? 'amount varies' : null,
       s.paysCard ? (s.paysCardOf ? `pays ${s.paysCardOf.account || 'a card'}` : 'pays a card') : null,
       when || null,

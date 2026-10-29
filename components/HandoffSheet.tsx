@@ -18,6 +18,7 @@ import { isHandle, REMOVED_NAME, type Direction, type RequestVia } from '@/lib/s
 import { handoffLinks, LINK_CURRENCY, messageText, NOTE_CHARS, noteOf, type MessageLine } from '@/lib/shared-expenses/links';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
 import { useAmountsHidden } from './hide-amounts';
+import { Notice } from './TotalCaveats';
 
 export default function HandoffSheet({ person, currency, shared, onClose }: { person: string | null; currency: string; shared: SharedExpenses; onClose: () => void }) {
   const card = shared.card;
@@ -151,18 +152,28 @@ export default function HandoffSheet({ person, currency, shared, onClose }: { pe
       <p className="shared-message">
         <Masked>{hideAmountsIn(message)}</Masked>
       </p>
-      <div className="button-pair">
-        <button className="secondary" onClick={() => void copy()}>
-          {hidden ? 'Copy the message, amounts included' : 'Copy the message'}
-        </button>
-        {canShare && (
-          <button className="secondary" onClick={() => void share()}>
-            {hidden ? 'Share it, amounts included…' : 'Share…'}
+      <div className="stack tight">
+        <div className="button-pair">
+          <button className="secondary" onClick={() => void copy()}>
+            {hidden ? 'Copy the message, amounts included' : 'Copy the message'}
           </button>
+          {canShare && (
+            <button className="secondary" onClick={() => void share()}>
+              {hidden ? 'Share it, amounts included…' : 'Share…'}
+            </button>
+          )}
+        </div>
+        {said && (
+          <p className="panel-note" role="status">
+            {said}
+          </p>
+        )}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
         )}
       </div>
-      {said && <p className="panel-note" role="status">{said}</p>}
-      {error && <div className="error">{error}</div>}
     </Sheet>
   );
 }

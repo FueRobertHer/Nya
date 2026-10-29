@@ -20,16 +20,17 @@ import { duePayments, upcomingDays } from '@/lib/calendar';
 import { addDays, type RecurringSeries } from '@/lib/recurring';
 import type { PlannedItem } from '@/lib/planned';
 import type { ForecastInstitution } from '@/lib/forecast';
-import { signedMoney } from '@/lib/format';
+import { formatDay, signedMoney } from '@/lib/format';
 import type { FxTable } from '@/lib/fx/rates';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { EntryRow } from './CalendarView';
 import { NoticeBadge, type UpcomingBadge } from './upcoming-notes';
 
-/** "Sat, Oct 24": a day's bar. */
-function dayName(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+/** "Today", or "Sat, Oct 24": a day's bar (lib/format.ts formatDay), on the
+ *  list's own today. */
+function dayName(iso: string, today: string): string {
+  return formatDay(iso, { weekday: 'short', now: new Date(`${today}T12:00:00`) });
 }
 
 export default function UpcomingList({
@@ -92,7 +93,7 @@ export default function UpcomingList({
           {list.map((d) => (
             <Fragment key={d.date}>
               <li className="txn-day">
-                <span>{dayName(d.date)}</span>
+                <span>{dayName(d.date, today)}</span>
                 {d.expected !== null && (
                   <span className="money">
                     <Masked>{signedMoney(d.expected, currency)}</Masked>

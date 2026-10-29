@@ -177,7 +177,7 @@ describe('Activity: the bar and its segments', () => {
     // Transactions: the first thing under the bar, never in a card.
     expect(strip()).toHaveLength(1);
     expect(kids()[0]).toBe(strip()[0]);
-    expect(figures()).toEqual(['+$3,100.00', '-$412.30', '+$2,687.70']);
+    expect(figures()).toEqual(['+$3,100.00', '−$412.30', '+$2,687.70']);
     for (let p = strip()[0].parentNode as FakeElement | null; p; p = p.parentNode as FakeElement | null) expect((p.getAttribute?.('class') ?? '').split(' ')).not.toContain('card');
     // Its heading, for a screen reader alone: the bar names the month.
     expect(strip()[0].findAll((e) => e.tagName === 'H2')[0].textContent).toBe(`In and out, ${longName(month)}`);

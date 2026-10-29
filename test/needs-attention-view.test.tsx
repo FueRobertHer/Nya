@@ -26,13 +26,13 @@ describe('the card', () => {
     expect(html).toContain('<h2 id="needs-attention-title" tabindex="-1">Needs attention <span class="meta">2</span><span class="visually-hidden"> items</span></h2>');
     expect(html.match(/<button type="button" class="list-row">/g)).toHaveLength(2);
     expect(text(html)).toContain('Critical: Chase Needs reconnecting');
-    expect(text(html)).toContain('Information: Transactions to review 12 to review');
+    expect(text(html)).toContain('Note: Transactions to review 12 to review');
   });
 
   test('its level is a shape and a word as well as a color: never color alone', () => {
     const html = render([item('a', 'critical', 'A'), item('b', 'caution', 'B'), item('c', 'info', 'C')]);
     for (const level of ['critical', 'caution', 'info']) expect(html).toContain(`<span class="list-row-icon ${level}"><svg`);
-    expect(html.match(/class="visually-hidden">(Critical|Caution|Information): </g)).toHaveLength(3);
+    expect(html.match(/class="visually-hidden">(Critical|Caution|Note): </g)).toHaveLength(3);
     // Three icons, each its own path.
     const paths = [...html.matchAll(/class="list-row-icon [a-z]+"><svg[^>]*><path d="([^"]+)"/g)].map((m) => m[1]);
     expect(new Set(paths).size).toBe(3);

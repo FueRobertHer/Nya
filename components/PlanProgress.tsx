@@ -21,7 +21,10 @@ import { Why } from './Why';
 import { Masked } from './HideAmounts';
 import { LinesSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
-import { dayName, pct, wholeMoney } from './plan-text';
+import { dayLabel, dayName, pct, wholeMoney } from './plan-text';
+import { onDay } from '@/lib/format';
+
+const firstUp = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import type { FirePlan, Input } from '@/lib/fire/plan';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, yearsBetween, YEAR_DAYS, type SavedPlan } from '@/lib/fire/saved-plan';
@@ -81,15 +84,15 @@ export function progressLines(saved: SavedPlan, answer: ProgressAnswer, nameOf: 
       start: null,
       compared: null,
       waiting: latest
-        ? `Progress shows from the first day every account your plan counts is recorded whole. On ${dayName(latest.date)}, ${latestShort ?? 'not every account was recorded.'}`
+        ? `Progress shows from the first day every account your plan counts is recorded whole. ${firstUp(onDay(dayName(latest.date)))}, ${latestShort ?? 'not every account was recorded.'}`
         : 'Progress shows once Nya records your invested assets, at the next snapshot of your balances.',
       caution: null,
       added: null,
       ended: null,
     };
   }
-  const start = `Started from ${money(anchor.total as number)}, recorded on ${dayName(anchor.date)}.`;
-  const caution = latestShort && latest && latest.date > whole.date ? `${dayName(latest.date)} isn’t counted: ${latestShort}` : null;
+  const start = `Started from ${money(anchor.total as number)}, recorded ${onDay(dayName(anchor.date))}.`;
+  const caution = latestShort && latest && latest.date > whole.date ? `${dayLabel(latest.date)} isn’t counted: ${latestShort}` : null;
   const added = answer.accounts.filter((a) => a.first !== null && a.first > anchor.date && a.last !== null && a.last >= whole.date);
   const addedLine =
     added.length > 0
@@ -99,7 +102,7 @@ export function progressLines(saved: SavedPlan, answer: ProgressAnswer, nameOf: 
   const ended = answer.accounts.filter((a) => a.ended !== null && a.ended > anchor.date && a.ended <= whole.date && a.first !== null && a.first <= anchor.date);
   const endedLine =
     ended.length > 0
-      ? `${names(ended.map((a) => `${nameOf(a.account_id)} (on ${dayName(a.ended as string)})`))} ended since ${dayName(anchor.date)}: what ${ended.length === 1 ? 'it' : 'they'} held is in the start and not since, so it counts again only where it went to an account your plan counts.`
+      ? `${names(ended.map((a) => `${nameOf(a.account_id)} (${onDay(dayName(a.ended as string))})`))} ended since ${dayName(anchor.date)}: what ${ended.length === 1 ? 'it' : 'they'} held is in the start and not since, so it counts again only where it went to an account your plan counts.`
       : null;
   const rest = { caution, added: addedLine, ended: endedLine };
   if (yearsBetween(anchor.date, whole.date) * 365.25 < MIN_DAYS) {
@@ -177,7 +180,7 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
           </>
         )}
         {savedState.kind === 'ready' && savedState.problem === 'newer' && (
-          <p className="notice info">The plan you saved as your plan was saved by a newer version of Nya, so it can’t be shown or changed here.</p>
+          <Notice level="info">The plan you saved as your plan was saved by a newer version of Nya, so it can’t be shown or changed here.</Notice>
         )}
         {savedState.kind === 'ready' && savedState.problem === null && saved === null && (
           <>
@@ -199,9 +202,9 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
         {saved && <SavedBody saved={saved} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
         {saved && changedSince(saved, plan).length > 0 && (
           <>
-            <p className="notice info">
+            <Notice level="info">
               Your Plan’s {names(changedSince(saved, plan))} changed since you saved it. This compares with the plan as you saved it.
-            </p>
+            </Notice>
             {!scenarioOpen && (
               <>
                 <div className="btn-row">
@@ -277,7 +280,7 @@ function Compared({ saved, answer, money, nameOf }: { saved: SavedPlan; answer: 
         <div className="txn-detail">
           <div className="txn-detail-row">
             <span>
-              <Masked>{`Invested on ${l.compared.day}`}</Masked>
+              <Masked>{`Invested ${onDay(l.compared.day)}`}</Masked>
             </span>
             <span className="money">
               <Masked>{l.compared.actual}</Masked>
@@ -588,7 +591,7 @@ export function SheetBody({
         <p>
           <Masked>{`Nya keeps your Plan’s assumptions as they are now${savingsText ? `, and the ${savingsText} a year of savings it uses,` : ''} and sets your invested assets against them from today. Nothing worked out from them is kept.`}</Masked>
         </p>
-        {sheet === 'resave' && saved && <p>This replaces the plan you saved on {dayName(saved.day)}, and the comparison starts again from today.</p>}
+        {sheet === 'resave' && saved && <p>This replaces the plan you saved {onDay(dayName(saved.day))}, and the comparison starts again from today.</p>}
         <label className="field">
           <span>Inflation a year, %</span>
           <input type="text" inputMode="decimal" placeholder="3" value={inflation} onChange={(e) => onInflation(e.target.value)} />
@@ -601,7 +604,7 @@ export function SheetBody({
   if (sheet === 'forget') {
     return (
       <div className="stack">
-        <p>Nya forgets the plan you saved{saved ? ` on ${dayName(saved.day)}` : ''}. Your Plan and its figures stay as they are. This can’t be undone.</p>
+        <p>Nya forgets the plan you saved{saved ? ` ${onDay(dayName(saved.day))}` : ''}. Your Plan and its figures stay as they are. This can’t be undone.</p>
         {error && <Notice level="critical">{error}</Notice>}
       </div>
     );

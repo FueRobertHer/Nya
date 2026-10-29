@@ -1288,7 +1288,7 @@ describe('a shared balance, in its own currency', () => {
     for (const a of [theirs, mine]) {
       const opened = await render(createElement(SharedAccountItem, { a, open: true, onToggle: () => {} }));
       expect(opened).toContain('Pret');
-      expect(opened).toContain('-£12.00');
+      expect(opened).toContain('−£12.00');
       expect(opened).not.toContain('$');
     }
   });

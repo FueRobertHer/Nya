@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, simulationAnswered, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
@@ -13,6 +13,11 @@ import { simulate, successGrid } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 const noop = () => {};
 const money = (n: number) => wholeMoney(n, 'USD');
@@ -116,9 +121,9 @@ describe('figures', () => {
   });
 
   test('the measured window, and a shorter one scaled up', () => {
-    expect(windowText(flows)).toBe('your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026)');
+    expect(windowText(flows)).toBe('your last 12 months of transactions (Oct 7, 2025 to Oct 6)');
     expect(windowText({ ...flows, scaled: true, days: 152, from: '2026-05-08' })).toBe(
-      '5 months of transactions (May 8, 2026 to Oct 6, 2026), scaled up to a year'
+      '5 months of transactions (May 8 to Oct 6), scaled up to a year'
     );
     expect(windowText({ ...flows, scaled: true, days: 360, from: '2025-10-12' })).toContain('360 days of transactions');
   });
@@ -186,17 +191,17 @@ describe('the FI card', () => {
       f: { ...flows, loanPayments: 18_000, cash: 1_200, refunds: 1_800, largestRefund: { amount: 1_500, date: '2026-02-01', name: 'Acme Rentals' }, unclearLoans: 400 },
     };
     expect(why(plan(), opts, 'spending')).toBe(
-      'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
+      'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1).'
     );
     expect(levels(figureRow(cardHtml(plan(), opts), 'Annual spending'), "$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan")).toEqual(['caution']);
   });
 
   test('says IOUs you owe from before your transactions begin aren’t counted here, naming the day', () => {
     const scaled = { ...flows, scaled: true, days: 40, from: '2026-08-28' };
-    expect(levels(figureRow(cardHtml(plan(), { f: { ...scaled, iousBefore: { count: 1, amount: 25 } } }), 'Annual spending'), "An IOU you owe from before Aug 28, 2026 ($25) isn't counted here: your spending is measured from your transactions, which begin then.")).toEqual([
+    expect(levels(figureRow(cardHtml(plan(), { f: { ...scaled, iousBefore: { count: 1, amount: 25 } } }), 'Annual spending'), "An IOU you owe from before Aug 28 ($25) isn't counted here: your spending is measured from your transactions, which begin then.")).toEqual([
       'caution',
     ]);
-    expect(levels(figureRow(cardHtml(plan(), { f: { ...scaled, iousBefore: { count: 10, amount: 1_000 } } }), 'Annual spending'), "10 IOUs you owe from before Aug 28, 2026 ($1,000) aren't counted here")).toEqual(['caution']);
+    expect(levels(figureRow(cardHtml(plan(), { f: { ...scaled, iousBefore: { count: 10, amount: 1_000 } } }), 'Annual spending'), "10 IOUs you owe from before Aug 28 ($1,000) aren't counted here")).toEqual(['caution']);
     expect(card(plan(), { f: scaled })).not.toContain('IOU');
   });
 
@@ -284,7 +289,7 @@ describe('the FI card', () => {
     });
     const invested = figureRow(html, 'Invested assets');
     expect(levels(invested, "Schwab couldn't be reached and isn't counted, so this figure may be low.")).toEqual(['caution']);
-    expect(levels(invested, "Vanguard's balances are from Oct 3, 2026")).toEqual(['caution']);
+    expect(levels(invested, "Vanguard's balances are from Oct 3")).toEqual(['caution']);
     expect(levels(invested, "1 account at Fidelity couldn't be shown, so this figure may be low.")).toEqual(['caution']);
     expect(text(html)).toContain('Invested assets may be low');
     // Typed instead: what was typed counts, so nothing says it may be low,
@@ -334,14 +339,14 @@ describe('the FI card', () => {
     expect(why(plan(), opts, 'savings')).toContain('over the same 12 months, plus $14,000 paid into Fidelity 401(k) and Vanguard Solo 401(k).');
     const savings = figureRow(html, 'Annual savings');
     for (const s of [
-      'Fidelity 401(k): 24 contributions added, $12,000, the largest $1,000 on Mar 13, 2026, all of them, as it is set as paid through payroll.',
-      'Vanguard Solo 401(k): 1 contribution added, $2,000, the largest $2,000 on Jun 2, 2026.',
+      'Fidelity 401(k): 24 contributions added, $12,000, the largest $1,000 on Mar 13, all of them, as it is set as paid through payroll.',
+      'Vanguard Solo 401(k): 1 contribution added, $2,000, the largest $2,000 on Jun 2.',
       "$10,000 more paid into Vanguard Solo 401(k) matched transfers from your bank to investment and retirement funds, which already count as saved, so it isn't added again.",
       // The sheet it is said in is the row's (rollout phase 6c), not an Edit button's.
       "How Vanguard Solo 401(k) is paid into isn't set: if you pay into it from your bank account, say so in Annual savings, or it may count twice.",
       'Schwab SEP is set as paid from your bank, so nothing paid into it is added again.',
-      'Fidelity 401(k) is counted from Apr 1, 2026',
-      'Nya has activity for Empower 457(b) from Mar 3, 2026.',
+      'Fidelity 401(k) is counted from Apr 1',
+      'Nya has activity for Empower 457(b) from Mar 3.',
       "Contributions to TSP TSP couldn't be measured, so this figure may be low.",
     ]) {
       expect(levels(savings, s)).toEqual(['caution']);

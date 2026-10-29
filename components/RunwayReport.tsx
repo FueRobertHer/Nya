@@ -13,12 +13,13 @@
 // sent or stored: only a scenario the person saves by name is
 // (app/api/runway-scenarios), and that keeps the settings, never a figure.
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import FieldError from './FieldError';
 import { Sheet } from './Sheet';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
 import { Hero } from './Hero';
-import TotalCaveats from './TotalCaveats';
+import TotalCaveats, { Notice } from './TotalCaveats';
 import { Segmented } from './Segmented';
 import { reportDay, reportTime } from './ReportView';
 import { fieldAmount, formatMoney } from '@/lib/format';
@@ -32,6 +33,7 @@ import { shownName } from '@/lib/merchant-name';
 import { plannedCadenceLabel } from '@/lib/planned';
 import { isCurrencyCode, minorDigits, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import { joinNames } from '@/lib/month-coverage';
+import { RunwaySkeleton } from './LoadingSkeletons';
 
 /** "Aug 2026": a month of a window. */
 const monthWords = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
@@ -317,6 +319,7 @@ export function browserZone(): string {
 
 export default function RunwayReport() {
   const [runway, setRunway] = useState<Runway | null>(null);
+  const lowerError = useId();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [whatIf, setWhatIf] = useState<RunwayWhatIf>(DEFAULT_WHAT_IF);
@@ -422,13 +425,13 @@ export default function RunwayReport() {
     }
   };
 
-  if (loading) return <div className="spinner no-print" role="status" aria-label="Working out the runway" />;
+  if (loading) return <RunwaySkeleton />;
   if (error || !runway) {
     return (
       <div className="card no-print">
-        <p className="error" role="alert">
+        <Notice level="critical" role="alert">
           {error ?? 'The runway couldn’t be worked out.'}
-        </p>
+        </Notice>
       </div>
     );
   }
@@ -459,14 +462,23 @@ export default function RunwayReport() {
             <div className="runway-fields">
               <label className="field">
                 Spending lower by, a month
-                <input inputMode="decimal" autoComplete="off" value={lowerText} onChange={(e) => setLowerText(e.target.value)} placeholder="0" aria-label={`Spending lower by, a month, in ${code}`} />
+                <input
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={lowerText}
+                  onChange={(e) => setLowerText(e.target.value)}
+                  placeholder="0"
+                  aria-label={`Spending lower by, a month, in ${code}`}
+                  aria-invalid={!lowerOk}
+                  aria-describedby={lowerOk ? undefined : lowerError}
+                />
               </label>
               <label className="field">
                 Income stops after
                 <input type="date" min={runway.today} value={whatIf.income_until ?? ''} onChange={(e) => change({ income_until: e.target.value || null })} />
               </label>
             </div>
-            {!lowerOk && <div className="error">Enter an amount, like 250 or 1,299.99.</div>}
+            {!lowerOk && <FieldError id={lowerError}>Enter an amount, like 250 or 1,299.99.</FieldError>}
             {otherCurrency && (
               <div className="stale-note">
                 That scenario’s lower spending was set in {otherCurrency}, and this runway is in {code}, so it isn’t applied. Type it again in {code}.
@@ -509,15 +521,15 @@ export default function RunwayReport() {
         }
       />
 
-      <div className="card no-print">
+      <div className="card no-print stack">
         <div className="inst-header">
           <div className="inst-name">Saved scenarios</div>
         </div>
         <SavedScenarios list={saved} currency={runway.currency} busy={busy} onApply={apply} onDelete={(id, label, unreadable) => void remove(id, label, unreadable)} />
         {savedError && !naming && (
-          <p className="error" role="alert">
+          <Notice level="critical" role="alert">
             {savedError}
-          </p>
+          </Notice>
         )}
       </div>
 
@@ -532,9 +544,9 @@ export default function RunwayReport() {
             <input value={name} maxLength={SCENARIO_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="If I took a year off" />
           </label>
           {savedError && (
-            <p className="error" role="alert">
+            <Notice level="critical" role="alert">
               {savedError}
-            </p>
+            </Notice>
           )}
           <div className="button-pair">
             <button className="secondary" onClick={() => setNaming(false)} disabled={busy}>

@@ -374,7 +374,7 @@ describe('where a report’s data comes from', () => {
       })
     );
     expect(html).toContain('My Bank Visa');
-    expect(html).toContain('Removed on ');
+    expect(html).toContain('Deleted on ');
     expect(html).toContain('through SimpleFIN');
     expect(html).toContain('A record that can’t be read');
     expect(html.match(/>Forget</g)).toHaveLength(2);
