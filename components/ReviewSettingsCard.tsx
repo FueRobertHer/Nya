@@ -103,13 +103,13 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
     try {
       const { res, data } = await post({ action: 'repair', confirm: true });
       if (!res.ok) {
-        setRepaired(data?.error ?? 'Could not remove them. Please try again.');
+        setRepaired(data?.error ?? 'Could not delete them. Please try again.');
         return;
       }
       setRepaired(
         data.unrecognised > 0
-          ? `Removed what was damaged. ${data.unrecognised === 1 ? 'One record was' : `${data.unrecognised} records were`} saved by a newer version of Nya and kept as they are.`
-          : 'Removed what was damaged.'
+          ? `Deleted what was damaged. ${data.unrecognised === 1 ? 'One record was' : `${data.unrecognised} records were`} saved by a newer version of Nya and kept as they are.`
+          : 'Deleted what was damaged.'
       );
       setConfirming(null);
       // Read again: what the settings were, if they weren't the damaged part.
@@ -167,10 +167,10 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
           <>
             <p className="stale-note">Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.</p>
             {confirming === 'repair' ? (
-              confirmPair(() => void repair(), 'Remove what’s damaged', 'Keep it')
+              confirmPair(() => void repair(), 'Delete what’s damaged', 'Keep it')
             ) : (
               <button className="secondary" onClick={() => setConfirming('repair')}>
-                Remove the damaged settings…
+                Delete the damaged settings…
               </button>
             )}
           </>
@@ -227,13 +227,13 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
         <>
           <p className="stale-note">
             Your approval of {view!.unknown === 1 ? '1 transaction' : `${view!.unknown} transactions`} couldn’t be read, so whether {view!.unknown === 1 ? 'it needs' : 'they need'} review isn’t known.
-            Damaged ones can be removed, which puts those transactions back in the queue; any saved by a newer version of Nya are kept.
+            Damaged ones can be deleted, which puts those transactions back in the queue; any saved by a newer version of Nya are kept.
           </p>
           {confirming === 'repair' ? (
-            confirmPair(() => void repair(), 'Remove what’s damaged', 'Keep them')
+            confirmPair(() => void repair(), 'Delete what’s damaged', 'Keep them')
           ) : (
             <button className="secondary" onClick={() => setConfirming('repair')}>
-              Remove the damaged approvals…
+              Delete the damaged approvals…
             </button>
           )}
         </>

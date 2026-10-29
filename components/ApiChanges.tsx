@@ -195,7 +195,7 @@ export function ApiChangesView({
             <div key={id} className="stale-note api-token-problem">
               A change couldn’t be read, so it can’t be undone.{' '}
               <button className="link-btn danger-link" onClick={() => setAsking({ kind: 'remove', change: null, id })}>
-                Remove it
+                Delete it
               </button>
             </div>
           ))}
@@ -233,7 +233,7 @@ export function ChangeSheet({
   onCancel: () => void;
   onConfirm: (all?: boolean) => void;
 }) {
-  const title = asking?.kind === 'undo' ? 'Undo this change?' : asking?.kind === 'forget' ? 'Forget what it changed?' : 'Remove the change?';
+  const title = asking?.kind === 'undo' ? 'Undo this change?' : asking?.kind === 'forget' ? 'Forget what it changed?' : 'Delete the change?';
   const label = asking?.change?.token?.label;
   return (
     <Sheet open={!!asking} title={title} onClose={onCancel}>
@@ -249,7 +249,7 @@ export function ChangeSheet({
               ? 'It is changed back only if nothing has changed it since, in the app or by another program; if something has, nothing is changed and you are told what. The undo is listed too.'
               : asking.kind === 'forget'
                 ? `Nya keeps a copy of what each change changed, before and after, for ${CHANGES_KEEP_DAYS} days, so it can be undone. Forgetting removes the copy now. The change stays listed, without it, and can no longer be undone.`
-                : 'Its record can’t be read, so it can’t be undone or shown. Removing it deletes what is left of it.'}
+                : 'Its record can’t be read, so it can’t be undone or shown. Deleting it removes what is left of it.'}
           </p>
           {error && <div className="error">{error}</div>}
           <div className="button-pair" style={{ marginTop: 16 }}>
@@ -257,7 +257,7 @@ export function ChangeSheet({
               Cancel
             </button>
             <button className={asking.kind === 'undo' ? undefined : 'danger'} onClick={() => onConfirm(false)} disabled={busy}>
-              {busy ? 'Working…' : asking.kind === 'undo' ? 'Undo' : asking.kind === 'forget' ? 'Forget this one' : 'Remove'}
+              {busy ? 'Working…' : asking.kind === 'undo' ? 'Undo' : asking.kind === 'forget' ? 'Forget this one' : 'Delete'}
             </button>
           </div>
           {asking.kind === 'forget' && label && (

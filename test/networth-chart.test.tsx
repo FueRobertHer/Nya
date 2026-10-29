@@ -412,7 +412,7 @@ describe('NetWorthChart as the hero', () => {
   test('drawn at its width, with no gridline and no money tick on the plot', () => {
     const html = at(352, <NetWorthChart hero points={year} />);
     // at-width: its months take the 12px rule (.at-width .chart-xlabel).
-    expect(html).toContain('class="chart-svg at-width hero-chart"');
+    expect(html).toMatch(/class="chart-svg at-width hero-chart( draw-in)?"/);
     expect(html).toContain('viewBox="0 0 352 140"');
     expect(html).not.toContain('chart-tick');
     expect(html).not.toContain('stroke="var(--border-subtle)"');

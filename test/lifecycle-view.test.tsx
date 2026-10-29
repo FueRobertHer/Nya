@@ -234,10 +234,10 @@ describe('closures that can’t be read', () => {
     expect(lifecycleDamageOf(409, null)).toBeNull();
   });
 
-  test('damaged ones can be removed once confirmed; ones a newer Nya saved are only named', () => {
+  test('damaged ones can be deleted once confirmed; ones a newer Nya saved are only named', () => {
     const damaged = renderToStaticMarkup(<LifecycleRepair damage={{ unreadable: 1, unrecognised: 0 }} onRepaired={noop} />);
     expect(text(damaged)).toContain('One saved account closure is damaged and can’t be read. Accounts can’t load until it is removed, since one may be an account you closed.');
-    expect(buttons(damaged)).toEqual(['Remove the damaged closure']);
+    expect(buttons(damaged)).toEqual(['Delete the damaged closure']);
     const newer = renderToStaticMarkup(<LifecycleRepair damage={{ unreadable: 0, unrecognised: 2 }} onRepaired={noop} />);
     expect(text(newer)).toContain('2 account closures are in a form this version of Nya can’t read, though they look intact');
     expect(buttons(newer)).toEqual([]);

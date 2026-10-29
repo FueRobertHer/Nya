@@ -260,6 +260,9 @@
 html,
 body {
   padding: 0;
+  /* How far a card or sheet sets its content in (.card: --sp-4 on a phone);
+     the rows that run to its edges take the same, so they line up. */
+  --inset: var(--sp-5);
   margin: 0;
 }
 
@@ -340,13 +343,21 @@ h1,
 }
 
 /* The edge sets a card apart: --surface is about 1.07:1 from --canvas in both
-   themes. Padding stays --sp-5, which the rows' edge-to-edge margin assumes. */
+   themes. Its padding is --inset, --sp-4 on a phone and --sp-5 from 720px;
+   rows that run to its edges are set in by the same, so they line up. */
 .card {
+  --inset: var(--sp-4);
   background: var(--card);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
-  padding: var(--sp-5);
+  padding: var(--inset);
   margin-bottom: var(--sp-3);
+}
+
+@media (min-width: 720px) {
+  .card {
+    --inset: var(--sp-5);
+  }
 }
 
 .total-label {
@@ -660,7 +671,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 /* In a sheet or a card, the rows run to its edges. */
 :is(.sheet-body, .card) > .list-rows:not(.card) {
-  margin-inline: calc(-1 * var(--sp-5));
+  margin-inline: calc(-1 * var(--inset));
 }
 
 /* The whole row is the target: a <button> or a link, never a row with
@@ -672,7 +683,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   gap: var(--sp-3);
   width: 100%;
   min-height: var(--row-min);
-  padding: var(--sp-3) var(--sp-5);
+  padding: var(--sp-3) var(--inset);
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -799,7 +810,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 .row-notes {
-  padding: 0 var(--sp-5) var(--sp-3);
+  padding: 0 var(--inset) var(--sp-3);
 }
 
 /* The Plan's What if… card: its scenarios' rows, under the chips, run to
@@ -1511,14 +1522,21 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   outline-offset: 1px;
 }
 
-/* One chevron for every select, instead of each browser's own. */
+/* One chevron for every select, instead of each browser's own, drawn in
+   --text-2 so it follows the theme: two strokes, each a 2px band across a
+   5px square, "\" then "/", meeting at the point. */
 :where(select:not([class*="cl-"])) {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d8391' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image:
+    linear-gradient(45deg, transparent calc(50% - 1px), var(--text-2) calc(50% - 1px), var(--text-2) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(135deg, transparent calc(50% - 1px), var(--text-2) calc(50% - 1px), var(--text-2) calc(50% + 1px), transparent calc(50% + 1px));
+  background-size: 5px 5px;
   background-repeat: no-repeat;
-  background-position: right 12px center;
+  background-position:
+    right 17px center,
+    right 12px center;
 }
 
 /* Room for the chevron, whatever padding a select's own class sets. */
@@ -1856,7 +1874,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   display: flex;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-5) var(--sp-1);
+  padding: var(--sp-3) var(--inset) var(--sp-1);
   color: var(--text-2);
   font-size: var(--fs-1);
   font-weight: var(--fw-medium);
@@ -1934,7 +1952,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
 /* A split transaction's parts and a group's transactions, each a row under
    its transaction's, set in past its logo. */
 .txn-part-row {
-  padding-left: calc(var(--sp-5) + 32px + var(--sp-3));
+  padding-left: calc(var(--inset) + 32px + var(--sp-3));
 }
 
 .txn-part-row .list-row-title {
@@ -2158,6 +2176,24 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   max-width: none;
   margin-inline: calc(-1 * var(--sp-4));
   touch-action: pan-y;
+}
+
+/* Its line draws in once a page load, left to right over --dur-base
+   (components/NetWorthChart.tsx adds .draw-in the first time only). A clip of
+   the whole plot, the outer <svg>, which every engine draws alike, so the
+   estimated stretches keep their dashes as it draws. Under reduced motion
+   the duration is zero: it is simply there. */
+.chart-svg.hero-chart.draw-in {
+  animation: hero-draw-in var(--dur-base) var(--ease) both;
+}
+
+@keyframes hero-draw-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
 }
 
 .chart-tick {
@@ -2747,7 +2783,7 @@ span.meter-fill {
 }
 
 .budget-sub-rows .list-row {
-  padding-left: calc(var(--sp-5) + var(--sp-4));
+  padding-left: calc(var(--inset) + var(--sp-4));
 }
 
 .budget-sub-rows .list-row-title {
@@ -2755,7 +2791,7 @@ span.meter-fill {
 }
 
 .budget-sub-rows > li > .helper {
-  padding: var(--sp-3) var(--sp-5) var(--sp-3) calc(var(--sp-5) + var(--sp-4));
+  padding: var(--sp-3) var(--inset) var(--sp-3) calc(var(--inset) + var(--sp-4));
 }
 
 .budget-add-button > svg {
@@ -3017,6 +3053,7 @@ span.meter-fill {
 
 /* A sheet from the bottom on phones... */
 .sheet {
+  --inset: var(--sp-5);
   position: fixed;
   z-index: var(--z-sheet);
   left: 0;
@@ -4517,8 +4554,8 @@ button.plan-edit:disabled {
    at 12px, and are about 42px here. */
 .plan-grid {
   margin-top: 10px;
-  margin-inline: calc(var(--sp-2) - var(--sp-5));
-  width: calc(100% + 2 * (var(--sp-5) - var(--sp-2)));
+  margin-inline: calc(var(--sp-2) - var(--inset));
+  width: calc(100% + 2 * (var(--inset) - var(--sp-2)));
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 2px;
@@ -5043,7 +5080,7 @@ button.plan-edit:disabled {
 }
 
 .recurring-marked .list-row {
-  padding-left: calc(var(--sp-5) + var(--sp-4));
+  padding-left: calc(var(--inset) + var(--sp-4));
 }
 
 .recurring-marked .list-row-title {
@@ -5051,7 +5088,7 @@ button.plan-edit:disabled {
 }
 
 .recurring-marked > li > .helper {
-  padding: var(--sp-3) var(--sp-5) var(--sp-3) calc(var(--sp-5) + var(--sp-4));
+  padding: var(--sp-3) var(--inset) var(--sp-3) calc(var(--inset) + var(--sp-4));
 }
 
 /* Planned's rows and Add while the items are read again after a refused
@@ -5118,7 +5155,7 @@ button.plan-edit:disabled {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px;
-  margin-inline: calc(-1 * var(--sp-5));
+  margin-inline: calc(-1 * var(--inset));
 }
 
 .cal-dow {
@@ -5258,7 +5295,7 @@ button.plan-edit:disabled {
 }
 
 .cal-detail > .list-rows {
-  margin-inline: calc(-1 * var(--sp-5));
+  margin-inline: calc(-1 * var(--inset));
 }
 
 /* Upcoming's list and the calendar's day list: Activity's day bars
@@ -6217,22 +6254,10 @@ button.cat-manage-row.archived {
   margin-left: 0;
 }
 
+/* Tags to pick: chips in a .chip-row (components/RuleSheet.tsx,
+   TxnTagsNote.tsx), a picked one with its edge and check. */
 .tag-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
   margin: 2px 0 8px;
-}
-
-button.tag-suggestion {
-  width: auto;
-  padding: 6px 10px;
-  font-size: var(--fs-1);
-  font-weight: 500;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 999px;
 }
 
 .txn-note-input {
@@ -6296,10 +6321,6 @@ button.tag-color.chosen {
   color: var(--text-2);
   font-size: var(--fs-2);
   margin-bottom: 12px;
-}
-
-button.tag-suggestion.chosen {
-  border-color: transparent;
 }
 
 .rule-preview {

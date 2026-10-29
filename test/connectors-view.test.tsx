@@ -373,8 +373,8 @@ describe('words for what happened', () => {
       '',
       '',
     ]);
-    expect(nothingToKeep(['New savings'])).toBe(' Removed New savings: no balance had come for it yet, so there was nothing to keep.');
-    expect(nothingToKeep(['A', 'B'])).toBe(' Removed A and B: no balance had come for them yet, so there was nothing to keep.');
+    expect(nothingToKeep(['New savings'])).toBe(' Deleted New savings: no balance had come for it yet, so there was nothing to keep.');
+    expect(nothingToKeep(['A', 'B'])).toBe(' Deleted A and B: no balance had come for them yet, so there was nothing to keep.');
     expect(nothingToKeep([])).toBe('');
   });
 });

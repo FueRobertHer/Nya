@@ -330,7 +330,7 @@ export function ApiTokensView({
             <div key={id} className="stale-note api-token-problem">
               A token’s record couldn’t be read, so that token doesn’t work.{' '}
               <button className="link-btn danger-link" onClick={() => setRevoking({ id, label: 'the token that can’t be read', unreadable: true })}>
-                Remove it
+                Delete it
               </button>
             </div>
           ))}
@@ -477,12 +477,12 @@ export function RevokeSheet({
   onConfirm: () => void;
 }) {
   return (
-    <Sheet open={!!revoking} title={revoking?.unreadable ? 'Remove the token?' : `Revoke ${revoking?.label ?? 'token'}?`} onClose={onCancel}>
+    <Sheet open={!!revoking} title={revoking?.unreadable ? 'Delete the token?' : `Revoke ${revoking?.label ?? 'token'}?`} onClose={onCancel}>
       {revoking && (
         <>
           <p className="panel-note" style={{ marginTop: 0 }}>
             {revoking.unreadable
-              ? 'Its record can’t be read, so it doesn’t work now. Removing it deletes what is left of it.'
+              ? 'Its record can’t be read, so it doesn’t work now. Deleting it removes what is left of it.'
               : 'Anything using it loses access on its next request. This can’t be undone: make a new token if you need one again.'}
           </p>
           {error && <div className="error">{error}</div>}
@@ -491,7 +491,7 @@ export function RevokeSheet({
               Cancel
             </button>
             <button className="danger" onClick={onConfirm} disabled={busy}>
-              {busy ? 'Revoking…' : revoking.unreadable ? 'Remove' : 'Revoke'}
+              {busy ? (revoking.unreadable ? 'Deleting…' : 'Revoking…') : revoking.unreadable ? 'Delete' : 'Revoke'}
             </button>
           </div>
         </>

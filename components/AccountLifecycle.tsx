@@ -738,7 +738,7 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
           {damage.unrecognised > 0
             ? ` Accounts can’t load while any closure can’t be read, since one may be an account you closed, and removing ${n === 1 ? 'this one' : 'these'} isn’t enough on its own (see below).`
             : ` Accounts can’t load until ${n === 1 ? 'it is' : 'they are'} removed, since one may be an account you closed.`}{' '}
-          Removing {n === 1 ? 'it' : 'them'} counts {n === 1 ? 'that account' : 'those accounts'} again until you close{' '}
+          Deleting {n === 1 ? 'it' : 'them'} counts {n === 1 ? 'that account' : 'those accounts'} again until you close{' '}
           {n === 1 ? 'it' : 'them'} again.
         </p>
       )}
@@ -758,12 +758,12 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
               Cancel
             </button>
             <button className="danger" onClick={repair} disabled={busy}>
-              {busy ? 'Removing…' : n === 1 ? 'Remove it' : `Remove all ${n}`}
+              {busy ? 'Deleting…' : n === 1 ? 'Delete it' : `Delete all ${n}`}
             </button>
           </div>
         ) : (
           <button className="secondary" onClick={() => setConfirming(true)}>
-            Remove the damaged {n === 1 ? 'closure' : 'closures'}
+            Delete the damaged {n === 1 ? 'closure' : 'closures'}
           </button>
         ))}
     </div>

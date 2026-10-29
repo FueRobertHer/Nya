@@ -313,14 +313,15 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 
 ## Vocabulary
 
-One word for one thing, everywhere:
+One word for one thing, everywhere. As a button, **Close** only dismisses a sheet, menu or notice; nothing changes.
 
 | Word | Means | Not |
 |---|---|---|
 | **Hide** | Keep syncing, stop counting | Remove, archive |
 | **Close** | The account ended on a day (closed, no longer yours, or no longer followed); history before stays; its button reads "Mark as closed…", so it is never taken for a sheet's Close | Disconnect, delete |
 | **Disconnect** | Remove a connection to an institution; its accounts' history is kept | Remove, unlink |
-| **Delete** | Permanently remove something you made (a manual account, a transaction, a rule) | Forget |
+| **Delete** | Permanently remove something you made or Nya keeps for you (a manual account, a transaction, a rule, a budget, an IOU, a token, a target, a record that can't be read, a disconnected bank's accounts you chose not to keep) | Remove, forget |
+| **Remove** | Take an item out of what you are editing or a list you keep, which stays as it was otherwise: a split's part, a rule's condition, a change in a scenario, a person from your sharing | Delete |
 | **Forget** | Permanently remove what Nya kept about a disconnected account | Delete |
 | **Link** | Join a reconnected account's history to the account it replaces | Connect |
 | **Connect** / **Reconnect** | Bring an institution in through a provider / fix its login | Link |

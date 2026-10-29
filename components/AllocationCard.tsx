@@ -947,7 +947,7 @@ export function SplitForm({
       {error && <div className="error">{error}</div>}
       {canRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={!editable || saving} onClick={() => void save(null)}>
-          {target ? 'Remove the target' : 'Remove my split'}
+          {target ? 'Delete the target' : 'Delete my split'}
         </button>
       )}
       <div className="button-pair" style={{ marginTop: 16 }}>

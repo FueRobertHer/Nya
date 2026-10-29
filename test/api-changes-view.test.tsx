@@ -104,11 +104,11 @@ describe('the list', () => {
     expect(cannotUndo(change({ op: 'undo' }))).toBe('An undo isn’t undone: make the change again.');
   });
 
-  test('a change that can’t be read can be removed; one from another version is only named; older ones load on asking', () => {
+  test('a change that can’t be read can be deleted; one from another version is only named; older ones load on asking', () => {
     const html = view({ list: ready([], { unreadable: ['20261020.0123456789abcdef.bbbbbbbbbbbb'], unrecognised: ['x'], next: 'abc' }) });
     const t = text(html);
     expect(t).toContain('A change couldn’t be read, so it can’t be undone.');
-    expect(html).toContain('Remove it');
+    expect(html).toContain('Delete it');
     expect(t).toContain('A change was recorded by another version of Nya');
     expect(html).toContain('Show older changes');
   });

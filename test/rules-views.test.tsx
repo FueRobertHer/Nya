@@ -324,7 +324,7 @@ describe('the screens, for a keyboard and a screen reader', () => {
     const html = renderToStaticMarkup(
       <TxnTagsNote t={{ transaction_id: 'x', name: 'Taxi', pending: false, tags: [], note: null } as any} tags={TAGS} onChangeTags={() => {}} onSaveNote={() => {}} />
     );
-    expect(html).toContain('class="tag-suggestions" role="group" aria-label="Your tags"');
+    expect(html).toContain('class="chip-row tag-suggestions" role="group" aria-label="Your tags"');
   });
 
   test('a pending row a rule hides offers no include that would lapse when it posts', () => {

@@ -133,6 +133,12 @@ const RANGE_TEXT: Record<RangeKey, string> = {
   ALL: 'All',
 };
 
+// The hero's line draws in once a page load: the first time Home's chart is
+// shown (on its own data, after the skeleton), never again as tabs or
+// ranges change. Server and first client render agree (it is false on both),
+// so the class is there from the start and nothing flashes.
+let heroDrawn = false;
+
 export default function NetWorthChart({
   points: allPoints,
   label = 'Net worth',
@@ -173,6 +179,10 @@ export default function NetWorthChart({
   hero?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawIn] = useState(() => hero && !heroDrawn);
+  useEffect(() => {
+    if (hero) heroDrawn = true;
+  }, [hero]);
   // Drawn at its own width, in the hero's frame or a card's.
   const [drawnRef, drawnW] = useDrawnWidth<SVGSVGElement>();
   const frame = useMemo(() => (hero ? heroFrame(drawnW) : cardFrame(drawnW)), [hero, drawnW]);
@@ -699,7 +709,7 @@ export default function NetWorthChart({
 
       <svg
         ref={plotRef}
-        className={hero ? 'chart-svg at-width hero-chart' : 'chart-svg at-width'}
+        className={hero ? `chart-svg at-width hero-chart${drawIn ? ' draw-in' : ''}` : 'chart-svg at-width'}
         viewBox={`0 0 ${W} ${H}`}
         role="slider"
         tabIndex={0}

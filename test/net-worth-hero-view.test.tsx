@@ -117,6 +117,23 @@ function mount(node: React.ReactNode) {
 
 const money = (n: number) => formatMoney(n, 'USD');
 
+describe('the hero line draws in once', () => {
+  test('drawn on the server and on the first showing; after that, a new chart and a re-render never again', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    // The server can't know the page has shown it: the first render has it.
+    expect(renderToStaticMarkup(<NetWorthChart hero points={POINTS} />)).toContain('class="chart-svg at-width hero-chart draw-in"');
+    const first = mount(<NetWorthChart hero points={POINTS} />);
+    // A new range is a re-render: the class stays, so nothing replays.
+    first.rerender(<NetWorthChart hero points={POINTS.slice(1)} />);
+    expect(first.plot().getAttribute('class')).toBe('chart-svg at-width hero-chart draw-in');
+    // Back on Home after another tab: the line is simply there.
+    const again = mount(<NetWorthChart hero points={POINTS} />);
+    expect(again.plot().getAttribute('class')).toBe('chart-svg at-width hero-chart');
+    // An account's chart never draws in.
+    expect(renderToStaticMarkup(<NetWorthChart points={POINTS} />)).not.toContain('draw-in');
+  });
+});
+
 describe('the hero, scrubbed', () => {
   test('a finger moves the figure to its day, says the day in the change line’s place, and keeps the readout on the range', () => {
     const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));

@@ -439,7 +439,7 @@ export function StoppedAccountsView({
           <span>
             {a.institution_name} {a.name}
             <span className="type-tag" style={{ display: 'block' }}>
-              {a.kept ? 'Kept as a manual account' : 'Removed'} on {shownDay(a.ended_at)}, through {a.connector}
+              {a.kept ? 'Kept as a manual account' : 'Deleted'} on {shownDay(a.ended_at)}, through {a.connector}
             </span>
           </span>
           <button className="link-btn danger-link" disabled={busy} onClick={() => onForget(a.account_id, `${a.institution_name} ${a.name}`)}>

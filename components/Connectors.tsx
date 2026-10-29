@@ -142,7 +142,7 @@ export function backIn(requests: { resets_in_seconds: number } | null | undefine
 export function nothingToKeep(list: string[] | undefined): string {
   if (!list || list.length === 0) return '';
   const one = list.length === 1;
-  return ` Removed ${names(list)}: no balance had come for ${one ? 'it' : 'them'} yet, so there was nothing to keep.`;
+  return ` Deleted ${names(list)}: no balance had come for ${one ? 'it' : 'them'} yet, so there was nothing to keep.`;
 }
 /** "Sep 12" from a YYYY-MM-DD, at local midnight. */
 const calendarDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -422,7 +422,7 @@ export function ChooseView({
           <label className="download-format">
             <input type="radio" name="connector-keep" checked={!keep} onChange={() => onKeep(false)} />
             <span>
-              <span className="download-format-name">Remove</span>
+              <span className="download-format-name">Delete {stopping === 1 ? 'it' : 'them'}</span>
               <span className="download-format-note">{stopping === 1 ? 'It goes, with its' : 'They go, with their'} transactions. Past net-worth totals keep what {stopping === 1 ? 'it' : 'they'} held.</span>
             </span>
           </label>
@@ -903,7 +903,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (res.data.kept) parts.push(`Kept ${res.data.kept} as manual account${res.data.kept === 1 ? '' : 's'}.`);
     const empty = res.data.nothing_to_keep as string[] | undefined;
     if (keep && empty?.length) parts.push(nothingToKeep(empty).trim());
-    else if (res.data.removed) parts.push(`Removed ${res.data.removed}.`);
+    else if (res.data.removed) parts.push(`Deleted ${res.data.removed}.`);
     // A card or loan reported as money held is asked about at once.
     const next = signStep(res.data.connection as ConnectionView | null, parts.join(' ') || null);
     if (next) return setStep(next);
@@ -1050,7 +1050,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             <label className="download-format">
               <input type="radio" name="connector-disconnect" checked={!keep} onChange={() => setKeep(false)} />
               <span>
-                <span className="download-format-name">Remove them</span>
+                <span className="download-format-name">Delete them</span>
                 <span className="download-format-note">They go, with their transactions. Past net-worth totals keep what they held, as for any bank you disconnect.</span>
               </span>
             </label>

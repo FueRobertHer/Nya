@@ -20,7 +20,7 @@ import { shownName } from '@/lib/merchant-name';
 import { fmtDayInYear } from './accounts-format';
 import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, sortedRules, type RuleField } from '@/lib/rules';
 import type { Taxonomy } from '@/lib/categories';
-import { shownColor, type Tag } from '@/lib/tags';
+import type { Tag } from '@/lib/tags';
 import { blankCondition, draftComplete, draftInput, type DraftCondition, type RuleDraft, type RulesState } from './rules-state';
 
 const FIELD_LABEL: Record<RuleField, string> = {
@@ -291,14 +291,16 @@ export default function RuleSheet({
         {tags.length > 0 && (
           <div className="field">
             Add tags
-            <div className="tag-suggestions" role="group" aria-label="Tags to add">
+            {/* Chips, as every label you pick is: on, an accent edge and a
+                check, never a color alone. */}
+            <div className="chip-row tag-suggestions" role="group" aria-label="Tags to add">
               {tags.map((t) => {
                 const on = form.add_tags.includes(t.id);
                 return (
                   <button
                     key={t.id}
                     type="button"
-                    className={`tag-suggestion${on ? ` chosen tag-${shownColor(t.color)}` : ''}`}
+                    className="chip"
                     aria-pressed={on}
                     onClick={() => set({ add_tags: on ? form.add_tags.filter((x) => x !== t.id) : [...form.add_tags, t.id] })}
                     disabled={busy}
