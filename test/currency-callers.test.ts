@@ -72,7 +72,7 @@ export function callers(path: string, source: string): string[] {
 describe('every reader that totals in one currency is listed, with its reason', () => {
   const sources = ['lib', 'components', 'app']
     .flatMap((d) => filesUnder(join(ROOT, d)))
-    .map((f) => relative(ROOT, f))
+    .map((f) => relative(ROOT, f).replaceAll('\\', '/'))
     .filter((f) => f !== 'lib/spending.ts' && f !== 'lib/format.ts' && !f.startsWith('lib/fx/'));
 
   test('the list is the code’s: none missing, none stale', () => {
@@ -85,7 +85,7 @@ describe('every reader that totals in one currency is listed, with its reason', 
   // Decision 1: Nya never writes a home currency on its own, on any path.
   test('only the person’s own requests write the currency settings: the two routes, nothing else', () => {
     // Every module, lib/fx/ included; withHome's own definition aside.
-    const all = ['lib', 'components', 'app'].flatMap((d) => filesUnder(join(ROOT, d))).map((f) => relative(ROOT, f));
+    const all = ['lib', 'components', 'app'].flatMap((d) => filesUnder(join(ROOT, d))).map((f) => relative(ROOT, f).replaceAll('\\', '/'));
     const writes = (f: string) => {
       const code = withoutComments(readFileSync(join(ROOT, f), 'utf8')).replace(/\bfunction\s+withHome\s*\(/g, '');
       return /\bcurrencySettingsStore\s*\.\s*(?:set|update|remove)\s*\(|\bwithHome\s*\(/.test(code);

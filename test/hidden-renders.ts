@@ -25,8 +25,8 @@ const decode = (s: string) =>
 
 /** The test file a render was made from. */
 function suite(): string {
-  const frame = (new Error().stack ?? '').split('\n').find((l) => /\/test\/[\w-]+\.test\.tsx?:\d+/.test(l));
-  return /test\/[\w-]+\.test\.tsx?:\d+/.exec(frame ?? '')?.[0] ?? '?';
+  const frame = (new Error().stack ?? '').split('\n').find((l) => /[\\/]test[\\/][\w-]+\.test\.tsx?:\d+/.test(l));
+  return /test[\\/][\w-]+\.test\.tsx?:\d+/.exec(frame ?? '')?.[0].replace('\\', '/') ?? '?';
 }
 
 function record(html: string) {

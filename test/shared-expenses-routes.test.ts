@@ -317,7 +317,7 @@ describe('isolation, and reads that never write', () => {
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(join(root, dir))) {
-        const path = join(dir, name);
+        const path = `${dir}/${name}`;
         if (name === 'node_modules' || name.startsWith('.')) continue;
         if (statSync(join(root, path)).isDirectory()) walk(path);
         else if (/\.(ts|tsx)$/.test(name)) files.push(path);

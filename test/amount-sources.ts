@@ -453,7 +453,7 @@ export function clientModules(root: string): string[] {
     seen.add(f);
     queue.push(...importsOf(root, f, readFileSync(f, 'utf8')));
   }
-  return [...seen].sort().map((f) => relative(root, f));
+  return [...seen].map((f) => relative(root, f).replaceAll('\\', '/')).sort();
 }
 
 /** The formatter calls that write an amount the way lib/format.ts does, with
