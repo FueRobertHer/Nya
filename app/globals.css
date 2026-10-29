@@ -1291,6 +1291,13 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   line-height: var(--lh-body);
 }
 
+/* A notice said after an action (role="alert": the errors that were
+   .error) keeps the 12px above it that .error gave, where its parent is not
+   a stack. :where() so a .stack's own gap, and any class, always wins. */
+:where(.notice[role="alert"]:not(:first-child)) {
+  margin-top: var(--sp-3);
+}
+
 .notice > svg {
   width: 16px;
   height: 16px;

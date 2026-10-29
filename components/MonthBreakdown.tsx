@@ -1344,8 +1344,10 @@ export default function MonthBreakdown({
 
               {notes.length + asideNotes.length > 0 && (
                 <div className="stack tight">
+                  {/* What the list may be missing: there as the list loads, so read
+                      in place, never announced. */}
                   {[...new Set([...notes, ...asideNotes])].map((n) => (
-                    <Notice key={n} level="critical" role="alert">
+                    <Notice key={n} level="critical">
                       {n}
                     </Notice>
                   ))}

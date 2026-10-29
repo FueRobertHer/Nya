@@ -292,7 +292,7 @@ describe('what the load couldn’t read, beside the chart', () => {
   // The words of each critical notice, in order (TotalCaveats' Notice, its
   // level said first for a screen reader).
   const critical = (html: string) =>
-    [...html.matchAll(/<div class="notice critical" role="alert">.*?<span class="visually-hidden">Critical: <\/span>(.*?)<\/div><\/div>/g)].map((m) => m[1]);
+    [...html.matchAll(/<div class="notice critical"(?: role="alert")?>.*?<span class="visually-hidden">Critical: <\/span>(.*?)<\/div><\/div>/g)].map((m) => m[1]);
 
   test('said first among what may be missing, as a sentence', () => {
     const html = sankey({ notes: [manual, 'Your rules couldn’t be read, so none are applied until they can be: transactions show as the bank and you have them.'] });

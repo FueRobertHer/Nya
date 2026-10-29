@@ -957,17 +957,22 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - **Dates:** every day read on screen goes through `formatDay`, or `formatInstantDay` for an instant's local day (`lib/format.ts`): "Today" and "Yesterday", "Aug 7" this year and "Aug 7, 2025" outside it, lower case mid sentence and never "on today" (`onDay`). The days that always carried a year (timeline notes, imports, restores, connections, sharing, the Plan's notes) and the instants said through `instantDay`, which never said today, moved to it; Upcoming's day bars, the calendar's day, Card Mode and the transaction sheet keep their weekday. Month names, times, chart axes, the API, MCP, emails, downloads, printed report dates and UTC days stay as they were.
 - **Offline:** a caution on Home's total while the device is offline, "Offline. Showing balances from 9:41 AM.", with the time of the numbers shown (`components/online.ts`, through the hero's caveats), gone once it is back online. Disabling the actions that need the network waits for a single place to do it: there is none yet.
 
-**Kept as the repo decided later** (the artifact still says otherwise): Activity has no hero; the month stepper's layout and its 16px chevron; the hatched caution meter; no blur under a sheet; two lines on one chart told apart by dash; an empty state's heading level; the stat strip's size; 32px logo tiles; the compact switch's 12px labels; the mask keeps its sign and currency.
+**The calls made after it** (the second pass, for consistency and polish without taking anything away):
+
+- **Words:** Delete is for good (a damaged record, a token, a change, a target, a disconnected bank's accounts you chose not to keep); Remove takes an item out of what you are editing (a split's part, a rule's condition, a change in a scenario, a person from sharing); a button reading Close only dismisses. The vocabulary in information-architecture.md has both rows.
+- **Card padding** is `--sp-4` on a phone, `--sp-5` from 720px, through one `--inset` that the rows running to a card's edges take as their margin and padding, so they line up at either width (a sheet's is `--sp-5`).
+- **The hero's line draws in once a page load** (`.draw-in`): a clip of the outer plot, which every engine draws alike, so the estimated stretches keep their dashes. It never replays on a new tab or range, and under reduced motion it is simply there.
+- **Tags to pick are chips** in a `.chip-row`, a picked one with its edge and check; every select draws its chevron in `--text-2` from CSS, so it follows the theme; Clerk's fields take `--border-input` and its primary keeps its fill on hover.
+- **A converted error keeps its 12px** above it where its parent isn't a stack (`:where(.notice[role="alert"]…)`), and the caveats a list shows as it loads (Activity's notes, an unreadable scenario) are read in place, not announced.
+- **Same-cause critical notes** were already one note per cause that names each institution and counts the accounts; the artifact now says so, rather than "a count".
+- **Clerk's `colorPrimary` stays `--accent`** for its links, with `--on-accent-fill` on it (9.80:1, 8.89:1) and `--accent-fill` on its button; the artifact now says so.
+
+**Taken by the artifact** (the repo had decided these after it was written): Activity has no hero; the month stepper's two-line grid and its 16px chevron; the hatched caution meter, budgets amber past their limit; no blur under a sheet; two lines on one chart told apart by dash; an empty state's heading level; stat figures sized by their cell; 32px logo tiles; the compact switch's 12px labels; the mask keeping its sign and currency; Clerk's profile in its own window; the shadow's light color; abbreviations on axis ticks, the calendar's cells and the cash flow chart's node labels.
 
 **Kept narrow:**
 
-- Card padding stays `--sp-5` on phones (see "After the rollout: controls and states without color", Kept narrow).
-- Critical notes with the same cause are not combined into a count: the artifact asks for it, but critical caveats never collapse here. Left for a decision.
-- Clerk's `colorPrimary` stays `--accent` for its links (step 2), against the artifact's note.
-- Other "Remove" actions, and the vocabulary table's Close and Hide, are left until the word list is settled.
-- The hero draw-in stays deferred (see the light accent review).
 - The cash flow chart keeps its see-through ribbons (each node's bar carries it at full strength, as the light theme check decided) and its node labels in K (laid out for a short figure; the table under it has every amount in full).
-- Still to move, each its own change: disabling the actions that need the network while offline, with that as their hint.
+- Still to move, each its own change: disabling the actions that need the network while offline, with that as their hint (the app has no one place for it yet; each action says its own error meanwhile).
 
 ## Left from the reviews
 

@@ -458,7 +458,7 @@ export function ScenariosSheet({
         {ready && list.length >= MAX_PLAN_SCENARIOS && <p className="panel-note">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one to make another.</p>}
         {state.unreadable.map((id) => (
           <div key={id} className="plan-row">
-            <Notice level="critical" role="alert">
+            <Notice level="critical">
               A saved scenario couldn’t be read: its stored data is damaged.
             </Notice>
             <button className="secondary" style={{ marginTop: 8 }} ref={keep(`unreadable:${id}`)} onClick={() => go({ kind: 'delete-unreadable', id })} disabled={busy}>
