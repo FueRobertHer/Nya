@@ -657,11 +657,12 @@ function PlanDetail({
       <section className="panel-section">
         <p className="section-label">Compared</p>
         <table className="payoff-compare">
+          <caption className="visually-hidden">The payoff orders compared</caption>
           <thead>
             <tr>
-              <th>Order</th>
-              <th>Paid off</th>
-              <th className="num">Interest</th>
+              <th scope="col">Order</th>
+              <th scope="col">Paid off</th>
+              <th scope="col" className="num">Interest</th>
             </tr>
           </thead>
           <tbody>

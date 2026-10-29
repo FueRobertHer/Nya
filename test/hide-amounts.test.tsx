@@ -94,7 +94,7 @@ import { cardOf as sharedCard, daysAgo as sharedDaysAgo, shared as sharedState, 
 
 // Hide amounts (components/hide-amounts.ts): the switch that shows the app's
 // structure while hiding its figures. Every money amount the main screens
-// show is written as "•••" by the formatters (lib/format.ts), with its sign
+// show is written as "••••" by the formatters (lib/format.ts), with its sign
 // and currency kept; meters, bars and charts keep their shapes; a screen
 // reader hears "hidden"; the choice is kept on the device and survives a
 // storage that fails; and nothing the server makes (the API, the downloads,
@@ -151,7 +151,7 @@ function exposed(html: string): string {
 }
 
 /** A figure as the formatters write one, or as anything else could: a
- *  currency's symbol beside a digit ("$12", "-$12", "CA$5", "12 €"), a code
+ *  currency's symbol beside a digit ("$12", "−$12", "CA$5", "12 €"), a code
  *  before or after one ("CHF 12.00", "12.50 DOGE"), a figure with cents or
  *  finer ("1,234.56", a quantity's "12.345"), thousands ("1,234"), or a
  *  compact figure ("1.2K"); never a percentage. A code is any three capitals
@@ -212,27 +212,27 @@ const shapes = (html: string) => [...html.matchAll(/\s(?:style|d|points|width|he
 describe('the formatters, with amounts hidden', () => {
   test('write the figures as one mask, whatever the size, with the sign and the currency where they go', () => {
     hideNow();
-    expect(formatMoney(1234.5, 'USD')).toBe('$•••');
-    expect(formatMoney(7, 'USD')).toBe('$•••');
-    expect(formatMoney(-12, 'USD')).toBe('-$•••');
-    expect(formatMoney(12, 'EUR')).toBe('€•••');
-    expect(formatMoney(3200, 'JPY')).toBe('¥•••');
-    expect(formatMoney(12, 'CAD')).toBe('CA$•••');
-    expect(formatMoney(12)).toBe('$•••');
-    expect(formatMoney(-12, null)).toBe('-$•••');
+    expect(formatMoney(1234.5, 'USD')).toBe('$••••');
+    expect(formatMoney(7, 'USD')).toBe('$••••');
+    expect(formatMoney(-12, 'USD')).toBe('−$••••');
+    expect(formatMoney(12, 'EUR')).toBe('€••••');
+    expect(formatMoney(3200, 'JPY')).toBe('¥••••');
+    expect(formatMoney(12, 'CAD')).toBe('CA$••••');
+    expect(formatMoney(12)).toBe('$••••');
+    expect(formatMoney(-12, null)).toBe('−$••••');
     // A code Intl refuses goes after the mask, as after the figures.
-    expect(formatMoney(12.5, 'DOGE')).toBe('••• DOGE');
-    expect(formatMoney(-12.5, 'DOGE')).toBe('-••• DOGE');
+    expect(formatMoney(12.5, 'DOGE')).toBe('•••• DOGE');
+    expect(formatMoney(-12.5, 'DOGE')).toBe('−•••• DOGE');
     // Signed, and compact: a "K" or an "M" says a size too.
-    expect(signedMoney(12, 'USD', { always: true })).toBe('+$•••');
-    expect(signedMoney(-5, 'USD')).toBe('-$•••');
-    expect(signedMoney(0, 'USD')).toBe('$•••');
-    expect(signedMoney(5, 'DOGE')).toBe('+••• DOGE');
-    expect(compactMoney(1_200_000, 'USD')).toBe('$•••');
-    expect(compactMoney(1_200_000)).toBe('$•••');
-    expect(compactMoney(950, 'EUR')).toBe('€•••');
-    expect(wholeMoney(1_500_000, 'USD')).toBe('$•••');
-    expect(wholeMoney(-3, null)).toBe('-$•••');
+    expect(signedMoney(12, 'USD', { always: true })).toBe('+$••••');
+    expect(signedMoney(-5, 'USD')).toBe('−$••••');
+    expect(signedMoney(0, 'USD')).toBe('$••••');
+    expect(signedMoney(5, 'DOGE')).toBe('+•••• DOGE');
+    expect(compactMoney(1_200_000, 'USD')).toBe('$••••');
+    expect(compactMoney(1_200_000)).toBe('$••••');
+    expect(compactMoney(950, 'EUR')).toBe('€••••');
+    expect(wholeMoney(1_500_000, 'USD')).toBe('$••••');
+    expect(wholeMoney(-3, null)).toBe('−$••••');
   });
 
   test('and as before when amounts show', () => {
@@ -253,28 +253,28 @@ describe('the formatters, with amounts hidden', () => {
     expect(hideAmountsIn(said)).toBe(said);
     hideNow();
     expect(hideAmountsIn(said)).toBe(
-      "Checking's balance changed to $••• since this form opened. Card (+$•••) and Wallet (+••• DOGE), €•••, ••• €, CA$••• and XAU ••• on Sep 12 at 3 pm, 2026."
+      "Checking's balance changed to $•••• since this form opened. Card (+$••••) and Wallet (+•••• DOGE), €••••, •••• €, CA$•••• and XAU •••• on Sep 12 at 3 pm, 2026."
     );
     // A code after a number that is no amount (a time, a year) is left alone.
     expect(hideAmountsIn('Synced at 12:00 UTC, for the 2026 IRS form, at 21.24% APR.')).toBe('Synced at 12:00 UTC, for the 2026 IRS form, at 21.24% APR.');
-    expect(hideAmountsIn('1.234,56 DOGE and 1,234.56 DOGE')).toBe('••• DOGE and ••• DOGE');
+    expect(hideAmountsIn('1.234,56 DOGE and 1,234.56 DOGE')).toBe('•••• DOGE and •••• DOGE');
   });
 
   test('a file’s figures, which carry no currency to tell an amount by, are hidden whole while it is imported, a date as one', () => {
     expect(hideFiguresIn('2026-09-01 | Rent | -2450.00')).toBe('2026-09-01 | Rent | -2450.00');
     hideNow();
-    expect(hideFiguresIn('2026-09-01 | Rent | -2450.00')).toBe('••• | Rent | -•••');
-    expect(hideFiguresIn("1'234.56, 1.234,56 and 1\u00a0234,56")).toBe('•••, ••• and •••');
+    expect(hideFiguresIn('2026-09-01 | Rent | -2450.00')).toBe('•••• | Rent | -••••');
+    expect(hideFiguresIn("1'234.56, 1.234,56 and 1\u00a0234,56")).toBe('••••, •••• and ••••');
     expect(spoken(hideFiguresIn('09/01/2026 | Payroll | 5120.33'))).toBe('hidden | Payroll | hidden');
   });
 
   test('a screen reader hears "hidden" for each, never bullets, and an account’s last digits as they are', () => {
-    expect(spoken('Groceries $••• of $••• · over')).toBe('Groceries hidden of hidden · over');
-    expect(spoken('Spent •••, -€•••, +••• DOGE, ••• €, CA$•••, (¥•••)')).toBe('Spent hidden, hidden, hidden, hidden, hidden, (hidden)');
+    expect(spoken('Groceries $•••• of $•••• · over')).toBe('Groceries hidden of hidden · over');
+    expect(spoken('Spent ••••, −€••••, +•••• DOGE, •••• €, CA$••••, (¥••••)')).toBe('Spent hidden, hidden, hidden, hidden, hidden, (hidden)');
     expect(spoken('Checking ••1234')).toBe('Checking ••1234');
     expect(spoken('Nothing hidden here: $12.00')).toBe('Nothing hidden here: $12.00');
     // A word after an amount with its symbol before is a word, said as one.
-    expect(spoken('+$••• IRA contribution, $••• OK, CHF\u00a0••• due')).toBe('hidden IRA contribution, hidden OK, hidden due');
+    expect(spoken('+$•••• IRA contribution, $•••• OK, CHF\u00a0•••• due')).toBe('hidden IRA contribution, hidden OK, hidden due');
   });
 
   // A rate is no amount of the person's money: the ECB's are public, and a
@@ -294,8 +294,8 @@ describe('the formatters, with amounts hidden', () => {
   });
 
   test('Masked draws the text as it is, and gives a screen reader the spoken words', () => {
-    const html = renderToStaticMarkup(<Masked>{'$••• of $•••'}</Masked>);
-    expect(html).toBe('<span aria-hidden="true">$••• of $•••</span><span class="visually-hidden">hidden of hidden</span>');
+    const html = renderToStaticMarkup(<Masked>{'$•••• of $••••'}</Masked>);
+    expect(html).toBe('<span aria-hidden="true">$•••• of $••••</span><span class="visually-hidden">hidden of hidden</span>');
     expect(renderToStaticMarkup(<Masked>{'$12.00 of $40.00'}</Masked>)).toBe('$12.00 of $40.00');
     expect(renderToStaticMarkup(<Masked>{null}</Masked>)).toBe('');
   });
@@ -357,7 +357,7 @@ describe('remembered on this device', () => {
     expect(inBrowser(() => setHideAmounts(true, storage))).toBe(true);
     expect(storage.items.get(HIDE_AMOUNTS_KEY)).toBe('1');
     expect(amountsHidden()).toBe(true);
-    expect(formatMoney(5, 'USD')).toBe('$•••');
+    expect(formatMoney(5, 'USD')).toBe('$••••');
     // A new page on the same device.
     loadHideAmountsForTests(null);
     expect(amountsHidden()).toBe(false);
@@ -421,12 +421,12 @@ describe('remembered on this device', () => {
 
   test('printing shows the figures, whatever the switch says, and hides them again after', () => {
     inBrowser(() => loadHideAmountsForTests(memory({ [HIDE_AMOUNTS_KEY]: '1' })));
-    expect(formatMoney(12, 'USD')).toBe('$•••');
+    expect(formatMoney(12, 'USD')).toBe('$••••');
     showFigures(true);
     expect(formatMoney(12, 'USD')).toBe('$12.00');
     expect(amountsHiddenNow()).toBe(false);
     inBrowser(() => showFigures(false));
-    expect(formatMoney(12, 'USD')).toBe('$•••');
+    expect(formatMoney(12, 'USD')).toBe('$••••');
   });
 });
 
@@ -1507,8 +1507,8 @@ describe('the main screens with amounts hidden', () => {
     const rule = css.slice(css.indexOf(hook), css.indexOf('}', css.indexOf(hook)));
     expect(rule).toContain('color: transparent;');
     expect(rule).toContain('-webkit-text-fill-color: transparent;');
-    // Three dots, drawn in the text's color so they read in either theme.
-    expect(rule.match(/radial-gradient\(circle, var\(--text-1\) /g)).toHaveLength(3);
+    // Four dots, as MASK, drawn in the text's color so they read in either theme.
+    expect(rule.match(/radial-gradient\(circle, var\(--text-1\) /g)).toHaveLength(MASK.length);
     expect(css).not.toContain('-webkit-text-security');
   });
 });
@@ -1727,7 +1727,7 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       'a point (1,234.56)',
       'You pay SimpleFIN for it ($15 a year), not Nya',
       'your own Lunch Flow account (about $35 a year for two bank connections, paid to Lunch Flow)',
-      'USD $••• is €••• (1 USD = 0.86573 EUR)',
+      'USD $•••• is €•••• (1 USD = 0.86573 EUR)',
       'USD hidden is hidden (1 USD = 0.86573 EUR)',
       '1 BTC = 61,000 USD, every day, past ones included',
       'The ECB’s of Sep 14, 2026: 1 USD = 0.86573 EUR',

@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { AttachmentSweepProblem, BackupProblem, JobView } from '@/lib/backup';
-import { CAUTION } from './ConnectionStatus';
+import { CAUTION, LevelWord } from './ConnectionStatus';
 import { backupWords, filesWords } from './NetWorthCard';
 import { PageHeader } from './PageHeader';
 
@@ -63,12 +63,18 @@ export function JobCard({ view, running, said, onRun }: { view: JobView; running
         {problem ? (
           <div className="notice caution">
             {CAUTION}
-            <div>{problem}</div>
+            <div>
+              <LevelWord level="caution" />
+              {problem}
+            </div>
           </div>
         ) : view.last_ok ? (
           <div className="notice done">
             {CHECK}
-            <div>Its last run worked, on {when(view.last_ok)}.</div>
+            <div>
+              <LevelWord level="done" />
+              Its last run worked, on {when(view.last_ok)}.
+            </div>
           </div>
         ) : null}
         {(view.last_ok || view.last_failed) && (
@@ -167,7 +173,10 @@ export default function AdminJobs() {
         {error && (
           <div className="notice caution">
             {CAUTION}
-            <div>{error}</div>
+            <div>
+              <LevelWord level="caution" />
+              {error}
+            </div>
           </div>
         )}
         {!jobs && !error && <p className="empty-note">Reading…</p>}

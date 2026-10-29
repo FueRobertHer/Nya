@@ -21,7 +21,7 @@ import type { Txn } from './MonthBreakdown';
 import { addMonths, calendarMonth, duePayments, type CalendarEntry } from '@/lib/calendar';
 import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurring';
 import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/lib/planned';
-import { amountsHidden, formatMoney, MASK, signedMoney, spoken } from '@/lib/format';
+import { amountsHidden, formatMoney, MASK, MINUS, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
@@ -41,7 +41,7 @@ const MONTHS_AHEAD = 12;
  *  as the rest of it is. */
 const SUFFIXES = ['K', 'M', 'B', 'T'];
 
-/** "+3.5K", "-143": a day's figure in a cell, its sign and whole units (the
+/** "+3.5K", "−143": a day's figure in a cell, its sign and whole units (the
  *  day's list has the cents), from a thousand two significant figures and K,
  *  M, B or T, never a currency (the legend names it once). The digits and
  *  the decimal sign are the viewer's ("3,5K" in German). Not Intl's compact
@@ -51,9 +51,9 @@ function cellFigure(n: number): string {
   // Hidden amounts (lib/format.ts): the sign and the mask, never a size. The
   // sign is the amount's own, not its rounded figure's: a figure under 0.5
   // drawn with none would say how small it is.
-  if (amountsHidden()) return `${n > 0 ? '+' : n < 0 ? '-' : ''}${MASK}`;
+  if (amountsHidden()) return `${n > 0 ? '+' : n < 0 ? MINUS : ''}${MASK}`;
   const r = Math.round(Math.abs(n));
-  const sign = r === 0 ? '' : n < 0 ? '-' : '+';
+  const sign = r === 0 ? '' : n < 0 ? MINUS : '+';
   if (r < 1000) return `${sign}${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(r)}`;
   // The suffix is chosen after rounding: at two figures 995 and up is a
   // thousand, so 999,999 is "1M", never "1000K". Past T the figure grows.

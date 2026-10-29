@@ -1627,7 +1627,14 @@ export function FiCard({
       <FigureCaveats notes={caveats} />
       {view.progress !== null && view.fiNumber !== null && (
         <div>
-          <div className="meter-track" role="img" aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}>
+          <div
+            className="meter-track"
+            role="meter"
+            aria-label={`Invested assets are ${progressText(view.progress)} of the FI number`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(Math.min(100, view.progress * 100))}
+          >
             <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
           </div>
           <div className="as-of">

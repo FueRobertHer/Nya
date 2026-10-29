@@ -227,12 +227,13 @@ export default function PlanFanChart({
       <details className="plan-table-view">
         <summary>Show as a table</summary>
         <table>
+          <caption className="visually-hidden">The range of outcomes: the 10th percentile, the median and the 90th</caption>
           <thead>
             <tr>
-              <th>{startAge !== null ? 'Age' : 'Year'}</th>
-              <th className="num">10th</th>
-              <th className="num">Median</th>
-              <th className="num">90th</th>
+              <th scope="col">{startAge !== null ? 'Age' : 'Year'}</th>
+              <th scope="col" className="num">10th</th>
+              <th scope="col" className="num">Median</th>
+              <th scope="col" className="num">90th</th>
             </tr>
           </thead>
           <tbody>

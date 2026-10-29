@@ -129,7 +129,7 @@ describe('the forecast', () => {
     );
 
   // The screen review: "$125K" sat on the line. Where its axis starts just
-  // under zero (the case that once drew "-$0" as a tick), the plot has no
+  // under zero (the case that once drew "−$0" as a tick), the plot has no
   // gridline and no amount, and zero's rule is named in a word instead.
   test('no money on its plot at a phone’s width: zero’s rule is named in a word, and every day is behind Show as a table', () => {
     const html = renderToStaticMarkup(
@@ -149,9 +149,9 @@ describe('the forecast', () => {
     const t = card();
     expect(t).toContain('Cash forecast Estimate');
     expect(t).toContain('Starts from $900.00 in Checking at Chase.');
-    // Rent on the 15th takes it to -$600, pay on the 25th back up: dates
+    // Rent on the 15th takes it to −$600, pay on the 25th back up: dates
     // after today are expectations.
-    expect(t).toContain('-$600.00 lowest, around Oct 15 (estimated)');
+    expect(t).toContain('−$600.00 lowest, around Oct 15 (estimated)');
     expect(t).toContain('Expected to drop below zero around Oct 15.');
     expect(t).toContain('Expected to end near $1,400.00 on Nov 8.');
     expect(t).toContain(
@@ -296,7 +296,7 @@ describe('the calendar', () => {
     const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
     const t = view({ series: spotify, txns: [] });
     expect(t).toContain("Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
-    expect(t).not.toContain('Expected · -$10.99');
+    expect(t).not.toContain('Expected · −$10.99');
   });
 
   // The screen review: "on the Plaid Credit Card card".
@@ -315,7 +315,7 @@ describe('the calendar', () => {
         txn({ transaction_id: 'c', name: 'Work trip', amount: 400, excluded: true }),
       ],
     });
-    expect(t).toContain('Posted · -$30.00');
+    expect(t).toContain('Posted · −$30.00');
     expect(t).toContain("Ramen In JPY, not in the day's figure");
     expect(t).toContain("Work trip Excluded, not in the day's figure");
   });
@@ -332,13 +332,13 @@ describe('the calendar', () => {
         currency="USD"
       />
     );
-    expect(html).toContain('aria-label="Monday, October 5, posted -$30.00"');
-    expect(html).toContain('aria-label="Thursday, October 15, expected -$1,500.00"');
+    expect(html).toContain('aria-label="Monday, October 5, posted −$30.00"');
+    expect(html).toContain('aria-label="Thursday, October 15, expected −$1,500.00"');
     expect(html).toContain('aria-label="Sunday, October 25, expected +$2,000.00"');
     // In the cell, its sign and whole units, a thousand shortened, and no
     // currency (the legend names it), to fit a phone's column at 12px.
-    expect(html).toContain('<span class="cal-fig out">-30</span>');
-    expect(html).toContain('<span class="cal-fig out estimated">-1.5K</span>');
+    expect(html).toContain('<span class="cal-fig out">−30</span>');
+    expect(html).toContain('<span class="cal-fig out estimated">−1.5K</span>');
     expect(html).toContain('<span class="cal-fig in estimated">+2K</span>');
   });
 
@@ -378,7 +378,7 @@ describe('the calendar', () => {
     12: [-994_999],
     13: [-995_000],
   };
-  const FIGURES = { 1: '+1K', 2: '+13K', 3: '+890K', 4: '+1M', 5: '+1.3M', 6: '0', 7: '-143', 8: '+999', 9: '0', 10: '-2.4B', 11: '+1000T', 12: '+990K', 13: '+1M' };
+  const FIGURES = { 1: '+1K', 2: '+13K', 3: '+890K', 4: '+1M', 5: '+1.3M', 6: '0', 7: '−143', 8: '+999', 9: '0', 10: '−2.4B', 11: '+1000T', 12: '+990K', 13: '+1M' };
 
   /** `fn` run with Intl.NumberFormat as `make` makes it of the real one,
    *  put back after. */
@@ -407,7 +407,7 @@ describe('the calendar', () => {
           super(locales ?? 'de-DE', options);
         }
       } as unknown as typeof Intl.NumberFormat;
-    expect(withNumberFormat(german, () => cellFigures(posted({ 1: [-3_500], 2: [-1_250_000], 3: [143] })))).toEqual({ 1: '+3,5K', 2: '+1,3M', 3: '-143' });
+    expect(withNumberFormat(german, () => cellFigures(posted({ 1: [-3_500], 2: [-1_250_000], 3: [143] })))).toEqual({ 1: '+3,5K', 2: '+1,3M', 3: '−143' });
   });
 
   test('a figure carried up is 1 of the next suffix, on an engine that rounds a number by its binary value too', () => {
@@ -520,7 +520,7 @@ describe('the planned items', () => {
       },
     });
     expect(t).toContain('Tax refund Once · next Oct 30, 2026 +$1,200.00');
-    expect(t).toContain('Car registration Yearly · next Nov 3, 2026 -$212.50');
+    expect(t).toContain('Car registration Yearly · next Nov 3, 2026 −$212.50');
     expect(t).toContain('Deposit back Once · was Sep 1, 2026 +$500.00');
     expect(t.indexOf('Tax refund')).toBeLessThan(t.indexOf('Car registration'));
     expect(t).toContain('Add a planned item');

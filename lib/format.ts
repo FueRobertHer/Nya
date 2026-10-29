@@ -12,7 +12,7 @@
 // HIDING AMOUNTS (components/hide-amounts.ts). A person can hide every amount
 // on their screen, to use Nya in public, on a shared screen or in a
 // screenshot: each formatter here then writes the amount's figures as MASK,
-// keeping its sign and its currency where they would be ("-$•••", "••• €"),
+// keeping its sign and its currency where they would be ("−$••••", "•••• €"),
 // so the page keeps its shape and nothing of the size. Only the page in the
 // browser ever turns it on (the switch in the header, remembered on the
 // device). Where there is no browser it can't be turned on at all
@@ -20,9 +20,41 @@
 // process's: the read-only API, the downloads, emails and every route's
 // answer always carry the figures. A page that must show them whatever the
 // switch says (a report being printed) turns it off meanwhile.
+//
+// THE MINUS SIGN. An amount below zero is written with the true minus sign
+// (MINUS, U+2212) before its currency's symbol, "−$1,240.50", as the design
+// system writes numbers: the hyphen is a dash's width and sits too low. It is
+// a rule of the screen only. What leaves Nya as data (the read-only API and
+// the emails built from it, the downloads, an OFX statement's words) and any
+// text read back keep the hyphen, through asciiMinus. Where a person types an
+// amount, either is read.
+//
+// THE MASK is four dots whatever the amount's size, so it never says how
+// large a hidden one is.
 
-/** What a hidden amount's figures are written as. */
-export const MASK = '•••';
+/** What a hidden amount's figures are written as: four dots, whatever the
+ *  amount's size. */
+export const MASK = '••••';
+
+/** The minus sign an amount on the screen is written with (U+2212). */
+export const MINUS = '\u2212';
+
+/** Text the formatters here wrote, with the hyphen for each minus sign
+ *  (MINUS), for what leaves Nya as data or is read back: the read-only API,
+ *  the emails, the downloads. */
+export function asciiMinus(text: string): string {
+  return text.replace(/\u2212/g, '-');
+}
+
+/** An amount written elsewhere (Intl's own, with the hyphen it writes for a
+ *  minus) with the true minus sign, as the formatters here write one. Only
+ *  for an amount's text, which holds no other hyphen. */
+export function trueMinus(text: string): string {
+  return text.replace(/-/g, MINUS);
+}
+
+/** Intl's parts with its minus sign (the hyphen) made the true one. */
+const withMinus = <P extends { type: string; value: string }>(parts: P[]): P[] => parts.map((p) => (p.type === 'minusSign' ? { ...p, value: MINUS } : p));
 
 let hidden = false;
 
@@ -65,7 +97,7 @@ export function roundsToNothing(amount: number, currency: string | null): boolea
 
 type Sign = 'auto' | 'always' | 'exceptZero';
 
-const signOf = (n: number, sign: Sign) => (n < 0 ? '-' : (n > 0 && sign !== 'auto') || (n === 0 && sign === 'always') ? '+' : '');
+const signOf = (n: number, sign: Sign) => (n < 0 ? MINUS : (n > 0 && sign !== 'auto') || (n === 0 && sign === 'always') ? '+' : '');
 
 // The parts of a formatted number that tell its size, written once as MASK.
 const FIGURES: ReadonlySet<string> = new Set(['integer', 'group', 'decimal', 'fraction', 'compact', 'exponentSeparator', 'exponentMinusSign', 'exponentInteger', 'nan', 'infinity', 'unknown']);
@@ -82,7 +114,7 @@ export function hiddenMoney(amount: number, currency?: string | null, sign: Sign
     try {
       let out = '';
       let masked = false;
-      for (const p of new Intl.NumberFormat(undefined, { style: 'currency', currency, signDisplay: sign }).formatToParts(n)) {
+      for (const p of withMinus(new Intl.NumberFormat(undefined, { style: 'currency', currency, signDisplay: sign }).formatToParts(n))) {
         if (!FIGURES.has(p.type)) out += p.value;
         else if (!masked) {
           out += MASK;
@@ -135,10 +167,15 @@ export function hideFiguresIn(text: string): string {
 
 // A hidden amount as the formatters write it: its sign, and its symbol
 // before MASK (with a code's letters, "CA$") or an ISO code and a no-break
-// space; or MASK with its symbol or code after it ("••• €", "••• DOGE").
+// space; or MASK with its symbol or code after it ("•••• €", "•••• DOGE").
 // Never a word's letters before it, nor a word after one with a symbol
-// before it ("$••• IRA contribution" keeps its IRA).
-const HIDDEN_IN_TEXT = /[+\-\u2212]?(?:(?:[A-Z]{0,3}\p{Sc}[\s\u00a0\u202f]?|\b[A-Z]{3}\u00a0)•••|•••(?:[\s\u00a0\u202f]?(?:\p{Sc}|[A-Z]{2,10}\b))?)/gu;
+// before it ("$•••• IRA contribution" keeps its IRA). Its sign is the true
+// minus or the hyphen, as an amount from elsewhere may have.
+const MASK_IN_TEXT = MASK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const HIDDEN_IN_TEXT = new RegExp(
+  `[+\\-\\u2212]?(?:(?:[A-Z]{0,3}\\p{Sc}[\\s\\u00a0\\u202f]?|\\b[A-Z]{3}\\u00a0)${MASK_IN_TEXT}|${MASK_IN_TEXT}(?:[\\s\\u00a0\\u202f]?(?:\\p{Sc}|[A-Z]{2,10}\\b))?)`,
+  'gu'
+);
 
 /** Text that may hold hidden amounts, as a screen reader is to say it: each
  *  one as "hidden" ("Groceries hidden of hidden"), never a row of bullets. */
@@ -152,7 +189,7 @@ const plain = (abs: number) =>
     maximumFractionDigits: 2,
   });
 
-/** The amount in a code Intl refused, the code after it: "-12.50 DOGE". */
+/** The amount in a code Intl refused, the code after it: "−12.50 DOGE". */
 function withCode(amount: number, currency: string, sign: string): string {
   return `${sign}${plain(Math.abs(amount))} ${currency}`;
 }
@@ -190,15 +227,15 @@ export function centsRuns(parts: readonly { type: string; value: string }[]): Mo
  *  options, which Intl's parts make up exactly. */
 function fullMoneyRuns(amount: number, currency?: string | null): MoneyRun[] {
   const plainRuns = (abs: number) => centsRuns(new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).formatToParts(abs));
-  const sign = amount < 0 ? '-' : '';
+  const sign = amount < 0 ? MINUS : '';
   if (currency) {
     let format: Intl.NumberFormat | null = null;
     try {
       format = new Intl.NumberFormat(undefined, { style: 'currency', currency });
     } catch {
-      // A code Intl refuses: "-12.50 DOGE", as withCode writes it.
+      // A code Intl refuses: "−12.50 DOGE", as withCode writes it.
     }
-    if (format) return centsRuns(format.formatToParts(amount));
+    if (format) return centsRuns(withMinus(format.formatToParts(amount)));
     return merged([{ text: sign, cents: false }, ...plainRuns(Math.abs(amount)), { text: ` ${currency}`, cents: false }]);
   }
   return merged([{ text: `${sign}$`, cents: false }, ...plainRuns(Math.abs(amount))]);
@@ -214,19 +251,21 @@ export function moneyRuns(amount: number, currency?: string | null): MoneyRun[] 
   return hidden ? [{ text: hiddenMoney(amount, currency), cents: false }] : fullMoneyRuns(amount, currency);
 }
 
-/** With its sign shown: "+$12.00", "-¥3,200". `always` signs zero too
+/** With its sign shown: "+$12.00", "−¥3,200". `always` signs zero too
  *  ("+$0.00"); otherwise zero has none. */
 export function signedMoney(amount: number, currency: string | null, opts: { always?: boolean } = {}): string {
   const n = amount === 0 ? 0 : amount; // never "-0"
   if (hidden) return hiddenMoney(n, currency, opts.always ? 'always' : 'exceptZero');
-  const sign = n > 0 || (n === 0 && opts.always) ? '+' : n < 0 ? '-' : '';
+  const sign = n > 0 || (n === 0 && opts.always) ? '+' : n < 0 ? MINUS : '';
   if (currency) {
     try {
-      return new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency,
-        signDisplay: opts.always ? 'always' : 'exceptZero',
-      }).format(n);
+      return joinedParts(
+        new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency,
+          signDisplay: opts.always ? 'always' : 'exceptZero',
+        }).formatToParts(n)
+      );
     } catch {
       return withCode(n, currency, sign);
     }
@@ -234,7 +273,15 @@ export function signedMoney(amount: number, currency: string | null, opts: { alw
   return `${sign}$${plain(Math.abs(n))}`;
 }
 
-// Compact form for dense labels (chart axes): $1.2K, €3.4M.
+/** Intl's parts as one text, with the true minus sign. */
+const joinedParts = (parts: { type: string; value: string }[]) =>
+  withMinus(parts)
+    .map((p) => p.value)
+    .join('');
+
+// Compact form for a chart's axis only ($1.2K, €3.4M), where ticks must fit
+// beside the plot: an amount a person reads (a label, a table's cell, a
+// sentence) is written in full, never abbreviated.
 export function compactMoney(amount: number, currency?: string | null): string {
   return hidden ? hiddenMoney(amount, currency) : fullCompact(amount, currency);
 }
@@ -244,20 +291,22 @@ export function compactMoney(amount: number, currency?: string | null): string {
 function fullCompact(amount: number, currency?: string | null): string {
   if (currency) {
     try {
-      return new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency,
-        notation: 'compact',
-        maximumFractionDigits: 1,
-      }).format(amount);
+      return joinedParts(
+        new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency,
+          notation: 'compact',
+          maximumFractionDigits: 1,
+        }).formatToParts(amount)
+      );
     } catch {
       // A code Intl refuses: the compact number, the code after it.
       const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(Math.abs(amount));
-      return `${amount < 0 ? '-' : ''}${compact} ${currency}`;
+      return `${amount < 0 ? MINUS : ''}${compact} ${currency}`;
     }
   }
   const abs = Math.abs(amount);
-  const sign = amount < 0 ? '-' : '';
+  const sign = amount < 0 ? MINUS : '';
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
   return `${sign}$${Math.round(abs)}`;
@@ -274,6 +323,31 @@ function fullCompact(amount: number, currency?: string | null): string {
  */
 export function formatRate(rate: number, from: string, to: string): string {
   return `1 ${from} = ${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(rate)} ${to}`;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const calendarDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/**
+ * A day (YYYY-MM-DD, a calendar day as the bank or the person gives it) as a
+ * person reads it: "Today" and "Yesterday", then "Aug 7" within the current
+ * year and "Aug 7, 2025" outside it. Which day is today is the person's own,
+ * in their time zone (the browser's), never UTC's; `now` is for tests. Mid
+ * sentence (`sentence`) it says "today" and "yesterday". For the screen only:
+ * a file, an answer of the API or an attribute a program reads keeps the
+ * ISO day.
+ */
+export function formatDay(iso: string, opts: { now?: Date | number; sentence?: boolean } = {}): string {
+  const now = new Date(opts.now ?? Date.now());
+  const day = iso.slice(0, 10);
+  const today = calendarDay(now);
+  if (day === today) return opts.sentence ? 'today' : 'Today';
+  if (day === calendarDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return opts.sentence ? 'yesterday' : 'Yesterday';
+  return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
+  });
 }
 
 /**

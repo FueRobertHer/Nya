@@ -10,9 +10,10 @@
 // (app/api/shared-expenses/payments, app/api/shared-expenses/close), and the
 // routes check it all again against what is open now.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import { shownName } from '@/lib/merchant-name';
 import type { Txn } from './MonthBreakdown';
 import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
@@ -52,6 +53,7 @@ function ItemPicker({
   disabled: boolean;
 }) {
   const scale = unitScale(currency);
+  const errorId = useId();
   const places = Math.round(Math.log10(scale));
   const people = [...new Set(items.map((i) => i.person))];
   const nameOf = (id: string) => card.people.find((p) => p.id === id)?.name ?? REMOVED_NAME;
@@ -67,6 +69,7 @@ function ItemPicker({
               const text = picked.get(i.id);
               const on = text !== undefined;
               const units = on && text.trim() ? partUnits(text, currency) : null;
+              const over = units !== null && units > toUnits(i.open, scale);
               return (
                 <div key={i.id} className="shared-pick">
                   <label className="group-member">
@@ -103,9 +106,21 @@ function ItemPicker({
                         value={text}
                         onChange={(e) => onPick(new Map(picked).set(i.id, e.target.value))}
                         placeholder={zeroExample(places)}
-                        aria-invalid={units === null || units > toUnits(i.open, scale)}
+                        aria-invalid={units === null || over}
+                        aria-describedby={units === null || over ? `${errorId}-${i.id}` : undefined}
                       />
                     </label>
+                  )}
+                  {on && (units === null || over) && (
+                    <FieldError id={`${errorId}-${i.id}`}>
+                      {units === null ? (
+                        `Enter an amount, like ${amountExample(places)}`
+                      ) : (
+                        <>
+                          Enter at most <Masked>{formatMoney(i.open, i.currency)}</Masked>, what is open of it
+                        </>
+                      )}
+                    </FieldError>
                   )}
                 </div>
               );

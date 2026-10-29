@@ -140,10 +140,10 @@ describe('what a split may hold (checkParts)', () => {
     setAmountsHidden(true);
     try {
       expect(refusals.map(hideAmountsIn)).toEqual([
-        'The parts add up to $•••, not the transaction’s $•••: $••• is left over.',
-        'A part’s amount can’t be finer than ¥•••.',
-        'A part’s amount can’t be finer than BTC\u00a0•••.',
-        'A part’s amount can’t be finer than ••• DOGE.',
+        'The parts add up to $••••, not the transaction’s $••••: $•••• is left over.',
+        'A part’s amount can’t be finer than ¥••••.',
+        'A part’s amount can’t be finer than BTC\u00a0••••.',
+        'A part’s amount can’t be finer than •••• DOGE.',
         `A transaction can be split into at most ${MAX_PARTS} parts.`,
       ]);
     } finally {

@@ -183,7 +183,7 @@ import { connectionsStore, connectorAccountsStore, type LeftOut } from './connec
 import { ANY_CONNECTOR, connectorLabel, isConnectorKind, type ConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
 import { lastEndDay } from './lifecycle';
-import { formatMoney } from './format';
+import { asciiMinus, formatMoney } from './format';
 
 // ---- Text ----
 
@@ -824,7 +824,7 @@ export function ofxFile(
     if (unreadConnection) {
       no_balance = `Nya holds ${entry.institution_name}’s balances while what it keeps about the bank’s ${via} connection can’t be read, as the Accounts tab does.`;
     } else if (waiting) {
-      no_balance = `${via} reports this card’s balance as money held (+${formatMoney(entry.reported_balance!, entry.currency)}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
+      no_balance = `${via} reports this card’s balance as money held (+${asciiMinus(formatMoney(entry.reported_balance!, entry.currency))}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
     } else if (bank?.error) {
       no_balance = `Nya holds ${entry.institution_name}’s balances while ${via}’s latest answer about it isn’t whole and current (${bank.error}), as the Accounts tab does.`;
     }

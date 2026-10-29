@@ -7,7 +7,7 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { amountsHidden, formatMoney, hiddenMoney } from '@/lib/format';
+import { amountsHidden, formatMoney, hiddenMoney, trueMinus } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { readableName } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
@@ -84,11 +84,13 @@ function fmtAmount(t: InvestmentTxn): string {
   const flipped = -t.amount;
   if (amountsHidden()) return hiddenMoney(flipped, t.currency || 'USD', 'always');
   try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency: t.currency || 'USD',
-      signDisplay: 'always',
-    }).format(flipped);
+    return trueMinus(
+      new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: t.currency || 'USD',
+        signDisplay: 'always',
+      }).format(flipped)
+    );
   } catch {
     return formatMoney(flipped, t.currency);
   }
@@ -144,6 +146,7 @@ export default function InvestmentActivity({
         </div>
       )}
       <table className="txn-table">
+        <caption className="visually-hidden">Investment activity</caption>
         <tbody>
           {data.txns.map((t) => {
             const inflow = -t.amount > 0;

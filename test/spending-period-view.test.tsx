@@ -20,7 +20,7 @@ const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const { localDate, localMonth } = await import('@/lib/local-date');
 const { addMonths } = await import('@/lib/rollover');
 const { periodCaption, periodEnding } = await import('@/lib/cash-flow');
-const { amountSamples, formatMoney, signedMoney } = await import('@/lib/format');
+const { formatMoney, setAmountsHidden, signedMoney } = await import('@/lib/format');
 const { textWidth } = await import('@/lib/sankey');
 type Txn = import('@/components/MonthBreakdown').Txn;
 
@@ -196,19 +196,34 @@ describe('Spending’s period', () => {
     v.unmount();
   });
 
-  test('Net by month’s columns are as wide as the widest month’s figure the currency writes at 12px, whatever the figures are', () => {
+  test('Net by month’s columns are as wide as the widest month’s figure, written in full at 12px; hidden, the same whatever the figures are', () => {
     const column = (rows: Txn[]) => {
       const v = mount({ txns: rows });
       const [trend] = v.all((e) => e.getAttribute('class') === 'trend-row');
       const px = (trend.style as unknown as { getPropertyValue: (k: string) => string }).getPropertyValue('--trend-col');
+      const labels = v.all((e) => e.getAttribute('class') === 'trend-val').map((e) => e.textContent);
       v.unmount();
-      return px;
+      return { px, labels };
     };
     const usd = column(ROWS);
-    expect(usd).toMatch(/^\d+px$/);
-    for (const s of amountSamples('USD')) expect(parseInt(usd, 10)).toBeGreaterThanOrEqual(textWidth(`+${s}`, 12));
-    // From the currency alone: a hundred times the figures, the same columns.
-    expect(column(ROWS.map((t) => ({ ...t, amount: t.amount * 100 })))).toBe(usd);
+    expect(usd.px).toMatch(/^\d+px$/);
+    // Each figure in full, never abbreviated, signed, and none wider than its column.
+    expect(usd.labels.length).toBeGreaterThan(0);
+    for (const s of usd.labels) {
+      expect(s).toMatch(/^[+\u2212]\$\d{1,3}(,\d{3})*\.\d{2}$/);
+      expect(parseInt(usd.px, 10)).toBeGreaterThanOrEqual(textWidth(s, 12));
+    }
+    // A hundred times the figures widens the columns to fit them...
+    const larger = column(ROWS.map((t) => ({ ...t, amount: t.amount * 100 })));
+    expect(parseInt(larger.px, 10)).toBeGreaterThan(parseInt(usd.px, 10));
+    // ...while amounts are hidden every label is the same mask, so the
+    // columns say nothing of a figure's size.
+    setAmountsHidden(true);
+    try {
+      expect(column(ROWS.map((t) => ({ ...t, amount: t.amount * 100 }))).px).toBe(column(ROWS).px);
+    } finally {
+      setAmountsHidden(false);
+    }
   });
 
   test('a pick lists the period’s rows on Transactions, which stays on the month; choosing a length ends it', () => {

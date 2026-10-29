@@ -4,9 +4,9 @@
 // moves the figure above it to the day under the finger. The chart reports
 // the day it is scrubbed to, and the hero (components/NetWorthCard.tsx) holds
 // it, so a pointer move re-renders the hero, never the whole dashboard. Only
-// a chart drawn as the hero reports, and only a pointer's scrub: a note
-// chosen from its list, a measurement between two days, or a chart elsewhere
-// never moves the figure.
+// a chart drawn as the hero reports, and only a pointer's scrub or the
+// keys' (arrows on the focused plot): a note chosen from its list, a
+// measurement between two days, or a chart elsewhere never moves the figure.
 
 import { createContext } from 'react';
 

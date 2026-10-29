@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ProgressView, SheetBody, progressOverlay, readInflation, shortWhy, type ProgressAnswer, type ProgressViewProps } from '@/components/PlanProgress';
 import PlanPathChart from '@/components/PlanPathChart';
 import { DrawnWidth } from '@/components/drawn-width';
-import { compactMoney } from '@/lib/format';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import type { SavedPlan } from '@/lib/fire/saved-plan';
@@ -274,7 +273,7 @@ describe('the lines before today on Your path’s chart', () => {
     expect(t).toContain('Since your plan Recorded Your plan Jan 1, 2024 $100,000 $100,000 Jan 31, 2024 $101,000');
     expect(t).toContain('Jan 1, 2028 $190,000 $185,317');
     const label = /role="img" aria-label="([^"]*)"/.exec(html)![1].replace(/&#x27;/g, "'");
-    expect(label.startsWith(`Since Jan 1, 2024, invested assets as recorded went from ${compactMoney(100_000, 'USD')} to ${compactMoney(190_000, 'USD')} on Jan 1, 2028, where your plan from Jan 1, 2024 had ${compactMoney(185_317.14, 'USD')}. Invested assets grow`)).toBe(true);
+    expect(label.startsWith(`Since Jan 1, 2024, invested assets as recorded went from ${wholeMoney(100_000, 'USD')} to ${wholeMoney(190_000, 'USD')} on Jan 1, 2028, where your plan from Jan 1, 2024 had ${wholeMoney(185_317.14, 'USD')}. Invested assets grow`)).toBe(true);
     // The axis starts at the start's age, today is marked.
     expect([...html.matchAll(/<text class="chart-xlabel"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1])).toEqual(['FI number', '35', 'stop 55', 'today 39']);
   });

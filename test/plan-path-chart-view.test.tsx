@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import PlanPathChart, { type PathChartProps } from '@/components/PlanPathChart';
 import { DrawnWidth } from '@/components/drawn-width';
 import { projectBalance } from '@/lib/fire/fi';
-import { compactMoney } from '@/lib/format';
 import { FiCard } from '@/components/PlanTab';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
@@ -11,7 +10,8 @@ import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { planPath } from '@/lib/fire/path';
 import type { LifeEvent } from '@/lib/fire/events';
 
-const c = (n: number) => compactMoney(n, 'USD');
+// The summary says each amount in full, in whole dollars, never "$1.2M".
+const c = (n: number) => wholeMoney(n, 'USD');
 
 // Your path's chart (rollout phase 8b): one line of invested assets from
 // today to the stop age, the FI number as a dashed line, a marker where the

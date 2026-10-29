@@ -601,7 +601,14 @@ export default function BudgetsTab({
                 </div>
               )}
               {drawn && hasTotal && !noSpending && (
-                <div className={`meter-track${meterState(totalRatio)}`}>
+                <div
+                  className={`meter-track${meterState(totalRatio)}`}
+                  role="meter"
+                  aria-label="Spent of the month's budgets"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(Math.min(totalRatio * 100, 100))}
+                >
                   <div className={`meter-fill${meterState(totalRatio)}`} style={{ width: `${Math.min(totalRatio * 100, 100)}%` }} />
                 </div>
               )}

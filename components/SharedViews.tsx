@@ -39,11 +39,19 @@ import { shortDate } from './SharingDates';
 
 /** A bar as long as a share (capped at the whole), in the meter's colors:
  *  warn near the limit, over (red) past it, as a shared budget still shows;
- *  the Budgets tab's own meters stay amber past it (rollout 6a2). */
-function Bar({ pct, state = '' }: { pct: number | null; state?: '' | ' warn' | ' over' | ' done' }) {
+ *  the Budgets tab's own meters stay amber past it (rollout 6a2). A meter
+ *  named for its line (`label`), its share in percent. */
+function Bar({ pct, state = '', label }: { pct: number | null; state?: '' | ' warn' | ' over' | ' done'; label: string }) {
   const width = pct === null ? 0 : Math.max(0, Math.min(pct, 100));
   return (
-    <div className={`meter-track incoming-meter${state === ' done' ? '' : state}`}>
+    <div
+      className={`meter-track incoming-meter${state === ' done' ? '' : state}`}
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct === null ? undefined : Math.round(width)}
+    >
       <div className={`meter-fill${state}`} style={{ width: `${width}%` }} />
     </div>
   );
@@ -212,7 +220,7 @@ function SpendingKind({ v }: { v: SpendingView }) {
                 <span className="incoming-account-name">{g.name}</span>
                 <span className="incoming-account-value">{amounts && g.amount !== undefined ? <Masked>{`${formatMoney(g.amount, v.currency)} · ${g.label ?? ''}`}</Masked> : g.label}</span>
               </div>
-              <Bar pct={g.pct} />
+              <Bar pct={g.pct} label={g.name} />
               {g.categories?.map((c, j) => (
                 <div key={`${c.name}-${j}`} className="peer-row incoming-sub">
                   <span>{c.name}</span>
@@ -251,7 +259,7 @@ function HoldingsTable({ title, lines, currency, amounts }: { title: string; lin
               {amounts && l.amount !== undefined ? <Masked>{`${formatMoney(l.amount, currency)} · ${l.label ?? ''}`}</Masked> : l.label}
             </span>
           </div>
-          <Bar pct={l.pct} />
+          <Bar pct={l.pct} label={l.name} />
         </div>
       ))}
     </div>
@@ -322,7 +330,7 @@ function BudgetRow({ b, currency, sub = false }: { b: BudgetLine; currency: stri
           <Masked>{budgetText(b, currency)}</Masked>
         </span>
       </div>
-      <Bar pct={b.pct ?? (b.over ? 100 : 0)} state={meterOf(b)} />
+      <Bar pct={b.pct ?? (b.over ? 100 : 0)} state={meterOf(b)} label={b.name} />
     </div>
   );
 }
@@ -422,7 +430,7 @@ function GoalsKind({ v }: { v: GoalsView }) {
                 {amounts ? <Masked>{`${formatMoney(g.saved!, g.currency)} of ${formatMoney(g.target!, g.currency)}`}</Masked> : g.target !== undefined ? <Masked>{`Target ${formatMoney(g.target, g.currency)}`}</Masked> : g.label}
               </span>
             </div>
-            {g.pct !== null && <Bar pct={g.pct} state={g.pct >= 100 ? ' done' : ''} />}
+            {g.pct !== null && <Bar pct={g.pct} state={g.pct >= 100 ? ' done' : ''} label={g.name} />}
             <div className="incoming-account-date">
               {[why, outlook, g.label !== null && amounts ? `${g.label} of the way` : null, g.target_date && !outlook ? `Its date: ${dayLabel(g.target_date)}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
                 .filter(Boolean)

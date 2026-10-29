@@ -104,7 +104,7 @@ describe('one color, each action once', () => {
     };
     expect(buttonsOf('plaid login')).toContain('Reconnect');
     expect(buttonsOf('plaid consent_ending')).toEqual(['Reconnect']);
-    expect(buttonsOf('plaid revoked, recovered')).toContain('Remove Chase');
+    expect(buttonsOf('plaid revoked, recovered')).toContain('Disconnect Chase');
     expect(buttonsOf('plaid vanished')).toContain('Add or remove accounts');
     expect(buttonsOf('connector refused')).toContain('Connect again');
     expect(buttonsOf('connector sign')).toContain('Answer');

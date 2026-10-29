@@ -307,6 +307,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - MonthStepper: the one month control (step 2b1): Activity's bar, Budgets' bar on Month and the calendar, each with its own months; Activity and Budgets share the month (step 2b2), the calendar keeps its own. This month has a line of its own under the name, held, 32px, so the row never changes size, on the bars and the calendar alike (since the month row fix).
 - Segmented: the underline switch for a value (a radio group: the net worth chart's range, Runway's window, the Plan's choices, the kind of report) or a few views (tabs over one panel: Allocation's two views, which report). Activity's, Budgets' and the Plan's bars, Budgets > Upcoming's List or Calendar, the forecast, Planned and Theme draw `.segmented` themselves.
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
+- FieldError: what is wrong with a field and what to do ("Enter an amount, like 120.50"), in `--neg` with the alert icon under it, named by the field's `aria-describedby`, so a field's red edge is never alone: the amounts in IouSheet, SplitSheet, ShareCostSheet and ConfirmPaymentSheet.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 - upcoming-notes (NoticeBadge): what Budgets > Upcoming says it may be missing (the notice at its top, through TotalCaveats, and the forecast's notes on where it starts), and the badge on each card the notice bears on (6a3).
 

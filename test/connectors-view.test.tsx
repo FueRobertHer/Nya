@@ -110,7 +110,7 @@ describe('choosing accounts', () => {
     expect(html).toContain('<p class="institution-name">My Bank</p>');
     // The sign said in words, never presented as what is owed before it is known.
     expect(html).toContain('<div class="type-tag">+$1,500.25, held</div>');
-    expect(html).toContain('<div class="type-tag">-$432.10, owed</div>');
+    expect(html).toContain('<div class="type-tag">−$432.10, owed</div>');
     expect(html).not.toContain('shown as what you owe');
     // One tracked through the other connection can't be chosen again.
     expect(html).toContain('Tracked through your other connection (bridge.other): not tracked twice');
@@ -223,7 +223,7 @@ describe('a card or a loan reported as money held', () => {
   } as const;
 
   test('its sign is said in words, either way', () => {
-    expect([reportedWords(-432.1, 'USD'), reportedWords(500, 'USD'), reportedWords(0, 'USD')]).toEqual(['-$432.10, owed', '+$500.00, held', '$0.00, held']);
+    expect([reportedWords(-432.1, 'USD'), reportedWords(500, 'USD'), reportedWords(0, 'USD')]).toEqual(['−$432.10, owed', '+$500.00, held', '$0.00, held']);
   });
 
   test('its card says so and offers to answer; the question asks which way, once, with neither chosen', () => {

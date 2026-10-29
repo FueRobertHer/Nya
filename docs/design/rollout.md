@@ -389,7 +389,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 - **The cash forecast's chart** (`components/ForecastChart.tsx`) is drawn at its width (`useDrawnWidth`), on its card and in What if I buy…, in the shape it had (150 to 340), with 2px more over its top tick and 4px more under its baseline for the 12px figures and dates, as Income vs spend took in 5d. Its ticks, "Now" and its last day are 12px at every width.
 - **The payoff plan's chart** (`PayoffChart` in `components/DebtPayoff.tsx`) the same, in its shape (140 to 340).
 - **Fewer gridlines where a chart is short.** At 12px on a phone's plot (71px tall on the forecast's card at 320px), five to seven ticks drew their figures 10 to 17px apart, a gridline cutting into the figure over the one below. Both charts now widen the step through 1, 2 and 5 until gridlines are at least 20px apart (`MIN_TICK_GAP`): two or three on a phone, and on a wide card what they drew.
-- **The calendar's figures, weekday letters and legend are 12px.** A cell's figure keeps its sign and drops the currency, which the legend names once on a line of its own ("Day figures in USD, rounded"): whole units under a thousand ("-143"), then two significant figures and K, M, B or T ("+3.5K", "+13K", "+890K", "+1.3M"), in the viewer's digits. With amounts hidden it is the sign and the mask ("+•••"), the sign taken before rounding, so a few cents don't read as "•••" beside the others' "+•••". Each cell's label still says its amounts in full, with the currency, and the day's list has the cents.
+- **The calendar's figures, weekday letters and legend are 12px.** A cell's figure keeps its sign and drops the currency, which the legend names once on a line of its own ("Day figures in USD, rounded"): whole units under a thousand ("−143"), then two significant figures and K, M, B or T ("+3.5K", "+13K", "+890K", "+1.3M"), in the viewer's digits. With amounts hidden it is the sign and the mask ("+•••"), the sign taken before rounding, so a few cents don't read as "•••" beside the others' "+•••". Each cell's label still says its amounts in full, with the currency, and the day's list has the cents.
 - **The calendar's grid runs to the card's edges**, as the day's list's rows do, with no padding at a cell's sides: a cell is 39px wide at 320px (it was 34px) and 44px or more from a 360px phone. Its focus ring is drawn inside, so the outer columns' ring stays on the card.
 - **The source scan** (`test/amount-sources.ts`) reads a number written with significant digits as an amount, as it reads one written with fraction digits or compact notation.
 
@@ -397,7 +397,7 @@ Split in pull requests: four for Budgets (6a1 to 6a4, about 4,700 lines of compo
 
 - **No currency in the calendar's cells, and a wider grid** (decided 2026-10-25). At 12px "+$3.5K" takes 37px, "-$12.5K" 40px and "+CA$3.5K" 52px, where a cell had 30px inside its padding. Keeping the symbol on the wider grid fits a 320px phone only for dollars, euros, pounds and yen under a hundred thousand, and never a code such as CA$; dots alone on phones would show figures only from about 430px.
 - **K and M, not Intl's compact notation**: in other locales it doesn't shorten thousands or writes a word ("13.000" in German, "13 mil" in Spanish), so a figure under a million would fit only in English. The app's words are English; the digits and the decimal sign are the viewer's.
-- **Two significant figures from a thousand**, rounded before the suffix is chosen, so 999,999 is "1M" and the widest figures under a million are three digits and K, as "+890K" (36px). "-$12.5K" becomes "-13K"; the day's list has the cents.
+- **Two significant figures from a thousand**, rounded before the suffix is chosen, so 999,999 is "1M" and the widest figures under a million are three digits and K, as "+890K" (36px). "-$12.5K" becomes "−13K"; the day's list has the cents.
 
 **Kept narrow in 6a4:**
 
@@ -826,9 +826,9 @@ Step 2 is three pull requests: 2a takes the edges off controls; 2b gives Activit
 
 **Kept narrow:**
 
-- The line's draw-in on first load is left for a change of its own: `clip-path` on an SVG group differs between engines, and only Chromium could be checked.
+- The line's draw-in on first load is left for a change of its own: `clip-path` on an SVG group differs between engines, and only Chromium could be checked. A dash-offset draw-in (`stroke-dasharray` and `stroke-dashoffset`) was considered since and set aside too: on an estimated stretch it replaces the 5 4 dashes while it draws, or slides them along the line, so the estimate would not read as one until it ends.
 - A figure past about 280px at 320px (an IDR total over about 10 billion) overflows its line by a few pixels on the narrowest phones; at 40px it overflowed more before.
-- Activity's month figure isn't a hero yet; no keyboard scrubbing (the notes list and the table carry it).
+- Activity's month figure isn't a hero yet. Keyboard scrubbing came later: the plot is a slider in the tab order (`role="slider"`, named by its summary), the arrows move the figure a day at a time, Home and End go to the ends, Escape or leaving the plot brings back today, and its value (`aria-valuetext`) follows the day once the keys rest for half a second, so a screen reader says the new figure once movement stops. Every net worth chart takes it; away from the hero it moves the readout, as a pointer does.
 - The account and shared charts keep their ticks and fixed viewBox.
 - The plot starts at the screen's edge, where a phone's own back gesture takes a swipe first; `touch-action` can't stop that.
 
@@ -928,7 +928,7 @@ A review of the light theme on 2026-10-28 (the design system artifact's audit.md
 **Kept narrow:**
 
 - The blue tag suggestion (`.tag-suggestion.chosen`) has no edge or check and now sits closer to a selected chip; it is left for when it is next touched.
-- The hero draw-in stays deferred.
+- The hero draw-in stays deferred (see step 5's Kept narrow: a clip differs between engines, and a dash offset breaks the estimated stretches' dashes while it draws).
 
 ## Left from the reviews
 

@@ -95,7 +95,7 @@ describe('the preview', () => {
     // The rows as the Activity tab shows amounts: money in signed plus.
     expect(t).toContain('ACME CORP PAYROLL');
     expect(t).toContain('+$2,450.00');
-    expect(t).toContain('-$4.50');
+    expect(t).toContain('−$4.50');
     expect(t).toContain('AT&T *WIRELESS');
     expect(t).toContain('listed twice in the file');
     expect(importButton(html)[1]).toBe('Import 8 transactions');
@@ -144,7 +144,7 @@ describe('the mapping step of a CSV file', () => {
     const t = text(html);
     expect(t).toContain('How the first rows read');
     expect(t).toContain('AMAZON MKTPL*2X3Y4, AMZN.COM/BILL WA');
-    expect(t).toContain('-$23.99');
+    expect(t).toContain('−$23.99');
     expect(t).toContain('CAPITAL ONE MOBILE PYMT');
     expect(t).toContain('+$500.00');
     // Every row is counted a moment after the taps stop, never once per tap.
@@ -263,7 +263,7 @@ describe('rows whose bank id is on another transaction here', () => {
     const t = text(html);
     expect(t).toContain('Bank ids already used in Checking');
     expect(t).toContain('This row has the bank’s id (FITID) of a transaction already in Checking, but doesn’t match it.');
-    expect(t).toContain('In the file (line 9) BISTRO -$60.00 Oct 3, 2026 Already in Checking BISTRO -$50.00 Oct 1, 2026 · the amount and date differ · choose one');
+    expect(t).toContain('In the file (line 9) BISTRO −$60.00 Oct 3, 2026 Already in Checking BISTRO −$50.00 Oct 1, 2026 · the amount and date differ · choose one');
     expect(t).toContain('1 bank id to decide');
     expect(t).toContain('Choose what to do with the transaction above whose bank id is already here, then import.');
     expect(html).toMatch(/aria-pressed="false"[^>]*>Import as new</);

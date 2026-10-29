@@ -50,7 +50,7 @@ import {
   tenthPct,
 } from './allocation-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { compactMoney, spoken } from '@/lib/format';
+import { spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { distinctAccountNames } from '@/lib/account-names';
 import { instantDay } from '@/lib/local-date';
@@ -411,6 +411,7 @@ export function ShareTable<K extends string>({
         ))}
       </div>
       <table className="alloc-table">
+        <caption className="visually-hidden">By class</caption>
         <tbody>
           {rows.map((r) => (
             <tr key={r.slot}>
@@ -751,12 +752,13 @@ export function DriftSection({
       ) : (
         <>
           <table className="alloc-table alloc-drift">
+            <caption className="visually-hidden">Target and now, by class</caption>
             <thead>
               <tr>
-                <th>Class</th>
-                <th className="num">Target</th>
-                <th className="num">Now</th>
-                <th className="num">Drift</th>
+                <th scope="col">Class</th>
+                <th scope="col" className="num">Target</th>
+                <th scope="col" className="num">Now</th>
+                <th scope="col" className="num">Drift</th>
               </tr>
             </thead>
             <tbody>
@@ -1432,11 +1434,12 @@ export function AllocationHistoryChart({
       <details className="plan-table-view">
         <summary>Show as a table</summary>
         <table>
+          <caption className="visually-hidden">The mix by day</caption>
           <thead>
             <tr>
-              <th>Day</th>
-              <th>Mix</th>
-              <th className="num">Counted</th>
+              <th scope="col">Day</th>
+              <th scope="col">Mix</th>
+              <th scope="col" className="num">Counted</th>
             </tr>
           </thead>
           <tbody>
@@ -1448,7 +1451,7 @@ export function AllocationHistoryChart({
                   {isMoney(d.unlisted) && <div className="alloc-sub"><Masked>{wholeMoney(d.unlisted, currency)}</Masked> of it in no position</div>}
                   {d.missing.length > 0 && <div className="alloc-sub">Leaves out {missingOn(d, answer, nameOf)}</div>}
                 </td>
-                <td className="num"><Masked>{compactMoney(d.total, currency)}</Masked></td>
+                <td className="num"><Masked>{wholeMoney(d.total, currency)}</Masked></td>
               </tr>
             ))}
           </tbody>

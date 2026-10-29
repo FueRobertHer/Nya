@@ -3,9 +3,10 @@
 // A drawer: a sheet up from the bottom on phones, a panel from the right on
 // wider screens (styles in app/globals.css). Closes on the backdrop or the
 // close button; Escape goes back a level if there is one, else closes. While
-// open the page behind it doesn't scroll, and focus moves into it and back to
-// where it was when it closes (if that is still on the page; if not, to what
-// the control's owner named instead, focusInsteadOf).
+// open the page behind it doesn't scroll, focus moves into it, Tab and
+// Shift+Tab stay inside it, and focus goes back to where it was when it
+// closes (if that is still on the page; if not, to what the control's owner
+// named instead, focusInsteadOf).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -19,6 +20,71 @@ const CLOSE_MS = 220;
 // (Menu's focusInstead). Held weakly, so a control gone for good takes its
 // entry with it.
 const insteadOf = new WeakMap<Element, () => HTMLElement | null>();
+
+/** Whether Tab can land on the element: a link, an enabled control, a
+ *  summary, or anything given a tab stop of its own. */
+function tabbable(el: Element): boolean {
+  if (el.hasAttribute('tabindex')) return el.getAttribute('tabindex') !== '-1';
+  switch (el.tagName) {
+    case 'A':
+      return el.hasAttribute('href');
+    case 'INPUT':
+      return !el.hasAttribute('disabled') && el.getAttribute('type') !== 'hidden';
+    case 'BUTTON':
+    case 'SELECT':
+    case 'TEXTAREA':
+      return !el.hasAttribute('disabled');
+    case 'SUMMARY':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** The panel's controls in tab order, leaving out any under a hidden or
+ *  inert part (a closed level, a collapsed section). */
+function tabbables(panel: Element): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  const walk = (n: Element) => {
+    for (const node of Array.from(n.childNodes)) {
+      if (node.nodeType !== 1) continue;
+      const c = node as Element;
+      if (c.hasAttribute('hidden') || c.hasAttribute('inert')) continue;
+      if (tabbable(c)) out.push(c as HTMLElement);
+      walk(c);
+    }
+  };
+  walk(panel);
+  return out;
+}
+
+/** Keeps Tab inside the panel: from its last control to its first, and
+ *  Shift+Tab from its first (or the panel itself) to its last. Focus that has
+ *  left for the page behind comes back in; focus in another dialog (a sheet
+ *  this one opened) is that dialog's to keep. */
+function trapTab(e: KeyboardEvent, panel: HTMLElement) {
+  const at = document.activeElement as HTMLElement | null;
+  const items = tabbables(panel);
+  if (!at || !panel.contains(at)) {
+    for (let n: Element | null = at; n; n = n.parentElement) if (n.getAttribute('role') === 'dialog') return;
+    e.preventDefault();
+    (items[0] ?? panel).focus();
+    return;
+  }
+  if (items.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (e.shiftKey && (at === first || at === panel)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && at === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 /** Focus goes to what `to` gives, then, when a sheet opened from `opener`
  *  closes after `opener` has left the page, rather than to nothing. */
@@ -69,7 +135,8 @@ export function Sheet({
   const escape = useRef(onClose);
   escape.current = onBack ?? onClose;
 
-  // Once it is on the page: lock the page behind, take focus, listen for Escape.
+  // Once it is on the page: lock the page behind, take focus, listen for
+  // Escape and Tab.
   const active = open && mounted;
   useEffect(() => {
     if (!active) return;
@@ -80,6 +147,7 @@ export function Sheet({
     panel.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') escape.current();
+      else if (e.key === 'Tab' && panel.current) trapTab(e, panel.current);
     };
     window.addEventListener('keydown', onKey);
     return () => {

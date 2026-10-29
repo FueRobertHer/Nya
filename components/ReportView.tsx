@@ -162,13 +162,14 @@ export function ReportView({ report }: { report: Report }) {
           {report.institutions.length > 0 && (
             <div className="report-scroll">
               <table className="report-table report-sources">
+                <caption className="visually-hidden">Connections</caption>
                 <thead>
                   <tr>
-                    <th>Connection</th>
-                    <th>State</th>
-                    <th>Transactions as of</th>
-                    <th>In Nya from</th>
-                    <th>May be missing</th>
+                    <th scope="col">Connection</th>
+                    <th scope="col">State</th>
+                    <th scope="col">Transactions as of</th>
+                    <th scope="col">In Nya from</th>
+                    <th scope="col">May be missing</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -218,11 +219,12 @@ export function ReportView({ report }: { report: Report }) {
               <h3>Manual accounts</h3>
               <div className="report-scroll">
                 <table className="report-table report-sources">
+                  <caption className="visually-hidden">Manual accounts</caption>
                   <thead>
                     <tr>
-                      <th>Account</th>
-                      <th>Transactions in this period</th>
-                      <th>Balance last updated</th>
+                      <th scope="col">Account</th>
+                      <th scope="col">Transactions in this period</th>
+                      <th scope="col">Balance last updated</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -246,11 +248,12 @@ export function ReportView({ report }: { report: Report }) {
               <h3>Accounts that ended</h3>
               <div className="report-scroll">
                 <table className="report-table report-sources">
+                  <caption className="visually-hidden">Accounts that ended</caption>
                   <thead>
                     <tr>
-                      <th>Account</th>
-                      <th>Ended</th>
-                      <th>In this report</th>
+                      <th scope="col">Account</th>
+                      <th scope="col">Ended</th>
+                      <th scope="col">In this report</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -303,14 +306,15 @@ export function ReportView({ report }: { report: Report }) {
           {flag}
           <div className="report-scroll">
             <table className="report-table">
+              <caption className="visually-hidden">By month</caption>
               <thead>
                 <tr>
-                  <th>Month</th>
-                  <th className="num">Money in</th>
-                  <th className="num">Money out</th>
-                  <th className="num">Net</th>
-                  <th className="num">Counted</th>
-                  <th>Notes</th>
+                  <th scope="col">Month</th>
+                  <th scope="col" className="num">Money in</th>
+                  <th scope="col" className="num">Money out</th>
+                  <th scope="col" className="num">Net</th>
+                  <th scope="col" className="num">Counted</th>
+                  <th scope="col">Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -348,12 +352,13 @@ export function ReportView({ report }: { report: Report }) {
           {flag}
           <div className="report-scroll">
             <table className="report-table">
+              <caption className="visually-hidden">Categories you marked for taxes</caption>
               <thead>
                 <tr>
-                  <th>Category</th>
-                  <th className="num">Money in</th>
-                  <th className="num">Money out</th>
-                  <th className="num">Counted</th>
+                  <th scope="col">Category</th>
+                  <th scope="col" className="num">Money in</th>
+                  <th scope="col" className="num">Money out</th>
+                  <th scope="col" className="num">Counted</th>
                 </tr>
               </thead>
               <tbody>
@@ -394,14 +399,15 @@ export function ReportView({ report }: { report: Report }) {
           ) : (
             <div className="report-scroll">
               <table className="report-table report-appendix">
+                <caption className="visually-hidden">Transactions in the categories you marked</caption>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th>Account</th>
-                    <th className="num">Amount</th>
-                    <th>Notes</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Description</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Account</th>
+                    <th scope="col" className="num">Amount</th>
+                    <th scope="col">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -437,11 +443,12 @@ function CategoryTable({ rows, money, empty }: { rows: Report['money_out']; mone
   return (
     <div className="report-scroll">
       <table className="report-table report-cats">
+        <caption className="visually-hidden">By category</caption>
         <thead>
           <tr>
-            <th>Category</th>
-            <th className="num">Amount</th>
-            <th className="num">Transactions</th>
+            <th scope="col">Category</th>
+            <th scope="col" className="num">Amount</th>
+            <th scope="col" className="num">Transactions</th>
           </tr>
         </thead>
         <tbody>

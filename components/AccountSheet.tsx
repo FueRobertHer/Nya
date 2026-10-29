@@ -18,7 +18,7 @@ import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
 import type { LifecycleTarget } from './AccountLifecycle';
 import type { HistoryImportTarget } from './HistoryImportSheet';
-import { hiddenFigure } from '@/lib/format';
+import { formatDay, hiddenFigure } from '@/lib/format';
 import { readableName } from '@/lib/merchant-name';
 import { isInvestmentType, isOwedType } from '@/lib/balance';
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
@@ -26,8 +26,8 @@ import {
   accountKindParts,
   balanceDay,
   fmt,
-  fmtDay,
   fmtGain,
+  fmtOnDay,
   heldLine,
   liabilitySummary,
   signedBalance,
@@ -65,7 +65,7 @@ export function LiabilityDetail({
       label: 'Last payment',
       value:
         fmt(l.last_payment_amount, currency) +
-        (l.last_payment_date ? ` on ${fmtDay(l.last_payment_date)}` : ''),
+        (l.last_payment_date ? ` ${fmtOnDay(l.last_payment_date)}` : ''),
     });
   }
   if (l.outstanding_interest != null) {
@@ -75,9 +75,9 @@ export function LiabilityDetail({
     rows.push({ label: 'Escrow', value: fmt(l.escrow_balance, currency) });
   }
   if (l.expected_payoff_date) {
-    rows.push({ label: 'Expected payoff', value: fmtDay(l.expected_payoff_date) });
+    rows.push({ label: 'Expected payoff', value: formatDay(l.expected_payoff_date) });
   }
-  if (l.maturity_date) rows.push({ label: 'Matures', value: fmtDay(l.maturity_date) });
+  if (l.maturity_date) rows.push({ label: 'Matures', value: formatDay(l.maturity_date) });
 
   if (rows.length === 0) return null;
   return (
@@ -99,11 +99,12 @@ export function LiabilityDetail({
 export function HoldingsTable({ holdings, flagged }: { holdings: Holding[]; flagged: Set<string> }) {
   return (
     <table>
+      <caption className="visually-hidden">Holdings</caption>
       <thead>
         <tr>
-          <th>Security</th>
-          <th className="num">Qty</th>
-          <th className="num">Value</th>
+          <th scope="col">Security</th>
+          <th scope="col" className="num">Qty</th>
+          <th scope="col" className="num">Value</th>
         </tr>
       </thead>
       <tbody>
@@ -295,8 +296,17 @@ export default function AccountSheet({
         )}
         {util != null && (
           <div className="util">
-            <div className={`meter-track${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}>
-              <div className={`meter-fill${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`} style={{ width: `${Math.min(util * 100, 100)}%` }} />
+            {/* Caution from half the limit; over (red) only past it. */}
+            <div
+              className={`meter-track${util >= 1 ? ' over' : util >= 0.5 ? ' warn' : ''}`}
+              role="meter"
+              aria-label="Credit used"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.min(Math.round(util * 100), 100)}
+              aria-valuetext={`${Math.round(util * 100)}% of the limit`}
+            >
+              <div className={`meter-fill${util >= 1 ? ' over' : util >= 0.5 ? ' warn' : ''}`} style={{ width: `${Math.min(util * 100, 100)}%` }} />
             </div>
             <span className="util-label">
               {Math.round(util * 100)}% of <Masked>{fmt(a.limit, a.currency)}</Masked> limit

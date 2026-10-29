@@ -6,7 +6,8 @@
 // instead of a floating tooltip, scrubbed by pointer. Both lines are dashed
 // throughout, as every estimate is drawn: only the first point, the cash now,
 // is measured. Zero is drawn when either line comes near it, and the day each
-// runs out is marked.
+// runs out is marked. Every point of both lines sits behind "Show as a
+// table", for anyone who can't read them.
 
 import { useMemo, useRef, useState } from 'react';
 import type { RunwayProjection } from '@/lib/report/runway';
@@ -46,6 +47,8 @@ const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T
 export default function RunwayChart({ projection, currency }: { projection: RunwayProjection; currency: string | null }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
+  // The table renders its rows only while it is open.
+  const [tableOpen, setTableOpen] = useState(false);
   const points = projection.chart;
   const today = points[0].date;
   const days = (date: string) => daysBetween(today, date);
@@ -160,6 +163,42 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
           {reportDay(last.date)}
         </text>
       </svg>
+
+      {/* Every point of both lines, for anyone who can't read them. Rows
+          render only while it is open, and through Masked each time, so hide
+          amounts masks them. */}
+      <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
+        <summary>Show as a table</summary>
+        {tableOpen && (
+          <table>
+            <caption>Every day after now is an estimate.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col" className="num">
+                  With income
+                </th>
+                <th scope="col" className="num">
+                  Without income
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {points.map((p) => (
+                <tr key={p.date}>
+                  <td>{p.date === today ? 'Now' : reportDay(p.date)}</td>
+                  <td className="num">
+                    <Masked>{formatMoney(p.with, currency)}</Masked>
+                  </td>
+                  <td className="num">
+                    <Masked>{formatMoney(p.without, currency)}</Masked>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </details>
     </div>
   );
 }

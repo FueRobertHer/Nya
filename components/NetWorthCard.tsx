@@ -26,8 +26,9 @@ import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
 /** The change Home's hero shows (components/Dashboard.tsx works it out). */
 export type HeroChange = { value: number; pct: number; days: number };
 
-/** The hero's change line: up in green, down in red, each with its arrow and
- *  how much; a change that rounds to nothing in the currency is said in
+/** The hero's change line: the change in bold, up in green and down in red,
+ *  each with its arrow and how much, and the rest of the line in the secondary
+ *  text color; a change that rounds to nothing in the currency is said in
  *  words, in the secondary text color and with no arrow, so no change never
  *  reads as a gain. What else the change holds (accounts that ended, rate
  *  moves) follows either way. */
@@ -41,7 +42,10 @@ export function HeroDelta({ delta, currency, endedIn, fromRates }: { delta: Hero
         `No change in ${days}`
       ) : (
         <>
-          {up ? '▲' : '▼'} <Masked>{formatMoney(Math.abs(delta.value), currency)}</Masked> ({delta.pct.toFixed(1)}%) · past {days}
+          <b>
+            {up ? '▲' : '▼'} <Masked>{formatMoney(Math.abs(delta.value), currency)}</Masked> ({delta.pct.toFixed(1)}%)
+          </b>{' '}
+          · past {days}
         </>
       )}
       {endedIn > 0 && ` · includes ${endedIn === 1 ? 'an account' : `${endedIn} accounts`} that ended`}

@@ -164,7 +164,7 @@ describe('the issue’s acceptance, through the views themselves', () => {
     const tab = renderToStaticMarkup(
       <MonthBreakdown txns={[row(day(1), 'ACME CORP', -1000, 'income'), row(day(2), 'Landlord', 2100, 'rent and utilities')]} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} segment="spending" />
     );
-    expect(tab).toContain('<div class="summary-value negative">-$1,100.00</div>');
+    expect(tab).toContain('<div class="summary-value negative">−$1,100.00</div>');
     expect(html).toContain('class="sankey-node deficit"');
     expect(html).toContain('class="sankey-link deficit"');
     expect(t).not.toContain('Left over');

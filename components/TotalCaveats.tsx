@@ -12,7 +12,7 @@
 import type { ReactNode } from 'react';
 import type { Severity } from '@/lib/accounts-status';
 import { joinNames } from '@/lib/month-coverage';
-import { CAUTION, levelIcon } from './ConnectionStatus';
+import { CAUTION, LevelWord, levelIcon } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
 
@@ -32,7 +32,8 @@ export function allHiddenCaveats(shownInstitutions: number, hiddenAccounts: numb
   return [{ key: 'all-hidden', severity: 'info', summary: 'every account hidden', body: `${all} hidden, so the total counts nothing. Unhide one from Hidden on the Accounts tab.` }];
 }
 
-const INFO = (
+/** An information notice's icon, a circled i. */
+export const INFO = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <circle cx="12" cy="12" r="9" />
     <path d="M12 11v5M12 8h.01" />
@@ -56,17 +57,15 @@ export function summaryText(lesser: readonly Caveat[]): string {
   return `${lesser.length} notes: ${joinNames(shown)}`;
 }
 
-/** What a screen reader says first, for what the color shows. */
-export function LevelWord({ level }: { level: CaveatSeverity }) {
-  return <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : 'Note: '}</span>;
-}
+export { LevelWord };
 
 /** One notice on its own, in its level's color, with its icon and its
  *  level said first: a caveat in full, or an error said where it arose (a
- *  budget's sheet, the month's card). */
-export function Notice({ level, children }: { level: CaveatSeverity; children: ReactNode }) {
+ *  budget's sheet, the month's card). One that appears after an action is
+ *  announced: `role` "alert" for a critical one, "status" for the rest. */
+export function Notice({ level, role, children }: { level: CaveatSeverity; role?: 'alert' | 'status'; children: ReactNode }) {
   return (
-    <div className={`notice ${level}`}>
+    <div className={`notice ${level}`} role={role}>
       {level === 'info' ? INFO : levelIcon(level)}
       <div>
         <LevelWord level={level} />

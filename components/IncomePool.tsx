@@ -76,6 +76,7 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
       {open && (
         <div className="pool-scroll">
           <table className="pool-table">
+            <caption className="visually-hidden">Income, spending and what was left, by month</caption>
             <thead>
               <tr>
                 <th scope="col">Month</th>

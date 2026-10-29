@@ -324,7 +324,7 @@ describe('NetWorthChart estimated throughout', () => {
     }));
   }
   const readDate = (html: string) => html.match(/<span class="chart-readout-date">([^<]*)</)?.[1];
-  const label = (html: string) => html.match(/<svg [^>]*role="img" aria-label="([^"]*)"/)?.[1] ?? '';
+  const label = (html: string) => html.match(/<svg [^>]*role="slider" [^>]*aria-label="([^"]*)"/)?.[1] ?? '';
 
   test('every day estimated: one solid line, and the readout, the label and the info say so', () => {
     const points = days(20, () => true);

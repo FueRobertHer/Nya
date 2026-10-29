@@ -43,6 +43,12 @@ export const CAUTION = (
   </svg>
 );
 
+/** What a screen reader says first, for what a notice's color and icon
+ *  show: its level, visually hidden (design-system.md, Status and honesty). */
+export function LevelWord({ level }: { level: Severity | 'info' | 'done' }) {
+  return <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : level === 'done' ? 'Done: ' : 'Note: '}</span>;
+}
+
 /** The icon for a notice whose level is decided at run time. */
 export function levelIcon(level: Severity): ReactNode {
   return level === 'critical' ? ALERT : CAUTION;
@@ -214,7 +220,7 @@ export function ConnectionStatus({
       add(
         'remove',
         <button className="btn secondary" onClick={() => onRemove(inst.item_id)}>
-          Remove {name}
+          Disconnect {name}
         </button>
       );
     }
@@ -289,6 +295,7 @@ export function ConnectionStatus({
         <div className={`notice ${severity}`}>
           {levelIcon(severity)}
           <div className="stack tight">
+            <LevelWord level={severity} />
             {lines.map((line, i) => (
               <p key={i}>{line}</p>
             ))}
@@ -317,7 +324,10 @@ export function ConnectionStatus({
           {c.warn ? (
             <div className="notice caution">
               {CAUTION}
-              <p>{c.text}</p>
+              <p>
+                <LevelWord level="caution" />
+                {c.text}
+              </p>
             </div>
           ) : (
             <p className="helper">{c.text}</p>

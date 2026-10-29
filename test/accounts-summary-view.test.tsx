@@ -58,7 +58,7 @@ describe('the line', () => {
     const html = render([institution()]);
     expect(html).toStartWith('<div class="card stack"><ul class="stat-strip" role="list" aria-label="Totals by kind">');
     expect(html).toContain(cell('Cash', '$1,200.00'));
-    expect(html).toContain(cell('Credit', '-$300.00'));
+    expect(html).toContain(cell('Credit', '−$300.00'));
     expect(html).not.toContain('notice');
   });
 

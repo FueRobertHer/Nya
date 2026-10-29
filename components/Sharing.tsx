@@ -39,7 +39,7 @@ import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
 import { RowsSkeleton, SharedWithMeSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
-import { CAUTION } from './ConnectionStatus';
+import { CAUTION, LevelWord } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
 import { cacheKeyFor } from './device-cache';
 import { InferenceNotes, KindsEditor, sameViews, seenText, viewsToSave, type ShareableGoal } from './ShareKinds';
@@ -547,6 +547,7 @@ export function SharingListView({
           <div className="notice caution">
             {CAUTION}
             <div className="stack tight">
+              <LevelWord level="caution" />
               <p>
                 {damaged?.maybe_connected
                   ? unmatched.length === 1
@@ -564,14 +565,22 @@ export function SharingListView({
             </div>
           </div>
         )}
-        {/* One region for what the list's actions did: always on the page, so
-            a line put in it is read out. */}
+        {/* What the list's actions did: a failure is an alert as it appears;
+            what was done goes in a region always on the page, so a line put
+            in it is read out. */}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
         <div role="status">
-          {error && <Notice level="critical">{error}</Notice>}
           {notice && (
             <div className="notice done">
               {CHECK}
-              <div>{notice}</div>
+              <div>
+                <LevelWord level="done" />
+                {notice}
+              </div>
             </div>
           )}
         </div>

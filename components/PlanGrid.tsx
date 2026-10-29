@@ -101,6 +101,7 @@ export default function PlanGrid({
 
   return (
     <table className="plan-grid">
+      <caption className="visually-hidden">Success rate by withdrawal rate and length</caption>
       <thead>
         <tr>
           <th scope="col">Rate</th>

@@ -271,7 +271,14 @@ export function GoalsCardView({
                 </span>
               </div>
               {ratio !== null ? (
-                <div className="meter-track goal-meter" role="img" aria-label={spoken(meterLabel(v))}>
+                <div
+                  className="meter-track goal-meter"
+                  role="meter"
+                  aria-label={spoken(meterLabel(v))}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(Math.min(ratio * 100, 100))}
+                >
                   <div className={`meter-fill${done ? ' done' : ''}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
                   {marker !== null && <span className="goal-marker" style={{ left: `${marker * 100}%` }} />}
                 </div>

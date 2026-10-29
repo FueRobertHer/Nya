@@ -14,12 +14,13 @@
 // imported from a file whose split was saved at the amount of the bank's
 // transaction that stood for it, once none does.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
 import { fieldAmount, formatMoney, hideAmountsIn } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
@@ -115,6 +116,7 @@ export default function SplitSheet({
 }) {
   // From the transaction it opens on (and afresh each time it opens on one).
   const [drafts, setDrafts] = useState<Draft[]>(() => (t ? startingParts(t, taxonomy.uncategorized) : []));
+  const errorId = useId();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -226,6 +228,7 @@ export default function SplitSheet({
                   onChange={(e) => set(d.key, { amount: e.target.value })}
                   placeholder={zeroIn(scale)}
                   aria-invalid={d.amount.trim() !== '' && parsed[i] === null}
+                  aria-describedby={d.amount.trim() !== '' && parsed[i] === null ? `${errorId}-${d.key}` : undefined}
                   disabled={saving}
                 />
               </label>
@@ -234,6 +237,9 @@ export default function SplitSheet({
                 <CategoryPicker taxonomy={taxonomy} value={d.category_id} onChange={(id) => set(d.key, { category_id: id })} disabled={saving} label={`Part ${i + 1} category`} />
               </label>
             </div>
+            {d.amount.trim() !== '' && parsed[i] === null && (
+              <FieldError id={`${errorId}-${d.key}`}>Enter an amount, like {amountExample(Math.round(Math.log10(scale)))}</FieldError>
+            )}
             <input
               className="text-input split-note"
               value={d.note}

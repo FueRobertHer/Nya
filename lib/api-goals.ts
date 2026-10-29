@@ -44,6 +44,7 @@ import type { KnownAccount } from './goal-save';
 import { goalSentences, stateText } from './goal-text';
 import type { ProjectionStatus } from './goal-projection';
 import { readFlowFx } from './fx/read';
+import { asciiMinus } from './format';
 import { toBase } from './fx/api-base';
 
 export type ApiGoalMonth = {
@@ -207,7 +208,9 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
       // Nothing of a hidden account: not its name, as a reconnected one's
       // note would give, nor anything it holds.
       if (isHidden) return [`${stateText(v)}.`];
-      return goalSentences(v, nameOf, g.account_id ? splits.get(g.account_id) : undefined);
+      // The page's words, with the hyphen for a minus (lib/format.ts
+      // asciiMinus): the API's text is data, and the emails' too.
+      return goalSentences(v, nameOf, g.account_id ? splits.get(g.account_id) : undefined).map(asciiMinus);
     };
     return {
       id: g.id,

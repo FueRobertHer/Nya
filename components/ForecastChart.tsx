@@ -289,10 +289,10 @@ export default function ForecastChart({
             <caption>{whatIf ? 'With the purchase, and each day’s end without it. ' : ''}Every day after now is an estimate.</caption>
             <thead>
               <tr>
-                <th>Day</th>
-                <th className="num">Low</th>
-                <th className="num">End of day</th>
-                {whatIf && <th className="num">Without it</th>}
+                <th scope="col">Day</th>
+                <th scope="col" className="num">Low</th>
+                <th scope="col" className="num">End of day</th>
+                {whatIf && <th scope="col" className="num">Without it</th>}
               </tr>
             </thead>
             <tbody>

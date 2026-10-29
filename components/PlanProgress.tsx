@@ -177,7 +177,7 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
           </>
         )}
         {savedState.kind === 'ready' && savedState.problem === 'newer' && (
-          <p className="notice info">The plan you saved as your plan was saved by a newer version of Nya, so it can’t be shown or changed here.</p>
+          <Notice level="info">The plan you saved as your plan was saved by a newer version of Nya, so it can’t be shown or changed here.</Notice>
         )}
         {savedState.kind === 'ready' && savedState.problem === null && saved === null && (
           <>
@@ -199,9 +199,9 @@ export function ProgressView({ savedState, series, plan, blocked, scenarioOpen, 
         {saved && <SavedBody saved={saved} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
         {saved && changedSince(saved, plan).length > 0 && (
           <>
-            <p className="notice info">
+            <Notice level="info">
               Your Plan’s {names(changedSince(saved, plan))} changed since you saved it. This compares with the plan as you saved it.
-            </p>
+            </Notice>
             {!scenarioOpen && (
               <>
                 <div className="btn-row">

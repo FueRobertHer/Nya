@@ -63,7 +63,7 @@ import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAt
 import { attentionItems, type Go } from './attention';
 import { resetsMonth, useViewMonth } from './view-month-state';
 import ConnectionDetails from './ConnectionDetails';
-import { ALERT, CAUTION, ConnectionStatus, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
+import { ALERT, CAUTION, ConnectionStatus, LevelWord, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
 import { Menu } from './Menu';
 import { cardlessSeverity as cardlessSeverityOf, firstToFix, severityOf, worse, type Severity } from '@/lib/accounts-status';
 import {
@@ -2450,13 +2450,19 @@ export default function Dashboard({
                   // Also where Home's row about it lands (components/attention.ts).
                   <div className="notice caution" id="health-unread" tabIndex={-1}>
                     {CAUTION}
-                    <p>Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.</p>
+                    <p>
+                      <LevelWord level="caution" />
+                      Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
+                    </p>
                   </div>
                 ) : (
                   unreadConnections > 0 && (
                     <div className="notice caution">
                       {CAUTION}
-                      <p>{`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}</p>
+                      <p>
+                        <LevelWord level="caution" />
+                        {`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+                      </p>
                     </div>
                   )
                 )}
@@ -2464,7 +2470,10 @@ export default function Dashboard({
                   // Also where Home's row about it lands (components/attention.ts).
                   <div className="notice critical" id="connectors-unread" tabIndex={-1}>
                     {ALERT}
-                    <p>Your own sync’s connections couldn’t be loaded: {connectors.error}</p>
+                    <p>
+                      <LevelWord level="critical" />
+                      Your own sync’s connections couldn’t be loaded: {connectors.error}
+                    </p>
                   </div>
                 )}
                 {/* Connections with no card here (every account hidden, or
@@ -2473,6 +2482,7 @@ export default function Dashboard({
                   <div className={`notice ${cardlessWorst}`}>
                     {levelIcon(cardlessWorst)}
                     <div className="stack tight">
+                      <LevelWord level={cardlessWorst} />
                       <p>
                         {cardlessCount === 1
                           ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
@@ -3104,9 +3114,7 @@ export default function Dashboard({
         open={!!disconnectTarget}
         title={
           shownDisconnectTarget
-            ? endedOffer === shownDisconnectTarget.item_id
-              ? 'Remove this connection?'
-              : `Disconnect ${shownDisconnectTarget.institution_name}?`
+            ? `Disconnect ${shownDisconnectTarget.institution_name}?`
             : 'Disconnect'
         }
         onClose={() => !disconnecting && setDisconnectTarget(null)}

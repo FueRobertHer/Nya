@@ -15,7 +15,8 @@
 // tab's totals (the Activity tab names what that left out). For a period
 // that holds today the x-axis stops at today rather than trailing a flat line
 // to its end (a row dated later in it counts in the period's totals, not
-// here).
+// here). Every day's two running totals sit behind "Show as a table", for
+// anyone who can't read the lines.
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import { type Txn } from './MonthBreakdown';
@@ -67,6 +68,8 @@ export default function MonthFlowChart({
   const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
   const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
+  // The table renders its rows only while it is open.
+  const [tableOpen, setTableOpen] = useState(false);
   const currency = useMemo(() => (given !== undefined ? given : totalsCurrency(txns)), [given, txns]);
 
   const today = localDate();
@@ -225,6 +228,42 @@ export default function MonthFlowChart({
           {dayLabel(days[lastAt])}
         </text>
       </svg>
+
+      {/* Every day's running totals, oldest first as the lines run. Rows
+          render only while it is open, and through Masked each time, so hide
+          amounts masks them. */}
+      <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
+        <summary>Show as a table</summary>
+        {tableOpen && (
+          <table>
+            <caption>Each day’s totals include the days before it.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col" className="num">
+                  In
+                </th>
+                <th scope="col" className="num">
+                  Out
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d, k) => (
+                <tr key={d}>
+                  <td>{dayLabel(d)}</td>
+                  <td className="num">
+                    <Masked>{formatMoney(cumIn[k], currency)}</Masked>
+                  </td>
+                  <td className="num">
+                    <Masked>{formatMoney(cumOut[k], currency)}</Masked>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </details>
     </div>
   );
 }

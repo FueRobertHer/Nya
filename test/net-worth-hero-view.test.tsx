@@ -78,7 +78,7 @@ function mount(node: React.ReactNode) {
   };
   mounted.add(unmount);
   const one = (cls: string) => host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes(cls))[0] ?? null;
-  const svg = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'img')[0];
+  const svg = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
   const fire = (type: string, props: Record<string, unknown>) =>
     act(() => {
       svg().dispatchEvent(Object.assign(new FakeEvent(type), { pointerId: 1, button: 0, buttons: 1, ...props }));
@@ -97,6 +97,20 @@ function mount(node: React.ReactNode) {
       fire('pointermove', { pointerType: 'touch', clientX: xOf(i), clientY: 0 });
     },
     mouse: (type: string, i: number, buttons = 0) => fire(type, { pointerType: 'mouse', clientX: xOf(i), buttons }),
+    plot: svg,
+    /** A key pressed on the focused plot; the event, to see what it did. */
+    key: (k: string) => {
+      const e = Object.assign(new FakeEvent('keydown'), { key: k });
+      act(() => {
+        svg().dispatchEvent(e);
+      });
+      return e;
+    },
+    /** Focus leaving the plot. */
+    blur: () =>
+      act(() => {
+        svg().dispatchEvent(new FakeEvent('focusout'));
+      }),
     rerender: (next: React.ReactNode) => act(() => root.render(next)),
   };
 }
@@ -144,7 +158,7 @@ describe('the hero, scrubbed', () => {
     expect(v.figure()).toContain(money(WORTH));
     v.scrub(3);
     act(() => {
-      v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'img')[0].dispatchEvent(
+      v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0].dispatchEvent(
         Object.assign(new FakeEvent('pointerdown'), { pointerType: 'touch', pointerId: 2, clientX: xOf(7), clientY: 0, button: 0, buttons: 1 }),
       );
     });
@@ -172,7 +186,7 @@ describe('the hero, scrubbed', () => {
     v.mouse('pointermove', 7);
     expect(v.figure()).toContain(money(POINTS[7].value));
     act(() => {
-      v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'img')[0].dispatchEvent(
+      v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0].dispatchEvent(
         Object.assign(new FakeEvent('pointerout'), { pointerType: 'mouse', pointerId: 1, relatedTarget: null }),
       );
     });
@@ -189,7 +203,7 @@ describe('the hero, scrubbed', () => {
     // The light accent review: the measured stretch deepens the gold under
     // the line, drawn over the solid wash (not under it, where it would be
     // hidden, nor over the page above the line).
-    const plot = v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'img')[0];
+    const plot = v.host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
     const paths = plot.findAll((e) => e.tagName.toLowerCase() === 'path');
     const wash = paths.findIndex((e) => e.getAttribute('fill') === 'var(--data-tint)');
     const slice = paths.findIndex((e) => e.getAttribute('fill') === 'var(--data)' && e.getAttribute('opacity') === '0.16');
@@ -317,5 +331,127 @@ describe('the hero, scrubbed', () => {
     v.scrub(4);
     expect(v.figure()).toContain(money(WORTH));
     expect(v.day()).toBeNull();
+  });
+});
+
+// The design system's hero: the plot is focusable, the arrows move the figure
+// a day at a time, Home and End jump to the ends, Escape or leaving the plot
+// brings back today, and the new figure is said once movement stops.
+describe('the hero, by the keys', () => {
+  const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 600))));
+
+  test('the plot is a slider in the tab order, named by its summary and told how to use', () => {
+    const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));
+    const plot = v.plot();
+    expect(plot.getAttribute('tabindex')).toBe('0');
+    expect(plot.getAttribute('aria-label')).toContain('Net worth from Oct 1 to Oct 10.');
+    const keys = v.host.findAll((e) => e.getAttribute('id') === plot.getAttribute('aria-describedby'))[0];
+    expect(keys.getAttribute('class')).toBe('visually-hidden');
+    expect(keys.textContent).toContain('Left and right arrows');
+    expect(keys.textContent).toContain('Escape');
+    expect(plot.getAttribute('aria-valuemin')).toBe('1');
+    expect(plot.getAttribute('aria-valuemax')).toBe('10');
+    expect(plot.getAttribute('aria-valuenow')).toBe('10');
+    expect(plot.getAttribute('aria-valuetext')).toBe(`${money(WORTH)} on Oct 10`);
+  });
+
+  test('the arrows move the figure a day at a time, Home and End go to the ends, and the readout keeps the range', () => {
+    const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));
+    const range = v.readout();
+    expect(v.key('ArrowLeft').defaultPrevented).toBe(true);
+    expect(v.figure()).toContain(money(POINTS[8].value));
+    expect(v.day()).toBe('Oct 9');
+    v.key('ArrowLeft');
+    expect(v.figure()).toContain(money(POINTS[7].value));
+    expect(v.day()).toBe('Oct 8');
+    v.key('ArrowRight');
+    expect(v.day()).toBe('Oct 9');
+    v.key('Home');
+    expect(v.figure()).toContain(money(POINTS[0].value));
+    expect(v.day()).toBe('Oct 1');
+    // Past the first day it stays there.
+    v.key('ArrowLeft');
+    expect(v.day()).toBe('Oct 1');
+    v.key('ArrowRight');
+    v.key('ArrowRight');
+    expect(v.day()).toBe('Oct 3 · estimated');
+    v.key('End');
+    expect(v.figure()).toContain(money(WORTH));
+    expect(v.day()).toBe('Oct 10');
+    expect(v.readout()).toBe(range);
+    // A key the plot doesn't use is left to the page.
+    expect(v.key('Tab').defaultPrevented).toBe(false);
+  });
+
+  test('Escape brings back today, and is the page’s when there is nothing to bring back', () => {
+    const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));
+    v.key('Home');
+    expect(v.day()).toBe('Oct 1');
+    const esc = v.key('Escape');
+    expect(esc.defaultPrevented).toBe(true);
+    expect(esc.propagationStopped).toBe(true);
+    expect(v.figure()).toContain(money(WORTH));
+    expect(v.day()).toBeNull();
+    expect(v.line().getAttribute('class')).toBe('hero-line');
+    // Nothing moved: a sheet around the chart still closes on it.
+    const again = v.key('Escape');
+    expect(again.defaultPrevented).toBe(false);
+    expect(again.propagationStopped).toBe(false);
+  });
+
+  test('leaving the plot brings back today', () => {
+    const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));
+    v.key('ArrowLeft');
+    v.key('ArrowLeft');
+    expect(v.day()).toBe('Oct 8');
+    v.blur();
+    expect(v.figure()).toContain(money(WORTH));
+    expect(v.day()).toBeNull();
+  });
+
+  test('the new figure is said once movement stops, not at every step', async () => {
+    const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));
+    const said = () => [v.plot().getAttribute('aria-valuenow'), v.plot().getAttribute('aria-valuetext')];
+    v.key('ArrowLeft');
+    v.key('ArrowLeft');
+    v.key('ArrowLeft');
+    // Moving: the value still says where it was.
+    expect(said()).toEqual(['10', `${money(WORTH)} on Oct 10`]);
+    await settle();
+    expect(said()).toEqual(['7', `${money(POINTS[6].value)} on Oct 7`]);
+    v.key('Home');
+    v.key('ArrowRight');
+    v.key('ArrowRight');
+    await settle();
+    expect(said()).toEqual(['3', `${money(POINTS[2].value)} on Oct 3, estimated`]);
+    v.key('Escape');
+    await settle();
+    expect(said()).toEqual(['10', `${money(WORTH)} on Oct 10`]);
+  });
+
+  test('a note on the day is said with it, and hidden amounts are said as hidden', async () => {
+    const notes: ChartNote[] = [{ date: '2026-10-06', text: 'Sold the car' }];
+    setAmountsHidden(true);
+    const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" notes={notes} />));
+    for (let k = 0; k < 4; k++) v.key('ArrowLeft');
+    expect(v.figure()).toContain(MASK);
+    expect(v.day()).toBe('Oct 6 · Sold the car');
+    await settle();
+    const text = v.plot().getAttribute('aria-valuetext')!;
+    expect(text).toContain('on Oct 6. Sold the car');
+    expect(text).not.toContain(MASK);
+    expect(text).not.toMatch(/\d\.\d\d/);
+  });
+
+  test('an account’s chart: the keys read the day in the readout, and Escape brings back the range', () => {
+    const v = mount(card(<NetWorthChart points={POINTS} label="Balance" currency="USD" />));
+    const range = v.readout();
+    v.key('ArrowLeft');
+    expect(v.readout()).toBe(money(POINTS[8].value));
+    // Never the hero's figure.
+    expect(v.figure()).toContain(money(WORTH));
+    expect(v.day()).toBeNull();
+    v.key('Escape');
+    expect(v.readout()).toBe(range);
   });
 });

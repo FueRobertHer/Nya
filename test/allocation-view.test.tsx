@@ -191,8 +191,8 @@ describe('the allocation by class', () => {
     const html = renderToStaticMarkup(<ShareTable totals={a.classes} order={SLOTS} colors={CLASS_COLORS} label={(s) => CLASS_NAMES[s]} money={money} />);
     const t = text(html);
     expect(t).toContain('US stocks $120,000 120%');
-    expect(t).toContain('Cash -$20,000 -20%');
-    expect(t).toContain('Cash is below zero (-$20,000): money owed');
+    expect(t).toContain('Cash −$20,000 -20%');
+    expect(t).toContain('Cash is below zero (−$20,000): money owed');
     // One segment, US stocks: the negative cash isn't a part of the bar.
     expect([...html.matchAll(/class="alloc-seg"/g)].length).toBe(1);
     expect(html.match(/class="alloc-swatch"/g)!.length).toBe(2);

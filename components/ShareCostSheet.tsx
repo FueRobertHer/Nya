@@ -9,9 +9,10 @@
 // stops sharing it (after asking). Nothing is sent to anyone: this keeps the
 // list, and the card offers to ask them for it.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import type { Txn } from './MonthBreakdown';
 import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
@@ -59,6 +60,7 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   const card = shared.card;
   const targets = useMemo(() => (t ? shareTargets(t) : []), [t]);
   const [targetKey, setTargetKey] = useState<string | null>(null);
+  const errorId = useId();
   const [picks, setPicks] = useState<Pick[]>([]);
   const [mode, setMode] = useState<Mode>('half');
   const [what, setWhat] = useState('');
@@ -214,10 +216,14 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
                     value={auto ? (auto[at] !== undefined ? fieldAmount(auto[at] / scale, places) : '') : picks[at].amount}
                     onChange={(e) => type(p.id, e.target.value)}
                     placeholder={zeroExample(places)}
-                    aria-invalid={units[at] === null}
+                    aria-invalid={!auto && picks[at].amount.trim() !== '' && units[at] === null}
+                    aria-describedby={!auto && picks[at].amount.trim() !== '' && units[at] === null ? `${errorId}-${p.id}` : undefined}
                     disabled={saving}
                   />
                 </label>
+              )}
+              {at >= 0 && !auto && picks[at].amount.trim() !== '' && units[at] === null && (
+                <FieldError id={`${errorId}-${p.id}`}>Enter an amount, like {amountExample(places)}</FieldError>
               )}
             </div>
           );

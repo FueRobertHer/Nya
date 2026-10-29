@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Why } from './Why';
-import { CAUTION } from './ConnectionStatus';
+import { CAUTION, LevelWord } from './ConnectionStatus';
 import { localDate } from '@/lib/local-date';
 
 export type TimelineNote = { id: string; date: string; text: string; kind: 'auto' | 'user'; account_id?: string };
@@ -148,7 +148,10 @@ export function TimelineNotesSheet({
           {problem && (
             <div className="notice caution">
               {CAUTION}
-              <p>{problem}</p>
+              <p>
+                <LevelWord level="caution" />
+                {problem}
+              </p>
             </div>
           )}
           <Why label="What are these?">

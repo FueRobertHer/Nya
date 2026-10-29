@@ -22,7 +22,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
-import { ALERT } from './ConnectionStatus';
+import { ALERT, LevelWord } from './ConnectionStatus';
 import CategoryPicker from './CategoryPicker';
 import TxnTagsNote, { type TagChange } from './TxnTagsNote';
 import ReviewNote from './ReviewNote';
@@ -234,7 +234,10 @@ export default function TransactionSheet(props: TransactionSheetProps) {
       {errors.map((e) => (
         <div className="notice critical" key={e}>
           {ALERT}
-          <p>{e}</p>
+          <p>
+            <LevelWord level="critical" />
+            {e}
+          </p>
         </div>
       ))}
     </>

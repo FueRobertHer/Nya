@@ -105,13 +105,14 @@ function MonthTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
       <h3>{label}</h3>
       <div className="report-scroll">
         <table className="report-table">
+          <caption className="visually-hidden">{label}</caption>
           <thead>
             <tr>
-              <th>Month</th>
-              <th className="num">This year</th>
-              <th className="num">Last year</th>
-              <th className="num">Change</th>
-              <th>Notes</th>
+              <th scope="col">Month</th>
+              <th scope="col" className="num">This year</th>
+              <th scope="col" className="num">Last year</th>
+              <th scope="col" className="num">Change</th>
+              <th scope="col">Notes</th>
             </tr>
           </thead>
           <tbody>
@@ -171,13 +172,14 @@ function GroupTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
       ) : (
         <div className="report-scroll">
           <table className="report-table">
+            <caption className="visually-hidden">By group and category</caption>
             <thead>
               <tr>
-                <th>Group and category</th>
-                <th className="num">This year</th>
-                <th className="num">Last year</th>
-                <th className="num">Change</th>
-                <th className="num">%</th>
+                <th scope="col">Group and category</th>
+                <th scope="col" className="num">This year</th>
+                <th scope="col" className="num">Last year</th>
+                <th scope="col" className="num">Change</th>
+                <th scope="col" className="num">%</th>
               </tr>
             </thead>
             <tbody>

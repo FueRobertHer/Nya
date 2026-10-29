@@ -164,14 +164,15 @@ describe('Settings > Sharing, the list in place, and a person’s sheet', () => 
     expect(row).toContain('<button class="btn secondary">Unblock</button>');
   });
 
-  test('what the list’s actions did is said in its one status region, always there', () => {
+  test('what the list’s actions did is said in its one status region, always there; a failure is an alert as it appears', () => {
     const quiet = panel({ enabled: true, connections: [], accounts });
     expect(quiet).toContain('<div role="status"></div>');
     const done = panel({ enabled: true, connections: [], accounts }, { notice: 'Unblocked.' });
     expect(done).toContain('<div role="status"><div class="notice done">');
     expect(text(done)).toContain('Unblocked.');
     const failed = panel({ enabled: true, connections: [], accounts }, { error: 'Something went wrong.' });
-    expect(failed).toContain('<div role="status"><div class="notice critical">');
+    expect(failed).toContain('<div class="notice critical" role="alert">');
+    expect(failed).toContain('<div role="status"></div>');
     expect(failed.match(/role="status"/g)).toHaveLength(1);
   });
 
@@ -366,7 +367,7 @@ describe('what others share with me', () => {
     const opened = text(renderToStaticMarkup(<SharedAccountItem a={pounds} open onToggle={toggle} />));
     expect(opened).toContain('£640.00');
     expect(opened).toContain('Pret');
-    expect(opened).toContain('-£12.00');
+    expect(opened).toContain('−£12.00');
     expect(opened).not.toContain('$');
     // Closed, as a card first shows it: the balance, and how many rows.
     const closed = text(renderToStaticMarkup(<SharedAccountItem a={pounds} open={false} onToggle={toggle} />));
