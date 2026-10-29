@@ -961,7 +961,8 @@ export default function MonthBreakdown({
             {/* The period every card here sums: a length, ending with the
                 bar's month. The underline switch, a labelled radio group
                 (since the screen review: the chips were a fourth kind of
-                switch and wrapped at 375px), held to its items' width. */}
+                switch and wrapped at 375px), across the width as every
+                switch is. */}
             {selected && (
               <Segmented
                 className="spending-period"

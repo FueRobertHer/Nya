@@ -304,6 +304,29 @@ a:not([class]) {
     calc(92px + env(safe-area-inset-bottom));
 }
 
+/* The app's page (components/Dashboard.tsx) is at least the screen's
+   height, so the Security and Privacy links (TrustLinks) sit at its foot
+   on a short tab rather than partway down: its body takes the room left.
+   The body's last child gives up its bottom margin, and so does the last
+   card of a tab's panel in it (Activity's), whose margin would pass out
+   through the panel, so the gap above the links stays their own 24px, as
+   when the margins collapsed. */
+.app-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app-page-body {
+  flex: 1 0 auto;
+}
+
+.app-page-body > :last-child,
+.app-page-body > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
 h1 {
   font-size: var(--fs-5);
   font-weight: 600;
@@ -4393,6 +4416,15 @@ button.plan-edit:disabled {
   font-size: var(--fs-2);
 }
 
+/* At the foot of Your figures (components/PlanTab.tsx InputsCard): under a
+   hairline like the one between its rows, which run to the card's edges,
+   and set in as they are. */
+.plan-inputs > .plan-currency-quiet {
+  margin: 0 calc(-1 * var(--inset));
+  padding: var(--sp-1) var(--inset);
+  border-top: 1px solid var(--border-subtle);
+}
+
 /* A heading inside a Plan card or sheet (rollout 6d): the Assumptions
    sheet's two parts, "From Your path" on Will it last?, and Portfolio's "For
    your plan". 13px, as a secondary line, in sentence case: .plan-subhead's
@@ -5031,17 +5063,10 @@ button.plan-edit:disabled {
    recurring (components/RecurringCard.tsx) and planned
    (components/PlannedCard.tsx) --- */
 
-/* List or Calendar: two short words, capped as the mockup draws it. */
-.upcoming-views {
-  max-width: 180px;
-}
-
 /* Activity > Spending's period (1M, 3M, 12M, YTD), as the switch and as its
-   placeholder: held to the width its four items need, so it reads as a
-   control on the segment rather than a second row of tabs under the bar's,
-   and spaced from the bar and the card under it as the chips were. */
+   placeholder: across the width, as every switch is, and spaced from the
+   bar and the card under it as the chips were. */
 .spending-period {
-  max-width: 240px;
   margin: var(--sp-2) 0 var(--sp-3);
 }
 

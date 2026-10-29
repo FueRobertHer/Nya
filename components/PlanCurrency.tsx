@@ -16,8 +16,13 @@
 //     one before is offered back.
 // Nothing here converts or relabels on its own: each change is the person's
 // word, and every error is announced.
+//
+// Quiet (recorded, and nothing about it needs the person), the tab draws the
+// card as one line at the foot of Your figures; otherwise above the bar. The
+// change drawer (CurrencyChangeSheet) is the tab's, so it stays open while
+// the card moves from one place to the other.
 
-import { useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Sheet } from './Sheet';
 import { everyCurrency, currencyName } from './currency-state';
 import { recordedText, relabelText } from '@/lib/fire/plan-currency';
@@ -29,6 +34,13 @@ export type CurrencyCardMode =
   | { kind: 'waiting'; text: string }
   | { kind: 'recorded'; currency: string; kept: string | null; relabelTo: string | null; previous: string | null; scenariosIn: number; offer: string[] }
   | { kind: 'none' };
+
+type RecordedMode = Extract<CurrencyCardMode, { kind: 'recorded' }>;
+
+/** Recorded, with the accounts, the spending and the last answer all agreeing
+ *  with it: nothing about the currency needs the person, so it is one line. */
+export const currencyQuiet = (mode: CurrencyCardMode): boolean =>
+  mode.kind === 'recorded' && !mode.kept && !(mode.previous && mode.previous !== mode.currency) && !(mode.relabelTo && mode.relabelTo !== mode.currency);
 
 /** Every code this browser knows, with its name, worked out once. */
 let choices: { code: string; name: string }[] | null = null;
@@ -73,6 +85,7 @@ export function PlanCurrencyCard({
   regionRef,
   onAnswer,
   onPick,
+  onChange,
 }: {
   mode: CurrencyCardMode;
   /** Why the tab couldn't record it itself, when it tried. */
@@ -86,11 +99,12 @@ export function PlanCurrencyCard({
   /** Before a first amount: the currency the person will type in (null to
    *  choose again). Recorded with that first amount's save. */
   onPick: (currency: string | null) => void;
+  /** Opens the change drawer (CurrencyChangeSheet), from the button pressed,
+   *  with a currency chosen already or none. */
+  onChange: (to: string | null, from: HTMLElement) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  // The change drawer: open, and the currency chosen in it, to confirm.
-  const [changing, setChanging] = useState<{ to: string | null } | null>(null);
   const off = disabled || busy;
   const answer = async (c: string) => {
     setBusy(true);
@@ -180,11 +194,9 @@ export function PlanCurrencyCard({
 
   // Recorded. Said always; one line when the accounts, the spending and the
   // last answer all agree with it, so the tab doesn't open on a notice.
-  const others = mode.offer.filter((c) => c !== mode.currency);
-  const to = changing?.to ?? null;
-  const quiet = !mode.kept && !(mode.previous && mode.previous !== mode.currency) && !(mode.relabelTo && mode.relabelTo !== mode.currency);
+  const quiet = currencyQuiet(mode);
   const change = (
-    <button className={quiet ? 'btn ghost' : 'plan-edit'} disabled={off} onClick={() => setChanging({ to: null })} aria-label="Change the currency your plan’s figures are in">
+    <button className={quiet ? 'btn ghost' : 'plan-edit'} disabled={off} onClick={(e) => onChange(null, e.currentTarget)} aria-label="Change the currency your plan’s figures are in">
       Change
     </button>
   );
@@ -210,57 +222,102 @@ export function PlanCurrencyCard({
         {!quiet && (
           <div className="action-row">
             {mode.relabelTo && mode.relabelTo !== mode.currency && (
-              <button className="secondary" disabled={off} onClick={() => setChanging({ to: mode.relabelTo })}>
+              <button className="secondary" disabled={off} onClick={(e) => onChange(mode.relabelTo, e.currentTarget)}>
                 They’re in {mode.relabelTo}
               </button>
             )}
             {change}
           </div>
         )}
-        {!changing && <Alert text={error} />}
+        <Alert text={error} />
       </div>
-      <Sheet open={!!changing} title="The currency your plan’s figures are in" onClose={() => setChanging(null)}>
-        {changing && to === null && (
-          <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              They’re recorded as {mode.currency}. Change it only if the figures you typed are in another currency: nothing is converted.
-            </p>
-            {others.length > 0 && (
-              <div className="action-row" style={{ marginTop: 12 }}>
-                {others.map((c) => (
-                  <button key={c} className="secondary" onClick={() => setChanging({ to: c })}>
-                    They’re in {c}
-                  </button>
-                ))}
-              </div>
-            )}
-            <AnotherCurrency except={[mode.currency, ...others]} disabled={off} label={others.length > 0 ? 'Or another currency' : 'The currency they’re in'} verb="They’re in" onChoose={(c) => setChanging({ to: c })} />
-          </>
-        )}
-        {changing && to !== null && (
-          <>
-            <div className="stack tight">
-              <p className="panel-note">Read your plan’s figures as {to}, not {mode.currency}?</p>
-              <p className="panel-note">{relabelText(mode.currency, to, mode.scenariosIn)}</p>
-              <Alert text={error} />
-            </div>
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={() => setChanging(null)} disabled={busy}>
-                Cancel
-              </button>
-              <button
-                disabled={off}
-                onClick={async () => {
-                  if (await answer(to)) setChanging(null);
-                }}
-              >
-                {busy ? 'Saving…' : `Read them as ${to}`}
-              </button>
-            </div>
-          </>
-        )}
-      </Sheet>
     </>,
     quiet
+  );
+}
+
+/** The change drawer: what a change of the recorded currency means, confirmed
+ *  before it is made. The tab's own, beside the card rather than inside it,
+ *  so it stays open when the card moves (quiet or not). `changing` is the
+ *  currency chosen in it, null before one is; the drawer is shut without it. */
+export function CurrencyChangeSheet({
+  mode,
+  changing,
+  onChanging,
+  disabled,
+  onAnswer,
+}: {
+  /** The recorded currency; the drawer is shut while there is none. */
+  mode: RecordedMode | null;
+  changing: { to: string | null } | null;
+  onChanging: (next: { to: string | null } | null) => void;
+  disabled: boolean;
+  onAnswer: (currency: string) => Promise<true | string>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const off = disabled || busy;
+  const to = changing?.to ?? null;
+  const others = mode ? mode.offer.filter((c) => c !== mode.currency) : [];
+  const close = () => {
+    setError('');
+    onChanging(null);
+  };
+  // Shut by the tab (no recorded currency any more): an error from before
+  // never greets the next opening.
+  useEffect(() => {
+    if (!changing) setError('');
+  }, [changing]);
+  return (
+    <Sheet open={!!changing && !!mode} title="The currency your plan’s figures are in" onClose={close}>
+      {mode && (
+        <>
+          {changing && to === null && (
+            <>
+              <p className="panel-note" style={{ marginTop: 0 }}>
+                They’re recorded as {mode.currency}. Change it only if the figures you typed are in another currency: nothing is converted.
+              </p>
+              {others.length > 0 && (
+                <div className="action-row" style={{ marginTop: 12 }}>
+                  {others.map((c) => (
+                    <button key={c} className="secondary" onClick={() => onChanging({ to: c })}>
+                      They’re in {c}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <AnotherCurrency except={[mode.currency, ...others]} disabled={off} label={others.length > 0 ? 'Or another currency' : 'The currency they’re in'} verb="They’re in" onChoose={(c) => onChanging({ to: c })} />
+            </>
+          )}
+          {changing && to !== null && (
+            <>
+              <div className="stack tight">
+                <p className="panel-note">Read your plan’s figures as {to}, not {mode.currency}?</p>
+                <p className="panel-note">{relabelText(mode.currency, to, mode.scenariosIn)}</p>
+                <Alert text={error} />
+              </div>
+              <div className="button-pair" style={{ marginTop: 16 }}>
+                <button className="secondary" onClick={close} disabled={busy}>
+                  Cancel
+                </button>
+                <button
+                  disabled={off}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError('');
+                    const r = await onAnswer(to);
+                    setBusy(false);
+                    if (r === true) close();
+                    else setError(r);
+                  }}
+                >
+                  {busy ? 'Saving…' : `Read them as ${to}`}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </Sheet>
   );
 }

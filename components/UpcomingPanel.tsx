@@ -174,7 +174,7 @@ export default function UpcomingPanel({
         badge={badges.forecast}
       />
 
-      <div className="segmented upcoming-views" role="tablist" aria-label="List or calendar" onKeyDown={onKeyDown}>
+      <div className="segmented" role="tablist" aria-label="List or calendar" onKeyDown={onKeyDown}>
         {UPCOMING_VIEWS.map((v, i) => (
           <button
             key={v.key}

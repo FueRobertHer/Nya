@@ -2239,542 +2239,546 @@ export default function Dashboard({
 
   return (
     <>
-      <main className="wrap">
-        <div className="top-row">
-          <Brand />
-          <div className="top-actions">
-            <HideAmountsToggle />
-            {/* Always there, unavailable and turning while the first load
-                is on its way, so the header doesn't change as it loads,
-                connected or not, nor when it takes over from the app
-                loading (components/LoadingSkeletons.tsx), which draws the
-                same. */}
-            <button
-              className="icon-btn"
-              onClick={refreshAll}
-              disabled={refreshing || loading}
-              aria-label="Refresh"
-              title="Refresh"
-            >
-              <HeaderIcon d={REFRESH} spin={refreshing || loading} />
-            </button>
-            {clerk ? (
-              <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={openSharing} />
-            ) : (
-              // Password mode has no account menu: Sign out and Sign out
-              // everywhere are in Settings > Account.
-              <button className="icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
-                <HeaderIcon d={GEAR} />
+      <main className="wrap app-page">
+        {/* Everything above the links, taking the room the page has left, so
+            the links sit at its foot on a short tab (.app-page). */}
+        <div className="app-page-body">
+          <div className="top-row">
+            <Brand />
+            <div className="top-actions">
+              <HideAmountsToggle />
+              {/* Always there, unavailable and turning while the first load
+                  is on its way, so the header doesn't change as it loads,
+                  connected or not, nor when it takes over from the app
+                  loading (components/LoadingSkeletons.tsx), which draws the
+                  same. */}
+              <button
+                className="icon-btn"
+                onClick={refreshAll}
+                disabled={refreshing || loading}
+                aria-label="Refresh"
+                title="Refresh"
+              >
+                <HeaderIcon d={REFRESH} spin={refreshing || loading} />
               </button>
-            )}
-          </div>
-        </div>
-
-        {loading ? (
-          // The open tab as it will be, its figures still to come
-          // (components/LoadingSkeletons.tsx), rather than a spinner the
-          // whole page then grows from; Settings as it will be, when the
-          // address has it open.
-          settings ? (
-            <SettingsSkeleton view={settings} sharing={clerk} />
-          ) : (
-            <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
-          )
-        ) : settings ? (
-          <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
-        ) : !connected ? (
-          <>
-            <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
-              <CoverageNote />
-              {/* Also offered here, not just on the Accounts tab: with nothing
-                  connected the tab bar is hidden, so this is the only reachable
-                  entry point for someone whose bank Plaid doesn't support at all. */}
-              <div className="action-row">
-                <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
-                  <ActionIcon d="M12 5v14M5 12h14" />
-                  Add manual
+              {clerk ? (
+                <ClerkAccount clearDevice={clearDevice} onOpenSettings={openSettings} onOpenSharing={openSharing} />
+              ) : (
+                // Password mode has no account menu: Sign out and Sign out
+                // everywhere are in Settings > Account.
+                <button className="icon-btn" onClick={openSettings} aria-label="Settings" title="Settings">
+                  <HeaderIcon d={GEAR} />
                 </button>
-                {clerk && (
-                  <button className="secondary" onClick={openSharing}>
-                    <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-                    Sharing
-                  </button>
-                )}
-              </div>
-              <p className="empty-note">
-                Manual accounts are for institutions Plaid can&apos;t reach. You type the balance and
-                update it whenever you like; it counts toward net worth and builds its own history.
-              </p>
-              <SwitchingLink onOpen={() => setMigrationOpen(true)} />
-              {error && (
-                <Notice level="critical" role="alert">
-                  {error}
-                </Notice>
               )}
-              {lifecycleRepair}
             </div>
-            {/* Bringing back a download goes only into an empty account, so
-                it is offered here first (components/RestoreCard.tsx). */}
-            <div id="bring-back">
-              <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan refreshKey={asOf} />
-            </div>
-            {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
-            <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
-            {/* Someone who only follows what others share needs no bank of their own. */}
-            {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
-          </>
-        ) : (
-          <>
-            {/* An unfinished restore, said on every tab. */}
-            <RestoreBanner hold={restoreHold} onOpen={openRestore} />
-            {tab === 'home' && (
-              <>
-                {/* The hero (look and feel, step 5; one card since rollout
-                    phase 4a): the total, what qualifies it, the chart and
-                    what qualifies that, the nightly jobs, and the chart
-                    notes in a sheet. The chart is in the hero's currency, as
-                    the figure it moves is. */}
-                <NetWorthCard
-                  worth={shownWorth}
-                  currency={shownCurrency}
-                  caveats={homeCaveats}
-                  pausedSince={pausedSince}
-                  notesProblem={timeline.problem}
-                  backupProblem={backupProblem}
-                  filesProblem={filesProblem}
-                  asOf={asOf}
-                  refreshing={refreshing}
-                  notesCount={timeline.notes.length}
-                  onNotes={() => setNotesOpen(true)}
-                  delta={shownDelta && <HeroDelta delta={shownDelta} currency={shownCurrency} endedIn={endedInDelta} fromRates={fromRates} />}
-                  chart={
-                    shownHistory.length >= 2 ? (
-                      <>
-                        <NetWorthChart hero points={shownHistory} currency={shownCurrency} notes={chartNotes} />
-                        {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
-                        {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
-                      </>
-                    ) : base && history.length >= 2 ? (
-                      // A history there is, that couldn't be converted: why.
-                      <ChartCurrencyNote base={base} main={accountCurrency} />
-                    ) : (
-                      <p className="empty-note">
-                        History builds as you use the app: check back tomorrow for your first
-                        trend line.
-                      </p>
-                    )
-                  }
-                />
-                <TimelineNotesSheet
-                  open={notesOpen}
-                  onClose={() => setNotesOpen(false)}
-                  notes={timeline.notes}
-                  problem={timeline.problem}
-                  onChanged={timeline.reload}
-                />
+          </div>
 
-                {/* What asks the person to act, each row going where it is
-                    fixed (rollout phase 4b); the admin's instructions for
-                    the nightly jobs under it. */}
-                {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
-                {admin && <AdminAttention backup={backupProblem} files={filesProblem} />}
-
-                <Insights
-                  txns={txns}
-                  fx={txnFx}
-                  idleCash={idleCashAccounts}
-                  withoutTransactions={txnWithout}
-                  series={recurring ?? undefined}
-                  dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
-                  incomplete={txnIncomplete}
-                  stopped={stoppedTxns}
-                  accounts={institutions.flatMap((i) =>
-                    i.accounts
-                      .filter((a) => !a.hidden)
-                      .map((a) => ({
-                        name: a.name,
-                        type: a.type,
-                        subtype: a.subtype,
-                        balance: a.balance,
-                        currency: a.currency,
-                        liability: a.liability,
-                      }))
-                  )}
-                  // This month's last row: the FI line (the Plan's years to
-                  // FI, FI number and savings rate, from the same inputs and
-                  // plan as the Plan tab). Last: it appears only once its
-                  // inputs are in, so nothing above it moves when it does.
-                  fi={
-                    <FiProgressLoader
-                      txns={txns}
-                      txnsLoading={txnsLoading}
-                      txnNotes={txnUnread}
-                      txnWithout={txnWithout}
-                      institutions={planInstitutions}
-                      currency={accountCurrency}
-                      txnFx={txnFx}
-                      balanceFx={base?.fx ?? null}
-                      onOpenPlan={() => {
-                        window.scrollTo(0, 0);
-                        setPlanSegment('path');
-                        setPlanLanding(Date.now());
-                        setTab('plan');
-                      }}
-                    />
-                  }
-                />
-                {error && (
-                  <Notice level="critical" role="alert">
-                    {error}
-                  </Notice>
-                )}
-                {lifecycleRepair}
-              </>
-            )}
-
-            {tab === 'accounts' && (
-              <>
-                {/* The status first, then Add account, tonal and at the
-                    right: connecting, a manual account and switching are in
-                    its sheet; sharing is in the avatar menu and Settings >
-                    Sharing. The pill counts from this load only: never from
-                    this device's snapshot or a load that failed. */}
-                <div className="accounts-bar">
-                  <AccountsStatus
-                    entries={statusEntries}
-                    known={!loading && !balancesSaved && !balancesFailed && !!connectors.data && !connectors.error}
-                    healthRead={!healthUnavailable}
-                    syncing={sortedInstitutions.some((i) => !i.manual || !!i.connector) || cardless.length > 0}
-                    onGo={goToFirstToFix}
-                  />
-                  <button className="btn secondary" onClick={() => setAddAccountOpen(true)}>
+          {loading ? (
+            // The open tab as it will be, its figures still to come
+            // (components/LoadingSkeletons.tsx), rather than a spinner the
+            // whole page then grows from; Settings as it will be, when the
+            // address has it open.
+            settings ? (
+              <SettingsSkeleton view={settings} sharing={clerk} />
+            ) : (
+              <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
+            )
+          ) : settings ? (
+            <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
+          ) : !connected ? (
+            <>
+              <div className="card">
+                <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
+                <CoverageNote />
+                {/* Also offered here, not just on the Accounts tab: with nothing
+                    connected the tab bar is hidden, so this is the only reachable
+                    entry point for someone whose bank Plaid doesn't support at all. */}
+                <div className="action-row">
+                  <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
                     <ActionIcon d="M12 5v14M5 12h14" />
-                    Add account
+                    Add manual
                   </button>
+                  {clerk && (
+                    <button className="secondary" onClick={openSharing}>
+                      <ActionIcon d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+                      Sharing
+                    </button>
+                  )}
                 </div>
-                <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
+                <p className="empty-note">
+                  Manual accounts are for institutions Plaid can&apos;t reach. You type the balance and
+                  update it whenever you like; it counts toward net worth and builds its own history.
+                </p>
+                <SwitchingLink onOpen={() => setMigrationOpen(true)} />
                 {error && (
                   <Notice level="critical" role="alert">
                     {error}
                   </Notice>
                 )}
                 {lifecycleRepair}
-                {lifecycle.problem && (
-                  <Notice level="critical" role="alert">
-                    {lifecycle.problem}
-                  </Notice>
-                )}
-                {/* What couldn't be read about every connection, said once
-                    for the tab: a card can't say what is missing from it. */}
-                {healthUnavailable ? (
-                  // Also where Home's row about it lands (components/attention.ts).
-                  <div className="notice caution" id="health-unread" tabIndex={-1}>
-                    {CAUTION}
-                    <p>
-                      <LevelWord level="caution" />
-                      Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
-                    </p>
+              </div>
+              {/* Bringing back a download goes only into an empty account, so
+                  it is offered here first (components/RestoreCard.tsx). */}
+              <div id="bring-back">
+                <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan refreshKey={asOf} />
+              </div>
+              {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
+              <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
+              {/* Someone who only follows what others share needs no bank of their own. */}
+              {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
+            </>
+          ) : (
+            <>
+              {/* An unfinished restore, said on every tab. */}
+              <RestoreBanner hold={restoreHold} onOpen={openRestore} />
+              {tab === 'home' && (
+                <>
+                  {/* The hero (look and feel, step 5; one card since rollout
+                      phase 4a): the total, what qualifies it, the chart and
+                      what qualifies that, the nightly jobs, and the chart
+                      notes in a sheet. The chart is in the hero's currency, as
+                      the figure it moves is. */}
+                  <NetWorthCard
+                    worth={shownWorth}
+                    currency={shownCurrency}
+                    caveats={homeCaveats}
+                    pausedSince={pausedSince}
+                    notesProblem={timeline.problem}
+                    backupProblem={backupProblem}
+                    filesProblem={filesProblem}
+                    asOf={asOf}
+                    refreshing={refreshing}
+                    notesCount={timeline.notes.length}
+                    onNotes={() => setNotesOpen(true)}
+                    delta={shownDelta && <HeroDelta delta={shownDelta} currency={shownCurrency} endedIn={endedInDelta} fromRates={fromRates} />}
+                    chart={
+                      shownHistory.length >= 2 ? (
+                        <>
+                          <NetWorthChart hero points={shownHistory} currency={shownCurrency} notes={chartNotes} />
+                          {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
+                          {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
+                        </>
+                      ) : base && history.length >= 2 ? (
+                        // A history there is, that couldn't be converted: why.
+                        <ChartCurrencyNote base={base} main={accountCurrency} />
+                      ) : (
+                        <p className="empty-note">
+                          History builds as you use the app: check back tomorrow for your first
+                          trend line.
+                        </p>
+                      )
+                    }
+                  />
+                  <TimelineNotesSheet
+                    open={notesOpen}
+                    onClose={() => setNotesOpen(false)}
+                    notes={timeline.notes}
+                    problem={timeline.problem}
+                    onChanged={timeline.reload}
+                  />
+
+                  {/* What asks the person to act, each row going where it is
+                      fixed (rollout phase 4b); the admin's instructions for
+                      the nightly jobs under it. */}
+                  {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
+                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} />}
+
+                  <Insights
+                    txns={txns}
+                    fx={txnFx}
+                    idleCash={idleCashAccounts}
+                    withoutTransactions={txnWithout}
+                    series={recurring ?? undefined}
+                    dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
+                    incomplete={txnIncomplete}
+                    stopped={stoppedTxns}
+                    accounts={institutions.flatMap((i) =>
+                      i.accounts
+                        .filter((a) => !a.hidden)
+                        .map((a) => ({
+                          name: a.name,
+                          type: a.type,
+                          subtype: a.subtype,
+                          balance: a.balance,
+                          currency: a.currency,
+                          liability: a.liability,
+                        }))
+                    )}
+                    // This month's last row: the FI line (the Plan's years to
+                    // FI, FI number and savings rate, from the same inputs and
+                    // plan as the Plan tab). Last: it appears only once its
+                    // inputs are in, so nothing above it moves when it does.
+                    fi={
+                      <FiProgressLoader
+                        txns={txns}
+                        txnsLoading={txnsLoading}
+                        txnNotes={txnUnread}
+                        txnWithout={txnWithout}
+                        institutions={planInstitutions}
+                        currency={accountCurrency}
+                        txnFx={txnFx}
+                        balanceFx={base?.fx ?? null}
+                        onOpenPlan={() => {
+                          window.scrollTo(0, 0);
+                          setPlanSegment('path');
+                          setPlanLanding(Date.now());
+                          setTab('plan');
+                        }}
+                      />
+                    }
+                  />
+                  {error && (
+                    <Notice level="critical" role="alert">
+                      {error}
+                    </Notice>
+                  )}
+                  {lifecycleRepair}
+                </>
+              )}
+
+              {tab === 'accounts' && (
+                <>
+                  {/* The status first, then Add account, tonal and at the
+                      right: connecting, a manual account and switching are in
+                      its sheet; sharing is in the avatar menu and Settings >
+                      Sharing. The pill counts from this load only: never from
+                      this device's snapshot or a load that failed. */}
+                  <div className="accounts-bar">
+                    <AccountsStatus
+                      entries={statusEntries}
+                      known={!loading && !balancesSaved && !balancesFailed && !!connectors.data && !connectors.error}
+                      healthRead={!healthUnavailable}
+                      syncing={sortedInstitutions.some((i) => !i.manual || !!i.connector) || cardless.length > 0}
+                      onGo={goToFirstToFix}
+                    />
+                    <button className="btn secondary" onClick={() => setAddAccountOpen(true)}>
+                      <ActionIcon d="M12 5v14M5 12h14" />
+                      Add account
+                    </button>
                   </div>
-                ) : (
-                  unreadConnections > 0 && (
-                    <div className="notice caution">
+                  <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
+                  {error && (
+                    <Notice level="critical" role="alert">
+                      {error}
+                    </Notice>
+                  )}
+                  {lifecycleRepair}
+                  {lifecycle.problem && (
+                    <Notice level="critical" role="alert">
+                      {lifecycle.problem}
+                    </Notice>
+                  )}
+                  {/* What couldn't be read about every connection, said once
+                      for the tab: a card can't say what is missing from it. */}
+                  {healthUnavailable ? (
+                    // Also where Home's row about it lands (components/attention.ts).
+                    <div className="notice caution" id="health-unread" tabIndex={-1}>
                       {CAUTION}
                       <p>
                         <LevelWord level="caution" />
-                        {`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+                        Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
                       </p>
                     </div>
-                  )
-                )}
-                {connectors.error && (
-                  // Also where Home's row about it lands (components/attention.ts).
-                  <div className="notice critical" id="connectors-unread" tabIndex={-1}>
-                    {ALERT}
-                    <p>
-                      <LevelWord level="critical" />
-                      Your own sync’s connections couldn’t be loaded: {connectors.error}
-                    </p>
-                  </div>
-                )}
-                {/* Connections with no card here (every account hidden, or
-                    none chosen yet) that need attention, in Settings. */}
-                {cardlessWorst && (
-                  <div className={`notice ${cardlessWorst}`}>
-                    {levelIcon(cardlessWorst)}
-                    <div className="stack tight">
-                      <LevelWord level={cardlessWorst} />
+                  ) : (
+                    unreadConnections > 0 && (
+                      <div className="notice caution">
+                        {CAUTION}
+                        <p>
+                          <LevelWord level="caution" />
+                          {`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+                        </p>
+                      </div>
+                    )
+                  )}
+                  {connectors.error && (
+                    // Also where Home's row about it lands (components/attention.ts).
+                    <div className="notice critical" id="connectors-unread" tabIndex={-1}>
+                      {ALERT}
                       <p>
-                        {cardlessCount === 1
-                          ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
-                          : `${cardlessCount} connections with no card here need attention: their accounts are hidden or not chosen yet.`}
+                        <LevelWord level="critical" />
+                        Your own sync’s connections couldn’t be loaded: {connectors.error}
                       </p>
-                      <div className="btn-row">
-                        <button className="btn secondary" onClick={openConnections}>
-                          Open Settings, Connections
-                        </button>
+                    </div>
+                  )}
+                  {/* Connections with no card here (every account hidden, or
+                      none chosen yet) that need attention, in Settings. */}
+                  {cardlessWorst && (
+                    <div className={`notice ${cardlessWorst}`}>
+                      {levelIcon(cardlessWorst)}
+                      <div className="stack tight">
+                        <LevelWord level={cardlessWorst} />
+                        <p>
+                          {cardlessCount === 1
+                            ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
+                            : `${cardlessCount} connections with no card here need attention: their accounts are hidden or not chosen yet.`}
+                        </p>
+                        <div className="btn-row">
+                          <button className="btn secondary" onClick={openConnections}>
+                            Open Settings, Connections
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {sortedInstitutions.map((inst) => (
-                  <InstitutionCard
-                    key={inst.item_id}
-                    inst={inst}
-                    institutions={institutions}
-                    base={base}
-                    shownCurrency={shownCurrency}
-                    connecting={connecting}
-                    expandedHoldings={expandedHoldings}
-                    unallowedIds={unallowedIds}
-                    lifecycle={lifecycle}
-                    place={places.get(inst.item_id) ?? null}
-                    requestsLeft={connectors.data?.requests?.left ?? null}
-                    onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
-                    toggleHoldings={toggleHoldings}
-                    onDetails={(i) => setDetailsFor(i.item_id)}
-                    onRemove={removeConnection}
-                    onConnector={setConnectorAsk}
-                    startReconnect={startReconnect}
-                    startAllowTransactions={startAllowTransactions}
-                    startEnableLiabilities={startEnableLiabilities}
-                    startManageAccounts={startManageAccounts}
-                  />
-                ))}
-
-                {hiddenAccounts.length > 0 && (
-                  <section className="card stack">
-                    <CollapsibleHeader
-                      title="Hidden"
-                      count={hiddenAccounts.length}
-                      open={hiddenExpanded}
-                      onToggle={() => setHiddenExpanded((v) => !v)}
-                      controls="hidden-accounts"
+                  {sortedInstitutions.map((inst) => (
+                    <InstitutionCard
+                      key={inst.item_id}
+                      inst={inst}
+                      institutions={institutions}
+                      base={base}
+                      shownCurrency={shownCurrency}
+                      connecting={connecting}
+                      expandedHoldings={expandedHoldings}
+                      unallowedIds={unallowedIds}
+                      lifecycle={lifecycle}
+                      place={places.get(inst.item_id) ?? null}
+                      requestsLeft={connectors.data?.requests?.left ?? null}
+                      onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
+                      toggleHoldings={toggleHoldings}
+                      onDetails={(i) => setDetailsFor(i.item_id)}
+                      onRemove={removeConnection}
+                      onConnector={setConnectorAsk}
+                      startReconnect={startReconnect}
+                      startAllowTransactions={startAllowTransactions}
+                      startEnableLiabilities={startEnableLiabilities}
+                      startManageAccounts={startManageAccounts}
                     />
-                    {hiddenExpanded && (
-                      <>
-                        <p className="helper">
-                          These accounts still sync, but are left out of net worth, transactions,
-                          budgets and insights, on every day, past ones too. Unhiding restores their
-                          history in full. To stop counting one only from a day on, unhide it, then open
-                          it, use Mark as closed… and choose Stop following: every day before then still counts.
-                        </p>
-                        {/* Each row's Unhide sits beside its text, not inside
-                            a control. */}
-                        <ul id="hidden-accounts" className="list-rows">
-                          {hiddenAccounts.map(({ account, institution_name, resolved }) => (
-                            <li key={account.account_id} className="list-row">
-                              <span className="list-row-text">
-                                <span className="list-row-title">{account.name}</span>
-                                <span className="list-row-sub">
-                                  {[institution_name, kindWords(account)].filter(Boolean).join(' · ')}
+                  ))}
+
+                  {hiddenAccounts.length > 0 && (
+                    <section className="card stack">
+                      <CollapsibleHeader
+                        title="Hidden"
+                        count={hiddenAccounts.length}
+                        open={hiddenExpanded}
+                        onToggle={() => setHiddenExpanded((v) => !v)}
+                        controls="hidden-accounts"
+                      />
+                      {hiddenExpanded && (
+                        <>
+                          <p className="helper">
+                            These accounts still sync, but are left out of net worth, transactions,
+                            budgets and insights, on every day, past ones too. Unhiding restores their
+                            history in full. To stop counting one only from a day on, unhide it, then open
+                            it, use Mark as closed… and choose Stop following: every day before then still counts.
+                          </p>
+                          {/* Each row's Unhide sits beside its text, not inside
+                              a control. */}
+                          <ul id="hidden-accounts" className="list-rows">
+                            {hiddenAccounts.map(({ account, institution_name, resolved }) => (
+                              <li key={account.account_id} className="list-row">
+                                <span className="list-row-text">
+                                  <span className="list-row-title">{account.name}</span>
+                                  <span className="list-row-sub">
+                                    {[institution_name, kindWords(account)].filter(Boolean).join(' · ')}
+                                  </span>
                                 </span>
-                              </span>
-                              {/* An unresolved account has no balance to
-                                  show; "--" beats a misleading $0.00. */}
-                              <span className="list-row-value">
-                                <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
-                              </span>
-                              <button
-                                className="btn ghost"
-                                disabled={togglingHidden !== null}
-                                onClick={() => toggleHidden(account.account_id, false)}
-                              >
-                                {togglingHidden === account.account_id ? 'Unhiding…' : 'Unhide'}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
-                  </section>
-                )}
+                                {/* An unresolved account has no balance to
+                                    show; "--" beats a misleading $0.00. */}
+                                <span className="list-row-value">
+                                  <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
+                                </span>
+                                <button
+                                  className="btn ghost"
+                                  disabled={togglingHidden !== null}
+                                  onClick={() => toggleHidden(account.account_id, false)}
+                                >
+                                  {togglingHidden === account.account_id ? 'Unhiding…' : 'Unhide'}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </section>
+                  )}
 
-                {/* Accounts that ended (#50), from the
-                    stored set, with when each ended, to change or reopen. */}
-                <EndedAccounts
-                  ended={ended}
-                  hidden={hiddenIds}
-                  busy={lifecycle.busy}
-                  onOpen={lifecycle.open}
-                  onReopen={lifecycle.reopen}
-                  onStillOpen={lifecycle.stillOpen}
-                  onImportHistory={(e) =>
-                    setHistoryTarget({
-                      account_id: e.account_id,
-                      name: e.label.name || 'Account',
-                      institution_name: e.label.institution,
-                      type: e.type ?? 'other',
-                      currency: null,
-                    })
-                  }
-                  importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
-                />
-
-                {/* What others share with me, whenever there is some; last,
-                    so my own accounts don't move when it arrives. What I
-                    share is in the Sharing drawer. */}
-                {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
-              </>
-            )}
-
-            {tab === 'activity' && (
-              <MonthBreakdown
-                txns={txns}
-                fx={txnFx}
-                notes={txnNotes}
-                asideNotes={txnAside}
-                loading={txnsLoading}
-                taxonomy={categories.taxonomy}
-                onRecategorize={txnEdits.recategorize}
-                onRename={renameVendor}
-                // Only with a manual account to add to (hidden ones aren't offered).
-                onAddTransaction={
-                  institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
-                }
-                onImport={() => setImportTarget({ account_id: null })}
-                onEditTransaction={txnEdits.openEdit}
-                onToggleExcluded={txnEdits.toggleExcluded}
-                tags={tagList.tags}
-                onChangeTags={txnEdits.changeTags}
-                onSaveNote={txnEdits.saveNote}
-                // Prefilled from the row as rules read it: the name it had
-                // before any rule named it, which a new rule's condition
-                // matches (a rule never reads another's changes).
-                onCreateRule={(t, category_id) =>
-                  rules.open(
-                    newDraft({
-                      conditions: [{ field: 'name', op: 'equals', value: nameForRules(t), value2: '', direction: '' }],
-                      set_category: category_id ?? t.category_id ?? '',
-                    })
-                  )
-                }
-                ruleSentenceOf={ruleSentenceOf}
-                // Splits and groups (#39): applied after the server's cache,
-                // so the list is read again quietly after a change.
-                onSplitsChanged={txnEdits.refresh}
-                review={review}
-                shared={sharedRows}
-                // Receipts and documents (#47), where the file store is connected.
-                onAttachmentsChanged={filesMode?.connected ? txnEdits.refresh : undefined}
-                actionError={txnEdits.error}
-                incomplete={txnIncomplete}
-                stopped={stoppedTxns}
-                withoutTransactions={txnWithout}
-                segment={activitySegment}
-                onSegment={setActivitySegment}
-                viewMonth={viewMonth.month}
-                onViewMonth={viewMonth.set}
-                // Shared expenses (#49): who owes what, on its own segment.
-                sharedSegment={
-                  <SharedExpensesCard
-                    shared={sharedExpenses}
-                    txns={txns}
-                    facts={sharedFacts}
-                    tags={tagList.tags}
-                    taxonomy={categories.taxonomy}
-                    currency={accountCurrency ?? 'USD'}
-                    fx={txnFx}
+                  {/* Accounts that ended (#50), from the
+                      stored set, with when each ended, to change or reopen. */}
+                  <EndedAccounts
+                    ended={ended}
+                    hidden={hiddenIds}
+                    busy={lifecycle.busy}
+                    onOpen={lifecycle.open}
+                    onReopen={lifecycle.reopen}
+                    onStillOpen={lifecycle.stillOpen}
+                    onImportHistory={(e) =>
+                      setHistoryTarget({
+                        account_id: e.account_id,
+                        name: e.label.name || 'Account',
+                        institution_name: e.label.institution,
+                        type: e.type ?? 'other',
+                        currency: null,
+                      })
+                    }
+                    importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
                   />
-                }
-              />
-            )}
 
-            {/* Its sheets, which the list's rows open too, on every segment. */}
-            {tab === 'activity' && (
-              <SharedSheets shared={sharedExpenses} tags={tagList.tags} taxonomy={categories.taxonomy} currency={accountCurrency ?? 'USD'} />
-            )}
+                  {/* What others share with me, whenever there is some; last,
+                      so my own accounts don't move when it arrives. What I
+                      share is in the Sharing drawer. */}
+                  {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
+                </>
+              )}
 
-            {tab === 'budgets' && (
-              <BudgetsTab
-                txns={txns}
-                fx={txnFx}
-                budgets={budgets}
-                taxonomy={categories.taxonomy}
-                categoriesError={categories.error}
-                budgetsStatus={budgetsState.status}
-                budgetsError={budgetsState.error}
-                budgetsSaveError={budgetsState.saveError}
-                onSave={budgetsStore.save}
-                goals={goals}
-                goalsStatus={goalsState.status}
-                goalsError={goalsState.error}
-                goalsSaveError={goalsState.saveError}
-                goalsDamage={goalsState.damage}
-                onGoalsRepaired={() => goalsStore.load()}
-                onSaveGoals={goalsStore.save}
-                // Hidden accounts stay in this list, and those that ended join
-                // it with their end (#50): GoalsCard needs them to tell "you hid
-                // this account" or "it closed" from "this account was
-                // disconnected". It excludes them from the picker itself.
-                accounts={withAccountEnds(
-                  institutions.flatMap((i) =>
-                    i.accounts.map((a) => ({
-                      account_id: a.account_id,
-                      name: a.name,
-                      institution: i.institution_name,
-                      balance: a.balance,
-                      currency: a.currency,
-                      hidden: a.hidden,
-                      type: a.type,
-                    }))
-                  ),
-                  ended
-                )}
-                loading={txnsLoading}
-                incomplete={txnIncomplete}
-                stopped={stoppedTxns}
-                withoutTransactions={txnWithout}
-                // The forecast, the calendar and the recurring list.
-                series={recurring}
-                txnsFailed={txnsFailed && txns === null}
-                institutions={institutions}
-                balancesAsOf={asOf}
-                balancesSaved={balancesSaved}
-                planned={plannedState.value}
-                plannedStatus={plannedState.status}
-                plannedError={plannedState.error}
-                plannedSaveError={plannedState.saveError}
-                onSavePlanned={plannedItemsStore.save}
-                budgetMonth={budgetMonth}
-                onCategories={(t) => {
-                  categories.accept(t);
-                  loadTransactions();
-                  budgetsStore.load();
-                }}
-                segment={budgetsSegment}
-                onSegment={setBudgetsSegment}
-                viewMonth={viewMonth.month}
-                onViewMonth={viewMonth.set}
-                // Whenever there is a card or loan on screen to plan: hidden
-                // accounts left out, as everywhere the accounts are listed.
-                onPayoff={allAccounts.some((a) => isOwedType(a.type)) ? () => setPayoffOpen(true) : undefined}
-              />
-            )}
+              {tab === 'activity' && (
+                <MonthBreakdown
+                  txns={txns}
+                  fx={txnFx}
+                  notes={txnNotes}
+                  asideNotes={txnAside}
+                  loading={txnsLoading}
+                  taxonomy={categories.taxonomy}
+                  onRecategorize={txnEdits.recategorize}
+                  onRename={renameVendor}
+                  // Only with a manual account to add to (hidden ones aren't offered).
+                  onAddTransaction={
+                    institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
+                  }
+                  onImport={() => setImportTarget({ account_id: null })}
+                  onEditTransaction={txnEdits.openEdit}
+                  onToggleExcluded={txnEdits.toggleExcluded}
+                  tags={tagList.tags}
+                  onChangeTags={txnEdits.changeTags}
+                  onSaveNote={txnEdits.saveNote}
+                  // Prefilled from the row as rules read it: the name it had
+                  // before any rule named it, which a new rule's condition
+                  // matches (a rule never reads another's changes).
+                  onCreateRule={(t, category_id) =>
+                    rules.open(
+                      newDraft({
+                        conditions: [{ field: 'name', op: 'equals', value: nameForRules(t), value2: '', direction: '' }],
+                        set_category: category_id ?? t.category_id ?? '',
+                      })
+                    )
+                  }
+                  ruleSentenceOf={ruleSentenceOf}
+                  // Splits and groups (#39): applied after the server's cache,
+                  // so the list is read again quietly after a change.
+                  onSplitsChanged={txnEdits.refresh}
+                  review={review}
+                  shared={sharedRows}
+                  // Receipts and documents (#47), where the file store is connected.
+                  onAttachmentsChanged={filesMode?.connected ? txnEdits.refresh : undefined}
+                  actionError={txnEdits.error}
+                  incomplete={txnIncomplete}
+                  stopped={stoppedTxns}
+                  withoutTransactions={txnWithout}
+                  segment={activitySegment}
+                  onSegment={setActivitySegment}
+                  viewMonth={viewMonth.month}
+                  onViewMonth={viewMonth.set}
+                  // Shared expenses (#49): who owes what, on its own segment.
+                  sharedSegment={
+                    <SharedExpensesCard
+                      shared={sharedExpenses}
+                      txns={txns}
+                      facts={sharedFacts}
+                      tags={tagList.tags}
+                      taxonomy={categories.taxonomy}
+                      currency={accountCurrency ?? 'USD'}
+                      fx={txnFx}
+                    />
+                  }
+                />
+              )}
 
-            {tab === 'plan' && (
-              <PlanTabLoader
-                txns={txns}
-                txnsLoading={txnsLoading}
-                txnNotes={txnUnread}
-                txnWithout={txnWithout}
-                institutions={planInstitutions}
-                holdings={planHoldings}
-                balancesAsOf={asOf}
-                balancesSaved={balancesSaved}
-                balancesFailed={balancesFailed}
-                currency={accountCurrency}
-                txnFx={txnFx}
-                balanceFx={base?.fx ?? null}
-                segment={planSegment}
-                onSegment={setPlanSegment}
-                landing={planLanding}
-                onLanded={() => setPlanLanding(null)}
-              />
-            )}
-          </>
-        )}
+              {/* Its sheets, which the list's rows open too, on every segment. */}
+              {tab === 'activity' && (
+                <SharedSheets shared={sharedExpenses} tags={tagList.tags} taxonomy={categories.taxonomy} currency={accountCurrency ?? 'USD'} />
+              )}
+
+              {tab === 'budgets' && (
+                <BudgetsTab
+                  txns={txns}
+                  fx={txnFx}
+                  budgets={budgets}
+                  taxonomy={categories.taxonomy}
+                  categoriesError={categories.error}
+                  budgetsStatus={budgetsState.status}
+                  budgetsError={budgetsState.error}
+                  budgetsSaveError={budgetsState.saveError}
+                  onSave={budgetsStore.save}
+                  goals={goals}
+                  goalsStatus={goalsState.status}
+                  goalsError={goalsState.error}
+                  goalsSaveError={goalsState.saveError}
+                  goalsDamage={goalsState.damage}
+                  onGoalsRepaired={() => goalsStore.load()}
+                  onSaveGoals={goalsStore.save}
+                  // Hidden accounts stay in this list, and those that ended join
+                  // it with their end (#50): GoalsCard needs them to tell "you hid
+                  // this account" or "it closed" from "this account was
+                  // disconnected". It excludes them from the picker itself.
+                  accounts={withAccountEnds(
+                    institutions.flatMap((i) =>
+                      i.accounts.map((a) => ({
+                        account_id: a.account_id,
+                        name: a.name,
+                        institution: i.institution_name,
+                        balance: a.balance,
+                        currency: a.currency,
+                        hidden: a.hidden,
+                        type: a.type,
+                      }))
+                    ),
+                    ended
+                  )}
+                  loading={txnsLoading}
+                  incomplete={txnIncomplete}
+                  stopped={stoppedTxns}
+                  withoutTransactions={txnWithout}
+                  // The forecast, the calendar and the recurring list.
+                  series={recurring}
+                  txnsFailed={txnsFailed && txns === null}
+                  institutions={institutions}
+                  balancesAsOf={asOf}
+                  balancesSaved={balancesSaved}
+                  planned={plannedState.value}
+                  plannedStatus={plannedState.status}
+                  plannedError={plannedState.error}
+                  plannedSaveError={plannedState.saveError}
+                  onSavePlanned={plannedItemsStore.save}
+                  budgetMonth={budgetMonth}
+                  onCategories={(t) => {
+                    categories.accept(t);
+                    loadTransactions();
+                    budgetsStore.load();
+                  }}
+                  segment={budgetsSegment}
+                  onSegment={setBudgetsSegment}
+                  viewMonth={viewMonth.month}
+                  onViewMonth={viewMonth.set}
+                  // Whenever there is a card or loan on screen to plan: hidden
+                  // accounts left out, as everywhere the accounts are listed.
+                  onPayoff={allAccounts.some((a) => isOwedType(a.type)) ? () => setPayoffOpen(true) : undefined}
+                />
+              )}
+
+              {tab === 'plan' && (
+                <PlanTabLoader
+                  txns={txns}
+                  txnsLoading={txnsLoading}
+                  txnNotes={txnUnread}
+                  txnWithout={txnWithout}
+                  institutions={planInstitutions}
+                  holdings={planHoldings}
+                  balancesAsOf={asOf}
+                  balancesSaved={balancesSaved}
+                  balancesFailed={balancesFailed}
+                  currency={accountCurrency}
+                  txnFx={txnFx}
+                  balanceFx={base?.fx ?? null}
+                  segment={planSegment}
+                  onSegment={setPlanSegment}
+                  landing={planLanding}
+                  onLanded={() => setPlanLanding(null)}
+                />
+              )}
+            </>
+          )}
+        </div>
         {/* At the foot of every tab: how the data is protected, and who can read it. */}
         <TrustLinks />
       </main>
