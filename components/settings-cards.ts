@@ -13,6 +13,7 @@ export { default as ReceiptsCard } from './ReceiptsCard';
 export { default as RestoreCard } from './RestoreCard';
 export { default as ReviewSettingsCard } from './ReviewSettingsCard';
 export { default as RulesCard } from './RulesCard';
+export { SharingSettings } from './Sharing';
 export { default as TagsCard } from './TagsCard';
 export { ThemeCard } from './ThemeCard';
 export { default as VendorDefaultsCard } from './VendorDefaultsCard';

@@ -66,6 +66,7 @@ export const ReceiptsCard = settingsCard('ReceiptsCard');
 export const RestoreCard = settingsCard('RestoreCard', { quiet: true });
 export const ReviewSettingsCard = settingsCard('ReviewSettingsCard');
 export const RulesCard = settingsCard('RulesCard');
+export const SharingSettings = settingsCard('SharingSettings');
 export const TagsCard = settingsCard('TagsCard');
 export const ThemeCard = settingsCard('ThemeCard');
 export const VendorDefaultsCard = settingsCard('VendorDefaultsCard');
