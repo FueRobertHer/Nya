@@ -16,12 +16,13 @@
 //   - "Shared by ..." (components/SharedWithMe.tsx, its own module so that
 //     Home doesn't bring this one), on the Accounts tab whenever a connection
 //     shares something: their accounts, read-only, and until when. They
-//     are fetched only once that part of the page is on screen, since each fetch is
-//     counted as a showing in the sharer's record (lib/access-log.ts). A
-//     fetch turned away (the limit on reads) or failing keeps what is shown,
-//     and says why it couldn't be refreshed. With nothing on screen it says
-//     nothing, unless nothing has loaded yet and the last good read on this
-//     device had something shared (rememberShares).
+//     are fetched only once that part of the page is on screen, since each
+//     fetch is counted as a showing in the sharer's record
+//     (lib/access-log.ts). A fetch turned away (the limit on reads) or
+//     failing keeps what is shown, and says why it couldn't be refreshed.
+//     With nothing on screen it says nothing, unless nothing has loaded yet
+//     and the last good read on this device had something shared
+//     (rememberShares).
 // Beside the accounts, the other kinds of share (#45 step 3): a person's sheet's
 // choices for them, and what they could work out from all of it together,
 // are components/ShareKinds.tsx; how a card draws them, components/SharedViews.tsx.
@@ -53,7 +54,6 @@ import {
   RENEW_DAYS,
   type EndChoice,
 } from './SharingDates';
-
 import { SharedCard, initial, type SharedView } from './SharedWithMe';
 
 export { shortDate } from './SharingDates';

@@ -22,7 +22,7 @@ const { LazySheet, SLOW_MS } = await import('@/components/LazySheets');
 const { default: BudgetsTabLoader, BudgetsUnavailable } = await import('@/components/BudgetsTabLoader');
 const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
 const { ThemeCard: RealThemeCard } = await import('@/components/ThemeCard');
-const { default: SharedExpensesCard, SharedUnavailable } = await import('@/components/SharedExpensesLoader');
+const { default: SharedExpensesCard, SharedSheets, SharedUnavailable, sharedExpensesPart, sheetTitle } = await import('@/components/SharedExpensesLoader');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -107,6 +107,9 @@ describe("Home's code doesn't reach the parts loaded later", () => {
       'components/SharedExpensesCard.tsx',
       'components/ShareCostSheet.tsx',
       'components/ConfirmPaymentSheet.tsx',
+      'components/IouSheet.tsx',
+      'components/PersonSheet.tsx',
+      'components/HandoffSheet.tsx',
     ];
     expect(reached.filter((f) => later.includes(f) || f.startsWith('lib/age/') || f.startsWith('lib/user-restore/') || f.startsWith('lib/import/'))).toEqual([]);
   });
@@ -271,10 +274,28 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
     expect(renderToStaticMarkup(<ThemeCard />)).toBe(renderToStaticMarkup(<RealThemeCard />));
   });
 
-  test("Activity's shared expenses draw a card of rows still to come", () => {
+  test("Activity's shared expenses draw the card as it is while its figures load", () => {
     const html = renderToStaticMarkup(<SharedExpensesCard {...({} as Parameters<typeof SharedExpensesCard>[0])} />);
-    expect(html).toContain('aria-busy="true"');
-    expect(html).toContain('class="card stack"');
+    expect(text(html)).toBe('Shared expenses Loading…');
+  });
+
+  test("its rows' sheets are on their way from when Activity opens, before any is asked for", async () => {
+    expect(sharedExpensesPart.loaded()).toBeNull();
+    const shared = { open: null, setOpen: noop } as unknown as Parameters<typeof SharedSheets>[0]['shared'];
+    const m = mount(<SharedSheets shared={shared} tags={[]} taxonomy={null} currency="USD" />);
+    expect(m.host.textContent).toBe('');
+    for (let i = 0; i < 50 && !sharedExpensesPart.loaded(); i++) await settle(20);
+    expect(sharedExpensesPart.loaded()).not.toBeNull();
+    // Still nothing drawn: no sheet was asked for.
+    expect(m.host.textContent).toBe('');
+    m.unmount();
+  });
+
+  test("a stand-in sheet has the title the sheet will have", () => {
+    expect(sheetTitle({ kind: 'share' } as Parameters<typeof sheetTitle>[0])).toBe('Share the cost');
+    expect(sheetTitle({ kind: 'settle', person: 'p', currency: 'USD', letGo: true })).toBe('Let it go');
+    expect(sheetTitle({ kind: 'person', id: null })).toBe('Add someone');
+    expect(sheetTitle({ kind: 'handoff', person: 'p', currency: 'USD' })).toBe('Ask for it');
   });
 
   test('a failure keeps the rest working', () => {
