@@ -41,7 +41,7 @@ function Row({ level, what, detail, onClick }: { level: AttentionSeverity; what:
       <span className={`list-row-icon ${level}`}>{level === 'critical' ? ICONS.critical : level === 'caution' ? ICONS.caution : ICONS.info}</span>
       <span className="list-row-text">
         <span className="list-row-title">
-          <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : 'Information: '}</span>
+          <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : 'Note: '}</span>
           <Masked>{what}</Masked>
         </span>
         {detail && (

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Masked } from './HideAmounts';
 import { reportDay, reportTime } from './ReportView';
 import { browserZone } from './RunwayReport';
-import { formatMoney, roundsToNothing, signedMoney } from '@/lib/format';
+import { formatMoney, MINUS, roundsToNothing, signedMoney } from '@/lib/format';
 import { gapSentences, reportConvertedText, scopeLine } from '@/lib/report/words';
 import type { Change, YoyCategory, YoyCompare, YoyGroup, YoyPeriod } from '@/lib/report/year-over-year';
 import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read';
@@ -29,7 +29,7 @@ const spanWords = (p: Pick<YoyPeriod, 'start' | 'end'>) => `${reportDay(p.start)
 /** A change in percent, in words: "+12.5%", "new" when last year's was
  *  zero and this year's isn't, nothing when both are. */
 export function pctWords(c: Change): string {
-  if (c.pct !== null) return `${c.pct > 0 ? '+' : ''}${c.pct.toFixed(1)}%`;
+  if (c.pct !== null) return `${c.pct > 0 ? '+' : c.pct < 0 ? MINUS : ''}${Math.abs(c.pct).toFixed(1)}%`;
   return c.this === 0 ? '' : 'new';
 }
 

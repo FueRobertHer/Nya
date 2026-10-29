@@ -51,7 +51,47 @@ function mount() {
   return { named, focused, tab, outside: outside as unknown as FakeElement, unmount: () => act(() => root.unmount()) };
 }
 
+/** A sheet whose last controls are ones Tab skips: a radio group's
+ *  unchecked radios, a closed details' body, a disabled fieldset's field. */
+function mountSkipped() {
+  const host = dom.document.createElement('div');
+  dom.document.body.appendChild(host);
+  const root = createRoot(host as unknown as HTMLElement);
+  act(() =>
+    root.render(
+      <Sheet open title="Pick" onClose={() => {}}>
+        <input type="radio" name="kind" aria-label="One" defaultChecked />
+        <input type="radio" name="kind" aria-label="Two" />
+        <details>
+          <summary>More</summary>
+          <button type="button">Inside</button>
+        </details>
+        <fieldset disabled>
+          <input aria-label="Held" />
+        </fieldset>
+      </Sheet>
+    )
+  );
+  const named = (label: string) => host.findAll((e) => (e.tagName === 'BUTTON' || e.tagName === 'INPUT' || e.tagName === 'SUMMARY') && (e.textContent.trim() === label || e.getAttribute('aria-label') === label))[0];
+  return { named, unmount: () => act(() => root.unmount()) };
+}
+
 describe('a sheet keeps Tab inside it', () => {
+  test('its last stop is the last one Tab lands on: not a radio of a group already passed, a closed details\' body or a disabled fieldset\'s field', async () => {
+    const v = mountSkipped();
+    await settle();
+    v.named('More').focus();
+    const e = new FakeEvent('keydown') as FakeEvent & { shiftKey: boolean };
+    e.key = 'Tab';
+    e.shiftKey = false;
+    act(() => {
+      (dom.document.defaultView as unknown as FakeElement).dispatchEvent(e);
+    });
+    expect(e.defaultPrevented).toBe(true);
+    expect((dom.document.activeElement as unknown as FakeElement) === v.named('Close')).toBe(true);
+    v.unmount();
+  });
+
   test('Tab on its last control goes to its first, Shift+Tab back again', async () => {
     const v = mount();
     await settle();

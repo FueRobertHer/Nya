@@ -1470,7 +1470,7 @@ describe('the main screens with amounts hidden', () => {
     ));
     expect(exposed(hidden)).toContain('Approaching your groceries budget (95%)');
     const chart = both(SCREENS['Home: the net worth chart']).hidden;
-    expect(exposed(chart)).toMatch(/[+-]\d+\.\d%/);
+    expect(exposed(chart)).toMatch(/[+\-\u2212]\d+\.\d%/);
   });
 
   test('the hidden figures are said as "hidden" where they stand alone', () => {

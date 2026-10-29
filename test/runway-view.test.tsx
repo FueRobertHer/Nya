@@ -459,7 +459,7 @@ describe('year over year, drawn', () => {
 
   test('the percent in words', () => {
     expect(pctWords({ this: 110, last: 100, change: 10, pct: 10 })).toBe('+10.0%');
-    expect(pctWords({ this: 90, last: 100, change: -10, pct: -10 })).toBe('-10.0%');
+    expect(pctWords({ this: 90, last: 100, change: -10, pct: -10 })).toBe('\u221210.0%');
     expect(pctWords({ this: 5, last: 0, change: 5, pct: null })).toBe('new');
     expect(pctWords({ this: 0, last: 0, change: 0, pct: null })).toBe('');
   });

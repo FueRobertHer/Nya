@@ -21,19 +21,20 @@ const CLOSE_MS = 220;
 // entry with it.
 const insteadOf = new WeakMap<Element, () => HTMLElement | null>();
 
-/** Whether Tab can land on the element: a link, an enabled control, a
- *  summary, or anything given a tab stop of its own. */
-function tabbable(el: Element): boolean {
+/** Whether Tab can land on the element: a link, an enabled control (none
+ *  in a disabled fieldset), a summary, or anything given a tab stop of its
+ *  own. */
+function tabbable(el: Element, offFieldset: boolean): boolean {
   if (el.hasAttribute('tabindex')) return el.getAttribute('tabindex') !== '-1';
   switch (el.tagName) {
     case 'A':
       return el.hasAttribute('href');
     case 'INPUT':
-      return !el.hasAttribute('disabled') && el.getAttribute('type') !== 'hidden';
+      return !offFieldset && !el.hasAttribute('disabled') && el.getAttribute('type') !== 'hidden';
     case 'BUTTON':
     case 'SELECT':
     case 'TEXTAREA':
-      return !el.hasAttribute('disabled');
+      return !offFieldset && !el.hasAttribute('disabled');
     case 'SUMMARY':
       return true;
     default:
@@ -41,20 +42,42 @@ function tabbable(el: Element): boolean {
   }
 }
 
-/** The panel's controls in tab order, leaving out any under a hidden or
- *  inert part (a closed level, a collapsed section). */
+const isRadio = (el: Element) => el.tagName === 'INPUT' && el.getAttribute('type') === 'radio';
+const isChecked = (el: Element) => (el as HTMLInputElement).checked === true;
+
+/** The panel's controls in the order Tab stops on them, leaving out any
+ *  under a hidden or inert part (a closed level), a closed details' body
+ *  (its summary stays), and all but one radio of a group: the checked one,
+ *  or the first while none is (a radio with no name is a group of its own). */
 function tabbables(panel: Element): HTMLElement[] {
   const out: HTMLElement[] = [];
-  const walk = (n: Element) => {
+  const checkedGroups = new Set<string>();
+  const seenGroups = new Set<string>();
+  const walk = (n: Element, offFieldset: boolean, visit: (c: Element, off: boolean) => void) => {
+    const closed = n.tagName === 'DETAILS' && !n.hasAttribute('open');
     for (const node of Array.from(n.childNodes)) {
       if (node.nodeType !== 1) continue;
       const c = node as Element;
       if (c.hasAttribute('hidden') || c.hasAttribute('inert')) continue;
-      if (tabbable(c)) out.push(c as HTMLElement);
-      walk(c);
+      if (closed && c.tagName !== 'SUMMARY') continue;
+      const off = offFieldset || (c.tagName === 'FIELDSET' && c.hasAttribute('disabled'));
+      visit(c, off);
+      walk(c, off, visit);
     }
   };
-  walk(panel);
+  walk(panel, false, (c) => {
+    const group = c.getAttribute('name');
+    if (group !== null && isRadio(c) && isChecked(c)) checkedGroups.add(group);
+  });
+  walk(panel, false, (c, off) => {
+    if (!tabbable(c, off)) return;
+    const group = c.getAttribute('name');
+    if (group !== null && isRadio(c)) {
+      if (seenGroups.has(group) || (checkedGroups.has(group) && !isChecked(c))) return;
+      seenGroups.add(group);
+    }
+    out.push(c as HTMLElement);
+  });
   return out;
 }
 

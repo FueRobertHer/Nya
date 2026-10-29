@@ -36,7 +36,8 @@
 // after a refusal (components/BudgetsTab.tsx), so focus goes back to it.
 // With nothing to save it with, the row is plain text, as it was.
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import FieldError from './FieldError';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { Sheet } from './Sheet';
 import ForecastChart, { fmtDay } from './ForecastChart';
@@ -230,6 +231,7 @@ export function ForecastView({
   open?: 'warning' | 'what-if';
 }) {
   const { position, forecast, threshold, warn, today, range, until, events } = work;
+  const errorId = useId();
   const code = position.currency ?? DEFAULT_CURRENCY;
   const parse = (text: string) => parseAmountInput(text, isCurrencyCode(code) ? code : DEFAULT_CURRENCY);
   const opening = (): WarnSheet => ({ open: true, draft: threshold ? String(threshold) : '', seen: saveError });
@@ -503,11 +505,13 @@ export function ForecastView({
                 }}
                 placeholder="0"
                 aria-label={`Warn below, in ${code}`}
+                aria-invalid={draft.trim() !== '' && !warnOk}
+                aria-describedby={draft.trim() !== '' && !warnOk ? `${errorId}-warn` : undefined}
                 disabled={savingWarn}
               />
             </label>
           </div>
-          {draft.trim() !== '' && !warnOk && <Notice level="critical">Enter an amount, like 250 or 1,299.99.</Notice>}
+          {draft.trim() !== '' && !warnOk && <FieldError id={`${errorId}-warn`}>Enter an amount, like 250 or 1,299.99.</FieldError>}
           <p className="helper">Blank warns only below zero.</p>
           {otherCurrency}
           {/* Why Save is off, by the button: the planned items couldn't be
@@ -534,7 +538,15 @@ export function ForecastView({
             <div className="quick-add-pair">
               <label className="field quick-add-amount">
                 Amount
-                <input inputMode="decimal" autoComplete="off" value={buyAmount} onChange={(e) => setBuyAmount(e.target.value)} placeholder="0.00" />
+                <input
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={buyAmount}
+                  onChange={(e) => setBuyAmount(e.target.value)}
+                  placeholder="0.00"
+                  aria-invalid={buyBad}
+                  aria-describedby={buyBad ? `${errorId}-buy` : undefined}
+                />
               </label>
               <label className="field quick-add-currency">
                 Currency
@@ -543,14 +555,22 @@ export function ForecastView({
             </div>
             <label className="field">
               On
-              <input type="date" value={buyDate} min={today} max={until} onChange={(e) => setBuyDate(e.target.value)} />
+              <input
+                type="date"
+                value={buyDate}
+                min={today}
+                max={until}
+                onChange={(e) => setBuyDate(e.target.value)}
+                aria-invalid={dateBad}
+                aria-describedby={dateBad ? `${errorId}-buy-day` : undefined}
+              />
             </label>
           </div>
-          {buyBad && <Notice level="critical">Enter an amount, like 250 or 1,299.99.</Notice>}
+          {buyBad && <FieldError id={`${errorId}-buy`}>Enter an amount, like 250 or 1,299.99.</FieldError>}
           {dateBad && (
-            <Notice level="critical">
+            <FieldError id={`${errorId}-buy-day`}>
               Pick a day from today to {fmtDay(until)}, the end of this {range}-day forecast.
-            </Notice>
+            </FieldError>
           )}
           {whatIf && (
             <>

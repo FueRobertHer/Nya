@@ -76,6 +76,8 @@ function harness(host: FakeElement) {
   const dialog = () => all((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0] ?? null;
   /** Each notice's words, its level said first ("Caution: ..."). */
   const notices = (within: FakeElement | null = host) => (within ? all((e) => cls(e)[0] === 'notice', within).map((e) => e.textContent) : []);
+  /** What a field says is wrong with it (FieldError), under it. */
+  const fieldErrors = (within: FakeElement | null = host) => (within ? all((e) => cls(e)[0] === 'field-error', within) : []);
   /** The notices on the card, not in a sheet. */
   const cardNotices = () => {
     const sheets = all((e) => e.getAttribute('role') === 'dialog');
@@ -100,7 +102,7 @@ function harness(host: FakeElement) {
       focused().dispatchEvent(e);
     });
   };
-  return { all, button, row, dialog, notices, cardNotices, field, open, focused, press };
+  return { all, button, row, dialog, notices, fieldErrors, cardNotices, field, open, focused, press };
 }
 
 function mount(node: React.ReactNode) {
@@ -515,15 +517,20 @@ describe('Planned', () => {
     const v = mountPlanned();
     await v.open('Car registration');
     expect(v.notices(v.dialog())).toEqual([]);
-    // PlannedCard.tsx:247-249 on main, each a .error (critical).
+    // PlannedCard.tsx:247-249 on main, in their words, each now under its
+    // field (FieldError), which names it.
     act(() => type(v.field('Amount')!, 'abc'));
     act(() => type(v.field('Currency')!, 'ZZZ'));
     act(() => type(v.field('First date')!, '1999-01-01'));
-    expect(v.notices(v.dialog())).toEqual([
-      'Critical: Enter an amount, like 212.50.',
-      'Critical: Enter a currency as its three-letter code, like USD or EUR.',
-      'Critical: Pick a date between 2000 and 2100.',
+    const errors = v.fieldErrors(v.dialog());
+    expect(errors.map((e) => e.textContent)).toEqual([
+      'Enter an amount, like 212.50.',
+      'Enter a currency as its three-letter code, like USD or EUR.',
+      'Pick a date between 2000 and 2100.',
     ]);
+    expect(['Amount', 'Currency', 'First date'].map((f) => v.field(f)!.getAttribute('aria-describedby'))).toEqual(errors.map((e) => e.getAttribute('id')));
+    expect(['Amount', 'Currency', 'First date'].map((f) => v.field(f)!.getAttribute('aria-invalid'))).toEqual(['true', 'true', 'true']);
+    expect(v.notices(v.dialog())).toEqual([]);
     expect(v.button('Save', v.dialog()!)!.hasAttribute('disabled')).toBe(true);
     v.unmount();
   });

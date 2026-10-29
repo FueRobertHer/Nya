@@ -13,7 +13,8 @@
 // sent or stored: only a scenario the person saves by name is
 // (app/api/runway-scenarios), and that keeps the settings, never a figure.
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import FieldError from './FieldError';
 import { Sheet } from './Sheet';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
@@ -317,6 +318,7 @@ export function browserZone(): string {
 
 export default function RunwayReport() {
   const [runway, setRunway] = useState<Runway | null>(null);
+  const lowerError = useId();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [whatIf, setWhatIf] = useState<RunwayWhatIf>(DEFAULT_WHAT_IF);
@@ -459,14 +461,23 @@ export default function RunwayReport() {
             <div className="runway-fields">
               <label className="field">
                 Spending lower by, a month
-                <input inputMode="decimal" autoComplete="off" value={lowerText} onChange={(e) => setLowerText(e.target.value)} placeholder="0" aria-label={`Spending lower by, a month, in ${code}`} />
+                <input
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={lowerText}
+                  onChange={(e) => setLowerText(e.target.value)}
+                  placeholder="0"
+                  aria-label={`Spending lower by, a month, in ${code}`}
+                  aria-invalid={!lowerOk}
+                  aria-describedby={lowerOk ? undefined : lowerError}
+                />
               </label>
               <label className="field">
                 Income stops after
                 <input type="date" min={runway.today} value={whatIf.income_until ?? ''} onChange={(e) => change({ income_until: e.target.value || null })} />
               </label>
             </div>
-            {!lowerOk && <div className="error">Enter an amount, like 250 or 1,299.99.</div>}
+            {!lowerOk && <FieldError id={lowerError}>Enter an amount, like 250 or 1,299.99.</FieldError>}
             {otherCurrency && (
               <div className="stale-note">
                 That scenario’s lower spending was set in {otherCurrency}, and this runway is in {code}, so it isn’t applied. Type it again in {code}.

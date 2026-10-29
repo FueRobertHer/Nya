@@ -533,7 +533,7 @@ button.secondary {
     opacity: 0.9;
   }
   /* A primary keeps its fill on hover (design-system.md, States). */
-  :is(.btn:not(.secondary, .ghost), button:not([class])):hover {
+  :is(.btn:not(.secondary, .ghost), button:not([class])):hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
     opacity: 1;
   }
   button.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
@@ -2910,7 +2910,7 @@ span.meter-fill {
 
 .brand h1 {
   margin: 0;
-  font-size: 1.375rem;
+  font-size: var(--fs-5);
   letter-spacing: -0.01em;
 }
 
@@ -6039,8 +6039,12 @@ button.rollup-toggle {
   color: var(--text-2);
 }
 
+/* A group's category under it: lighter than the group's bar, but never
+   see-through gold (over the light canvas it turns beige): the solid wash
+   with a gold edge, so it still reads 3:1. */
 .cat-bar.rollup-child-bar {
-  opacity: 0.55;
+  background: var(--data-tint);
+  box-shadow: inset 0 0 0 1px var(--data);
 }
 
 /* A group's heading opens the group: a whole row, as tall as a category's,

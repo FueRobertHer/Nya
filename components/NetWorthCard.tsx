@@ -20,7 +20,7 @@ import { CAUTION } from './ConnectionStatus';
 import { Hero } from './Hero';
 import { HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
-import { formatMoney, moneyRuns, roundsToNothing } from '@/lib/format';
+import { formatMoney, MINUS, moneyRuns, roundsToNothing, signedMoney } from '@/lib/format';
 import TotalCaveats, { LevelWord, type Caveat } from './TotalCaveats';
 
 /** The change Home's hero shows (components/Dashboard.tsx works it out). */
@@ -43,7 +43,8 @@ export function HeroDelta({ delta, currency, endedIn, fromRates }: { delta: Hero
       ) : (
         <>
           <b>
-            {up ? '▲' : '▼'} <Masked>{formatMoney(Math.abs(delta.value), currency)}</Masked> ({delta.pct.toFixed(1)}%)
+            {up ? '▲' : '▼'} <Masked>{signedMoney(delta.value, currency, { always: true })}</Masked> ({up ? '+' : MINUS}
+            {Math.abs(delta.pct).toFixed(1)}%)
           </b>{' '}
           · past {days}
         </>

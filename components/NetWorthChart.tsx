@@ -416,7 +416,7 @@ export default function NetWorthChart({
    *  from a zero or negative start. */
   function change(i: number, j: number): { text: string; approx: boolean } {
     const d = vals[j] - vals[i];
-    const pct = !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? '-' : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
+    const pct = !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? MINUS : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
     const approx = !!(points[i].estimated || points[j].estimated);
     return { text: `${approx ? '≈ ' : ''}${signed(d, currency)}${pct}`, approx };
   }
@@ -826,6 +826,7 @@ export default function NetWorthChart({
         <summary>Show as a table</summary>
         {tableOpen && (
           <table>
+            <caption className="visually-hidden">{label} by day</caption>
             <thead>
               <tr>
                 <th scope="col">Day</th>

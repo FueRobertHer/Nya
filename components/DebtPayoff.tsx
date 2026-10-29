@@ -13,7 +13,8 @@
 // Plaid's terms. Keeping it in browser storage would be one more place for
 // financial details to outlive a sign-out, to save retyping a rate.
 
-import { useMemo, useState, type PointerEvent, type ReactNode } from 'react';
+import { useId, useMemo, useState, type PointerEvent, type ReactNode } from 'react';
+import FieldError from './FieldError';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
@@ -193,6 +194,7 @@ export function PayoffPanel({
   startMonth?: string;
 }) {
   const start = startMonth ?? localMonth();
+  const extraError = useId();
   const groups = useMemo(() => byCurrency(debtAccounts(institutions)), [institutions]);
   const spots = useMemo(() => blindSpots(institutions), [institutions]);
   const group = groups.find((g) => currencyKey(g.currency) === inputs.currency) ?? groups[0];
@@ -373,6 +375,8 @@ export function PayoffPanel({
             step="0.01"
             placeholder="0.00"
             value={extraText}
+            aria-invalid={extra === 'invalid'}
+            aria-describedby={extra === 'invalid' ? extraError : undefined}
             onChange={(e) => {
               const value = e.target.value;
               onChange((prev) => ({ ...prev, extra: { ...prev.extra, [key]: value } }));
@@ -380,7 +384,7 @@ export function PayoffPanel({
           />
         </label>
         {extra === 'invalid' ? (
-          <div className="error payoff-field-error">Enter an amount of 0 or more.</div>
+          <FieldError id={extraError}>Enter an amount of 0 or more.</FieldError>
         ) : (
           comparison && (
             <p className="panel-note payoff-field-note">

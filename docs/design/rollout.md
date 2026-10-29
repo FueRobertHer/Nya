@@ -941,14 +941,16 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - **Menu** edged in `--border-input`; **view switch** over a `--border-subtle` rule, its current item bold.
 - **Notices:** every notice starts with its level for a screen reader (`LevelWord`, now with "Done:"); the Plan's two information notices are `Notice`s with their icon; a critical error after an action is `role="alert"`.
 - **Meters** are `role="meter"` with their values, on `--r-pill`; a card's credit meter is red only past its limit (caution from half).
-- **Fields:** an invalid amount is edged in `--neg` and says what to do under it (`FieldError`, tied with `aria-describedby`).
+- **Fields:** an invalid field is edged in `--neg` and says what to do under it (`FieldError`, tied with `aria-describedby`): the shared-expense and IOU amounts, Planned's sheet, the forecast's two sheets, the runway and Debt payoff. The typing errors that were critical notices keep their words. Clerk's fields take `--border-input`, and its primary keeps its fill on hover.
 - **Type** in rem, so it follows the person's text size; the 14px sizes moved to the scale (13 or 15px); the hero's cents are half the figure at every width, the figure tracked -0.025em; the change line's change is the bold, colored part.
 - **Color:** a holding's loss in its table is in the text color with its minus; quieter amounts are `--text-2`, never `--text-3`; radii and motion on their tokens; the stat strip's one row from 720px, the one breakpoint.
 - **Money and dates:** the true minus sign (U+2212) on screen, ASCII kept where text is parsed or downloaded (the API, the MCP server, emails, OFX); four bullets for a hidden figure; full amounts in tables, labels and summaries (axis ticks and the calendar's cells keep K and M); "Today" and "Yesterday" in Activity's day headings and the account sheet's dates.
 - **Tables** carry `scope` on every header and a caption (visually hidden where a heading says it); Income vs spend and the runway have Show as a table.
 - **Net worth chart** read by the keys: it is a slider, arrows a point at a time, Home and End, Escape or leaving it back to today, the value said once the keys rest.
 - **Words:** a budget and an IOU are deleted, a connection that can't be repaired is disconnected.
-- **Header icons** at stroke 2, as everything at 20px is.
+- **Header icons** at stroke 2, as everything at 20px is; the brand's name at `--fs-5`.
+- **Gold is never see-through:** a group's category bars are the solid wash with a gold edge, not gold at 55%.
+- **Signs:** the hero's change carries its sign as well as its arrow ("▲ +$10.00 (+1.0%)"); percentages take the true minus too.
 
 **Kept as the repo decided later** (the artifact still says otherwise): Activity has no hero; the month stepper's layout and its 16px chevron; the hatched caution meter; no blur under a sheet; two lines on one chart told apart by dash; an empty state's heading level; the stat strip's size; 32px logo tiles; the compact switch's 12px labels; the mask keeps its sign and currency.
 
@@ -959,6 +961,8 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - Clerk's `colorPrimary` stays `--accent` for its links (step 2), against the artifact's note.
 - Other "Remove" actions, and the vocabulary table's Close and Hide, are left until the word list is settled.
 - The hero draw-in stays deferred (see the light accent review).
+- The cash flow chart keeps its see-through ribbons (each node's bar carries it at full strength, as the light theme check decided) and its node labels in K (laid out for a short figure; the table under it has every amount in full).
+- Still to move, each its own change: the 147 `.error` lines to notices or field errors; the remaining on-screen dates (about 66 `toLocaleDateString` calls) to `formatDay`; an offline caution on the hero; the spinners left in empty cards; the keys on the other charts that can be scrubbed; the chosen tag suggestion's check.
 
 ## Left from the reviews
 
