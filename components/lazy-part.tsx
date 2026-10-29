@@ -12,10 +12,11 @@
 // with the rest of the dashboard working as before.
 //
 // Once Home has its figures, preloadParts fetches each part in turn, so a
-// sheet opens at once and, since the service worker keeps every file it
-// fetched (public/service-worker.js), the parts open offline too, as they did
-// when they came with Home. The Plan tab isn't among them: it carries the
-// projection engine, the largest code there is, and is fetched when it opens.
+// sheet opens at once and, since the service worker keeps every file a kept
+// page can load (public/service-worker.js), the parts open offline too, as
+// they did when they came with Home. The Plan tab isn't among them: it
+// carries the projection engine, the largest code there is, and is fetched
+// when it opens.
 
 import { Component, Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 

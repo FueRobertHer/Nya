@@ -7,8 +7,12 @@
 //   opens (showing the last-seen state) if the phone is offline
 // - Next's hashed files are answered from the copy kept here once there is
 //   one, since a file at such an address never changes
+// - Once a day, what no kept page can load any more (an old deploy's files
+//   and pages) is let go of (tidy, below)
 
 const CACHE_NAME = 'nya-v3';
+// What the daily tidy remembers between runs (tidy, below).
+const TIDY_CACHE = 'nya-v3-tidy';
 const PRECACHE = ['/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -19,7 +23,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     Promise.all([
-      caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))),
+      caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== TIDY_CACHE).map((k) => caches.delete(k)))),
       // Page loads are sent by the browser itself (see the fetch handler).
       self.registration.navigationPreload?.enable(),
     ])
@@ -50,6 +54,7 @@ self.addEventListener('fetch', (event) => {
   // back on every page load. In development they aren't immutable, and are
   // fetched as below, as is everything when the cache can't be read.
   if (url.pathname.startsWith('/_next/static/')) {
+    asked.add(url.pathname);
     event.respondWith(
       caches
         .match(event.request)
@@ -82,7 +87,7 @@ function networkFirst(event) {
           // may stop as soon as the page has its answer. A browser that
           // won't wait still has the answer.
           try {
-            event.waitUntil(write);
+            event.waitUntil(event.request.mode === 'navigate' ? write.then(() => tidy(event)) : write);
           } catch {}
         }
         return response;
@@ -97,4 +102,163 @@ function networkFirst(event) {
           .then((hit) => hit ?? (event.request.mode === 'navigate' ? caches.match(event.request, { ignoreSearch: true }) : undefined))
       )
   );
+}
+
+// The tidy. Every deploy brings new files and pages, and without it the
+// cache would keep every one ever fetched. Kept pages say what they need:
+// Next names each file a page can load, as text, in the page or in a file it
+// loads (script tags, the client components in its flight rows, a chunk's
+// dynamic imports, a stylesheet's fonts). So, once a day, after a page loaded
+// online:
+// - Pages of another deploy than that page's are dropped where a page of its
+//   deploy shares their path (an old ?tab= beside a fresh /): offline, an
+//   address falls back to the fresh page by path, which reads its tab from
+//   the address.
+// - Built files no kept page can reach are dropped.
+// Neither goes at once: only once found so at three tidies on different days
+// over at least a week, so a page whose files were still arriving, or a load
+// cut short, is put right by the next full load. And nothing goes while the
+// page that started it is missing its own scripts or stylesheets, or while
+// another window is open (it may be running an older deploy), or if this
+// worker has answered it since it started. A file reachable only through a
+// file no longer kept can't be loaded offline anyway.
+
+const DAY = 24 * 60 * 60 * 1000;
+// Under /api/, which is never answered from a cache, so no page load or
+// offline fallback can find it.
+const NOTES = '/api/service-worker/tidy';
+/** Built files (/_next/static/) asked for since this worker started. */
+const asked = new Set();
+let tidying = null;
+
+function tidy(event) {
+  tidying ??= tidyOnce(event.request, event.resultingClientId)
+    .catch(() => {})
+    .finally(() => (tidying = null));
+  return tidying;
+}
+
+async function tidyOnce(request, clientId) {
+  const notes = await caches.open(TIDY_CACHE);
+  const saved = await notes
+    .match(NOTES)
+    .then((r) => r?.json())
+    .catch(() => null);
+  const state = { tidied: 0, refs: {}, unused: {}, ...saved };
+  const now = Date.now();
+  if (now >= state.tidied && now - state.tidied < DAY) return;
+  // After the page's own files, not competing with them.
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  const cache = await caches.open(CACHE_NAME);
+  const page = await cache.match(request);
+  if (!page) return;
+  const pageText = await page.text();
+  for (const own of ownFiles(pageText, request.url)) if (!(await cache.match(own))) return;
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  if (windows.some((w) => w.id !== clientId)) return;
+
+  const build = buildOf(pageText);
+  const day = Math.floor(now / DAY);
+  const unused = {};
+  // Found unused again; true once it has been for long enough to go.
+  const due = (key) => {
+    const was = state.unused[key];
+    const note = was ? { ...was, days: was.days + (was.last === day ? 0 : 1), last: day } : { since: now, days: 1, last: day };
+    unused[key] = note;
+    return note.days >= 3 && now - note.since >= 7 * DAY;
+  };
+
+  const pages = [];
+  const built = new Map();
+  for (const key of await cache.keys()) {
+    const path = new URL(key.url).pathname;
+    if (path.startsWith('/_next/static/')) {
+      built.set(path, key);
+      continue;
+    }
+    const kept = await cache.match(key);
+    const type = kept?.headers.get('Content-Type') ?? '';
+    if (!/text\/html|text\/x-component/.test(type)) continue;
+    const text = await kept.text();
+    pages.push({ key, path, text, group: `${type.includes('html') ? 'html' : 'rsc'} ${path}`, build: buildOf(text) });
+  }
+  const current = new Set(pages.filter((p) => build && p.build === build).map((p) => p.group));
+  const roots = [];
+  for (const p of pages) {
+    if (build && p.build && p.build !== build && current.has(p.group) && due(p.key.url)) {
+      await cache.delete(p.key);
+      delete unused[p.key.url];
+    } else roots.push(p);
+  }
+
+  const reached = new Set();
+  const queue = [];
+  const reach = (path) => {
+    if (reached.has(path)) return;
+    reached.add(path);
+    queue.push(path);
+  };
+  for (const p of roots) refsIn(p.text, p.path).forEach(reach);
+  // A built file never changes, so what it names is read once.
+  const refs = {};
+  while (queue.length) {
+    const path = queue.pop();
+    const key = built.get(path);
+    if (!key || !/\.(js|css)$/.test(path)) continue;
+    let named = state.refs[path];
+    if (!named) {
+      const kept = await cache.match(key);
+      if (!kept) continue;
+      named = refsIn(await kept.text(), path);
+    }
+    refs[path] = named;
+    named.forEach(reach);
+  }
+  for (const [path, key] of built) {
+    if (reached.has(path) || !due(key.url)) continue;
+    // Checked with nothing awaited before the delete starts.
+    if (asked.has(path)) continue;
+    await cache.delete(key);
+    delete unused[key.url];
+  }
+
+  await notes.put(NOTES, new Response(JSON.stringify({ tidied: now, refs, unused }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+/** The deploy a page or RSC payload belongs to: Next's build id, or the
+ *  deployment id it carries instead when there is one. */
+function buildOf(text) {
+  // The build id is the last key of the payload's first row: "b":"<id>"}
+  // and the row's end (escaped inside a page's script).
+  return text.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}(?:\\n|\n)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
+}
+
+/** The scripts and stylesheets a page loads itself (not a noModule
+ *  polyfill, which current browsers never fetch). */
+function ownFiles(html, base) {
+  const files = [];
+  for (const [tag] of html.matchAll(/<(?:script|link)\b[^>]*>/gi)) {
+    if (/\bnomodule\b/i.test(tag)) continue;
+    const src = /^<script/i.test(tag) ? tag.match(/\ssrc="([^"]+)"/i) : /\srel="stylesheet"/i.test(tag) ? tag.match(/\shref="([^"]+)"/i) : null;
+    if (!src) continue;
+    const url = new URL(src[1].replaceAll('&amp;', '&'), base);
+    if (url.origin === self.location.origin) files.push(url.href);
+  }
+  return files;
+}
+
+/** The built files `text` names: as a path (`static/chunks/x.js`, with or
+ *  without /_next/ before it), or in a stylesheet's url(), which may be
+ *  relative to `base`. Matching loosely only keeps more. */
+function refsIn(text, base) {
+  const found = new Set();
+  for (const m of text.match(/static\/[\w.~%\/-]+/g) ?? []) found.add(`/_next/${m}`);
+  for (const [, ref] of text.matchAll(/url\(\s*['"]?([^'")\s]+)/g)) {
+    try {
+      const url = new URL(ref, `${self.location.origin}${base}`);
+      if (url.origin === self.location.origin && url.pathname.startsWith('/_next/static/')) found.add(url.pathname);
+    } catch {}
+  }
+  return [...found];
 }
