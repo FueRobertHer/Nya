@@ -31,6 +31,7 @@ import { Sheet } from './Sheet';
 import { ScenarioTag } from './ScenarioTag';
 import { Choice } from './PlanForms';
 import { dayName, wholeMoney } from './plan-text';
+import { keysHelp, useChartKeys } from './chart-keys';
 import {
   BUCKET_COLORS,
   CLASS_COLORS,
@@ -1316,7 +1317,8 @@ export function dayMixText(day: SeriesDay): string {
  * missing an account is drawn faint, with a mark under it. A readout above
  * the plot names the day being read (the last, until another is touched) and
  * what it leaves out, and a table of the same figures sits behind "Show as a
- * table".
+ * table". The keys move the readout a recorded day at a time
+ * (components/chart-keys.ts).
  */
 export function AllocationHistoryChart({
   days,
@@ -1331,6 +1333,13 @@ export function AllocationHistoryChart({
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
+  const keys = useChartKeys({
+    count: days.length,
+    active,
+    setActive,
+    say: (k) =>
+      `${dayName(days[k].date)}: ${dayMixText(days[k])}, ${wholeMoney(days[k].total, currency)} counted${days[k].missing.length ? `, leaving out ${missingOn(days[k], answer, nameOf)}` : ''}`,
+  });
   if (days.length === 0) return null;
   const first = dayNum(days[0].date);
   const span = dayNum(days[days.length - 1].date) - first + 1;
@@ -1373,7 +1382,8 @@ export function AllocationHistoryChart({
         ref={svgRef}
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={`Your mix on each of ${days.length} recorded days, from ${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)}. On the last: ${dayMixText(days[days.length - 1])}${
           days[days.length - 1].missing.length ? `, leaving out ${missingOn(days[days.length - 1], answer, nameOf)}` : ''
         }.`}
@@ -1416,6 +1426,9 @@ export function AllocationHistoryChart({
           </text>
         )}
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('recorded day', 'the latest', 'the first and last')}
+      </p>
       <div className="chart-legend">
         {present.map((s) => (
           <span key={s} className="chart-legend-item">

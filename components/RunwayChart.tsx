@@ -3,7 +3,8 @@
 // The runway as two lines (lib/report/runway.ts): the cash going forward
 // without income and with it, in the house style of ForecastChart and
 // NetWorthChart: dependency-free inline SVG, a readout row above the plot
-// instead of a floating tooltip, scrubbed by pointer. Both lines are dashed
+// instead of a floating tooltip, scrubbed by pointer or read by the keys
+// (components/chart-keys.ts). Both lines are dashed
 // throughout, as every estimate is drawn: only the first point, the cash now,
 // is measured. Zero is drawn when either line comes near it, and the day each
 // runs out is marked. Every point of both lines sits behind "Show as a
@@ -15,6 +16,7 @@ import { compactMoney, formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { LegendLine } from './LegendLine';
 import { reportDay } from './ReportView';
+import { keysHelp, useChartKeys } from './chart-keys';
 
 const W = 340;
 const H = 150;
@@ -94,6 +96,14 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
   const shown = active === null ? null : points[active];
   const last = points[points.length - 1];
   const tone = (v: number) => (v < 0 ? 'var(--down)' : undefined);
+  const keys = useChartKeys({
+    count: points.length,
+    active,
+    setActive,
+    rest: 0,
+    say: (k) =>
+      `${formatMoney(points[k].with, currency)} with income, ${formatMoney(points[k].without, currency)} without, ${points[k].date === today ? 'now' : `${reportDay(points[k].date)}, estimated`}`,
+  });
 
   return (
     <div className="runway-chart">
@@ -132,7 +142,8 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
         ref={svgRef}
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={spoken(
           `Estimated cash from ${formatMoney(points[0].with, currency)} now to ${formatMoney(last.with, currency)} with income and ${formatMoney(last.without, currency)} without it on ${reportDay(last.date)}.`
         )}
@@ -163,6 +174,9 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
           {reportDay(last.date)}
         </text>
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('point', 'now', 'now and the last day')}
+      </p>
 
       {/* Every point of both lines, for anyone who can't read them. Rows
           render only while it is open, and through Masked each time, so hide

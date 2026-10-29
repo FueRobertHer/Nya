@@ -40,6 +40,7 @@ import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { FirePlan, Measured } from '@/lib/fire/plan';
 import type { Method, SimPlan, SimResult } from '@/lib/fire/simulate';
 import type { PlanJob, PlanJobResult } from '@/lib/fire/jobs';
+import { ScenarioRowsSkeleton } from './LoadingSkeletons';
 
 export { ScenarioTag } from './ScenarioTag';
 
@@ -245,7 +246,7 @@ export function ScenariosSheet({
   /** How the saved Plan's load went: until it has loaded, nothing is
    *  compared, since a scenario is its changes to the Plan, and figures over
    *  the defaults would be about a plan nobody made. While it loads, the
-   *  list is only why, and a spinner. */
+   *  list is only why, and its rows as placeholders. */
   planState: 'loading' | 'ready' | 'error';
   /** Why scenarios can't be opened or changed now, when they can't. */
   whyNot: string | null;
@@ -366,10 +367,11 @@ export function ScenariosSheet({
 
   const listBody =
     planState === 'loading' ? (
-      // Until the Plan has loaded, no row and no summary over the defaults.
+      // Until the Plan has loaded, no row and no summary over the defaults:
+      // the rows as placeholders, as many as are saved once that is known.
       <>
         {whyNot && <p className="panel-note">{whyNot}</p>}
-        <div className="spinner" role="status" aria-label="Loading your plan" />
+        <ScenarioRowsSkeleton count={ready ? list.length : 2} status="Loading your plan" />
       </>
     ) : (
       <>
@@ -381,7 +383,7 @@ export function ScenariosSheet({
           to your plan reaches every scenario.
         </p>
         {whyNot && <p className="panel-note">{whyNot}</p>}
-        {state.status === 'loading' && <div className="spinner" role="status" aria-label="Loading your scenarios" />}
+        {state.status === 'loading' && <ScenarioRowsSkeleton count={2} status="Loading your scenarios" />}
         {state.status === 'error' && (
           <>
             <div className="error">{state.error}</div>

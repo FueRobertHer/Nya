@@ -39,6 +39,7 @@ import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
 import { HideAmountsToggle, useFiguresWhenPrinted } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
+import { ReportSkeleton } from './LoadingSkeletons';
 
 /** The accountant's report's ⋯: its CSV, a file to save (disabled until a
  *  report is on screen), marking categories, and the accounts you stopped
@@ -369,7 +370,7 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {which === 'accountant' && loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
+        {which === 'accountant' && loading && !report && <ReportSkeleton title={null} status="Making the report" />}
         {which === 'accountant' && report && (
           <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
             <ReportView report={report} />

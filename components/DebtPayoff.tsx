@@ -18,6 +18,7 @@ import FieldError from './FieldError';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
+import { keysHelp, useChartKeys } from './chart-keys';
 import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
 import { distinctAccountNames } from '@/lib/account-names';
@@ -1190,7 +1191,8 @@ const BASELINE_COLOR = 'var(--text-3)';
 /**
  * What is owed in total, month by month: the chosen order against paying only
  * the minimums. Scrubbing reads both at a month; at rest it shows the month the
- * plan is done, which is when the gap between them is plainest.
+ * plan is done, which is when the gap between them is plainest. The keys read
+ * it too (components/chart-keys.ts), a month at a time.
  */
 function PayoffChart({
   plan,
@@ -1257,6 +1259,14 @@ function PayoffChart({
 
   const fmt = (v: number) => money(Math.round(v * 100));
   const endLabel = monthLabel(addMonths(start, span));
+  const keys = useChartKeys({
+    count: span + 1,
+    active,
+    setActive,
+    rest: done,
+    say: (k) =>
+      `${planLabel} ${fmt(planVals[k])}, minimums only ${fmt(baseVals[k])}, ${k === 0 ? 'owed now' : `owed in ${monthLabel(addMonths(start, k))}`}`,
+  });
   return (
     <div>
       <div className="chart-legend">
@@ -1288,7 +1298,8 @@ function PayoffChart({
         ref={drawnRef}
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={`Total owed from now to ${endLabel}. ${planLabel} reaches zero in ${monthLabel(plan.month!)}; paying only the minimums, ${baseline.month ? `in ${monthLabel(baseline.month)}` : `not within ${HORIZON_YEARS} years`}.`}
         onPointerMove={scrub}
         onPointerDown={scrub}
@@ -1322,6 +1333,9 @@ function PayoffChart({
           {endLabel}
         </text>
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('month', 'the month the plan is done', 'now and the last month')}
+      </p>
     </div>
   );
 }

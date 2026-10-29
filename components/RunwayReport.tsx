@@ -33,6 +33,7 @@ import { shownName } from '@/lib/merchant-name';
 import { plannedCadenceLabel } from '@/lib/planned';
 import { isCurrencyCode, minorDigits, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import { joinNames } from '@/lib/month-coverage';
+import { RunwaySkeleton } from './LoadingSkeletons';
 
 /** "Aug 2026": a month of a window. */
 const monthWords = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
@@ -424,7 +425,7 @@ export default function RunwayReport() {
     }
   };
 
-  if (loading) return <div className="spinner no-print" role="status" aria-label="Working out the runway" />;
+  if (loading) return <RunwaySkeleton />;
   if (error || !runway) {
     return (
       <div className="card no-print">

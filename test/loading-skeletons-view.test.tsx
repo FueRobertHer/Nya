@@ -7,14 +7,21 @@ import {
   ActivitySkeleton,
   AppLoading,
   BudgetsSkeleton,
+  DeleteAccountSkeleton,
   HomeSkeleton,
+  InvestmentActivitySkeleton,
   LinesSkeleton,
   PlanPanelSkeleton,
   PlanSkeleton,
+  ReportSkeleton,
+  RunwaySkeleton,
+  ScenarioRowsSkeleton,
   SettingsSkeleton,
   SharedWithMeSkeleton,
+  SharePreviewSkeleton,
   SignInSkeleton,
   TabSkeleton,
+  VendorDefaultsSkeleton,
 } from '@/components/LoadingSkeletons';
 import NetWorthCard from '@/components/NetWorthCard';
 import NetWorthChart from '@/components/NetWorthChart';
@@ -310,5 +317,101 @@ describe('every tab while it loads', () => {
     for (const f of ['MonthBreakdown.tsx', 'BudgetsTab.tsx', 'PlanTabLoader.tsx', 'PlanTab.tsx']) expect(read(f)).not.toContain('className="spinner"');
     // A placeholder is a box or a line's width, never a sentence in a pulsing bar.
     expect(read('PlanProgress.tsx')).not.toContain('<p className="skeleton"');
+  });
+});
+
+describe('the waits inside cards, sheets and reports', () => {
+  const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8');
+  const read = (p: string) => readFileSync(join(import.meta.dir, '..', 'components', p), 'utf8');
+  // Classes the real views carry with no rule of their own: the skeleton is drawn on them too.
+  const realClasses = new Set(
+    ['InvestmentActivity.tsx', 'VendorDefaultsCard.tsx', 'PlanScenarios.tsx', 'ReportView.tsx', 'RunwayReport.tsx', 'YearOverYearReport.tsx', 'DeleteAccount.tsx', 'Sharing.tsx'].flatMap((f) =>
+      [...read(f).matchAll(/className="([^"]+)"/g)].flatMap((m) => m[1].split(' '))
+    )
+  );
+  // What a screen reader is given: nothing inside inert or aria-hidden.
+  const said = (html: string) => {
+    let out = '';
+    let hiddenAt = -1;
+    let depth = 0;
+    for (const m of html.matchAll(/<(\/?)(\w+)([^>]*?)(\/?)>|[^<]+/g)) {
+      const [whole, closing, tag, attrs = '', selfClosing] = m;
+      if (!whole.startsWith('<')) {
+        if (hiddenAt < 0) out += ` ${whole} `;
+        continue;
+      }
+      if (closing) {
+        depth--;
+        if (depth === hiddenAt) hiddenAt = -1;
+      } else if (!selfClosing && !['input', 'br'].includes(tag)) {
+        if (hiddenAt < 0 && /\sinert=""|\saria-hidden="true"/.test(attrs)) hiddenAt = depth;
+        depth++;
+      }
+    }
+    return text(out);
+  };
+  // Each view, its status, and all a screen reader is given (a known heading, then the status).
+  const views: [string, string, string, string][] = [
+    ['An investment account’s activity', renderToStaticMarkup(<InvestmentActivitySkeleton />), 'Loading investment activity', 'Loading investment activity'],
+    ['Settings: Defaults', renderToStaticMarkup(<VendorDefaultsSkeleton />), 'Loading defaults', 'Loading defaults'],
+    ['Sharing: what they see', renderToStaticMarkup(<SharePreviewSkeleton who="Sam" />), 'Loading what Sam sees', 'Loading what Sam sees'],
+    ['Scenarios', renderToStaticMarkup(<ScenarioRowsSkeleton count={2} status="Loading your scenarios" />), 'Loading your scenarios', 'Loading your scenarios'],
+    ['The accountant’s report', renderToStaticMarkup(<ReportSkeleton title={null} status="Making the report" />), 'Making the report', 'Making the report'],
+    ['Year over year', renderToStaticMarkup(<ReportSkeleton title="Year over year" className="yoy-report" status="Comparing the years" />), 'Comparing the years', 'Comparing the years'],
+    ['The runway', renderToStaticMarkup(<RunwaySkeleton />), 'Working out the runway', 'Working out the runway'],
+    ['Delete my account', renderToStaticMarkup(<DeleteAccountSkeleton />), 'Loading', 'Delete my account Loading'],
+  ];
+
+  for (const [name, html, status, spoken] of views) {
+    test(`${name}: busy, one status in words, every placeholder hidden, no spinner`, () => {
+      expect(html.match(/aria-busy="true"/g)?.length).toBe(1);
+      expect(html.match(/role="status"/g)?.length).toBe(1);
+      expect(html).toContain(`<p class="visually-hidden" role="status">${status}</p>`);
+      expect(said(html)).toBe(spoken);
+      expect(html).toContain('class="skeleton');
+      expect(html).not.toContain('spinner');
+      // A button or a field drawn in it can't be reached until the view is in.
+      for (const m of html.matchAll(/<(?:button|input)\b[^>]*>/g)) expect(m[0]).toContain('disabled=""');
+    });
+
+    test(`${name}: every class it is drawn with is in the stylesheet, or one the real view carries`, () => {
+      const missing = [...classesOf(html)].filter((c) => !new RegExp(`\\.${c}(?![\\w-])`).test(css) && !realClasses.has(c));
+      expect(missing).toEqual([]);
+    });
+  }
+
+  test('the runway and the reports are for the screen only, the runway’s months under their heading', () => {
+    for (const html of [renderToStaticMarkup(<RunwaySkeleton />), renderToStaticMarkup(<ReportSkeleton title={null} status="Making the report" />)]) {
+      expect(html).toStartWith('<div class="no-print" aria-busy="true"><article class="report');
+    }
+    const runway = renderToStaticMarkup(<RunwaySkeleton />);
+    expect(runway).toContain('<h1>Runway</h1>');
+    expect(runway).toContain('<h2 class="total-label">Without income</h2>');
+    expect(runway).toContain('skeleton block plan-skeleton-chart');
+  });
+
+  test('no scenario rows held when none is saved; Sharing’s preview is their card, “Shared by you”', () => {
+    expect(renderToStaticMarkup(<ScenarioRowsSkeleton count={0} status="Loading your plan" />)).not.toContain('plan-row');
+    expect(renderToStaticMarkup(<ScenarioRowsSkeleton count={3} status="Loading your plan" />).match(/class="plan-row"/g)?.length).toBe(3);
+    expect(renderToStaticMarkup(<SharePreviewSkeleton who="Sam" />)).toContain('<h3>Shared by you</h3>');
+  });
+
+  test('they are drawn in place of the spinners those waits had; an account’s history and the waits for an action keep theirs', () => {
+    expect(read('InvestmentActivity.tsx')).toContain('<InvestmentActivitySkeleton />');
+    expect(read('VendorDefaultsCard.tsx')).toContain('<VendorDefaultsSkeleton />');
+    expect(read('Sharing.tsx')).toContain('<SharePreviewSkeleton who={who} />');
+    expect(read('PlanScenarios.tsx')).toContain('<ScenarioRowsSkeleton');
+    expect(read('RunwayReport.tsx')).toContain('<RunwaySkeleton />');
+    expect(read('ReportsPage.tsx')).toContain('<ReportSkeleton');
+    expect(read('YearOverYearReport.tsx')).toContain('<ReportSkeleton');
+    expect(read('DeleteAccount.tsx')).toContain('<DeleteAccountSkeleton />');
+    for (const f of ['InvestmentActivity.tsx', 'VendorDefaultsCard.tsx', 'Sharing.tsx', 'PlanScenarios.tsx', 'RunwayReport.tsx', 'ReportsPage.tsx', 'YearOverYearReport.tsx', 'DeleteAccount.tsx']) {
+      expect([f, read(f).includes('className="spinner')]).toEqual([f, false]);
+    }
+    // Kept (design-system.md, Skeleton): a small wait inside a card, in a box
+    // the chart's size, and a wait whose content can't be known yet (a
+    // connection's sheet before it knows its step, a migration's file).
+    expect(read('AccountSparkline.tsx')).toContain('<div className="chart-loading-box">');
+    for (const f of ['AccountSparkline.tsx', 'Connectors.tsx', 'MigrationSheet.tsx']) expect([f, read(f).includes('className="spinner"')]).toEqual([f, true]);
   });
 });

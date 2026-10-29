@@ -8,7 +8,8 @@
 // SVG in the same house style as NetWorthChart: hairline gridlines with clean
 // tick values, labels in the muted text colour, and a readout row above the
 // plot instead of a tooltip, since on a phone the finger covers the point
-// being read. Scrubbing snaps to the nearest year. A table of the same
+// being read. Scrubbing snaps to the nearest year, and the keys move it a
+// year at a time (components/chart-keys.ts). A table of the same
 // figures sits behind "Show as a table" for anyone who can't read the plot.
 // It is drawn at its own width (components/drawn-width.ts, rollout phase 6d),
 // in the shape it has always had, so its figures and ages are the 12px they
@@ -20,6 +21,7 @@ import { compactMoney, spoken } from '@/lib/format';
 import { wholeMoney } from './plan-text';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, MIN_LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
+import { keysHelp, useChartKeys } from './chart-keys';
 
 /** Its height for its width: 160 to 340, the shape it has always had. */
 const ASPECT = 160 / FALLBACK_WIDTH;
@@ -145,6 +147,13 @@ export default function PlanFanChart({
   const whenLong = (y: number) =>
     y === years ? `at the end (${when(y)})` : y === 0 ? `at the start (${when(0)})` : `at ${when(y)}`;
 
+  const keys = useChartKeys({
+    count: years + 1,
+    active,
+    setActive,
+    say: (k) => `Median ${wholeMoney(bands.p50[k], currency)} ${whenLong(k)}, middle 80% ${wholeMoney(bands.p10[k], currency)} to ${wholeMoney(bands.p90[k], currency)}`,
+  });
+
   function scrub(e: PointerEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / rect.width) * W;
@@ -179,7 +188,8 @@ export default function PlanFanChart({
         ref={drawnRef}
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={spoken(
           `Balance over ${years} years in today's dollars. At the end: median ${wholeMoney(bands.p50[years], currency)}, middle 80% ${wholeMoney(bands.p10[years], currency)} to ${wholeMoney(bands.p90[years], currency)}.`
         )}
@@ -208,6 +218,9 @@ export default function PlanFanChart({
           </text>
         ))}
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('year', 'the end', 'the start and the end')}
+      </p>
 
       <div className="chart-legend plan-legend">
         <span className="chart-legend-item">

@@ -181,7 +181,7 @@ function mount(node: React.ReactNode) {
   };
   mounted.add(unmount);
   // The chart: the svg drawn as an image (an icon's is hidden from a screen reader).
-  const svg = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'img')[0] ?? null;
+  const svg = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && ['img', 'slider'].includes(e.getAttribute('role') ?? ''))[0] ?? null;
   const lines = (test: (e: FakeElement) => boolean) => svg()!.findAll((e) => e.tagName.toLowerCase() === 'line' && test(e));
   return {
     host,

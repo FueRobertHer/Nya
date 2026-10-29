@@ -199,7 +199,9 @@ function spokenText(html: string): string {
       const hidden = /\saria-hidden="true"/.test(attrs);
       if (label !== undefined && !hidden && !quiet.some(Boolean)) said.push(label);
       if (VOID.has(m[2].toLowerCase()) || m[4] === '/') continue;
-      quiet.push(hidden || /\srole="img"/.test(attrs) || (label !== undefined && /^(?:button|a|option)$/i.test(m[2])));
+      // An image's text, and a slider's (a chart read by the keys), is
+      // presentational: said by its label and its value.
+      quiet.push(hidden || /\srole="(?:img|slider)"/.test(attrs) || (label !== undefined && /^(?:button|a|option)$/i.test(m[2])));
     } else if (m[5] && !quiet.some(Boolean)) said.push(m[5]);
   }
   return decode(said.join('\n'));
@@ -1449,7 +1451,7 @@ describe('the main screens with amounts hidden', () => {
       ['Budgets: the cash forecast', 150],
       ['Budgets > Goals: the payoff plan', 140],
     ];
-    const boxes = (html: string) => [...html.matchAll(/<svg[^>]*\srole="img"[^>]*>/g)].map((m) => m[0].match(/\sviewBox="([^"]*)"/)?.[1]);
+    const boxes = (html: string) => [...html.matchAll(/<svg[^>]*\srole="(?:img|slider)"[^>]*>/g)].map((m) => m[0].match(/\sviewBox="([^"]*)"/)?.[1]);
     for (const width of [248, 600]) {
       for (const [name, shape] of charts) {
         const screen = SCREENS[name];

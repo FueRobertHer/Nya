@@ -947,6 +947,8 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - **Money and dates:** the true minus sign (U+2212) on screen, ASCII kept where text is parsed or downloaded (the API, the MCP server, emails, OFX); four bullets for a hidden figure; full amounts in tables, labels and summaries (axis ticks and the calendar's cells keep K and M); "Today" and "Yesterday" in Activity's day headings and the account sheet's dates.
 - **Tables** carry `scope` on every header and a caption (visually hidden where a heading says it); Income vs spend and the runway have Show as a table.
 - **Net worth chart** read by the keys: it is a slider, arrows a point at a time, Home and End, Escape or leaving it back to today, the value said once the keys rest.
+- **The other charts read by the keys:** Income vs spend, the cash forecast, the payoff plan, the plan's fan, the runway and the allocation's history take the net worth chart's keys through one hook (`useChartKeys`, `components/chart-keys.ts`), driving the state a finger drives, so their readout moves; each rests where its readout does (the latest, now, the lowest, the month the plan is done), and Escape with nothing moved is the page's. `test/chart-keys-view.test.tsx`.
+- **Skeletons for the spinners left in empty cards:** an investment account's activity, Settings' Defaults, Sharing's "What they see", the Scenarios sheet's rows (two spinners), the accountant's report, year over year, the runway, and Delete my account, each on its real classes with one status (`components/LoadingSkeletons.tsx`). An account's history keeps its spinner in the chart's box, and the waits whose content can't be known yet (a connection's sheet before it knows its step, reading a migration's file) keep theirs.
 - **Words:** a budget and an IOU are deleted, a connection that can't be repaired is disconnected.
 - **Header icons** at stroke 2, as everything at 20px is; the brand's name at `--fs-5`.
 - **Gold is never see-through:** a group's category bars are the solid wash with a gold edge, not gold at 55%.
@@ -962,7 +964,7 @@ The design system artifact was checked rule by rule against the app, its tokens,
 - Other "Remove" actions, and the vocabulary table's Close and Hide, are left until the word list is settled.
 - The hero draw-in stays deferred (see the light accent review).
 - The cash flow chart keeps its see-through ribbons (each node's bar carries it at full strength, as the light theme check decided) and its node labels in K (laid out for a short figure; the table under it has every amount in full).
-- Still to move, each its own change: the 147 `.error` lines to notices or field errors; the remaining on-screen dates (about 66 `toLocaleDateString` calls) to `formatDay`; an offline caution on the hero; the spinners left in empty cards; the keys on the other charts that can be scrubbed; the chosen tag suggestion's check.
+- Still to move, each its own change: the 147 `.error` lines to notices or field errors; the remaining on-screen dates (about 66 `toLocaleDateString` calls) to `formatDay`; an offline caution on the hero; the chosen tag suggestion's check.
 
 ## Left from the reviews
 
