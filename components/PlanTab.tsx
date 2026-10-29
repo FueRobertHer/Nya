@@ -53,7 +53,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
-import { Sheet } from './Sheet';
+import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
 import PlanGrid, { type FailedCell } from './PlanGrid';
 import { AboutForm, AssumptionsForm, ExpenseForm, FigureForm, IncomeForm, type AssumptionsAt, type FigureKind } from './PlanForms';
@@ -139,7 +139,7 @@ import {
   type CurrencyAnswer,
 } from '@/lib/fire/plan-currency';
 import { recordPlanCurrency } from './plan-currency-client';
-import { PlanCurrencyCard, type CurrencyCardMode } from './PlanCurrency';
+import { CurrencyChangeSheet, PlanCurrencyCard, currencyQuiet, type CurrencyCardMode } from './PlanCurrency';
 import {
   applyScenario,
   changesOf,
@@ -390,6 +390,18 @@ export default function PlanTab({
     currencyState.kind === 'recorded' ? currencyState.currency : currencyState.kind === 'follows' ? (picked ?? (reliably.ok ? figures.currency : null)) : null;
   const editable = editableNow && currencyKnown;
   const regionRef = useRef<HTMLDivElement | null>(null);
+  // Whether the currency's card or line is where it can take focus: quiet, it
+  // is at the foot of Your figures, in Your path's panel, hidden on the other
+  // segments. Set as the tab is drawn (below).
+  const regionShown = useRef(true);
+  const currencyHadFocus = useRef(false);
+  // Bumped by an answer the person gave on the card: focus then goes to the
+  // card, or the line it became, once it is drawn (an effect below), since
+  // the answer can move it to the other place.
+  const [focusCurrency, setFocusCurrency] = useState(0);
+  // The change drawer, the tab's (components/PlanCurrency.tsx): the currency
+  // chosen in it, null before one is; shut without it.
+  const [changing, setChanging] = useState<{ to: string | null } | null>(null);
   const [currencySaid, setCurrencySaid] = useState('');
   // The currency before the person changed it, offered back for a while.
   const [previous, setPrevious] = useState<string | null>(null);
@@ -408,7 +420,6 @@ export default function PlanTab({
       setConfirmed({ plan: r.plan ?? stored, answer: r.answer });
       setPrevious(byPerson && before && before !== c ? before : null);
       setCurrencySaid(`Your plan’s figures are recorded as ${c}.`);
-      regionRef.current?.focus();
       return true;
     }
     // Changed elsewhere: the plan as it is now (after any save under way,
@@ -462,19 +473,38 @@ export default function PlanTab({
           picked || (!reliably.ok && reliably.why !== 'loading')
           ? { kind: 'first', text: firstText(figures.currency, reliably.ok ? 'none' : reliably.why, from), offer, picked }
           : { kind: 'none' };
+  // Where focus goes after an answer, or when the drawer shuts after the
+  // button that opened it has gone: the card or its line where it is shown,
+  // else the bar's heading.
+  const currencyTarget = () => (regionRef.current?.isConnected && regionShown.current ? regionRef.current : titleRef.current);
   const currencyCard = (
     <PlanCurrencyCard
       mode={currencyMode}
       failure={autoKey && autoFailed?.for === autoKey ? autoFailed.error : null}
       disabled={currencyBusy || !planLoaded}
       regionRef={regionRef}
-      onAnswer={(c) => recordCurrency(c, true)}
+      onAnswer={async (c) => {
+        const r = await recordCurrency(c, true);
+        if (r === true) setFocusCurrency((n) => n + 1);
+        return r;
+      }}
       onPick={(c) => {
         setPicked(c);
         if (c) setCurrencySaid(`You’ll type your plan’s figures in ${c}.`);
       }}
+      onChange={(to, from) => {
+        focusInsteadOf(from, currencyTarget);
+        setChanging({ to });
+      }}
     />
   );
+  const quietCurrency = currencyQuiet(currencyMode);
+  // The drawer is for a recorded currency: once there is none (a reload that
+  // finds the record unreadable), what was chosen in it is dropped, so it
+  // never opens again on its own when one is recorded later.
+  useEffect(() => {
+    if (currencyMode.kind !== 'recorded') setChanging(null);
+  }, [currencyMode.kind]);
   // Every save of the Plan itself, through its store, with the currency its
   // figures are in: never a first typed amount without one.
   const savePlanIn = async (next: FirePlan): Promise<boolean | string> => {
@@ -873,6 +903,13 @@ export default function PlanTab({
   const scenariosRef = useRef<HTMLButtonElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // After the person's answer on the currency's card: focus on it, or on the
+  // line it became, once drawn wherever it went.
+  useEffect(() => {
+    if (focusCurrency) currencyTarget()?.focus();
+    // currencyTarget reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCurrency]);
   /** Scrolls `el` up when it is behind the pinned bar, to one --sp-2 under
    *  the bar, where Activity's and Budgets' segments land (their
    *  scroll-margin-top in app/globals.css). Where nothing is laid out (a
@@ -1101,6 +1138,22 @@ export default function PlanTab({
   // breaks a rule of the Plan's, has nothing worked out: its card says why,
   // on every segment.
   const worked = shown !== null;
+  // The currency, quiet, is a line at the foot of Your figures, beside the
+  // figures it is about, so nothing above the bar arrives as the plan loads;
+  // above the bar while it needs the person, or with Your figures not drawn.
+  const currencyInFigures = planLoaded && quietCurrency && worked;
+  regionShown.current = !currencyInFigures || segment === 'path';
+  // Whether focus is in the card or its line as it is now, read before it
+  // moves: when it moves on its own (the accounts say something new, a
+  // scenario opens), focus follows it rather than falling to the page.
+  if (typeof document !== 'undefined' && regionRef.current) currencyHadFocus.current = regionRef.current.contains(document.activeElement);
+  useEffect(() => {
+    const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    if (currencyHadFocus.current && lost) currencyTarget()?.focus();
+    currencyHadFocus.current = false;
+    // currencyTarget reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currencyInFigures]);
 
   return (
     <>
@@ -1123,7 +1176,14 @@ export default function PlanTab({
         </div>
       )}
       {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving && currencyKnown} onSave={savers.repair} money={money} />}
-      {planLoaded && currencyCard}
+      {planLoaded && !currencyInFigures && currencyCard}
+      <CurrencyChangeSheet
+        mode={currencyMode.kind === 'recorded' ? currencyMode : null}
+        changing={changing}
+        onChanging={setChanging}
+        disabled={currencyBusy || !planLoaded}
+        onAnswer={(c) => recordCurrency(c, true)}
+      />
       <div className="visually-hidden" role="status">
         {shownStatus}
       </div>
@@ -1206,6 +1266,7 @@ export default function PlanTab({
               held={reloading}
               onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' ? { kind } : { kind: 'figure', figure: kind }, kind)}
               rowRef={inputRowRef}
+              currency={currencyInFigures ? currencyCard : null}
             />
 
             {/* Only over your saved plan, never the defaults; the card is
@@ -1837,6 +1898,7 @@ export function InputsCard({
   held = false,
   onOpen,
   rowRef,
+  currency = null,
 }: {
   /** What each row says (components/plan-figure-notes.ts figureNotes). */
   figures: FigureNotes;
@@ -1853,6 +1915,9 @@ export function InputsCard({
   /** Each row's button as it is drawn, by kind, so focus can find the row
    *  drawn now when the one pressed has gone. */
   rowRef?: (kind: InputKind, el: HTMLButtonElement | null) => void;
+  /** The plan's currency as one line (components/PlanCurrency.tsx), at the
+   *  card's foot while nothing about it needs the person. */
+  currency?: React.ReactNode;
 }) {
   const figure = (v: number | null) => (v !== null ? money(v) : '--');
   const row = (kind: InputKind) => ({
@@ -1873,6 +1938,7 @@ export function InputsCard({
         <InputRow title="Ages" said={figures.ages} {...row('about')} />
         <InputRow title="Assumptions" said={figures.assumptions} {...row('assumptions')} />
       </ul>
+      {currency}
     </section>
   );
 }

@@ -589,6 +589,12 @@ describe('getting to them', () => {
     expect(source('components/AddAccountSheet.tsx')).toMatch(/<Why label="Which should I use\?">\s*<div className="stack tight">\s*<CoverageNote \/>/);
     expect(dashboard).not.toContain("'Connect an account'");
     expect(dashboard).toContain('<TrustLinks />');
+    // At the foot of the screen on a short tab: the links come last in the
+    // page, after its body, which takes the room left (.app-page).
+    expect(dashboard).toMatch(/<main className="wrap app-page">[\s\S]*<div className="app-page-body">[\s\S]*<\/div>\s*\{\/\*[^*]*\*\/\}\s*<TrustLinks \/>\s*<\/main>/);
+    const css = source('app/globals.css');
+    expect(css).toMatch(/\.app-page \{[^}]*flex-direction: column;[^}]*min-height: 100dvh;/);
+    expect(css).toMatch(/\.app-page-body \{\s*flex: 1 0 auto;/);
   });
 });
 
