@@ -7,7 +7,7 @@
 - `bun test` runs the whole suite; `bun test test/<name>.test.ts` runs one file.
 - `bun run typecheck` runs `tsc --noEmit`.
 - Run both before calling a change done.
-- CI (`.github/workflows/ci.yml`, Ubuntu with a real Redis) runs the same pair and is the reference. On a Windows checkout about 47 tests also fail on a clean `main` (source scans and byte-exact fixtures that see CRLF, age and zip vectors, a spawn of `bun.exe`). Before blaming a change, run the suite on `main` and compare the failing sets.
+- CI (`.github/workflows/ci.yml`, Ubuntu with a real Redis) runs the same pair and is the reference. Tests that fail on Windows but pass in CI are a portability bug in the test: compare paths with `/` (`relative(...).replaceAll('\\', '/')`), find tools with `Bun.which`, not `sh`. Before blaming a change, run the suite on `main` and compare the failing sets.
 
 ## Branches and worktrees
 
@@ -17,7 +17,7 @@
 ## Line endings
 
 - Files keep the endings they were committed with: most are LF, about 140 are CRLF, and `app/globals.css` is mixed (CRLF, then LF for its last `.stack` block). `git ls-files --eol` shows each file's.
-- `core.autocrlf` is on, so an editor or script can quietly rewrite a whole file's endings. After a scripted rewrite, check that `git diff --stat` counts only the lines you meant to change.
+- `.gitattributes` sets `* -text`, so git checks out each file's bytes as committed, whatever `core.autocrlf` says (tests read fixtures and sources byte for byte). A checkout made before that keeps the CRLF git wrote into it until it is checked out again: stash or commit, then `git rm -r --cached -q . && git reset --hard`. New worktrees need nothing. An editor or script can still rewrite a whole file's endings. After a scripted rewrite, check that `git diff --stat` counts only the lines you meant to change.
 
 ## Checking UI
 

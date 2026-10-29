@@ -238,13 +238,13 @@ describe('no other reader of transactions is given the mark', () => {
     const callers = [...sources(join(ROOT, 'lib')), ...sources(join(ROOT, 'app'))].filter((f) => /\bfinishActivity\(/.test(readFileSync(f, 'utf8')));
     expect(callers.length).toBeGreaterThan(1);
     const marking = callers.filter((f) => /finishActivity\([^;]*\battached\s*:/s.test(readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '')));
-    expect(marking.map((f) => relative(ROOT, f))).toEqual(['app/api/transactions/route.ts']);
+    expect(marking.map((f) => relative(ROOT, f).replaceAll('\\', '/'))).toEqual(['app/api/transactions/route.ts']);
   });
 
   test('and nothing but it and the attachment routes reads which transactions have one', () => {
     const readers = [...sources(join(ROOT, 'lib')), ...sources(join(ROOT, 'app'))]
       .filter((f) => /\battachedIds\(/.test(readFileSync(f, 'utf8')))
-      .map((f) => relative(ROOT, f))
+      .map((f) => relative(ROOT, f).replaceAll('\\', '/'))
       .sort();
     expect(readers).toEqual(['app/api/transactions/route.ts', 'lib/attachments.ts']);
   });

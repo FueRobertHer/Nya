@@ -1527,7 +1527,7 @@ describe('never the server, the API or a download', () => {
 
   test('only the browser’s switch turns it on, and nothing the server runs reaches the switch', () => {
     const all = [...sources(join(ROOT, 'lib')), ...sources(join(ROOT, 'app')), ...sources(join(ROOT, 'components'))];
-    const callers = all.filter((f) => /\bsetAmountsHidden\(/.test(readFileSync(f, 'utf8'))).map((f) => relative(ROOT, f));
+    const callers = all.filter((f) => /\bsetAmountsHidden\(/.test(readFileSync(f, 'utf8'))).map((f) => relative(ROOT, f).replaceAll('\\', '/'));
     expect(callers.sort()).toEqual(['components/hide-amounts.ts', 'lib/format.ts']);
     // No route, page or library module imports it: only components drawn in
     // the browser do.
@@ -1793,7 +1793,7 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       // A fresh environment: the suites read what they set themselves, or
       // what the .env files say, never what an earlier file of this run set.
       // The run reads bunfig.toml as any does: test/preload.ts loads first.
-      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+|CI)$/.test(k)));
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+|CI|SYSTEMROOT|TEMP|TMP|USERPROFILE)$/i.test(k)));
       const run = Bun.spawnSync([process.execPath, 'test', '--preload', './test/hidden-renders.ts', ...suites.map((f) => `./test/${f}`)], {
         cwd: ROOT,
         env: { ...env, NYA_HIDDEN_RENDERS: out },

@@ -1,0 +1,6 @@
+# Every file is checked out byte for byte as it was committed, whatever
+# core.autocrlf says. The tests read fixtures (age vectors, the ECB's CSV, the
+# release before's blobs) and source files byte for byte, so a checkout that
+# turned LF into CRLF failed them on Windows. Most files are LF, some CRLF:
+# each keeps its own.
+* -text

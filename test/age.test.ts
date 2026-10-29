@@ -453,7 +453,7 @@ describe('a protected download', () => {
 
 // The age command, where it is installed, through a pseudo-terminal (`script`):
 // it reads a passphrase only from a terminal.
-const hasTool = (name: string) => Bun.spawnSync(['sh', '-c', `command -v ${name}`]).exitCode === 0;
+const hasTool = (name: string) => Bun.which(name) !== null;
 const CLI = hasTool('age') && hasTool('script');
 
 describe.skipIf(!CLI)('the age command', () => {

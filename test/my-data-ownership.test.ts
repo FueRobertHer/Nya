@@ -532,7 +532,7 @@ describe('a passphrase', () => {
     expect(passphraseProblem('elevenchars')).toBe('Use a passphrase of at least 12 characters.');
   });
 
-  const CLI = Bun.spawnSync(['sh', '-c', 'command -v age && command -v script']).exitCode === 0;
+  const CLI = Bun.which('age') !== null && Bun.which('script') !== null;
   test.skipIf(!CLI)('a protected download opens with the age command', async () => {
     const res = await download({ format: 'transactions-csv', passphrase: PASSPHRASE });
     const plain = await download({ format: 'transactions-csv' });

@@ -41,7 +41,7 @@ describe('the matcher, as Next compiles it', () => {
     "const { getMiddlewareMatchers } = require('next/dist/build/analysis/get-page-static-info.js');" +
     'process.stdout.write(getMiddlewareMatchers([process.env.MATCHER], {})[0].regexp);';
   const compiled = Bun.spawnSync([process.execPath, '-e', script], {
-    cwd: new URL('..', import.meta.url).pathname,
+    cwd: `${import.meta.dir}/..`,
     env: { ...process.env, MATCHER: config.matcher[0] },
   });
   const regexp = compiled.stdout.toString();
