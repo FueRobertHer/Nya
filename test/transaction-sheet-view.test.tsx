@@ -265,7 +265,7 @@ describe('a transaction’s sheet', () => {
     await v.open('Whole Foods');
     expect(v.dialog()!.textContent).not.toContain('Could not save that.');
     v.render({ actionError: 'Could not reach the server.' });
-    expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice critical').map((e) => e.textContent)).toEqual(['Could not reach the server.']);
+    expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice critical').map((e) => e.textContent)).toEqual(['Critical: Could not reach the server.']);
     v.unmount();
   });
 
@@ -274,7 +274,7 @@ describe('a transaction’s sheet', () => {
     await v.open('Whole Foods');
     v.render({ actionError: null });
     v.render({ actionError: 'Could not save that.' });
-    expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice critical').map((e) => e.textContent)).toEqual(['Could not save that.']);
+    expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice critical').map((e) => e.textContent)).toEqual(['Critical: Could not save that.']);
     v.unmount();
   });
 

@@ -62,7 +62,7 @@
 // the finger.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { formatMoney, spoken } from '@/lib/format';
+import { formatMoney, MINUS, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -109,9 +109,9 @@ const AXIS_GAP = 2 * LABEL_GAP;
 // net-worth total, which has none of its own) formats as "$", as it always
 // did; Home's hero passes the currency its figure is in.
 
-// Signed, for money added and growth: "+$1,200.00" / "-$80.00".
+// Signed, for money added and growth: "+$1,200.00" / "−$80.00".
 function signed(n: number, currency?: string | null): string {
-  return (n < 0 ? '-' : '+') + formatMoney(Math.abs(n), currency);
+  return (n < 0 ? MINUS : '+') + formatMoney(Math.abs(n), currency);
 }
 
 function fmtDay(iso: string, withYear = false): string {

@@ -22,7 +22,7 @@ import { Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Masked } from './HideAmounts';
 import { segmentKey } from './ActivityBar';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, MINUS } from '@/lib/format';
 import { isCalendarDay, isCurrencyCode, knownCurrency, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import {
   EARLIEST_PLANNED,
@@ -251,7 +251,7 @@ export default function PlannedCard({
                       </span>
                     </span>
                     <span className={`list-row-value money planned-amount${item.kind === 'income' ? ' inflow' : ''}`}>
-                      <Masked>{`${item.kind === 'income' ? '+' : '-'}${formatMoney(item.amount, item.currency)}`}</Masked>
+                      <Masked>{`${item.kind === 'income' ? '+' : MINUS}${formatMoney(item.amount, item.currency)}`}</Masked>
                     </span>
                   </>
                 );

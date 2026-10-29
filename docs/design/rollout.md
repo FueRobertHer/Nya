@@ -930,6 +930,36 @@ A review of the light theme on 2026-10-28 (the design system artifact's audit.md
 - The blue tag suggestion (`.tag-suggestion.chosen`) has no edge or check and now sits closer to a selected chip; it is left for when it is next touched.
 - The hero draw-in stays deferred (see step 5's Kept narrow: a clip differs between engines, and a dash offset breaks the estimated stretches' dashes while it draws).
 
+## After the design system update (2026-10-29)
+
+The design system artifact was checked rule by rule against the app, its tokens, the brand book's sections and each component's notes and reference styles. The tokens already matched; the rest was brought in line, or recorded here where the repo decided otherwise later. One PR, branch `fue/clever-thompson-j55oms`.
+
+**Built:**
+
+- **States:** a primary keeps its fill on hover; a secondary deepens to `--border-strong` and a ghost raises to `--elevated`; anything disabled or held with `aria-disabled` is at 60%; the focus ring is drawn inside tabs and a switch's items, and the invite link draws it round its box.
+- **Sheet:** Tab and Shift+Tab stay inside it (`components/Sheet.tsx`); its edge is `--border-strong` on `--surface`; a wrapped title keeps the close button by its first line; the footer's buttons sit at its end; it and the tab bar take the `--z-*` layers.
+- **Menu** edged in `--border-input`; **view switch** over a `--border-subtle` rule, its current item bold.
+- **Notices:** every notice starts with its level for a screen reader (`LevelWord`, now with "Done:"); the Plan's two information notices are `Notice`s with their icon; a critical error after an action is `role="alert"`.
+- **Meters** are `role="meter"` with their values, on `--r-pill`; a card's credit meter is red only past its limit (caution from half).
+- **Fields:** an invalid amount is edged in `--neg` and says what to do under it (`FieldError`, tied with `aria-describedby`).
+- **Type** in rem, so it follows the person's text size; the 14px sizes moved to the scale (13 or 15px); the hero's cents are half the figure at every width, the figure tracked -0.025em; the change line's change is the bold, colored part.
+- **Color:** a holding's loss in its table is in the text color with its minus; quieter amounts are `--text-2`, never `--text-3`; radii and motion on their tokens; the stat strip's one row from 720px, the one breakpoint.
+- **Money and dates:** the true minus sign (U+2212) on screen, ASCII kept where text is parsed or downloaded (the API, the MCP server, emails, OFX); four bullets for a hidden figure; full amounts in tables, labels and summaries (axis ticks and the calendar's cells keep K and M); "Today" and "Yesterday" in Activity's day headings and the account sheet's dates.
+- **Tables** carry `scope` on every header and a caption (visually hidden where a heading says it); Income vs spend and the runway have Show as a table.
+- **Net worth chart** read by the keys: it is a slider, arrows a point at a time, Home and End, Escape or leaving it back to today, the value said once the keys rest.
+- **Words:** a budget and an IOU are deleted, a connection that can't be repaired is disconnected.
+- **Header icons** at stroke 2, as everything at 20px is.
+
+**Kept as the repo decided later** (the artifact still says otherwise): Activity has no hero; the month stepper's layout and its 16px chevron; the hatched caution meter; no blur under a sheet; two lines on one chart told apart by dash; an empty state's heading level; the stat strip's size; 32px logo tiles; the compact switch's 12px labels; the mask keeps its sign and currency.
+
+**Kept narrow:**
+
+- Card padding stays `--sp-5` on phones (see "After the rollout: controls and states without color", Kept narrow).
+- Critical notes with the same cause are not combined into a count: the artifact asks for it, but critical caveats never collapse here. Left for a decision.
+- Clerk's `colorPrimary` stays `--accent` for its links (step 2), against the artifact's note.
+- Other "Remove" actions, and the vocabulary table's Close and Hide, are left until the word list is settled.
+- The hero draw-in stays deferred (see the light accent review).
+
 ## Left from the reviews
 
 The look and feel review (2026-10-27) and the screen review (2026-10-28) were pages of their own, now retired. What they raised that is neither built nor recorded above:

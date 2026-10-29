@@ -290,7 +290,7 @@ describe('the calendar, redrawn', () => {
     expect(Object.values(cellFigures(calendar())).filter(Boolean)).toEqual(['−30', '−1.5K', '−213', '+2K', '+1.2K']);
     const masked = Object.values(cellFigures(hidden(calendar)));
     expect(masked.filter(Boolean)).toEqual(['−••••', '−••••', '−••••', '+••••', '+••••']);
-    for (const f of masked) expect(f).toMatch(/^(?:[+-]?••••)?$/);
+    for (const f of masked) expect(f).toMatch(/^(?:[+\u2212]?••••)?$/);
   });
 
   test('hidden, a figure under 0.5 keeps its sign, so the mask never says it is that small; a zero has none', () => {

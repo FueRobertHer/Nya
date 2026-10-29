@@ -615,7 +615,7 @@ describe('Home’s budget alerts weigh what is available', () => {
 describe('the pool table on a phone', () => {
   test('its cells set their own size (the global th, td would win), and it scrolls inside its box', () => {
     const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\r\n/g, '\n');
-    expect(css).toContain(".pool-table td,\n.pool-table th[scope='row'] {\n  font-size: 12px;\n}");
+    expect(css).toContain(".pool-table td,\n.pool-table th[scope='row'] {\n  font-size: var(--fs-1);\n}");
     expect(css).toMatch(/\.pool-scroll \{[^}]*overflow-x: auto;/);
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'IncomePool.tsx'), 'utf8');
     expect(source).toContain('<div className="pool-scroll">');

@@ -288,9 +288,9 @@ describe('review: the page says what it can’t show', () => {
     // Connections and manual accounts here.
     expect(tables.length).toBe(2);
     for (const t of tables) {
-      const heads = [...t.matchAll(/<th>([^<]*)<\/th>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
+      const heads = [...t.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
       for (const r of t.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
-        if (r[1].startsWith('<th>')) continue;
+        if (r[1].startsWith('<th')) continue;
         const labels = [...r[1].matchAll(/<td data-label="([^"]*)"/g)].map((m) => m[1]);
         expect(labels).toEqual(heads);
       }

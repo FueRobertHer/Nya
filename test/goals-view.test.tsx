@@ -70,7 +70,7 @@ describe('the card', () => {
     const end = new Date(Date.now() + 100 * 86_400_000).toISOString().slice(0, 10);
     const html = card([goal('Trip', 'sav', 20_000, { target_date: end }, { plan_start: { date: start, amount: 0 } })]);
     expect(html).toContain('class="goal-marker"');
-    expect(html).toMatch(/role="img" aria-label="\$10,000\.00 of \$20,000\.00 saved, 50%\. To reach it by [^"]+, it would have \$\d[\d,]*\.\d\d by now\."/);
+    expect(html).toMatch(/role="meter" aria-label="\$10,000\.00 of \$20,000\.00 saved, 50%\. To reach it by [^"]+, it would have \$\d[\d,]*\.\d\d by now\."/);
     // Without a target date, no marker.
     expect(card([goal('Trip', 'sav', 20_000)])).not.toContain('goal-marker');
   });
