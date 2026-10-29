@@ -274,8 +274,12 @@ function importAes(raw: Uint8Array): Promise<CryptoKey> {
 }
 
 function toBase64(bytes: Uint8Array): string {
+  // A chunk at a time: a string built one character per byte takes ~10x
+  // longer on a blob of megabytes, and every encrypt of one pays it.
   let binary = '';
-  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000) as unknown as number[]);
+  }
   return btoa(binary);
 }
 

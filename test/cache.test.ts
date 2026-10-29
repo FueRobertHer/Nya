@@ -17,6 +17,7 @@ const {
   CacheKey,
 } = await import('@/lib/cache');
 const { createFirstContainer, asContainerId } = await import('@/lib/containers');
+const { encrypt } = await import('@/lib/crypto');
 
 const saved = { ...process.env };
 let ctx: { container: ReturnType<typeof asContainerId> };
@@ -80,6 +81,21 @@ describe('the caches live in the container', () => {
     } finally {
       Date.now = realNow;
     }
+  });
+});
+
+describe('gzipped', () => {
+  test('a payload is stored compressed, and reads back as it was', async () => {
+    const txns = Array.from({ length: 2000 }, (_, i) => ({ transaction_id: `t${i}`, name: 'Coffee shop', amount: 4.5, date: '2026-10-01' }));
+    await writeCache(ctx, CacheKey.Transactions, { txns });
+    const stored = (await fake.get<string>(testKey(`c:${ctx.container}:cache:transactions`)))!;
+    expect(stored.length).toBeLessThan(JSON.stringify({ txns }).length / 5);
+    expect(await readCache<unknown>(ctx, CacheKey.Transactions)).toEqual({ txns });
+  });
+
+  test('an entry written before compression still reads', async () => {
+    await fake.set(testKey(`c:${ctx.container}:cache:net-worth`), await encrypt(ctx, JSON.stringify({ total: 7 })));
+    expect(await readCache<unknown>(ctx, CacheKey.NetWorth)).toEqual({ total: 7 });
   });
 });
 

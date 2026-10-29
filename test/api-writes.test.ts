@@ -25,7 +25,8 @@ const { decryptJsonText } = await import('@/lib/blob');
 const spec = await import('@/lib/api-spec');
 const limits = await import('@/lib/api-limits');
 const { MANUAL_TYPES, MAX_MANUAL_ACCOUNTS, MAX_BALANCE, getManualAccount, saveManualAccount } = await import('@/lib/manual');
-const { TAG_COLORS, TAG_NAME_MAX, MAX_TAGS, MAX_TAGS_PER_TRANSACTION, readTagSet } = await import('@/lib/tags');
+const { TAG_COLORS, TAG_NAME_MAX, MAX_TAGS, MAX_TAGS_PER_TRANSACTION } = await import('@/lib/tags');
+const { readTagSet } = await import('@/lib/tags-store');
 const { NAME_MAX, ICON_MAX, MAX_CATEGORIES, MAX_GROUPS } = await import('@/lib/categories');
 const { MAX_PAYEE_CHARS, MAX_NOTE_CHARS } = await import('@/lib/manual-txn-input');
 const { ensureTaxonomy, readTaxonomy } = await import('@/lib/category-store');
@@ -569,7 +570,8 @@ describe('idempotency keys', () => {
     // A tag being deleted is a trace of one made too.
     const swept = await send('POST', 'tags', { body: { name: 'Swept' }, headers: { 'idempotency-key': 'k-5' } });
     await stopped(swept.body.change_id, { unmade: true });
-    const { changeTagSet, markDeleted } = await import('@/lib/tags');
+    const { markDeleted } = await import('@/lib/tags');
+    const { changeTagSet } = await import('@/lib/tags-store');
     await changeTagSet(ctx, (s) => markDeleted(s, swept.body.tag.id));
     setSystemTime(new Date(LATER + PENDING_MS));
     const refused = await send('POST', 'tags', { body: { name: 'Swept' }, headers: { 'idempotency-key': 'k-5' } });

@@ -9,7 +9,8 @@
 
 import type { Ctx } from './containers';
 import { changeAnnotation, stripTags, txnAnnotationStore, type AnnotationChange, type TxnAnnotation } from './txn-annotations';
-import { ensureTag, liveTagIds, readTagSet, type Tag } from './tags';
+import { liveTagIds, type Tag } from './tags';
+import { ensureTag, readTagSet } from './tags-store';
 import { finishDeleting } from './tag-delete';
 import { editManualTxn, findManualTxn, isConnectorRow, MANUAL_TXN_PREFIX } from './manual-txns';
 

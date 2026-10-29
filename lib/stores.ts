@@ -16,7 +16,7 @@
 // each moves behind the seam; the data download reads those itself.
 //
 // One line per declaring module, in alphabetical order, like:
-//   import './rules';
+//   import './rules-store';
 
 import './access-log';
 import './allocation-settings';
@@ -48,13 +48,13 @@ import './rate-limit';
 import './report/runway-scenario-store';
 import './report/store';
 import './review-store';
-import './rules';
+import './rules-store';
 import './saved-plan';
 import './share-limit';
 import './shared-expenses/store';
 import './sign-repair-store';
 import './splits';
-import './tags';
+import './tags-store';
 import './timeline-notes';
 import './txn-annotations';
 import './user-restore/store';

@@ -149,8 +149,8 @@
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
 import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
-import { rulesStore } from './rules';
-import { tagStore } from './tags';
+import { rulesStore } from './rules-store';
+import { tagStore } from './tags-store';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';

@@ -32,7 +32,7 @@ import { shownReason } from './ImportSheet';
 import { formatDay, formatInstantDay, formatMoney, hideAmountsIn, hideFiguresIn, onDay, plainNumber, signedMoney } from '@/lib/format';
 import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
-import { MANUAL_TYPES } from '@/lib/manual';
+import { MANUAL_TYPES } from '@/lib/manual-types';
 import { isCurrencyCode } from '@/lib/manual-txn-input';
 import { Notice } from './TotalCaveats';
 

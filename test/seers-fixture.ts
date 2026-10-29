@@ -135,9 +135,9 @@ export async function seedEveryKind(
   await weeklyStateStore.set(ctx, { v: 1, key: Buffer.alloc(32, 1).toString('base64url'), sent: null, sent_at: null } as never);
 
   // ---- Rules, tags, and what was said about transactions.
-  const { tagStore } = await import('@/lib/tags');
+  const { tagStore } = await import('@/lib/tags-store');
   await tagStore.set(ctx, { version: 1, tags: [{ id: 'tag1', name: 'Trip', color: 'blue', created_at: at }] });
-  const { rulesStore } = await import('@/lib/rules');
+  const { rulesStore } = await import('@/lib/rules-store');
   await rulesStore.set(ctx, {
     version: 1,
     rules: [{ id: 'rule1', enabled: true, priority: 1, conditions: [{ field: 'name', op: 'contains', value: 'coffee' }], actions: { set_category: food.id }, created_at: at, updated_at: at }],

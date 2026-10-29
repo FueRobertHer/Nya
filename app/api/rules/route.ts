@@ -3,10 +3,10 @@ import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
 import { indexTaxonomy } from '@/lib/categories';
 import { ensureTaxonomy } from '@/lib/category-store';
-import { liveTagIds, readTagSet, tagsForDisplay } from '@/lib/tags';
+import { liveTagIds } from '@/lib/tags';
+import { readTagSet, tagsForDisplay } from '@/lib/tags-store';
 import {
   addRule,
-  changeRules,
   deadRuleTags,
   deleteRule,
   editRule,
@@ -14,16 +14,15 @@ import {
   enableRule,
   newRuleId,
   orderRules,
-  readRuleSet,
   ruleProblem,
   RuleError,
   sortedRules,
-  sweepRuleTags,
   withCurrentCategories,
   withLiveTags,
   type RuleContext,
   type RuleSet,
 } from '@/lib/rules';
+import { changeRules, readRuleSet, sweepRuleTags } from '@/lib/rules-store';
 
 // Your rules (lib/rules.ts), for the Rules screen in Settings, Transactions
 // (components/RulesCard.tsx) and "Create a rule from this" on a transaction.

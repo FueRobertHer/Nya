@@ -113,6 +113,13 @@ describe('v1, the format every stored value is in today', () => {
     expect(await decrypt(TEST_CTX, v1)).toBe('safe');
   });
 
+  test('a value bigger than a base64 chunk round-trips', async () => {
+    // Encoded 32 KB at a time: a value spanning several chunks, with an odd
+    // remainder, comes back byte for byte.
+    const big = Array.from({ length: 120_001 }, (_, i) => String.fromCharCode(32 + ((i * 7919) % 95))).join('');
+    expect(await decrypt(TEST_CTX, await encrypt(TEST_CTX, big))).toBe(big);
+  });
+
   test('an altered value is reported as altered', async () => {
     const v1 = await encrypt(TEST_CTX, 'x');
     const flipped = v1[20] === 'A' ? 'B' : 'A';

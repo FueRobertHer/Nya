@@ -2,8 +2,8 @@
 //
 // Your rules (#36): each matches transactions by what they say and then
 // files them under a category, gives them a name, adds tags or hides them
-// (leaves them out of budgets and reports, still listed). The pure part is
-// safe in the browser; the store is at the end.
+// (leaves them out of budgets and reports, still listed). This module is
+// the pure part, safe in the browser; the store is in lib/rules-store.ts.
 //
 // APPLIED ON READ, never written into a stored row (lib/txn-layers.ts, in the
 // read layer every reader shares: the app, the read-only API and its MCP
@@ -62,15 +62,13 @@
 // screen or answer shows it meanwhile (withLiveTags).
 //
 // THE STORED SHAPE IS CLOSED. One value per container on the storage seam
-// (lib/repo.ts), the `rules` store, encrypted. A condition, an action or a
-// field this release doesn't know makes the whole set unrecognised, never
-// partly applied: a rule read without a condition a later release added
-// would match more than it should. So nothing is applied while it can't be
-// read, the Activity tab says so, and nothing is saved over it. A new field
-// ships in two releases, one that reads it and then one that writes it.
+// (lib/repo.ts), the `rules` store, encrypted (lib/rules-store.ts). A
+// condition, an action or a field this release doesn't know makes the whole set
+// unrecognised, never partly applied: a rule read without a condition a later
+// release added would match more than it should. So nothing is applied while it
+// can't be read, the Activity tab says so, and nothing is saved over it. A new
+// field ships in two releases, one that reads it and then one that writes it.
 
-import { defineValueStore } from './repo';
-import type { Ctx } from './containers';
 import { categoryById, displayName, isProvisionalId, type CategoryIndex } from './categories';
 import { MAX_AMOUNT, MAX_PAYEE_CHARS } from './manual-txn-input';
 import { isTagId, type TagSet } from './tags';
@@ -669,56 +667,7 @@ export function ruleSentence(r: Rule, names: RuleNames): string {
   return `If ${r.conditions.map((c) => conditionWords(c, names)).join(' and ')}: ${does.length ? does.join(', ') : 'nothing (its tags were deleted)'}.`;
 }
 
-// ---- Stored ----
-
-export const rulesStore = defineValueStore<RuleSet>('rules', {
-  what: 'rules',
-  isValid: isRuleSet,
-  exportable: true, // the person's own rules
-});
+// ---- Ids ----
 
 /** A new rule's id: random, so it says nothing of what it matches. */
 export const newRuleId = (): string => crypto.randomUUID();
-
-/** Strict: the stored rules, or null when none were ever saved. */
-export function readRuleSet(ctx: Ctx): Promise<RuleSet | null> {
-  return rulesStore.get(ctx);
-}
-
-/**
- * The rules for showing transactions (lib/activity.ts): the stored ones, or
- * none, with a note when they can't be read (damaged, or saved by a version
- * this one doesn't know): no rule is applied then, so a transaction a rule
- * hid counts again until they can be, and nothing writes on this answer.
- * Storage that can't be reached throws, as every read does.
- */
-export async function rulesForDisplay(ctx: Ctx): Promise<{ set: RuleSet | null; note: string | null }> {
-  const report = await rulesStore.getReport(ctx);
-  if (report.unreadable || report.unrecognised) {
-    console.error(`Stored rules ${report.unreadable ? 'unreadable' : 'unrecognised'}`);
-    return { set: null, note: "Your rules couldn't be read, so none are applied until they can be: transactions show as the bank and you have them." };
-  }
-  return { set: report.value, note: null };
-}
-
-/** Changes the rules with `op` (from none when none were saved), in one
- *  compare-and-set: `op` may run more than once and throws RuleError to
- *  refuse. Rules that can't be read are refused (StoredDataUnreadableError),
- *  never replaced. */
-export async function changeRules(ctx: Ctx, op: (set: RuleSet) => RuleSet): Promise<RuleSet> {
-  return (await rulesStore.update(ctx, (cur) => op(cur ?? emptyRuleSet())))!;
-}
-
-/** Takes deleted tags' ids out of every rule (lib/tag-delete.ts). Returns how
- *  many rules changed, or null when the rules can't be read: they are left
- *  as they are (no rule is applied while they can't be, and nothing shows a
- *  deleted tag), and the deletion stays noted, to be swept once they can. */
-export async function sweepRuleTags(ctx: Ctx, ids: readonly string[]): Promise<number | null> {
-  const report = await rulesStore.getReport(ctx);
-  if (report.unreadable || report.unrecognised) return null;
-  if (!report.value) return 0;
-  const before = report.value.rules.filter((r) => r.actions.add_tags?.some((t) => ids.includes(t))).length;
-  if (before === 0) return 0;
-  await rulesStore.update(ctx, (cur) => (cur ? withoutTags(cur, ids) : cur));
-  return before;
-}

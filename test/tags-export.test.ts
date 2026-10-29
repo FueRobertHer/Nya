@@ -24,7 +24,7 @@ const { rememberAccounts } = await import('@/lib/last-known');
 const { linkAccounts } = await import('@/lib/links');
 const { saveManualAccount } = await import('@/lib/manual');
 const { manualTxnStore } = await import('@/lib/manual-txns');
-const { ensureTag } = await import('@/lib/tags');
+const { ensureTag } = await import('@/lib/tags-store');
 const { changeAnnotation, carriedAnnotationStore } = await import('@/lib/txn-annotations');
 const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
 
@@ -113,7 +113,8 @@ describe('in the download', () => {
   test('a tag deleted is in no transaction’s list, whatever a record still holds', async () => {
     const { deleteTag } = await import('@/lib/tag-delete');
     // Stopped part way: the record still names it; nothing shows it.
-    const { changeTagSet, markDeleted } = await import('@/lib/tags');
+    const { markDeleted } = await import('@/lib/tags');
+    const { changeTagSet } = await import('@/lib/tags-store');
     await changeTagSet(ctx, (s) => markDeleted(s, work));
     const doc = await download();
     expect(doc.transactions.find((t) => t.transaction_id === 't_hotel')!.tags).toEqual(['Vacation 2026']);
@@ -125,8 +126,9 @@ describe('in the download', () => {
 const { assembleBankRows, finishActivity } = await import('@/lib/activity');
 const { ensureTaxonomy } = await import('@/lib/category-store');
 const { indexTaxonomy } = await import('@/lib/categories');
-const { addRule, changeRules, newRuleId } = await import('@/lib/rules');
-const { readTagSet } = await import('@/lib/tags');
+const { addRule, newRuleId } = await import('@/lib/rules');
+const { changeRules } = await import('@/lib/rules-store');
+const { readTagSet } = await import('@/lib/tags-store');
 const { ofxFile } = await import('@/lib/ofx-export');
 
 /** An account's OFX statement, as the download writes it: each transaction's

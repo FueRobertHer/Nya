@@ -9,7 +9,8 @@
 // tag has, or too many tags).
 
 import type { Ctx } from './containers';
-import { addTag, changeTagSet, newTagId, recolorTag, renameTag, type Tag, type TagSet } from './tags';
+import { addTag, newTagId, recolorTag, renameTag, type Tag, type TagSet } from './tags';
+import { changeTagSet } from './tags-store';
 import { deleteTag, finishDeleting } from './tag-delete';
 
 /**
