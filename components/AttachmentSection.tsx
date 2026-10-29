@@ -141,7 +141,7 @@ export default function AttachmentSection({ t, rows, onChanged }: { t: AttachRow
         <ul className="attach-thumbs">
           {files.map((f, i) => (
             <li key={f.id}>
-              <button className="attach-thumb" onClick={() => setViewing(i)} aria-label={`Open ${fileTitle(f)}, from ${shortDay(fileDay(f))}`}>
+              <button className="attach-thumb" onClick={() => setViewing(i)} aria-label={`Open ${fileTitle(f)}, from ${shortDay(fileDay(f), { sentence: true })}`}>
                 {f.kind === 'image' && f.thumb && !hidden && !f.damaged ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={thumbUrl(f.id)} alt="" loading="lazy" />

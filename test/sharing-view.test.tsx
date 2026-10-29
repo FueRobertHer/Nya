@@ -116,15 +116,18 @@ afterEach(() => {
 });
 
 describe('dates', () => {
-  test('month and day, with the year only when it is not this one', () => {
+  test('month and day, with the year only when it is not this one, and today and yesterday by name', () => {
     const now = new Date('2026-09-28T12:00:00');
-    expect(shortDate('2026-09-28', now)).toBe('Sep 28');
+    expect(shortDate('2026-09-28', now)).toBe('today');
+    expect(shortDate('2026-09-28', now, true)).toBe('Today');
+    expect(shortDate('2026-09-27', now)).toBe('yesterday');
+    expect(shortDate('2026-09-20', now)).toBe('Sep 20');
     expect(shortDate('2025-12-31', now)).toBe('Dec 31, 2025');
     expect(shortDate('not a date', now)).toBe('not a date');
   });
 
   test('shows an instant as the day it was in the viewer local time, not its UTC day', () => {
-    const now = new Date('2026-09-29T12:00:00Z');
+    const now = new Date('2026-10-29T12:00:00Z');
     // 03:19 UTC on the 29th is still the 28th anywhere west of UTC-3:20, and the
     // 29th anywhere east of it: the label must follow the machine zone.
     const at = '2026-09-29T03:19:00.000Z';
@@ -385,13 +388,15 @@ describe('what others share with me', () => {
   });
 
   test('an account that ended shows as ended from its day, with no balance (#50)', () => {
+    // Its day as every day is said (lib/format.ts formatDay), on a today held still.
+    setSystemTime(new Date('2026-10-29T12:00:00'));
     const toggle = () => {};
     const savings = { id: 'a', label: 'Ally Savings', level: 'balance' as const, balance: null, currency: null, as_of: null, debt: false };
     const closed = text(renderToStaticMarkup(<SharedAccountItem a={{ ...savings, ended: { state: 'closed', on: '2026-03-12' } }} open={false} onToggle={toggle} />));
-    expect(closed).toContain('Closed Mar 12, 2026');
+    expect(closed).toContain('Closed Mar 12');
     expect(closed).not.toContain('No balance yet');
-    expect(endedText({ state: 'left', on: '2026-03-12' })).toBe('No longer theirs since Mar 12, 2026');
-    expect(endedText({ state: 'untracked', on: '2026-03-12' })).toBe('Not followed since Mar 12, 2026');
+    expect(endedText({ state: 'left', on: '2026-03-12' })).toBe('No longer theirs since Mar 12');
+    expect(endedText({ state: 'untracked', on: '2026-03-12' })).toBe('Not followed since Mar 12');
   });
 });
 

@@ -11,7 +11,7 @@
 // or failed has none. A sentence never fails: what it can't read, it leaves
 // out, and says what kind of change it was.
 
-import { formatMoney, signedMoney } from '@/lib/format';
+import { formatDay, formatMoney, onDay, signedMoney } from '@/lib/format';
 
 /** A change as app/api/api-changes lists it. */
 export type ListedChange = {
@@ -63,11 +63,11 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 const at = (r: Rec | null, ...path: string[]): unknown => path.reduce<unknown>((v, k) => rec(v)?.[k], r);
 const cur = (v: unknown): string | null => (typeof v === 'string' && /^[A-Z]{3}$/.test(v) ? v : null);
 
-/** A day as the viewer reads it: "Oct 9". */
+/** A day as the viewer reads it mid sentence: "today", "Oct 9", "Oct 9, 2025"
+ *  (lib/format.ts formatDay). */
 function day(iso: unknown): string | null {
   if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return null;
-  const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return Number.isNaN(Date.parse(iso.slice(0, 10))) ? null : formatDay(iso.slice(0, 10), { sentence: true });
 }
 
 /** A transaction's amount with its sign as the app shows it: money in is +. */
@@ -79,7 +79,7 @@ function txnMoney(row: Rec | null): string | null {
 /** "Coffee, -$4.50 on Oct 9", from what it can read. */
 function txnWords(row: Rec | null): string {
   const name = text(row?.name) ?? 'a transaction';
-  const parts = [txnMoney(row), day(row?.date) ? `on ${day(row?.date)}` : null].filter(Boolean);
+  const parts = [txnMoney(row), day(row?.date) ? onDay(day(row?.date)!) : null].filter(Boolean);
   return parts.length > 0 ? `${name}, ${parts.join(' ')}` : name;
 }
 

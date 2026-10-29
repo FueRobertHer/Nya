@@ -19,8 +19,8 @@ import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { keysHelp, useChartKeys } from './chart-keys';
-import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
-import { instantDay, localMonth } from '@/lib/local-date';
+import { compactMoney, fieldAmount, formatDay, formatInstantDay, formatMoney, hiddenFigure } from '@/lib/format';
+import { localMonth } from '@/lib/local-date';
 import { distinctAccountNames } from '@/lib/account-names';
 import { kindWords } from './accounts-format';
 import {
@@ -108,16 +108,17 @@ function compactIn(currency: string | null, amount: number): string {
     : hiddenFigure(new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(amount));
 }
 
-// "Aug 7" from a YYYY-MM-DD, parsed at local midnight so it never shows the day before.
+// "Aug 7" from a YYYY-MM-DD, parsed at local midnight so it never shows the day
+// before, mid sentence: "today", "Aug 7, 2025" (lib/format.ts formatDay).
 function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 // The day a recovered balance is from, as the Accounts tab shows it
 // (fmtStaleDay in Dashboard.tsx): the instant's local day when it belongs to
 // that date, else the date.
 function staleDay(date: string, at: string | null): string {
-  return (at && at.slice(0, 10) === date ? instantDay(at) : null) ?? fmtDay(date);
+  return (at && at.slice(0, 10) === date ? formatInstantDay(at, { sentence: true }) : null) ?? fmtDay(date);
 }
 
 /** "A", "A and B", "A, B and C". */
@@ -758,7 +759,7 @@ function DebtRow({
 }) {
   const { account: a, apr, minimum, status } = row;
   const card = a.type === 'credit';
-  const updated = a.updatedAt ? instantDay(a.updatedAt) : null;
+  const updated = a.updatedAt ? formatInstantDay(a.updatedAt, { sentence: true }) : null;
   const balanceNote = a.staleAsOf
     ? ` · balance from ${staleDay(a.staleAsOf, a.staleAsOfAt)}`
     : updated

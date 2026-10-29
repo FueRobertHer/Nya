@@ -278,7 +278,9 @@ describe('the calendar', () => {
   test('opens on this month and today, saying what posted and what is expected are', () => {
     const t = view();
     expect(t).toContain('October 2026');
-    expect(t).toContain('Friday, October 9');
+    // Today's own day is "Today" (lib/format.ts formatDay).
+    expect(t).toContain('Today');
+    expect(t).not.toContain('Friday, Oct 9');
     expect(t).toContain('Nothing expected.');
     expect(t).toContain(
       "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added."
@@ -519,9 +521,9 @@ describe('the planned items', () => {
         ],
       },
     });
-    expect(t).toContain('Tax refund Once · next Oct 30, 2026 +$1,200.00');
-    expect(t).toContain('Car registration Yearly · next Nov 3, 2026 −$212.50');
-    expect(t).toContain('Deposit back Once · was Sep 1, 2026 +$500.00');
+    expect(t).toContain('Tax refund Once · next Oct 30 +$1,200.00');
+    expect(t).toContain('Car registration Yearly · next Nov 3 −$212.50');
+    expect(t).toContain('Deposit back Once · was Sep 1 +$500.00');
     expect(t.indexOf('Tax refund')).toBeLessThan(t.indexOf('Car registration'));
     expect(t).toContain('Add a planned item');
   });

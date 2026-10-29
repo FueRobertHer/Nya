@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ProgressView, SheetBody, progressOverlay, readInflation, shortWhy, type ProgressAnswer, type ProgressViewProps } from '@/components/PlanProgress';
 import PlanPathChart from '@/components/PlanPathChart';
@@ -6,6 +6,11 @@ import { DrawnWidth } from '@/components/drawn-width';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import type { SavedPlan } from '@/lib/fire/saved-plan';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // The Progress card at the end of Your path (components/PlanProgress.tsx,
 // rollout 8e): "This is my plan" only when the Plan can be saved; once saved,
@@ -175,7 +180,7 @@ describe('saved, set against what was recorded', () => {
   });
 
   test('days that couldn’t be read are said', () => {
-    expect(text(view({ series: { kind: 'ready', answer: answer(190_000, { unreadable_days: ['2026-02-03'] }) } }))).toContain('The balances of Feb 3, 2026 couldn’t be read, so that day is left out.');
+    expect(text(view({ series: { kind: 'ready', answer: answer(190_000, { unreadable_days: ['2026-02-03'] }) } }))).toContain('The balances of Feb 3 couldn’t be read, so that day is left out.');
     expect(text(view({ series: { kind: 'ready', answer: answer(190_000, { unreadable_days: ['2026-02-03', '2026-02-04'] }) } }))).toContain('2 days couldn’t be read');
   });
 

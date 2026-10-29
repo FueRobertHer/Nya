@@ -16,7 +16,7 @@ import { Masked } from './HideAmounts';
 import FieldError, { amountExample } from './FieldError';
 import { shownName } from '@/lib/merchant-name';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { toUnits, unitScale } from '@/lib/split-rows';
 import { localDate } from '@/lib/local-date';
@@ -27,9 +27,9 @@ import { partUnits } from './SplitSheet';
 import { whoseText } from './shared-expenses-text';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
 
-/** "Oct 5": a day as the list shows it. */
-function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+/** "Oct 5": a day as the list shows it ("Today"), or mid sentence (`sentence`, "today"). */
+function shownDay(iso: string, sentence = false): string {
+  return formatDay(iso, { sentence });
 }
 
 /** The amount a picked item's field holds, as typed. */
@@ -242,7 +242,7 @@ export function ConfirmPaymentSheet({
     return (
       <Sheet open title="Paid back" onClose={() => !saving && onClose()}>
         <p className="panel-note" style={{ marginTop: 0 }}>
-          {shownName(t)}, {shownDay(t.date)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
+          {shownName(t)}, {shownDay(t.date, true)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
           {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
         </p>
         {error && (
@@ -266,7 +266,7 @@ export function ConfirmPaymentSheet({
   return (
     <Sheet open title={direction === 'to_you' ? 'This paid back…' : 'This paid…'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {shownName(t)}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} on {shownDay(t.date)}.{' '}
+        {shownName(t)}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} {onDay(shownDay(t.date, true))}.{' '}
         {direction === 'to_you'
           ? 'Choose what it paid back: that much of it is money between you and them, never income.'
           : 'Choose what it paid of what you owe: that much of it is money between you and them, never spending.'}

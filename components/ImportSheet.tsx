@@ -35,8 +35,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import type { SheetInstitution } from './ManualTxnSheet';
-import { formatMoney, hideAmountsIn, hideFiguresIn, plainNumber, signedMoney } from '@/lib/format';
-import { instantDay, localDate } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, hideAmountsIn, hideFiguresIn, onDay, plainNumber, signedMoney } from '@/lib/format';
+import { localDate } from '@/lib/local-date';
 import { isOwedType } from '@/lib/balance';
 import { DEFAULT_CURRENCY, isCurrencyCode } from '@/lib/manual-txn-input';
 import { MAX_FILE_BYTES, MAX_IMPORT_ROWS, type FileFormat } from '@/lib/import/record';
@@ -166,9 +166,12 @@ type Account = SheetInstitution['accounts'][number] & { institution_name: string
 
 const label = (a: Account) => (a.institution_name && a.institution_name !== a.name ? `${a.institution_name} · ${a.name}` : a.name);
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
-/** A calendar day, "Sep 3, 2026", read on the local calendar as written. */
-const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fmtDay(a) : `${fmtDay(a)} to ${fmtDay(b)}`) : null);
+/** A calendar day, "Today", "Sep 3", "Sep 3, 2025" (lib/format.ts formatDay),
+ *  read on the local calendar as written. */
+const fmtDay = (day: string) => formatDay(day);
+/** The same mid sentence: "today", "Sep 3", "Sep 3, 2025". */
+const inDay = (day: string) => formatDay(day, { sentence: true });
+const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? inDay(a) : `${inDay(a)} to ${inDay(b)}`) : null);
 /** As the Activity tab shows an amount: money in signed plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 /** A line's problem as shown: an amount it quotes from the file, which
@@ -1345,13 +1348,13 @@ export function PreviewView({
           <label className="quick-add-check" style={{ marginTop: 16 }}>
             <input type="checkbox" checked={setBalance} disabled={busy} onChange={(e) => onSetBalance(e.target.checked)} />
             <span>
-              Also set {name}’s {owed ? 'amount owed' : 'balance'} to <Masked>{formatMoney(b.amount, keptIn)}</Masked>, the statement’s balance on{' '}
-              {b.as_of ? fmtDay(b.as_of) : 'its date'} (now <Masked>{formatMoney(b.from, keptIn)}</Masked>)
+              Also set {name}’s {owed ? 'amount owed' : 'balance'} to <Masked>{formatMoney(b.amount, keptIn)}</Masked>, the statement’s balance{' '}
+              {b.as_of ? onDay(inDay(b.as_of)) : 'on its date'} (now <Masked>{formatMoney(b.from, keptIn)}</Masked>)
             </span>
           </label>
         ) : (
           <p className="panel-note" style={{ marginTop: 16 }}>
-            The statement’s balance{b.as_of ? ` on ${fmtDay(b.as_of)}` : ''} was <Masked>{formatMoney(b.amount, p.statement?.currency ?? keptIn)}</Masked>.{' '}
+            The statement’s balance{b.as_of ? ` ${onDay(inDay(b.as_of))}` : ''} was <Masked>{formatMoney(b.amount, p.statement?.currency ?? keptIn)}</Masked>.{' '}
             {balanceRefusal(b.refusal!, name, keptIn)}
           </p>
         ))}
@@ -1521,7 +1524,7 @@ export function PastImports({
               </div>
               <div className="import-row-meta">
                 {[
-                  i.imported_at ? `Imported ${instantDay(i.imported_at) ?? i.imported_at.slice(0, 10)}` : null,
+                  i.imported_at ? `Imported ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}` : null,
                   i.counts ? `${plural(i.counts.imported, 'transaction')} added` : null,
                   i.counts?.replaced ? `${i.counts.replaced.toLocaleString()} updated` : null,
                   range,

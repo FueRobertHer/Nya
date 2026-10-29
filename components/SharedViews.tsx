@@ -14,9 +14,9 @@
 // Class names avoid "share" (see components/Sharing.tsx).
 
 import { useState } from 'react';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney, onDay } from '@/lib/format';
 import { readableName } from '@/lib/merchant-name';
-import { dayLabel, monthLabel } from '@/lib/goal-text';
+import { monthLabel } from '@/lib/goal-text';
 import {
   isUnreadable,
   KIND_NAME,
@@ -387,7 +387,7 @@ export function outlookWords(g: GoalLine): string | null {
     case 'behind': {
       if (o.beyond || !o.completion) return 'Not within 50 years at this pace';
       const when = monthLabel(o.completion);
-      if (o.date_passed && g.target_date) return `Its date, ${dayLabel(g.target_date)}, has passed; at this pace, reached in ${when}`;
+      if (o.date_passed && g.target_date) return `Its date, ${formatDay(g.target_date, { sentence: true })}, has passed; at this pace, reached in ${when}`;
       if (o.status === 'on_track') return due && o.completion < g.target_date!.slice(0, 7) ? `On track for ${when}, ahead of ${due}` : `On track for ${due ?? when}`;
       return `Behind${due ? ` its date, ${due}` : ''}: at this pace, reached in ${when}`;
     }
@@ -400,7 +400,7 @@ function goalState(g: GoalLine): string | null {
     case 'untracked':
       return 'Not tracked against an account';
     case 'ended':
-      return g.ended_on ? `Its account ended on ${dayLabel(g.ended_on)}, so it counts nothing from then` : 'Its account ended, so it counts nothing';
+      return g.ended_on ? `Its account ended ${onDay(formatDay(g.ended_on, { sentence: true }))}, so it counts nothing from then` : 'Its account ended, so it counts nothing';
     case 'owed':
       return 'Tracks a card or a loan, whose balance is owed, so no progress is shown';
     case 'no_balance':
@@ -432,7 +432,7 @@ function GoalsKind({ v }: { v: GoalsView }) {
             </div>
             {g.pct !== null && <Bar pct={g.pct} state={g.pct >= 100 ? ' done' : ''} label={g.name} />}
             <div className="incoming-account-date">
-              {[why, outlook, g.label !== null && amounts ? `${g.label} of the way` : null, g.target_date && !outlook ? `Its date: ${dayLabel(g.target_date)}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
+              {[why, outlook, g.label !== null && amounts ? `${g.label} of the way` : null, g.target_date && !outlook ? `Its date: ${formatDay(g.target_date, { sentence: true })}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
                 .filter(Boolean)
                 .join(' · ')}
             </div>

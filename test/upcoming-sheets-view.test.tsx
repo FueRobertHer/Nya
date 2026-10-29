@@ -432,7 +432,7 @@ describe('Planned', () => {
     expect(v.all((e) => e.tagName === 'SECTION')[0].getAttribute('aria-labelledby')).toBe('planned-title');
     expect(v.all((e) => e.tagName === 'H3').map((e) => e.textContent)).toEqual(['Planned']);
     const rows = v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('list-row'));
-    expect(rows.map((r) => r.textContent)).toEqual([`Tax refundOnce · next Oct 30, 2026+${money(1200)}`, `Car registrationYearly · next Nov 3, 2026\u2212${money(212.5)}`]);
+    expect(rows.map((r) => r.textContent)).toEqual([`Tax refundOnce · next Oct 30+${money(1200)}`, `Car registrationYearly · next Nov 3\u2212${money(212.5)}`]);
     for (const r of rows) {
       expect(r.tagName).toBe('BUTTON');
       expect(r.getAttribute('aria-haspopup')).toBe('dialog');

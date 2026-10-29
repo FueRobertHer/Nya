@@ -21,8 +21,7 @@ import { Why } from './Why';
 import { affectedText, badgeOf, endsText, healthText, lastSyncedText, reconnectText, sideText } from './ConnectionHealth';
 import { carriedLine, retryLine, type ConnectorAsk } from './Connectors';
 import { connectorBadge, connectorHealthText, connectorSideText, connectorSite } from '@/lib/connectors/health';
-import { formatMoney, hideAmountsIn } from '@/lib/format';
-import { instantDay } from '@/lib/local-date';
+import { formatInstantDay, formatMoney, hideAmountsIn } from '@/lib/format';
 import type { PageFx } from '@/lib/fx/view';
 import type { ConnectionView } from '@/lib/connectors/view';
 import { severityOf, type Severity } from '@/lib/accounts-status';
@@ -55,7 +54,7 @@ export function levelIcon(level: Severity): ReactNode {
 }
 
 const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
-const localDay = (iso: string) => instantDay(iso) ?? iso.slice(0, 10);
+const localDay = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 
 /** The connection a connector's card belongs to, and whether this card is its
  *  first (where the lines about all its banks go). */

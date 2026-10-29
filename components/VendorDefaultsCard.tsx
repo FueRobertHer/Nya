@@ -11,11 +11,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { defaultListWords } from './review-text';
 import { VendorDefaultsSkeleton } from './LoadingSkeletons';
+import { formatDay } from '@/lib/format';
 
 type Shown = { id: string; name: string; category_id: string; since: string; agree: number; set_at: string };
 
+/** A calendar day mid sentence: "today", "Oct 5", "Oct 5, 2025". */
 function day(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: Taxonomy | null; onChanged: () => void }) {

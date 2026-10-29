@@ -13,7 +13,7 @@
 // "Load more" asks for the next page after the last one.
 
 import { useCallback, useEffect, useState } from 'react';
-import { plainNumber } from '@/lib/format';
+import { formatInstantDay, plainNumber } from '@/lib/format';
 import { sizeText } from './DataInventory';
 import { PageHeader } from './PageHeader';
 
@@ -54,7 +54,8 @@ export const SORTS = [
 ] as const;
 export type Sort = (typeof SORTS)[number][0];
 
-const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** The local day an instant fell on, mid sentence: "today", "Oct 5". */
+const day = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 /** A YYYY-MM-DD day as it is, the same in every time zone. */
 export const utcDay = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

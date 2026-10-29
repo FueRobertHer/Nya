@@ -128,7 +128,7 @@ describe('the Activity tab’s list', () => {
     expect(page).toContain('Groceries food −$100.01 Household −$30.00 Auto −$19.99');
     expect(page).toContain('Dinner with Sam Group of 2 · Restaurants · Card −$60.00 Bistro');
     // A group's transaction: its day and its account, by its name.
-    expect(page).toMatch(/Bistro [A-Z][a-z]{2} \d{1,2} · Card /);
+    expect(page).toMatch(/Bistro (?:Today|Yesterday|[A-Z][a-z]{2} \d{1,2}) · Card /);
     expect(page).toContain('Venmo from Sam');
     // The day's figure counts the parts and the net: 150 + 60 + 4.50 out.
     expect(page).toContain('−$214.50');

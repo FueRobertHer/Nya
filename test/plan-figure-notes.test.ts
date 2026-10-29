@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { NOTE_KINDS, figureNotes, inputFlags, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureText } from '@/components/plan-figure-notes';
@@ -10,6 +10,11 @@ import { fiFigures, gapText, measuredInputs, spendingGap, assetsGap } from '@/li
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import type { LifeEvent } from '@/lib/fire/events';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // What each figure the Plan rests on says (components/plan-figure-notes.ts,
 // rollout phase 6c): every state of the plan's table (the sub, the value's
@@ -69,7 +74,7 @@ const bothBeside: NoTransactionsView = {
   connections: 3,
 };
 const AS_OF = '2026-10-06T15:12:00Z';
-const WINDOW = 'your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026)';
+const WINDOW = 'your last 12 months of transactions (Oct 7, 2025 to Oct 6)';
 
 type Over = Omit<Partial<FigureArgs>, 'plan'> & { plan?: Partial<FirePlan> };
 
@@ -212,7 +217,7 @@ describe('annual spending', () => {
       })
     ).spending.why;
     expect(rich).toBe(
-      'Includes $6,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals beyond the $800 of cash spending you entered on Wallet and for what you owed others and settled in cash, taken to be the same money, less $900 of refunds (the largest, $600 from REI on May 2, 2026).'
+      'Includes $6,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals beyond the $800 of cash spending you entered on Wallet and for what you owed others and settled in cash, taken to be the same money, less $900 of refunds (the largest, $600 from REI on May 2).'
     );
     expect(rich).not.toContain(WINDOW);
     expect(rich).not.toContain('from your last');
@@ -292,7 +297,7 @@ describe('annual savings', () => {
       'An estimate: income minus spending over the same 12 months, plus $14,000 paid into Fidelity 401(k) and Empower 403(b). That is a savings rate of 52% of income, what went into those plans counted as income too.'
     );
     expect(notesOf(t)).toEqual([
-      ['caution', 'contributions added', 'Fidelity 401(k): 24 contributions added, $12,000, the largest $900 on Mar 15, 2026, all of them, as it is set as paid through payroll.'],
+      ['caution', 'contributions added', 'Fidelity 401(k): 24 contributions added, $12,000, the largest $900 on Mar 15, all of them, as it is set as paid through payroll.'],
       ['caution', 'contributions added', 'Empower 403(b): $2,000 added.'],
       [
         'caution',
@@ -301,8 +306,8 @@ describe('annual savings', () => {
       ],
       ['caution', 'payroll not set', "How Empower 403(b) is paid into isn't set: if you pay into it from your bank account, say so in Annual savings, or it may count twice."],
       ['caution', 'plans paid from your bank', 'Vanguard Solo 401(k) is set as paid from your bank, so nothing paid into it is added again.'],
-      ['caution', 'a plan counted from later', "Fidelity 401(k) is counted from Jan 10, 2026, when Nya's record of it starts."],
-      ['caution', 'a plan’s history starting later', 'Nya has activity for Empower 403(b) from Apr 2, 2026.'],
+      ['caution', 'a plan counted from later', "Fidelity 401(k) is counted from Jan 10, when Nya's record of it starts."],
+      ['caution', 'a plan’s history starting later', 'Nya has activity for Empower 403(b) from Apr 2.'],
       ['caution', 'contributions not measured', "Contributions to TIAA 457(b) couldn't be measured, so this figure may be low."],
       ['caution', 'plan activity not read', "Empower 403(b)'s activity couldn't all be read, so this figure may be low."],
       ['caution', 'transactions that couldn’t be read', "Transactions from Chase couldn't all be read (the Activity tab says why), so this figure may be off."],
@@ -342,7 +347,7 @@ describe('invested assets', () => {
     });
     expect(notesOf(figureNotes(at({ assets: a })).assets)).toEqual([
       ['caution', 'an institution not reached', "Schwab couldn't be reached and isn't counted, so this figure may be low."],
-      ['caution', 'balances from earlier', "Vanguard's balances are from Oct 1, 2026: it couldn't be reached since."],
+      ['caution', 'balances from earlier', "Vanguard's balances are from Oct 1: it couldn't be reached since."],
       ['caution', 'accounts not shown', "2 accounts at Fidelity couldn't be shown, so this figure may be low."],
       ['caution', 'balances not known', '2 more had no balance to count, so this figure may be low.'],
       ['caution', 'other currencies left out', "1 account in GBP isn't in this figure, which is in USD."],
@@ -383,7 +388,7 @@ describe('the notes’ kinds and keys', () => {
   test('two notes that say the same have keys of their own, from the row, the kind and the place, never the text', () => {
     const workplace = { ...noPlans, partial: [{ name: 'Fidelity 401(k)', from: '2026-01-10' }, { name: 'Fidelity 401(k)', from: '2026-01-10' }] } as WorkplaceSavings;
     const notes = figureNotes(at({ workplace, workplaceCount: 1 })).savings.notes;
-    expect(notes.map((n) => n.text)).toEqual(["Fidelity 401(k) is counted from Jan 10, 2026, when Nya's record of it starts.", "Fidelity 401(k) is counted from Jan 10, 2026, when Nya's record of it starts."]);
+    expect(notes.map((n) => n.text)).toEqual(["Fidelity 401(k) is counted from Jan 10, when Nya's record of it starts.", "Fidelity 401(k) is counted from Jan 10, when Nya's record of it starts."]);
     expect(notes.map((n) => n.key)).toEqual(['savings:a plan counted from later:0', 'savings:a plan counted from later:1']);
     const all = Object.values(figureNotes(at({ unread: [{ institution: 'Chase', reason: 'x' }] }))).flatMap((t) => t.notes.map((n) => n.key));
     expect(new Set(all).size).toBe(all.length);

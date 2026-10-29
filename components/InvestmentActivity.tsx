@@ -7,7 +7,7 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { amountsHidden, formatMoney, hiddenMoney, trueMinus } from '@/lib/format';
+import { amountsHidden, formatDay, formatMoney, hiddenMoney, trueMinus } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { readableName } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
@@ -68,8 +68,8 @@ export function loadInvestmentActivity(accountId: string, itemId: string): Promi
 function fmtDay(iso: string): string {
   // Parsed at local midnight, not UTC, so a date never renders as the day
   // before for anyone west of Greenwich.
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  // "Today", "Oct 5", "Oct 5, 2025" (lib/format.ts formatDay).
+  return formatDay(iso);
 }
 
 /**

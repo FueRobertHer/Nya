@@ -35,7 +35,7 @@ import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
 import { Masked } from './HideAmounts';
 import { localDate } from '@/lib/local-date';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
 
 export type EndState = 'closed' | 'left' | 'untracked';
@@ -94,11 +94,11 @@ export type LifecycleTarget = {
 
 const endOf = (l: EndedAccount['lifecycle']) => (l.state === 'untracked' ? l.from : l.on);
 
-/** "Mar 12", or "Mar 12, 2025" outside this year: a calendar day, read at
- *  local midnight so it never shows as the day before. */
+/** "Mar 12", or "Mar 12, 2025" outside this year, "today" and "yesterday"
+ *  (lib/format.ts formatDay, mid sentence): a calendar day, read at local
+ *  midnight so it never shows as the day before. */
 export function dayText(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  return formatDay(iso, { sentence: true });
 }
 
 /** "Ally Savings ••1234". */

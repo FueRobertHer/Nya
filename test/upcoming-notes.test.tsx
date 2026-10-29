@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import UpcomingPanel from '@/components/UpcomingPanel';
 import TotalCaveats from '@/components/TotalCaveats';
@@ -371,7 +371,18 @@ const MOVES: { starts: string; was: string; now: string | null; why: string }[] 
  *  it behind "Why?" (`moved`, said at level `why`). The recording stays as it
  *  was made. */
 const CAPITAL = 'each part of an Upcoming row’s line starts with a capital, as a label of its own (the words pass after the screen review)';
+const DATES = 'a day says its year only outside this one, and today is "today", as the design system’s dates do (lib/format.ts formatDay)';
+// The days are said as of a today held still, in the scenes' own year.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 const REWORDED: { was: string; level: string; now: string; moved?: string; why: string }[] = [
+  { was: 'Once · next Oct 20, 2026', level: 'tag', now: 'Once · next Oct 20', why: DATES },
+  { was: 'Once · next Oct 30, 2026', level: 'tag', now: 'Once · next Oct 30', why: DATES },
+  { was: 'Once · was Oct 20, 2026', level: 'tag', now: 'Once · was Oct 20', why: DATES },
+  { was: 'Once · was Oct 30, 2026', level: 'tag', now: 'Once · was Oct 30', why: DATES },
+  { was: 'Chase · Sapphire · Monthly · seen 6 times · next ~Oct 9', level: 'tag', now: 'Chase · Sapphire · Monthly · seen 6 times · next ~today', why: DATES },
+  { was: 'Chase · Checking · Every 2 weeks · seen 12 times · amount varies · next ~Oct 9', level: 'tag', now: 'Chase · Checking · Every 2 weeks · seen 12 times · amount varies · next ~today', why: DATES },
+  { was: 'Starts from $900.00 in Checking at Chase. Expected to end near $900.00 on Jan 19.', level: 'helper', now: 'Starts from $900.00 in Checking at Chase. Expected to end near $900.00 on Jan 19, 2027.', why: DATES },
   { was: 'pending', level: 'tag', now: 'Pending', why: CAPITAL },
   {
     was: "income · Every 2 weeks · its amount varies, not in the day's figure",

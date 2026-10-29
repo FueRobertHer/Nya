@@ -77,10 +77,10 @@ import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { monthNotice, pastMonthNotes, thisMonthNotes } from './budget-notes';
 import { gapText, monthName as nameOfMonth, monthsText, type IncomeCarryover, type MonthGap } from '@/lib/rollover';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
-import { localDate, localMonth, instantDay } from '@/lib/local-date';
+import { localDate, localMonth } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
 import { EMPTY_PLANNED, type Planned } from '@/lib/planned';
-import { formatMoney } from '@/lib/format';
+import { formatInstantDay, formatMoney } from '@/lib/format';
 import { spendingByCategory } from '@/lib/totals';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import { noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -104,7 +104,7 @@ const NOT_LOADED: BudgetMonthState = { status: 'idle', view: null, error: null, 
 /** A reason a month may be incomplete, in words: an instant as the local
  *  day it fell on, a calendar day as it is. */
 const reasonText = (g: MonthGap) => {
-  const text = gapText(g, (at) => (at.length > 10 ? (instantDay(at) ?? at.slice(0, 10)) : (instantDay(`${at}T12:00:00Z`, 'UTC') ?? at)));
+  const text = gapText(g, (at) => formatInstantDay(at, { sentence: true }) ?? at);
   return `${text[0].toUpperCase()}${text.slice(1)}`;
 };
 
@@ -523,7 +523,7 @@ export default function BudgetsTab({
     hasTotal && !noSpending
       ? past
         ? pastMonthNotes(monthName, shownGaps, reasonText)
-        : thisMonthNotes(thisMonth, incomplete, stopped, withoutTransactions, (at) => instantDay(at) ?? at.slice(0, 10))
+        : thisMonthNotes(thisMonth, incomplete, stopped, withoutTransactions, (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10))
       : [];
   // The month's one notice, at the top of the segment: those, and why a
   // carry or the pool may be off.

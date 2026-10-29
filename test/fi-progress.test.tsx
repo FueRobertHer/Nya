@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -12,6 +12,11 @@ import { currencyNote, fiFigures, measuredInputs, planCurrency, savingsRate, tra
 import { trailingFlows, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import type { Txn } from '@/components/MonthBreakdown';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // The FI card on Home: the Plan's own figures, from the same inputs and the
 // same arithmetic (lib/fire/progress.ts), so the two always agree; the
@@ -209,7 +214,7 @@ describe('the FI card on Home', () => {
     // figure has no other note), the rate the transactions measure.
     const savings = figureRow(planTabHtml(p), 'Annual savings');
     expect(text(savings)).toContain('Annual savings Typed by you $5,000');
-    const measured = `Measured from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026) instead, your savings rate is ${rate} of income.`;
+    const measured = `Measured from your last 12 months of transactions (Oct 7, 2025 to Oct 6) instead, your savings rate is ${rate} of income.`;
     expect(levels(closed(savings), measured)).toEqual(['info']);
     const h = home(p);
     expect(h).toContain(rate);
@@ -400,7 +405,7 @@ describe('the FI card on Home', () => {
 
   test('a year that wasn’t a whole year says from when', () => {
     const short = inputs({ flows: { ...flows, from: '2026-07-01', days: 98, scaled: true } });
-    expect(home(plan(), short)).toContain('savings rate, since Jul 1, 2026');
+    expect(home(plan(), short)).toContain('savings rate, since Jul 1');
   });
 });
 

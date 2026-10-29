@@ -62,7 +62,7 @@
 // the finger.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { formatMoney, MINUS, spoken } from '@/lib/format';
+import { formatDay, formatMoney, MINUS, onDay, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -114,12 +114,10 @@ function signed(n: number, currency?: string | null): string {
   return (n < 0 ? MINUS : '+') + formatMoney(Math.abs(n), currency);
 }
 
-function fmtDay(iso: string, withYear = false): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(withYear ? { year: 'numeric' } : {}),
-  });
+/** A day as the readout says it: "Today", "Sep 3", "Sep 3, 2025" outside this
+ *  year (lib/format.ts formatDay); `sentence` for the middle of one. */
+function fmtDay(iso: string, sentence = false): string {
+  return formatDay(iso, { sentence });
 }
 
 const RANGE_TEXT: Record<RangeKey, string> = {
@@ -386,15 +384,16 @@ export default function NetWorthChart({
   const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, basePath, baseStart } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
-  // Dates carry the year once the range crosses one, or "Mar 3" is ambiguous.
-  const withYear = points[0].date.slice(0, 4) !== points[last].date.slice(0, 4);
-  const day = (i: number) => fmtDay(points[i].date, withYear);
+  // Dates carry the year outside this one (formatDay), so "Mar 3" is never
+  // ambiguous; `dayIn` is the same in the middle of a sentence.
+  const day = (i: number) => fmtDay(points[i].date);
+  const dayIn = (i: number) => fmtDay(points[i].date, true);
   // A line drawn solid because none of it is recorded says so in words,
   // true to the days that are: a recorded today, or a few recorded days.
   let estimatedWords = '';
   if (uniform) {
     const recorded = points.flatMap((p, i) => (p.estimated ? [] : [i]));
-    const except = recorded.length === 0 ? '' : recorded.length === 1 ? `, except ${day(recorded[0])}` : `, except ${recorded.length} recorded days`;
+    const except = recorded.length === 0 ? '' : recorded.length === 1 ? `, except ${dayIn(recorded[0])}` : `, except ${recorded.length} recorded days`;
     // Not "from transactions": a day bridged between two others is a
     // straight line across days with no data (lib/history.ts).
     estimatedWords = `Estimated, not recorded${except}.`;
@@ -452,7 +451,7 @@ export default function NetWorthChart({
 
   const info: string[] = [];
   if (baseStart >= 0) {
-    info.push(`Grey line: the balance on ${day(baseStart)} plus money added since. The gap above it is growth.`);
+    info.push(`Grey line: the balance ${onDay(dayIn(baseStart))} plus money added since. The gap above it is growth.`);
   }
   if (uniform) info.push(`${estimatedWords} No stretch of this range is recorded, so the line is solid.`);
   else if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');
@@ -668,7 +667,7 @@ export default function NetWorthChart({
   const said = settled !== null && settled <= last ? settled : last;
   const saidNote = noteOn(said);
   const valueText = spoken(
-    `${formatMoney(vals[said], currency)} on ${day(said)}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
+    `${formatMoney(vals[said], currency)} ${onDay(dayIn(said))}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
   );
 
   return (
@@ -714,7 +713,7 @@ export default function NetWorthChart({
         role="slider"
         tabIndex={0}
         aria-label={spoken(
-          `${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
+          `${label} from ${dayIn(0)} to ${dayIn(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
         )}
         aria-describedby={keysId}
         aria-valuemin={1}
@@ -816,7 +815,7 @@ export default function NetWorthChart({
           {marked.map((m, i) => (
             <li key={m.date}>
               <button type="button" className="chart-note-btn" aria-pressed={active === m.index} onClick={() => chooseNote(i)} onFocus={() => chooseNote(i)}>
-                <span className="chart-note-day">{fmtDay(m.date, withYear)}</span> {m.text}
+                <span className="chart-note-day">{fmtDay(m.date)}</span> {m.text}
               </button>
             </li>
           ))}
@@ -824,7 +823,7 @@ export default function NetWorthChart({
       )}
       <p className="visually-hidden" aria-live="polite">
         {chosenNote !== null && marked[chosenNote] && points[marked[chosenNote].index]
-          ? spoken(`${fmtDay(marked[chosenNote].date, true)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} on ${day(marked[chosenNote].index)}.`)
+          ? spoken(`${fmtDay(marked[chosenNote].date)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} ${onDay(dayIn(marked[chosenNote].index))}.`)
           : ''}
       </p>
 

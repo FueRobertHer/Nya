@@ -14,7 +14,7 @@ import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import FieldError, { amountExample } from './FieldError';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
@@ -28,9 +28,9 @@ import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
 type Mode = 'half' | 'even' | 'amount';
 type Pick = { person: string; amount: string };
 
-/** "Oct 5": a transaction's day as the list shows it. */
-function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+/** "on Oct 5", "today": a transaction's day mid sentence. */
+function onShownDay(iso: string): string {
+  return onDay(formatDay(iso, { sentence: true }));
 }
 
 /** What can be shared of a transaction: the transaction itself, or each part
@@ -173,7 +173,7 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   return (
     <Sheet open title={stored ? 'Who owes what' : 'Share the cost'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {shownName(t)}: <Masked>{formatMoney(target.amount, currency)}</Masked> on {shownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
+        {shownName(t)}: <Masked>{formatMoney(target.amount, currency)}</Masked> {onShownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
         budgets and reports on this day, and theirs is what they owe you. Nya never asks them for it on its own.
       </p>
       {targets.length > 1 && (

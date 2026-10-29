@@ -124,7 +124,7 @@ describe("Upcoming's list", () => {
     const t = text(html);
     // Today: pay that varies and a card's own charge, both listed, neither in the day's figure.
     expect(t).toContain(
-      "Fri, Oct 9 Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18 Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash −$10.99"
+      "Today Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18 Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash −$10.99"
     );
     expect(t).toContain("Mon, Oct 12 Gym Bill · Monthly · On an account of unknown type, not in the day's figure −$45.00");
     expect(t).toContain('Thu, Oct 15 −$1,500.00 Rent Bill · Monthly −$1,500.00');
@@ -163,7 +163,7 @@ describe("Upcoming's list", () => {
 
   test('a late one, and what is in another currency, converted or not', () => {
     // Rent was due on the 15th: expected today, the 17th.
-    expect(text(list({ today: '2026-10-17' }))).toContain('Sat, Oct 17 −$1,500.00 Rent Bill · Monthly · Due Oct 15, not in yet −$1,500.00');
+    expect(text(list({ today: '2026-10-17' }))).toContain('Today −$1,500.00 Rent Bill · Monthly · Due Oct 15, not in yet −$1,500.00');
     const eur = { ...CAR, currency: 'EUR' };
     expect(text(list({ planned: [eur] }))).toContain("Car registration Planned · Once · In EUR, not in the day's figure −€212.50");
     // With a home currency, at the newest rates (1 EUR = 1.1551 USD, test/fx-fixture.ts).
@@ -251,7 +251,8 @@ describe('the calendar, redrawn', () => {
       ],
     });
     const t = text(html);
-    expect(t).toContain('Friday, October 9');
+    // The chosen day's heading: today's is "Today" (lib/format.ts formatDay).
+    expect(t).toContain('Today');
     expect(t).toContain('Posted · −$34.50 Corner shop −$30.00');
     expect(t).toContain("Ramen In JPY, not in the day's figure −¥3,200");
     expect(t).toContain("Work trip Excluded, not in the day's figure −$400.00");
@@ -259,7 +260,7 @@ describe('the calendar, redrawn', () => {
     expect(t).toContain("Expected Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18");
     expect(html).not.toContain('<table');
     expect(html).toContain('<li class="txn-day"><span>Posted · −$34.50</span></li>');
-    expect(html).toContain('<div class="card-header"><h3>Friday, October 9</h3></div>');
+    expect(html).toContain('<div class="card-header"><h3>Today</h3></div>');
     expect(html).toContain('<span class="list-row-value upcoming-amount uncounted">−$400.00</span>');
   });
 

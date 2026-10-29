@@ -30,8 +30,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { CsvMapping, DateOrderQuestion, kindsText, shownReason, type Picked } from './ImportSheet';
 import { Masked } from './HideAmounts';
-import { formatMoney, signedMoney } from '@/lib/format';
-import { instantDay } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, onDay, signedMoney } from '@/lib/format';
 import { isCurrencyCode } from '@/lib/manual-txn-input';
 import { MAX_FILE_BYTES, MAX_IMPORT_ROWS, type FileFormat } from '@/lib/import/record';
 import { decodeFile, detectFormat, FORMAT_NAMES } from '@/lib/import/text';
@@ -156,8 +155,10 @@ type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done';
 
 const NONE = <T,>(): ChoiceSet<T> => ({ each: {} });
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
-const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fmtDay(a) : `${fmtDay(a)} to ${fmtDay(b)}`) : null);
+const fmtDay = (day: string) => formatDay(day);
+/** The same mid sentence: "today", "Sep 3", "Sep 3, 2025". */
+const inDay = (day: string) => formatDay(day, { sentence: true });
+const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? inDay(a) : `${inDay(a)} to ${inDay(b)}`) : null);
 /** As the Activity tab shows an amount: money in signed plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 const wire = <T,>(c: ChoiceSet<T>) => ({ ...(c.all ? { all: c.all } : {}), ...(Object.keys(c.each).length > 0 ? { each: c.each } : {}) });
@@ -170,7 +171,7 @@ const CONFIDENCE_TEXT = { high: 'very likely the same', medium: 'likely the same
 /** Why a proposal is the same transaction only through a posting lag, in
  *  words (lib/history-import/plan.ts Edge). */
 export function edgeText(edge: Edge, bank: string): string {
-  if (edge.kind === 'before-bank') return `${bank} has nothing before ${fmtDay(edge.day)}: the same only if it posted days later`;
+  if (edge.kind === 'before-bank') return `${bank} has nothing before ${inDay(edge.day)}: the same only if it posted days later`;
   if (edge.kind === 'outside-file') return `this file covers ${fmtRange(edge.from, edge.to)}: the same only if dated otherwise in it`;
   return `that import covers ${fmtRange(edge.from, edge.to)}: the same only if dated otherwise in it`;
 }
@@ -550,7 +551,7 @@ export default function HistoryImportSheet({
           {past?.history_pending && <HistoryPendingNote bank={shown.institution_name} />}
           {past?.bank_from && (
             <p className="panel-note">
-              {shown.institution_name}’s own transactions for this connection start on {fmtDay(past.bank_from)}. Export a period that reaches up to that day, or
+              {shown.institution_name}’s own transactions for this connection start {onDay(inDay(past.bank_from))}. Export a period that reaches up to that day, or
               past it, so no days fall between the two.
             </p>
           )}
@@ -560,7 +561,7 @@ export default function HistoryImportSheet({
               transactions.
             </p>
           )}
-          {past?.reach?.reach && <p className="panel-note">The estimated history reaches back to {fmtDay(past.reach.reach)} through what you imported.</p>}
+          {past?.reach?.reach && <p className="panel-note">The estimated history reaches back to {inDay(past.reach.reach)} through what you imported.</p>}
           <div className="sheet-form">
             <label className="field">
               File to import into {name}
@@ -685,7 +686,7 @@ export default function HistoryImportSheet({
               .join(' · ') || 'Every row in the file was read.'}
           </p>
           {done.history.drawn && done.history.reach && (
-            <p className="status-note">{name}’s estimated history now reaches back to {fmtDay(done.history.reach)}, through what you imported.</p>
+            <p className="status-note">{name}’s estimated history now reaches back to {inDay(done.history.reach)}, through what you imported.</p>
           )}
           {done.history.backfill && done.imported > 0 && (
             <p className="panel-note">The estimated history is being worked out again with these transactions: the chart shows them in a moment.</p>
@@ -807,7 +808,7 @@ export function ReviewView({
       </p>
       {r.bank_from ? (
         <p className="panel-note">
-          {r.before_bank > 0 ? `${plural(r.before_bank, 'new transaction')} ${r.before_bank === 1 ? 'is' : 'are'} older than ${bank}’s own (from ${fmtDay(r.bank_from)}): history it never gave.` : `None of the new rows is older than ${bank}’s own (from ${fmtDay(r.bank_from)}).`}
+          {r.before_bank > 0 ? `${plural(r.before_bank, 'new transaction')} ${r.before_bank === 1 ? 'is' : 'are'} older than ${bank}’s own (from ${inDay(r.bank_from)}): history it never gave.` : `None of the new rows is older than ${bank}’s own (from ${inDay(r.bank_from)}).`}
           {r.within_bank > 0 ? ` ${plural(r.within_bank, 'new transaction')} ${r.within_bank === 1 ? 'falls' : 'fall'} in its period, though it has nothing like ${r.within_bank === 1 ? 'it' : 'them'}.` : ''}
         </p>
       ) : (
@@ -939,7 +940,7 @@ export function ReviewView({
                     <div className="import-row-meta">{fmtDay(p.file.date)}</div>
                     <div className="import-row-meta" style={{ marginTop: 6 }}>
                       {p.twin.kind === 'imported'
-                        ? `Imported from ${p.twin.file_name ?? 'an earlier file'}${p.twin.imported_at ? ` on ${instantDay(p.twin.imported_at) ?? p.twin.imported_at.slice(0, 10)}` : ''}`
+                        ? `Imported from ${p.twin.file_name ?? 'an earlier file'}${p.twin.imported_at ? ` ${onDay(formatInstantDay(p.twin.imported_at, { sentence: true }) ?? p.twin.imported_at.slice(0, 10))}` : ''}`
                         : `From ${bank}`}
                     </div>
                     <div className="import-conflict-version">
@@ -1007,7 +1008,7 @@ export function ReviewView({
                     <span className={`import-row-amount${x.file.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(x.file.amount, x.file.currency)}</Masked></span>
                   </div>
                   <div className="import-row-meta">
-                    {fmtDay(x.file.date)} · already imported: {x.stored.name}, {fmtDay(x.stored.date)}, <Masked>{fmtAmount(x.stored.amount, x.stored.currency)}</Masked>
+                    {fmtDay(x.file.date)} · already imported: {x.stored.name}, {inDay(x.stored.date)}, <Masked>{fmtAmount(x.stored.amount, x.stored.currency)}</Masked>
                     {(conflicts.each[String(x.index)] ?? conflicts.all ?? x.suggested) === null ? ' · choose one' : ''}
                   </div>
                   <div className="import-choices" role="group" aria-label={`What to do with ${x.file.name}`}>
@@ -1148,7 +1149,7 @@ function PastHistoryImports({
               </div>
               <div className="import-row-meta">
                 {[
-                  i.imported_at ? `Imported ${instantDay(i.imported_at) ?? i.imported_at.slice(0, 10)}` : null,
+                  i.imported_at ? `Imported ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}` : null,
                   i.counts ? `${plural(i.counts.imported, 'transaction')} added` : null,
                   i.covers ? `covers ${fmtRange(i.covers.from, i.covers.to)}` : fmtRange(i.first_date, i.last_date),
                 ]

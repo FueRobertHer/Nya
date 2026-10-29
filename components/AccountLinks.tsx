@@ -25,7 +25,7 @@
 import type { CarriedEnd } from '@/lib/link-ends';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
-import { formatMoney, plainNumber } from '@/lib/format';
+import { formatDay, formatMoney, onDay, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
 import { ACCOUNT_LINKS_TITLE } from './attention';
@@ -98,7 +98,7 @@ type Payload = AccountLinksPayload;
 export function carriedEndNote(ends: readonly CarriedEnd[] | undefined, old: string, to: string, toLabel: string): string | null {
   const e = ends?.find((x) => x.old === old && x.to === to);
   if (!e) return null;
-  const how = e.state === 'closed' ? `closed on ${fmtDay(e.day)}` : e.state === 'left' ? `was no longer yours from ${fmtDay(e.day)}` : `wasn’t followed from ${fmtDay(e.day)}`;
+  const how = e.state === 'closed' ? `closed ${onDay(fmtDay(e.day))}` : e.state === 'left' ? `was no longer yours from ${fmtDay(e.day)}` : `wasn’t followed from ${fmtDay(e.day)}`;
   return `The earlier account ${how}, and an end follows an account across a link: linked, ${toLabel} counts in nothing from that day either. To keep it counting, reopen it under Accounts that ended once it is linked.`;
 }
 
@@ -123,9 +123,10 @@ export function forgottenNotice(body: { unreadable_days?: unknown; damaged_holdi
   return `Forgotten. ${what.charAt(0).toUpperCase()}${what.slice(1)} ${one ? 'is' : 'are'} damaged and can't be read, so ${them} left as ${them}.`;
 }
 
+/** A calendar day mid sentence: "today", "Oct 5", "Oct 5, 2025". */
 function fmtDay(iso: string | null): string {
   if (!iso) return 'unknown';
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 export default function AccountLinks({
@@ -315,8 +316,8 @@ export function AccountLinksView({
       {data.suggestions.map((s) => (
         <div key={`${s.old}>${s.to}`} className="account-link-row">
           <p>
-            <strong>{s.old_label}</strong> stopped reporting on {fmtDay(s.evidence.old_last)}, and{' '}
-            <strong>{s.to_label}</strong> appeared on {fmtDay(s.evidence.new_first)}. Same account?
+            <strong>{s.old_label}</strong> stopped reporting {onDay(fmtDay(s.evidence.old_last))}, and{' '}
+            <strong>{s.to_label}</strong> appeared {onDay(fmtDay(s.evidence.new_first))}. Same account?
           </p>
           <p className="chart-note">
             {s.evidence.persistent_match ? 'Plaid identifies them as the same account. ' : ''}

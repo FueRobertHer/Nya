@@ -16,11 +16,13 @@ import { Sheet } from './Sheet';
 import { Why } from './Why';
 import { CAUTION, LevelWord } from './ConnectionStatus';
 import { localDate } from '@/lib/local-date';
+import { formatDay } from '@/lib/format';
 
 export type TimelineNote = { id: string; date: string; text: string; kind: 'auto' | 'user'; account_id?: string };
 
-/** "Mar 12, 2025": a calendar day, read at local midnight. */
-const dayText = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** "Today", "Mar 12", "Mar 12, 2025": a calendar day, read at local midnight
+ *  (lib/format.ts formatDay); `sentence` for the middle of one. */
+const dayText = (iso: string, sentence = false) => formatDay(iso, { sentence });
 
 /** The notes, read again whenever `refreshKey` changes (a reload). */
 export function useTimelineNotes(refreshKey: unknown) {
@@ -207,7 +209,7 @@ export function TimelineNotesSheet({
         }
       >
         <div className="stack">
-          <p>{`Delete "${stored.text}" from ${dayText(stored.date)}? This can’t be undone.`}</p>
+          <p>{`Delete "${stored.text}" from ${dayText(stored.date, true)}? This can’t be undone.`}</p>
           {error && <div className="error">{error}</div>}
         </div>
       </Sheet>

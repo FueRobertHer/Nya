@@ -114,6 +114,7 @@ import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import { accruedCaveats } from './AccruedInterestNote';
 import NetWorthCard, { HeroDelta } from './NetWorthCard';
 import { allHiddenCaveats, type Caveat } from './TotalCaveats';
+import { useOfflineCaveats } from './online';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
@@ -2200,7 +2201,11 @@ export default function Dashboard({
   // (lib/accounts-status.ts); the student loans' accrued interest it leaves
   // out or couldn't read; and its currency. Built while rendering, not in a
   // memo, so hide amounts masks the figures in them at once.
+  // Offline (navigator.onLine): the numbers shown are the last ones loaded,
+  // and the total says from when (components/online.ts).
+  const offlineCaveats = useOfflineCaveats(asOf);
   const homeCaveats: Caveat[] = [
+    ...offlineCaveats,
     ...totalCaveats(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }, restoreHold, severityOf).map((n) => ({
       key: n.text,
       severity: n.severity,

@@ -33,8 +33,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
-import { formatMoney } from '@/lib/format';
-import { instantDay } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, onDay } from '@/lib/format';
 import type { ConnectionView, FetchView, OfferView, AccountView } from '@/lib/connectors/view';
 import type { OwedSign } from '@/lib/connectors/store';
 import { CONNECTOR_WORDS, type ConnectorKind } from '@/lib/connectors/types';
@@ -102,7 +101,7 @@ async function send(path: string, method: string, body?: unknown): Promise<{ ok:
   }
 }
 
-const dayOf = (iso: string | null | undefined) => (iso ? (instantDay(iso) ?? iso.slice(0, 10)) : null);
+const dayOf = (iso: string | null | undefined) => (iso ? (formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10)) : null);
 
 /** A balance as its service reported it, its sign said in words: "-$432.10,
  *  owed" or "+$500.00, held". Never "what you owe" before that is known. */
@@ -144,8 +143,8 @@ export function nothingToKeep(list: string[] | undefined): string {
   const one = list.length === 1;
   return ` Deleted ${names(list)}: no balance had come for ${one ? 'it' : 'them'} yet, so there was nothing to keep.`;
 }
-/** "Sep 12" from a YYYY-MM-DD, at local midnight. */
-const calendarDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** "Sep 12" from a YYYY-MM-DD, at local midnight, mid sentence ("today"). */
+const calendarDay = (day: string) => formatDay(day, { sentence: true });
 
 // ---- The card on the Accounts tab ----
 
@@ -450,7 +449,7 @@ export function ChooseView({
                     {o.balance !== undefined && o.currency && (
                       <div className="type-tag">
                         <Masked>{reportedWords(o.balance, o.currency)}</Masked>
-                        {o.balance_at ? ` on ${dayOf(o.balance_at)}` : ''}
+                        {o.balance_at ? ` ${onDay(dayOf(o.balance_at)!)}` : ''}
                       </div>
                     )}
                     {!o.currency && <div className="type-tag">In a currency Nya doesn’t know ({o.currency_text.slice(0, 40)}): can’t be tracked</div>}

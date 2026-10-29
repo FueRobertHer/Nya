@@ -1,9 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthChart from '@/components/NetWorthChart';
 import { DrawnWidth, MIN_LABEL_GAP, labelWidth } from '@/components/drawn-width';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 type P = { date: string; value: number; estimated?: boolean };
 
@@ -330,7 +335,7 @@ describe('NetWorthChart estimated throughout', () => {
     const points = days(20, () => true);
     expect(runs(points)).toEqual(['solid']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
-    expect(readDate(html)).toBe('Since Sep 1, 2026 · estimated');
+    expect(readDate(html)).toBe('Since Sep 1 · estimated');
     expect(label(html)).toContain('Estimated, not recorded.');
     expect(html).toContain('Estimated, not recorded. No stretch of this range is recorded, so the line is solid.');
     expect(html).not.toContain('Dashed: estimated');
@@ -340,7 +345,7 @@ describe('NetWorthChart estimated throughout', () => {
     const points = days(20, (i) => i < 19);
     expect(runs(points)).toEqual(['solid']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
-    expect(readDate(html)).toBe('Since Sep 1, 2026 · estimated');
+    expect(readDate(html)).toBe('Since Sep 1 · estimated');
     expect(label(html)).toContain('Estimated, not recorded, except Sep 20.');
   });
 
@@ -348,14 +353,14 @@ describe('NetWorthChart estimated throughout', () => {
     const points = days(20, (i) => i < 10);
     expect(runs(points)).toEqual(['dashed', 'solid']);
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
-    expect(readDate(html)).toBe('Since Sep 1, 2026');
+    expect(readDate(html)).toBe('Since Sep 1');
     expect(html).not.toContain('Estimated, not recorded');
     expect(html).toContain('Dashed: estimated');
   });
 
   test('every day recorded: solid, and nothing says estimated', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={days(20, () => false)} />);
-    expect(readDate(html)).toBe('Since Sep 1, 2026');
+    expect(readDate(html)).toBe('Since Sep 1');
     expect(html).not.toContain('stimated');
   });
 

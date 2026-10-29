@@ -71,7 +71,7 @@ export function downloadReminder(zipAt: string | null, files: number, now: Date 
   const one = 'This copy of Nya keeps one copy of each file, so download them to keep your own.';
   if (!zipAt) return { text: `${one} You haven’t downloaded them yet.`, ask: true };
   const days = Math.floor((now.getTime() - Date.parse(zipAt)) / 86_400_000);
-  return { text: `${one} Last downloaded ${shortDay(zipAt.slice(0, 10))}.`, ask: days >= REMIND_DAYS };
+  return { text: `${one} Last downloaded ${shortDay(zipAt, { sentence: true, now })}.`, ask: days >= REMIND_DAYS };
 }
 
 // ---- The ZIP files ----
