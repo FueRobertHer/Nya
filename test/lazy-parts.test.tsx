@@ -17,10 +17,11 @@ const { act, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { lazyPart, onPartShown, useLazyPart, PartBoundary, PartUnavailable } = await import('@/components/lazy-part');
+const { lazyPart, onPartShown, preloadParts, useLazyPart, PartBoundary, PartUnavailable } = await import('@/components/lazy-part');
 const { LazySheet, SLOW_MS } = await import('@/components/LazySheets');
 const { default: BudgetsTabLoader, BudgetsUnavailable } = await import('@/components/BudgetsTabLoader');
-const { CardUnavailable, ApiTokens } = await import('@/components/SettingsCardsLoader');
+const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
+const { ThemeCard: RealThemeCard } = await import('@/components/ThemeCard');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -149,6 +150,44 @@ describe('a part', () => {
     m.unmount();
   });
 
+  test('every place a part is drawn has it once one of them tried again', async () => {
+    const c = controlled<{ word: string }>();
+    function Card({ id }: { id: string }) {
+      const { mod, failed, retry } = useLazyPart(c.part);
+      if (mod) return <p>{`${id} ${mod.word}`}</p>;
+      if (failed) return <button onClick={retry}>{`Try again ${id}`}</button>;
+      return <p>{`${id} waiting`}</p>;
+    }
+    const m = mount(
+      <div>
+        <Card id="a" />
+        <Card id="b" />
+      </div>
+    );
+    await c.fail();
+    expect(m.host.textContent).toBe('Try again aTry again b');
+    act(() => click(button(m.host, 'Try again a')!));
+    await c.arrive({ word: 'here' });
+    expect(m.host.textContent).toBe('a hereb here');
+    m.unmount();
+  });
+
+  test('the background fetch takes the parts in turn, past one that fails, once per page', async () => {
+    const order: string[] = [];
+    const part = (name: string, ok = true) =>
+      lazyPart(() => {
+        order.push(name);
+        return ok ? Promise.resolve(name) : Promise.reject(new Error('chunk failed'));
+      });
+    const first = part('budgets');
+    preloadParts([first, part('cards', false), part('sheets')]);
+    preloadParts([part('again')]);
+    expect(order).toEqual([]);
+    await settle(3500);
+    expect(order).toEqual(['budgets', 'cards', 'sheets']);
+    expect(first.loaded()).toBe('budgets');
+  });
+
   test('a part that stops while it runs says so in its place, and starts afresh on Try again', () => {
     let broken = true;
     function Fragile() {
@@ -197,11 +236,20 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
     expect(html).toContain('class="card stack"');
   });
 
+  test('a card that often draws nothing draws nothing until its code is in', () => {
+    expect(renderToStaticMarkup(<RestoreCard clerk={false} />)).toBe('');
+  });
+
+  test('once its code is in, a card is the card itself', async () => {
+    await settingsCardsPart.load();
+    expect(renderToStaticMarkup(<ThemeCard />)).toBe(renderToStaticMarkup(<RealThemeCard />));
+  });
+
   test('a failure keeps the rest working', () => {
     expect(text(renderToStaticMarkup(<BudgetsUnavailable reason="load" onRetry={noop} />))).toContain(
       "The Budgets tab couldn't be loaded. It needs a connection the first time it opens after an update. The other tabs work as before."
     );
-    expect(text(renderToStaticMarkup(<CardUnavailable reason="crash" onRetry={noop} />))).toContain('This card ran into a problem and stopped. The rest of Settings works as before.');
+    expect(text(renderToStaticMarkup(<CardUnavailable reason="crash" onRetry={noop} />))).toContain('This card ran into a problem and stopped. The rest of the app works as before.');
   });
 });
 

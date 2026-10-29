@@ -5,7 +5,9 @@
 // (components/lazy-part.tsx). Settings opens at once, its list and its
 // bar with it; a card's rows are still to come for the moment its code takes.
 // If the code can't be loaded, or a card stops while it runs, that card says
-// so and the rest of Settings works as before.
+// so and the rest works as before. A card that often draws nothing (Restore
+// on Home's first screen among them) draws nothing until its code is in, and
+// nothing if it can't be loaded, rather than a card that then goes away.
 
 import type { ComponentProps, ComponentType } from 'react';
 import { CardSkeleton } from './LoadingSkeletons';
@@ -19,12 +21,13 @@ export const settingsCardsPart = lazyPart(() => import('./settings-cards'));
 export function CardUnavailable({ reason, onRetry }: { reason: 'load' | 'crash'; onRetry: () => void }) {
   return (
     <section className="card">
-      <PartUnavailable what="This card" after="The rest of Settings works as before." reason={reason} onRetry={onRetry} />
+      <PartUnavailable what="This card" after="The rest of the app works as before." reason={reason} onRetry={onRetry} />
     </section>
   );
 }
 
-function settingsCard<K extends keyof Cards>(name: K) {
+/** `quiet`: for a card that often draws nothing at all. */
+function settingsCard<K extends keyof Cards>(name: K, { quiet = false } = {}) {
   type Props = ComponentProps<Cards[K]>;
   function Card(props: Props) {
     const { mod, failed, retry } = useLazyPart(settingsCardsPart);
@@ -38,6 +41,7 @@ function settingsCard<K extends keyof Cards>(name: K) {
         </PartBoundary>
       );
     }
+    if (quiet) return null;
     if (failed) return <CardUnavailable reason="load" onRetry={retry} />;
     return <CardSkeleton label="Loading" />;
   }
@@ -45,14 +49,14 @@ function settingsCard<K extends keyof Cards>(name: K) {
   return Card;
 }
 
-export const AccountLinks = settingsCard('AccountLinks');
-export const AdminUnusedItems = settingsCard('AdminUnusedItems');
+export const AccountLinks = settingsCard('AccountLinks', { quiet: true });
+export const AdminUnusedItems = settingsCard('AdminUnusedItems', { quiet: true });
 export const ApiTokens = settingsCard('ApiTokens');
 export const CategoriesCard = settingsCard('CategoriesCard');
 export const CurrencyCard = settingsCard('CurrencyCard');
-export const DemoDataCard = settingsCard('DemoDataCard');
+export const DemoDataCard = settingsCard('DemoDataCard', { quiet: true });
 export const ReceiptsCard = settingsCard('ReceiptsCard');
-export const RestoreCard = settingsCard('RestoreCard');
+export const RestoreCard = settingsCard('RestoreCard', { quiet: true });
 export const ReviewSettingsCard = settingsCard('ReviewSettingsCard');
 export const RulesCard = settingsCard('RulesCard');
 export const TagsCard = settingsCard('TagsCard');

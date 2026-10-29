@@ -25,21 +25,34 @@ export type LazyPart<M> = {
   load: () => Promise<M>;
   /** The module, once it has arrived. */
   loaded: () => M | null;
+  /** Calls `listener` when the module arrives, whoever asked for it: so
+   *  every place a part is drawn (Settings' cards share one) has it once one
+   *  of them tried again. Returns how to stop. */
+  onArrival: (listener: (mod: M) => void) => () => void;
 };
 
 export function lazyPart<M>(importer: () => Promise<M>): LazyPart<M> {
   let mod: M | null = null;
   let loading: Promise<M> | null = null;
+  const waiting = new Set<(mod: M) => void>();
   return {
     load: () =>
       (loading ??= importer().then(
-        (m) => (mod = m),
+        (m) => {
+          mod = m;
+          for (const listener of waiting) listener(m);
+          return m;
+        },
         (err) => {
           loading = null;
           throw err;
         }
       )),
     loaded: () => mod,
+    onArrival: (listener) => {
+      waiting.add(listener);
+      return () => void waiting.delete(listener);
+    },
   };
 }
 
@@ -54,23 +67,30 @@ export function onPartShown(listener: () => void): () => void {
   return () => void shown.delete(listener);
 }
 
-/** The part's module once `wanted`: at once if it has arrived already, so a
- *  part opened again draws in the same render. `retry` after a failed load. */
+/** The part's module once `wanted`: at once if it has arrived already (a
+ *  part opened again, or fetched in the background since this one was
+ *  drawn), so it draws in the same render. `retry` after a failed load. */
 export function useLazyPart<M>(part: LazyPart<M>, wanted = true): { mod: M | null; failed: boolean; retry: () => void } {
-  const [mod, setMod] = useState<M | null>(() => part.loaded());
+  const [arrivedMod, setMod] = useState<M | null>(() => part.loaded());
+  const mod = wanted ? (arrivedMod ?? part.loaded()) : null;
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    // Here when it arrives, from this load or another place's.
+    const stop = part.onArrival((m) => {
+      setMod(m);
+      setFailed(false);
+    });
+    const now = part.loaded();
+    if (now) setMod(now);
+    return stop;
+  }, [part]);
+  useEffect(() => {
     if (mod || !wanted) return;
     let live = true;
-    part.load().then(
-      (m) => {
-        if (live) setMod(m);
-      },
-      () => {
-        if (live) setFailed(true);
-      }
-    );
+    part.load().catch(() => {
+      if (live) setFailed(true);
+    });
     return () => {
       live = false;
     };
@@ -85,7 +105,7 @@ export function useLazyPart<M>(part: LazyPart<M>, wanted = true): { mod: M | nul
     setFailed(false);
     setAttempt((n) => n + 1);
   }, []);
-  return { mod, failed, retry };
+  return { mod, failed: failed && !mod, retry };
 }
 
 let preloading = false;

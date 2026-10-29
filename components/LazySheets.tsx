@@ -91,7 +91,7 @@ export function ImportSheet(props: ImportSheetProps) {
 type HistoryImportSheetProps = ComponentProps<typeof import('./HistoryImportSheet').default>;
 export function HistoryImportSheet(props: HistoryImportSheetProps) {
   return (
-    <LazySheet part={historyImportSheetPart} open={!!props.target} title="Import history" onClose={props.onClose}>
+    <LazySheet part={historyImportSheetPart} open={!!props.target} title={`Import ${props.target?.name ?? 'the account'}’s history`} onClose={props.onClose}>
       {(m) => <m.default {...props} />}
     </LazySheet>
   );
