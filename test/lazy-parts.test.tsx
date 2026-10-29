@@ -20,7 +20,7 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { lazyPart, onPartShown, preloadParts, useLazyPart, PartBoundary, PartUnavailable } = await import('@/components/lazy-part');
 const { LazySheet, SLOW_MS } = await import('@/components/LazySheets');
 const { default: BudgetsTabLoader, BudgetsUnavailable } = await import('@/components/BudgetsTabLoader');
-const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
+const { CardUnavailable, ApiTokens, RestoreCard, ThemeCard, settingsCard, settingsCardsPart } = await import('@/components/SettingsCardsLoader');
 const { ThemeCard: RealThemeCard } = await import('@/components/ThemeCard');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -183,7 +183,10 @@ describe('a part', () => {
     preloadParts([first, part('cards', false), part('sheets')]);
     preloadParts([part('again')]);
     expect(order).toEqual([]);
-    await settle(3500);
+    // One at a time: the next waits for the browser to be idle again.
+    await settle(1500);
+    expect(order).toEqual(['budgets']);
+    await settle(2000);
     expect(order).toEqual(['budgets', 'cards', 'sheets']);
     expect(first.loaded()).toBe('budgets');
   });
@@ -238,6 +241,24 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
 
   test('a card that often draws nothing draws nothing until its code is in', () => {
     expect(renderToStaticMarkup(<RestoreCard clerk={false} />)).toBe('');
+  });
+
+  test("when the code can't be loaded, a quiet card says so, and one most people never see stays away", async () => {
+    type Cards = typeof import('@/components/settings-cards');
+    const c = controlled<Cards>();
+    const Restore = settingsCard('RestoreCard', { quiet: true }, c.part);
+    const Demo = settingsCard('DemoDataCard', { rare: true }, c.part);
+    const m = mount(
+      <div>
+        <Restore clerk={false} />
+        <Demo onChanged={noop} />
+      </div>
+    );
+    expect(m.host.textContent).toBe('');
+    await c.fail();
+    expect(m.host.textContent).toContain("This card couldn't be loaded.");
+    expect(m.host.textContent.match(/couldn't be loaded/g)).toHaveLength(1);
+    m.unmount();
   });
 
   test('once its code is in, a card is the card itself', async () => {
@@ -304,6 +325,20 @@ describe('a sheet loaded on demand', () => {
     expect(body.textContent).toContain("This couldn't be loaded. It needs a connection the first time it opens after an update. The rest of the app works as before.");
     act(() => click(button(body, 'Try again')!));
     expect(c.calls()).toBe(2);
+    await c.arrive({ default: RealSheet });
+    expect(m.host.textContent).toContain('open');
+    m.unmount();
+  });
+
+  test('opened again after its code failed, it tries again rather than say so at once', async () => {
+    const c = controlled<Mod>();
+    const m = mount(sheet(c.part, true));
+    await c.fail();
+    m.render(sheet(c.part, false));
+    expect(c.calls()).toBe(1);
+    m.render(sheet(c.part, true));
+    expect(c.calls()).toBe(2);
+    expect(dom.document.body.textContent).not.toContain("couldn't be loaded");
     await c.arrive({ default: RealSheet });
     expect(m.host.textContent).toContain('open');
     m.unmount();
