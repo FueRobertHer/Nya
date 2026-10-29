@@ -8119,13 +8119,6 @@ button.review-keys-toggle {
   margin-top: 12px;
 }
 
-.plan-event-kinds {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
 .plan-choice-row {
   display: flex;
   gap: 16px;

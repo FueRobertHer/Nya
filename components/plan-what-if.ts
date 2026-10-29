@@ -119,12 +119,28 @@ export function lifeChoiceText(when: FiWhen, plan: FiWhen): string {
   }
 }
 
-/** What a template's draft does, said in its sheet as it is typed: null
- *  while the form can't be saved (`missing`: a field is empty, else one is
- *  out of range). Part-time work counts from the stop age, never in the FI
- *  date: when it leaves the age where it is, it says why. */
-export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kind: LifeEventKind | null = null, missing = true): string {
+/** A scenario's row in the card: its FI age, and how many life events it
+ *  holds once it holds more than one ("FI around 47, 5 years sooner (3 life
+ *  events)"), so a stack reads as one. */
+export function scenarioRowText(events: number, when: FiWhen, plan: FiWhen): string {
+  const fi = lifeChoiceText(when, plan);
+  return events > 1 ? `${fi} (${events} life events)` : fi;
+}
+
+/** A scenario's life events with a draft in them: in place of the one it
+ *  edits (the same id), else added at the end. */
+export function withDraft(events: readonly LifeEvent[], draft: LifeEvent): LifeEvent[] {
+  return events.some((e) => e.id === draft.id) ? events.map((e) => (e.id === draft.id ? draft : e)) : [...events, draft];
+}
+
+/** What a draft does, said in its sheet as it is typed: null while the form
+ *  can't be saved (`missing`: a field is empty, else one is out of range).
+ *  On your plan (`what-if`) against your plan; in an open scenario against
+ *  that scenario as it is now. Part-time work counts from the stop age,
+ *  never in the FI date: when it leaves the age where it is, it says why. */
+export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kind: LifeEventKind | null = null, missing = true, where: 'what-if' | 'scenario' = 'what-if'): string {
   if (when === null) return missing ? 'Fill in the figures to see how it moves your FI age.' : 'Once the figures are in range, this says how they move your FI age.';
+  if (where === 'scenario') return scenarioPreviewText(when, plan, money, kind);
   if (when.kind === 'age' && plan.kind === 'age') {
     if (when.age !== plan.age) return `In this what-if, FI moves from around ${plan.age} to around ${when.age} (${moveText(when.age, plan.age)}).`;
     return kind === 'part-time'
@@ -137,4 +153,30 @@ export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kin
   }
   if (when.kind === 'not-run') return 'In this what-if, the figures can’t be worked out: its lasting change takes your spending in retirement below zero.';
   return `In this what-if: ${lifeChoiceText(when, plan)}.`;
+}
+
+/** The same, in an open scenario: `now` is the scenario as it is, so the
+ *  move is this event's alone, among the others it holds. */
+function scenarioPreviewText(when: FiWhen, now: FiWhen, money: Money, kind: LifeEventKind | null): string {
+  switch (when.kind) {
+    case 'age':
+      if (now.kind !== 'age') return `In this scenario, FI comes around ${when.age}.`;
+      if (when.age !== now.age) return `In this scenario, FI moves from around ${now.age} to around ${when.age} (${moveText(when.age, now.age)}).`;
+      return kind === 'part-time'
+        ? `In this scenario, FI stays around ${now.age}: part-time work counts from the stop age on, in Will it last?, not in when you reach FI.`
+        : `In this scenario, FI stays around ${now.age}.`;
+    case 'now':
+      return 'In this scenario, you’re at FI.';
+    case 'never':
+      return 'In this scenario, FI isn’t reached at this savings rate.';
+    case 'short': {
+      if (!when.figures.short) return 'In this scenario: No FI age worked out.';
+      const why = shortText(when.figures.short, when.figures.plan.age, money);
+      return `In this scenario, ${why.charAt(0).toLowerCase()}${why.slice(1)}`;
+    }
+    case 'not-run':
+      return 'In this scenario, the figures can’t be worked out: a lasting change takes spending in retirement below zero.';
+    default:
+      return `In this scenario: ${lifeChoiceText(when, now)}.`;
+  }
 }
