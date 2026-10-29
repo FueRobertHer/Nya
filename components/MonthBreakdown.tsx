@@ -26,13 +26,13 @@ import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
 import MonthFigures from "./MonthFigures";
-import { amountSamples, compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { formatDay, formatInstantDay, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
 import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
-import { instantDay, localDate, localMonth } from "@/lib/local-date";
+import { localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { importedRowsNote } from "@/lib/history-import/view";
@@ -63,6 +63,7 @@ import { provenanceWords, rowAccountNames, unsureCategory } from "./txn-words";
 import { shownName } from "@/lib/merchant-name";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 import { activityMonth, activityOpensOn, writeMonth, type ViewMonth } from "./view-month-state";
+import { Notice } from './TotalCaveats';
 
 // What a row and its sheet say of a transaction (components/txn-words.ts),
 // re-exported for code that imported them from here.
@@ -202,17 +203,19 @@ export function emptyListWords(on: { query: boolean; tag: boolean; review: boole
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
-// Compact, signed, for the net-bar value labels: +$1.2K / -$340.
-function fmtCompactSigned(n: number, currency: string | null): string {
-  return `${n < 0 ? "-" : "+"}${compactMoney(Math.abs(n), currency)}`;
+// Signed and in full, for the net-bar value labels: +$1,240.50 / −$340.00,
+// never abbreviated (design-system.md, numbers). Zero has its plus, as a
+// bar's label always had a sign.
+function fmtNetSigned(n: number, currency: string | null): string {
+  return signedMoney(n, currency, { always: true });
 }
 
-// How wide Net by month's columns are, in px: the widest a month's figure
-// can be in `currency` at its 12px (lib/format.ts amountSamples), so no
-// figure widens its own column, and never under a finger's 42. From the
-// currency alone, so hiding amounts changes nothing.
-function trendColumn(currency: string | null): number {
-  const widest = Math.max(...amountSamples(currency).map((s) => textWidth(`+${s}`, 12)));
+// How wide Net by month's columns are, in px: the widest label drawn at its
+// 12px, so every column is as wide as the widest, and never under a finger's
+// 42. What is drawn: while amounts are hidden every label is the same mask,
+// so the columns say nothing of how large a hidden figure is.
+function trendColumn(nets: readonly number[], currency: string | null): number {
+  const widest = Math.max(0, ...nets.map((n) => textWidth(fmtNetSigned(n, currency), 12)));
   return Math.max(42, Math.ceil(widest) + 4);
 }
 
@@ -235,11 +238,9 @@ function fmtDayNet(nets: Map<string | null, number>, currency: string | null): s
     .join(" · ");
 }
 
+// A day's heading: "Today", "Yesterday", "Aug 7", "Aug 7, 2025" (lib/format.ts formatDay).
 function fmtTxnDate(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+  return formatDay(iso);
 }
 
 /** The bar's month, in full: "October 2026". */
@@ -880,7 +881,7 @@ export default function MonthBreakdown({
   const uncategorized = uncategorizedNote(uncategorizedFromConnector(monthTxns), uncategorizedFrom(monthTxns));
   const gapNotes = selected
     ? [
-        ...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)),
+        ...monthGapNotes(selected, incomplete, stopped, (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10)),
         // Not a bank whose files cover the month in its place (#52), as a
         // report and budget rollover count it.
         ...missingMonthNotes(withoutTransactions, selected),
@@ -896,7 +897,7 @@ export default function MonthBreakdown({
   const spendingGaps =
     onSpending && !taxonomy
       ? period
-        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) })
+        ? periodGapNotes({ period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10) })
         : notes
       : [];
   const caption = period ? periodCaption(period, today) : "";
@@ -1002,7 +1003,7 @@ export default function MonthBreakdown({
                   <div className="inst-name">Net by month</div>
                   <div className="inst-total">tap a month to end on it</div>
                 </div>
-                <div className="trend-row" ref={trendRef} style={{ "--trend-col": `${trendColumn(currency)}px` } as CSSProperties}>
+                <div className="trend-row" ref={trendRef} style={{ "--trend-col": `${trendColumn(trend.map((t) => t.net), currency)}px` } as CSSProperties}>
                   {(() => {
                     const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
                     return trend.map(({ month: m, net }) => (
@@ -1014,7 +1015,7 @@ export default function MonthBreakdown({
                         aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
                       >
                         <span className="trend-val">
-                          <Masked>{fmtCompactSigned(net, currency)}</Masked>
+                          <Masked>{fmtNetSigned(net, currency)}</Masked>
                         </span>
                         <span
                           className={`trend-bar${net >= 0 ? " up" : " down"}`}
@@ -1226,8 +1227,16 @@ export default function MonthBreakdown({
               {/* The review queue, while it is on: its count, Card Mode and approving what's listed (its filter is the To review chip, and the N key). */}
               {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
 
-              {actionError && <div className="error">{actionError}</div>}
-              {splitError && <div className="error">{splitError}</div>}
+              {actionError && (
+                <Notice level="critical" role="alert">
+                  {actionError}
+                </Notice>
+              )}
+              {splitError && (
+                <Notice level="critical" role="alert">
+                  {splitError}
+                </Notice>
+              )}
               {visible.length === 0 ? (
                 <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, unsure: unsureOnly, receipt: byReceipt, pick: !!flowPick })}</p>
               ) : (
@@ -1333,11 +1342,17 @@ export default function MonthBreakdown({
                 </ul>
               )}
 
-              {[...new Set([...notes, ...asideNotes])].map((n) => (
-                <div className="error" key={n}>
-                  {n}
+              {notes.length + asideNotes.length > 0 && (
+                <div className="stack tight">
+                  {/* What the list may be missing: there as the list loads, so read
+                      in place, never announced. */}
+                  {[...new Set([...notes, ...asideNotes])].map((n) => (
+                    <Notice key={n} level="critical">
+                      {n}
+                    </Notice>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           </>
         )

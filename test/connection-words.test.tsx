@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import InstitutionCard from '@/components/InstitutionCard';
 import { ConnectionDetailsBody } from '@/components/ConnectionDetails';
@@ -16,7 +16,13 @@ import before from './connection-words-before-3b.json';
 // answered, its history) is in Connection details. One word was changed on
 // purpose since: the account sheet's button the missing-account warning
 // names is "Mark as closed…" (it read "Close…", beside the sheet's own
-// Close), so the record names it as the button now reads.
+// Close), so the record names it as the button now reads. And the dates
+// follow the design system's (lib/format.ts formatDay): a day of this year
+// without its year, one of another year with it, so the record says them so,
+// on a today held still.
+
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 const noop = () => {};
 const text = (html: string) =>
@@ -104,7 +110,7 @@ describe('one color, each action once', () => {
     };
     expect(buttonsOf('plaid login')).toContain('Reconnect');
     expect(buttonsOf('plaid consent_ending')).toEqual(['Reconnect']);
-    expect(buttonsOf('plaid revoked, recovered')).toContain('Remove Chase');
+    expect(buttonsOf('plaid revoked, recovered')).toContain('Disconnect Chase');
     expect(buttonsOf('plaid vanished')).toContain('Add or remove accounts');
     expect(buttonsOf('connector refused')).toContain('Connect again');
     expect(buttonsOf('connector sign')).toContain('Answer');

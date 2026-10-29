@@ -62,7 +62,7 @@ describe('the list', () => {
   test('each change: a sentence, its token and how it came, and Undo and Forget', () => {
     const html = view({ list: ready([change()]) });
     const t = text(html);
-    expect(t).toContain('Added Corner café, -$4.50 on Oct 20.');
+    expect(t).toContain('Added Corner café, −$4.50 on Oct 20.');
     expect(t).toContain('Importer through the API');
     expect(html.match(/>Undo<\/button>/g)).toHaveLength(1);
     expect(html.match(/>Forget<\/button>/g)).toHaveLength(1);
@@ -104,11 +104,11 @@ describe('the list', () => {
     expect(cannotUndo(change({ op: 'undo' }))).toBe('An undo isn’t undone: make the change again.');
   });
 
-  test('a change that can’t be read can be removed; one from another version is only named; older ones load on asking', () => {
+  test('a change that can’t be read can be deleted; one from another version is only named; older ones load on asking', () => {
     const html = view({ list: ready([], { unreadable: ['20261020.0123456789abcdef.bbbbbbbbbbbb'], unrecognised: ['x'], next: 'abc' }) });
     const t = text(html);
     expect(t).toContain('A change couldn’t be read, so it can’t be undone.');
-    expect(html).toContain('Remove it');
+    expect(html).toContain('Delete it');
     expect(t).toContain('A change was recorded by another version of Nya');
     expect(html).toContain('Show older changes');
   });
@@ -142,12 +142,12 @@ describe('sentences', () => {
     );
     const row = { id: 'manual-txn:1', name: 'Market', amount: 25, currency: 'USD', date: '2026-10-19', note: 'apples' };
     expect(changeSentence(change({ op: 'transaction.update', before: { row, said: null }, after: { row: { ...row, amount: 30, note: null }, said: null } }))).toBe(
-      'Changed Market, -$25.00 on Oct 19: its amount from -$25.00 to -$30.00, its note taken off.'
+      'Changed Market, −$25.00 on Oct 19: its amount from −$25.00 to −$30.00, its note taken off.'
     );
     expect(changeSentence(change({ op: 'transaction.update', before: { row, said: null }, after: { row, said: { excluded: true, tags: ['t'] } } }))).toBe(
-      'Changed Market, -$25.00 on Oct 19: left out of budgets and reports, its tags.'
+      'Changed Market, −$25.00 on Oct 19: left out of budgets and reports, its tags.'
     );
-    expect(changeSentence(change({ op: 'transaction.delete', before: { row, said: null }, after: null }))).toBe('Deleted Market, -$25.00 on Oct 19.');
+    expect(changeSentence(change({ op: 'transaction.delete', before: { row, said: null }, after: null }))).toBe('Deleted Market, −$25.00 on Oct 19.');
     expect(changeSentence(change({ op: 'category.create', target: { kind: 'category', id: 'c' }, after: { category: { name: 'Pets' } } }))).toBe('Added the category Pets.');
     expect(changeSentence(change({ op: 'category.update', target: { kind: 'category', id: 'c' }, before: { category: { name: 'Pets', archived: false } }, after: { category: { name: 'Pets', archived: true } } }))).toBe(
       'Changed the category Pets: archived.'
@@ -159,7 +159,7 @@ describe('sentences', () => {
       'Changed the tag Trip: its color from blue to green.'
     );
     const undone = change();
-    expect(changeSentence(change({ op: 'undo', target: { kind: 'change', id: undone.id }, undoes: undone.id }), {}, undone)).toBe('Undid this: added Corner café, -$4.50 on Oct 20.');
+    expect(changeSentence(change({ op: 'undo', target: { kind: 'change', id: undone.id }, undoes: undone.id }), {}, undone)).toBe('Undid this: added Corner café, −$4.50 on Oct 20.');
   });
 
   test('what it can’t read, it leaves out', () => {

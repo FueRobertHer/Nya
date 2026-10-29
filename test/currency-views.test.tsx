@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import { balancesIn } from '@/lib/fx/net-worth';
@@ -21,6 +21,11 @@ import { CurrencyCardBody, OwnRateForm, draftProblem, ecbBeside, ownRateText, ty
 import { affectedText, type HealthInstitution } from '@/components/ConnectionHealth';
 import type { CurrencySettingsView } from '@/components/currency-state';
 import { ecbTable } from './fx-fixture';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // What the page says and shows of a home currency (step 1: net worth): the
 // hero's note and change, the chart's note, the offer to choose one, the
@@ -135,9 +140,9 @@ describe('the words of a converted figure', () => {
   });
 
   test('the heading, stale rates, and accounts saying no currency', () => {
-    expect(convertedHeading('EUR', DAY, false)).toBe('Converted into EUR at the ECB’s rates of Sep 14, 2026');
-    expect(convertedHeading('EUR', DAY, true)).toBe('Converted into EUR at the ECB’s rates of Sep 14, 2026, and your own');
-    expect(staleText('2026-09-09')).toBe('The newest rates Nya has are from Sep 9, 2026: it couldn’t fetch newer ones, so converted figures may be out of date.');
+    expect(convertedHeading('EUR', DAY, false)).toBe('Converted into EUR at the ECB’s rates of Sep 14');
+    expect(convertedHeading('EUR', DAY, true)).toBe('Converted into EUR at the ECB’s rates of Sep 14, and your own');
+    expect(staleText('2026-09-09')).toBe('The newest rates Nya has are from Sep 9: it couldn’t fetch newer ones, so converted figures may be out of date.');
     expect(staleText(null)).toBe('Nya has no exchange rates yet, so nothing in another currency can be converted.');
     expect(unknownText(2, 'USD')).toBe('2 accounts say no currency, so they are counted in USD.');
   });
@@ -170,13 +175,13 @@ describe('the words of a converted figure', () => {
     ).toEqual([
       '3 days couldn’t be converted: Nya didn’t keep their balances by account, so they aren’t drawn.',
       '1 day isn’t drawn, on Jun 3, 2024: Nya doesn’t have the ECB’s rates for that day yet.',
-      'What is in ARS isn’t in the chart from Mar 1, 2026 to Mar 4, 2026: there is no rate for ARS on those days.',
+      'What is in ARS isn’t in the chart from Mar 1 to Mar 4: there is no rate for ARS on those days.',
       'What is in GBP isn’t in the chart from Jan 2, 2024 to Jan 5, 2024: Nya doesn’t have the ECB’s rates for those days yet.',
       'Nya knows of 1 account with no currency recorded: any balance it held is counted in USD.',
     ]);
     // A home currency with no rate: the days not drawn say so.
     expect(chartGapLines({ unsplit: 0, main_unrated: [{ why: 'not-published', unrated: 'ARS', from: '2026-09-01', to: '2026-09-14', days: 10 }], left_out: [], unknown_currency: 0 }, 'ARS', 'USD')).toEqual([
-      '10 days aren’t drawn, from Sep 1, 2026 to Sep 14, 2026: nothing can be converted into ARS, as the ECB doesn’t publish it.',
+      '10 days aren’t drawn, from Sep 1 to Sep 14: nothing can be converted into ARS, as the ECB doesn’t publish it.',
     ]);
     expect(chartGapLines({ unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, 'EUR', 'USD')).toEqual([]);
   });
@@ -234,9 +239,9 @@ describe('Home’s notes', () => {
     const html = renderToStaticMarkup(<HeroCurrencyNote base={b} main="USD" onOpen={noop} />);
     expect(text(html)).toBe(
       [
-        'Converted into EUR at the ECB’s rates of Sep 14, 2026: USD $1,000.00 is €865.73 (1 USD = 0.86573 EUR).',
+        'Converted into EUR at the ECB’s rates of Sep 14: USD $1,000.00 is €865.73 (1 USD = 0.86573 EUR).',
         '1 account in BTC isn’t in this total: there is no rate for BTC. Set a rate for BTC',
-        'The newest rates Nya has are from Sep 14, 2026: it couldn’t fetch newer ones, so converted figures may be out of date.',
+        'The newest rates Nya has are from Sep 14: it couldn’t fetch newer ones, so converted figures may be out of date.',
       ].join(' ')
     );
     // With amounts hidden: no figure of the person's, the rate kept.
@@ -447,7 +452,7 @@ describe('the Currency card', () => {
   test('without a home currency: what Nya does now, and the way to choose one', () => {
     const html = card(ready({}));
     expect(text(html)).toContain('adds your net worth up in the currency most of your accounts are in, unconverted');
-    expect(text(html)).toContain('The ECB’s newest rates: Sep 14, 2026.');
+    expect(text(html)).toContain('The ECB’s newest rates: Sep 14.');
     expect(buttons(html)).toEqual(['Choose a home currency', 'Add a rate']);
   });
 
@@ -458,7 +463,7 @@ describe('the Currency card', () => {
     expect(t).toContain('Your net worth is shown in EUR, with accounts in other currencies converted at the European Central Bank’s daily reference rates, or your own.');
     expect(t).toContain('Your budgets, goals and the Plan stay as they are');
     expect(t).toContain('1 BTC = 61,000 USD, every day, past ones included The ECB doesn’t publish BTC');
-    expect(t).toContain('1 USD = 0.92 EUR, from Sep 1, 2026 The ECB’s of Sep 14, 2026: 1 USD = 0.86573 EUR');
+    expect(t).toContain('1 USD = 0.92 EUR, from Sep 1 The ECB’s of Sep 14: 1 USD = 0.86573 EUR');
     expect(buttons(html)).toEqual(['Change', 'Stop converting', 'Change', 'Remove…', 'Change', 'Remove…', 'Add a rate']);
     // Stopping is confirmed, and says what it keeps.
     expect(text(card(ready({ home: 'EUR' }), { confirm: 'stop' }))).toContain('Every figure goes back to its own currency, as before you chose one. Your own rates are kept.');
@@ -493,7 +498,7 @@ describe('the Currency card', () => {
 
   test('rates older than they should be are said', () => {
     expect(text(card(ready({ home: 'EUR', ecb: { date: '2026-09-09', rates: {}, stale: true, fetch_ok: false } })))).toContain(
-      'The ECB’s newest rates: Sep 9, 2026. Nya couldn’t fetch newer ones, so converted figures may be out of date.'
+      'The ECB’s newest rates: Sep 9. Nya couldn’t fetch newer ones, so converted figures may be out of date.'
     );
   });
 
@@ -522,10 +527,10 @@ describe('the Currency card', () => {
     const html = renderToStaticMarkup(
       <OwnRateForm draft={{ ...draft, rate: '0.92' }} onDraft={noop} view={ready({}).view} currencies={['USD']} busy={false} error={null} onSave={noop} onCancel={noop} />
     );
-    expect(text(html)).toContain('The ECB’s of Sep 14, 2026: 1 USD = 0.86573 EUR');
+    expect(text(html)).toContain('The ECB’s of Sep 14: 1 USD = 0.86573 EUR');
     // Said where a rate is changed, now the card keeps it behind About the rates.
     expect(text(html)).toContain('Changing a rate changes every figure it reaches, past days included.');
     expect(ownRateText(BTC_RATE)).toBe('1 BTC = 61,000 USD, every day, past ones included');
-    expect(ecbBeside({ currency: 'GBP', quote: 'USD' }, ready({}).view.ecb)).toBe('The ECB’s of Sep 14, 2026: 1 GBP = 1.3494 USD');
+    expect(ecbBeside({ currency: 'GBP', quote: 'USD' }, ready({}).view.ecb)).toBe('The ECB’s of Sep 14: 1 GBP = 1.3494 USD');
   });
 });

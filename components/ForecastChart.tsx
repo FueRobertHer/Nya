@@ -22,14 +22,19 @@
 // is behind "Show as a table". Zero and the warning are named in words at
 // their left end, never with an amount (the card's Warns below row says it).
 // The line stays dashed: a forecast is all estimate, and says so.
+//
+// The plot is read by the keys too (components/chart-keys.ts): from the
+// lowest, the arrows move the readout a day's end at a time, and Escape goes
+// back to the lowest.
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import type { Forecast } from '@/lib/forecast';
-import { formatMoney, signedMoney, spoken } from '@/lib/format';
+import { formatDay, formatMoney, onDay, signedMoney, spoken } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { LegendLine } from './LegendLine';
+import { keysHelp, useChartKeys } from './chart-keys';
 
 /** Its height for its width: 150 to 340, the shape it has always had. */
 const ASPECT = 150 / FALLBACK_WIDTH;
@@ -51,9 +56,13 @@ const RULE_LABEL_HEIGHT = 12;
 /** Two names are at least this far apart, baseline to baseline. */
 const RULE_LABEL_LINE = 14;
 
+/** A day mid sentence: "today", "Nov 28", "Jan 3, 2027" (lib/format.ts formatDay). */
 export function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
+
+/** The axis's last day, "Nov 28", as a chart's axis names it. */
+const axisDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 export default function ForecastChart({
   forecast,
@@ -171,6 +180,21 @@ export default function ForecastChart({
   const moves = day ? [...day.events, ...(altDay ? altDay.events.filter((e) => e.source === 'what-if') : [])] : [];
   const last = forecast.days[forecast.days.length - 1];
   const tone = (v: number) => (v < 0 ? 'var(--down)' : v < threshold ? 'var(--warn)' : undefined);
+  const keys = useChartKeys({
+    count: forecast.days.length + 1,
+    active,
+    setActive,
+    // At rest the readout shows the lowest: the keys start from the end of
+    // its day (now, when the lowest is now).
+    rest: lowNow ? 0 : lowDay + 1,
+    restSaid: `${formatMoney(shownLow.balance, currency)} lowest, ${lowWhen}${lowNow ? '' : ', estimated'}`,
+    say: (k) => {
+      const v = k === 0 ? forecast.start : forecast.days[k - 1].balance;
+      const alt = !whatIf ? null : k === 0 ? whatIf.start : whatIf.days[k - 1].balance;
+      const when = k === 0 ? 'now' : `${k === 1 ? 'end of today' : `end of ${fmtDay(forecast.days[k - 1].date)}`}, estimated`;
+      return `${formatMoney(alt ?? v, currency)} ${when}${alt !== null && alt !== v ? `, without it ${formatMoney(v, currency)}` : ''}`;
+    },
+  });
 
   return (
     <div>
@@ -216,8 +240,9 @@ export default function ForecastChart({
         ref={drawnRef}
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
-        aria-label={spoken(`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`)}
+        role="slider"
+        {...keys.slider}
+        aria-label={spoken(`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} ${onDay(fmtDay(last.date))}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`)}
         onPointerMove={scrub}
         onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
@@ -253,9 +278,12 @@ export default function ForecastChart({
           Now
         </text>
         <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 6} textAnchor="end">
-          {fmtDay(last.date)}
+          {axisDay(last.date)}
         </text>
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('day', 'the lowest', 'now and the last day')}
+      </p>
 
       {/* What moves the scrubbed day, so a step in the line can be read. */}
       <div className="chart-readout-split">
@@ -289,10 +317,10 @@ export default function ForecastChart({
             <caption>{whatIf ? 'With the purchase, and each day’s end without it. ' : ''}Every day after now is an estimate.</caption>
             <thead>
               <tr>
-                <th>Day</th>
-                <th className="num">Low</th>
-                <th className="num">End of day</th>
-                {whatIf && <th className="num">Without it</th>}
+                <th scope="col">Day</th>
+                <th scope="col" className="num">Low</th>
+                <th scope="col" className="num">End of day</th>
+                {whatIf && <th scope="col" className="num">Without it</th>}
               </tr>
             </thead>
             <tbody>
@@ -312,7 +340,7 @@ export default function ForecastChart({
               </tr>
               {shown.days.map((d, k) => (
                 <tr key={d.date}>
-                  <td>{fmtDay(d.date)}</td>
+                  <td>{formatDay(d.date)}</td>
                   <td className="num">
                     <Masked>{formatMoney(d.low, currency)}</Masked>
                   </td>

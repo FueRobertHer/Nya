@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import TagChips from './TagChips';
 import { TAG_COLORS, TAG_NAME_MAX, shownColor, type Tag } from '@/lib/tags';
+import { Notice } from './TotalCaveats';
 
 type Level = { at: 'list' } | { at: 'tag'; id: string } | { at: 'add' };
 
@@ -165,7 +166,16 @@ export default function TagsCard({
               </button>
             </li>
           ))}
-          {tags.length === 0 && (loadError ? <li className="error">{loadError}</li> : <li className="panel-note">No tags yet.</li>)}
+          {tags.length === 0 &&
+            (loadError ? (
+              <li>
+                <Notice level="critical" role="alert">
+                  {loadError}
+                </Notice>
+              </li>
+            ) : (
+              <li className="panel-note">No tags yet.</li>
+            ))}
         </ul>
       </>
     );
@@ -177,7 +187,11 @@ export default function TagsCard({
           <input value={name} maxLength={TAG_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="e.g. Reimbursable" disabled={busy} />
         </label>
         {colorChoice}
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
         <button onClick={() => send({ action: 'add', name, color })} disabled={busy || !name.trim()} style={{ marginTop: 12 }}>
           {busy ? 'Adding…' : 'Add tag'}
         </button>
@@ -224,7 +238,13 @@ export default function TagsCard({
             </button>
           )}
         </div>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="panel-section">
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
       </div>
     );
   }

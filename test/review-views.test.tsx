@@ -328,7 +328,7 @@ describe('Card Mode’s cards', () => {
     );
     const t = text(html);
     expect(t).toContain('Costco');
-    expect(t).toContain('-$54.20');
+    expect(t).toContain('−$54.20');
     expect(t).toContain('Chase · Card');
     expect(t).toContain('General merchandise');
     expect(t).toContain('bulk paper towels');
@@ -347,7 +347,7 @@ describe('Card Mode’s cards', () => {
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain('tabindex="0"');
     // What Enter approves, said before it is: the merchant, the amount and the category.
-    expect(html).toContain('aria-label="Costco, -$54.20, General merchandise. Transaction 1 of 1. Enter approves it."');
+    expect(html).toContain('aria-label="Costco, −$54.20, General merchandise. Transaction 1 of 1. Enter approves it."');
   });
 
   test('its category list chooses only on Use: moving through it changes what it shows, never what is saved', () => {
@@ -392,8 +392,8 @@ describe('Card Mode’s cards', () => {
       txn('split:p2', { split_of: 't_split', split_index: 1, split_count: 2, split_parent: { amount: 100, category_id: cat('general merchandise'), category_name: 'general merchandise' }, amount: 40, category_id: cat('household'), category_name: 'household', needs_review: true }),
     ];
     const split = renderToStaticMarkup(<CardMode open txns={parts} taxonomy={taxonomy} tags={[]} currency="USD" review={controls()} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />);
-    expect(text(split)).toContain('-$100.00');
-    expect(text(split)).toContain('Groceries -$60.00');
+    expect(text(split)).toContain('−$100.00');
+    expect(text(split)).toContain('Groceries −$60.00');
     expect(split).toMatch(/<button[^>]*disabled=""[^>]*>Recategorize<\/button>/);
     expect(split).toContain('Edit split');
   });

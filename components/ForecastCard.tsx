@@ -36,7 +36,8 @@
 // after a refusal (components/BudgetsTab.tsx), so focus goes back to it.
 // With nothing to save it with, the row is plain text, as it was.
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import FieldError from './FieldError';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { Sheet } from './Sheet';
 import ForecastChart, { fmtDay } from './ForecastChart';
@@ -56,7 +57,7 @@ import {
   type PendingRow,
 } from '@/lib/forecast';
 import { EMPTY_PLANNED, thresholdOf, type Planned } from '@/lib/planned';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney, onDay } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { Why } from './Why';
@@ -74,12 +75,23 @@ const NO_DISMISSED: ReadonlySet<string> = new Set();
 const NO_ROWS: PendingRow[] = [];
 const NO_CAVEATS: readonly Caveat[] = [];
 
-/** When balances were loaded: the time today, the day and time before. */
+/** When balances were loaded: the time today, the day and time before
+ *  ("yesterday at 3:12 PM", "Oct 7 at 3:12 PM"). */
 function fmtLoaded(iso: string, today: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return localDate(d) === today ? time : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`;
+  return localDate(d) === today ? time : `${formatDay(localDate(d), { sentence: true, now: new Date(`${today}T12:00:00`) })} at ${time}`;
+}
+
+/** The same after "saved": "at 3:12 PM" today, "yesterday at 3:12 PM",
+ *  "on Oct 7 at 3:12 PM". */
+function savedWhen(iso: string, today: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return `on ${iso}`;
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (localDate(d) === today) return `at ${time}`;
+  return `${onDay(formatDay(localDate(d), { sentence: true, now: new Date(`${today}T12:00:00`) }))} at ${time}`;
 }
 
 /** What the forecast is worked out from. */
@@ -230,6 +242,7 @@ export function ForecastView({
   open?: 'warning' | 'what-if';
 }) {
   const { position, forecast, threshold, warn, today, range, until, events } = work;
+  const errorId = useId();
   const code = position.currency ?? DEFAULT_CURRENCY;
   const parse = (text: string) => parseAmountInput(text, isCurrencyCode(code) ? code : DEFAULT_CURRENCY);
   const opening = (): WarnSheet => ({ open: true, draft: threshold ? String(threshold) : '', seen: saveError });
@@ -395,11 +408,11 @@ export function ForecastView({
         Starts from <Masked>{money(forecast.start)}</Masked>
         <Masked>{position.pending.count > 0 ? `: ${money(position.balances)} in ${said}, less ${money(position.pending.amount)} still pending.` : ` in ${said}.`}</Masked>
         {balancesAsOf && balancesSaved
-          ? ` Those are the balances saved on ${fmtLoaded(balancesAsOf, today)}, the last time they loaded; anything since isn't in it.`
+          ? ` Those are the balances saved ${savedWhen(balancesAsOf, today)}, the last time they loaded; anything since isn't in it.`
           : balancesAsOf
             ? ` Balances as of ${fmtLoaded(balancesAsOf, today)}.`
             : ''}{' '}
-        Expected to end near <Masked>{money(forecast.end)}</Masked> on {fmtDay(forecast.days[forecast.days.length - 1].date)}.
+        Expected to end near <Masked>{money(forecast.end)}</Masked> {onDay(fmtDay(forecast.days[forecast.days.length - 1].date))}.
       </p>
       {listed && (
         <Why label="Which accounts">
@@ -503,11 +516,13 @@ export function ForecastView({
                 }}
                 placeholder="0"
                 aria-label={`Warn below, in ${code}`}
+                aria-invalid={draft.trim() !== '' && !warnOk}
+                aria-describedby={draft.trim() !== '' && !warnOk ? `${errorId}-warn` : undefined}
                 disabled={savingWarn}
               />
             </label>
           </div>
-          {draft.trim() !== '' && !warnOk && <Notice level="critical">Enter an amount, like 250 or 1,299.99.</Notice>}
+          {draft.trim() !== '' && !warnOk && <FieldError id={`${errorId}-warn`}>Enter an amount, like 250 or 1,299.99.</FieldError>}
           <p className="helper">Blank warns only below zero.</p>
           {otherCurrency}
           {/* Why Save is off, by the button: the planned items couldn't be
@@ -534,7 +549,15 @@ export function ForecastView({
             <div className="quick-add-pair">
               <label className="field quick-add-amount">
                 Amount
-                <input inputMode="decimal" autoComplete="off" value={buyAmount} onChange={(e) => setBuyAmount(e.target.value)} placeholder="0.00" />
+                <input
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={buyAmount}
+                  onChange={(e) => setBuyAmount(e.target.value)}
+                  placeholder="0.00"
+                  aria-invalid={buyBad}
+                  aria-describedby={buyBad ? `${errorId}-buy` : undefined}
+                />
               </label>
               <label className="field quick-add-currency">
                 Currency
@@ -543,14 +566,22 @@ export function ForecastView({
             </div>
             <label className="field">
               On
-              <input type="date" value={buyDate} min={today} max={until} onChange={(e) => setBuyDate(e.target.value)} />
+              <input
+                type="date"
+                value={buyDate}
+                min={today}
+                max={until}
+                onChange={(e) => setBuyDate(e.target.value)}
+                aria-invalid={dateBad}
+                aria-describedby={dateBad ? `${errorId}-buy-day` : undefined}
+              />
             </label>
           </div>
-          {buyBad && <Notice level="critical">Enter an amount, like 250 or 1,299.99.</Notice>}
+          {buyBad && <FieldError id={`${errorId}-buy`}>Enter an amount, like 250 or 1,299.99.</FieldError>}
           {dateBad && (
-            <Notice level="critical">
+            <FieldError id={`${errorId}-buy-day`}>
               Pick a day from today to {fmtDay(until)}, the end of this {range}-day forecast.
-            </Notice>
+            </FieldError>
           )}
           {whatIf && (
             <>

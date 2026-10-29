@@ -155,8 +155,8 @@ describe('the printed report', () => {
     expect(months.text).toContain('Oct 2025 $0.00 $0.00 $0.00 0 May be missing transactions from Citi');
     expect(marked.text).toContain('You marked these categories as ones that matter for your taxes. Nya doesn’t judge how any of them is taxed');
     expect(marked.text).toContain('Medical $0.00 $67.50 2');
-    expect(appendix.text).toContain('Feb 3, 2025 Pharmacy Medical Chase: Checking (from the bank) -$42.50');
-    expect(appendix.text).toContain('Mar 3, 2025 Co-pay Medical Cash: Wallet (entered by hand) -$25.00 receipt kept');
+    expect(appendix.text).toContain('Feb 3, 2025 Pharmacy Medical Chase: Checking (from the bank) −$42.50');
+    expect(appendix.text).toContain('Mar 3, 2025 Co-pay Medical Cash: Wallet (entered by hand) −$25.00 receipt kept');
   });
 
   test('an account that ended is named among the sources, as closed, no longer yours or not followed on its day, and its gaps said with the rest', () => {
@@ -265,13 +265,13 @@ describe('review: the page says what it can’t show', () => {
 
   test("a transaction named by the bank's own text reads readably, under its category as the app writes it", () => {
     const appendix = parts(html({ rows: [row('CVS PHARMACY #123', '2025-02-02', 12, { category: 'medical', name_from_bank: true })] })).at(-1)!;
-    expect(appendix.text).toContain('Feb 2, 2025 CVS Pharmacy #123 Medical Chase: Checking (from the bank) -$12.00');
+    expect(appendix.text).toContain('Feb 2, 2025 CVS Pharmacy #123 Medical Chase: Checking (from the bank) −$12.00');
   });
 
   test('a zero amount is never written as minus zero', () => {
     const appendix = parts(html({ rows: [row('Zero fee', '2025-02-02', 0, { category: 'medical' })] })).at(-1)!;
     expect(appendix.text).toContain('Zero fee Medical Chase: Checking (from the bank) $0.00');
-    expect(appendix.text).not.toContain('-$0.00');
+    expect(appendix.text).not.toContain('−$0.00');
   });
 
   test('every printed page carries the report and its period, beside its number', () => {
@@ -288,9 +288,9 @@ describe('review: the page says what it can’t show', () => {
     // Connections and manual accounts here.
     expect(tables.length).toBe(2);
     for (const t of tables) {
-      const heads = [...t.matchAll(/<th>([^<]*)<\/th>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
+      const heads = [...t.matchAll(/<th scope="col">([^<]*)<\/th>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
       for (const r of t.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
-        if (r[1].startsWith('<th>')) continue;
+        if (r[1].startsWith('<th')) continue;
         const labels = [...r[1].matchAll(/<td data-label="([^"]*)"/g)].map((m) => m[1]);
         expect(labels).toEqual(heads);
       }

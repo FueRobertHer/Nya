@@ -93,6 +93,7 @@ import { budgetMeters, isBudgetAmount, placeBudgets, type Budgets, type GroupMet
 import { monthGaps, type Incomplete, type Stopped } from './month-coverage';
 import { filesCoverAll, type CoveredAccount } from './history-import/coverage';
 import { tidy } from './totals';
+import { onDay } from './format';
 
 // ---- Months ----
 
@@ -918,7 +919,7 @@ export function gapText(g: MonthGap, day: (isoOrDay: string) => string): string 
     case 'stopped':
       return g.since ? `${g.institution} hasn’t synced since ${day(g.since)}` : `${g.institution} isn’t syncing`;
     case 'begins':
-      return `${g.institution}’s stored transactions begin on ${day(g.first)}`;
+      return `${g.institution}’s stored transactions begin ${onDay(day(g.first))}`;
     case 'without':
       return g.reason === 'refused'
         ? `Plaid doesn’t provide transactions for the bank or card accounts at ${g.institution}`

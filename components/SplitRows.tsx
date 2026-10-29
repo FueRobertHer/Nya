@@ -15,7 +15,7 @@ import type { Txn } from './MonthBreakdown';
 import type { SheetTarget } from './TransactionSheet';
 import type { SheetAction } from './ActionRows';
 import { Masked } from './HideAmounts';
-import { signedMoney } from '@/lib/format';
+import { formatDay, onDay, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
@@ -70,8 +70,8 @@ export const heldInGroupAs = (m: Pick<Txn, 'transaction_id' | 'group_carried_fro
 /** A row's notice under its name about its split or group, if any. */
 export function entryNotice(t: Txn): string | null {
   if (t.group_outside) {
-    const day = new Date(`${t.group_outside.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    return `It is in the group “${t.group_outside.name}”, which counts on ${day}, before the transactions shown here begin, so it isn’t counted here.`;
+    const day = formatDay(t.group_outside.date, { sentence: true });
+    return `It is in the group “${t.group_outside.name}”, which counts ${onDay(day)}, before the transactions shown here begin, so it isn’t counted here.`;
   }
   if (t.group_unapplied) {
     return `It is in the group “${t.group_unapplied.name}”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.`;
@@ -242,7 +242,7 @@ export function MemberRows({
             <span className="list-row-text">
               <span className="list-row-title">{shownName(m)}</span>
               <span className="list-row-sub">
-                {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {accountName(m)}
+                {formatDay(m.date)} · {accountName(m)}
               </span>
               {/* What was said of it on its own doesn't change the group's net. */}
               {m.excluded === true && <span className="txn-row-note">{m.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</span>}

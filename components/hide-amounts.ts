@@ -3,8 +3,8 @@
 // Hide amounts: one switch (components/HideAmounts.tsx, in the header) that
 // shows the app's structure while hiding its figures, for using Nya in
 // public, on a shared screen or in a screenshot. While it is on, every
-// formatter in lib/format.ts writes an amount's figures as "•••", keeping its
-// sign and currency ("-$•••"); meters, bars and charts keep their shapes, and
+// formatter in lib/format.ts writes an amount's figures as "••••", keeping its
+// sign and currency ("−$••••"); meters, bars and charts keep their shapes, and
 // percentages stay, since they say no amount.
 //
 // REMEMBERED ON THIS DEVICE, never on the server: it is a viewer's own

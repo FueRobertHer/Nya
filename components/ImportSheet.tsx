@@ -35,8 +35,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import type { SheetInstitution } from './ManualTxnSheet';
-import { formatMoney, hideAmountsIn, hideFiguresIn, plainNumber, signedMoney } from '@/lib/format';
-import { instantDay, localDate } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, hideAmountsIn, hideFiguresIn, onDay, plainNumber, signedMoney } from '@/lib/format';
+import { localDate } from '@/lib/local-date';
 import { isOwedType } from '@/lib/balance';
 import { DEFAULT_CURRENCY, isCurrencyCode } from '@/lib/manual-txn-input';
 import { MAX_FILE_BYTES, MAX_IMPORT_ROWS, type FileFormat } from '@/lib/import/record';
@@ -46,6 +46,7 @@ import { normalizeRecords } from '@/lib/import/normalize';
 import { DATE_ORDER_NAMES, DATE_STYLE_NAMES, type DateOrder, type DateStyle } from '@/lib/import/dates';
 import { DECIMAL_NAMES, type DecimalMark } from '@/lib/import/amounts';
 import { columnsFromNames, DELIMITER_NAMES, DELIMITERS, guessColumns, readCsvTable, splitCsv, type CsvColumns, type CsvSign, type CsvTable, type Delimiter } from '@/lib/import/csv';
+import { Notice } from './TotalCaveats';
 
 /** What the sheet is open on: an account (from its row), or none yet. */
 export type ImportTarget = { account_id: string | null };
@@ -166,9 +167,12 @@ type Account = SheetInstitution['accounts'][number] & { institution_name: string
 
 const label = (a: Account) => (a.institution_name && a.institution_name !== a.name ? `${a.institution_name} · ${a.name}` : a.name);
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
-/** A calendar day, "Sep 3, 2026", read on the local calendar as written. */
-const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fmtDay(a) : `${fmtDay(a)} to ${fmtDay(b)}`) : null);
+/** A calendar day, "Today", "Sep 3", "Sep 3, 2025" (lib/format.ts formatDay),
+ *  read on the local calendar as written. */
+const fmtDay = (day: string) => formatDay(day);
+/** The same mid sentence: "today", "Sep 3", "Sep 3, 2025". */
+const inDay = (day: string) => formatDay(day, { sentence: true });
+const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? inDay(a) : `${inDay(a)} to ${inDay(b)}`) : null);
 /** As the Activity tab shows an amount: money in signed plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 /** A line's problem as shown: an amount it quotes from the file, which
@@ -641,7 +645,11 @@ export default function ImportSheet({
             </label>
           </div>
           {busy && <p className="panel-note">Reading the file…</p>}
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           {notice && <p className="status-note">{notice}</p>}
           <PastImports
             past={past}
@@ -662,11 +670,11 @@ export default function ImportSheet({
       )}
 
       {step === 'statement' && read?.status === 'statement' && file && (
-        <>
-          <p className="panel-note" style={{ marginTop: 0 }}>
+        <div className="stack">
+          <p className="panel-note">
             This file holds {read.statements.length} {file.format === 'qif' ? 'accounts' : 'statements'}. Which one is {name}’s?
           </p>
-          <div className="button-stack" style={{ marginTop: 12 }}>
+          <div className="button-stack">
             {read.statements.map((s) => (
               <button key={s.index} className="secondary import-choice" disabled={busy} onClick={() => proceed({ ...options, statement: s.index }, file)}>
                 <span>{s.label}</span>
@@ -678,14 +686,22 @@ export default function ImportSheet({
               </button>
             ))}
           </div>
-          {error && <div className="error">{error}</div>}
-        </>
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
+        </div>
       )}
 
       {step === 'order' && file && (
         <>
           <DateOrderQuestion read={read} options={options} onChange={(o) => setOptions(o)} />
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={chooseAgain} disabled={busy}>
               Another file
@@ -761,30 +777,40 @@ export default function ImportSheet({
               {name}’s {account && isOwedType(account.type) ? 'amount owed' : 'balance'} is now <Masked>{formatMoney(done.balance, account?.currency ?? DEFAULT_CURRENCY)}</Masked>.
             </p>
           )}
-          {done.balance_error && <div className="error">The rows were imported, but {done.balance_error}</div>}
+          {done.balance_error && (
+            <Notice level="critical" role="alert">
+              The rows were imported, but {done.balance_error}
+            </Notice>
+          )}
           {(done.imported > 0 || !!done.replaced) && (
             <p className="panel-note">
               They show on the Activity tab. A transfer, a card payment or cash taken out that the file marks as one counts as neither spending nor income, as a
               linked bank’s does; every other row counts as spending or income until you give it a category. If this was the wrong file, undo it below.
             </p>
           )}
-          <PastImports
-            past={past}
-            error={pastError}
-            account={name}
-            keptIn={account?.currency ?? DEFAULT_CURRENCY}
-            busy={busy}
-            undoing={undoing}
-            plan={undoPlan}
-            onUndo={(i) => void askUndo(i)}
-            onKeep={() => {
-              setUndoing(null);
-              setUndoPlan(null);
-            }}
-            onConfirm={(i) => void undo(i)}
-          />
-          {error && <div className="error">{error}</div>}
-          {notice && <p className="status-note">{notice}</p>}
+          <div className="stack tight">
+            <PastImports
+              past={past}
+              error={pastError}
+              account={name}
+              keptIn={account?.currency ?? DEFAULT_CURRENCY}
+              busy={busy}
+              undoing={undoing}
+              plan={undoPlan}
+              onUndo={(i) => void askUndo(i)}
+              onKeep={() => {
+                setUndoing(null);
+                setUndoPlan(null);
+              }}
+              onConfirm={(i) => void undo(i)}
+            />
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+            {notice && <p className="status-note">{notice}</p>}
+          </div>
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={chooseAgain} disabled={busy}>
               Import another
@@ -913,7 +939,9 @@ export function CsvMapping({
   if (!table) {
     return (
       <>
-        <div className="error">{read?.status === 'error' ? read.error : 'This file couldn’t be read as a table.'}</div>
+        <Notice level="critical" role="alert">
+          {read?.status === 'error' ? read.error : 'This file couldn’t be read as a table.'}
+        </Notice>
       </>
     );
   }
@@ -1054,8 +1082,16 @@ export function CsvMapping({
         )}
       </div>
 
-      {read?.status === 'mapping' && read.problem && <div className="error">{read.problem}</div>}
-      {read?.status === 'error' && <div className="error">{read.error}</div>}
+      {read?.status === 'mapping' && read.problem && (
+        <Notice level="critical" role="alert">
+          {read.problem}
+        </Notice>
+      )}
+      {read?.status === 'error' && (
+        <Notice level="critical" role="alert">
+          {read.error}
+        </Notice>
+      )}
       {live && read?.status === 'ready' && (
         <>
           <p className="section-label" style={{ marginTop: 16 }}>
@@ -1089,7 +1125,11 @@ export function CsvMapping({
           </p>
         </>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button onClick={onNext} disabled={busy || read?.status !== 'ready' || !live || live.rows.length === 0 || !isCurrencyCode(options.currency ?? keptIn)}>
           {busy ? 'Checking…' : `Check against ${account}`}
@@ -1345,13 +1385,13 @@ export function PreviewView({
           <label className="quick-add-check" style={{ marginTop: 16 }}>
             <input type="checkbox" checked={setBalance} disabled={busy} onChange={(e) => onSetBalance(e.target.checked)} />
             <span>
-              Also set {name}’s {owed ? 'amount owed' : 'balance'} to <Masked>{formatMoney(b.amount, keptIn)}</Masked>, the statement’s balance on{' '}
-              {b.as_of ? fmtDay(b.as_of) : 'its date'} (now <Masked>{formatMoney(b.from, keptIn)}</Masked>)
+              Also set {name}’s {owed ? 'amount owed' : 'balance'} to <Masked>{formatMoney(b.amount, keptIn)}</Masked>, the statement’s balance{' '}
+              {b.as_of ? onDay(inDay(b.as_of)) : 'on its date'} (now <Masked>{formatMoney(b.from, keptIn)}</Masked>)
             </span>
           </label>
         ) : (
           <p className="panel-note" style={{ marginTop: 16 }}>
-            The statement’s balance{b.as_of ? ` on ${fmtDay(b.as_of)}` : ''} was <Masked>{formatMoney(b.amount, p.statement?.currency ?? keptIn)}</Masked>.{' '}
+            The statement’s balance{b.as_of ? ` ${onDay(inDay(b.as_of))}` : ''} was <Masked>{formatMoney(b.amount, p.statement?.currency ?? keptIn)}</Masked>.{' '}
             {balanceRefusal(b.refusal!, name, keptIn)}
           </p>
         ))}
@@ -1362,7 +1402,11 @@ export function PreviewView({
 
       {unanswered > 0 && <p className="stale-note">Choose what to do with {unanswered === 1 ? 'the transaction' : `the ${unanswered.toLocaleString()} transactions`} above whose bank id is already here, then import.</p>}
       {/* A refusal can name the balance (one changed since the preview). */}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onBack} disabled={busy}>
           {file.format === 'csv' ? 'Columns' : 'Another file'}
@@ -1521,7 +1565,7 @@ export function PastImports({
               </div>
               <div className="import-row-meta">
                 {[
-                  i.imported_at ? `Imported ${instantDay(i.imported_at) ?? i.imported_at.slice(0, 10)}` : null,
+                  i.imported_at ? `Imported ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}` : null,
                   i.counts ? `${plural(i.counts.imported, 'transaction')} added` : null,
                   i.counts?.replaced ? `${i.counts.replaced.toLocaleString()} updated` : null,
                   range,
@@ -1544,19 +1588,19 @@ export function PastImports({
                 <div className="import-row-meta">It also set the balance to <Masked>{formatMoney(i.balance_update.to, keptIn)}</Masked>.</div>
               )}
               {confirming && (
-                <div className="import-confirm">
+                <div className="import-confirm stack tight">
                   {!plan ? (
-                    <p className="panel-note" style={{ marginTop: 6 }}>
-                      Working out what undoing it would do…
-                    </p>
+                    <p className="panel-note">Working out what undoing it would do…</p>
                   ) : plan.error || !plan.plan ? (
-                    <div className="error">{plan.error}</div>
+                    <Notice level="critical" role="alert">
+                      {plan.error}
+                    </Notice>
                   ) : (
-                    <p className="panel-note" style={{ marginTop: 6 }}>
+                    <p className="panel-note">
                       {undoText(plan.plan)} Your exclusions, tags, notes and splits on them are forgotten with them, and they leave any group they’re in. The balance stays as it is. This can’t be undone.
                     </p>
                   )}
-                  <div className="button-pair" style={{ marginTop: 8 }}>
+                  <div className="button-pair">
                     <button className="secondary" onClick={onKeep} disabled={busy}>
                       Keep it
                     </button>

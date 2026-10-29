@@ -137,11 +137,11 @@ describe('the change line', () => {
   const line = (value: number, more: { endedIn?: number; fromRates?: string; currency?: string; days?: number } = {}) =>
     renderToStaticMarkup(<HeroDelta delta={{ value, pct: (Math.abs(value) / 1000) * 100, days: more.days ?? 30 }} currency={more.currency ?? 'USD'} endedIn={more.endedIn ?? 0} fromRates={more.fromRates ?? ''} />);
 
-  test('a gain is green with an up arrow, a loss red with a down arrow, each with how much', () => {
+  test('a gain is green with an up arrow, a loss red with a down arrow, each with how much and its sign', () => {
     expect(line(10)).toStartWith('<div class="hero-delta up">');
-    expect(text(line(10))).toBe('▲ $10.00 (1.0%) · past 30 days');
+    expect(text(line(10))).toBe('▲ +$10.00 (+1.0%) · past 30 days');
     expect(line(-10)).toStartWith('<div class="hero-delta down">');
-    expect(text(line(-10))).toBe('▼ $10.00 (1.0%) · past 30 days');
+    expect(text(line(-10))).toBe('▼ −$10.00 (−1.0%) · past 30 days');
   });
 
   // The screen review: "▲ $0.00 (0.0%)" in green read as a gain.
@@ -161,7 +161,7 @@ describe('the change line', () => {
 
   test('one day is a day', () => {
     expect(text(line(0, { days: 1 }))).toBe('No change in 1 day');
-    expect(text(line(10, { days: 1 }))).toBe('▲ $10.00 (1.0%) · past 1 day');
+    expect(text(line(10, { days: 1 }))).toBe('▲ +$10.00 (+1.0%) · past 1 day');
   });
 
   test('with amounts hidden: the figure is masked, and no change is still said in words', () => {

@@ -25,7 +25,7 @@
 // (components/Connectors.tsx EndedPointer): `?stopped` in the address opens
 // the list once it has loaded.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ReportView } from './ReportView';
 import RunwayReport from './RunwayReport';
 import YearOverYearReport from './YearOverYearReport';
@@ -37,8 +37,12 @@ import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
 import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
+import { formatInstantDay, onDay } from '@/lib/format';
 import { HideAmountsToggle, useFiguresWhenPrinted } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
+import { ReportSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
+import FieldError from './FieldError';
 
 /** The accountant's report's ⋯: its CSV, a file to save (disabled until a
  *  report is on screen), marking categories, and the accounts you stopped
@@ -350,9 +354,9 @@ export default function ReportsPage() {
               </label>
             )}
             {error && (
-              <div className="error" role="alert">
+              <Notice level="critical" role="alert">
                 {error}
-              </div>
+              </Notice>
             )}
             {/* Print is the one button; the rest are under the report's ⋯
                 (the CSV as a link to save, so it needs no script). */}
@@ -369,7 +373,7 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {which === 'accountant' && loading && !report && <div className="spinner no-print" role="status" aria-label="Making the report" />}
+        {which === 'accountant' && loading && !report && <ReportSkeleton title={null} status="Making the report" />}
         {which === 'accountant' && report && (
           <div className={loading ? 'report-loading' : undefined} aria-busy={loading}>
             <ReportView report={report} />
@@ -410,11 +414,8 @@ export type StoppedList = {
   unrecognised: number;
 };
 
-/** "Sep 3, 2026": the local day an instant fell on. */
-const shownDay = (iso: string) => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-};
+/** "Sep 3", "today": the local day an instant fell on, mid sentence. */
+const shownDay = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso;
 
 /** The records of accounts you stopped tracking, each with Forget. */
 export function StoppedAccountsView({
@@ -439,7 +440,7 @@ export function StoppedAccountsView({
           <span>
             {a.institution_name} {a.name}
             <span className="type-tag" style={{ display: 'block' }}>
-              {a.kept ? 'Kept as a manual account' : 'Removed'} on {shownDay(a.ended_at)}, through {a.connector}
+              {a.kept ? 'Kept as a manual account' : 'Deleted'} {onDay(shownDay(a.ended_at))}, through {a.connector}
             </span>
           </span>
           <button className="link-btn danger-link" disabled={busy} onClick={() => onForget(a.account_id, `${a.institution_name} ${a.name}`)}>
@@ -462,9 +463,9 @@ export function StoppedAccountsView({
         </p>
       )}
       {error && (
-        <p className="error" role="alert">
+        <Notice level="critical" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
     </div>
   );
@@ -541,12 +542,13 @@ export function MarkCategoriesView({
   onToggle: (category: string) => void;
   onSave: () => void;
 }) {
+  const overId = useId();
   if (unreadable) {
     return (
-      <p className="error">
+      <Notice level="critical" role="alert">
         The categories you marked before couldn’t be read, so they can’t be changed here: saving now would replace them. Nothing has been lost; this needs
         fixing on the server.
-      </p>
+      </Notice>
     );
   }
   const over = chosen.length > REPORT_SETTINGS_LIMITS.marked;
@@ -559,7 +561,7 @@ export function MarkCategoriesView({
       {categories.length === 0 ? (
         <p className="empty-note">There are no categories in this period yet.</p>
       ) : (
-        <fieldset className="report-marks" disabled={saving} aria-label="Categories">
+        <fieldset className="report-marks" disabled={saving} aria-label="Categories" aria-invalid={over} aria-describedby={over ? overId : undefined}>
           {categories.map((c) => (
             <label key={c.key} className="report-mark">
               <input type="checkbox" checked={chosen.includes(c.key)} onChange={() => onToggle(c.key)} />
@@ -568,11 +570,11 @@ export function MarkCategoriesView({
           ))}
         </fieldset>
       )}
-      {over && <p className="error">At most {REPORT_SETTINGS_LIMITS.marked} categories can be marked.</p>}
+      {over && <FieldError id={overId}>At most {REPORT_SETTINGS_LIMITS.marked} categories can be marked.</FieldError>}
       {error && (
-        <p className="error" role="alert">
+        <Notice level="critical" role="alert">
           {error}
-        </p>
+        </Notice>
       )}
       <button onClick={onSave} disabled={saving || over}>
         {saving ? 'Saving…' : 'Save'}

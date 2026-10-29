@@ -14,13 +14,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Why } from './Why';
-import { CAUTION } from './ConnectionStatus';
+import { CAUTION, LevelWord } from './ConnectionStatus';
 import { localDate } from '@/lib/local-date';
+import { formatDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 export type TimelineNote = { id: string; date: string; text: string; kind: 'auto' | 'user'; account_id?: string };
 
-/** "Mar 12, 2025": a calendar day, read at local midnight. */
-const dayText = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** "Today", "Mar 12", "Mar 12, 2025": a calendar day, read at local midnight
+ *  (lib/format.ts formatDay); `sentence` for the middle of one. */
+const dayText = (iso: string, sentence = false) => formatDay(iso, { sentence });
 
 /** The notes, read again whenever `refreshKey` changes (a reload). */
 export function useTimelineNotes(refreshKey: unknown) {
@@ -148,7 +151,10 @@ export function TimelineNotesSheet({
           {problem && (
             <div className="notice caution">
               {CAUTION}
-              <p>{problem}</p>
+              <p>
+                <LevelWord level="caution" />
+                {problem}
+              </p>
             </div>
           )}
           <Why label="What are these?">
@@ -204,8 +210,12 @@ export function TimelineNotesSheet({
         }
       >
         <div className="stack">
-          <p>{`Delete "${stored.text}" from ${dayText(stored.date)}? This can’t be undone.`}</p>
-          {error && <div className="error">{error}</div>}
+          <p>{`Delete "${stored.text}" from ${dayText(stored.date, true)}? This can’t be undone.`}</p>
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
         </div>
       </Sheet>
     );
@@ -243,7 +253,11 @@ export function TimelineNotesSheet({
             <input value={d.text} onChange={(e) => edit({ text: e.target.value })} maxLength={200} placeholder="e.g. Bought the house" disabled={busy} />
           </label>
         </div>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
       </div>
     </Sheet>
   );

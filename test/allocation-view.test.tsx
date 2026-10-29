@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AllocationCard, {
   AllocationHistoryChart,
@@ -26,6 +26,11 @@ import type { SeriesDay } from '@/lib/allocation/series';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import { wholeMoney } from '@/components/plan-text';
 import { initialListState } from '@/lib/whole-list-store';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // The Allocation section of the Plan tab, rendered: the unclassified share
 // shown plainly and never folded into a class, what is left out named, the
@@ -191,8 +196,8 @@ describe('the allocation by class', () => {
     const html = renderToStaticMarkup(<ShareTable totals={a.classes} order={SLOTS} colors={CLASS_COLORS} label={(s) => CLASS_NAMES[s]} money={money} />);
     const t = text(html);
     expect(t).toContain('US stocks $120,000 120%');
-    expect(t).toContain('Cash -$20,000 -20%');
-    expect(t).toContain('Cash is below zero (-$20,000): money owed');
+    expect(t).toContain('Cash −$20,000 -20%');
+    expect(t).toContain('Cash is below zero (−$20,000): money owed');
     // One segment, US stocks: the negative cash isn't a part of the bar.
     expect([...html.matchAll(/class="alloc-seg"/g)].length).toBe(1);
     expect(html.match(/class="alloc-swatch"/g)!.length).toBe(2);
@@ -239,7 +244,7 @@ describe('the allocation by tax bucket', () => {
       currency: 'USD',
     });
     const t = text(renderToStaticMarkup(<BucketView alloc={a} money={money} editable open={noop} />));
-    expect(t).toContain("401(k) · Fidelity Tax-deferred $70,000, its balance on Oct 1, 2026 (Fidelity couldn't be reached since), from its type, 401(k).");
+    expect(t).toContain("401(k) · Fidelity Tax-deferred $70,000, its balance on Oct 1 (Fidelity couldn't be reached since), from its type, 401(k).");
   });
 });
 
@@ -474,7 +479,7 @@ describe('the mix over time', () => {
     expect(t).toContain('Recorded from Sep 30, 2026, on 2 days: nothing is drawn before the first, or on a day nothing was recorded.');
     expect(t).toContain('Each day is counted as the allocation above is, from the positions and balances recorded that day.');
     // The readout reads the last day until another is touched.
-    expect(t).toContain('70% US stocks, 30% bonds Oct 2, 2026 · $100 counted');
+    expect(t).toContain('70% US stocks, 30% bonds Oct 2 · $100 counted');
   });
 
   test('says from when it is shown, when recording began before the year it reads', () => {
@@ -486,18 +491,18 @@ describe('the mix over time', () => {
     const days = [day('2026-10-01', { 'us-stocks': 300, bonds: 100 }), day('2026-10-02', { 'us-stocks': 300, bonds: 100 }), day('2026-10-05', { bonds: 100 }, { missing: ['k'] }), day('2026-10-08', { bonds: 100 }, { missing: ['k'] })];
     const html = body(days, { accounts: [span('k', '2026-10-01', '2026-10-02')] });
     const t = text(html);
-    expect(t).toContain('100% bonds Oct 8, 2026 · $100 counted · leaves out 401(k) at Fidelity (not recorded since Oct 2, 2026)');
-    expect(t).toContain("401(k) at Fidelity hasn't been recorded since Oct 2, 2026, so the mix on the latest days leaves it out.");
+    expect(t).toContain('100% bonds Oct 8 · $100 counted · leaves out 401(k) at Fidelity (not recorded since Oct 2)');
+    expect(t).toContain("401(k) at Fidelity hasn't been recorded since Oct 2, so the mix on the latest days leaves it out.");
     expect(t).toContain("On 2 days (marked), the mix leaves out 401(k) at Fidelity, which wasn't recorded then.");
     expect(t).toContain('Missing an account');
     expect(html.match(/opacity="0.45"/g)).toHaveLength(2);
-    expect(html).toContain('leaving out 401(k) at Fidelity (not recorded since Oct 2, 2026)');
+    expect(html).toContain('leaving out 401(k) at Fidelity (not recorded since Oct 2)');
   });
 
   test('before an account was first recorded, and on a day between, each says which', () => {
     const days = [day('2026-10-01', { bonds: 1 }, { missing: ['k'] }), day('2026-10-04', { bonds: 1, 'us-stocks': 3 }), day('2026-10-05', { 'us-stocks': 3 }, { missing: ['b'] }), day('2026-10-06', { bonds: 1, 'us-stocks': 3 })];
     const t = text(body(days, { accounts: [span('b', '2026-10-04', '2026-10-06'), span('k', '2026-10-04', '2026-10-06')] }));
-    expect(t).toContain('Leaves out 401(k) at Fidelity (first recorded on Oct 4, 2026)');
+    expect(t).toContain('Leaves out 401(k) at Fidelity (first recorded on Oct 4)');
     expect(t).toContain('Leaves out IRA at Fidelity (not recorded that day)');
     // Two accounts on different days: the note agrees with the accounts, not the days.
     expect(t).toContain("On 2 days (marked), the mix leaves out accounts that weren't recorded then: 401(k) at Fidelity and IRA at Fidelity.");
@@ -507,7 +512,7 @@ describe('the mix over time', () => {
   test('two accounts behind at the end are each said with since when', () => {
     const days = [day('2026-10-01', { bonds: 1 }), day('2026-10-08', { bonds: 1 }, { missing: ['b', 'k'] })];
     const t = text(body(days, { accounts: [span('b', '2026-09-20', '2026-10-01'), span('k', '2026-10-01', '2026-10-01')] }));
-    expect(t).toContain("IRA at Fidelity (since Oct 1, 2026) and 401(k) at Fidelity (since Oct 1, 2026) haven't been recorded lately, so the mix on the latest days leaves them out.");
+    expect(t).toContain("IRA at Fidelity (since Oct 1) and 401(k) at Fidelity (since Oct 1) haven't been recorded lately, so the mix on the latest days leaves them out.");
   });
 
   test('what the days count and leave out is said: money no position explains, accounts no longer linked, currencies, days that can’t be read', () => {
@@ -521,7 +526,7 @@ describe('the mix over time', () => {
       "Unclassified includes money no position explains, in IRA at Fidelity: an account kept by hand, a balance beyond its positions, or a day an account's positions didn't come."
     );
     // The day's own figure says how much of it no position explains.
-    expect(t).toContain('Oct 1, 2026 67% US stocks, 33% unclassified $50 of it in no position $150');
+    expect(t).toContain('Oct 1 67% US stocks, 33% unclassified $50 of it in no position $150');
     expect(t).toContain("Rollover IRA at Schwab isn't linked now, so on the days it was recorded it is counted from its positions alone.");
     expect(t).toContain('Leaves out Rollover IRA at Schwab (not recorded that day)');
     expect(t).toContain("Positions with no currency in an account that isn't linked now are left out: its currency isn't known.");
@@ -543,7 +548,7 @@ describe('the mix over time', () => {
       />
     );
     const t = text(html);
-    expect(t).toContain("401(k) at Fidelity hasn't been recorded since Aug 20, 2026, so the mix on the latest days leaves it out.");
+    expect(t).toContain("401(k) at Fidelity hasn't been recorded since Aug 20, so the mix on the latest days leaves it out.");
     expect(t).not.toContain("isn't linked now");
     expect(t).toContain("Fidelity couldn't be reached and isn't counted, so the latest days may be short.");
     expect(t).toContain("1 account at Questrade couldn't be shown, so the latest days may be short.");

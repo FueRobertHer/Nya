@@ -21,7 +21,7 @@ import type { Txn } from './MonthBreakdown';
 import { addMonths, calendarMonth, duePayments, type CalendarEntry } from '@/lib/calendar';
 import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurring';
 import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/lib/planned';
-import { amountsHidden, formatMoney, MASK, signedMoney, spoken } from '@/lib/format';
+import { amountsHidden, formatDay, formatMoney, MASK, MINUS, onDay, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
@@ -41,7 +41,7 @@ const MONTHS_AHEAD = 12;
  *  as the rest of it is. */
 const SUFFIXES = ['K', 'M', 'B', 'T'];
 
-/** "+3.5K", "-143": a day's figure in a cell, its sign and whole units (the
+/** "+3.5K", "−143": a day's figure in a cell, its sign and whole units (the
  *  day's list has the cents), from a thousand two significant figures and K,
  *  M, B or T, never a currency (the legend names it once). The digits and
  *  the decimal sign are the viewer's ("3,5K" in German). Not Intl's compact
@@ -51,9 +51,9 @@ function cellFigure(n: number): string {
   // Hidden amounts (lib/format.ts): the sign and the mask, never a size. The
   // sign is the amount's own, not its rounded figure's: a figure under 0.5
   // drawn with none would say how small it is.
-  if (amountsHidden()) return `${n > 0 ? '+' : n < 0 ? '-' : ''}${MASK}`;
+  if (amountsHidden()) return `${n > 0 ? '+' : n < 0 ? MINUS : ''}${MASK}`;
   const r = Math.round(Math.abs(n));
-  const sign = r === 0 ? '' : n < 0 ? '-' : '+';
+  const sign = r === 0 ? '' : n < 0 ? MINUS : '+';
   if (r < 1000) return `${sign}${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(r)}`;
   // The suffix is chosen after rounding: at two figures 995 and up is a
   // thousand, so 999,999 is "1M", never "1000K". Past T the figure grows.
@@ -100,12 +100,22 @@ function monthTitle(month: string): string {
   return new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
-function dayTitle(iso: string): string {
+/** A cell's name in the month's grid, "Saturday, October 24": the grid's own
+ *  label for each of its days, always the date, as the number it stands for
+ *  is (its month and year are the grid's title). */
+function cellName(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
+/** A day's heading: "Today", "Yesterday", or "Saturday, Oct 24" (lib/format.ts
+ *  formatDay), on the calendar's own today. */
+function dayTitle(iso: string, today: string): string {
+  return formatDay(iso, { weekday: 'long', now: new Date(`${today}T12:00:00`) });
+}
+
+/** A day mid sentence: "today", "Oct 24". */
 function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 function cadenceText(c: Cadence | PlannedCadence | undefined, source: CalendarEntry['source']): string {
@@ -136,7 +146,7 @@ function postedTags(e: CalendarEntry, currency: string | null): string {
     e.figure !== undefined ? `${signedMoney(e.figure, currency)} in the day's figure` : null,
     // Counted through its group, on the group's earlier day (#39).
     e.group
-      ? `in the group “${e.group.name}”, counted on ${new Date(`${e.group.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, not in the day's figure`
+      ? `in the group “${e.group.name}”, counted ${onDay(fmtDay(e.group.date))}, not in the day's figure`
       : null,
     e.excluded ? "excluded, not in the day's figure" : null,
     !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
@@ -320,7 +330,7 @@ export default function CalendarView({
           const estimated = !past && !(date === today && d.posted !== null);
           const dots = dotsOf(d.entries);
           const label = [
-            dayTitle(date),
+            cellName(date),
             d.posted !== null ? `posted ${signedMoney(d.posted, currency)}` : null,
             d.expected !== null ? `expected ${signedMoney(d.expected, currency)}` : null,
             dots.length > 0 && d.expected === null ? 'something expected' : null,
@@ -371,7 +381,7 @@ export default function CalendarView({
       {day && (
         <div className="cal-detail stack tight">
           <div className="card-header">
-            <h3>{dayTitle(day.date)}</h3>
+            <h3>{dayTitle(day.date, today)}</h3>
           </div>
           {day.entries.length === 0 && (
             <p className="empty-note">{day.date < today ? (unknownPast ? pastNote : 'Nothing posted.') : 'Nothing expected.'}</p>

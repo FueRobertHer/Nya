@@ -6,8 +6,8 @@ import type { LinkKind } from '@/lib/item-products';
 import { connectorBalanceDay } from '@/lib/connectors/types';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import type { AccountQuestion } from './AccountLifecycle';
-import { formatMoney, hiddenFigure } from '@/lib/format';
-import { instantDay, localDate } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, hiddenFigure, MINUS, onDay } from '@/lib/format';
+import { localDate } from '@/lib/local-date';
 import { isOwedType, signedContribution } from '@/lib/balance';
 
 export type Account = {
@@ -163,7 +163,7 @@ export function signedBalance(a: Account): number {
 // "+$12.34 · 5.2%" gain/loss for a holding vs its cost basis.
 export function fmtGain(value: number, cost: number): string {
   const gain = value - cost;
-  const sign = gain >= 0 ? '+' : '-';
+  const sign = gain >= 0 ? '+' : MINUS;
   const pct = cost !== 0 ? ` · ${((Math.abs(gain) / Math.abs(cost)) * 100).toFixed(1)}%` : '';
   return `${sign}$${hiddenFigure(
     Math.abs(gain).toLocaleString(undefined, {
@@ -173,18 +173,24 @@ export function fmtGain(value: number, cost: number): string {
   )}${pct}`;
 }
 
-// "Mar 4" from a YYYY-MM-DD. Parsed at local midnight, not UTC, so a due date
-// never renders as the day before for anyone west of Greenwich.
+// A YYYY-MM-DD as a sentence says it: "today", "yesterday", "Mar 4", and
+// "Mar 4, 2025" outside this year (lib/format.ts formatDay). Parsed at local
+// midnight, not UTC, so a due date never renders as the day before for
+// anyone west of Greenwich. A label on its own (a sheet's row) capitalizes
+// it: formatDay without `sentence`.
 export function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
+  return formatDay(iso, { sentence: true });
 }
 
-// The local day of an instant (an ISO time), not its UTC day.
+// "on Mar 4", or "today" and "yesterday" with no "on".
+export function fmtOnDay(iso: string): string {
+  return onDay(fmtDay(iso));
+}
+
+// The local day of an instant (an ISO time), not its UTC day, as a sentence
+// says it: "today", "yesterday", "Mar 4", "Mar 4, 2025".
 export function fmtInstantDay(iso: string): string {
-  return instantDay(iso) ?? fmtDay(iso.slice(0, 10));
+  return formatInstantDay(iso, { sentence: true }) ?? fmtDay(iso.slice(0, 10));
 }
 
 // The day a stored snapshot was taken, in the viewer's own time. The snapshot's
@@ -194,20 +200,18 @@ export function fmtInstantDay(iso: string): string {
 export function fmtStaleDay(date: string, at?: string): string {
   // The instant must belong to that date's UTC day; a mismatch (a restore keeps
   // this environment's own record of instants) means it isn't this snapshot's.
-  const local = at && at.slice(0, 10) === date ? instantDay(at) : null;
+  const local = at && at.slice(0, 10) === date ? formatInstantDay(at, { sentence: true }) : null;
   return local ?? fmtDay(date);
 }
 
-// A day as a row says it: "Nov 15", with its year when that isn't today's
-// year ("Nov 15, 2025"), so a day of another year never reads as this year's.
-// liabilitySummary's due dates, the rule preview's and a shared account's
-// transactions. Parsed at local midnight, as fmtDay.
-export function fmtDayInYear(iso: string, today: string = localDate()): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(iso.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
-  });
+// A day as a row says it: "Today", "Yesterday", "Nov 15", with its year when
+// that isn't today's year ("Nov 15, 2025"), so a day of another year never
+// reads as this year's (formatDay, on `today`'s calendar); `sentence` for the
+// middle of one ("due today"). liabilitySummary's due dates, the rule
+// preview's and a shared account's transactions. Parsed at local midnight, as
+// fmtDay.
+export function fmtDayInYear(iso: string, today: string = localDate(), sentence = false): string {
+  return formatDay(iso, { now: new Date(`${today}T12:00:00`), sentence });
 }
 
 // The one-line summary under a credit or loan row: rate, minimum, due date.
@@ -229,7 +233,7 @@ export function liabilitySummary(a: Account, today: string = localDate()): strin
   if (l.apr != null) parts.push(`${l.apr.toFixed(2)}% APR`);
   if (l.minimum_payment != null) parts.push(`min ${fmt(l.minimum_payment, a.currency)}`);
   if (l.next_due_date) {
-    const day = fmtDayInYear(l.next_due_date, today);
+    const day = fmtDayInYear(l.next_due_date, today, true);
     if (l.next_due_date >= today) parts.push(`${l.is_overdue ? 'next due' : 'due'} ${day}`);
     else if (l.is_overdue) parts.push(`was due ${day}`);
   }

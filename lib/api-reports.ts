@@ -50,6 +50,7 @@ import {
   type RunwayWindow,
 } from './report/runway';
 import { runwayCaveats } from './report/runway-words';
+import { asciiMinus } from './format';
 import type { YearOverYear } from './report/year-over-year';
 import { gapSentences, scopeLine } from './report/words';
 
@@ -281,6 +282,7 @@ export async function readApiRunway(
   // each name as the API gives it (card_payments[].name): the bank's text as
   // the bank wrote it, never the page's readable form.
   const asGiven = { ...p, window: { ...p.window, card_payments: p.window.card_payments.map(apiNamed) } };
+  // With the hyphen for a minus (lib/format.ts asciiMinus): the API's text is data.
   const notes = runwayCaveats(v1, asGiven, { day: iso, time: iso, month: iso });
   const converted = r.conversion ? runwayBase(r, projectRunway(r, whatIf), whatIf) : null;
   return {
@@ -293,7 +295,7 @@ export async function readApiRunway(
       leave_out_one_offs: whatIf.leave_out_one_offs,
       count_moved_out: whatIf.count_moved_out,
     },
-    notes: [...notes, ...(converted?.notes ?? [])],
+    notes: [...notes, ...(converted?.notes ?? [])].map(asciiMinus),
     base_currency: r.conversion?.home ?? null,
     base: converted?.base ?? null,
   };

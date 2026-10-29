@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -10,6 +10,11 @@ import InstitutionCard from '@/components/InstitutionCard';
 import type { Institution } from '@/components/accounts-format';
 import { connectorHealth } from '@/lib/connectors/health';
 import type { ConnectionView } from '@/lib/connectors/view';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 // The screens for bringing your own sync (components/Connectors.tsx): the
 // option beside the connect buttons, what connecting says, choosing accounts,
@@ -110,7 +115,7 @@ describe('choosing accounts', () => {
     expect(html).toContain('<p class="institution-name">My Bank</p>');
     // The sign said in words, never presented as what is owed before it is known.
     expect(html).toContain('<div class="type-tag">+$1,500.25, held</div>');
-    expect(html).toContain('<div class="type-tag">-$432.10, owed</div>');
+    expect(html).toContain('<div class="type-tag">−$432.10, owed</div>');
     expect(html).not.toContain('shown as what you owe');
     // One tracked through the other connection can't be chosen again.
     expect(html).toContain('Tracked through your other connection (bridge.other): not tracked twice');
@@ -143,7 +148,7 @@ describe('choosing accounts', () => {
     const html = renderToStaticMarkup(<ChooseView {...props} choices={{ A: 'depository' }} />).replace(/&#x27;/g, "'");
     expect(html).toContain('aria-label="Is Checking one of the accounts from your download?"');
     expect(html).toContain('<option value="new">No: a new account</option>');
-    expect(html).toContain('<option value="manual_old">Yes: My Bank Checking, USD, last transaction Oct 3, 2026 (likely)</option>');
+    expect(html).toContain('<option value="manual_old">Yes: My Bank Checking, USD, last transaction Oct 3 (likely)</option>');
     // Only an account chosen is asked about.
     expect(html).not.toContain('aria-label="Is Savings one of the accounts from your download?"');
     expect(html).toContain(carryNote(carry));
@@ -154,15 +159,15 @@ describe('choosing accounts', () => {
     const off = renderToStaticMarkup(<ChooseView {...props} carry={{ ...carry, enabled: false }} choices={{ A: 'depository' }} />);
     expect(off).not.toContain('one of the accounts from your download?');
     expect(carryNote({ ...carry, enabled: false })).toContain('An account you track here is a new one: if it is one of them, its transactions count beside the ones from your download where both have them.');
-    expect(carryChoiceWords(waiting[0], 'same')).toBe('Yes: My Bank Checking, USD, last transaction Oct 3, 2026 (the same account)');
+    expect(carryChoiceWords(waiting[0], 'same')).toBe('Yes: My Bank Checking, USD, last transaction Oct 3 (the same account)');
     expect(carryChoiceWords({ ...waiting[0], last: null }, 'possible')).toBe('Yes: My Bank Checking, USD');
   });
 
   test('an account carried on says what it carries on and what the first answers found, plainly when none matched, with its undo', () => {
     const carried = { ...conn().accounts[0], continued: { from: { connector: 'simplefin' as const, name: 'Old Checking', institution_name: 'My Bank' }, until: '2026-10-03', matched: 40, added: 2, undoing: false } };
-    expect(carriedLine(carried, 'SimpleFIN')).toEqual({ text: 'Checking carries on My Bank Old Checking from your download: 40 of the 42 transactions SimpleFIN sent from before Oct 3, 2026 were in it, and 2 more were added.', warn: false });
+    expect(carriedLine(carried, 'SimpleFIN')).toEqual({ text: 'Checking carries on My Bank Old Checking from your download: 40 of the 42 transactions SimpleFIN sent from before Oct 3 were in it, and 2 more were added.', warn: false });
     expect(carriedLine({ ...carried, continued: { ...carried.continued, matched: 0, added: 140 } }, 'SimpleFIN')).toEqual({
-      text: 'None of the 140 transactions SimpleFIN sent from before Oct 3, 2026 are in your download: if Checking isn’t the same account, undo carrying it on.',
+      text: 'None of the 140 transactions SimpleFIN sent from before Oct 3 are in your download: if Checking isn’t the same account, undo carrying it on.',
       warn: true,
     });
     expect(carriedLine({ ...carried, continued: { ...carried.continued, matched: 0, added: 0 } }, 'SimpleFIN')!.text).toBe('Checking carries on My Bank Old Checking from your download: its transactions are matched to those from your download as SimpleFIN sends them.');
@@ -223,7 +228,7 @@ describe('a card or a loan reported as money held', () => {
   } as const;
 
   test('its sign is said in words, either way', () => {
-    expect([reportedWords(-432.1, 'USD'), reportedWords(500, 'USD'), reportedWords(0, 'USD')]).toEqual(['-$432.10, owed', '+$500.00, held', '$0.00, held']);
+    expect([reportedWords(-432.1, 'USD'), reportedWords(500, 'USD'), reportedWords(0, 'USD')]).toEqual(['−$432.10, owed', '+$500.00, held', '$0.00, held']);
   });
 
   test('its card says so and offers to answer; the question asks which way, once, with neither chosen', () => {
@@ -245,7 +250,7 @@ describe('a connection’s card', () => {
     const html = renderToStaticMarkup(<ConnectorCardView conn={conn()} requests={{ left: 5, limit: 8, resets_in_seconds: 100 }} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
     expect(html).toContain('bridge.example · 1 account tracked · last answered');
     expect(html).toContain('5 of 8 requests left today');
-    expect(html).toContain('Everything SimpleFIN has from Jul 11, 2026 on is in, and older transactions arrive over the next few nights.');
+    expect(html).toContain('Everything SimpleFIN has from Jul 11 on is in, and older transactions arrive over the next few nights.');
     expect(html).toContain('>Refresh</button>');
     expect(html).toContain('>Choose accounts</button>');
     expect(html).toContain('>Disconnect</button>');
@@ -373,8 +378,8 @@ describe('words for what happened', () => {
       '',
       '',
     ]);
-    expect(nothingToKeep(['New savings'])).toBe(' Removed New savings: no balance had come for it yet, so there was nothing to keep.');
-    expect(nothingToKeep(['A', 'B'])).toBe(' Removed A and B: no balance had come for them yet, so there was nothing to keep.');
+    expect(nothingToKeep(['New savings'])).toBe(' Deleted New savings: no balance had come for it yet, so there was nothing to keep.');
+    expect(nothingToKeep(['A', 'B'])).toBe(' Deleted A and B: no balance had come for them yet, so there was nothing to keep.');
     expect(nothingToKeep([])).toBe('');
   });
 });

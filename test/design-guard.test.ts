@@ -140,7 +140,7 @@ describe('design guard: controls and states read without color', () => {
     ['h1,', 'font-family: var(--font-display)', 'titles and figures are in Red Hat Display (look and feel, step 3)'],
     ['.upcoming-skeleton-chart,', 'aspect-ratio: 340 / 150', "Upcoming's chart skeleton keeps the chart's shape"],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'border-bottom: 3px solid var(--accent)', 'the current item of a switch has a bar'],
-    ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-semibold)', 'the current item of a switch is heavier'],
+    ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-bold)', 'the current item of a switch is bold'],
     ['.chip:is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-on])::before {', 'mask', 'a chip that is on has a check'],
     ['.tab-bar button.active::before {', 'var(--accent)', 'the current tab has a bar'],
     ['.tab-bar {', 'calc((100% - var(--content-max)) / 2)', 'the tabs keep to the content column on a wide window'],

@@ -63,7 +63,7 @@ import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAt
 import { attentionItems, type Go } from './attention';
 import { resetsMonth, useViewMonth } from './view-month-state';
 import ConnectionDetails from './ConnectionDetails';
-import { ALERT, CAUTION, ConnectionStatus, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
+import { ALERT, CAUTION, ConnectionStatus, LevelWord, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
 import { Menu } from './Menu';
 import { cardlessSeverity as cardlessSeverityOf, firstToFix, severityOf, worse, type Severity } from '@/lib/accounts-status';
 import {
@@ -113,7 +113,8 @@ import { withAccountEnds } from '@/lib/goal-view';
 import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import { accruedCaveats } from './AccruedInterestNote';
 import NetWorthCard, { HeroDelta } from './NetWorthCard';
-import { allHiddenCaveats, type Caveat } from './TotalCaveats';
+import { allHiddenCaveats, type Caveat, Notice } from './TotalCaveats';
+import { useOfflineCaveats } from './online';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
@@ -2200,7 +2201,11 @@ export default function Dashboard({
   // (lib/accounts-status.ts); the student loans' accrued interest it leaves
   // out or couldn't read; and its currency. Built while rendering, not in a
   // memo, so hide amounts masks the figures in them at once.
+  // Offline (navigator.onLine): the numbers shown are the last ones loaded,
+  // and the total says from when (components/online.ts).
+  const offlineCaveats = useOfflineCaveats(asOf);
   const homeCaveats: Caveat[] = [
+    ...offlineCaveats,
     ...totalCaveats(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }, restoreHold, severityOf).map((n) => ({
       key: n.text,
       severity: n.severity,
@@ -2302,7 +2307,11 @@ export default function Dashboard({
                 update it whenever you like; it counts toward net worth and builds its own history.
               </p>
               <SwitchingLink onOpen={() => setMigrationOpen(true)} />
-              {error && <div className="error">{error}</div>}
+              {error && (
+                <Notice level="critical" role="alert">
+                  {error}
+                </Notice>
+              )}
               {lifecycleRepair}
             </div>
             {/* Bringing back a download goes only into an empty account, so
@@ -2415,7 +2424,11 @@ export default function Dashboard({
                     />
                   }
                 />
-                {error && <div className="error">{error}</div>}
+                {error && (
+                  <Notice level="critical" role="alert">
+                    {error}
+                  </Notice>
+                )}
                 {lifecycleRepair}
               </>
             )}
@@ -2441,22 +2454,36 @@ export default function Dashboard({
                   </button>
                 </div>
                 <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
-                {error && <div className="error">{error}</div>}
+                {error && (
+                  <Notice level="critical" role="alert">
+                    {error}
+                  </Notice>
+                )}
                 {lifecycleRepair}
-                {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
+                {lifecycle.problem && (
+                  <Notice level="critical" role="alert">
+                    {lifecycle.problem}
+                  </Notice>
+                )}
                 {/* What couldn't be read about every connection, said once
                     for the tab: a card can't say what is missing from it. */}
                 {healthUnavailable ? (
                   // Also where Home's row about it lands (components/attention.ts).
                   <div className="notice caution" id="health-unread" tabIndex={-1}>
                     {CAUTION}
-                    <p>Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.</p>
+                    <p>
+                      <LevelWord level="caution" />
+                      Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
+                    </p>
                   </div>
                 ) : (
                   unreadConnections > 0 && (
                     <div className="notice caution">
                       {CAUTION}
-                      <p>{`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}</p>
+                      <p>
+                        <LevelWord level="caution" />
+                        {`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+                      </p>
                     </div>
                   )
                 )}
@@ -2464,7 +2491,10 @@ export default function Dashboard({
                   // Also where Home's row about it lands (components/attention.ts).
                   <div className="notice critical" id="connectors-unread" tabIndex={-1}>
                     {ALERT}
-                    <p>Your own sync’s connections couldn’t be loaded: {connectors.error}</p>
+                    <p>
+                      <LevelWord level="critical" />
+                      Your own sync’s connections couldn’t be loaded: {connectors.error}
+                    </p>
                   </div>
                 )}
                 {/* Connections with no card here (every account hidden, or
@@ -2473,6 +2503,7 @@ export default function Dashboard({
                   <div className={`notice ${cardlessWorst}`}>
                     {levelIcon(cardlessWorst)}
                     <div className="stack tight">
+                      <LevelWord level={cardlessWorst} />
                       <p>
                         {cardlessCount === 1
                           ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
@@ -2939,7 +2970,11 @@ export default function Dashboard({
               </p>
             )}
 
-            {manualError && <div className="error">{manualError}</div>}
+            {manualError && (
+              <Notice level="critical" role="alert">
+                {manualError}
+              </Notice>
+            )}
 
             <div className="button-pair" style={{ marginTop: 16 }}>
               <button className="secondary" onClick={() => setManualDraft(null)} disabled={savingManual}>
@@ -2972,11 +3007,17 @@ export default function Dashboard({
       >
         {shownDeleteTarget && (
           <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              This account&apos;s balance history, and any transactions entered on it, are{' '}
-              <strong>not recoverable</strong>. Re-adding it creates a new account with an empty history.
-            </p>
-            {manualError && <div className="error">{manualError}</div>}
+            <div className="stack">
+              <p className="panel-note">
+                This account&apos;s balance history, and any transactions entered on it, are <strong>not recoverable</strong>. Re-adding it creates a new account with an empty
+                history.
+              </p>
+              {manualError && (
+                <Notice level="critical" role="alert">
+                  {manualError}
+                </Notice>
+              )}
+            </div>
             <div className="button-pair" style={{ marginTop: 16 }}>
               <button className="secondary" onClick={() => setManualDeleteTarget(null)} disabled={savingManual}>
                 Cancel
@@ -3104,9 +3145,7 @@ export default function Dashboard({
         open={!!disconnectTarget}
         title={
           shownDisconnectTarget
-            ? endedOffer === shownDisconnectTarget.item_id
-              ? 'Remove this connection?'
-              : `Disconnect ${shownDisconnectTarget.institution_name}?`
+            ? `Disconnect ${shownDisconnectTarget.institution_name}?`
             : 'Disconnect'
         }
         onClose={() => !disconnecting && setDisconnectTarget(null)}

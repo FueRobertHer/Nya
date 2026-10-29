@@ -83,9 +83,16 @@ export const CLERK_APPEARANCE = {
     // it (ink on brass, 9.80:1, in dark; white on navy, 8.89:1, in light).
     // Its primary button alone takes --accent-fill, as Nya's own primary does
     // (ink on brass, 8.98:1; white on navy, 15.46:1).
+    // It keeps its fill on hover, as Nya's own primary does.
     formButtonPrimary: {
       backgroundColor: 'var(--accent-fill)',
-      '&:hover, &:active': { backgroundColor: 'var(--accent-fill)', filter: 'brightness(0.92)' },
+      '&:hover, &:active': { backgroundColor: 'var(--accent-fill)' },
+    },
+    // A field's edge is what shows it is a field: --border-input, 3:1, as
+    // Nya's own fields (colorBorder stays --border-strong for Clerk's cards
+    // and dividers).
+    formFieldInput: {
+      borderColor: 'var(--border-input)',
     },
     // Clerk draws its plain badge ("Primary" beside an address) in its border
     // color, which on this border is unreadable; secondary text instead, as

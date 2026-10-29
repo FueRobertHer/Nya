@@ -13,12 +13,14 @@
 // Plaid's terms. Keeping it in browser storage would be one more place for
 // financial details to outlive a sign-out, to save retyping a rate.
 
-import { useMemo, useState, type PointerEvent, type ReactNode } from 'react';
+import { useId, useMemo, useState, type PointerEvent, type ReactNode } from 'react';
+import FieldError from './FieldError';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
-import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
-import { instantDay, localMonth } from '@/lib/local-date';
+import { keysHelp, useChartKeys } from './chart-keys';
+import { compactMoney, fieldAmount, formatDay, formatInstantDay, formatMoney, hiddenFigure } from '@/lib/format';
+import { localMonth } from '@/lib/local-date';
 import { distinctAccountNames } from '@/lib/account-names';
 import { kindWords } from './accounts-format';
 import {
@@ -106,16 +108,17 @@ function compactIn(currency: string | null, amount: number): string {
     : hiddenFigure(new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(amount));
 }
 
-// "Aug 7" from a YYYY-MM-DD, parsed at local midnight so it never shows the day before.
+// "Aug 7" from a YYYY-MM-DD, parsed at local midnight so it never shows the day
+// before, mid sentence: "today", "Aug 7, 2025" (lib/format.ts formatDay).
 function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 // The day a recovered balance is from, as the Accounts tab shows it
 // (fmtStaleDay in Dashboard.tsx): the instant's local day when it belongs to
 // that date, else the date.
 function staleDay(date: string, at: string | null): string {
-  return (at && at.slice(0, 10) === date ? instantDay(at) : null) ?? fmtDay(date);
+  return (at && at.slice(0, 10) === date ? formatInstantDay(at, { sentence: true }) : null) ?? fmtDay(date);
 }
 
 /** "A", "A and B", "A, B and C". */
@@ -193,6 +196,7 @@ export function PayoffPanel({
   startMonth?: string;
 }) {
   const start = startMonth ?? localMonth();
+  const extraError = useId();
   const groups = useMemo(() => byCurrency(debtAccounts(institutions)), [institutions]);
   const spots = useMemo(() => blindSpots(institutions), [institutions]);
   const group = groups.find((g) => currencyKey(g.currency) === inputs.currency) ?? groups[0];
@@ -373,6 +377,8 @@ export function PayoffPanel({
             step="0.01"
             placeholder="0.00"
             value={extraText}
+            aria-invalid={extra === 'invalid'}
+            aria-describedby={extra === 'invalid' ? extraError : undefined}
             onChange={(e) => {
               const value = e.target.value;
               onChange((prev) => ({ ...prev, extra: { ...prev.extra, [key]: value } }));
@@ -380,7 +386,7 @@ export function PayoffPanel({
           />
         </label>
         {extra === 'invalid' ? (
-          <div className="error payoff-field-error">Enter an amount of 0 or more.</div>
+          <FieldError id={extraError}>Enter an amount of 0 or more.</FieldError>
         ) : (
           comparison && (
             <p className="panel-note payoff-field-note">
@@ -657,11 +663,12 @@ function PlanDetail({
       <section className="panel-section">
         <p className="section-label">Compared</p>
         <table className="payoff-compare">
+          <caption className="visually-hidden">The payoff orders compared</caption>
           <thead>
             <tr>
-              <th>Order</th>
-              <th>Paid off</th>
-              <th className="num">Interest</th>
+              <th scope="col">Order</th>
+              <th scope="col">Paid off</th>
+              <th scope="col" className="num">Interest</th>
             </tr>
           </thead>
           <tbody>
@@ -752,7 +759,7 @@ function DebtRow({
 }) {
   const { account: a, apr, minimum, status } = row;
   const card = a.type === 'credit';
-  const updated = a.updatedAt ? instantDay(a.updatedAt) : null;
+  const updated = a.updatedAt ? formatInstantDay(a.updatedAt, { sentence: true }) : null;
   const balanceNote = a.staleAsOf
     ? ` · balance from ${staleDay(a.staleAsOf, a.staleAsOfAt)}`
     : updated
@@ -1185,7 +1192,8 @@ const BASELINE_COLOR = 'var(--text-3)';
 /**
  * What is owed in total, month by month: the chosen order against paying only
  * the minimums. Scrubbing reads both at a month; at rest it shows the month the
- * plan is done, which is when the gap between them is plainest.
+ * plan is done, which is when the gap between them is plainest. The keys read
+ * it too (components/chart-keys.ts), a month at a time.
  */
 function PayoffChart({
   plan,
@@ -1252,6 +1260,14 @@ function PayoffChart({
 
   const fmt = (v: number) => money(Math.round(v * 100));
   const endLabel = monthLabel(addMonths(start, span));
+  const keys = useChartKeys({
+    count: span + 1,
+    active,
+    setActive,
+    rest: done,
+    say: (k) =>
+      `${planLabel} ${fmt(planVals[k])}, minimums only ${fmt(baseVals[k])}, ${k === 0 ? 'owed now' : `owed in ${monthLabel(addMonths(start, k))}`}`,
+  });
   return (
     <div>
       <div className="chart-legend">
@@ -1283,7 +1299,8 @@ function PayoffChart({
         ref={drawnRef}
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={`Total owed from now to ${endLabel}. ${planLabel} reaches zero in ${monthLabel(plan.month!)}; paying only the minimums, ${baseline.month ? `in ${monthLabel(baseline.month)}` : `not within ${HORIZON_YEARS} years`}.`}
         onPointerMove={scrub}
         onPointerDown={scrub}
@@ -1317,6 +1334,9 @@ function PayoffChart({
           {endLabel}
         </text>
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('month', 'the month the plan is done', 'now and the last month')}
+      </p>
     </div>
   );
 }

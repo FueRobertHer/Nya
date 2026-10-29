@@ -18,8 +18,8 @@ describe('the figures', () => {
   test('in with its plus, out with its minus, net with its sign and color', () => {
     expect(figures(strip(1000, 4391.92))).toEqual([
       ['summary-value inflow', '+$1,000.00'],
-      ['summary-value', '-$4,391.92'],
-      ['summary-value negative', '-$3,391.92'],
+      ['summary-value', '−$4,391.92'],
+      ['summary-value negative', '−$3,391.92'],
     ]);
     expect(figures(strip(3100, 412.3))[2]).toEqual(['summary-value inflow', '+$2,687.70']);
   });
@@ -36,7 +36,7 @@ describe('the figures', () => {
   });
 
   test('a currency with no minor unit rounds to its whole units first, and net is the difference of what is written', () => {
-    expect(figures(strip(1000.4, 1000.6, 'JPY')).map(([, v]) => v)).toEqual(['+¥1,000', '-¥1,001', '-¥1']);
+    expect(figures(strip(1000.4, 1000.6, 'JPY')).map(([, v]) => v)).toEqual(['+¥1,000', '−¥1,001', '−¥1']);
     // Under half a yen either way: nothing, in no color.
     expect(figures(strip(0.4, 0.3, 'JPY'))).toEqual([
       ['summary-value inflow', '¥0'],

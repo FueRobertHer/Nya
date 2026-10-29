@@ -29,11 +29,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import { shownReason } from './ImportSheet';
-import { formatMoney, hideAmountsIn, hideFiguresIn, plainNumber, signedMoney } from '@/lib/format';
+import { formatDay, formatInstantDay, formatMoney, hideAmountsIn, hideFiguresIn, onDay, plainNumber, signedMoney } from '@/lib/format';
 import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
 import { MANUAL_TYPES } from '@/lib/manual';
 import { isCurrencyCode } from '@/lib/manual-txn-input';
+import { Notice } from './TotalCaveats';
 
 type Options = { app?: AppId; columns?: Partial<Record<AppRole, number>>; date_order?: 'mdy' | 'dmy'; sign?: 'negative-out' | 'positive-out' };
 type AccountAnswer =
@@ -179,8 +180,10 @@ export type UndoPreview = {
 type NewAnswer = Extract<AccountAnswer, { to: 'new' }>;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
-const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fmtDay(a) : `${fmtDay(a)} to ${fmtDay(b)}`) : null);
+const fmtDay = (day: string) => formatDay(day);
+/** The same mid sentence: "today", "Sep 3", "Sep 3, 2025". */
+const inDay = (day: string) => formatDay(day, { sentence: true });
+const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? inDay(a) : `${inDay(a)} to ${inDay(b)}`) : null);
 /** An amount in Plaid's sign, as the Activity tab shows it: money in with a plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 const listWords = (words: string[]) => (words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
@@ -542,8 +545,8 @@ export default function MigrationSheet({
       ) : question?.needs === 'mapping' ? (
         <MappingStep q={question} options={options} busy={busy} error={error} onAnswer={(o) => answer({ options: o })} />
       ) : question?.needs === 'date_order' ? (
-        <div className="sheet-form">
-          <p className="panel-note" style={{ marginTop: 0 }}>
+        <div className="sheet-form stack tight">
+          <p className="panel-note">
             Every date in this file could be read two ways (such as {question.examples.join(', ')}). Which order does {APP_NAMES[question.app]} write them in?
           </p>
           <div className="action-row">
@@ -554,7 +557,11 @@ export default function MigrationSheet({
               Day first
             </button>
           </div>
-          {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
         </div>
       ) : review ? (
         <ReviewStep
@@ -584,7 +591,11 @@ export default function MigrationSheet({
             <input key={inputKey} type="file" accept=".csv,.tsv,.zip,text/csv,application/zip" disabled={busy} onChange={(e) => e.target.files?.[0] && void choose(e.target.files[0])} />
           </label>
           {busy && <div className="spinner" role="status" aria-label="Reading the file" />}
-          {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
           {notice && <p className="panel-note" role="status">{notice}</p>}
           <details className="migration-how">
             <summary>How to export from each app</summary>
@@ -663,8 +674,16 @@ export function MappingStep({ q, options, busy, error, onAnswer }: { q: Extract<
             </select>
           </label>
         ))}
-      {q.problem && <div className="error"><Masked>{hideAmountsIn(q.problem)}</Masked></div>}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      {q.problem && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(q.problem)}</Masked>
+        </Notice>
+      )}
+      {error && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </Notice>
+      )}
       <p className="section-label">The first rows</p>
       <ul className="import-problems">
         {q.table.sample.map((row) => (
@@ -895,7 +914,11 @@ export function ReviewStep({
               Show all {r.categories.mappings.length.toLocaleString()} categories
             </button>
           )}
-          {r.categories.problem && <div className="error">{r.categories.problem}</div>}
+          {r.categories.problem && (
+            <Notice level="critical" role="alert">
+              {r.categories.problem}
+            </Notice>
+          )}
         </>
       )}
       {(r.counts.transfers > 0 || r.counts.opening > 0 || r.counts.uncategorized > 0) && (
@@ -997,12 +1020,20 @@ export function ReviewStep({
         </>
       )}
 
-      {r.blocks.map((b) => (
-        <div key={b} className="error">
-          <Masked>{hideAmountsIn(b)}</Masked>
+      {(r.blocks.length > 0 || error) && (
+        <div className="stack tight">
+          {r.blocks.map((b) => (
+            <Notice key={b} level="critical" role="alert">
+              <Masked>{hideAmountsIn(b)}</Masked>
+            </Notice>
+          ))}
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
         </div>
-      ))}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      )}
       <div className="action-row">
         <button disabled={!canImport} onClick={onImport}>
           {busy ? 'Reading…' : pending ? 'Update the review first' : waiting > 0 ? `${plural(waiting, 'answer')} still needed` : 'Import'}
@@ -1305,7 +1336,7 @@ function TargetSection({
       )}
       {t.ended && t.ended.rows > 0 && (
         <p className="panel-note">
-          {t.ended.state === 'closed' ? `${t.name} closed on ${fmtDay(t.ended.day)}` : t.ended.state === 'left' ? `${t.name} has not been yours since ${fmtDay(t.ended.day)}` : `You stopped following ${t.name} from ${fmtDay(t.ended.day)}`}:{' '}
+          {t.ended.state === 'closed' ? `${t.name} closed ${onDay(inDay(t.ended.day))}` : t.ended.state === 'left' ? `${t.name} has not been yours since ${inDay(t.ended.day)}` : `You stopped following ${t.name} from ${inDay(t.ended.day)}`}:{' '}
           {t.ended.rows === 1 ? 'one of the transactions this file adds is' : `${t.ended.rows.toLocaleString()} of the transactions this file adds are`} dated from then, and {t.ended.rows === 1 ? 'counts' : 'count'} in nothing, as its bank’s own from then don’t.
         </p>
       )}
@@ -1347,7 +1378,7 @@ function TargetSection({
                       <Masked>{fmtAmount(p.file.amount, p.file.currency)}</Masked>
                     </span>
                   </div>
-                  <div className="import-row-meta">In the file, {fmtDay(p.file.date)}</div>
+                  <div className="import-row-meta">In the file, {inDay(p.file.date)}</div>
                   <div className="import-conflict-version">
                     <span className="import-row-name">{p.twin.name}</span>
                     <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}>
@@ -1355,7 +1386,7 @@ function TargetSection({
                     </span>
                   </div>
                   <div className="import-row-meta">
-                    {p.twin.kind === 'bank' ? `${institution ?? 'The bank'}’s` : 'An earlier file’s'}, {fmtDay(p.twin.date)} · {p.days === 0 ? 'the same day' : `${plural(p.days, 'day')} apart`} · {CONFIDENCE[p.confidence]}
+                    {p.twin.kind === 'bank' ? `${institution ?? 'The bank'}’s` : 'An earlier file’s'}, {inDay(p.twin.date)} · {p.days === 0 ? 'the same day' : `${plural(p.days, 'day')} apart`} · {CONFIDENCE[p.confidence]}
                     {chosen === null ? ' · choose one' : ''}
                   </div>
                   <div className="import-choices" role="group" aria-label={`What ${p.file.name} is`}>
@@ -1419,7 +1450,7 @@ export function PastMigrations({ items, error, onUndo }: { items: Listed[] | nul
               {e && (
                 <div className="import-row-meta">
                   {[
-                    new Date(e.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+                    formatInstantDay(e.started_at) ?? e.started_at.slice(0, 10),
                     e.status === 'done'
                       ? e.counts
                         ? plural(e.counts.imported, 'transaction')
@@ -1499,7 +1530,11 @@ export function UndoConfirm({
       ) : (
         !error && <p className="panel-note">Counting what it takes out…</p>
       )}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </Notice>
+      )}
       <div className="action-row">
         <button className="secondary" disabled={busy} onClick={onCancel}>
           Keep it

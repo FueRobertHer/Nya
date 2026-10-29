@@ -6,19 +6,20 @@
  * lib/theme.ts and the web manifest, drift apart.
  */
 :root {
-  /* Type. Nothing on screen goes under --fs-1. */
+  /* Type. In rem, so it follows the person's text size (12, 13, 15, 17, 20,
+     24px at a 16px root). Nothing on screen goes under --fs-1. */
   /* Red Hat Text and Display from next/font (app/layout.tsx), named after it
      for a page that loads them some other way (a static check page). */
   --font-ui: var(--font-red-hat-text, "Red Hat Text"), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font-red-hat-display, "Red Hat Display"), var(--font-ui);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
-  --fs-2: 13px; /* secondary lines, notices, helper text */
-  --fs-3: 15px; /* body, list rows, buttons */
-  --fs-4: 17px; /* sheet titles, settings section titles */
-  --fs-5: 20px; /* screen titles, summary figures */
-  --fs-6: 24px; /* large figures in a stat strip */
-  --fs-hero: clamp(32px, 9vw, 40px); /* the one hero number per screen */
+  --fs-1: 0.75rem; /* meta: dates, provenance chips, chart ticks */
+  --fs-2: 0.8125rem; /* secondary lines, notices, helper text */
+  --fs-3: 0.9375rem; /* body, list rows, buttons */
+  --fs-4: 1.0625rem; /* sheet titles, settings section titles */
+  --fs-5: 1.25rem; /* screen titles, summary figures */
+  --fs-6: 1.5rem; /* large figures in a stat strip */
+  --fs-hero: clamp(2rem, 9vw, 2.5rem); /* the one hero number per screen */
   --lh-tight: 1.2;
   --lh-body: 1.45;
   --fw-regular: 400;
@@ -259,6 +260,9 @@
 html,
 body {
   padding: 0;
+  /* How far a card or sheet sets its content in (.card: --sp-4 on a phone);
+     the rows that run to its edges take the same, so they line up. */
+  --inset: var(--sp-5);
   margin: 0;
 }
 
@@ -301,13 +305,13 @@ a:not([class]) {
 }
 
 h1 {
-  font-size: 20px;
+  font-size: var(--fs-5);
   font-weight: 600;
   margin: 0 0 4px;
 }
 
 h2 {
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-weight: 600;
   margin: 16px 0 10px;
 }
@@ -334,28 +338,36 @@ h1,
 
 .sub {
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-2);
   margin-bottom: 24px;
 }
 
 /* The edge sets a card apart: --surface is about 1.07:1 from --canvas in both
-   themes. Padding stays --sp-5, which the rows' edge-to-edge margin assumes. */
+   themes. Its padding is --inset, --sp-4 on a phone and --sp-5 from 720px;
+   rows that run to its edges are set in by the same, so they line up. */
 .card {
+  --inset: var(--sp-4);
   background: var(--card);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
-  padding: var(--sp-5);
-  margin-bottom: 16px;
+  padding: var(--inset);
+  margin-bottom: var(--sp-3);
+}
+
+@media (min-width: 720px) {
+  .card {
+    --inset: var(--sp-5);
+  }
 }
 
 .total-label {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .total-value {
   /* hero figure: proportional digits read better than tabular at this size */
-  font-size: 40px;
+  font-size: 2.5rem;
   font-weight: 700;
   margin-top: 4px;
 }
@@ -364,10 +376,12 @@ h1,
   color: var(--down);
 }
 
-/* Home's net worth: its cents at half the figure, quieter (look and feel,
-   step 3), in a negative total too. */
+/* Home's net worth: its cents at half the figure, whatever size the figure
+   is, and quieter (look and feel, step 3), in a negative total too. */
 .total-value .cents {
-  font-size: var(--fs-5);
+  font-size: 50%;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
   color: var(--text-2);
 }
 
@@ -394,12 +408,13 @@ h1,
 
 .hero .total-value {
   font-size: var(--fs-hero);
+  letter-spacing: -0.025em;
 }
 
 /* Your path's answer (rollout phase 8b): words, not a figure, so the hero's
    smaller end, where "Around age 39" fits a phone's line. */
 .hero .total-value.plan-answer {
-  font-size: 32px;
+  font-size: 2rem;
   line-height: 1.15;
 }
 
@@ -498,7 +513,7 @@ h1,
   border: none;
   padding: var(--sp-3) var(--sp-5);
   border-radius: var(--r-md);
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-weight: 600;
   cursor: pointer;
   width: 100%;
@@ -506,10 +521,10 @@ h1,
   /* No double-tap zoom delay on buttons. */
   touch-action: manipulation;
   transition:
-    opacity 0.15s,
-    transform 0.1s,
-    background-color 0.15s,
-    border-color 0.15s;
+    opacity var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 /* A secondary button is tonal: an --elevated fill and no edge, since its
@@ -528,8 +543,12 @@ button.secondary {
   button:hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
     opacity: 0.9;
   }
+  /* A primary keeps its fill on hover (design-system.md, States). */
+  :is(.btn:not(.secondary, .ghost), button:not([class])):hover:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
+    opacity: 1;
+  }
   button.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
-    background: var(--border-subtle);
+    background: var(--border-strong);
     opacity: 1;
   }
 }
@@ -652,7 +671,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 /* In a sheet or a card, the rows run to its edges. */
 :is(.sheet-body, .card) > .list-rows:not(.card) {
-  margin-inline: calc(-1 * var(--sp-5));
+  margin-inline: calc(-1 * var(--inset));
 }
 
 /* The whole row is the target: a <button> or a link, never a row with
@@ -664,7 +683,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   gap: var(--sp-3);
   width: 100%;
   min-height: var(--row-min);
-  padding: var(--sp-3) var(--sp-5);
+  padding: var(--sp-3) var(--inset);
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -704,6 +723,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 .list-row-value {
   flex-shrink: 0;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -790,7 +810,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 .row-notes {
-  padding: 0 var(--sp-5) var(--sp-3);
+  padding: 0 var(--inset) var(--sp-3);
 }
 
 /* The Plan's What if… card: its scenarios' rows, under the chips, run to
@@ -853,16 +873,17 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   width: 100%;
 }
 
-/* Hovered, a secondary deepens a step (--raised is --elevated, no step) and
-   a ghost is underlined, so it never looks like a secondary at rest. */
+/* Hovered, a secondary's fill deepens to --border-strong (the one place a
+   line token is a fill) and a ghost raises to --elevated, as rows and icon
+   buttons do. */
 @media (hover: hover) {
   .btn.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
-    background: var(--border-subtle);
+    background: var(--border-strong);
     opacity: 1;
   }
 
   .btn.ghost:hover:not(:disabled):not([aria-disabled="true"]) {
-    text-decoration: underline;
+    background: var(--elevated);
     opacity: 1;
   }
 }
@@ -887,7 +908,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
    radio group with aria-checked when it sets a value. */
 .segmented {
   display: flex;
-  border-bottom: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .segmented > button {
@@ -916,7 +937,12 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   padding-bottom: var(--sp-1);
   border-bottom: 3px solid var(--accent);
   color: var(--text-1);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-bold);
+}
+
+/* The ring inside the item, as for tabs and rows. */
+.segmented > button:focus-visible {
+  outline-offset: -2px;
 }
 
 @media (hover: hover) {
@@ -1265,6 +1291,13 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   line-height: var(--lh-body);
 }
 
+/* A notice said after an action (role="alert": the errors that were
+   .error) keeps the 12px above it that .error gave, where its parent is not
+   a stack. :where() so a .stack's own gap, and any class, always wins. */
+:where(.notice[role="alert"]:not(:first-child)) {
+  margin-top: var(--sp-3);
+}
+
 .notice > svg {
   width: 16px;
   height: 16px;
@@ -1402,7 +1435,9 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   min-width: 220px;
   max-width: calc(100vw - 2 * var(--sp-4));
   padding: var(--sp-1);
-  border: 1px solid var(--border-strong);
+  /* It floats over content with no shadow, so its edge is what shows it:
+     --border-input, 3:1. */
+  border: 1px solid var(--border-input);
   border-radius: var(--r-md);
   background: var(--elevated);
 }
@@ -1460,6 +1495,30 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   min-height: var(--tap);
 }
 
+/* A field with an error is outlined in --neg; its words and icon say what
+   to do (.field-error), so the color is never alone. */
+:is(input, select, textarea)[aria-invalid="true"] {
+  border-color: var(--neg);
+}
+
+/* What is wrong with a field and what to do (components/FieldError.tsx),
+   under it: its own line in a row of fields. */
+.field-error {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+  color: var(--neg);
+  font-size: var(--fs-2);
+}
+
+.field-error > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 :where(input, select, textarea)::placeholder {
   color: var(--text-2);
   opacity: 1;
@@ -1470,14 +1529,21 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   outline-offset: 1px;
 }
 
-/* One chevron for every select, instead of each browser's own. */
+/* One chevron for every select, instead of each browser's own, drawn in
+   --text-2 so it follows the theme: two strokes, each a 2px band across a
+   5px square, "\" then "/", meeting at the point. */
 :where(select:not([class*="cl-"])) {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d8391' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image:
+    linear-gradient(45deg, transparent calc(50% - 1px), var(--text-2) calc(50% - 1px), var(--text-2) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(135deg, transparent calc(50% - 1px), var(--text-2) calc(50% - 1px), var(--text-2) calc(50% + 1px), transparent calc(50% + 1px));
+  background-size: 5px 5px;
   background-repeat: no-repeat;
-  background-position: right 12px center;
+  background-position:
+    right 17px center,
+    right 12px center;
 }
 
 /* Room for the chevron, whatever padding a select's own class sets. */
@@ -1504,7 +1570,7 @@ th,
 td {
   text-align: left;
   padding: 9px 8px;
-  font-size: 14px;
+  font-size: var(--fs-2);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -1521,19 +1587,13 @@ th.num {
   white-space: nowrap;
 }
 
-.error {
-  color: var(--down);
-  font-size: 14px;
-  margin-top: 12px;
-}
-
 /* A failed refresh where the last known balances were recovered. Amber, not
    red: the figures on the card are real, just not current, and styling that
    identically to "could not fetch balances" would make the genuine failure
    (nothing to show at all) indistinguishable from the recoverable one. */
 .stale-note {
   color: var(--warn);
-  font-size: 13px;
+  font-size: var(--fs-2);
   margin-top: 12px;
 }
 
@@ -1554,17 +1614,17 @@ th.num {
 
 .inst-name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 .inst-total {
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-2);
 }
 
 .type-tag select {
-  font-size: 12px;
+  font-size: var(--fs-1);
   padding-top: 4px;
   padding-bottom: 4px;
   margin-left: 4px;
@@ -1600,7 +1660,7 @@ th.num {
   width: auto;
   flex: 1;
   padding: 10px 14px;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 /* Destructive action (disconnect confirm): red so it reads as irreversible. */
@@ -1614,7 +1674,7 @@ button.danger {
   width: auto;
   margin-top: 10px;
   padding: 7px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .manage-toggle[aria-pressed="true"] {
@@ -1653,7 +1713,7 @@ button.danger {
   border: none;
   padding: 0;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
 }
 
@@ -1676,7 +1736,7 @@ button.danger {
   /* The colour only: a select keeps its chevron (background-image). */
   background-color: var(--bg);
   color: var(--text);
-  font-size: 15px;
+  font-size: var(--fs-3);
   margin-bottom: 12px;
 }
 
@@ -1685,7 +1745,8 @@ button.danger {
   outline-offset: 1px;
 }
 
-button:disabled:where(:not([class*="cl-"])) {
+/* Disabled, or held with aria-disabled so it keeps focus: 60%. */
+button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1708,22 +1769,28 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .as-of {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   margin-top: 6px;
 }
 
+/* The change is the bold part, in its direction's color with its arrow; its
+   period and what it includes are in the secondary text color. */
 .hero-delta {
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--text-2);
+  font-size: var(--fs-2);
   margin-top: 6px;
   font-variant-numeric: tabular-nums;
 }
 
-.hero-delta.up {
+.hero-delta > b {
+  font-weight: var(--fw-semibold);
+}
+
+.hero-delta.up > b {
   color: var(--up);
 }
 
-.hero-delta.down {
+.hero-delta.down > b {
   color: var(--down);
 }
 
@@ -1808,7 +1875,7 @@ button:disabled:where(:not([class*="cl-"])) {
   display: flex;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-5) var(--sp-1);
+  padding: var(--sp-3) var(--inset) var(--sp-1);
   color: var(--text-2);
   font-size: var(--fs-1);
   font-weight: var(--fw-medium);
@@ -1880,13 +1947,13 @@ button:disabled:where(:not([class*="cl-"])) {
    quieter. */
 .txn-amount.excluded,
 .txn-amount.split-whole {
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* A split transaction's parts and a group's transactions, each a row under
    its transaction's, set in past its logo. */
 .txn-part-row {
-  padding-left: calc(var(--sp-5) + 32px + var(--sp-3));
+  padding-left: calc(var(--inset) + 32px + var(--sp-3));
 }
 
 .txn-part-row .list-row-title {
@@ -1923,7 +1990,7 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .empty-note {
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-2);
   margin: 12px 0 0;
 }
 
@@ -1942,7 +2009,7 @@ button:disabled:where(:not([class*="cl-"])) {
   font-weight: var(--fw-semibold);
 }
 
-.empty-state > :is(.stale-note, .error, .panel-note) {
+.empty-state > :is(.stale-note, .panel-note) {
   margin: 0;
 }
 
@@ -1958,7 +2025,7 @@ button:disabled:where(:not([class*="cl-"])) {
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 10;
+  z-index: var(--z-tabbar);
   display: flex;
   background: var(--glass);
   backdrop-filter: blur(12px);
@@ -2007,6 +2074,11 @@ button:disabled:where(:not([class*="cl-"])) {
   background: var(--accent);
 }
 
+/* The ring inside the tab, as for rows and menu items. */
+.tab-bar button:focus-visible {
+  outline-offset: -2px;
+}
+
 .tab-bar svg {
   width: 22px;
   height: 22px;
@@ -2024,13 +2096,13 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .chart-readout-value {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-variant-numeric: tabular-nums;
 }
 
 .chart-readout-date {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 /* The net-worth and account chart's readout: the figure and the info button on
@@ -2058,7 +2130,7 @@ button:disabled:where(:not([class*="cl-"])) {
    Tabular figures so the two amounts don't jitter while scrubbing. */
 .chart-readout-split {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-variant-numeric: tabular-nums;
   margin: -4px 0 8px;
   /* Keeps a line's height when it is empty (see the readout above). Never cuts
@@ -2107,15 +2179,33 @@ button:disabled:where(:not([class*="cl-"])) {
   touch-action: pan-y;
 }
 
+/* Its line draws in once a page load, left to right over --dur-base
+   (components/NetWorthChart.tsx adds .draw-in the first time only). A clip of
+   the whole plot, the outer <svg>, which every engine draws alike, so the
+   estimated stretches keep their dashes as it draws. Under reduced motion
+   the duration is zero: it is simply there. */
+.chart-svg.hero-chart.draw-in {
+  animation: hero-draw-in var(--dur-base) var(--ease) both;
+}
+
+@keyframes hero-draw-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+
 .chart-tick {
   fill: var(--text-2);
-  font-size: 10px;
+  font-size: 0.625rem;
   font-variant-numeric: tabular-nums;
 }
 
 .chart-xlabel {
   fill: var(--text-2);
-  font-size: 10px;
+  font-size: 0.625rem;
 }
 
 /* A rule's name in words at its left end, inside the plot (the cash
@@ -2175,7 +2265,7 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .chart-info {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   margin-top: 8px;
 }
 
@@ -2205,7 +2295,7 @@ button:disabled:where(:not([class*="cl-"])) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--text-2);
 }
 
@@ -2255,7 +2345,7 @@ button:disabled:where(:not([class*="cl-"])) {
 .summary-value {
   /* 17px from a 370px screen, 15px at 320px, where three figures in Red Hat
      Display don't fit at 17. */
-  font-size: clamp(15px, 4.6vw, 17px);
+  font-size: clamp(0.9375rem, 4.6vw, 1.0625rem);
   font-weight: 600;
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
@@ -2270,7 +2360,7 @@ button:disabled:where(:not([class*="cl-"])) {
 }
 
 /* A stat strip (docs/design/design-system.md#stat-strip): labelled figures,
-   two to a row on a phone, all in one row from 640px, or three to a row when
+   two to a row on a phone, all in one row from 720px, or three to a row when
    there are five (the Accounts tab's totals by kind with Other). A cell may
    shrink below its figure (min-width: 0), so a long one wraps inside its own
    cell rather than running into the next. The figure is sized by its own
@@ -2286,7 +2376,7 @@ button:disabled:where(:not([class*="cl-"])) {
   list-style: none;
 }
 
-@media (min-width: 640px) {
+@media (min-width: 720px) {
   .stat-strip {
     grid-template-columns: none;
     grid-auto-columns: minmax(0, 1fr);
@@ -2340,7 +2430,7 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .cat-name {
   flex: 0 0 34%;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2361,14 +2451,14 @@ button:disabled:where(:not([class*="cl-"])) {
 
 .cat-val {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
 .search-input {
   margin: 12px 0 4px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   padding: 10px 12px;
 }
 
@@ -2384,8 +2474,10 @@ button:disabled:where(:not([class*="cl-"])) {
   color: var(--up);
 }
 
+/* A loss stays in the text color with its minus: red on an amount in a row
+   or table would say something is wrong. */
 .gain.loss {
-  color: var(--down);
+  color: var(--text-1);
 }
 
 /* --- spending trend columns (Activity tab) --- */
@@ -2471,7 +2563,7 @@ button:disabled:where(:not([class*="cl-"])) {
    so gold (--data on --data-tint), not the accent. */
 .meter-track {
   height: 10px;
-  border-radius: 5px;
+  border-radius: var(--r-pill);
   background: var(--data-tint);
   overflow: hidden;
   margin-top: 8px;
@@ -2493,7 +2585,7 @@ span.meter-fill {
 
 .meter-fill {
   height: 100%;
-  border-radius: 5px 0 0 5px;
+  border-radius: var(--r-pill);
   background: var(--data);
   min-width: 2px;
 }
@@ -2508,12 +2600,10 @@ span.meter-fill {
 
 .meter-fill.over {
   background: var(--down);
-  border-radius: 5px;
 }
 
 .meter-fill.done {
   background: var(--up);
-  border-radius: 5px;
 }
 
 .done-tag {
@@ -2524,7 +2614,7 @@ span.meter-fill {
 .recat-select {
   margin: 8px 0 4px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   width: auto;
   appearance: none;
 }
@@ -2574,7 +2664,7 @@ span.meter-fill {
   flex: 0 0 auto;
   width: auto;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .rename-hint {
@@ -2593,7 +2683,7 @@ span.meter-fill {
 .txn-detail-row {
   display: flex;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .txn-detail-row dt {
@@ -2610,7 +2700,7 @@ span.meter-fill {
 /* Account last-4 and credit-utilization meter on the Accounts tab. */
 .acct-mask {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .util {
@@ -2651,12 +2741,12 @@ span.meter-fill {
 }
 
 .budget-name {
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-weight: 500;
 }
 
 .budget-amounts {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
@@ -2694,7 +2784,7 @@ span.meter-fill {
 }
 
 .budget-sub-rows .list-row {
-  padding-left: calc(var(--sp-5) + var(--sp-4));
+  padding-left: calc(var(--inset) + var(--sp-4));
 }
 
 .budget-sub-rows .list-row-title {
@@ -2702,7 +2792,7 @@ span.meter-fill {
 }
 
 .budget-sub-rows > li > .helper {
-  padding: var(--sp-3) var(--sp-5) var(--sp-3) calc(var(--sp-5) + var(--sp-4));
+  padding: var(--sp-3) var(--inset) var(--sp-3) calc(var(--inset) + var(--sp-4));
 }
 
 .budget-add-button > svg {
@@ -2760,7 +2850,7 @@ span.meter-fill {
 }
 
 .holdings-title {
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-weight: 600;
   display: flex;
   align-items: baseline;
@@ -2769,7 +2859,7 @@ span.meter-fill {
 
 .holdings-count {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 500;
 }
 
@@ -2778,14 +2868,14 @@ span.meter-fill {
   align-items: center;
   gap: 6px;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-2);
   font-variant-numeric: tabular-nums;
 }
 
 .holdings-summary .chevron {
   width: 16px;
   height: 16px;
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .holdings-summary .chevron.open {
@@ -2823,7 +2913,7 @@ span.meter-fill {
   align-items: center;
   gap: 8px;
   padding: 4px 0;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* Sharing (components/Sharing.tsx): one account per row, its choice or
@@ -2857,7 +2947,7 @@ span.meter-fill {
 
 .brand h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-5);
   letter-spacing: -0.01em;
 }
 
@@ -2890,7 +2980,7 @@ span.meter-fill {
   align-items: center;
   gap: 6px;
   padding: 12px 6px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.2;
 }
 
@@ -2945,7 +3035,7 @@ span.meter-fill {
 .sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-sheet-backdrop);
   background: var(--scrim);
   opacity: 0;
   /* The motion tokens, as the sheet's: one duration and one easing. */
@@ -2964,8 +3054,9 @@ span.meter-fill {
 
 /* A sheet from the bottom on phones... */
 .sheet {
+  --inset: var(--sp-5);
   position: fixed;
-  z-index: 41;
+  z-index: var(--z-sheet);
   left: 0;
   right: 0;
   bottom: 0;
@@ -2973,8 +3064,8 @@ span.meter-fill {
   max-height: 92dvh;
   display: flex;
   flex-direction: column;
-  background: var(--card);
-  border: 1px solid var(--line);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
   border-bottom: none;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   box-shadow: 0 -12px 40px var(--shadow);
@@ -2991,17 +3082,18 @@ span.meter-fill {
 .sheet-handle {
   width: 36px;
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   background: var(--border);
   margin: 8px auto 0;
   flex-shrink: 0;
 }
 
+/* A wrapped title keeps the close button beside its first line. */
 .sheet-header {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px 10px 20px;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-5);
   flex-shrink: 0;
 }
 
@@ -3010,7 +3102,10 @@ span.meter-fill {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 17px;
+  /* Centred on the 44px buttons beside it: (44 - 17 * 1.2) / 2, about 12px. */
+  padding-top: 12px;
+  font-size: var(--fs-4);
+  line-height: var(--lh-tight);
   overflow-wrap: anywhere;
 }
 
@@ -3021,9 +3116,9 @@ span.meter-fill {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  border-radius: 50%;
-  background: var(--raised);
-  color: var(--text);
+  border-radius: var(--r-pill);
+  background: var(--elevated);
+  color: var(--text-1);
 }
 
 .sheet-icon-btn svg {
@@ -3045,6 +3140,7 @@ span.meter-fill {
   flex-shrink: 0;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5) var(--sp-4);
   border-top: 1px solid var(--border-subtle);
@@ -3061,7 +3157,7 @@ span.meter-fill {
     height: 100vh;
     height: 100dvh;
     border-radius: var(--r-lg) 0 0 var(--r-lg);
-    border: 1px solid var(--line);
+    border: 1px solid var(--border-strong);
     border-right: none;
     box-shadow: -12px 0 40px var(--shadow);
     transform: translateX(100%);
@@ -3109,7 +3205,7 @@ span.meter-fill {
 
 .panel-note {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.45;
   margin: 8px 0 0;
 }
@@ -3119,13 +3215,13 @@ span.meter-fill {
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
 .field input {
   width: 100%;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 .invite-link {
@@ -3147,20 +3243,27 @@ span.meter-fill {
   border: none;
   background: transparent;
   padding: 6px 0;
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
   text-overflow: ellipsis;
 }
 
+/* The ring goes round the whole box, the field and its button, never
+   nowhere. */
 .invite-link input:focus {
   outline: none;
+}
+
+.invite-link:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .invite-link button {
   width: auto;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   flex-shrink: 0;
 }
 
@@ -3173,7 +3276,7 @@ span.meter-fill {
   place-items: center;
   background: var(--accent-tint);
   color: var(--accent);
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-weight: 700;
 }
 
@@ -3191,7 +3294,7 @@ span.meter-fill {
 .avatar.small {
   width: 28px;
   height: 28px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .peer-row {
@@ -3208,12 +3311,12 @@ span.meter-fill {
 
 .peer-row > span:first-child {
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .peer-row select {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
   padding-top: 8px;
   padding-bottom: 8px;
   max-width: 55%;
@@ -3244,7 +3347,7 @@ button.danger-outline {
 }
 
 .status-note {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--up);
   margin-top: 10px;
 }
@@ -3260,7 +3363,7 @@ button.danger-outline {
 .incoming-head h3 {
   flex: 1;
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 .pill {
@@ -3285,12 +3388,12 @@ button.danger-outline {
 }
 
 .incoming-account-name {
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .incoming-account-date {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .incoming-account-value {
@@ -3307,7 +3410,7 @@ button.danger-outline {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
   padding: 6px 0 0;
 }
@@ -3316,11 +3419,11 @@ button.danger-outline {
 
 .privacy-panel h3 {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 .privacy-panel p {
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.5;
 }
 
@@ -3362,7 +3465,7 @@ button.danger-outline {
 }
 
 .auth-wrap .brand h1 {
-  font-size: 24px;
+  font-size: var(--fs-6);
 }
 
 /* What Nya is, in one line under the name (lib/tagline.ts). */
@@ -3669,7 +3772,7 @@ button.danger-outline {
 
 .institution-name {
   margin: 8px 0 2px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-weight: 600;
   color: var(--text);
 }
@@ -3681,7 +3784,7 @@ button.danger-outline {
 
 .sheet-form select {
   width: 100%;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 /* --- debt payoff planner (components/DebtPayoff.tsx) --- */
@@ -3693,9 +3796,8 @@ button.danger-outline {
   color: var(--accent);
 }
 
-/* A note or error straight under a field, which has its own margin already. */
-.payoff-field-note,
-.payoff-field-error {
+/* A note straight under a field, which has its own margin already. */
+.payoff-field-note {
   margin-top: 0;
 }
 
@@ -3714,7 +3816,7 @@ button.danger-outline {
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   margin-bottom: 2px;
 }
 
@@ -3737,7 +3839,7 @@ button.danger-outline {
 /* Where a term came from: Plaid, typed, or still needed. */
 .payoff-source {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   line-height: 1.35;
 }
 
@@ -3805,7 +3907,7 @@ button.danger-outline {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .payoff-step-when {
@@ -3816,7 +3918,7 @@ button.danger-outline {
 /* The line under a month or a debt: how long, and what it costs. */
 .payoff-sub {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 400;
   margin-top: 2px;
 }
@@ -3866,7 +3968,7 @@ button.danger-outline {
 
 .download-format-name {
   display: block;
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-weight: 600;
 }
 
@@ -3874,7 +3976,7 @@ button.danger-outline {
   display: block;
   margin-top: 2px;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.4;
 }
 
@@ -3914,7 +4016,7 @@ button.danger-outline {
 }
 
 .receipt-section li {
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.5;
   margin-bottom: 6px;
   overflow-wrap: anywhere;
@@ -4042,13 +4144,13 @@ button.danger-outline {
 }
 
 .info-section h3 {
-  font-size: 15px;
+  font-size: var(--fs-3);
   margin: 0;
 }
 
 .info-section p,
 .info-section li {
-  font-size: 15px;
+  font-size: var(--fs-3);
   line-height: 1.55;
 }
 
@@ -4071,7 +4173,7 @@ button.danger-outline {
 
 .info-section .info-aside {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.5;
 }
 
@@ -4080,7 +4182,7 @@ button.danger-outline {
 }
 
 .info-section code {
-  font-size: 13px;
+  font-size: var(--fs-2);
   overflow-wrap: anywhere;
 }
 
@@ -4088,7 +4190,7 @@ button.danger-outline {
 .info-table th[scope="row"] {
   width: 36%;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-weight: 600;
 }
 
@@ -4135,7 +4237,7 @@ button.danger-outline {
 
 .info-status dd {
   margin: 4px 0 0;
-  font-size: 15px;
+  font-size: var(--fs-3);
   line-height: 1.55;
 }
 
@@ -4144,7 +4246,7 @@ button.danger-outline {
   justify-content: center;
   gap: 20px;
   margin: 24px 0 4px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .trust-links a {
@@ -4218,12 +4320,12 @@ button.danger-outline {
 }
 
 .plan-row-label {
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .plan-row-value {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -4235,7 +4337,7 @@ button.danger-outline {
   gap: 12px;
   margin-top: 3px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   line-height: 1.4;
 }
 
@@ -4255,7 +4357,7 @@ button.plan-edit {
   border: none;
   padding: 2px 0 2px 8px;
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-weight: 600;
 }
 
@@ -4364,24 +4466,24 @@ button.plan-edit:disabled {
 
 .plan-working {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   padding: 40px 0;
   text-align: center;
 }
 
 .plan-stat-value {
-  font-size: 32px;
+  font-size: 2rem;
   font-weight: 700;
 }
 
 .plan-stat-label {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .plan-definition {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   line-height: 1.4;
   margin: 6px 0 4px;
 }
@@ -4419,7 +4521,7 @@ button.plan-edit:disabled {
 .plan-table-view {
   margin-top: 8px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 /* A 44px target: one line as tall as a tap, so it stays a list item and
@@ -4433,12 +4535,12 @@ button.plan-edit:disabled {
 .plan-table-view td,
 .plan-table-view th {
   padding: 6px 4px;
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 /* What the rows are (the cash forecast's "every day after now is an
    estimate"), set as the table's first line. */
-.plan-table-view caption {
+.plan-table-view caption:not(.visually-hidden) {
   padding: 4px;
   text-align: start;
   caption-side: top;
@@ -4452,8 +4554,8 @@ button.plan-edit:disabled {
    at 12px, and are about 42px here. */
 .plan-grid {
   margin-top: 10px;
-  margin-inline: calc(var(--sp-2) - var(--sp-5));
-  width: calc(100% + 2 * (var(--sp-5) - var(--sp-2)));
+  margin-inline: calc(var(--sp-2) - var(--inset));
+  width: calc(100% + 2 * (var(--inset) - var(--sp-2)));
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 2px;
@@ -4494,7 +4596,7 @@ button.plan-edit:disabled {
 }
 
 .plan-grid td.plan-grid-cell {
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-weight: 600;
   border-radius: 6px;
 }
@@ -4520,7 +4622,7 @@ button.plan-edit:disabled {
    touch it. */
 .plan-grid th.plan-grid-rate {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .plan-worst,
@@ -4538,7 +4640,7 @@ button.plan-edit:disabled {
   gap: 12px;
   padding: 7px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .plan-worst li:last-child,
@@ -4560,7 +4662,7 @@ button.plan-edit:disabled {
 
 .plan-assumptions li {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   line-height: 1.45;
   margin-top: 6px;
 }
@@ -4574,7 +4676,7 @@ button.plan-edit:disabled {
   align-items: center;
   gap: 10px;
   margin-top: 12px;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .plan-check input {
@@ -4594,6 +4696,8 @@ button.plan-edit:disabled {
   min-width: 0;
 }
 
+/* A save of the Plan that failed (a critical Notice, components/PlanTab.tsx),
+   between the cards: a card's own margin under it. */
 .plan-save-error {
   margin: 0 0 12px;
 }
@@ -4604,7 +4708,7 @@ button.plan-edit:disabled {
 }
 
 .plan-funding-name {
-  font-size: 13px;
+  font-size: var(--fs-2);
   margin-bottom: 6px;
 }
 
@@ -4612,7 +4716,7 @@ button.plan-edit:disabled {
 
 .end-picker select {
   width: 100%;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 /* A record of showings: one of the reader's days a line. */
@@ -4620,7 +4724,7 @@ button.plan-edit:disabled {
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .shown-list li {
@@ -4647,7 +4751,7 @@ button.plan-edit:disabled {
 
 /* The amount comes first and largest: it is what is typed every time. */
 .quick-add-amount input {
-  font-size: 22px;
+  font-size: 1.375rem;
   font-weight: 600;
 }
 
@@ -4677,7 +4781,7 @@ button.plan-edit:disabled {
   align-items: flex-start;
   gap: 10px;
   margin-top: 4px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   line-height: 1.4;
   color: var(--text);
 }
@@ -4737,7 +4841,7 @@ button.plan-edit:disabled {
   width: auto;
   flex-shrink: 0;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .api-token-problem .link-btn {
@@ -4748,12 +4852,13 @@ button.plan-edit:disabled {
   width: 100%;
   margin-top: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-1);
   resize: vertical;
 }
 
 .api-token-made .button-pair,
-.api-token-new > button {
+.api-token-new > button,
+.api-token-new > .notice {
   margin-top: 12px;
 }
 
@@ -4840,7 +4945,7 @@ button.plan-edit:disabled {
 .alloc-sub {
   margin-top: 2px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 /* A split's fields, two to a row. */
@@ -4889,7 +4994,7 @@ button.plan-edit:disabled {
 .alloc-readout .chart-readout-value {
   flex: 1 1 100%;
   min-height: 3.9em;
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.3;
   white-space: normal;
 }
@@ -4961,7 +5066,7 @@ button.plan-edit:disabled {
 .list-row.recurring-ended,
 .recurring-ended .list-row-sub,
 .recurring-ended .recurring-amount.inflow {
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* Money in on Recurring's and Planned's rows. */
@@ -4978,7 +5083,7 @@ button.plan-edit:disabled {
 }
 
 .recurring-marked .list-row {
-  padding-left: calc(var(--sp-5) + var(--sp-4));
+  padding-left: calc(var(--inset) + var(--sp-4));
 }
 
 .recurring-marked .list-row-title {
@@ -4986,7 +5091,7 @@ button.plan-edit:disabled {
 }
 
 .recurring-marked > li > .helper {
-  padding: var(--sp-3) var(--sp-5) var(--sp-3) calc(var(--sp-5) + var(--sp-4));
+  padding: var(--sp-3) var(--inset) var(--sp-3) calc(var(--inset) + var(--sp-4));
 }
 
 /* Planned's rows and Add while the items are read again after a refused
@@ -5010,7 +5115,7 @@ button.plan-edit:disabled {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .recurring-dismissed-list li {
@@ -5031,7 +5136,7 @@ button.plan-edit:disabled {
 /* The what-if's answer: the new lowest point, coloured as the line's point. */
 .forecast-whatif {
   margin: 14px 0 6px;
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -5053,7 +5158,7 @@ button.plan-edit:disabled {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px;
-  margin-inline: calc(-1 * var(--sp-5));
+  margin-inline: calc(-1 * var(--inset));
 }
 
 .cal-dow {
@@ -5089,7 +5194,7 @@ button.plan-edit:disabled {
 }
 
 .cal-num {
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .cal-day.past .cal-num {
@@ -5193,7 +5298,7 @@ button.plan-edit:disabled {
 }
 
 .cal-detail > .list-rows {
-  margin-inline: calc(-1 * var(--sp-5));
+  margin-inline: calc(-1 * var(--inset));
 }
 
 /* Upcoming's list and the calendar's day list: Activity's day bars
@@ -5215,7 +5320,7 @@ button.plan-edit:disabled {
 }
 
 .upcoming-amount.uncounted {
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* The list has no heading, so its first day's bar starts at the card's top. */
@@ -5229,7 +5334,7 @@ button.plan-edit:disabled {
 /* What the preview found, first and largest. */
 .import-headline {
   margin: 12px 0 0;
-  font-size: 17px;
+  font-size: var(--fs-4);
   font-weight: 600;
   line-height: 1.35;
 }
@@ -5245,7 +5350,7 @@ button.import-choice {
 
 .import-choice-meta {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 400;
 }
 
@@ -5286,20 +5391,20 @@ button.import-choice {
 }
 
 .import-row-name {
-  font-size: 14px;
+  font-size: var(--fs-3);
   overflow-wrap: anywhere;
 }
 
 .import-row-meta {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   line-height: 1.4;
   margin-top: 2px;
 }
 
 .import-row-amount {
   flex: 0 0 auto;
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -5310,7 +5415,7 @@ button.import-choice {
 
 .import-problems li {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.45;
   padding: 4px 0;
   overflow-wrap: anywhere;
@@ -5367,7 +5472,7 @@ button.import-choice {
   width: auto;
   padding-left: 6px;
   padding-right: 6px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .import-choices > button[aria-pressed="true"] {
@@ -5414,10 +5519,10 @@ button.import-choice {
   margin-top: 12px;
   padding: 12px 20px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--elevated);
   color: var(--text-1);
-  font-size: 15px;
+  font-size: var(--fs-3);
   font-weight: 600;
   text-decoration: none;
 }
@@ -5460,13 +5565,13 @@ button.import-choice {
 /* Each part of the report, on screen: one of the app's cards. */
 .report-page {
   background: var(--card);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   padding: 20px;
   margin-bottom: 16px;
 }
 
 .report h1 {
-  font-size: 20px;
+  font-size: var(--fs-5);
   margin: 2px 0 6px;
 }
 
@@ -5475,7 +5580,7 @@ button.import-choice {
 }
 
 .report h3 {
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-weight: 600;
   margin: 16px 0 4px;
   color: var(--text-2);
@@ -5483,13 +5588,13 @@ button.import-choice {
 
 .report-kicker {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .report-meta,
 .report-note {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.45;
   margin: 6px 0 0;
 }
@@ -5498,10 +5603,10 @@ button.import-choice {
    either. */
 .report-status {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   margin: 16px 0;
-  font-size: 14px;
+  font-size: var(--fs-2);
   line-height: 1.45;
 }
 
@@ -5525,7 +5630,7 @@ button.import-choice {
 
 /* A figure that may be short is marked in words, never by color alone. */
 .report-flag {
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-weight: 600;
   margin: 6px 0 10px;
 }
@@ -5544,7 +5649,7 @@ button.import-choice {
 }
 
 .report-figure {
-  font-size: clamp(14px, 4.4vw, 17px);
+  font-size: clamp(0.875rem, 4.4vw, 1.0625rem);
   font-weight: 600;
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
@@ -5562,7 +5667,7 @@ button.import-choice {
 }
 
 .report-table td {
-  font-size: 13px;
+  font-size: var(--fs-2);
   vertical-align: top;
 }
 
@@ -5622,7 +5727,7 @@ button.import-choice {
 .report-list {
   margin: 4px 0 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* The two category tables, money out and money in, line up. */
@@ -5658,7 +5763,7 @@ button.import-choice {
   align-items: center;
   gap: 10px;
   padding: 8px 0;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 .report-mark input {
@@ -5974,8 +6079,12 @@ button.rollup-toggle {
   color: var(--text-2);
 }
 
+/* A group's category under it: lighter than the group's bar, but never
+   see-through gold (over the light canvas it turns beige): the solid wash
+   with a gold edge, so it still reads 3:1. */
 .cat-bar.rollup-child-bar {
-  opacity: 0.55;
+  background: var(--data-tint);
+  box-shadow: inset 0 0 0 1px var(--data);
 }
 
 /* A group's heading opens the group: a whole row, as tall as a category's,
@@ -5998,14 +6107,14 @@ button.cat-manage-group {
 
 .cat-manage-group-name {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .cat-manage-kind {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .cat-manage-list {
@@ -6060,7 +6169,7 @@ button.cat-manage-row.archived {
 }
 
 .download-card code {
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .open-download > button {
@@ -6081,7 +6190,7 @@ button.cat-manage-row.archived {
 .connector-token textarea {
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: var(--fs-2);
   overflow-wrap: anywhere;
 }
 
@@ -6136,7 +6245,7 @@ button.cat-manage-row.archived {
   background: none;
   border: none;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--fs-2);
   line-height: 1;
 }
 
@@ -6148,27 +6257,15 @@ button.cat-manage-row.archived {
   margin-left: 0;
 }
 
+/* Tags to pick: chips in a .chip-row (components/RuleSheet.tsx,
+   TxnTagsNote.tsx), a picked one with its edge and check. */
 .tag-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
   margin: 2px 0 8px;
-}
-
-button.tag-suggestion {
-  width: auto;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 999px;
 }
 
 .txn-note-input {
   margin: 4px 0 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
   padding: 10px 12px;
   resize: vertical;
 }
@@ -6201,7 +6298,7 @@ button.tag-color.chosen {
 
 .rule-condition {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 10px 10px 0;
   margin-bottom: 10px;
 }
@@ -6225,18 +6322,14 @@ button.tag-color.chosen {
 .rule-is {
   flex: 0 0 auto;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-2);
   margin-bottom: 12px;
-}
-
-button.tag-suggestion.chosen {
-  border-color: transparent;
 }
 
 .rule-preview {
   margin-top: 16px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--raised);
 }
 
@@ -6249,7 +6342,7 @@ button.tag-suggestion.chosen {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .rule-samples li {
@@ -6277,7 +6370,7 @@ button.tag-suggestion.chosen {
 }
 
 .rule-sentence {
-  font-size: 14px;
+  font-size: var(--fs-3);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -6288,7 +6381,7 @@ button.tag-suggestion.chosen {
   gap: 4px 12px;
   align-items: center;
   margin-top: 6px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .rule-row-actions label {
@@ -6357,7 +6450,7 @@ button.tag-suggestion.chosen {
   padding: 4px 0;
   border-radius: 6px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 400;
   text-align: left;
   overflow-wrap: anywhere;
@@ -6404,7 +6497,7 @@ button.tag-suggestion.chosen {
   align-items: flex-start;
   gap: 10px;
   padding: 8px 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -6423,7 +6516,7 @@ button.tag-suggestion.chosen {
 .lifecycle-choice-note {
   display: block;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .lifecycle-prefilled {
@@ -6457,7 +6550,7 @@ button.tag-suggestion.chosen {
 .lifecycle-ask {
   margin: 0;
   color: var(--warn);
-  font-size: 14px;
+  font-size: var(--fs-2);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -6480,7 +6573,7 @@ button.tag-suggestion.chosen {
   gap: 12px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
-  font-size: 14px;
+  font-size: var(--fs-3);
   overflow-wrap: anywhere;
 }
 
@@ -6490,7 +6583,7 @@ button.tag-suggestion.chosen {
 
 .lifecycle-note {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   margin-top: 2px;
 }
 
@@ -6526,7 +6619,7 @@ button.tag-suggestion.chosen {
   align-items: flex-start;
   gap: 10px;
   margin-top: 10px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -6549,7 +6642,7 @@ button.tag-suggestion.chosen {
 .goal-plans-repair > button {
   width: auto;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* --- savings goals: the "where you should be" marker, outlooks and the
@@ -6576,7 +6669,7 @@ button.tag-suggestion.chosen {
 
 .goal-outlook {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-1);
   line-height: 1.4;
   color: var(--text-2);
 }
@@ -6602,7 +6695,7 @@ button.tag-suggestion.chosen {
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
@@ -6638,7 +6731,7 @@ button.tag-suggestion.chosen {
 .budget-carry {
   margin-top: 4px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .budget-carry.negative {
@@ -6682,7 +6775,7 @@ button.tag-suggestion.chosen {
 
 .pool-table td,
 .pool-table th[scope='row'] {
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .pool-table thead th {
@@ -6739,7 +6832,7 @@ button.tag-suggestion.chosen {
 }
 
 .split-part-top .split-amount input {
-  font-size: 18px;
+  font-size: 1.125rem;
   font-weight: 600;
 }
 
@@ -6750,7 +6843,7 @@ button.tag-suggestion.chosen {
 
 .split-note {
   margin-bottom: 6px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   padding: 10px 12px;
 }
 
@@ -6763,12 +6856,12 @@ button.tag-suggestion.chosen {
 button.split-small {
   width: auto;
   padding: 7px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .split-left {
   margin: 12px 0 0;
-  font-size: 14px;
+  font-size: var(--fs-2);
   font-weight: 600;
   color: var(--warn);
 }
@@ -6788,7 +6881,7 @@ button.split-small {
   min-height: 44px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
-  font-size: 14px;
+  font-size: var(--fs-3);
   color: var(--text);
 }
 
@@ -6912,7 +7005,7 @@ button.split-small {
 .cash-flow-table {
   margin-top: 10px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .cash-flow-table summary {
@@ -6923,7 +7016,7 @@ button.split-small {
 .cash-flow-table td,
 .cash-flow-table th {
   padding: 6px 4px;
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .cash-flow-table td {
@@ -6955,7 +7048,7 @@ button.cash-flow-show {
   text-decoration: underline;
   text-decoration-color: var(--text-2);
   text-underline-offset: 3px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
 }
 
 .cash-flow-tag {
@@ -6979,14 +7072,14 @@ button.cash-flow-show {
   gap: 10px;
   margin-top: 10px;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .flow-shown button {
   width: auto;
   flex: none;
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* --- hide amounts (components/hide-amounts.ts, components/HideAmounts.tsx) ---
@@ -7012,15 +7105,16 @@ button.cash-flow-show {
   color: transparent;
   -webkit-text-fill-color: transparent;
   text-shadow: none;
-  /* Three dots in --text-1 (the text itself is transparent here), where the
-     text starts, sized to it. */
+  /* Four dots in --text-1, as MASK in lib/format.ts (the text itself is
+     transparent here), where the text starts, sized to it. */
   background-image:
+    radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
     radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
     radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em),
     radial-gradient(circle, var(--text-1) 0.15em, transparent 0.16em);
   background-repeat: no-repeat;
   background-origin: content-box;
-  background-position: 0 center, 0.45em center, 0.9em center;
+  background-position: 0 center, 0.45em center, 0.9em center, 1.35em center;
   background-size: 0.4em 0.4em;
 }
 
@@ -7049,7 +7143,7 @@ button.cash-flow-show {
 .template-changes {
   margin: 4px 0 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.45;
 }
 
@@ -7061,7 +7155,7 @@ button.cash-flow-show {
    its state beside the card's name, and the summary as it goes, in plain
    text, wrapped to the sheet's width. */
 .weekly-summary-status {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
@@ -7092,12 +7186,19 @@ button.cash-flow-show {
   text-align: left;
 }
 
+/* What failed (a critical Notice), spaced as the card and the sheet space
+   their other parts. */
+.weekly-summary-card > .notice,
+.weekly-summary-sheet > .notice {
+  margin-top: 12px;
+}
+
 .weekly-preview-title {
   margin: 20px 0 6px;
 }
 
 .weekly-preview-subject {
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-weight: 600;
   margin: 0 0 6px;
 }
@@ -7106,7 +7207,7 @@ button.cash-flow-show {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.5;
   margin: 0;
   padding: 12px;
@@ -7138,7 +7239,8 @@ button.cash-flow-show {
   gap: var(--sp-2);
 }
 
-.review-bar-row + .review-bar-row {
+.review-bar-row + .review-bar-row,
+.review-bar-row + .notice {
   margin-top: var(--sp-2);
 }
 
@@ -7158,7 +7260,7 @@ button.review-keys-toggle {
   padding: 4px 0;
   margin-top: 4px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 400;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -7172,7 +7274,7 @@ button.review-keys-toggle {
 
 .review-keys {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-1);
   color: var(--text-2);
 }
 
@@ -7217,7 +7319,7 @@ button.review-keys-toggle {
   gap: 8px;
   margin: 4px 0 8px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 
 .review-note span {
@@ -7230,7 +7332,7 @@ button.review-keys-toggle {
   width: auto;
   min-height: var(--tap);
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* Card Mode: full screen, above the page and its tab bar, under the sheets
@@ -7264,13 +7366,13 @@ button.review-keys-toggle {
 
 .card-mode-header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 1.125rem;
 }
 
 .card-mode-position {
   flex: 1 1 auto;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .card-mode-body {
@@ -7283,7 +7385,7 @@ button.review-keys-toggle {
   position: relative;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 20px;
+  border-radius: var(--r-lg);
   padding: 28px 20px 22px;
   min-height: 260px;
   /* Up and down still scroll the page; sideways is the card's. */
@@ -7291,8 +7393,8 @@ button.review-keys-toggle {
   user-select: none;
   -webkit-user-select: none;
   transition:
-    transform 0.18s ease,
-    opacity 0.18s ease;
+    transform var(--dur-base) var(--ease),
+    opacity var(--dur-base) var(--ease);
   overflow: hidden;
   overflow-wrap: anywhere;
 }
@@ -7311,10 +7413,10 @@ button.review-keys-toggle {
   top: 14px;
   padding: 4px 10px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .card-mode-lean.approve {
@@ -7335,13 +7437,13 @@ button.review-keys-toggle {
 }
 
 .card-mode-merchant {
-  font-size: 20px;
+  font-size: var(--fs-5);
   font-weight: 600;
   margin-top: 10px;
 }
 
 .card-mode-amount {
-  font-size: 32px;
+  font-size: 2rem;
   font-weight: 700;
   margin-top: 6px;
   font-variant-numeric: tabular-nums;
@@ -7353,7 +7455,7 @@ button.review-keys-toggle {
 
 .card-mode-meta {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   margin-top: 6px;
 }
 
@@ -7363,7 +7465,7 @@ button.review-keys-toggle {
   padding: 6px 12px;
   border-radius: 999px;
   background: var(--raised);
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .card-mode-picker {
@@ -7384,12 +7486,12 @@ button.review-keys-toggle {
   width: auto;
   flex: 0 0 auto;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .card-mode-hint {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
   margin-top: 8px;
 }
 
@@ -7397,7 +7499,7 @@ button.review-keys-toggle {
   list-style: none;
   padding: 0;
   margin: 12px 0 0;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .card-mode-parts li {
@@ -7410,7 +7512,7 @@ button.review-keys-toggle {
 
 .card-mode-note {
   margin-top: 10px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   white-space: pre-wrap;
 }
 
@@ -7430,7 +7532,7 @@ button.review-keys-toggle {
 
 .card-mode-more > button {
   padding: 10px 8px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .card-mode-end {
@@ -7440,7 +7542,7 @@ button.review-keys-toggle {
 }
 
 .card-mode-end h3 {
-  font-size: 22px;
+  font-size: 1.375rem;
   margin: 0 0 8px;
 }
 
@@ -7449,7 +7551,8 @@ button.review-keys-toggle {
   margin: 0 0 20px;
 }
 
-.card-mode-error {
+/* What failed (a critical Notice), under the card it is about. */
+.card-mode > .notice {
   margin-top: 12px;
 }
 
@@ -7502,7 +7605,7 @@ button.review-keys-toggle {
   width: auto;
   flex: 0 0 auto;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* --- sharing's other kinds: net worth, spending, holdings, budgets, goals
@@ -7517,13 +7620,13 @@ button.review-keys-toggle {
 
 .incoming-kind-name {
   margin: 0 0 4px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-weight: 600;
 }
 
 .incoming-kind-sub {
   margin: 12px 0 2px;
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -7547,7 +7650,7 @@ button.review-keys-toggle {
 /* A category under its group, or a goal's lesser line. */
 .incoming-sub {
   padding-left: 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
@@ -7571,12 +7674,12 @@ button.review-keys-toggle {
 }
 
 .kind-name {
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .kind-choice select {
   width: 100%;
-  font-size: 14px;
+  font-size: var(--fs-3);
   padding-top: 8px;
   padding-bottom: 8px;
 }
@@ -7613,7 +7716,7 @@ button.review-keys-toggle {
 /* Each app's export steps, folded until asked for. */
 .migration-how {
   margin-top: 12px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .migration-how summary {
@@ -7639,7 +7742,7 @@ button.review-keys-toggle {
 
 .restore-list li {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   line-height: 1.45;
   margin-bottom: 4px;
   overflow-wrap: anywhere;
@@ -7654,7 +7757,7 @@ button.review-keys-toggle {
 }
 
 .restore-bank-name {
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-weight: 600;
 }
 
@@ -7719,7 +7822,7 @@ button.review-keys-toggle {
 }
 
 .currency-offer-why {
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 400;
   opacity: 0.8;
 }
@@ -7761,7 +7864,7 @@ button.review-keys-toggle {
 }
 
 .own-rate-rate {
-  font-size: 14px;
+  font-size: var(--fs-3);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -7819,7 +7922,7 @@ button.review-keys-toggle {
   display: inline-block;
   margin-left: 8px;
   color: var(--text-2);
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .inventory-row[open] > summary::after,
@@ -7837,13 +7940,13 @@ button.review-keys-toggle {
 
 .inventory-name {
   min-width: 0;
-  font-size: 15px;
+  font-size: var(--fs-3);
 }
 
 .inventory-figures {
   margin-left: auto;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
   text-align: right;
 }
 
@@ -7863,7 +7966,7 @@ button.review-keys-toggle {
 
 .inventory-none > summary {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .admin-storage-items {
@@ -7944,6 +8047,11 @@ button.review-keys-toggle {
   .runway-chart .chart-readout {
     display: none;
   }
+
+  /* Closed on paper, Show as a table would print only its summary. */
+  .runway-chart .plan-table-view {
+    display: none;
+  }
 }
 
 /* Plan scenarios (components/PlanScenarios.tsx, PlanCompare.tsx, PlanEvents.tsx):
@@ -7956,7 +8064,7 @@ button.review-keys-toggle {
   border: 1px solid var(--accent);
   border-radius: 999px;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
 }
 
@@ -8004,7 +8112,7 @@ button.review-keys-toggle {
 .plan-working-line {
   min-height: 0;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 /* One column: compare is drawn in the Scenarios sheet, a 440px panel on a
@@ -8019,7 +8127,7 @@ button.review-keys-toggle {
 .plan-compare-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--fs-2);
 }
 
 .plan-compare-table caption {
@@ -8091,7 +8199,7 @@ button.review-keys-toggle {
 .api-change-state,
 .api-change-why {
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .api-change-actions {
@@ -8107,7 +8215,7 @@ button.review-keys-toggle {
   width: auto;
   min-height: 44px;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 
 .api-change-more {
@@ -8128,7 +8236,7 @@ button.review-keys-toggle {
   list-style: none;
   margin: 8px 0 12px;
   padding: 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .shared-person,
@@ -8146,7 +8254,7 @@ button.review-keys-toggle {
   align-self: flex-start;
   min-height: 44px;
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-3);
   text-align: left;
 }
 
@@ -8176,7 +8284,7 @@ button.review-keys-toggle {
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 14px;
+  font-size: var(--fs-3);
   overflow-wrap: anywhere;
 }
 
@@ -8259,7 +8367,7 @@ button.attach-thumb {
   align-items: center;
   gap: 10px;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
@@ -8309,7 +8417,7 @@ button.attach-thumb {
 }
 
 .attach-viewer-sub {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
@@ -8362,7 +8470,7 @@ button.attach-thumb {
 .attach-viewer-note {
   margin: 0;
   padding: 0 16px;
-  font-size: 14px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
@@ -8406,11 +8514,11 @@ button.attach-reveal {
   min-height: 44px;
   min-width: 44px;
   padding: 8px 14px;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .attach-viewer-count {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
@@ -8432,7 +8540,7 @@ button.attach-picker-item {
   padding: 8px 12px;
   text-align: left;
   font-weight: 500;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 
 .attach-picker-text {
@@ -8443,7 +8551,7 @@ button.attach-picker-item {
 }
 
 .attach-picker-day {
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 400;
   color: var(--text-2);
 }
@@ -8458,7 +8566,7 @@ button.attach-picker-item {
 .receipts-filters .text-input {
   flex: 1 1 140px;
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--fs-3);
   padding: 10px 12px;
 }
 
@@ -8515,12 +8623,12 @@ button.receipts-item {
 }
 
 .receipts-sub {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 
 .receipts-why {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--warn);
 }
 
@@ -8542,7 +8650,7 @@ button.receipts-item {
 .receipts-volume-note {
   display: block;
   margin-top: 4px;
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--text-2);
 }
 

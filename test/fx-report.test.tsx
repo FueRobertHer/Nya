@@ -152,7 +152,7 @@ describe('with one', () => {
   test('the report and its file say what was converted and the days of the rates, never a rate', () => {
     const html = renderToStaticMarkup(<ReportView report={r} />);
     expect(html).toContain('Converted into EUR at each day’s ECB rate, from Sep 10, 2026 to Sep 14, 2026: 2 transactions in USD and 1 in GBP.');
-    expect(html).toContain('Counted as -€100.00, at its day’s rate');
+    expect(html).toContain('Counted as −€100.00, at its day’s rate');
     expect(html).not.toContain('named below and left out');
     const csv = parseCsv(reportCsv(r).replace(/^﻿/, ''));
     expect(csv.find((x) => x[0] === 'conversion')).toEqual([

@@ -85,9 +85,9 @@ describe('the Budgets tab’s group meters', () => {
   test('a budget on a category since deleted is shown, and its row opens a sheet that removes it', () => {
     const t = card({ budgets: { categories: { gone_1: { amount: 25 } }, groups: {} } });
     expect(t).toContain('A category since deleted $25.00');
-    expect(t).not.toContain('Remove budget');
+    expect(t).not.toContain('Delete budget');
     const sheet = card({ budgets: { categories: { gone_1: { amount: 25 } }, groups: {} }, edit: { kind: 'category', id: 'gone_1' } });
-    expect(sheet).toContain('A category since deleted $25.00 Cancel Remove budget');
+    expect(sheet).toContain('A category since deleted $25.00 Cancel Delete budget');
   });
 
   test('to add one: whole groups without a budget, then each group’s categories without one, archived ones left out', () => {

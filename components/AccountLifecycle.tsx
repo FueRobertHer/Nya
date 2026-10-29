@@ -35,8 +35,9 @@ import { Sheet } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
 import { Masked } from './HideAmounts';
 import { localDate } from '@/lib/local-date';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
+import { Notice } from './TotalCaveats';
 
 export type EndState = 'closed' | 'left' | 'untracked';
 
@@ -94,11 +95,11 @@ export type LifecycleTarget = {
 
 const endOf = (l: EndedAccount['lifecycle']) => (l.state === 'untracked' ? l.from : l.on);
 
-/** "Mar 12", or "Mar 12, 2025" outside this year: a calendar day, read at
- *  local midnight so it never shows as the day before. */
+/** "Mar 12", or "Mar 12, 2025" outside this year, "today" and "yesterday"
+ *  (lib/format.ts formatDay, mid sentence): a calendar day, read at local
+ *  midnight so it never shows as the day before. */
 export function dayText(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  return formatDay(iso, { sentence: true });
 }
 
 /** "Ally Savings ••1234". */
@@ -341,7 +342,11 @@ export function LifecycleForm({
           <span>Stop counting what it owes</span>
         </label>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
           Cancel
@@ -738,7 +743,7 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
           {damage.unrecognised > 0
             ? ` Accounts can’t load while any closure can’t be read, since one may be an account you closed, and removing ${n === 1 ? 'this one' : 'these'} isn’t enough on its own (see below).`
             : ` Accounts can’t load until ${n === 1 ? 'it is' : 'they are'} removed, since one may be an account you closed.`}{' '}
-          Removing {n === 1 ? 'it' : 'them'} counts {n === 1 ? 'that account' : 'those accounts'} again until you close{' '}
+          Deleting {n === 1 ? 'it' : 'them'} counts {n === 1 ? 'that account' : 'those accounts'} again until you close{' '}
           {n === 1 ? 'it' : 'them'} again.
         </p>
       )}
@@ -750,7 +755,11 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
           version that saved {damage.unrecognised === 1 ? 'it' : 'them'} is back.
         </p>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {n > 0 &&
         (confirming ? (
           <div className="button-pair">
@@ -758,12 +767,12 @@ export function LifecycleRepair({ damage, onRepaired }: { damage: LifecycleDamag
               Cancel
             </button>
             <button className="danger" onClick={repair} disabled={busy}>
-              {busy ? 'Removing…' : n === 1 ? 'Remove it' : `Remove all ${n}`}
+              {busy ? 'Deleting…' : n === 1 ? 'Delete it' : `Delete all ${n}`}
             </button>
           </div>
         ) : (
           <button className="secondary" onClick={() => setConfirming(true)}>
-            Remove the damaged {n === 1 ? 'closure' : 'closures'}
+            Delete the damaged {n === 1 ? 'closure' : 'closures'}
           </button>
         ))}
     </div>

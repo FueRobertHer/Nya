@@ -9,6 +9,7 @@
 // that version reads them.
 
 import { useState } from 'react';
+import { Notice } from './TotalCaveats';
 
 export type GoalPlansDamage = { unreadable: number; unrecognised: number };
 
@@ -48,7 +49,7 @@ export default function GoalPlansRepair({ damage, onRepaired }: { damage: GoalPl
           {m > 0
             ? ` Goals can’t be shown or changed while any plan can’t be read, and removing ${n === 1 ? 'this one' : 'these'} isn’t enough on its own (see below).`
             : ` Goals can’t be shown or changed until ${n === 1 ? 'it is' : 'they are'} removed.`}{' '}
-          Removing {n === 1 ? 'it' : 'them'} keeps {n === 1 ? 'that goal' : 'those goals'}, with {n === 1 ? 'its' : 'their'} name, target
+          Deleting {n === 1 ? 'it' : 'them'} keeps {n === 1 ? 'that goal' : 'those goals'}, with {n === 1 ? 'its' : 'their'} name, target
           and account, and no plan: an allocation, monthly target or target date {n === 1 ? 'it' : 'they'} had needs setting again. This
           can’t be undone here: if a backup holds {n === 1 ? 'it' : 'them'}, whoever runs this Nya may want to recover{' '}
           {n === 1 ? 'it' : 'them'} from there first.
@@ -61,7 +62,11 @@ export default function GoalPlansRepair({ damage, onRepaired }: { damage: GoalPl
           goals can’t be shown until the version that saved {m === 1 ? 'it' : 'them'} is back.
         </p>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {n > 0 &&
         (confirming ? (
           <div className="button-pair">
@@ -69,12 +74,12 @@ export default function GoalPlansRepair({ damage, onRepaired }: { damage: GoalPl
               Cancel
             </button>
             <button className="danger" onClick={repair} disabled={busy}>
-              {busy ? 'Removing…' : n === 1 ? 'Remove it' : `Remove all ${n}`}
+              {busy ? 'Deleting…' : n === 1 ? 'Delete it' : `Delete all ${n}`}
             </button>
           </div>
         ) : (
           <button className="secondary" onClick={() => setConfirming(true)}>
-            Remove the damaged {n === 1 ? 'plan' : 'plans'}
+            Delete the damaged {n === 1 ? 'plan' : 'plans'}
           </button>
         ))}
     </div>

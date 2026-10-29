@@ -74,8 +74,9 @@ export function draftFromRule(r: Rule): RuleDraft {
   };
 }
 
-/** An amount as typed, as a number, or NaN (the server says what is wrong). */
-const amountOf = (s: string) => (s.trim() === '' ? NaN : Number(s.replace(/[,\s]/g, '')));
+/** An amount as typed, as a number, or NaN (the server says what is wrong).
+ *  Its minus may be the hyphen or the true minus sign the app writes. */
+const amountOf = (s: string) => (s.trim() === '' ? NaN : Number(s.replace(/[,\s]/g, '').replace(/\u2212/g, '-')));
 
 /** The form as a rule's input (app/api/rules, app/api/rules/preview). The
  *  server checks every field; this only turns text into what it takes. */

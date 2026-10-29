@@ -30,6 +30,7 @@ import AttachmentViewer, { DocIcon, fileTitle, fileDay } from './AttachmentViewe
 import { shortDay, type PickRow } from './attachment-pick';
 import { useAmountsHidden } from './hide-amounts';
 import { amountsHidden } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 /** At most this many on one transaction (lib/attachments.ts PER_TRANSACTION). */
 export const PER_TRANSACTION = 10;
@@ -135,13 +136,17 @@ export default function AttachmentSection({ t, rows, onChanged }: { t: AttachRow
     <div className="attach-section">
       <div className="section-label">Receipts and documents</div>
       {t.attached === null && <p className="rename-hint">Whether this has any couldn’t be read with the list.</p>}
-      {readError && <div className="error">{readError}</div>}
+      {readError && (
+        <Notice level="critical" role="alert">
+          {readError}
+        </Notice>
+      )}
 
       {files.length > 0 && (
         <ul className="attach-thumbs">
           {files.map((f, i) => (
             <li key={f.id}>
-              <button className="attach-thumb" onClick={() => setViewing(i)} aria-label={`Open ${fileTitle(f)}, from ${shortDay(fileDay(f))}`}>
+              <button className="attach-thumb" onClick={() => setViewing(i)} aria-label={`Open ${fileTitle(f)}, from ${shortDay(fileDay(f), { sentence: true })}`}>
                 {f.kind === 'image' && f.thumb && !hidden && !f.damaged ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={thumbUrl(f.id)} alt="" loading="lazy" />
@@ -173,21 +178,23 @@ export default function AttachmentSection({ t, rows, onChanged }: { t: AttachRow
       )}
       {mode?.connected && !mode.uploads && files.length > 0 && <p className="rename-hint">Adding new receipts and documents is off on this copy of Nya.</p>}
 
-      <div aria-live="polite">
-        {sending && (
-          <div className="attach-progress">
-            <span>
-              {sending.preparing ? 'Getting it ready' : 'Sending'}
-              {sending.of > 1 ? ` ${sending.at} of ${sending.of}` : ''}…
-            </span>
-            {!sending.preparing && sending.total > 0 && <progress max={sending.total} value={sending.sent} aria-label="Sent so far" />}
-          </div>
-        )}
-        {said && <p className="status-note">{said}</p>}
+      <div className="stack tight">
+        <div aria-live="polite">
+          {sending && (
+            <div className="attach-progress">
+              <span>
+                {sending.preparing ? 'Getting it ready' : 'Sending'}
+                {sending.of > 1 ? ` ${sending.at} of ${sending.of}` : ''}…
+              </span>
+              {!sending.preparing && sending.total > 0 && <progress max={sending.total} value={sending.sent} aria-label="Sent so far" />}
+            </div>
+          )}
+          {said && <p className="status-note">{said}</p>}
+        </div>
         {problems.map((p) => (
-          <div className="error" key={p}>
+          <Notice key={p} level="critical" role="alert">
             {p}
-          </div>
+          </Notice>
         ))}
       </div>
       {quota && <p className="rename-hint">{quota}</p>}

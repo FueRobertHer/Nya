@@ -11,6 +11,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
+import { formatInstantDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 type Row = {
   container: string;
@@ -22,8 +24,9 @@ type Row = {
 };
 type Payload = { flag_after_days: number; items: Row[] };
 
+/** The local day an instant fell on, mid sentence: "today", "Oct 5". */
 function fmtDay(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 }
 
 export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void }) {
@@ -135,13 +138,17 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
           ))
         )}
 
-        <div className="account-link-row">
+        <div className="account-link-row stack tight">
           <div className="manual-row-actions">
             <button className="btn ghost" disabled={checking} onClick={checkNow}>
               {checking ? 'Checking…' : 'Check all accounts now'}
             </button>
           </div>
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
         </div>
       </div>
 
@@ -165,7 +172,11 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
                 autoCorrect="off"
               />
             </label>
-            {sheetError && <div className="error">{sheetError}</div>}
+            {sheetError && (
+              <Notice level="critical" role="alert">
+                {sheetError}
+              </Notice>
+            )}
             <div className="button-pair" style={{ marginTop: 16 }}>
               <button className="secondary" onClick={() => setTarget(null)} disabled={removing}>
                 Cancel

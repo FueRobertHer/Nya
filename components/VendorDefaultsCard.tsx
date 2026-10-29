@@ -10,11 +10,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { defaultListWords } from './review-text';
+import { VendorDefaultsSkeleton } from './LoadingSkeletons';
+import { formatDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 type Shown = { id: string; name: string; category_id: string; since: string; agree: number; set_at: string };
 
+/** A calendar day mid sentence: "today", "Oct 5", "Oct 5, 2025". */
 function day(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: Taxonomy | null; onChanged: () => void }) {
@@ -73,7 +77,7 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
   };
 
   return (
-    <div className="card">
+    <div className="card stack">
       <div className="inst-header">
         <div className="inst-name">Defaults</div>
         {defaults && defaults.length > 0 && <div className="inst-total">{defaults.length}</div>}
@@ -106,7 +110,7 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
             </button>
           </>
         ) : (
-          <div className="spinner" role="status" aria-label="Loading defaults" />
+          <VendorDefaultsSkeleton />
         )
       ) : defaults.length === 0 ? (
         <p className="empty-note">
@@ -135,7 +139,11 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
           </ul>
         </>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
     </div>
   );
 }

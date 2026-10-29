@@ -7,9 +7,10 @@
 // is no spending, nor is paying it back. Saved through
 // app/api/shared-expenses/ious.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import CategoryPicker from './CategoryPicker';
 import { fieldAmount, hideAmountsIn, zeroExample } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
@@ -18,6 +19,7 @@ import type { Taxonomy } from '@/lib/categories';
 import { REMOVED_NAME, WHAT_MAX, type Direction } from '@/lib/shared-expenses/model';
 import { partUnits } from './SplitSheet';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
 type Draft = { person: string; direction: Direction; amount: string; currency: string; date: string; what: string; category_id: string };
 
@@ -76,6 +78,7 @@ export default function IouSheet({
   const units = draft.amount.trim() ? partUnits(draft.amount, code) : null;
   const ready = !!draft.person && units !== null && /^[A-Z]{3}$/.test(code) && !!draft.date && draft.what.trim().length > 0;
   const places = Math.round(Math.log10(unitScale(code)));
+  const amountError = useId();
 
   async function run(method: 'POST' | 'PATCH' | 'DELETE', body: unknown) {
     setSaving(true);
@@ -138,6 +141,7 @@ export default function IouSheet({
               onChange={(e) => set({ amount: e.target.value })}
               placeholder={zeroExample(places)}
               aria-invalid={draft.amount.trim() !== '' && units === null}
+              aria-describedby={draft.amount.trim() !== '' && units === null ? amountError : undefined}
               disabled={saving}
             />
           </label>
@@ -146,6 +150,7 @@ export default function IouSheet({
             <input className="text-input" value={draft.currency} maxLength={3} onChange={(e) => set({ currency: e.target.value })} disabled={saving || !!id} autoComplete="off" />
           </label>
         </div>
+        {draft.amount.trim() !== '' && units === null && <FieldError id={amountError}>Enter an amount, like {amountExample(places)}</FieldError>}
         <label className="field">
           On
           <input type="date" value={draft.date} min="1970-01-01" max={localDate()} onChange={(e) => set({ date: e.target.value })} disabled={saving} />
@@ -163,9 +168,9 @@ export default function IouSheet({
         )}
       </div>
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
       <div className="button-pair">
         <button onClick={() => void run(id ? 'PATCH' : 'POST', id ? { id, ...fields() } : fields())} disabled={!ready || saving}>
@@ -177,15 +182,15 @@ export default function IouSheet({
       </div>
       {id && !asking && (
         <button className="secondary" style={{ marginTop: 12 }} onClick={() => setAsking(true)} disabled={saving}>
-          Remove this IOU
+          Delete this IOU
         </button>
       )}
       {id && asking && (
         <>
-          <p className="panel-note">Remove it? What it counted goes from your totals, and it is no longer in your balance with them.</p>
+          <p className="panel-note">Delete it? What it counted goes from your totals, and it is no longer in your balance with them.</p>
           <div className="button-pair">
             <button className="danger" onClick={() => void run('DELETE', { id })} disabled={saving}>
-              Remove
+              Delete
             </button>
             <button className="secondary" onClick={() => setAsking(false)} disabled={saving}>
               Keep it

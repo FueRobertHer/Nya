@@ -14,22 +14,24 @@
 // imported from a file whose split was saved at the amount of the bank's
 // transaction that stood for it, once none does.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideAmountsIn } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
 import { bankKept, splitAtBanksAmount, splitKeptUnder } from './SplitRows';
 import { shownName } from '@/lib/merchant-name';
+import { Notice } from './TotalCaveats';
 
-/** "Oct 5": a transaction's day as the list shows it. */
+/** "Oct 5": a transaction's day mid sentence, "today" and "yesterday" too. */
 function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 /** One part as the form holds it: the amount as typed. */
@@ -115,6 +117,7 @@ export default function SplitSheet({
 }) {
   // From the transaction it opens on (and afresh each time it opens on one).
   const [drafts, setDrafts] = useState<Draft[]>(() => (t ? startingParts(t, taxonomy.uncategorized) : []));
+  const errorId = useId();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -194,7 +197,7 @@ export default function SplitSheet({
   return (
     <Sheet open title={split ? 'Edit split' : 'Split transaction'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {shownName(t)}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, on {shownDay(t.date)}. Give each part its own category: the parts
+        {shownName(t)}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, {onDay(shownDay(t.date))}. Give each part its own category: the parts
         count in budgets and reports, and the transaction stays one, as the bank has it.
       </p>
       {changed && changed.split_remainder && (
@@ -226,6 +229,7 @@ export default function SplitSheet({
                   onChange={(e) => set(d.key, { amount: e.target.value })}
                   placeholder={zeroIn(scale)}
                   aria-invalid={d.amount.trim() !== '' && parsed[i] === null}
+                  aria-describedby={d.amount.trim() !== '' && parsed[i] === null ? `${errorId}-${d.key}` : undefined}
                   disabled={saving}
                 />
               </label>
@@ -234,6 +238,9 @@ export default function SplitSheet({
                 <CategoryPicker taxonomy={taxonomy} value={d.category_id} onChange={(id) => set(d.key, { category_id: id })} disabled={saving} label={`Part ${i + 1} category`} />
               </label>
             </div>
+            {d.amount.trim() !== '' && parsed[i] === null && (
+              <FieldError id={`${errorId}-${d.key}`}>Enter an amount, like {amountExample(Math.round(Math.log10(scale)))}</FieldError>
+            )}
             <input
               className="text-input split-note"
               value={d.note}
@@ -279,9 +286,9 @@ export default function SplitSheet({
           currency (lib/splits.ts): those are hidden while amounts are, and
           its counts stay. */}
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
       <div className="button-pair">
         <button onClick={save} disabled={!ready || saving}>

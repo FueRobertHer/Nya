@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import { loadInvestmentActivity, type InvestmentActivityPayload } from './InvestmentActivity';
 import { contributionBaseline } from '@/lib/growth';
+import { Notice } from './TotalCaveats';
 
 export default function AccountSparkline({
   accountId,
@@ -82,7 +83,12 @@ export default function AccountSparkline({
     [activity]
   );
 
-  if (failed) return <div className="error">Could not load account history.</div>;
+  if (failed)
+    return (
+      <Notice level="critical" role="alert">
+        Could not load account history.
+      </Notice>
+    );
   if (points === null) {
     // Roughly the chart's own height, so the chart replacing it moves nothing.
     return (

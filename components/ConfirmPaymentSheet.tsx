@@ -10,12 +10,13 @@
 // (app/api/shared-expenses/payments, app/api/shared-expenses/close), and the
 // routes check it all again against what is open now.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import FieldError, { amountExample } from './FieldError';
 import { shownName } from '@/lib/merchant-name';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { toUnits, unitScale } from '@/lib/split-rows';
 import { localDate } from '@/lib/local-date';
@@ -25,10 +26,11 @@ import type { CardAnswer } from '@/lib/shared-expenses/read';
 import { partUnits } from './SplitSheet';
 import { whoseText } from './shared-expenses-text';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
-/** "Oct 5": a day as the list shows it. */
-function shownDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+/** "Oct 5": a day as the list shows it ("Today"), or mid sentence (`sentence`, "today"). */
+function shownDay(iso: string, sentence = false): string {
+  return formatDay(iso, { sentence });
 }
 
 /** The amount a picked item's field holds, as typed. */
@@ -52,6 +54,7 @@ function ItemPicker({
   disabled: boolean;
 }) {
   const scale = unitScale(currency);
+  const errorId = useId();
   const places = Math.round(Math.log10(scale));
   const people = [...new Set(items.map((i) => i.person))];
   const nameOf = (id: string) => card.people.find((p) => p.id === id)?.name ?? REMOVED_NAME;
@@ -67,6 +70,7 @@ function ItemPicker({
               const text = picked.get(i.id);
               const on = text !== undefined;
               const units = on && text.trim() ? partUnits(text, currency) : null;
+              const over = units !== null && units > toUnits(i.open, scale);
               return (
                 <div key={i.id} className="shared-pick">
                   <label className="group-member">
@@ -103,9 +107,21 @@ function ItemPicker({
                         value={text}
                         onChange={(e) => onPick(new Map(picked).set(i.id, e.target.value))}
                         placeholder={zeroExample(places)}
-                        aria-invalid={units === null || units > toUnits(i.open, scale)}
+                        aria-invalid={units === null || over}
+                        aria-describedby={units === null || over ? `${errorId}-${i.id}` : undefined}
                       />
                     </label>
+                  )}
+                  {on && (units === null || over) && (
+                    <FieldError id={`${errorId}-${i.id}`}>
+                      {units === null ? (
+                        `Enter an amount, like ${amountExample(places)}`
+                      ) : (
+                        <>
+                          Enter at most <Masked>{formatMoney(i.open, i.currency)}</Masked>, what is open of it
+                        </>
+                      )}
+                    </FieldError>
                   )}
                 </div>
               );
@@ -226,15 +242,17 @@ export function ConfirmPaymentSheet({
   if (confirmed) {
     return (
       <Sheet open title="Paid back" onClose={() => !saving && onClose()}>
-        <p className="panel-note" style={{ marginTop: 0 }}>
-          {shownName(t)}, {shownDay(t.date)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
-          {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
-        </p>
-        {error && (
-          <div className="error">
-            <Masked>{hideAmountsIn(error)}</Masked>
-          </div>
-        )}
+        <div className="stack">
+          <p className="panel-note">
+            {shownName(t)}, {shownDay(t.date, true)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
+            {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
+          </p>
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
+        </div>
         <div className="button-pair">
           <button className="secondary" onClick={() => void act('DELETE', { transaction_id: keptUnder })} disabled={saving}>
             Reopen it
@@ -251,7 +269,7 @@ export function ConfirmPaymentSheet({
   return (
     <Sheet open title={direction === 'to_you' ? 'This paid back…' : 'This paid…'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {shownName(t)}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} on {shownDay(t.date)}.{' '}
+        {shownName(t)}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} {onDay(shownDay(t.date, true))}.{' '}
         {direction === 'to_you'
           ? 'Choose what it paid back: that much of it is money between you and them, never income.'
           : 'Choose what it paid of what you owe: that much of it is money between you and them, never spending.'}
@@ -264,22 +282,24 @@ export function ConfirmPaymentSheet({
           <input className="text-input" value={note} maxLength={NOTE_MAX} onChange={(e) => setNote(e.target.value)} disabled={saving} />
         </label>
       </div>
-      <p className={`split-left${ready ? ' done' : ''}`} role="status">
-        <Masked>
-          {sum < 0
-            ? `What you chose comes to ${money(-sum)} the other way`
-            : sum > whole
-            ? `That is ${money(sum - whole)} more than the payment`
-            : sum === whole
-              ? 'All of it pays back what you chose.'
-              : `${money(sum)} of it pays back what you chose; the other ${money(whole - sum)} counts as the bank shows it.`}
-        </Masked>
-      </p>
-      {error && (
-        <div className="error">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
-      )}
+      <div className="stack">
+        <p className={`split-left${ready ? ' done' : ''}`} role="status">
+          <Masked>
+            {sum < 0
+              ? `What you chose comes to ${money(-sum)} the other way`
+              : sum > whole
+              ? `That is ${money(sum - whole)} more than the payment`
+              : sum === whole
+                ? 'All of it pays back what you chose.'
+                : `${money(sum)} of it pays back what you chose; the other ${money(whole - sum)} counts as the bank shows it.`}
+          </Masked>
+        </p>
+        {error && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={() => void confirm()} disabled={!ready || saving}>
           {saving ? 'Saving…' : 'Confirm'}
@@ -393,16 +413,18 @@ export function SettleSheet({
           <input className="text-input" value={note} maxLength={NOTE_MAX} onChange={(e) => setNote(e.target.value)} disabled={saving} />
         </label>
       </div>
-      {lettingGoYours && (
-        <p className="panel-note">
-          What {name} owed you of a shared transaction becomes your part, on the day you bought it: your spending that month goes up by it.
-        </p>
-      )}
-      {error && (
-        <div className="error">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
-      )}
+      <div className="stack tight">
+        {lettingGoYours && (
+          <p className="panel-note">
+            What {name} owed you of a shared transaction becomes your part, on the day you bought it: your spending that month goes up by it.
+          </p>
+        )}
+        {error && (
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        )}
+      </div>
       <div className="button-pair">
         <button onClick={() => void save()} disabled={!ready || saving}>
           {saving ? 'Saving…' : kind === 'forgiven' ? 'Let it go' : 'Mark settled'}

@@ -13,19 +13,20 @@
 
 /* ---------- Theme-independent scales ---------- */
 :root {
-  /* Type. Nothing on screen goes under --fs-1. */
+  /* Type. In rem, so it follows the person's text size (12, 13, 15, 17, 20,
+     24px at a 16px root). Nothing on screen goes under --fs-1. */
   /* Red Hat Text and Display from next/font (app/layout.tsx), named after it
      for a page that loads them some other way (a static check page). */
   --font-ui: var(--font-red-hat-text, "Red Hat Text"), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font-red-hat-display, "Red Hat Display"), var(--font-ui);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
-  --fs-2: 13px; /* secondary lines, notices, helper text */
-  --fs-3: 15px; /* body, list rows, buttons */
-  --fs-4: 17px; /* sheet titles, settings section titles */
-  --fs-5: 20px; /* screen titles, summary figures */
-  --fs-6: 24px; /* large figures in a stat strip */
-  --fs-hero: clamp(32px, 9vw, 40px); /* the one hero number per screen */
+  --fs-1: 0.75rem; /* meta: dates, provenance chips, chart ticks */
+  --fs-2: 0.8125rem; /* secondary lines, notices, helper text */
+  --fs-3: 0.9375rem; /* body, list rows, buttons */
+  --fs-4: 1.0625rem; /* sheet titles, settings section titles */
+  --fs-5: 1.25rem; /* screen titles, summary figures */
+  --fs-6: 1.5rem; /* large figures in a stat strip */
+  --fs-hero: clamp(2rem, 9vw, 2.5rem); /* the one hero number per screen */
   --lh-tight: 1.2;
   --lh-body: 1.45;
   --fw-regular: 400;

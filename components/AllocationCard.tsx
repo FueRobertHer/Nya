@@ -26,11 +26,12 @@
 // left out of it: never silently, and never with unclassified money counted
 // as stocks or bonds.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { ScenarioTag } from './ScenarioTag';
 import { Choice } from './PlanForms';
-import { dayName, wholeMoney } from './plan-text';
+import { axisDay, dayLabel, dayName, wholeMoney } from './plan-text';
+import { keysHelp, useChartKeys } from './chart-keys';
 import {
   BUCKET_COLORS,
   CLASS_COLORS,
@@ -50,10 +51,9 @@ import {
   tenthPct,
 } from './allocation-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { compactMoney, spoken } from '@/lib/format';
+import { formatInstantDay, onDay, spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { distinctAccountNames } from '@/lib/account-names';
-import { instantDay } from '@/lib/local-date';
 import { readableName } from '@/lib/merchant-name';
 import { subtypeWords } from './accounts-format';
 import {
@@ -91,6 +91,8 @@ import type { FirePlan } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
+import { Notice } from './TotalCaveats';
+import FieldError from './FieldError';
 
 /** Allocation's two views, by asset class or tax bucket, as tabs. */
 const allocationTabId = (v: string) => `allocation-tab-${v}`;
@@ -100,7 +102,7 @@ const ALLOCATION_PANEL = 'allocation-panel';
  *  instant when the server knew it, else the stored UTC day (as the Plan's
  *  invested assets say it). */
 export function fmtDay(day: string, at: string | null): string {
-  const local = at && at.slice(0, 10) === day ? instantDay(at) : null;
+  const local = at && at.slice(0, 10) === day ? formatInstantDay(at, { sentence: true }) : null;
   return local ?? dayName(day);
 }
 
@@ -261,26 +263,32 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
   return (
     <div className="card alloc-card">
       <ScenarioTag name={scenarioName} />
-      <div className="inst-header">
-        <div className="inst-name">Allocation</div>
-        {hasAccounts && (
-          <button className="plan-edit" onClick={() => open({ kind: 'target' })} disabled={!editable}>
-            {current.target ? 'Change target' : 'Set a target'}
-          </button>
+      <div className="stack tight">
+        <div className="inst-header">
+          <div className="inst-name">Allocation</div>
+          {hasAccounts && (
+            <button className="plan-edit" onClick={() => open({ kind: 'target' })} disabled={!editable}>
+              {current.target ? 'Change target' : 'Set a target'}
+            </button>
+          )}
+        </div>
+        {settings.status === 'error' && (
+          <>
+            <Notice level="critical" role="alert">
+              {settings.error}
+            </Notice>
+            <p className="panel-note">The figures below leave out the buckets, splits and target you set until they load.</p>
+            <button className="secondary" onClick={() => void allocation.load()}>
+              Try again
+            </button>
+          </>
+        )}
+        {settings.saveError && (
+          <Notice level="critical" role="alert">
+            {settings.saveError}
+          </Notice>
         )}
       </div>
-      {settings.status === 'error' && (
-        <>
-          <div className="error" style={{ marginTop: 0 }}>
-            {settings.error}
-          </div>
-          <p className="panel-note">The figures below leave out the buckets, splits and target you set until they load.</p>
-          <button className="secondary" style={{ marginTop: 8 }} onClick={() => void allocation.load()}>
-            Try again
-          </button>
-        </>
-      )}
-      {settings.saveError && <div className="error">{settings.saveError}</div>}
       {settingsLocked && <p className="panel-note">Your target, fund splits and tax buckets are the same for every plan: change them with your plan open.</p>}
 
       {!hasAccounts ? (
@@ -411,6 +419,7 @@ export function ShareTable<K extends string>({
         ))}
       </div>
       <table className="alloc-table">
+        <caption className="visually-hidden">By class</caption>
         <tbody>
           {rows.map((r) => (
             <tr key={r.slot}>
@@ -751,12 +760,13 @@ export function DriftSection({
       ) : (
         <>
           <table className="alloc-table alloc-drift">
+            <caption className="visually-hidden">Target and now, by class</caption>
             <thead>
               <tr>
-                <th>Class</th>
-                <th className="num">Target</th>
-                <th className="num">Now</th>
-                <th className="num">Drift</th>
+                <th scope="col">Class</th>
+                <th scope="col" className="num">Target</th>
+                <th scope="col" className="num">Now</th>
+                <th scope="col" className="num">Drift</th>
               </tr>
             </thead>
             <tbody>
@@ -861,21 +871,32 @@ const FIELD_NAMES: Record<AssetClass, string> = {
 
 /** Percents as typed, into a split: an empty field is none. Throws a message
  *  a person can act on. */
+/** What is wrong with a split as typed: about one class's field, or (no
+ *  `field`) about the shares together. */
+export class SplitProblem extends Error {
+  constructor(
+    message: string,
+    readonly field?: AssetClass
+  ) {
+    super(message);
+  }
+}
+
 export function readSplit(fields: Partial<Record<AssetClass, string>>, opts: { target?: boolean } = {}): Split {
   const split: Split = {};
   for (const c of ASSET_CLASSES) {
     const t = (fields[c] ?? '').trim();
     if (t === '') continue;
     const n = Number(t);
-    if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error(`${FIELD_NAMES[c]} must be a percent from 0 to 100.`);
-    if (tenths(n) === null) throw new Error(`${FIELD_NAMES[c]} can have one decimal at most.`);
+    if (!Number.isFinite(n) || n < 0 || n > 100) throw new SplitProblem(`${FIELD_NAMES[c]} must be a percent from 0 to 100.`, c);
+    if (tenths(n) === null) throw new SplitProblem(`${FIELD_NAMES[c]} can have one decimal at most.`, c);
     if (n > 0) split[c] = n;
   }
   const sum = ASSET_CLASSES.reduce((s, c) => s + (tenths(split[c] ?? 0) ?? 0), 0);
-  if (sum === 0) throw new Error('Give at least one class a share.');
-  if (sum !== 1000) throw new Error(`These add up to ${sum / 10}%: they need to add up to 100%.`);
+  if (sum === 0) throw new SplitProblem('Give at least one class a share.');
+  if (sum !== 1000) throw new SplitProblem(`These add up to ${sum / 10}%: they need to add up to 100%.`);
   if (opts.target && (split.stocks ?? 0) > 0 && ((split['us-stocks'] ?? 0) > 0 || (split['intl-stocks'] ?? 0) > 0)) {
-    throw new Error('Give stocks as one share, or as US and international, not both.');
+    throw new SplitProblem('Give stocks as one share, or as US and international, not both.');
   }
   return split;
 }
@@ -902,7 +923,12 @@ export function SplitForm({
     Object.fromEntries(ASSET_CLASSES.map((c) => [c, initial?.[c] !== undefined ? String(initial[c]) : '']))
   );
   const [error, setError] = useState('');
+  // What Save found wrong with what is typed, said under the fields.
+  const [wrong, setWrong] = useState<SplitProblem | null>(null);
   const [saving, setSaving] = useState(false);
+  const errorId = useId();
+  // A field is invalid when the problem is about it, or about them all.
+  const invalid = (c: AssetClass) => !!wrong && (wrong.field === undefined || wrong.field === c);
   let sum = 0;
   for (const c of ASSET_CLASSES) sum += tenths(Number(fields[c] || 0)) ?? 0;
   const save = async (split: Split | null) => {
@@ -931,7 +957,10 @@ export function SplitForm({
                 setFields((f) => ({ ...f, [c]: e.target.value }));
                 // What Save said is about what was there then.
                 setError('');
+                setWrong(null);
               }}
+              aria-invalid={invalid(c)}
+              aria-describedby={invalid(c) ? errorId : undefined}
               disabled={saving}
             />
           </label>
@@ -942,10 +971,15 @@ export function SplitForm({
       <p className="helper" aria-live="polite">
         {sum / 10}% of 100%
       </p>
-      {error && <div className="error">{error}</div>}
+      {wrong && <FieldError id={errorId}>{wrong.message}</FieldError>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {canRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={!editable || saving} onClick={() => void save(null)}>
-          {target ? 'Remove the target' : 'Remove my split'}
+          {target ? 'Delete the target' : 'Delete my split'}
         </button>
       )}
       <div className="button-pair" style={{ marginTop: 16 }}>
@@ -959,9 +993,12 @@ export function SplitForm({
             try {
               split = readSplit(fields, { target });
             } catch (err) {
-              setError((err as Error).message);
+              if (!(err instanceof SplitProblem)) throw err;
+              setError('');
+              setWrong(err);
               return;
             }
+            setWrong(null);
             void save(split);
           }}
         >
@@ -1009,7 +1046,11 @@ export function BucketForm({
           </label>
         ))}
       </div>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={saving}>
           Cancel
@@ -1148,7 +1189,7 @@ function historyNames(answer: HistoryAnswer, accountNames: Map<string, string>):
  *  "first recorded on Oct 5, 2026", "not recorded that day". */
 export function missingWhy(account: HistoryAccount | undefined, date: string): string {
   if (!account || account.first === null || account.last === null) return 'never recorded';
-  if (date < account.first) return `first recorded on ${dayName(account.first)}`;
+  if (date < account.first) return `first recorded ${onDay(dayName(account.first))}`;
   if (date > account.last) return `not recorded since ${dayName(account.last)}`;
   return 'not recorded that day';
 }
@@ -1248,8 +1289,8 @@ export function HistoryBody({
   return (
     <>
       <p className="as-of">
-        Recorded from {dayName(answer.first_recorded)}
-        {shownFrom ? `, shown from ${dayName(shownFrom)}` : ''}, on {days.length} day{days.length === 1 ? '' : 's'}: nothing is drawn before the first, or on a day
+        Recorded from {axisDay(answer.first_recorded)}
+        {shownFrom ? `, shown from ${axisDay(shownFrom)}` : ''}, on {days.length} day{days.length === 1 ? '' : 's'}: nothing is drawn before the first, or on a day
         nothing was recorded. Each day is counted as the allocation above is, from the positions and balances recorded that day.
       </p>
       <AllocationHistoryChart days={days} currency={answer.currency} answer={answer} nameOf={nameOf} />
@@ -1314,7 +1355,8 @@ export function dayMixText(day: SeriesDay): string {
  * missing an account is drawn faint, with a mark under it. A readout above
  * the plot names the day being read (the last, until another is touched) and
  * what it leaves out, and a table of the same figures sits behind "Show as a
- * table".
+ * table". The keys move the readout a recorded day at a time
+ * (components/chart-keys.ts).
  */
 export function AllocationHistoryChart({
   days,
@@ -1329,6 +1371,13 @@ export function AllocationHistoryChart({
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [active, setActive] = useState<number | null>(null);
+  const keys = useChartKeys({
+    count: days.length,
+    active,
+    setActive,
+    say: (k) =>
+      `${dayLabel(days[k].date)}: ${dayMixText(days[k])}, ${wholeMoney(days[k].total, currency)} counted${days[k].missing.length ? `, leaving out ${missingOn(days[k], answer, nameOf)}` : ''}`,
+  });
   if (days.length === 0) return null;
   const first = dayNum(days[0].date);
   const span = dayNum(days[days.length - 1].date) - first + 1;
@@ -1362,7 +1411,7 @@ export function AllocationHistoryChart({
       <div className={`chart-readout chart-readout-stable alloc-readout${marked ? ' alloc-readout-marked' : ''}`}>
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
-          {dayName(day.date)} · <Masked>{wholeMoney(day.total, currency)}</Masked> counted
+          {dayLabel(day.date)} · <Masked>{wholeMoney(day.total, currency)}</Masked> counted
           <Masked>{isMoney(day.unlisted) ? `, ${wholeMoney(day.unlisted, currency)} of it in no position` : ''}</Masked>
           {day.missing.length ? ` · leaves out ${missingOn(day, answer, nameOf)}` : ''}
         </span>
@@ -1371,7 +1420,8 @@ export function AllocationHistoryChart({
         ref={svgRef}
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        {...keys.slider}
         aria-label={`Your mix on each of ${days.length} recorded days, from ${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)}. On the last: ${dayMixText(days[days.length - 1])}${
           days[days.length - 1].missing.length ? `, leaving out ${missingOn(days[days.length - 1], answer, nameOf)}` : ''
         }.`}
@@ -1406,14 +1456,17 @@ export function AllocationHistoryChart({
         })}
         {active !== null && <rect x={xs[i] - 1} y={PAD_TOP - 2} width={width + 2} height={plotH + 4} fill="none" stroke="var(--text-3)" strokeWidth={1} />}
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 4} textAnchor="start">
-          {dayName(days[0].date)}
+          {axisDay(days[0].date)}
         </text>
         {days.length > 1 && (
           <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 4} textAnchor="end">
-            {dayName(days[days.length - 1].date)}
+            {axisDay(days[days.length - 1].date)}
           </text>
         )}
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('recorded day', 'the latest', 'the first and last')}
+      </p>
       <div className="chart-legend">
         {present.map((s) => (
           <span key={s} className="chart-legend-item">
@@ -1432,23 +1485,24 @@ export function AllocationHistoryChart({
       <details className="plan-table-view">
         <summary>Show as a table</summary>
         <table>
+          <caption className="visually-hidden">The mix by day</caption>
           <thead>
             <tr>
-              <th>Day</th>
-              <th>Mix</th>
-              <th className="num">Counted</th>
+              <th scope="col">Day</th>
+              <th scope="col">Mix</th>
+              <th scope="col" className="num">Counted</th>
             </tr>
           </thead>
           <tbody>
             {[...days].reverse().map((d) => (
               <tr key={d.date}>
-                <td>{dayName(d.date)}</td>
+                <td>{dayLabel(d.date)}</td>
                 <td>
                   {dayMixText(d)}
                   {isMoney(d.unlisted) && <div className="alloc-sub"><Masked>{wholeMoney(d.unlisted, currency)}</Masked> of it in no position</div>}
                   {d.missing.length > 0 && <div className="alloc-sub">Leaves out {missingOn(d, answer, nameOf)}</div>}
                 </td>
-                <td className="num"><Masked>{compactMoney(d.total, currency)}</Masked></td>
+                <td className="num"><Masked>{wholeMoney(d.total, currency)}</Masked></td>
               </tr>
             ))}
           </tbody>

@@ -14,7 +14,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReviewControls } from './review-state';
 import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { localDate } from '@/lib/local-date';
-import { plainNumber } from '@/lib/format';
+import { formatDay, plainNumber } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 /** The first days the queue can start from, as offered: today, a week back,
  *  a month back (lib/review-layer.ts MAX_SINCE_DAYS). */
@@ -41,8 +42,9 @@ export function nearFull(a: ApprovalRoom | null): boolean {
   return !!a && a.kept >= a.max - a.room;
 }
 
+/** A calendar day mid sentence: "today", "Oct 5", "Oct 5, 2025". */
 function day(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDay(iso, { sentence: true });
 }
 
 const count = (n: number) => plainNumber(n);
@@ -103,13 +105,13 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
     try {
       const { res, data } = await post({ action: 'repair', confirm: true });
       if (!res.ok) {
-        setRepaired(data?.error ?? 'Could not remove them. Please try again.');
+        setRepaired(data?.error ?? 'Could not delete them. Please try again.');
         return;
       }
       setRepaired(
         data.unrecognised > 0
-          ? `Removed what was damaged. ${data.unrecognised === 1 ? 'One record was' : `${data.unrecognised} records were`} saved by a newer version of Nya and kept as they are.`
-          : 'Removed what was damaged.'
+          ? `Deleted what was damaged. ${data.unrecognised === 1 ? 'One record was' : `${data.unrecognised} records were`} saved by a newer version of Nya and kept as they are.`
+          : 'Deleted what was damaged.'
       );
       setConfirming(null);
       // Read again: what the settings were, if they weren't the damaged part.
@@ -167,10 +169,10 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
           <>
             <p className="stale-note">Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.</p>
             {confirming === 'repair' ? (
-              confirmPair(() => void repair(), 'Remove what’s damaged', 'Keep it')
+              confirmPair(() => void repair(), 'Delete what’s damaged', 'Keep it')
             ) : (
               <button className="secondary" onClick={() => setConfirming('repair')}>
-                Remove the damaged settings…
+                Delete the damaged settings…
               </button>
             )}
           </>
@@ -227,13 +229,13 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
         <>
           <p className="stale-note">
             Your approval of {view!.unknown === 1 ? '1 transaction' : `${view!.unknown} transactions`} couldn’t be read, so whether {view!.unknown === 1 ? 'it needs' : 'they need'} review isn’t known.
-            Damaged ones can be removed, which puts those transactions back in the queue; any saved by a newer version of Nya are kept.
+            Damaged ones can be deleted, which puts those transactions back in the queue; any saved by a newer version of Nya are kept.
           </p>
           {confirming === 'repair' ? (
-            confirmPair(() => void repair(), 'Remove what’s damaged', 'Keep them')
+            confirmPair(() => void repair(), 'Delete what’s damaged', 'Keep them')
           ) : (
             <button className="secondary" onClick={() => setConfirming('repair')}>
-              Remove the damaged approvals…
+              Delete the damaged approvals…
             </button>
           )}
         </>
@@ -259,7 +261,11 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
         </>
       )}
       {repaired && <p className="panel-note">{repaired}</p>}
-      {review.error && <div className="error">{review.error}</div>}
+      {review.error && (
+        <Notice level="critical" role="alert">
+          {review.error}
+        </Notice>
+      )}
     </div>
   );
 }

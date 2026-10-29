@@ -16,13 +16,14 @@
 // with a back arrow. Focus goes back to the item's row as it is drawn then;
 // after Delete, to Add a planned item; after Add, to the new item's row.
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import FieldError from './FieldError';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Masked } from './HideAmounts';
 import { segmentKey } from './ActivityBar';
-import { formatMoney } from '@/lib/format';
+import { formatDay, formatMoney, MINUS } from '@/lib/format';
 import { isCalendarDay, isCurrencyCode, knownCurrency, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import {
   EARLIEST_PLANNED,
@@ -38,8 +39,9 @@ import {
   type PlannedKind,
 } from '@/lib/planned';
 
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** A day mid sentence: "today", "Oct 5", "Oct 5, 2025", on the card's own today. */
+function fmtDay(iso: string, today: string): string {
+  return formatDay(iso, { sentence: true, now: new Date(`${today}T12:00:00`) });
 }
 
 /** The form's working copy: the amount as typed. */
@@ -93,6 +95,7 @@ export default function PlannedCard({
   /** Add a planned item's sheet open at first. */
   adding?: boolean;
 }) {
+  const errorId = useId();
   const fresh = (): Draft => ({ id: crypto.randomUUID(), name: '', kind: 'expense', amount: '', currency: currency ?? DEFAULT_CURRENCY, date: today, cadence: 'once' });
   const of = (item: PlannedItem): Draft => ({ ...item, amount: String(item.amount) });
   const [sheet, setSheet] = useState<SheetState | null>(() => {
@@ -247,11 +250,11 @@ export default function PlannedCard({
                     <span className="list-row-text">
                       <span className="list-row-title">{item.name}</span>
                       <span className="list-row-sub">
-                        {plannedCadenceLabel(item.cadence)} · {next ? `next ${fmtDay(next)}` : `was ${fmtDay(item.date)}`}
+                        {plannedCadenceLabel(item.cadence)} · {next ? `next ${fmtDay(next, today)}` : `was ${fmtDay(item.date, today)}`}
                       </span>
                     </span>
                     <span className={`list-row-value money planned-amount${item.kind === 'income' ? ' inflow' : ''}`}>
-                      <Masked>{`${item.kind === 'income' ? '+' : '-'}${formatMoney(item.amount, item.currency)}`}</Masked>
+                      <Masked>{`${item.kind === 'income' ? '+' : MINUS}${formatMoney(item.amount, item.currency)}`}</Masked>
                     </span>
                   </>
                 );
@@ -373,6 +376,8 @@ export default function PlannedCard({
                       value={d.amount}
                       onChange={(e) => setDraft({ ...d, amount: e.target.value })}
                       placeholder="0.00"
+                      aria-invalid={d.amount.trim() !== '' && !amountOk}
+                      aria-describedby={d.amount.trim() !== '' && !amountOk ? `${errorId}-amount` : undefined}
                       disabled={saving}
                     />
                   </label>
@@ -381,6 +386,8 @@ export default function PlannedCard({
                     <input
                       value={d.currency}
                       onChange={(e) => setDraft({ ...d, currency: e.target.value.toUpperCase() })}
+                      aria-invalid={code.length === 3 && !currencyOk}
+                      aria-describedby={code.length === 3 && !currencyOk ? `${errorId}-currency` : undefined}
                       maxLength={3}
                       autoCapitalize="characters"
                       autoCorrect="off"
@@ -391,7 +398,14 @@ export default function PlannedCard({
                 </div>
                 <label className="field">
                   {d.cadence === 'once' ? 'Date' : 'First date'}
-                  <input type="date" value={d.date} onChange={(e) => setDraft({ ...d, date: e.target.value })} disabled={saving} />
+                  <input
+                    type="date"
+                    value={d.date}
+                    onChange={(e) => setDraft({ ...d, date: e.target.value })}
+                    aria-invalid={d.date !== '' && !dateOk}
+                    aria-describedby={d.date !== '' && !dateOk ? `${errorId}-date` : undefined}
+                    disabled={saving}
+                  />
                 </label>
                 <label className="field">
                   Repeats
@@ -404,9 +418,9 @@ export default function PlannedCard({
                   </select>
                 </label>
               </div>
-              {d.amount.trim() !== '' && !amountOk && <Notice level="critical">Enter an amount, like 212.50.</Notice>}
-              {code.length === 3 && !currencyOk && <Notice level="critical">Enter a currency as its three-letter code, like USD or EUR.</Notice>}
-              {d.date !== '' && !dateOk && <Notice level="critical">Pick a date between 2000 and 2100.</Notice>}
+              {d.amount.trim() !== '' && !amountOk && <FieldError id={`${errorId}-amount`}>Enter an amount, like 212.50.</FieldError>}
+              {code.length === 3 && !currencyOk && <FieldError id={`${errorId}-currency`}>Enter a currency as its three-letter code, like USD or EUR.</FieldError>}
+              {d.date !== '' && !dateOk && <FieldError id={`${errorId}-date`}>Pick a date between 2000 and 2100.</FieldError>}
               <p className="helper">
                 {d.cadence === 'once'
                   ? 'Counted once, on its date.'

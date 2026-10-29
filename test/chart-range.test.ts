@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import {
   availableRanges,
   rangeLabel,
@@ -9,6 +9,11 @@ import {
   rangeStart,
   sliceRange,
 } from '@/lib/chart-range';
+
+// Days are said as the design system says them (lib/format.ts formatDay):
+// without their year in this one, on a today held still.
+beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
+afterAll(() => setSystemTime());
 
 /** One point a day from `first` to `last` inclusive. */
 function daily(first: string, last: string) {
@@ -132,7 +137,7 @@ describe('range labels', () => {
 
   // A gap: the range starts Aug 24 but its first point is Sep 20.
   test('one whose first point comes well after its start is dated instead', () => {
-    expect(rangeLabel('1M', '2026-09-20', '2026-09-24')).toBe('Since Sep 20, 2026');
+    expect(rangeLabel('1M', '2026-09-20', '2026-09-24')).toBe('Since Sep 20');
   });
 });
 

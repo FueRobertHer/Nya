@@ -6,14 +6,13 @@
 // up, the months it averaged, and why any were left out or may be short,
 // with one tap to use it. Shown only in the currency the budgets are in.
 
-import { formatMoney } from '@/lib/format';
+import { formatInstantDay, formatMoney } from '@/lib/format';
 import { gapText, type MonthGap } from '@/lib/rollover';
-import { instantDay } from '@/lib/local-date';
 import { suggestionWords, type BudgetSuggestions } from '@/lib/budget-suggestions';
 import { Masked } from './HideAmounts';
 
 /** A day ("2026-08-12") or an instant as the local day it fell on: "Aug 12". */
-const dayOf = (at: string) => (at.length > 10 ? (instantDay(at) ?? at.slice(0, 10)) : (instantDay(`${at}T12:00:00Z`, 'UTC') ?? at));
+const dayOf = (at: string) => formatInstantDay(at, { sentence: true }) ?? at;
 
 export default function BudgetSuggestion({
   suggestions,

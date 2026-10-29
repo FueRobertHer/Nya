@@ -20,8 +20,9 @@ import { shownName } from '@/lib/merchant-name';
 import { fmtDayInYear } from './accounts-format';
 import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, sortedRules, type RuleField } from '@/lib/rules';
 import type { Taxonomy } from '@/lib/categories';
-import { shownColor, type Tag } from '@/lib/tags';
+import type { Tag } from '@/lib/tags';
 import { blankCondition, draftComplete, draftInput, type DraftCondition, type RuleDraft, type RulesState } from './rules-state';
+import { Notice } from './TotalCaveats';
 
 const FIELD_LABEL: Record<RuleField, string> = {
   name: 'Name',
@@ -291,14 +292,16 @@ export default function RuleSheet({
         {tags.length > 0 && (
           <div className="field">
             Add tags
-            <div className="tag-suggestions" role="group" aria-label="Tags to add">
+            {/* Chips, as every label you pick is: on, an accent edge and a
+                check, never a color alone. */}
+            <div className="chip-row tag-suggestions" role="group" aria-label="Tags to add">
               {tags.map((t) => {
                 const on = form.add_tags.includes(t.id);
                 return (
                   <button
                     key={t.id}
                     type="button"
-                    className={`tag-suggestion${on ? ` chosen tag-${shownColor(t.color)}` : ''}`}
+                    className="chip"
                     aria-pressed={on}
                     onClick={() => set({ add_tags: on ? form.add_tags.filter((x) => x !== t.id) : [...form.add_tags, t.id] })}
                     disabled={busy}
@@ -321,11 +324,14 @@ export default function RuleSheet({
           </label>
         )}
 
-        <div className="rule-preview" aria-live="polite">
+        {/* Live while it counts; a failure is an alert of its own instead. */}
+        <div className="rule-preview" aria-live={complete && previewError ? undefined : 'polite'}>
           {!complete ? (
             <p className="panel-note">Fill in each condition and choose what it does to see what it matches.</p>
           ) : previewError ? (
-            <div className="error">{previewError}</div>
+            <Notice level="critical" role="alert">
+              {previewError}
+            </Notice>
           ) : !preview ? (
             <p className="panel-note">Counting what it matches…</p>
           ) : (
@@ -367,7 +373,11 @@ export default function RuleSheet({
           )}
         </div>
 
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
         <button onClick={save} disabled={busy || !complete} style={{ marginTop: 12 }}>
           {busy ? 'Saving…' : form.id ? 'Save rule' : 'Make rule'}
         </button>

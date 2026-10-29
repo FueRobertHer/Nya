@@ -33,12 +33,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
-import { formatMoney } from '@/lib/format';
-import { instantDay } from '@/lib/local-date';
+import { formatDay, formatInstantDay, formatMoney, onDay } from '@/lib/format';
 import type { ConnectionView, FetchView, OfferView, AccountView } from '@/lib/connectors/view';
 import type { OwedSign } from '@/lib/connectors/store';
 import { CONNECTOR_WORDS, type ConnectorKind } from '@/lib/connectors/types';
 import type { CarryView } from '@/lib/connectors/continue';
+import { Notice } from './TotalCaveats';
 
 /** What the dashboard asks of the sheet: `connector` is which service a new
  *  connection (or a new token or key for one) is for. */
@@ -102,7 +102,7 @@ async function send(path: string, method: string, body?: unknown): Promise<{ ok:
   }
 }
 
-const dayOf = (iso: string | null | undefined) => (iso ? (instantDay(iso) ?? iso.slice(0, 10)) : null);
+const dayOf = (iso: string | null | undefined) => (iso ? (formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10)) : null);
 
 /** A balance as its service reported it, its sign said in words: "-$432.10,
  *  owed" or "+$500.00, held". Never "what you owe" before that is known. */
@@ -142,10 +142,10 @@ export function backIn(requests: { resets_in_seconds: number } | null | undefine
 export function nothingToKeep(list: string[] | undefined): string {
   if (!list || list.length === 0) return '';
   const one = list.length === 1;
-  return ` Removed ${names(list)}: no balance had come for ${one ? 'it' : 'them'} yet, so there was nothing to keep.`;
+  return ` Deleted ${names(list)}: no balance had come for ${one ? 'it' : 'them'} yet, so there was nothing to keep.`;
 }
-/** "Sep 12" from a YYYY-MM-DD, at local midnight. */
-const calendarDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** "Sep 12" from a YYYY-MM-DD, at local midnight, mid sentence ("today"). */
+const calendarDay = (day: string) => formatDay(day, { sentence: true });
 
 // ---- The card on the Accounts tab ----
 
@@ -304,7 +304,14 @@ export function ConnectorCards({
     [onChanged]
   );
 
-  if (error) return <div className="card"><div className="error">Your own sync’s connections couldn’t be loaded: {error}</div></div>;
+  if (error)
+    return (
+      <div className="card">
+        <Notice level="critical" role="alert">
+          Your own sync’s connections couldn’t be loaded: {error}
+        </Notice>
+      </div>
+    );
   if (!data) return null;
   const shown = (id: string) => !only || only.has(id);
   return (
@@ -422,7 +429,7 @@ export function ChooseView({
           <label className="download-format">
             <input type="radio" name="connector-keep" checked={!keep} onChange={() => onKeep(false)} />
             <span>
-              <span className="download-format-name">Remove</span>
+              <span className="download-format-name">Delete {stopping === 1 ? 'it' : 'them'}</span>
               <span className="download-format-note">{stopping === 1 ? 'It goes, with its' : 'They go, with their'} transactions. Past net-worth totals keep what {stopping === 1 ? 'it' : 'they'} held.</span>
             </span>
           </label>
@@ -450,7 +457,7 @@ export function ChooseView({
                     {o.balance !== undefined && o.currency && (
                       <div className="type-tag">
                         <Masked>{reportedWords(o.balance, o.currency)}</Masked>
-                        {o.balance_at ? ` on ${dayOf(o.balance_at)}` : ''}
+                        {o.balance_at ? ` ${onDay(dayOf(o.balance_at)!)}` : ''}
                       </div>
                     )}
                     {!o.currency && <div className="type-tag">In a currency Nya doesn’t know ({o.currency_text.slice(0, 40)}): can’t be tracked</div>}
@@ -903,7 +910,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (res.data.kept) parts.push(`Kept ${res.data.kept} as manual account${res.data.kept === 1 ? '' : 's'}.`);
     const empty = res.data.nothing_to_keep as string[] | undefined;
     if (keep && empty?.length) parts.push(nothingToKeep(empty).trim());
-    else if (res.data.removed) parts.push(`Removed ${res.data.removed}.`);
+    else if (res.data.removed) parts.push(`Deleted ${res.data.removed}.`);
     // A card or loan reported as money held is asked about at once.
     const next = signStep(res.data.connection as ConnectionView | null, parts.join(' ') || null);
     if (next) return setStep(next);
@@ -978,7 +985,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
         <>
           <ConnectIntro again={!!view.connection_id} connector={view.connector} />
           <CredentialField connector={view.connector} value={token} busy={busy} onChange={setToken} />
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1009,7 +1020,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
           {keep && stoppingUnsure(view, choices).length > 0 && (
             <SignView label={view.label} accounts={stoppingUnsure(view, choices)} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
           )}
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1022,8 +1037,14 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
       )}
       {view?.kind === 'uncarry' && (
         <>
-          <p className="panel-note" style={{ marginTop: 0 }}>{uncarryWords(view.account, view.label)}</p>
-          {error && <div className="error">{error}</div>}
+          <div className="stack">
+            <p className="panel-note">{uncarryWords(view.account, view.label)}</p>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1050,7 +1071,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             <label className="download-format">
               <input type="radio" name="connector-disconnect" checked={!keep} onChange={() => setKeep(false)} />
               <span>
-                <span className="download-format-name">Remove them</span>
+                <span className="download-format-name">Delete them</span>
                 <span className="download-format-note">They go, with their transactions. Past net-worth totals keep what they held, as for any bank you disconnect.</span>
               </span>
             </label>
@@ -1072,7 +1093,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             Name
             <input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={view.label} disabled={busy} autoCapitalize="off" autoCorrect="off" />
           </label>
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
@@ -1095,7 +1120,11 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             </p>
           )}
           <SignView label={view.label} accounts={view.accounts} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Later

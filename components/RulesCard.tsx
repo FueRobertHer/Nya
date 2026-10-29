@@ -17,6 +17,7 @@ import type { Tag } from '@/lib/tags';
 import { draftFromRule, newDraft, type RulesState } from './rules-state';
 import { hiddenFigure } from '@/lib/format';
 import { Masked } from './HideAmounts';
+import { Notice } from './TotalCaveats';
 
 /** An amount in a rule: a size, in whatever currency the transaction is
  *  (hidden while amounts are, lib/format.ts). */
@@ -97,10 +98,16 @@ export default function RulesCard({
         </>
       ) : (
         <>
-          <button className="secondary" style={{ marginTop: 12 }} onClick={() => rules.open(newDraft())} disabled={!rules.set}>
-            New rule
-          </button>
-          {error && <div className="error">{error}</div>}
+          <div className="stack">
+            <button className="secondary" style={{ marginTop: 12 }} onClick={() => rules.open(newDraft())} disabled={!rules.set}>
+              New rule
+            </button>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
           {list.length > 0 && (
             <ol className="rule-list">
               {list.map((r, i) => (

@@ -112,10 +112,10 @@ describe('the rule drawer', () => {
   test('a matching transaction reads as the rows do: its day, its name readable, its account', () => {
     const year = localDate().slice(0, 4);
     const sample = (over: object) => text(renderToStaticMarkup(<ul><RuleSample s={{ transaction_id: 't', date: `${year}-10-24`, name: 'Uber', amount: 12.5, currency: 'USD', account_name: 'Plaid Checking', ...over }} /></ul>));
-    expect(sample({})).toBe('Oct 24 Uber · Plaid Checking -$12.50');
-    expect(sample({ name: 'CREDIT CARD 3333 PAYMENT *//', name_from_bank: true })).toBe('Oct 24 Credit Card 3333 Payment · Plaid Checking -$12.50');
+    expect(sample({})).toBe('Oct 24 Uber · Plaid Checking −$12.50');
+    expect(sample({ name: 'CREDIT CARD 3333 PAYMENT *//', name_from_bank: true })).toBe('Oct 24 Credit Card 3333 Payment · Plaid Checking −$12.50');
     // A day of another year says its year.
-    expect(sample({ date: '2024-10-24' })).toBe('Oct 24, 2024 Uber · Plaid Checking -$12.50');
+    expect(sample({ date: '2024-10-24' })).toBe('Oct 24, 2024 Uber · Plaid Checking −$12.50');
   });
 
   test('a rule made from a transaction opens with its name to match and its category, and says a choice on one transaction wins', () => {
@@ -168,8 +168,8 @@ describe('on the Activity tab', () => {
     const t = text(renderToStaticMarkup(<MonthBreakdown txns={txns} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />));
     expect(t).toContain('and 1 transaction you left out, and 1 transaction a rule hides.');
     // Each row's badge says which; its sheet says it in full.
-    expect(t).toContain('Hidden by rule Shopping · Checking Hidden by a rule -$10.00');
-    expect(t).toContain('Excluded by hand Shopping · Checking Excluded -$10.00');
+    expect(t).toContain('Hidden by rule Shopping · Checking Hidden by a rule −$10.00');
+    expect(t).toContain('Excluded by hand Shopping · Checking Excluded −$10.00');
   });
 });
 
@@ -324,7 +324,7 @@ describe('the screens, for a keyboard and a screen reader', () => {
     const html = renderToStaticMarkup(
       <TxnTagsNote t={{ transaction_id: 'x', name: 'Taxi', pending: false, tags: [], note: null } as any} tags={TAGS} onChangeTags={() => {}} onSaveNote={() => {}} />
     );
-    expect(html).toContain('class="tag-suggestions" role="group" aria-label="Your tags"');
+    expect(html).toContain('class="chip-row tag-suggestions" role="group" aria-label="Your tags"');
   });
 
   test('a pending row a rule hides offers no include that would lapse when it posts', () => {

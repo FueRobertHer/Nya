@@ -21,8 +21,7 @@ import { Why } from './Why';
 import { affectedText, badgeOf, endsText, healthText, lastSyncedText, reconnectText, sideText } from './ConnectionHealth';
 import { carriedLine, retryLine, type ConnectorAsk } from './Connectors';
 import { connectorBadge, connectorHealthText, connectorSideText, connectorSite } from '@/lib/connectors/health';
-import { formatMoney, hideAmountsIn } from '@/lib/format';
-import { instantDay } from '@/lib/local-date';
+import { formatInstantDay, formatMoney, hideAmountsIn } from '@/lib/format';
 import type { PageFx } from '@/lib/fx/view';
 import type { ConnectionView } from '@/lib/connectors/view';
 import { severityOf, type Severity } from '@/lib/accounts-status';
@@ -43,13 +42,19 @@ export const CAUTION = (
   </svg>
 );
 
+/** What a screen reader says first, for what a notice's color and icon
+ *  show: its level, visually hidden (design-system.md, Status and honesty). */
+export function LevelWord({ level }: { level: Severity | 'info' | 'done' }) {
+  return <span className="visually-hidden">{level === 'critical' ? 'Critical: ' : level === 'caution' ? 'Caution: ' : level === 'done' ? 'Done: ' : 'Note: '}</span>;
+}
+
 /** The icon for a notice whose level is decided at run time. */
 export function levelIcon(level: Severity): ReactNode {
   return level === 'critical' ? ALERT : CAUTION;
 }
 
 const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
-const localDay = (iso: string) => instantDay(iso) ?? iso.slice(0, 10);
+const localDay = (iso: string) => formatInstantDay(iso, { sentence: true }) ?? iso.slice(0, 10);
 
 /** The connection a connector's card belongs to, and whether this card is its
  *  first (where the lines about all its banks go). */
@@ -214,7 +219,7 @@ export function ConnectionStatus({
       add(
         'remove',
         <button className="btn secondary" onClick={() => onRemove(inst.item_id)}>
-          Remove {name}
+          Disconnect {name}
         </button>
       );
     }
@@ -289,6 +294,7 @@ export function ConnectionStatus({
         <div className={`notice ${severity}`}>
           {levelIcon(severity)}
           <div className="stack tight">
+            <LevelWord level={severity} />
             {lines.map((line, i) => (
               <p key={i}>{line}</p>
             ))}
@@ -317,7 +323,10 @@ export function ConnectionStatus({
           {c.warn ? (
             <div className="notice caution">
               {CAUTION}
-              <p>{c.text}</p>
+              <p>
+                <LevelWord level="caution" />
+                {c.text}
+              </p>
             </div>
           ) : (
             <p className="helper">{c.text}</p>

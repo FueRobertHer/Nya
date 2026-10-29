@@ -40,6 +40,7 @@ import { listFiles, looseWords, saveBlob, sizeWords, thumbUrl, type FileView, ty
 import AttachmentViewer, { DocIcon, fileDay, fileTitle } from './AttachmentViewer';
 import { shortDay, type PickRow } from './attachment-pick';
 import { amountTyped } from './receipt-filter';
+import { Notice } from './TotalCaveats';
 
 const PAGE = 50;
 /** Days after which the card asks for a download again. */
@@ -71,7 +72,7 @@ export function downloadReminder(zipAt: string | null, files: number, now: Date 
   const one = 'This copy of Nya keeps one copy of each file, so download them to keep your own.';
   if (!zipAt) return { text: `${one} You haven’t downloaded them yet.`, ask: true };
   const days = Math.floor((now.getTime() - Date.parse(zipAt)) / 86_400_000);
-  return { text: `${one} Last downloaded ${shortDay(zipAt.slice(0, 10))}.`, ask: days >= REMIND_DAYS };
+  return { text: `${one} Last downloaded ${shortDay(zipAt, { sentence: true, now })}.`, ask: days >= REMIND_DAYS };
 }
 
 // ---- The ZIP files ----
@@ -295,31 +296,41 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
           {plan.unreadable > 0 && <p className="stale-note">{plan.unreadable === 1 ? 'One record' : `${plan.unreadable} records`} couldn’t be read, so not every file is here.</p>}
         </>
       )}
-      <div aria-live="polite">
-        {phase.kind === 'confirming' && <p className="panel-note">Confirm it’s you in the window that opened.</p>}
-        {phase.kind === 'preparing' && <p className="panel-note">Preparing file {phase.volume}: each receipt is read and decrypted first.</p>}
-        {phase.kind === 'receiving' && (
-          <p className="panel-note">
-            Downloading file {phase.volume}… {formatBytes(phase.bytes)} of {formatBytes(phase.total)}
-          </p>
+      <div className="stack tight">
+        <div aria-live="polite">
+          {phase.kind === 'confirming' && <p className="panel-note">Confirm it’s you in the window that opened.</p>}
+          {phase.kind === 'preparing' && <p className="panel-note">Preparing file {phase.volume}: each receipt is read and decrypted first.</p>}
+          {phase.kind === 'receiving' && (
+            <p className="panel-note">
+              Downloading file {phase.volume}… {formatBytes(phase.bytes)} of {formatBytes(phase.total)}
+            </p>
+          )}
+          {protect && saved.length > 0 && (
+            <p className="panel-note">
+              They are protected with your passphrase. Open each on <a href={OPEN_DOWNLOAD_PATH}>Open a protected download</a> or with the age app.
+            </p>
+          )}
+          {notes.map((n) => (
+            <p key={n} className="stale-note">
+              {n}
+            </p>
+          ))}
+          {added > 0 && (
+            <button className="secondary" onClick={getPlan} disabled={busy || loading}>
+              Get the download ready again
+            </button>
+          )}
+        </div>
+        {planError && (
+          <Notice level="critical" role="alert">
+            {planError}
+          </Notice>
         )}
-        {protect && saved.length > 0 && (
-          <p className="panel-note">
-            They are protected with your passphrase. Open each on <a href={OPEN_DOWNLOAD_PATH}>Open a protected download</a> or with the age app.
-          </p>
+        {phase.kind === 'error' && (
+          <Notice level="critical" role="alert">
+            {phase.message}
+          </Notice>
         )}
-        {notes.map((n) => (
-          <p key={n} className="stale-note">
-            {n}
-          </p>
-        ))}
-        {added > 0 && (
-          <button className="secondary" onClick={getPlan} disabled={busy || loading}>
-            Get the download ready again
-          </button>
-        )}
-        {planError && <div className="error">{planError}</div>}
-        {phase.kind === 'error' && <div className="error">{phase.message}</div>}
       </div>
     </div>
   );
@@ -366,11 +377,13 @@ export default function ReceiptsCard({ clerk, rows, onChanged }: { clerk: boolea
 
   if (!answer) {
     return error ? (
-      <div className="card receipts-card">
+      <div className="card receipts-card stack">
         <div className="inst-header">
           <div className="inst-name">Receipts and documents</div>
         </div>
-        <div className="error">{error}</div>
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
       </div>
     ) : null;
   }
@@ -400,7 +413,11 @@ export default function ReceiptsCard({ clerk, rows, onChanged }: { clerk: boolea
       )}
       {answer.unreadable.length > 0 && <p className="stale-note">{answer.unreadable.length === 1 ? 'One couldn’t' : `${answer.unreadable.length} couldn’t`} be read just now, so the list isn’t whole.</p>}
       {answer.unrecognised.length > 0 && <p className="stale-note">{answer.unrecognised.length === 1 ? 'One is' : `${answer.unrecognised.length} are`} saved in a form this version of Nya doesn’t know.</p>}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {said && <p className="status-note">{said}</p>}
 
       {files.length > 0 && (

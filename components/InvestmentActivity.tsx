@@ -7,10 +7,12 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { amountsHidden, formatMoney, hiddenMoney } from '@/lib/format';
+import { amountsHidden, formatDay, formatMoney, hiddenMoney, trueMinus } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { readableName } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
+import { InvestmentActivitySkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -67,8 +69,8 @@ export function loadInvestmentActivity(accountId: string, itemId: string): Promi
 function fmtDay(iso: string): string {
   // Parsed at local midnight, not UTC, so a date never renders as the day
   // before for anyone west of Greenwich.
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  // "Today", "Oct 5", "Oct 5, 2025" (lib/format.ts formatDay).
+  return formatDay(iso);
 }
 
 /**
@@ -84,11 +86,13 @@ function fmtAmount(t: InvestmentTxn): string {
   const flipped = -t.amount;
   if (amountsHidden()) return hiddenMoney(flipped, t.currency || 'USD', 'always');
   try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency: t.currency || 'USD',
-      signDisplay: 'always',
-    }).format(flipped);
+    return trueMinus(
+      new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: t.currency || 'USD',
+        signDisplay: 'always',
+      }).format(flipped)
+    );
   } catch {
     return formatMoney(flipped, t.currency);
   }
@@ -118,10 +122,13 @@ export default function InvestmentActivity({
     };
   }, [accountId, itemId]);
 
-  if (failed) return <div className="error">Could not load investment activity.</div>;
-  if (data === null) {
-    return <div className="spinner" role="status" aria-label="Loading investment activity" />;
-  }
+  if (failed)
+    return (
+      <Notice level="critical" role="alert">
+        Could not load investment activity.
+      </Notice>
+    );
+  if (data === null) return <InvestmentActivitySkeleton />;
   // With stored history, a note (institution down, storage problem) no longer
   // means there is nothing to show: say it, then show what is stored.
   if (data.txns.length === 0) {
@@ -144,6 +151,7 @@ export default function InvestmentActivity({
         </div>
       )}
       <table className="txn-table">
+        <caption className="visually-hidden">Investment activity</caption>
         <tbody>
           {data.txns.map((t) => {
             const inflow = -t.amount > 0;

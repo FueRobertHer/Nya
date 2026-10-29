@@ -91,7 +91,7 @@ describe('the meters, against what is available', () => {
     );
     // Said in words, never as a limit below zero.
     expect(text(html)).toContain('Groceries Over $150.00 overspent, carried over $0.00 spent, nothing left Began the month $50.00 over.');
-    expect(text(html)).not.toContain('-$');
+    expect(text(html)).not.toContain('−$');
     // Over is amber in Budgets, as nearly over is: the word tells them apart.
     expect(html).toContain('meter-fill warn" style="width:100%"');
     expect(html).not.toContain('meter-fill over');
@@ -127,7 +127,7 @@ describe('the meters, against what is available', () => {
     });
     expect(own).toContain('Food Over Capped by the group’s budget $200.00 spent, nothing left');
     expect(own).toContain('Nothing is left of the budget for Food as a whole after what it carried over, so nothing more can be spent in the group, whatever its categories have available ($400.00).');
-    expect(own).not.toContain('-$');
+    expect(own).not.toContain('−$');
     // Every category in it budgeted, so theirs can bind.
     const all = Object.fromEntries(taxonomy.categories.filter((c) => c.group === FOOD).map((c) => [c.id, { amount: 10 }]));
     const theirs = card({
@@ -461,7 +461,7 @@ describe('the Budgets tab, with the month loaded', () => {
       />
     );
     expect(text(html)).toContain('Spent $80.00 spent, nothing left');
-    expect(text(html)).not.toContain('of -$');
+    expect(text(html)).not.toContain('of −$');
     expect(html).toContain('meter-fill warn" style="width:100%"');
   });
 
@@ -588,7 +588,7 @@ describe('Home’s budget alerts weigh what is available', () => {
     const none = budgetTexts({ txns: [], budgets, taxonomy, budgetCarries: carries({ [GROCERIES]: { carry: -350 } }) });
     expect(none).toContain('Over your groceries budget: overspending carried over left it $50.00 over before this month');
     expect(none).not.toContain('is spent');
-    for (const t of [alerts(carries({ [GROCERIES]: { carry: -350 } })), none]) expect(t).not.toContain('of -$');
+    for (const t of [alerts(carries({ [GROCERIES]: { carry: -350 } })), none]) expect(t).not.toContain('of −$');
   });
 
   test('the dashboard passes this month’s carries, once loaded', () => {
@@ -615,7 +615,7 @@ describe('Home’s budget alerts weigh what is available', () => {
 describe('the pool table on a phone', () => {
   test('its cells set their own size (the global th, td would win), and it scrolls inside its box', () => {
     const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\r\n/g, '\n');
-    expect(css).toContain(".pool-table td,\n.pool-table th[scope='row'] {\n  font-size: 12px;\n}");
+    expect(css).toContain(".pool-table td,\n.pool-table th[scope='row'] {\n  font-size: var(--fs-1);\n}");
     expect(css).toMatch(/\.pool-scroll \{[^}]*overflow-x: auto;/);
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'IncomePool.tsx'), 'utf8');
     expect(source).toContain('<div className="pool-scroll">');

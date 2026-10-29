@@ -15,16 +15,19 @@
 // tab's totals (the Activity tab names what that left out). For a period
 // that holds today the x-axis stops at today rather than trailing a flat line
 // to its end (a row dated later in it counts in the period's totals, not
-// here).
+// here). Every day's two running totals sit behind "Show as a table", for
+// anyone who can't read the lines. The plot is read by the keys too
+// (components/chart-keys.ts): the arrows move the readout a day at a time.
 
 import { useMemo, useState, type PointerEvent } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, totalsCurrency } from '@/lib/spending';
-import { formatMoney, compactMoney, spoken } from '@/lib/format';
+import { formatDay, formatMoney, compactMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { lastDayOf } from '@/lib/cash-flow';
 import { localDate } from '@/lib/local-date';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
+import { keysHelp, useChartKeys } from './chart-keys';
 
 /** Its height for its width: 150 to 340, the shape it has always had. */
 const ASPECT = 150 / FALLBACK_WIDTH;
@@ -67,6 +70,8 @@ export default function MonthFlowChart({
   const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
   const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
+  // The table renders its rows only while it is open.
+  const [tableOpen, setTableOpen] = useState(false);
   const currency = useMemo(() => (given !== undefined ? given : totalsCurrency(txns)), [given, txns]);
 
   const today = localDate();
@@ -138,7 +143,13 @@ export default function MonthFlowChart({
   // With the year when the period reaches into another year than today's.
   const withYear = first.slice(0, 4) !== today.slice(0, 4) || last.slice(0, 4) !== today.slice(0, 4);
 
-  function dayLabel(day: string): string {
+  // A day read on screen: "Today", "Oct 5", "Oct 5, 2025" (lib/format.ts
+  // formatDay, on `today`'s calendar); `sentence` in the middle of one.
+  const now = new Date(`${today}T12:00:00`);
+  const dayLabel = (day: string, sentence = false) => formatDay(day, { now, sentence });
+
+  /** The axis's ends, as a chart's axis names them. */
+  function axisDay(day: string): string {
     return new Date(`${day}T12:00:00Z`).toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -163,6 +174,12 @@ export default function MonthFlowChart({
   }
 
   const i = active ?? lastAt;
+  const keys = useChartKeys({
+    count: days.length,
+    active,
+    setActive,
+    say: (k) => `In ${formatMoney(cumIn[k], currency)}, out ${formatMoney(cumOut[k], currency)}, through ${dayLabel(days[k], true)}`,
+  });
 
   return (
     <div>
@@ -185,7 +202,7 @@ export default function MonthFlowChart({
           <Masked>{formatMoney(cumOut[i], currency)}</Masked>
         </span>
         <span className="chart-readout-date">
-          {active !== null || !toDate ? `through ${dayLabel(days[i])}` : 'to date'}
+          {active !== null || !toDate ? `through ${dayLabel(days[i], true)}` : 'to date'}
         </span>
       </div>
 
@@ -193,8 +210,9 @@ export default function MonthFlowChart({
         ref={drawnRef}
         className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
-        aria-label={spoken(`Cumulative income and spending for ${dayLabel(days[0])} to ${dayLabel(days[lastAt])}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
+        role="slider"
+        {...keys.slider}
+        aria-label={spoken(`Cumulative income and spending for ${dayLabel(days[0], true)} to ${dayLabel(days[lastAt], true)}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
         onPointerMove={scrub}
         onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
@@ -219,12 +237,51 @@ export default function MonthFlowChart({
         <circle cx={xs[i]} cy={y(cumIn[i])} r={4} fill="var(--up)" stroke="var(--card)" strokeWidth={2} />
 
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 6}>
-          {dayLabel(days[0])}
+          {axisDay(days[0])}
         </text>
         <text className="chart-xlabel" x={W - PAD_RIGHT} y={H - 6} textAnchor="end">
-          {dayLabel(days[lastAt])}
+          {axisDay(days[lastAt])}
         </text>
       </svg>
+      <p id={keys.helpId} className="visually-hidden">
+        {keysHelp('day')}
+      </p>
+
+      {/* Every day's running totals, oldest first as the lines run. Rows
+          render only while it is open, and through Masked each time, so hide
+          amounts masks them. */}
+      <details className="plan-table-view" onToggle={(e) => setTableOpen(e.currentTarget.open)}>
+        <summary>Show as a table</summary>
+        {tableOpen && (
+          <table>
+            <caption>Each day’s totals include the days before it.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Day</th>
+                <th scope="col" className="num">
+                  In
+                </th>
+                <th scope="col" className="num">
+                  Out
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d, k) => (
+                <tr key={d}>
+                  <td>{dayLabel(d)}</td>
+                  <td className="num">
+                    <Masked>{formatMoney(cumIn[k], currency)}</Masked>
+                  </td>
+                  <td className="num">
+                    <Masked>{formatMoney(cumOut[k], currency)}</Masked>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </details>
     </div>
   );
 }

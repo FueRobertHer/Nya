@@ -195,7 +195,7 @@ describe('the institution card notices, words and color', () => {
         '2026-10-27'
       );
     expect(terms('2026-11-15', false)).toBe('3.99% APR · min $3,141.54 · due Nov 15');
-    expect(terms('2026-10-27', false)).toBe('3.99% APR · min $3,141.54 · due Oct 27');
+    expect(terms('2026-10-27', false)).toBe('3.99% APR · min $3,141.54 · due today');
     expect(terms('2026-11-15', true)).toBe('3.99% APR · min $3,141.54 · next due Nov 15');
     expect(terms('2026-05-28', true)).toBe('3.99% APR · min $3,141.54 · was due May 28');
     expect(terms('2026-05-28', false)).toBe('3.99% APR · min $3,141.54');

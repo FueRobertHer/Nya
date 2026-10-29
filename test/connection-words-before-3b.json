@@ -20,12 +20,12 @@
   },
   "plaid consent_ending": {
     "card": [
-      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.",
+      "Plaid says this connection ends on Oct 15, 2099. Reconnect before then to keep it syncing.",
       "Reconnect soon · Oct 15"
     ],
     "health": [
       "Reconnect soon",
-      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing: it takes a minute.",
+      "Plaid says this connection ends on Oct 15, 2099. Reconnect before then to keep it syncing: it takes a minute.",
       "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
     ],
     "connectorWarnings": [],
@@ -33,12 +33,12 @@
   },
   "plaid disconnect_pending": {
     "card": [
-      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing.",
+      "Plaid says this connection ends on Oct 15, 2099. Reconnect before then to keep it syncing.",
       "Reconnect soon · Oct 15"
     ],
     "health": [
       "Reconnect soon",
-      "Plaid says this connection ends on Oct 15. Reconnect before then to keep it syncing: it takes a minute.",
+      "Plaid says this connection ends on Oct 15, 2099. Reconnect before then to keep it syncing: it takes a minute.",
       "Last synced Sep 12 · On Chase's side · Plaid code SOME_PLAID_CODE"
     ],
     "connectorWarnings": [],
@@ -404,7 +404,7 @@
     "connectorWarnings": [],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector waiting": {
@@ -420,7 +420,7 @@
     "connectorWarnings": [],
     "connectorNotes": [
       "bridge.example · 1 account tracked · no answer yet · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector reported": {
@@ -439,7 +439,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector missing": {
@@ -457,7 +457,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector sign": {
@@ -475,7 +475,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector old_balance": {
@@ -491,7 +491,7 @@
     "connectorWarnings": [],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector stale": {
@@ -507,7 +507,7 @@
     "connectorWarnings": [],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector unreadable": {
@@ -523,7 +523,7 @@
     "connectorWarnings": [],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector gone": {
@@ -539,7 +539,7 @@
     "connectorWarnings": [],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector refused": {
@@ -557,7 +557,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector payment": {
@@ -575,7 +575,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector limited": {
@@ -593,7 +593,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector rejected": {
@@ -611,7 +611,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector down": {
@@ -629,7 +629,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector answer": {
@@ -647,7 +647,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector blocked": {
@@ -665,7 +665,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   },
   "connector credentials": {
@@ -683,7 +683,7 @@
     ],
     "connectorNotes": [
       "bridge.example · 1 account tracked · last answered Oct 9 · 5 of 8 requests left today",
-      "Everything SimpleFIN has from Jul 11, 2026 on is in."
+      "Everything SimpleFIN has from Jul 11 on is in."
     ]
   }
 }

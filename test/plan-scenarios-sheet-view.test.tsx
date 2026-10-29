@@ -429,12 +429,16 @@ describe('leaving the sheet', () => {
 });
 
 describe('what it waits for', () => {
-  test('while the Plan loads, the list is only why and a spinner; nothing is compared until it has loaded, so not while it can’t be read either', async () => {
+  test('while the Plan loads, the list is only why and its rows as placeholders, said once; nothing is compared until it has loaded, so not while it can’t be read either', async () => {
     const { fetcher } = store(SCENARIOS);
     const s = await mount(fetcher, { shown: { planState: 'loading', whyNot: 'Your plan is still loading: scenarios open, and are compared, once it has.', canOpen: false } });
     const loading = s.dialog()!;
     expect(loading.textContent).toContain('Your plan is still loading: scenarios open, and are compared, once it has.');
-    expect(loading.findAll((e) => e.getAttribute('aria-label') === 'Loading your plan').length).toBe(1);
+    // Not a spinner: the rows as they will be, hidden, the card busy, and one status.
+    expect(loading.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('spinner'))).toHaveLength(0);
+    expect(loading.findAll((e) => e.getAttribute('role') === 'status').map((e) => e.textContent)).toEqual(['Loading your plan']);
+    expect(loading.findAll((e) => e.getAttribute('aria-busy') === 'true')).toHaveLength(1);
+    expect(loading.findAll((e) => (e.getAttribute('class') ?? '') === 'plan-rows')[0].getAttribute('aria-hidden')).toBe('true');
     for (const absent of ['New scenario', 'What-ifs beside your plan', 'Retire at 50', 'Retirement age: 50', 'Choose two to four plans.']) expect(loading.textContent).not.toContain(absent);
     expect(s.jobs).toEqual([]);
 

@@ -13,7 +13,7 @@
 //     amount, the suggestion from history (one tap saves it), and a
 //     Rollover row while rollover is known and it has an amount; that row
 //     waits while the amount typed isn't the one saved, as a change of
-//     amount is saved first. Footer: Remove... and Save.
+//     amount is saved first. Footer: Delete... and Save.
 //   - rollover: on since when, with Reset carryover... and Turn off; or off,
 //     with the month to count from and Turn on. A change that is saved
 //     closes the sheet: the meter shows it once the month is worked out
@@ -263,16 +263,16 @@ export function BudgetSheet({
     // A carry is kept only for a budget that rolls over.
     const rolls = !!rollover?.since || !!carry;
     return sheet(
-      'Remove budget',
+      'Delete budget',
       <p>
-        Remove the budget for {name}?{rolls ? ' Its rollover ends with it: adding it again starts without one.' : ''}
+        Delete the budget for {name}?{rolls ? ' Its rollover ends with it: adding it again starts without one.' : ''}
       </p>,
       <div className="btn-row">
         <button type="button" ref={safe} className="btn secondary" onClick={back} disabled={busy}>
           Keep it
         </button>
         <button type="button" className="btn danger" onClick={onRemove} disabled={!editable || busy}>
-          {busy ? 'Removing…' : 'Remove'}
+          {busy ? 'Deleting…' : 'Delete'}
         </button>
       </div>
     );
@@ -335,7 +335,7 @@ export function BudgetSheet({
     <div className="btn-row">
       {saved !== null && (
         <button type="button" className="btn secondary" onClick={() => onLevel('remove')} disabled={busy}>
-          Remove…
+          Delete…
         </button>
       )}
       <button type="button" className="btn" onClick={() => amount !== null && onSave(amount)} disabled={!editable || busy || amount === null}>
@@ -381,7 +381,7 @@ export function OrphanBudgetSheet({
             Cancel
           </button>
           <button type="button" className="btn danger" onClick={onRemove} disabled={!editable || busy}>
-            Remove budget
+            Delete budget
           </button>
         </div>
       }

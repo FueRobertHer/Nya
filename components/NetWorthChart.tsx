@@ -45,6 +45,14 @@
 // the range are listed under the chart as buttons that select their day, and
 // the selection is announced.
 //
+// The plot is also a slider (role="slider", in the tab order): its name is
+// the summary in words, the left and right arrows move it a point at a time,
+// Home and End go to the ends, and Escape or leaving it (blur) brings back
+// the latest day. It moves exactly what a pointer's scrub moves (the hero's
+// figure, or the readout elsewhere). Its value (aria-valuenow and
+// aria-valuetext) follows the day only once the keys rest (SETTLE_MS), so a
+// screen reader says the new figure once movement stops, not at every step.
+//
 // As Home's hero (`hero`, look and feel step 5) it runs edge to edge under
 // the figure, its months kept inside the page's gutter and the today dot
 // ringed in the page; a pointer's scrub moves the hero's figure
@@ -53,8 +61,8 @@
 // card, in the shape it has always had, and the readout reads the day under
 // the finger.
 
-import { useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { formatMoney, spoken } from '@/lib/format';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { formatDay, formatMoney, MINUS, onDay, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -88,6 +96,9 @@ const heroFrame = (W: number): Frame => ({ W, H: 140, left: 2, right: 8, top: 8,
 /** How far sideways a finger on the hero goes before it scrubs, in CSS
  *  pixels: less, and it may be the start of a scroll. */
 const SIDEWAYS = 6;
+/** How long the day on the plot rests before the slider's value follows it,
+ *  so a screen reader says the figure once, when movement stops. */
+const SETTLE_MS = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The gap a step of month labels needs between neighbours, edge to edge,
  *  to be chosen: twice the least, since a label drawn in Red Hat at 12px can
@@ -98,17 +109,15 @@ const AXIS_GAP = 2 * LABEL_GAP;
 // net-worth total, which has none of its own) formats as "$", as it always
 // did; Home's hero passes the currency its figure is in.
 
-// Signed, for money added and growth: "+$1,200.00" / "-$80.00".
+// Signed, for money added and growth: "+$1,200.00" / "−$80.00".
 function signed(n: number, currency?: string | null): string {
-  return (n < 0 ? '-' : '+') + formatMoney(Math.abs(n), currency);
+  return (n < 0 ? MINUS : '+') + formatMoney(Math.abs(n), currency);
 }
 
-function fmtDay(iso: string, withYear = false): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(withYear ? { year: 'numeric' } : {}),
-  });
+/** A day as the readout says it: "Today", "Sep 3", "Sep 3, 2025" outside this
+ *  year (lib/format.ts formatDay); `sentence` for the middle of one. */
+function fmtDay(iso: string, sentence = false): string {
+  return formatDay(iso, { sentence });
 }
 
 const RANGE_TEXT: Record<RangeKey, string> = {
@@ -121,6 +130,12 @@ const RANGE_TEXT: Record<RangeKey, string> = {
   '5Y': '5Y',
   ALL: 'All',
 };
+
+// The hero's line draws in once a page load: the first time Home's chart is
+// shown (on its own data, after the skeleton), never again as tabs or
+// ranges change. Server and first client render agree (it is false on both),
+// so the class is there from the start and nothing flashes.
+let heroDrawn = false;
 
 export default function NetWorthChart({
   points: allPoints,
@@ -162,6 +177,10 @@ export default function NetWorthChart({
   hero?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawIn] = useState(() => hero && !heroDrawn);
+  useEffect(() => {
+    if (hero) heroDrawn = true;
+  }, [hero]);
   // Drawn at its own width, in the hero's frame or a card's.
   const [drawnRef, drawnW] = useDrawnWidth<SVGSVGElement>();
   const frame = useMemo(() => (hero ? heroFrame(drawnW) : cardFrame(drawnW)), [hero, drawnW]);
@@ -187,7 +206,11 @@ export default function NetWorthChart({
   const [showInfo, setShowInfo] = useState(false);
   // The note last chosen from the list, for the announcement.
   const [chosenNote, setChosenNote] = useState<number | null>(null);
+  // The day the slider's value says (null: the latest), once the day on the
+  // plot has rested SETTLE_MS (see the header).
+  const [settled, setSettled] = useState<number | null>(null);
   const infoId = useId();
+  const keysId = useId();
   // Pointers down on the plot (id -> clientX), and where a mouse drag began.
   const pointers = useRef(new Map<number, number>());
   const dragFrom = useRef<number | null>(null);
@@ -212,9 +235,14 @@ export default function NetWorthChart({
     setActive(null);
     setMeasure(null);
     setChosenNote(null);
+    setSettled(null);
     active = null;
     measure = null;
   }
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(active), SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [active]);
   const baseline = useMemo(() => (baselineFor ? baselineFor(points) : null), [baselineFor, points]);
 
   // Geometry depends only on the data -- memoized so per-pointermove
@@ -356,15 +384,16 @@ export default function NetWorthChart({
   const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, basePath, baseStart } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
-  // Dates carry the year once the range crosses one, or "Mar 3" is ambiguous.
-  const withYear = points[0].date.slice(0, 4) !== points[last].date.slice(0, 4);
-  const day = (i: number) => fmtDay(points[i].date, withYear);
+  // Dates carry the year outside this one (formatDay), so "Mar 3" is never
+  // ambiguous; `dayIn` is the same in the middle of a sentence.
+  const day = (i: number) => fmtDay(points[i].date);
+  const dayIn = (i: number) => fmtDay(points[i].date, true);
   // A line drawn solid because none of it is recorded says so in words,
   // true to the days that are: a recorded today, or a few recorded days.
   let estimatedWords = '';
   if (uniform) {
     const recorded = points.flatMap((p, i) => (p.estimated ? [] : [i]));
-    const except = recorded.length === 0 ? '' : recorded.length === 1 ? `, except ${day(recorded[0])}` : `, except ${recorded.length} recorded days`;
+    const except = recorded.length === 0 ? '' : recorded.length === 1 ? `, except ${dayIn(recorded[0])}` : `, except ${recorded.length} recorded days`;
     // Not "from transactions": a day bridged between two others is a
     // straight line across days with no data (lib/history.ts).
     estimatedWords = `Estimated, not recorded${except}.`;
@@ -396,7 +425,7 @@ export default function NetWorthChart({
    *  from a zero or negative start. */
   function change(i: number, j: number): { text: string; approx: boolean } {
     const d = vals[j] - vals[i];
-    const pct = !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? '-' : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
+    const pct = !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? MINUS : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
     const approx = !!(points[i].estimated || points[j].estimated);
     return { text: `${approx ? '≈ ' : ''}${signed(d, currency)}${pct}`, approx };
   }
@@ -422,7 +451,7 @@ export default function NetWorthChart({
 
   const info: string[] = [];
   if (baseStart >= 0) {
-    info.push(`Grey line: the balance on ${day(baseStart)} plus money added since. The gap above it is growth.`);
+    info.push(`Grey line: the balance ${onDay(dayIn(baseStart))} plus money added since. The gap above it is growth.`);
   }
   if (uniform) info.push(`${estimatedWords} No stretch of this range is recorded, so the line is solid.`);
   else if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');
@@ -533,6 +562,56 @@ export default function NetWorthChart({
     }
   }
 
+  /** Back to the latest day: nothing scrubbed, measured or chosen. */
+  function backToToday() {
+    setActive(null);
+    setMeasure(null);
+    setChosenNote(null);
+    setScrubbing(false);
+  }
+
+  // The keys move the day as a pointer's scrub does (see the header).
+  function onKeyDown(e: React.KeyboardEvent<SVGSVGElement>) {
+    const from = measure ? measure[1] : (active ?? last);
+    let to: number;
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'ArrowDown':
+        to = Math.max(0, from - 1);
+        break;
+      case 'ArrowRight':
+      case 'ArrowUp':
+        to = Math.min(last, from + 1);
+        break;
+      case 'Home':
+        to = 0;
+        break;
+      case 'End':
+        to = last;
+        break;
+      case 'Escape':
+        // Nothing to put back: the key is the page's (a sheet closes).
+        if (active === null && measure === null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        backToToday();
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    setMeasure(null);
+    setChosenNote(null);
+    setActive(to);
+    setScrubbing(true);
+  }
+
+  function onBlur() {
+    // A finger or a mouse drag still on the plot ends by its own events.
+    if (pointers.current.size > 0 || dragFrom.current !== null) return;
+    backToToday();
+  }
+
   function pickRange(key: RangeKey) {
     setPicked(key);
     setActive(null);
@@ -549,9 +628,10 @@ export default function NetWorthChart({
     setScrubbing(false);
   }
 
-  // The hero's figure follows a pointer's day (never a measurement's, which
-  // is too long for its line, nor a note chosen from the list), in the same
-  // frame as the plot; gone when the pointer is, or the chart.
+  // The hero's figure follows a pointer's or the keys' day (never a
+  // measurement's, which is too long for its line, nor a note chosen from the
+  // list), in the same frame as the plot; gone when the pointer or the keys
+  // let go (Escape, blur), or the chart is.
   const heroDay = hero && scrubbing && !measure && active !== null && points[active] ? active : null;
   const heroValue = heroDay === null ? null : vals[heroDay];
   const heroText = heroDay === null ? '' : day(heroDay);
@@ -581,6 +661,14 @@ export default function NetWorthChart({
     // Said once here when the line is solid for being all an estimate.
     readDate = `${rangeLabel(range, points[0].date, points[last].date)}${uniform ? ' · estimated' : ''}`;
   }
+
+  // The slider's value: the day the plot rested on, said as the figure, its
+  // day, and what it is ("estimated", a note), as the hero's line says them.
+  const said = settled !== null && settled <= last ? settled : last;
+  const saidNote = noteOn(said);
+  const valueText = spoken(
+    `${formatMoney(vals[said], currency)} ${onDay(dayIn(said))}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
+  );
 
   return (
     <div>
@@ -620,12 +708,20 @@ export default function NetWorthChart({
 
       <svg
         ref={plotRef}
-        className={hero ? 'chart-svg at-width hero-chart' : 'chart-svg at-width'}
+        className={hero ? `chart-svg at-width hero-chart${drawIn ? ' draw-in' : ''}` : 'chart-svg at-width'}
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
+        role="slider"
+        tabIndex={0}
         aria-label={spoken(
-          `${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
+          `${label} from ${dayIn(0)} to ${dayIn(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
         )}
+        aria-describedby={keysId}
+        aria-valuemin={1}
+        aria-valuemax={points.length}
+        aria-valuenow={said + 1}
+        aria-valuetext={valueText}
+        onKeyDown={onKeyDown}
+        onBlur={onBlur}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
@@ -704,6 +800,9 @@ export default function NetWorthChart({
           </text>
         ))}
       </svg>
+      <p id={keysId} className="visually-hidden">
+        Left and right arrows move from day to day, Home and End go to the first and last day, and Escape goes back to the latest.
+      </p>
 
       {ranges.length > 1 && (
         <Segmented compact className="chart-range-switch" label="Time range" value={range} onChange={pickRange} options={ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
@@ -716,7 +815,7 @@ export default function NetWorthChart({
           {marked.map((m, i) => (
             <li key={m.date}>
               <button type="button" className="chart-note-btn" aria-pressed={active === m.index} onClick={() => chooseNote(i)} onFocus={() => chooseNote(i)}>
-                <span className="chart-note-day">{fmtDay(m.date, withYear)}</span> {m.text}
+                <span className="chart-note-day">{fmtDay(m.date)}</span> {m.text}
               </button>
             </li>
           ))}
@@ -724,7 +823,7 @@ export default function NetWorthChart({
       )}
       <p className="visually-hidden" aria-live="polite">
         {chosenNote !== null && marked[chosenNote] && points[marked[chosenNote].index]
-          ? spoken(`${fmtDay(marked[chosenNote].date, true)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} on ${day(marked[chosenNote].index)}.`)
+          ? spoken(`${fmtDay(marked[chosenNote].date)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} ${onDay(dayIn(marked[chosenNote].index))}.`)
           : ''}
       </p>
 
@@ -736,10 +835,11 @@ export default function NetWorthChart({
         <summary>Show as a table</summary>
         {tableOpen && (
           <table>
+            <caption className="visually-hidden">{label} by day</caption>
             <thead>
               <tr>
-                <th>Day</th>
-                <th className="num">{label}</th>
+                <th scope="col">Day</th>
+                <th scope="col" className="num">{label}</th>
               </tr>
             </thead>
             <tbody>

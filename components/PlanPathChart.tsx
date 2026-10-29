@@ -22,8 +22,8 @@
 
 import { useMemo } from 'react';
 import type { PathPoint } from '@/lib/fire/path';
-import { compactMoney, spoken } from '@/lib/format';
-import { dayName, pct, wholeMoney } from './plan-text';
+import { onDay, spoken } from '@/lib/format';
+import { dayLabel, dayName, pct, wholeMoney } from './plan-text';
 import { Masked } from './HideAmounts';
 import type { ProgressOverlay } from './PlanProgress';
 import { FALLBACK_WIDTH, MIN_LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -121,11 +121,11 @@ function summary(p: PathChartProps, stopped: boolean): string {
   const { points, stopAge, fiNumber, fiAge, currency } = p;
   const start = points[0];
   const end = points[points.length - 1];
-  const parts = [`Invested assets ${end.balance >= start.balance ? 'grow' : 'fall'} from ${compactMoney(start.balance, currency)} at ${start.age}`];
-  if (fiNumber !== null && start.balance >= fiNumber) parts.push(`already above the ${compactMoney(fiNumber, currency)} FI number`);
-  else if (fiNumber !== null && fiAge !== null && fiAge <= end.age) parts.push(`reach the ${compactMoney(fiNumber, currency)} FI number around ${Math.round(fiAge)}`);
-  else if (fiNumber !== null && points.every((q) => q.balance < fiNumber)) parts.push(`stay under the ${compactMoney(fiNumber, currency)} FI number`);
-  parts.push(stopped ? `and the projection stops at ${end.age}, before ${stopAge}` : `and are about ${compactMoney(end.balance, currency)} at ${stopAge}`);
+  const parts = [`Invested assets ${end.balance >= start.balance ? 'grow' : 'fall'} from ${wholeMoney(start.balance, currency)} at ${start.age}`];
+  if (fiNumber !== null && start.balance >= fiNumber) parts.push(`already above the ${wholeMoney(fiNumber, currency)} FI number`);
+  else if (fiNumber !== null && fiAge !== null && fiAge <= end.age) parts.push(`reach the ${wholeMoney(fiNumber, currency)} FI number around ${Math.round(fiAge)}`);
+  else if (fiNumber !== null && points.every((q) => q.balance < fiNumber)) parts.push(`stay under the ${wholeMoney(fiNumber, currency)} FI number`);
+  parts.push(stopped ? `and the projection stops at ${end.age}, before ${stopAge}` : `and are about ${wholeMoney(end.balance, currency)} at ${stopAge}`);
   const path = `${parts.join(', ')}, growing a steady ${pct(p.realReturn)} a year after inflation${p.withEvents ? ' with this scenario’s life events' : ''}.`;
   return p.recorded ? `${recordedWords(p.recorded, currency)} ${path}` : path;
 }
@@ -136,7 +136,7 @@ function recordedWords(r: ProgressOverlay, currency: string | null): string {
   const first = r.recorded[0];
   const last = r.recorded[r.recorded.length - 1];
   const planned = r.planned[r.planned.length - 1];
-  return `Since ${dayName(r.from)}, invested assets as recorded went from ${compactMoney(first.balance, currency)} to ${compactMoney(last.balance, currency)} on ${dayName(r.days[r.days.length - 1])}, where your plan from ${dayName(r.savedDay)} had ${compactMoney(planned.balance, currency)}.`;
+  return `Since ${dayName(r.from)}, invested assets as recorded went from ${wholeMoney(first.balance, currency)} to ${wholeMoney(last.balance, currency)} ${onDay(dayName(r.days[r.days.length - 1]))}, where your plan from ${dayName(r.savedDay)} had ${wholeMoney(planned.balance, currency)}.`;
 }
 
 export default function PlanPathChart(props: PathChartProps) {
@@ -184,10 +184,11 @@ export default function PlanPathChart(props: PathChartProps) {
       <details className="plan-table-view">
         <summary>Show as a table</summary>
         <table>
+          <caption className="visually-hidden">Invested assets by age</caption>
           <thead>
             <tr>
-              <th>Age</th>
-              <th className="num">Invested</th>
+              <th scope="col">Age</th>
+              <th scope="col" className="num">Invested</th>
             </tr>
           </thead>
           <tbody>
@@ -203,17 +204,18 @@ export default function PlanPathChart(props: PathChartProps) {
         </table>
         {recorded && (
           <table>
+            <caption className="visually-hidden">Recorded and planned since your plan</caption>
             <thead>
               <tr>
-                <th>Since your plan</th>
-                <th className="num">Recorded</th>
-                <th className="num">Your plan</th>
+                <th scope="col">Since your plan</th>
+                <th scope="col" className="num">Recorded</th>
+                <th scope="col" className="num">Your plan</th>
               </tr>
             </thead>
             <tbody>
               {recorded.days.map((d, i) => (
                 <tr key={d}>
-                  <td>{dayName(d)}</td>
+                  <td>{dayLabel(d)}</td>
                   <td className="num">
                     <Masked>{wholeMoney(recorded.recorded[i].balance, currency)}</Masked>
                   </td>
