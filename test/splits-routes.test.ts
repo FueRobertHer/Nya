@@ -51,7 +51,7 @@ const { encrypt } = await import('@/lib/crypto');
 const { rememberAccounts } = await import('@/lib/last-known');
 const { saveManualAccount } = await import('@/lib/manual');
 const { addManualTxn, newManualTxn, manualTxnStore } = await import('@/lib/manual-txns');
-const { splitStore } = await import('@/lib/splits');
+const { splitStore, saveSplit, changePart, removeSplit, checkParts } = await import('@/lib/splits');
 const { rulesStore } = await import('@/lib/rules');
 const { summarize } = await import('@/lib/totals');
 const { PART_PREFIX, REMAINDER_PREFIX } = await import('@/lib/split-rows');
@@ -200,6 +200,24 @@ describe('a split, saved through the route, read as its parts', () => {
     expect((await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: now })).status).toBe(200);
     expect((await route('transaction-splits', 'DELETE', { transaction_id: 't_costco' })).status).toBe(200);
     expect((await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: 'not a time' })).status).toBe(400);
+  });
+
+  test('changes saved in one millisecond still move the split on, so an edit opened before them is refused', async () => {
+    const at = new Date('2026-10-28T12:00:00.000Z');
+    const parent = { amount: 150, currency: 'USD', pending: false };
+    const parts = checkParts(costcoSplit(), parent);
+    const saved = await saveSplit(ctx, 't_costco', parent, parts, at, null);
+    const changed = (await changePart(ctx, 't_costco', saved.parts[0].id, { note: 'changed elsewhere' }, at))!;
+    expect(changed.updated_at > saved.updated_at).toBe(true);
+    await expect(saveSplit(ctx, 't_costco', parent, parts, at, saved.updated_at)).rejects.toMatchObject({ status: 409 });
+    await expect(removeSplit(ctx, 't_costco', saved.updated_at)).rejects.toMatchObject({ status: 409 });
+    expect((await splitStore.get(ctx, 't_costco'))!.parts[0].note).toBe('changed elsewhere');
+    // From what is there now it saves, and moves on again in the same millisecond.
+    const again = await saveSplit(ctx, 't_costco', parent, parts, at, changed.updated_at);
+    expect(again.updated_at > changed.updated_at).toBe(true);
+    // A clock behind the stored time never stamps it backward.
+    const earlier = await saveSplit(ctx, 't_costco', parent, parts, new Date('2026-10-28T11:00:00.000Z'), again.updated_at);
+    expect(earlier.updated_at > again.updated_at).toBe(true);
   });
 
   test('a manual row and an imported one split as a bank’s does, and their splits go with their row', async () => {
