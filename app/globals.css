@@ -3389,6 +3389,13 @@ button.danger-outline {
   margin: 0;
 }
 
+/* The accounts side by side, as wide as each other (components/DemoSignIn.tsx):
+   each is a form around its button, so the forms share the row. */
+.demo-accounts > form {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* Says Clerk's form hasn't loaded (components/SignInFlow.tsx), under its
    placeholder and as wide. */
 .auth-notice {
