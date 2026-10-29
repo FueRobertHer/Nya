@@ -3389,14 +3389,6 @@ button.danger-outline {
   margin: 0;
 }
 
-/* Each account a tonal button of two lines, read from the left like a row:
-   the name, then what it is set up to hold. */
-.btn.demo-account {
-  justify-content: flex-start;
-  padding-block: var(--sp-3);
-  text-align: left;
-}
-
 /* Says Clerk's form hasn't loaded (components/SignInFlow.tsx), under its
    placeholder and as wide. */
 .auth-notice {
