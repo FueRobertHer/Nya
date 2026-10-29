@@ -2431,7 +2431,9 @@ export function EventsCard({
             note={`at age ${x.atAge}${
               leftOut.has(x.id)
                 ? start !== null
-                  ? `. Before ${start}, where Will it last? starts, so it isn't counted anywhere.`
+                  ? plan.age !== null && x.atAge < plan.age
+                    ? ". Before today, so it isn't counted: your measured figures may already count it."
+                    : `. Before ${start}, where Will it last? starts, so it isn't counted anywhere.`
                   : '. Not in the simulation: add your age.'
                 : beyond.has(x.id)
                   ? `. After the plan ends${end !== null ? ` at ${end}` : ''}: only the grid's longer columns reach it.`

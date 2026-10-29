@@ -15,7 +15,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, parsePlan, pctText, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
@@ -855,7 +855,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       </p>
       <p className="helper">
         Counts in Will it last?, never in your FI date or FI number. Part-time work is{' '}
-        {props.scenario ? "one of this scenario's life events" : 'a life choice in What if…'}, and Barista FI&apos;s
+        {props.scenario ? 'a life event in this scenario' : 'a life choice in What if…'}, and Barista FI&apos;s
         part-time income is in Assumptions.
       </p>
       <div className="sheet-form">
@@ -930,6 +930,9 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
   const [amount, setAmount] = useState(asText(item?.amount ?? null));
   const [atAge, setAtAge] = useState(asText(item?.atAge ?? null));
   const s = useSave(props);
+  // Where Will it last? starts (lib/fire/plan.ts enginePlan): a one-off
+  // before it is in neither that nor the FI date.
+  const start = startAge(plan);
   const build = (): FirePlan => {
     if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanExpense = {
@@ -947,8 +950,9 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         after tax.
       </p>
       <p className="helper">
-        Counts in Will it last? once that starts, never in your FI date.{' '}
-        {props.scenario ? "To move this scenario's FI date with it, add it to its life events." : 'To move your FI date with it, try it in What if… as a life choice.'}
+        {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
+        {props.scenario ? "To move this scenario's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
+        {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
       </p>
       <div className="sheet-form">
         <label className="field">
