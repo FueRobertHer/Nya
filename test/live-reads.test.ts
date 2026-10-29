@@ -57,9 +57,14 @@ function hold() {
   };
 }
 
-/** Lets everything that can run before a read answers run. */
+/** Lets everything that can run before a read answers run: the microtasks,
+ *  and the work that takes longer (a decrypt), over a few turns of the event
+ *  loop. */
 async function untilWaiting() {
-  for (let i = 0; i < 100; i++) await Promise.resolve();
+  for (let turn = 0; turn < 5; turn++) {
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe('reads begun together', () => {
