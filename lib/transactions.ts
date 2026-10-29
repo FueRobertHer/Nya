@@ -26,6 +26,7 @@
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
+import { begin } from './eager';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
 import { redis, kc, getItems, type StoredItem } from './storage';
 import type { Ctx } from './containers';
@@ -1050,6 +1051,10 @@ async function syncItem(ctx: Ctx,
   item: StoredItem,
   opts: SyncOptions = {}
 ): Promise<SyncOutcome> {
+  // The marker's read, begun beside the decrypt and used where it was read
+  // before. Not the stored blob's: an Item blocked as too large, or whose
+  // credentials can't be read, stops before it, and its blob can be megabytes.
+  const markerRead = begin(() => redis().get<string>(blockedKey(ctx, item.item_id)));
   let access_token: string;
   try {
     access_token = await decrypt(ctx, item.encrypted_access_token);
@@ -1061,7 +1066,7 @@ async function syncItem(ctx: Ctx,
   // before the Plaid call: pulling again would rebuild the same oversized state
   // and refuse to write it again, at full cost, on every dashboard load.
   try {
-    const raw = await redis().get<string>(blockedKey(ctx, item.item_id));
+    const raw = await markerRead;
     if (raw) {
       const marker = parseBlocked(raw);
 
