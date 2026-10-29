@@ -12,27 +12,39 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { usePlaidLink, type PlaidLinkOnEvent, type PlaidLinkOnExit, type PlaidLinkOnSuccess, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
 import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
-import AccountLinks from './AccountLinks';
-import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
-import ReceiptsCard from './ReceiptsCard';
 import InventoryEntry from './InventoryEntry';
-import RestoreCard from './RestoreCard';
-import DemoDataCard from './DemoDataCard';
+// Settings' cards, and the sheets Home never opens itself, load when first
+// needed or once Home has its figures (components/lazy-part.tsx).
+import {
+  AccountLinks,
+  AdminUnusedItems,
+  ApiTokens,
+  CategoriesCard,
+  CurrencyCard,
+  DemoDataCard,
+  ReceiptsCard,
+  RestoreCard,
+  ReviewSettingsCard,
+  RulesCard,
+  TagsCard,
+  ThemeCard,
+  VendorDefaultsCard,
+  WeeklySummaryCard,
+  settingsCardsPart,
+} from './SettingsCardsLoader';
+import { DebtPayoff, HistoryImportSheet, ImportSheet, MigrationSheet, debtPayoffPart, historyImportSheetPart, importSheetPart, migrationSheetPart } from './LazySheets';
+import { onPartShown, preloadParts } from './lazy-part';
 import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
-import ApiTokens from './ApiTokens';
-import WeeklySummaryCard from './WeeklySummaryCard';
-import { ThemeCard } from './ThemeCard';
 import { localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingSettings, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
-import DebtPayoff from './DebtPayoff';
 import { CoverageNote, TrustLinks } from './TrustLinks';
 import { SettingsSkeleton, TabSkeleton } from './LoadingSkeletons';
 import { TABS, parseSettings, parseTab, settingsHref, tabHref, type Tab } from '@/lib/dashboard-tab';
-import ConnectButtons from './ConnectButtons';
+import ConnectButtons, { SwitchingLink } from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
 import AccountsStatus from './AccountsStatus';
@@ -46,9 +58,8 @@ import { historyPausedSince } from '@/lib/history-status';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
 import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
-import ImportSheet, { type ImportTarget } from './ImportSheet';
-import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
-import MigrationSheet, { SwitchingLink } from './MigrationSheet';
+import type { ImportTarget } from './ImportSheet';
+import type { HistoryImportTarget } from './HistoryImportSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
@@ -80,18 +91,13 @@ import {
 import { useTimelineNotes, TimelineNotesSheet } from './TimelineNotes';
 import { totalCaveats, type RestoreHoldNote } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
-import BudgetsTab from './BudgetsTab';
+import BudgetsTab, { budgetsTabPart } from './BudgetsTabLoader';
 import { BUDGETS_MONTH_TITLE, type BudgetsSegment } from './BudgetsBar';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { useCategories, useCategoriesForBudgets } from './categories-state';
 import { useBudgetMonth } from './budget-month-state';
-import CategoriesCard from './CategoriesCard';
 import { useTagList } from './tags-state';
-import TagsCard from './TagsCard';
 import { newDraft, useRules } from './rules-state';
-import RulesCard from './RulesCard';
-import ReviewSettingsCard from './ReviewSettingsCard';
-import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOfferSheet, dismissOffer, heroCurrencyCaveats, offerDismissed, offerFor } from './CurrencyNotes';
 import { CORRECTION_KEEPS, RELABEL_KEEPS, rateEffectText, relabelledText } from './currency-text';
@@ -99,7 +105,6 @@ import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import { totalsCurrency } from '@/lib/spending';
-import VendorDefaultsCard from './VendorDefaultsCard';
 import { useReview } from './review-state';
 import { countToReview } from '@/lib/review-layer';
 import RuleSheet from './RuleSheet';
@@ -865,6 +870,12 @@ export default function Dashboard({
     goalsStore.load();
     plannedItemsStore.load();
   }, [loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
+
+  // Once Home has its figures, the code of what it doesn't draw, while the
+  // browser is idle: the Budgets tab, Settings' cards and the sheets.
+  useEffect(() => {
+    if (!loading && !txnsLoading) preloadParts([budgetsTabPart, settingsCardsPart, debtPayoffPart, importSheetPart, historyImportSheetPart, migrationSheetPart]);
+  }, [loading, txnsLoading]);
 
   const renameVendor = useCallback(
     async (vendor_key: string, name: string) => {
@@ -2182,11 +2193,15 @@ export default function Dashboard({
       return;
     }
     const target = document.getElementById(focusTarget.id);
-    if (!target) return;
+    // Not yet on screen, or only its skeleton's, which can't take focus.
+    if (!target || target.closest('[inert]')) return;
     setFocusTarget(null);
     target.scrollIntoView({ block: 'start' });
     target.focus({ preventScroll: true });
   });
+  // A part whose code comes later (components/lazy-part.tsx) draws it with
+  // no render here: look again when one arrives.
+  useEffect(() => (focusTarget ? onPartShown(() => setFocusTarget((t) => t && { ...t })) : undefined), [focusTarget]);
   const resetViewMonth = viewMonth.reset;
   const goTo = useCallback(
     (go: Go) => {
