@@ -562,10 +562,15 @@ export const isLifecycleUnreadable = (err: unknown): err is UnreadableEntriesErr
  * has them already (the net-worth route reads them with the hidden set);
  * null says they couldn't be read, which only matters when something has an
  * entry: then this throws, as the hidden set does, rather than leave an
- * earlier id of a closed account counting.
+ * earlier id of a closed account counting. `read`: the read of the
+ * entries, when the caller began it beside the links' (lib/activity.ts).
  */
-export async function getEffectiveLifecycle(ctx: Ctx, links: ReadonlyMap<string, Link> | null): Promise<LifecycleView> {
-  const entries = await readLifecycleEntries(ctx);
+export async function getEffectiveLifecycle(
+  ctx: Ctx,
+  links: ReadonlyMap<string, Link> | null,
+  read: Promise<Map<string, LifecycleEntry>> = readLifecycleEntries(ctx)
+): Promise<LifecycleView> {
+  const entries = await read;
   if (entries.size === 0) return EMPTY_VIEW;
   if (links === null) throw new Error('Account links could not be read, so which of their ids are closed can’t be told');
   return effectiveLifecycle(entries, links);

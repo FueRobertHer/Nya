@@ -66,6 +66,7 @@
 // and it reads whole transactions.
 
 import { getItems } from './storage';
+import { eager } from './eager';
 import type { Ctx } from './containers';
 import { readOverridesReport, getCarriedReport, carriedCategories } from './overrides';
 import { readRenamesReport } from './renames';
@@ -74,7 +75,7 @@ import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, liveAccountIds, type Link } from './links';
-import { getEffectiveLifecycle, endDays, type LifecycleView } from './lifecycle';
+import { getEffectiveLifecycle, endDays, readLifecycleEntries, type LifecycleView } from './lifecycle';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
 import { importedForActivity } from './history-import/read';
@@ -309,9 +310,16 @@ export async function assembleBankRows(
    *  its transactions in Nya begin, beside each bank's `first_date`. */
   imported_first: string | null;
 }> {
-  const items = await getItems(ctx);
-  const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
-  const lifecycle = await getEffectiveLifecycle(ctx, links);
+  // Three reads that don't depend on each other, begun together (one round
+  // trip, as Redis's reads in the same tick are sent together) and awaited
+  // in the order they were made one after another, so the same failure is
+  // the one that surfaces.
+  const itemsRead = eager(getItems(ctx));
+  const hiddenRead = eager(getEffectiveHidden(ctx, { readOnly: opts.readOnly }));
+  const entriesRead = eager(readLifecycleEntries(ctx));
+  const items = await itemsRead;
+  const { hidden, links, liveOk } = await hiddenRead;
+  const lifecycle = await getEffectiveLifecycle(ctx, links, entriesRead);
   const endedFrom = opts.keepEnded ? undefined : endDays(lifecycle);
   const hiddenIds = new Set(hidden.keys());
   const leftOut = opts.includeHidden ? new Set<string>() : hiddenIds;
@@ -623,12 +631,16 @@ export async function finishActivity(
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
   const rows = [...transactions, ...candidates];
-  // The approvals of these rows only (lib/review-read.ts), beside the categories.
-  const [filed, reviewParts] = await Promise.all([filingSet(ctx, rows, { grow: !!opts.grow }), readReviewParts(ctx, rows, reviewBasics)]);
+  // The approvals of these rows only (lib/review-read.ts), and how the rules
+  // know an account, beside the categories: neither reads them.
+  const onAccount = rulesRead(ruleRead.set, (r) => r.conditions.some((c) => c.field === 'account'));
+  const [filed, reviewParts, links] = await Promise.all([
+    filingSet(ctx, rows, { grow: !!opts.grow }),
+    readReviewParts(ctx, rows, reviewBasics),
+    ruleAccounts(ctx, onAccount || !!opts.followLinks),
+  ]);
   const ix = indexTaxonomy(filed.taxonomy);
   const review = reviewLayerOf(reviewParts, ix);
-  const onAccount = rulesRead(ruleRead.set, (r) => r.conditions.some((c) => c.field === 'account'));
-  const links = await ruleAccounts(ctx, onAccount || !!opts.followLinks);
   const account = links.account;
   const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
   applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects, review: review.layer });

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
+import { eager } from '@/lib/eager';
 import { attachedIds } from '@/lib/attachments';
 import { personMode } from '@/lib/attachment-http';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
@@ -56,14 +57,6 @@ import { flowFxReader } from '@/lib/fx/read';
 // total is then today's. The settings and the accounts' currencies are read
 // beside the rows; rates that can't be read leave the rows of other
 // currencies without one (named in every total), never fail the load.
-
-/** A promise begun now and awaited later, its rejection marked handled
- *  meanwhile, so a failure elsewhere first can't leave it unhandled; awaiting
- *  it still throws (as in app/api/net-worth/route.ts). */
-function eager<T>(p: Promise<T>): Promise<T> {
-  p.catch(() => {});
-  return p;
-}
 
 export async function GET(req: Request) {
   try {
