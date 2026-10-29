@@ -3224,6 +3224,12 @@ span.meter-fill {
   font-size: var(--fs-3);
 }
 
+/* A field’s select and textarea type at the body size too, rather than the
+   label’s 13px they would inherit; a class of their own still sets its own. */
+.field :where(select, textarea) {
+  font-size: var(--fs-3);
+}
+
 .invite-link {
   display: flex;
   align-items: center;

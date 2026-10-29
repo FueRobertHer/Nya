@@ -58,7 +58,7 @@ Also:
 
 - **The container spaces its children.** Put stacked siblings in `.stack` (12px), `.stack.tight` (8px) or `.stack.loose` (16px); children of a stack lose their own block margins.
 - **No inline spacing or type.** `style={{}}` must not set margin, padding, gap, font size, weight, line height, letter spacing or text transform. Inline style is for data only: a bar's width, a marker's position, a chart color as `var(--…)`, a CSS custom property.
-- Spacing comes from the 4px grid (4, 8, 12, 16, 20, 24, 32). Radii come from 6, 8, 12, 16 and pill.
+- Spacing comes from the 4px grid (4, 8, 12, 16, 20, 24, 32). Radii come from 6, 8, 12, 16 and pill. Two exceptions, kept on purpose: a `.field`'s label sits 6px over its control, and the small marks inside charts and their keys (swatches, bars, a due dot) keep the 1 to 5px radii of their size.
 - **Reuse before you add.** Before writing a CSS rule, look for the class in the table below. Name a new class for its feature (`.payoff-…`), unless it is a generic primitive agreed in design-system.md. Never add another note, alert or button variant.
 - Phone first: it must work at 320 and 375px wide without the page scrolling sideways.
 
@@ -136,7 +136,7 @@ Nya shows its gaps on purpose ([features.md](../features.md)). A new feature tha
 
 - One line of helper text; the rest behind "Why?".
 - Say what to do, then why: "Reconnect Chase to update its balances".
-- One word for one thing: Hide, Close, Disconnect, Delete, Forget, Link, Connect ([vocabulary](information-architecture.md#vocabulary)).
+- One word for one thing: Hide, Close, Disconnect, Delete, Remove, Forget, Link, Connect, Reconnect ([vocabulary](information-architecture.md#vocabulary)).
 - Sentence case. No em or en dashes.
 
 ## Accessibility
