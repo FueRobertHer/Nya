@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SETTINGS_TITLES, SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
-import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
+import { LOCAL_CACHE_KEY, cacheKeyFor, reloadKeyAfter } from './device-cache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { usePlaidLink, type PlaidLinkOnEvent, type PlaidLinkOnExit, type PlaidLinkOnSuccess, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
 import { existingItemsAt } from '@/lib/existing-items';
@@ -365,6 +365,13 @@ export default function Dashboard({
   // the note under the chart. Sent beside the payload, never cached with it.
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
+  // What the parts read beside the balances read again on, Settings' cards
+  // that ask among them (components/device-cache.ts reloadKeyAfter). Not
+  // Restore's: it already reads nothing again on the balances' first time
+  // (components/RestoreCard.tsx), so it keeps `asOf`, where null means
+  // nothing loaded yet.
+  const [reloadKey, setReloadKey] = useState<string | null>(null);
+  const savedAsOf = useRef<string | null | undefined>(undefined);
   const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null; none?: true } | null>(null);
   // The nightly clean-up of receipts and documents, said the same way
   // (lib/backup.ts attachmentSweepProblem).
@@ -679,6 +686,7 @@ export default function Dashboard({
       setEnded(Array.isArray(data.lifecycle) ? data.lifecycle : []);
       setRestoreHold(data.restore_hold ?? null);
       setAsOf(data.as_of ?? null);
+      setReloadKey((k) => reloadKeyAfter(k, data.as_of ?? null, savedAsOf.current));
       setBalancesSaved(false);
       setBalancesFailed(false);
       setBackupProblem(data.backup_problem ?? null);
@@ -822,6 +830,7 @@ export default function Dashboard({
           setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
           setEnded(Array.isArray(snap.lifecycle) ? snap.lifecycle : []);
           setAsOf(snap.as_of ?? null);
+          savedAsOf.current = snap.as_of ?? null;
           setBalancesSaved(true);
           setConnected(snap.institutions.length > 0);
           // As after a load with nothing connected (loadNetWorth), should
@@ -1148,7 +1157,7 @@ export default function Dashboard({
   );
 
   // Notes on the timeline (#50), read again with each load.
-  const timeline = useTimelineNotes(asOf);
+  const timeline = useTimelineNotes(reloadKey);
   // The chart notes sheet, from the Net worth card (components/TimelineNotes.tsx).
   const [notesOpen, setNotesOpen] = useState(false);
   const reloadTimeline = timeline.reload;
@@ -1238,7 +1247,7 @@ export default function Dashboard({
   );
   // Every SimpleFIN and Lunch Flow connection, read once for the dashboard,
   // again after each load (`asOf` changes with it).
-  const connectors = useConnectors(asOf);
+  const connectors = useConnectors(reloadKey);
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
   const askLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
   // Offered only where the deployment turned it on (app/page.tsx).
@@ -2066,7 +2075,7 @@ export default function Dashboard({
               loads says what it suggests, which ends Home's row about any it
               no longer does (a decline changes no figures, so nothing else is
               reloaded), and draws its title, which a jump may be waiting for. */}
-          <AccountLinks onChanged={() => loadNetWorth(true)} onLoaded={linkOfferLoaded} refreshKey={asOf} />
+          <AccountLinks onChanged={() => loadNetWorth(true)} onLoaded={linkOfferLoaded} refreshKey={reloadKey} />
           {/* The admin's list of connections, across every account, that
               cost money and do nothing. Only ever mounted for the admin (decided
               on the server in app/page.tsx); the route also refuses
@@ -2382,7 +2391,7 @@ export default function Dashboard({
               {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
               <ConnectorCards data={connectors.data} error={connectors.error} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
               {/* Someone who only follows what others share needs no bank of their own. */}
-              {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
+              {clerk && <SharedWithMe refreshKey={reloadKey} viewer={viewer} />}
             </>
           ) : (
             <>
@@ -2664,7 +2673,7 @@ export default function Dashboard({
                   {/* What others share with me, whenever there is some; last,
                       so my own accounts don't move when it arrives. What I
                       share is in the Sharing drawer. */}
-                  {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
+                  {clerk && <SharedWithMe refreshKey={reloadKey} viewer={viewer} />}
                 </>
               )}
 
