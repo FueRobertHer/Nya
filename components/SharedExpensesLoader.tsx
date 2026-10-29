@@ -6,11 +6,12 @@
 // (components/lazy-part.tsx), not with Home. The segment draws the card as it
 // is while its figures load; a sheet asked for before the code is in opens
 // once it is, or without it after a moment (components/LazySheets.tsx), with
-// the title it will have. If it can't be loaded, or stops while it runs, it
+// the title it opens with. If it can't be loaded, or stops while it runs, it
 // says so in its place and the rest of Activity works as before.
 
 import { useEffect, type ComponentProps } from 'react';
-import type { SharedOpen } from './shared-expenses-state';
+import type { SharedExpenses, SharedOpen } from './shared-expenses-state';
+import { REMOVED_NAME } from '@/lib/shared-expenses/model';
 import { LazySheet } from './LazySheets';
 import { PartBoundary, PartUnavailable, lazyPart, useLazyPart } from './lazy-part';
 
@@ -42,18 +43,20 @@ function SharedLoading() {
   );
 }
 
-/** The title the sheet for `open` has, for its stand-in. A person's sheet is
- *  titled with their name, which only the card knows. */
-export function sheetTitle(open: SharedOpen | null): string {
+/** The title the sheet for `open` opens with, for its stand-in, from what
+ *  the page already has (the card, `card`): the usual one where it depends
+ *  on more than that (a row already shared, a payment already confirmed,
+ *  which way a handoff goes). */
+export function sheetTitle(open: SharedOpen | null, card: SharedExpenses['card']): string {
   switch (open?.kind) {
     case 'paid':
-      return 'Paid back';
+      return (open.t.shared_was ?? open.t.amount) < 0 ? 'This paid back…' : 'This paid…';
     case 'settle':
       return open.letGo ? 'Let it go' : 'Mark settled';
     case 'person':
-      return open.id ? 'Someone' : 'Add someone';
+      return open.id ? (card?.people.find((x) => x.id === open.id)?.name ?? REMOVED_NAME) : 'Add someone';
     case 'iou':
-      return 'IOU';
+      return open.id ? 'IOU' : 'Add an IOU';
     case 'handoff':
       return 'Ask for it';
     default:
@@ -81,7 +84,7 @@ export function SharedSheets(props: ComponentProps<Module['SharedSheets']>) {
   // way from when Activity opens.
   useEffect(() => void sharedExpensesPart.load().catch(() => {}), []);
   return (
-    <LazySheet part={sharedExpensesPart} open={open !== null} title={sheetTitle(open)} onClose={() => setOpen(null)}>
+    <LazySheet part={sharedExpensesPart} open={open !== null} title={sheetTitle(open, props.shared.card)} onClose={() => setOpen(null)}>
       {(m) => <m.SharedSheets {...props} />}
     </LazySheet>
   );

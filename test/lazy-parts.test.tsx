@@ -291,11 +291,18 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
     m.unmount();
   });
 
-  test("a stand-in sheet has the title the sheet will have", () => {
-    expect(sheetTitle({ kind: 'share' } as Parameters<typeof sheetTitle>[0])).toBe('Share the cost');
-    expect(sheetTitle({ kind: 'settle', person: 'p', currency: 'USD', letGo: true })).toBe('Let it go');
-    expect(sheetTitle({ kind: 'person', id: null })).toBe('Add someone');
-    expect(sheetTitle({ kind: 'handoff', person: 'p', currency: 'USD' })).toBe('Ask for it');
+  test("a stand-in sheet has the title the sheet opens with", () => {
+    type Open = Parameters<typeof sheetTitle>[0];
+    type Card = Parameters<typeof sheetTitle>[1];
+    const card = { people: [{ id: 'p1', name: 'Sam' }] } as unknown as Card;
+    expect(sheetTitle({ kind: 'share' } as Open, card)).toBe('Share the cost');
+    expect(sheetTitle({ kind: 'paid', t: { amount: -20 } } as Open, card)).toBe('This paid back…');
+    expect(sheetTitle({ kind: 'paid', t: { amount: 20 } } as Open, card)).toBe('This paid…');
+    expect(sheetTitle({ kind: 'settle', person: 'p1', currency: 'USD', letGo: true }, card)).toBe('Let it go');
+    expect(sheetTitle({ kind: 'person', id: 'p1' }, card)).toBe('Sam');
+    expect(sheetTitle({ kind: 'person', id: null }, card)).toBe('Add someone');
+    expect(sheetTitle({ kind: 'iou', id: null }, card)).toBe('Add an IOU');
+    expect(sheetTitle({ kind: 'iou', id: 'i1' }, card)).toBe('IOU');
   });
 
   test('a failure keeps the rest working', () => {
