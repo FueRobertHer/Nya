@@ -15,14 +15,18 @@ type Answer = { status?: number; body?: string; cacheControl?: string };
 function worker() {
   const store = new Map<string, Response>();
   const without = (url: string) => url.split('?')[0];
+  const broken = { match: false };
   const cache = {
     match: async (req: { url: string } | string, opts?: { ignoreSearch?: boolean }) => {
+      if (broken.match) throw new Error('UnknownError: Unexpected internal error');
       const url = typeof req === 'string' ? req : req.url;
       const hit = store.get(url) ?? (opts?.ignoreSearch ? [...store].find(([k]) => without(k) === without(url))?.[1] : undefined);
       return hit?.clone();
     },
     put: async (req: { url: string } | string, res: Response) => {
       puts.push(typeof req === 'string' ? req : req.url);
+      // A write takes a while: done only if the worker was kept for it.
+      await new Promise((r) => setTimeout(r, 5));
       store.set(typeof req === 'string' ? `${ORIGIN}${req}` : req.url, res);
     },
   };
@@ -72,7 +76,7 @@ function worker() {
     return res ? await res.text() : undefined;
   }
 
-  return { request, net, asked, puts, store };
+  return { request, net, asked, puts, store, broken };
 }
 
 const chunk = '/_next/static/chunks/0abc123.js';
@@ -88,6 +92,22 @@ describe('Next’s hashed files', () => {
     for (let i = 0; i < 3; i++) expect(await w.request(chunk)).toBe('chunk');
     expect(w.asked).toHaveLength(1);
     expect(w.puts).toHaveLength(1);
+  });
+
+  test('the worker is kept until the copy is written', async () => {
+    const w = worker();
+    w.net.answers.set(`${ORIGIN}${chunk}`, { body: 'chunk', cacheControl: IMMUTABLE });
+    await w.request(chunk);
+    expect(w.store.has(`${ORIGIN}${chunk}`)).toBe(true);
+  });
+
+  test('a cache that can’t be read leaves them to the network, as before', async () => {
+    const w = worker();
+    w.net.answers.set(`${ORIGIN}${chunk}`, { body: 'chunk', cacheControl: IMMUTABLE });
+    await w.request(chunk);
+    w.broken.match = true;
+    expect(await w.request(chunk)).toBe('chunk');
+    expect(w.asked).toHaveLength(2);
   });
 
   test('offline, the kept copy still answers', async () => {

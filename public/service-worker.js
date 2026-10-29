@@ -27,6 +27,8 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+const immutable = (response) => /\bimmutable\b/.test(response.headers.get('Cache-Control') ?? '');
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -46,16 +48,19 @@ self.addEventListener('fetch', (event) => {
   // server says so (Cache-Control: immutable), so the copy kept here is the
   // file: answer with it, with no trip to the network and no copy written
   // back on every page load. In development they aren't immutable, and are
-  // fetched as below.
+  // fetched as below, as is everything when the cache can't be read.
   if (url.pathname.startsWith('/_next/static/')) {
-    event.respondWith(caches.match(event.request).then((kept) => (kept && immutable(kept) ? kept : networkFirst(event))));
+    event.respondWith(
+      caches
+        .match(event.request)
+        .catch(() => undefined)
+        .then((kept) => (kept && immutable(kept) ? kept : networkFirst(event)))
+    );
     return;
   }
 
   event.respondWith(networkFirst(event));
 });
-
-const immutable = (response) => /\bimmutable\b/.test(response.headers.get('Cache-Control') ?? '');
 
 function networkFirst(event) {
   // A page load uses the browser's own request (navigation preload), not a
@@ -69,14 +74,16 @@ function networkFirst(event) {
       .then((response) => {
         if (response.ok) {
           const copy = response.clone();
+          const write = caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, copy))
+            .catch(() => {});
           // Kept until written, rather than left to a worker the browser
-          // may stop as soon as the page has its answer.
-          event.waitUntil(
-            caches
-              .open(CACHE_NAME)
-              .then((cache) => cache.put(event.request, copy))
-              .catch(() => {})
-          );
+          // may stop as soon as the page has its answer. A browser that
+          // won't wait still has the answer.
+          try {
+            event.waitUntil(write);
+          } catch {}
         }
         return response;
       })
