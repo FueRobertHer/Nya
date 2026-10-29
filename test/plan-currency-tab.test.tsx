@@ -127,6 +127,10 @@ async function render(props: Partial<PlanTabProps> = {}) {
     openDialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0] ?? null,
     container,
     region,
+    /** Your figures, on Your path: where the currency is one line, at its foot. */
+    figures: () => container.findAll((e) => e.getAttribute('aria-labelledby') === 'plan-inputs-title')[0] ?? null,
+    /** The bar's heading, where focus goes when the currency lands out of sight. */
+    heading: () => container.findAll((e) => e.getAttribute('class') === 'plan-bar')[0]?.findAll((e) => /^H[1-6]$/.test(e.tagName))[0] ?? null,
     /** The card's words, without the list of every currency's name. */
     said: () => {
       const r = region();
@@ -199,8 +203,12 @@ describe('a plan saved before its currency was recorded', () => {
     expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN) }]);
     expect(tab.said()).toContain('Your plan’s figures are in USD, the currency they were typed in.');
     expect(tab.status()).toContain('Your plan’s figures are recorded as USD.');
-    // Nothing about it needs the person: one line, not a card, still the same region.
+    // Nothing about it needs the person: one line, not a card, at the foot of
+    // Your figures rather than above the bar, so nothing arrives above it.
     expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
+    expect(tab.figures()!.contains(tab.region())).toBe(true);
+    // Recorded on the tab's own: focus stays where it was.
+    expect(dom.document.activeElement).toBe(dom.document.body);
     expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
     expect(tab.text()).toContain('$1,000,000');
     await tab.unmount();
@@ -281,13 +289,28 @@ describe('a plan saved before its currency was recorded', () => {
     expect(posts(calls).length).toBe(0);
     expect(tab.said()).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
     expect(tab.region()!.getAttribute('class')).toBe('card');
-    const asked = tab.region();
+    expect(tab.figures()!.contains(tab.region())).toBe(false);
     await press(tab.buttons('They’re in USD')[0]);
     expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts(PLAN), answered: true }]);
     expect(tab.said()).toContain('Your plan’s figures are in USD');
-    // Answered, it becomes one line, in the same element, so focus moved to it stays.
-    expect(tab.region()).toBe(asked);
+    // Answered, it becomes one line at the foot of Your figures, and focus,
+    // left with the button that went, follows it there.
     expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
+    expect(tab.figures()!.contains(tab.region())).toBe(true);
+    expect(dom.document.activeElement).toBe(tab.region());
+    await tab.unmount();
+  });
+
+  test('answered on another segment: the line it becomes is on Your path, out of sight, so focus goes to the bar’s heading', async () => {
+    serve({
+      ...planServer({ plan: PLAN }).answers,
+      'GET /api/fire-plan': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
+      'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
+    });
+    const tab = await render({ segment: 'stress' });
+    await press(tab.buttons('They’re in USD')[0]);
+    expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
+    expect(dom.document.activeElement).toBe(tab.heading());
     await tab.unmount();
   });
 
@@ -476,6 +499,65 @@ describe('a recorded currency', () => {
     // Change, always there: confirmed the same way.
     await press(tab.byLabel('Change the currency your plan’s figures are in'));
     expect(tab.dialog()!.textContent).toContain('They’re recorded as USD.');
+    await tab.unmount();
+  });
+
+  test('changed from the line in Your figures: the drawer stays open as the card moves above the bar, and focus goes to the card when it shuts', async () => {
+    const server = planServer({ plan: PLAN, record: { currency: 'USD', amounts: typedAmounts(PLAN) } });
+    const calls = serve(server.answers);
+    const tab = await render();
+    expect(tab.figures()!.contains(tab.region())).toBe(true);
+    const change = tab.byLabel('Change the currency your plan’s figures are in')!;
+    change.focus();
+    await press(change);
+    const select = tab.openDialog()!.findAll((e) => e.tagName === 'SELECT')[0];
+    await act(async () => type(select, 'JPY'));
+    await press(tab.openDialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'They’re in JPY')[0]);
+    expect(tab.openDialog()!.textContent).toContain('Read your plan’s figures as JPY, not USD?');
+    await press(tab.openDialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Read them as JPY')[0]);
+    expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([['JPY', true]]);
+    await settle(400);
+    // Changed, it offers USD back, so it needs the person: a card above the bar.
+    expect(tab.said()).toContain('Changed from USD.');
+    expect(tab.region()!.getAttribute('class')).toBe('card');
+    expect(tab.figures()!.contains(tab.region())).toBe(false);
+    expect(tab.openDialog()).toBeNull();
+    expect(dom.document.activeElement).toBe(tab.region());
+    await tab.unmount();
+  });
+
+  test('a change refused as stale, and the reload finds the record unreadable: the drawer shuts, and answering never opens it again', async () => {
+    let loads = 0;
+    let records = 0;
+    serve({
+      'GET /api/fire-plan': () => [200, ++loads === 1 ? { plan: PLAN, currency: 'USD' } : { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
+      'POST /api/fire-plan': (c) => (++records === 1 ? [409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }] : [200, { plan: PLAN, currency: c.body.currency }]),
+      'GET /api/plan-scenarios': [200, EMPTY],
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render();
+    await press(tab.byLabel('Change the currency your plan’s figures are in'));
+    await act(async () => type(tab.openDialog()!.findAll((e) => e.tagName === 'SELECT')[0], 'JPY'));
+    await press(tab.openDialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'They’re in JPY')[0]);
+    await press(tab.openDialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Read them as JPY')[0]);
+    await settle(400);
+    expect(tab.said()).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
+    expect(tab.openDialog()).toBeNull();
+    await press(tab.buttons('They’re in USD')[0]);
+    await settle(400);
+    expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
+    expect(tab.openDialog()).toBeNull();
+    await tab.unmount();
+  });
+
+  test('focus on the line when it moves on its own (the accounts now in another currency): it follows the card above the bar', async () => {
+    serve(answers());
+    const tab = await render();
+    expect(tab.figures()!.contains(tab.region())).toBe(true);
+    tab.region()!.focus();
+    await tab.rerender({ institutions: broker([EUR()]), currency: 'EUR' });
+    expect(tab.region()!.getAttribute('class')).toBe('card');
+    expect(dom.document.activeElement).toBe(tab.region());
     await tab.unmount();
   });
 

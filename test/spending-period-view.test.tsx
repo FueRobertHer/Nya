@@ -122,7 +122,7 @@ describe('Spending’s period', () => {
     expect(v.radios().map((e) => e.textContent)).toEqual(['1M', '3M', '12M', 'YTD']);
     // Names start with the words shown (WCAG 2.5.3), then say them in full.
     expect(v.radios().map((e) => e.getAttribute('aria-label'))).toEqual(['1M, 1 month', '3M, 3 months', '12M, 12 months', 'YTD, year to date']);
-    // The underline switch, held to its items' width.
+    // The underline switch, across the width as every switch is.
     expect(v.group()!.getAttribute('class')).toBe('segmented spending-period');
     expect(v.checked()).toEqual(['1M']);
     const longName = new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
