@@ -1793,7 +1793,7 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       // A fresh environment: the suites read what they set themselves, or
       // what the .env files say, never what an earlier file of this run set.
       // The run reads bunfig.toml as any does: test/preload.ts loads first.
-      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+|CI)$/.test(k)));
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+|CI|SYSTEMROOT|TEMP|TMP|USERPROFILE)$/i.test(k)));
       const run = Bun.spawnSync([process.execPath, 'test', '--preload', './test/hidden-renders.ts', ...suites.map((f) => `./test/${f}`)], {
         cwd: ROOT,
         env: { ...env, NYA_HIDDEN_RENDERS: out },

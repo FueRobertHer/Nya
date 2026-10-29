@@ -82,7 +82,7 @@ describe('rows the layer adds are never evidence of history (Blocking 1)', () =>
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(join(root, dir))) {
-        const path = join(dir, name);
+        const path = `${dir}/${name}`;
         if (statSync(join(root, path)).isDirectory()) walk(path);
         else if (/\.(ts|tsx)$/.test(name)) files.push(path);
       }

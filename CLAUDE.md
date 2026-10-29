@@ -17,7 +17,7 @@
 ## Line endings
 
 - Files keep the endings they were committed with: most are LF, about 140 are CRLF, and `app/globals.css` is mixed (CRLF, then LF for its last `.stack` block). `git ls-files --eol` shows each file's.
-- `.gitattributes` sets `* -text`, so git checks out each file's bytes as committed, whatever `core.autocrlf` says (tests read fixtures and sources byte for byte). An editor or script can still rewrite a whole file's endings. After a scripted rewrite, check that `git diff --stat` counts only the lines you meant to change.
+- `.gitattributes` sets `* -text`, so git checks out each file's bytes as committed, whatever `core.autocrlf` says (tests read fixtures and sources byte for byte). A checkout made before that keeps the CRLF git wrote into it until it is checked out again: stash or commit, then `git rm -r --cached -q . && git reset --hard`. New worktrees need nothing. An editor or script can still rewrite a whole file's endings. After a scripted rewrite, check that `git diff --stat` counts only the lines you meant to change.
 
 ## Checking UI
 
