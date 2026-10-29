@@ -231,7 +231,7 @@ The only way to say something is wrong or worth knowing. See [Status and honesty
 - Never color alone: every notice has an icon and words, and starts with its level for a screen reader ("Critical:", "Caution:", "Note:", "Done:", visually hidden, `LevelWord`), as Needs attention's rows do.
 - **Announced once.** A notice that appears after an action is announced: `role="alert"` for a critical one (`Notice`'s `role`), `role="status"` for done, information and caution. Notices already there when a screen loads are read in place, not announced. Critical and caution differ by shape as well as color (in light, `--neg` and `--warn` are about 1.1:1 apart): critical has the alert triangle and an edge, caution the clock, the same shapes as Needs attention's rows.
 
-Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`, `.plan-warning`, `.forecast-warning`, `.api-access-warning`, `.restore-banner`, and the feature-scoped notes (`.lifecycle-note`, `.review-note`, `.split-note`, `.goal-note`, `.budget-note`, `.currency-note`, `.imported-history-note`, `.kind-warnings`, `.plan-save-error`, `.payoff-field-error`, `.card-mode-error`).
+Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`, `.plan-warning`, `.forecast-warning`, `.api-access-warning`, `.restore-banner`, and the feature-scoped notes (`.lifecycle-note`, `.review-note`, `.split-note`, `.goal-note`, `.budget-note`, `.currency-note`, `.imported-history-note`, `.kind-warnings`, `.plan-save-error`, `.payoff-field-error`, `.card-mode-error`). No `.error` line is left since the update of 2026-10-29: each is a critical `Notice`, or a `FieldError` under the field it is about.
 
 ### Helper text and disclosure
 

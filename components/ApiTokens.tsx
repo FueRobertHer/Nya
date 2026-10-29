@@ -32,6 +32,7 @@ import { Sheet } from './Sheet';
 import ApiChanges from './ApiChanges';
 import { CHANGES_KEEP_DAYS, LABEL_MAX, MAX_TOKENS, REQUESTS_PER_MINUTE, type Access } from '@/lib/api-limits';
 import { formatInstantDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 export type TokenInfo = { id: string; label: string; hint: string; created_at: string; last_used_at: string | null; access?: Access };
 
@@ -278,32 +279,38 @@ export function ApiTokensView({
 
   return (
     <div className="card api-tokens-card">
-      <div className="inst-header">
-        <div className="inst-name">API tokens</div>
-      </div>
-      {writes ? (
+      <div className="stack tight">
+        <div className="inst-header">
+          <div className="inst-name">API tokens</div>
+        </div>
+        {writes ? (
+          <p className="panel-note">
+            A token lets a program you choose read your data: a script, a dashboard, or an AI assistant through Nya’s MCP
+            server. It reads only what the <a href="/developers">developer page</a> lists, and changes nothing unless you
+            choose, when you make it, that it may update balances or make changes. Anyone holding it can do all it can, so
+            keep it secret, and revoke any you no longer use.{' '}
+            {needsPassword
+              ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens. Turning on sign-in accounts does: make new ones once you sign in.'
+              : 'Signing out everywhere doesn’t revoke tokens.'}
+          </p>
+        ) : (
         <p className="panel-note">
           A token lets a program you choose read your data: a script, a dashboard, or an AI assistant through Nya’s MCP
-          server. It reads only what the <a href="/developers">developer page</a> lists, and changes nothing unless you
-          choose, when you make it, that it may update balances or make changes. Anyone holding it can do all it can, so
-          keep it secret, and revoke any you no longer use.{' '}
+          server. It can’t change anything, and reads only what the <a href="/developers">developer page</a> lists. Anyone
+          holding it can read all of that, so keep it secret, and revoke any you no longer use.{' '}
           {needsPassword
             ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens. Turning on sign-in accounts does: make new ones once you sign in.'
             : 'Signing out everywhere doesn’t revoke tokens.'}
         </p>
-      ) : (
-      <p className="panel-note">
-        A token lets a program you choose read your data: a script, a dashboard, or an AI assistant through Nya’s MCP
-        server. It can’t change anything, and reads only what the <a href="/developers">developer page</a> lists. Anyone
-        holding it can read all of that, so keep it secret, and revoke any you no longer use.{' '}
-        {needsPassword
-          ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens. Turning on sign-in accounts does: make new ones once you sign in.'
-          : 'Signing out everywhere doesn’t revoke tokens.'}
-      </p>
-      )}
+        )}
 
-      {list.kind === 'loading' && <p className="panel-note">Loading your tokens…</p>}
-      {list.kind === 'error' && <div className="error">{list.message}</div>}
+        {list.kind === 'loading' && <p className="panel-note">Loading your tokens…</p>}
+        {list.kind === 'error' && (
+          <Notice level="critical" role="alert">
+            {list.message}
+          </Notice>
+        )}
+      </div>
       {list.kind === 'ready' && (
         <>
           {list.tokens.length === 0 && list.unreadable.length === 0 && list.unrecognised.length === 0 && (
@@ -443,7 +450,11 @@ export function ApiTokensView({
                 </button>
               </>
             )}
-            {error && <div className="error">{error}</div>}
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
           </div>
         )
       )}
@@ -481,12 +492,18 @@ export function RevokeSheet({
     <Sheet open={!!revoking} title={revoking?.unreadable ? 'Delete the token?' : `Revoke ${revoking?.label ?? 'token'}?`} onClose={onCancel}>
       {revoking && (
         <>
-          <p className="panel-note" style={{ marginTop: 0 }}>
-            {revoking.unreadable
-              ? 'Its record can’t be read, so it doesn’t work now. Deleting it removes what is left of it.'
-              : 'Anything using it loses access on its next request. This can’t be undone: make a new token if you need one again.'}
-          </p>
-          {error && <div className="error">{error}</div>}
+          <div className="stack">
+            <p className="panel-note">
+              {revoking.unreadable
+                ? 'Its record can’t be read, so it doesn’t work now. Deleting it removes what is left of it.'
+                : 'Anything using it loses access on its next request. This can’t be undone: make a new token if you need one again.'}
+            </p>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={onCancel} disabled={busy}>
               Cancel

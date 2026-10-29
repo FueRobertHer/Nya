@@ -35,6 +35,7 @@ import {
   type CategoryKind,
   type Taxonomy,
 } from '@/lib/categories';
+import { Notice } from './TotalCaveats';
 
 type Level =
   | { at: 'list' }
@@ -216,7 +217,11 @@ export default function CategoryManager({
           Icon (optional)
           <input value={icon} maxLength={ICON_MAX} onChange={(e) => setIcon(e.target.value)} placeholder="An emoji" disabled={busy} />
         </label>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
         <button onClick={() => send({ action: 'add-category', name, group, icon })} disabled={busy || !name.trim()}>
           {busy ? 'Adding…' : 'Add category'}
         </button>
@@ -237,8 +242,14 @@ export default function CategoryManager({
             <option value="transfer">Transfers (left out of totals)</option>
           </select>
         </label>
-        <p className="panel-note">A group keeps its kind; to count a category another way, move it into a group of that kind.</p>
-        {error && <div className="error">{error}</div>}
+        <div className="stack">
+          <p className="panel-note">A group keeps its kind; to count a category another way, move it into a group of that kind.</p>
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
+        </div>
         <button onClick={() => send({ action: 'add-group', name, kind })} disabled={busy || !name.trim()} style={{ marginTop: 12 }}>
           {busy ? 'Adding…' : 'Add group'}
         </button>
@@ -367,7 +378,13 @@ export default function CategoryManager({
             merged away or deleted.
           </p>
         )}
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="panel-section">
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
       </div>
     );
   }
@@ -418,7 +435,13 @@ export default function CategoryManager({
           )}
           {inside > 0 && <p className="panel-note">Move or merge its {inside === 1 ? 'category' : `${inside} categories`} into other groups to delete it.</p>}
         </div>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <div className="panel-section">
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
       </div>
     );
   }

@@ -19,7 +19,7 @@ import { Sheet } from './Sheet';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
 import { Hero } from './Hero';
-import TotalCaveats from './TotalCaveats';
+import TotalCaveats, { Notice } from './TotalCaveats';
 import { Segmented } from './Segmented';
 import { reportDay, reportTime } from './ReportView';
 import { fieldAmount, formatMoney } from '@/lib/format';
@@ -429,9 +429,9 @@ export default function RunwayReport() {
   if (error || !runway) {
     return (
       <div className="card no-print">
-        <p className="error" role="alert">
+        <Notice level="critical" role="alert">
           {error ?? 'The runway couldn’t be worked out.'}
-        </p>
+        </Notice>
       </div>
     );
   }
@@ -521,15 +521,15 @@ export default function RunwayReport() {
         }
       />
 
-      <div className="card no-print">
+      <div className="card no-print stack">
         <div className="inst-header">
           <div className="inst-name">Saved scenarios</div>
         </div>
         <SavedScenarios list={saved} currency={runway.currency} busy={busy} onApply={apply} onDelete={(id, label, unreadable) => void remove(id, label, unreadable)} />
         {savedError && !naming && (
-          <p className="error" role="alert">
+          <Notice level="critical" role="alert">
             {savedError}
-          </p>
+          </Notice>
         )}
       </div>
 
@@ -544,9 +544,9 @@ export default function RunwayReport() {
             <input value={name} maxLength={SCENARIO_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="If I took a year off" />
           </label>
           {savedError && (
-            <p className="error" role="alert">
+            <Notice level="critical" role="alert">
               {savedError}
-            </p>
+            </Notice>
           )}
           <div className="button-pair">
             <button className="secondary" onClick={() => setNaming(false)} disabled={busy}>

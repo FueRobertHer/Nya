@@ -166,7 +166,7 @@ describe('the repair', () => {
     const busy = confirm({ kind: 'repairing' });
     expect(busy).toContain('<button class="secondary" disabled="">Cancel</button>');
     expect(busy).toContain('<button disabled="">Rebuilding…</button>');
-    expect(confirm({ kind: 'failed', error: 'Your holdings records need no repair.' })).toContain('<div class="error">Your holdings records need no repair.</div>');
+    expect(confirm({ kind: 'failed', error: 'Your holdings records need no repair.' })).toContain('<span class="visually-hidden">Critical: </span>Your holdings records need no repair.</div></div>');
   });
 
   test('asks the server only with the confirmation, and passes on what it says', async () => {

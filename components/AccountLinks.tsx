@@ -29,6 +29,7 @@ import { formatDay, formatMoney, onDay, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
 import { ACCOUNT_LINKS_TITLE } from './attention';
+import { Notice } from './TotalCaveats';
 
 type Suggestion = {
   old: string;
@@ -569,7 +570,11 @@ export function AccountLinksView({
         </div>
       )}
 
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
         Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to

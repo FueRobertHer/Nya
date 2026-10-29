@@ -15,6 +15,7 @@ import { useClerk } from '@clerk/nextjs';
 import { DEMO_UNAVAILABLE, type DemoUser } from '@/lib/demo';
 import { useDemoHold } from './SignInFlow';
 import { demoSignIn } from './demo-sign-in';
+import { Notice } from './TotalCaveats';
 
 export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; unavailable: boolean }) {
   const clerk = useClerk();
@@ -57,9 +58,9 @@ export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; 
           ))}
         </div>
         {error && (
-          <p className="error" role="alert">
+          <Notice level="critical" role="alert">
             {error}
-          </p>
+          </Notice>
         )}
       </div>
     </div>

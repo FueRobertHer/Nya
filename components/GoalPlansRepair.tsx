@@ -9,6 +9,7 @@
 // that version reads them.
 
 import { useState } from 'react';
+import { Notice } from './TotalCaveats';
 
 export type GoalPlansDamage = { unreadable: number; unrecognised: number };
 
@@ -61,7 +62,11 @@ export default function GoalPlansRepair({ damage, onRepaired }: { damage: GoalPl
           goals can’t be shown until the version that saved {m === 1 ? 'it' : 'them'} is back.
         </p>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       {n > 0 &&
         (confirming ? (
           <div className="button-pair">

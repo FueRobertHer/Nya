@@ -15,13 +15,13 @@
     "inlineLayoutStyles": 3
   },
   "components/AllocationCard.tsx": {
-    "inlineLayoutStyles": 9
+    "inlineLayoutStyles": 7
   },
   "components/ApiChanges.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/ApiTokens.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/CategoriesCard.tsx": {
     "inlineLayoutStyles": 3
@@ -33,16 +33,16 @@
     "inlineLayoutStyles": 5
   },
   "components/ConfirmPaymentSheet.tsx": {
-    "inlineLayoutStyles": 3
+    "inlineLayoutStyles": 2
   },
   "components/ConnectRedirect.tsx": {
     "inlineLayoutStyles": 2
   },
   "components/Connectors.tsx": {
-    "inlineLayoutStyles": 8
+    "inlineLayoutStyles": 7
   },
   "components/Dashboard.tsx": {
-    "inlineLayoutStyles": 7
+    "inlineLayoutStyles": 6
   },
   "components/DebtPayoff.tsx": {
     "inlineLayoutStyles": 1
@@ -60,13 +60,13 @@
     "inlineLayoutStyles": 2
   },
   "components/HistoryImportSheet.tsx": {
-    "inlineLayoutStyles": 22
+    "inlineLayoutStyles": 17
   },
   "components/HoldingsRecorded.tsx": {
-    "inlineLayoutStyles": 3
+    "inlineLayoutStyles": 1
   },
   "components/ImportSheet.tsx": {
-    "inlineLayoutStyles": 36
+    "inlineLayoutStyles": 31
   },
   "components/IouSheet.tsx": {
     "inlineLayoutStyles": 2
@@ -75,7 +75,7 @@
     "inlineLayoutStyles": 8
   },
   "components/MigrationSheet.tsx": {
-    "inlineLayoutStyles": 22
+    "inlineLayoutStyles": 21
   },
   "components/MonthBreakdown.tsx": {
     "inlineLayoutStyles": 1
@@ -87,7 +87,7 @@
     "inlineLayoutStyles": 2
   },
   "components/PlanCurrency.tsx": {
-    "inlineLayoutStyles": 12
+    "inlineLayoutStyles": 9
   },
   "components/PlanEvents.tsx": {
     "inlineLayoutStyles": 3
@@ -96,10 +96,10 @@
     "inlineLayoutStyles": 7
   },
   "components/PlanScenarios.tsx": {
-    "inlineLayoutStyles": 10
+    "inlineLayoutStyles": 6
   },
   "components/PlanTab.tsx": {
-    "inlineLayoutStyles": 6
+    "inlineLayoutStyles": 4
   },
   "components/ReviewSettingsCard.tsx": {
     "inlineLayoutStyles": 2

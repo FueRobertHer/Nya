@@ -12,6 +12,7 @@ import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/c
 import { defaultListWords } from './review-text';
 import { VendorDefaultsSkeleton } from './LoadingSkeletons';
 import { formatDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 type Shown = { id: string; name: string; category_id: string; since: string; agree: number; set_at: string };
 
@@ -76,7 +77,7 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
   };
 
   return (
-    <div className="card">
+    <div className="card stack">
       <div className="inst-header">
         <div className="inst-name">Defaults</div>
         {defaults && defaults.length > 0 && <div className="inst-total">{defaults.length}</div>}
@@ -138,7 +139,11 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
           </ul>
         </>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
     </div>
   );
 }

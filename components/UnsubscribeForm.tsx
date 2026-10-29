@@ -10,6 +10,7 @@
 // browser's history.
 
 import { useEffect, useState } from 'react';
+import { Notice } from './TotalCaveats';
 
 export type UnsubscribePhase = { kind: 'idle' } | { kind: 'busy' } | { kind: 'done'; message: string } | { kind: 'error'; message: string };
 
@@ -48,12 +49,12 @@ export default function UnsubscribeForm() {
   return <UnsubscribeView token={token} phase={phase} onTurnOff={turnOff} />;
 }
 
-/** What the page shows, for the address it was opened with. What came of
- *  the button is said in one live region, there from the first render, so a
- *  screen reader announces it when its words change (one that appears
- *  already holding them often isn't). */
+/** What the page shows, for the address it was opened with. That it worked
+ *  is said in one live region, there from the first render, so a screen
+ *  reader announces it when its words change (one that appears already
+ *  holding them often isn't); a failure is an alert of its own. */
 export function UnsubscribeView({ token, phase, onTurnOff }: { token: string | null | undefined; phase: UnsubscribePhase; onTurnOff: () => void }) {
-  const said = phase.kind === 'done' || phase.kind === 'error' ? phase.message : '';
+  const said = phase.kind === 'done' ? phase.message : '';
   return (
     <section className="card info-section unsubscribe-card">
       {phase.kind === 'done' ? null : token === undefined ? (
@@ -70,7 +71,12 @@ export function UnsubscribeView({ token, phase, onTurnOff }: { token: string | n
           </button>
         </>
       )}
-      <p role="status" className={said ? (phase.kind === 'error' ? 'error' : 'status-note') : undefined}>
+      {phase.kind === 'error' && (
+        <Notice level="critical" role="alert">
+          {phase.message}
+        </Notice>
+      )}
+      <p role="status" className={said ? 'status-note' : undefined}>
         {said}
       </p>
     </section>

@@ -21,6 +21,7 @@ import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read
 import { joinNames } from '@/lib/month-coverage';
 import { displayName } from '@/lib/categories';
 import { ReportSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
 
 /** "Oct 2026": a month's name. */
 const monthWords = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', year: 'numeric' });
@@ -320,9 +321,9 @@ export default function YearOverYearReport() {
           </label>
         )}
         {error && (
-          <div className="error" role="alert">
+          <Notice level="critical" role="alert">
             {error}
-          </div>
+          </Notice>
         )}
         <div className="action-row report-actions">
           <button className="secondary" onClick={() => window.print()} disabled={!report || loading}>

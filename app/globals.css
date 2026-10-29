@@ -1580,12 +1580,6 @@ th.num {
   white-space: nowrap;
 }
 
-.error {
-  color: var(--down);
-  font-size: var(--fs-2);
-  margin-top: 12px;
-}
-
 /* A failed refresh where the last known balances were recovered. Amber, not
    red: the figures on the card are real, just not current, and styling that
    identically to "could not fetch balances" would make the genuine failure
@@ -2008,7 +2002,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   font-weight: var(--fw-semibold);
 }
 
-.empty-state > :is(.stale-note, .error, .panel-note) {
+.empty-state > :is(.stale-note, .panel-note) {
   margin: 0;
 }
 
@@ -3795,9 +3789,8 @@ button.danger-outline {
   color: var(--accent);
 }
 
-/* A note or error straight under a field, which has its own margin already. */
-.payoff-field-note,
-.payoff-field-error {
+/* A note straight under a field, which has its own margin already. */
+.payoff-field-note {
   margin-top: 0;
 }
 
@@ -4696,6 +4689,8 @@ button.plan-edit:disabled {
   min-width: 0;
 }
 
+/* A save of the Plan that failed (a critical Notice, components/PlanTab.tsx),
+   between the cards: a card's own margin under it. */
 .plan-save-error {
   margin: 0 0 12px;
 }
@@ -4855,7 +4850,8 @@ button.plan-edit:disabled {
 }
 
 .api-token-made .button-pair,
-.api-token-new > button {
+.api-token-new > button,
+.api-token-new > .notice {
   margin-top: 12px;
 }
 
@@ -7183,6 +7179,13 @@ button.cash-flow-show {
   text-align: left;
 }
 
+/* What failed (a critical Notice), spaced as the card and the sheet space
+   their other parts. */
+.weekly-summary-card > .notice,
+.weekly-summary-sheet > .notice {
+  margin-top: 12px;
+}
+
 .weekly-preview-title {
   margin: 20px 0 6px;
 }
@@ -7229,7 +7232,8 @@ button.cash-flow-show {
   gap: var(--sp-2);
 }
 
-.review-bar-row + .review-bar-row {
+.review-bar-row + .review-bar-row,
+.review-bar-row + .notice {
   margin-top: var(--sp-2);
 }
 
@@ -7540,7 +7544,8 @@ button.review-keys-toggle {
   margin: 0 0 20px;
 }
 
-.card-mode-error {
+/* What failed (a critical Notice), under the card it is about. */
+.card-mode > .notice {
   margin-top: 12px;
 }
 

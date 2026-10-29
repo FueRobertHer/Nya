@@ -41,6 +41,7 @@ import type { FirePlan, Measured } from '@/lib/fire/plan';
 import type { Method, SimPlan, SimResult } from '@/lib/fire/simulate';
 import type { PlanJob, PlanJobResult } from '@/lib/fire/jobs';
 import { ScenarioRowsSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
 
 export { ScenarioTag } from './ScenarioTag';
 
@@ -386,7 +387,9 @@ export function ScenariosSheet({
         {state.status === 'loading' && <ScenarioRowsSkeleton count={2} status="Loading your scenarios" />}
         {state.status === 'error' && (
           <>
-            <div className="error">{state.error}</div>
+            <Notice level="critical" role="alert">
+              {state.error}
+            </Notice>
             <button className="secondary" style={{ marginTop: 8 }} onClick={() => void client.load()}>
               Try again
             </button>
@@ -455,9 +458,9 @@ export function ScenariosSheet({
         {ready && list.length >= MAX_PLAN_SCENARIOS && <p className="panel-note">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one to make another.</p>}
         {state.unreadable.map((id) => (
           <div key={id} className="plan-row">
-            <div className="error" style={{ marginTop: 0 }}>
+            <Notice level="critical" role="alert">
               A saved scenario couldn’t be read: its stored data is damaged.
-            </div>
+            </Notice>
             <button className="secondary" style={{ marginTop: 8 }} ref={keep(`unreadable:${id}`)} onClick={() => go({ kind: 'delete-unreadable', id })} disabled={busy}>
               Delete it
             </button>
@@ -565,12 +568,18 @@ export function ScenariosSheet({
       )}
       {(level?.kind === 'delete' || level?.kind === 'delete-unreadable') && (
         <>
-          <p className="panel-note" style={{ marginTop: 0 }}>
-            {level.kind === 'delete'
-              ? `Delete the scenario “${level.entry.name}”? Your plan isn’t changed. This can’t be undone.`
-              : 'Delete the scenario that couldn’t be read? What it held can’t be recovered from here, and this can’t be undone.'}
-          </p>
-          {error && <div className="error">{error}</div>}
+          <div className="stack">
+            <p className="panel-note">
+              {level.kind === 'delete'
+                ? `Delete the scenario “${level.entry.name}”? Your plan isn’t changed. This can’t be undone.`
+                : 'Delete the scenario that couldn’t be read? What it held can’t be recovered from here, and this can’t be undone.'}
+            </p>
+            {error && (
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            )}
+          </div>
           <div className="button-pair" style={{ marginTop: 16 }}>
             <button className="secondary" onClick={back} disabled={busy}>
               Cancel
@@ -630,7 +639,11 @@ function NameForm({
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={SCENARIO_NAME_MAX} disabled={busy} placeholder="Stop at 50" />
         </label>
       </div>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
           Cancel
@@ -740,47 +753,50 @@ export function ScenarioCard({
   const fixWith = problem?.field ? formFor(problem.field) : null;
   return (
     <div className="card plan-scenario-card">
-      <p className="panel-note">
-        Everything below is this scenario, and changes you make here are saved to it, never to your plan. Your age, how your figures are measured, the method and
-        the allocation settings are your plan’s, the same in every scenario. Leaving the Plan tab, or reloading, brings back your plan.
-      </p>
-      {other && planCurrency && (
-        <>
-          <div className="error">{currencyText(other, planCurrency, planCurrencyKnown)}</div>
-          {confirmWhyNot ? (
-            <p className="panel-note">{confirmWhyNot}</p>
-          ) : (
-            <button
-              className="secondary"
-              style={{ marginTop: 8 }}
-              disabled={!editable}
-              onClick={async () => {
-                const r = await onConfirmCurrency();
-                setError(r === true || r === null ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
-              }}
-            >
-              They’re in {planCurrency}
-            </button>
-          )}
-        </>
-      )}
-      {notice && (
-        <div className="error" role="alert">
-          {notice}
-        </div>
-      )}
-      {problem && (
-        <>
-          <div className="error">
-            {problem.text}
-          </div>
-          {fixWith && (
-            <button className="secondary" style={{ marginTop: 8 }} onClick={() => onFix(fixWith)} disabled={!editable}>
-              Change it
-            </button>
-          )}
-        </>
-      )}
+      <div className="stack tight">
+        <p className="panel-note">
+          Everything below is this scenario, and changes you make here are saved to it, never to your plan. Your age, how your figures are measured, the method and
+          the allocation settings are your plan’s, the same in every scenario. Leaving the Plan tab, or reloading, brings back your plan.
+        </p>
+        {other && planCurrency && (
+          <>
+            <Notice level="critical" role="alert">
+              {currencyText(other, planCurrency, planCurrencyKnown)}
+            </Notice>
+            {confirmWhyNot ? (
+              <p className="panel-note">{confirmWhyNot}</p>
+            ) : (
+              <button
+                className="secondary"
+                disabled={!editable}
+                onClick={async () => {
+                  const r = await onConfirmCurrency();
+                  setError(r === true || r === null ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
+                }}
+              >
+                They’re in {planCurrency}
+              </button>
+            )}
+          </>
+        )}
+        {notice && (
+          <Notice level="critical" role="alert">
+            {notice}
+          </Notice>
+        )}
+        {problem && (
+          <>
+            <Notice level="critical" role="alert">
+              {problem.text}
+            </Notice>
+            {fixWith && (
+              <button className="secondary" onClick={() => onFix(fixWith)} disabled={!editable}>
+                Change it
+              </button>
+            )}
+          </>
+        )}
+      </div>
       <div className="plan-subhead">What it changes</div>
       {changes.length === 0 && eventsCount === 0 ? (
         <p className="empty-note">Nothing yet: it is your plan as it is. Change anything below, or add a life event, and it is saved here.</p>
@@ -820,7 +836,11 @@ export function ScenarioCard({
           )}
         </div>
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
       <button className="btn secondary" aria-haspopup="dialog" onClick={onScenarios}>
         {scenariosCount !== null && scenariosCount > 0 ? `Scenarios (${scenariosCount})` : 'Scenarios'}
       </button>

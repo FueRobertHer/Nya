@@ -113,7 +113,7 @@ import { withAccountEnds } from '@/lib/goal-view';
 import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import { accruedCaveats } from './AccruedInterestNote';
 import NetWorthCard, { HeroDelta } from './NetWorthCard';
-import { allHiddenCaveats, type Caveat } from './TotalCaveats';
+import { allHiddenCaveats, type Caveat, Notice } from './TotalCaveats';
 import { useOfflineCaveats } from './online';
 import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
@@ -2307,7 +2307,11 @@ export default function Dashboard({
                 update it whenever you like; it counts toward net worth and builds its own history.
               </p>
               <SwitchingLink onOpen={() => setMigrationOpen(true)} />
-              {error && <div className="error">{error}</div>}
+              {error && (
+                <Notice level="critical" role="alert">
+                  {error}
+                </Notice>
+              )}
               {lifecycleRepair}
             </div>
             {/* Bringing back a download goes only into an empty account, so
@@ -2420,7 +2424,11 @@ export default function Dashboard({
                     />
                   }
                 />
-                {error && <div className="error">{error}</div>}
+                {error && (
+                  <Notice level="critical" role="alert">
+                    {error}
+                  </Notice>
+                )}
                 {lifecycleRepair}
               </>
             )}
@@ -2446,9 +2454,17 @@ export default function Dashboard({
                   </button>
                 </div>
                 <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
-                {error && <div className="error">{error}</div>}
+                {error && (
+                  <Notice level="critical" role="alert">
+                    {error}
+                  </Notice>
+                )}
                 {lifecycleRepair}
-                {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
+                {lifecycle.problem && (
+                  <Notice level="critical" role="alert">
+                    {lifecycle.problem}
+                  </Notice>
+                )}
                 {/* What couldn't be read about every connection, said once
                     for the tab: a card can't say what is missing from it. */}
                 {healthUnavailable ? (
@@ -2954,7 +2970,11 @@ export default function Dashboard({
               </p>
             )}
 
-            {manualError && <div className="error">{manualError}</div>}
+            {manualError && (
+              <Notice level="critical" role="alert">
+                {manualError}
+              </Notice>
+            )}
 
             <div className="button-pair" style={{ marginTop: 16 }}>
               <button className="secondary" onClick={() => setManualDraft(null)} disabled={savingManual}>
@@ -2987,11 +3007,17 @@ export default function Dashboard({
       >
         {shownDeleteTarget && (
           <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              This account&apos;s balance history, and any transactions entered on it, are{' '}
-              <strong>not recoverable</strong>. Re-adding it creates a new account with an empty history.
-            </p>
-            {manualError && <div className="error">{manualError}</div>}
+            <div className="stack">
+              <p className="panel-note">
+                This account&apos;s balance history, and any transactions entered on it, are <strong>not recoverable</strong>. Re-adding it creates a new account with an empty
+                history.
+              </p>
+              {manualError && (
+                <Notice level="critical" role="alert">
+                  {manualError}
+                </Notice>
+              )}
+            </div>
             <div className="button-pair" style={{ marginTop: 16 }}>
               <button className="secondary" onClick={() => setManualDeleteTarget(null)} disabled={savingManual}>
                 Cancel

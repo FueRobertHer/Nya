@@ -27,6 +27,7 @@ import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/c
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
 import { bankKept, splitAtBanksAmount, splitKeptUnder } from './SplitRows';
 import { shownName } from '@/lib/merchant-name';
+import { Notice } from './TotalCaveats';
 
 /** "Oct 5": a transaction's day mid sentence, "today" and "yesterday" too. */
 function shownDay(iso: string): string {
@@ -285,9 +286,9 @@ export default function SplitSheet({
           currency (lib/splits.ts): those are hidden while amounts are, and
           its counts stay. */}
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
       <div className="button-pair">
         <button onClick={save} disabled={!ready || saving}>

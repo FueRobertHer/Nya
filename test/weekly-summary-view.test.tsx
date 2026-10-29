@@ -126,7 +126,8 @@ describe('the sheet', () => {
     expect(cannot).toMatch(/<button class="secondary" disabled="">Send me one now<\/button>/);
     expect(cannot).toContain('isn’t set up to send email');
     expect(sheet({ sendNote: { ok: true, text: 'Sent. It should arrive within a minute or two.' } })).toContain('class="status-note">Sent.');
-    expect(sheet({ sendNote: { ok: false, text: 'You can send yourself 3 a day.' } })).toContain('class="error">You can send yourself 3 a day.');
+    expect(sheet({ sendNote: { ok: false, text: 'You can send yourself 3 a day.' } })).toContain('<div class="notice critical" role="alert">');
+    expect(sheet({ sendNote: { ok: false, text: 'You can send yourself 3 a day.' } })).toContain('<span class="visually-hidden">Critical: </span>You can send yourself 3 a day.</div></div>');
   });
 
   test('says when it comes in every zone: the first hours of the day east of UTC, never the day after', () => {
@@ -169,7 +170,9 @@ describe('the page its link opens', () => {
     // The live region is there before anything is said, so its words are announced.
     expect(asks).toContain('<p role="status"></p>');
     const failed = renderToStaticMarkup(<UnsubscribeView token="abc" phase={{ kind: 'error', message: 'This link doesn’t work.' }} onTurnOff={noop} />);
-    expect(failed).toContain('<p role="status" class="error">This link doesn’t work.</p>');
+    // A failure is an alert of its own, outside the live region kept for what worked.
+    expect(failed).toContain('<span class="visually-hidden">Critical: </span>This link doesn’t work.</div></div><p role="status"></p>');
+    expect(failed).toContain('<div class="notice critical" role="alert">');
   });
 
   test('posts the link’s token as a mail app’s one-click unsubscribe does, and says what came of it', async () => {

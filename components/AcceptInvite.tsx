@@ -4,6 +4,7 @@
 // Connecting shares nothing by itself; each side then chooses what to share.
 
 import { useState } from 'react';
+import { Notice } from './TotalCaveats';
 
 export function AcceptInvite({ token, fromName }: { token: string; fromName: string }) {
   const [label, setLabel] = useState(fromName);
@@ -41,10 +42,16 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
         <span>Your name, as they’ll see it</span>
         <input value={myName} onChange={(e) => setMyName(e.target.value)} maxLength={40} placeholder="So they know it’s you" />
       </label>
-      <button onClick={accept} disabled={busy}>
-        {busy ? 'Connecting…' : 'Connect'}
-      </button>
-      {error && <div className="error">{error}</div>}
+      <div className="stack tight">
+        <button onClick={accept} disabled={busy}>
+          {busy ? 'Connecting…' : 'Connect'}
+        </button>
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
+      </div>
     </>
   );
 }

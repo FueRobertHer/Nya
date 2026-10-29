@@ -34,6 +34,7 @@ import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind,
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
 import { MANUAL_TYPES } from '@/lib/manual';
 import { isCurrencyCode } from '@/lib/manual-txn-input';
+import { Notice } from './TotalCaveats';
 
 type Options = { app?: AppId; columns?: Partial<Record<AppRole, number>>; date_order?: 'mdy' | 'dmy'; sign?: 'negative-out' | 'positive-out' };
 type AccountAnswer =
@@ -544,8 +545,8 @@ export default function MigrationSheet({
       ) : question?.needs === 'mapping' ? (
         <MappingStep q={question} options={options} busy={busy} error={error} onAnswer={(o) => answer({ options: o })} />
       ) : question?.needs === 'date_order' ? (
-        <div className="sheet-form">
-          <p className="panel-note" style={{ marginTop: 0 }}>
+        <div className="sheet-form stack tight">
+          <p className="panel-note">
             Every date in this file could be read two ways (such as {question.examples.join(', ')}). Which order does {APP_NAMES[question.app]} write them in?
           </p>
           <div className="action-row">
@@ -556,7 +557,11 @@ export default function MigrationSheet({
               Day first
             </button>
           </div>
-          {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
         </div>
       ) : review ? (
         <ReviewStep
@@ -586,7 +591,11 @@ export default function MigrationSheet({
             <input key={inputKey} type="file" accept=".csv,.tsv,.zip,text/csv,application/zip" disabled={busy} onChange={(e) => e.target.files?.[0] && void choose(e.target.files[0])} />
           </label>
           {busy && <div className="spinner" role="status" aria-label="Reading the file" />}
-          {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
           {notice && <p className="panel-note" role="status">{notice}</p>}
           <details className="migration-how">
             <summary>How to export from each app</summary>
@@ -665,8 +674,16 @@ export function MappingStep({ q, options, busy, error, onAnswer }: { q: Extract<
             </select>
           </label>
         ))}
-      {q.problem && <div className="error"><Masked>{hideAmountsIn(q.problem)}</Masked></div>}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      {q.problem && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(q.problem)}</Masked>
+        </Notice>
+      )}
+      {error && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </Notice>
+      )}
       <p className="section-label">The first rows</p>
       <ul className="import-problems">
         {q.table.sample.map((row) => (
@@ -897,7 +914,11 @@ export function ReviewStep({
               Show all {r.categories.mappings.length.toLocaleString()} categories
             </button>
           )}
-          {r.categories.problem && <div className="error">{r.categories.problem}</div>}
+          {r.categories.problem && (
+            <Notice level="critical" role="alert">
+              {r.categories.problem}
+            </Notice>
+          )}
         </>
       )}
       {(r.counts.transfers > 0 || r.counts.opening > 0 || r.counts.uncategorized > 0) && (
@@ -999,12 +1020,20 @@ export function ReviewStep({
         </>
       )}
 
-      {r.blocks.map((b) => (
-        <div key={b} className="error">
-          <Masked>{hideAmountsIn(b)}</Masked>
+      {(r.blocks.length > 0 || error) && (
+        <div className="stack tight">
+          {r.blocks.map((b) => (
+            <Notice key={b} level="critical" role="alert">
+              <Masked>{hideAmountsIn(b)}</Masked>
+            </Notice>
+          ))}
+          {error && (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          )}
         </div>
-      ))}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      )}
       <div className="action-row">
         <button disabled={!canImport} onClick={onImport}>
           {busy ? 'Reading…' : pending ? 'Update the review first' : waiting > 0 ? `${plural(waiting, 'answer')} still needed` : 'Import'}
@@ -1501,7 +1530,11 @@ export function UndoConfirm({
       ) : (
         !error && <p className="panel-note">Counting what it takes out…</p>
       )}
-      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </Notice>
+      )}
       <div className="action-row">
         <button className="secondary" disabled={busy} onClick={onCancel}>
           Keep it

@@ -26,6 +26,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sheet } from './Sheet';
 import { formatDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 /** What /api/holdings-history?summary=1 answers: UTC days, or null when
  *  nothing was recorded for the account, and the moments behind them, when
@@ -222,19 +223,25 @@ export function RepairConfirm({
   const busy = phase.kind === 'repairing';
   return (
     <>
-      {missing ? (
-        <p className="panel-note" style={{ marginTop: 0 }}>
-          The list of where each month of your holdings history is kept is missing, so what was recorded can&apos;t be
-          read. Nya can rebuild it from the months themselves. Nothing is lost: every month stays as it is.
-        </p>
-      ) : (
-        <p className="panel-note" style={{ marginTop: 0 }}>
-          The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
-          are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
-          damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
-        </p>
-      )}
-      {phase.kind === 'failed' && <div className="error">{phase.error}</div>}
+      <div className="stack">
+        {missing ? (
+          <p className="panel-note">
+            The list of where each month of your holdings history is kept is missing, so what was recorded can&apos;t be
+            read. Nya can rebuild it from the months themselves. Nothing is lost: every month stays as it is.
+          </p>
+        ) : (
+          <p className="panel-note">
+            The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
+            are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
+            damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
+          </p>
+        )}
+        {phase.kind === 'failed' && (
+          <Notice level="critical" role="alert">
+            {phase.error}
+          </Notice>
+        )}
+      </div>
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onCancel} disabled={busy}>
           Cancel

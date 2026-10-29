@@ -15,6 +15,7 @@ import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/c
 import { formatInstantDay } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { changedSinceWords, defaultWords, suggestionWords } from './review-text';
+import { Notice } from './TotalCaveats';
 
 /** The local day an instant fell on, mid sentence: "today", "Oct 5". */
 function day(iso: string): string {
@@ -153,7 +154,11 @@ export default function ReviewNote({
   return (
     <>
       {lines}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
     </>
   );
 }

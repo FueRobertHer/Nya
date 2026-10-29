@@ -23,6 +23,7 @@ import {
   type DeletionReceipt,
   type ReceiptFormat,
 } from '@/lib/deletion-receipt';
+import { Notice } from './TotalCaveats';
 
 const RECEIPT_KEY = 'nya:deletion-receipt';
 /** What an unfinished attempt deleted (DeleteAccount), until one finishes. */
@@ -140,7 +141,7 @@ export function DeletionReceiptView({
   };
 
   return (
-    <div className="card receipt-card">
+    <div className="card receipt-card stack">
       <h2>Your account was deleted</h2>
       <p className="panel-note">
         What was deleted, what expires later, and what stays. Save a copy: it goes away when you press {doneLabel} or
@@ -164,7 +165,11 @@ export function DeletionReceiptView({
           Download as text
         </button>
       </div>
-      {copy === 'failed' && <div className="error">Couldn’t copy it. Use Download as text instead.</div>}
+      {copy === 'failed' && (
+        <Notice level="critical" role="alert">
+          Couldn’t copy it. Use Download as text instead.
+        </Notice>
+      )}
       <button className="receipt-done" onClick={onDone}>
         {doneLabel}
       </button>

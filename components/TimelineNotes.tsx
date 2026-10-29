@@ -17,6 +17,7 @@ import { Why } from './Why';
 import { CAUTION, LevelWord } from './ConnectionStatus';
 import { localDate } from '@/lib/local-date';
 import { formatDay } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 export type TimelineNote = { id: string; date: string; text: string; kind: 'auto' | 'user'; account_id?: string };
 
@@ -210,7 +211,11 @@ export function TimelineNotesSheet({
       >
         <div className="stack">
           <p>{`Delete "${stored.text}" from ${dayText(stored.date, true)}? This can’t be undone.`}</p>
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
         </div>
       </Sheet>
     );
@@ -248,7 +253,11 @@ export function TimelineNotesSheet({
             <input value={d.text} onChange={(e) => edit({ text: e.target.value })} maxLength={200} placeholder="e.g. Bought the house" disabled={busy} />
           </label>
         </div>
-        {error && <div className="error">{error}</div>}
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
       </div>
     </Sheet>
   );

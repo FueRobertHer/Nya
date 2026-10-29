@@ -28,6 +28,7 @@ import { useState } from 'react';
 import { AgeError, WORK_FACTOR, blobSource, openWithPassphrase } from '@/lib/age/age';
 import { scrypt } from '@/lib/age/scrypt';
 import { NOT_A_SIGN_IN } from '@/components/DownloadOptions';
+import { Notice } from './TotalCaveats';
 
 export type OpenPhase =
   | { kind: 'idle' }
@@ -213,26 +214,32 @@ export function OpenProtectedDownloadView({
       <button onClick={onOpen} disabled={!ready}>
         {busy ? 'Opening…' : 'Open'}
       </button>
-      <div aria-live="polite">
-        {phase.kind === 'working' && phase.step === 'key' && (
-          <p className="panel-note">
-            Unlocking it with your passphrase… {Math.round(phase.done * 100)}%. This takes a few seconds on purpose: it is
-            what makes guessing a passphrase slow.
-          </p>
-        )}
-        {phase.kind === 'working' && phase.step === 'contents' && <p className="panel-note">Opening… {Math.round(phase.done * 100)}%</p>}
-        {phase.kind === 'done' && (
-          <>
-            <p className="status-note">
-              Opened and saved {phase.name} ({sizeOf(phase.blob.size)}). It isn’t protected any more, so keep it somewhere
-              safe.
+      <div className="stack tight">
+        <div aria-live="polite">
+          {phase.kind === 'working' && phase.step === 'key' && (
+            <p className="panel-note">
+              Unlocking it with your passphrase… {Math.round(phase.done * 100)}%. This takes a few seconds on purpose: it is
+              what makes guessing a passphrase slow.
             </p>
-            <button className="secondary" onClick={onSaveAgain}>
-              Save it again
-            </button>
-          </>
+          )}
+          {phase.kind === 'working' && phase.step === 'contents' && <p className="panel-note">Opening… {Math.round(phase.done * 100)}%</p>}
+          {phase.kind === 'done' && (
+            <>
+              <p className="status-note">
+                Opened and saved {phase.name} ({sizeOf(phase.blob.size)}). It isn’t protected any more, so keep it somewhere
+                safe.
+              </p>
+              <button className="secondary" onClick={onSaveAgain}>
+                Save it again
+              </button>
+            </>
+          )}
+        </div>
+        {phase.kind === 'error' && (
+          <Notice level="critical" role="alert">
+            {phase.message}
+          </Notice>
         )}
-        {phase.kind === 'error' && <div className="error">{phase.message}</div>}
       </div>
     </section>
   );

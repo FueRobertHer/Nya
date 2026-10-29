@@ -26,6 +26,7 @@ import { Sheet } from './Sheet';
 import { DEFAULT_WEEKDAY, SENDS_NOW_PER_DAY, WEEKDAY_NAMES, type Weekday, type WeeklySetting } from '@/lib/weekly-summary/settings';
 import { RUN_TEXT, nextDelivery, sameClock, timeOfDay } from '@/lib/weekly-summary/when';
 import { LinesSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
 
 export type Loaded =
   | { kind: 'loading' }
@@ -232,10 +233,10 @@ export function WeeklySummaryView({ loaded, clerk, onOpen }: { loaded: Loaded; c
         </>
       )}
       {loaded.kind === 'error' && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           {loaded.message}
           {loaded.unreadable ? ' Nothing was changed, and no summary is sent while it can’t be read.' : ''}
-        </div>
+        </Notice>
       )}
       {loaded.kind === 'ready' && (
         <>
@@ -317,11 +318,19 @@ export function WeeklySummarySheetBody(props: {
       <button onClick={props.onSave} disabled={props.saving || unchanged}>
         {props.saving ? 'Saving…' : 'Save'}
       </button>
-      {props.saveError && <div className="error">{props.saveError}</div>}
+      {props.saveError && (
+        <Notice level="critical" role="alert">
+          {props.saveError}
+        </Notice>
+      )}
 
       <h3 className="section-label weekly-preview-title">This week’s summary</h3>
       {preview.kind === 'loading' && <p className="panel-note">Working it out…</p>}
-      {preview.kind === 'error' && <div className="error">{preview.message}</div>}
+      {preview.kind === 'error' && (
+        <Notice level="critical" role="alert">
+          {preview.message}
+        </Notice>
+      )}
       {preview.kind === 'ready' && (
         <>
           <p className="weekly-preview-subject">{preview.subject}</p>
@@ -340,7 +349,14 @@ export function WeeklySummarySheetBody(props: {
         {props.sending ? 'Sending…' : 'Send me one now'}
       </button>
       {!props.canSend && props.whyNot && <p className="panel-note">{props.whyNot}</p>}
-      {props.sendNote && <p className={props.sendNote.ok ? 'status-note' : 'error'}>{props.sendNote.text}</p>}
+      {props.sendNote &&
+        (props.sendNote.ok ? (
+          <p className="status-note">{props.sendNote.text}</p>
+        ) : (
+          <Notice level="critical" role="alert">
+            {props.sendNote.text}
+          </Notice>
+        ))}
       <p className="panel-note">Up to {SENDS_NOW_PER_DAY} a day.</p>
     </div>
   );

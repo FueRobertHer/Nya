@@ -15,6 +15,7 @@ import type { ReviewControls } from './review-state';
 import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { localDate } from '@/lib/local-date';
 import { formatDay, plainNumber } from '@/lib/format';
+import { Notice } from './TotalCaveats';
 
 /** The first days the queue can start from, as offered: today, a week back,
  *  a month back (lib/review-layer.ts MAX_SINCE_DAYS). */
@@ -260,7 +261,11 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
         </>
       )}
       {repaired && <p className="panel-note">{repaired}</p>}
-      {review.error && <div className="error">{review.error}</div>}
+      {review.error && (
+        <Notice level="critical" role="alert">
+          {review.error}
+        </Notice>
+      )}
     </div>
   );
 }

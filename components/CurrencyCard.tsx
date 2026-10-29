@@ -20,6 +20,7 @@ import { formatRate } from '@/lib/format';
 import { rateTextError } from '@/lib/fx/rate-text';
 import type { OwnRate } from '@/lib/fx/rates';
 import { LinesSkeleton } from './LoadingSkeletons';
+import { Notice } from './TotalCaveats';
 
 type Props = {
   /** The person's accounts' currencies, most first. */
@@ -106,13 +107,19 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
   const view = load.kind === 'ready' ? load.view : null;
   return (
     <>
-      <div className="inst-header">
-        <div className="inst-name">Currency</div>
-        {view && !view.problem && <div className="inst-total">{view.home ?? 'not converting'}</div>}
+      <div className="stack">
+        <div className="inst-header">
+          <div className="inst-name">Currency</div>
+          {view && !view.problem && <div className="inst-total">{view.home ?? 'not converting'}</div>}
+        </div>
+        {load.kind === 'error' && (
+          <Notice level="critical" role="alert">
+            {load.message}
+          </Notice>
+        )}
       </div>
       {/* Its two lines still to come: the home currency, then the rates. */}
       {load.kind === 'loading' && <LinesSkeleton status="Loading your currency settings" lines={2} />}
-      {load.kind === 'error' && <div className="error">{load.message}</div>}
       {view?.problem ? (
         <>
           <p className="stale-note">
@@ -241,7 +248,11 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
           </>
         )
       )}
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
     </>
   );
 }
@@ -320,20 +331,26 @@ export function OwnRateForm({
           <input type="date" value={draft.from} max={tomorrow()} onChange={(e) => onDraft({ ...draft, from: e.target.value })} disabled={busy} />
         </label>
       )}
-      <p className="panel-note">
-        {draft.every ? 'It is used for every day, past ones too, instead of the ECB’s.' : 'From that day on it is used instead of the ECB’s; before it, the ECB’s rate where it publishes one.'} A
-        rate in a currency other than the euro goes through the ECB’s rate for that currency each day. Changing a rate changes every figure it reaches, past days
-        included.
-      </p>
-      <div className="button-pair">
-        <button onClick={onSave} disabled={busy || problem !== null}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-        <button className="secondary" onClick={onCancel} disabled={busy}>
-          Cancel
-        </button>
+      <div className="stack">
+        <p className="panel-note">
+          {draft.every ? 'It is used for every day, past ones too, instead of the ECB’s.' : 'From that day on it is used instead of the ECB’s; before it, the ECB’s rate where it publishes one.'} A
+          rate in a currency other than the euro goes through the ECB’s rate for that currency each day. Changing a rate changes every figure it reaches, past days
+          included.
+        </p>
+        <div className="button-pair">
+          <button onClick={onSave} disabled={busy || problem !== null}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button className="secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+        </div>
+        {error && (
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        )}
       </div>
-      {error && <div className="error">{error}</div>}
     </div>
   );
 }

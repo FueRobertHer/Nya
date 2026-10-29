@@ -19,6 +19,7 @@ import type { Taxonomy } from '@/lib/categories';
 import { REMOVED_NAME, WHAT_MAX, type Direction } from '@/lib/shared-expenses/model';
 import { partUnits } from './SplitSheet';
 import { SHARED_ROUTES, type SharedExpenses } from './shared-expenses-state';
+import { Notice } from './TotalCaveats';
 
 type Draft = { person: string; direction: Direction; amount: string; currency: string; date: string; what: string; category_id: string };
 
@@ -167,9 +168,9 @@ export default function IouSheet({
         )}
       </div>
       {error && (
-        <div className="error">
+        <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
-        </div>
+        </Notice>
       )}
       <div className="button-pair">
         <button onClick={() => void run(id ? 'PATCH' : 'POST', id ? { id, ...fields() } : fields())} disabled={!ready || saving}>

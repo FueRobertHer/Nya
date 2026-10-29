@@ -13,7 +13,7 @@
 // figures are measured, the method, the part-time income) is shown, but
 // can't be edited there, and the form says where its save goes.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { allocationOf, asText, LIMITS, parsePlan, pctText, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
@@ -24,6 +24,8 @@ import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import { Why } from './Why';
 import { Segmented } from './Segmented';
+import FieldError from './FieldError';
+import { Notice } from './TotalCaveats';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -45,41 +47,56 @@ type SaveProps = {
 /** Said beside an input a scenario can't change. */
 const SAME_IN_EVERY_PLAN = 'the same in every scenario: change it with your plan open.';
 
-class FieldError extends Error {}
+/** What was typed that can't be saved, and the fields it is about (each by
+ *  the name `readNumber` is given): said under the last of them, and named
+ *  by each (`useSave`'s `field` and `under`). */
+class FieldProblem extends Error {
+  constructor(
+    message: string,
+    readonly fields: readonly string[]
+  ) {
+    super(message);
+  }
+}
 
 /** A number typed in a field: null when empty, an error when not a number in range. */
 function readNumber(text: string, what: string, min: number, max: number, opts: { integer?: boolean; optional?: boolean; scale?: number } = {}): number | null {
   const t = text.trim();
   if (t === '') {
     if (opts.optional) return null;
-    throw new FieldError(`${what} is needed.`);
+    throw new FieldProblem(`${what} is needed.`, [what]);
   }
   const n = Number(t);
   const scale = opts.scale ?? 1;
   if (!Number.isFinite(n) || n * scale < min - 1e-12 || n * scale > max + 1e-12) {
     const show = (v: number) => (scale === 1 ? plainNumber(v) : `${Number((v / scale).toFixed(2))}%`);
-    throw new FieldError(`${what} must be from ${show(min)} to ${show(max)}.`);
+    throw new FieldProblem(`${what} must be from ${show(min)} to ${show(max)}.`, [what]);
   }
-  if (opts.integer && !Number.isInteger(n)) throw new FieldError(`${what} must be a whole number.`);
+  if (opts.integer && !Number.isInteger(n)) throw new FieldProblem(`${what} must be a whole number.`, [what]);
   return scale === 1 ? n : Number((n * scale).toFixed(6));
 }
 
 
-/** Saves `build()` when it checks out, keeping the message otherwise. */
+/** Saves `build()` when it checks out, keeping the message otherwise: what
+ *  was typed wrong under its field, a save that failed as a notice. */
 function useSave({ onSave, onDone, editable }: SaveProps) {
   const [error, setError] = useState('');
+  const [wrong, setWrong] = useState<FieldProblem | null>(null);
   const [saving, setSaving] = useState(false);
+  const errorId = useId();
   async function save(build: () => FirePlan) {
     let next: FirePlan;
     try {
       next = build();
     } catch (err) {
-      if (err instanceof FieldError) {
-        setError(err.message);
+      if (err instanceof FieldProblem) {
+        setError('');
+        setWrong(err);
         return;
       }
       throw err;
     }
+    setWrong(null);
     // The server checks again; this catches anything the fields above missed.
     const parsed = parsePlan(next);
     if ('error' in parsed) {
@@ -93,7 +110,13 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
     if (ok === true) onDone();
     else setError(typeof ok === 'string' ? ok : 'It was not saved. Try again in a moment.');
   }
-  return { error, saving, save, disabled: saving || !editable };
+  /** A field's input: invalid, and described by what is wrong, while it is
+   *  one the problem is about. */
+  const field = (name: string) => (wrong?.fields.includes(name) ? { 'aria-invalid': true, 'aria-describedby': errorId } : {});
+  /** What is wrong, said here when the last field it is about is one of `names`. */
+  const under = (...names: string[]) =>
+    wrong && names.includes(wrong.fields[wrong.fields.length - 1]) ? <FieldError id={errorId}>{wrong.message}</FieldError> : null;
+  return { error, saving, save, field, under, disabled: saving || !editable };
 }
 
 function Buttons({
@@ -154,7 +177,7 @@ export function Choice<T extends string>({
  *  money backwards and the simulation retire before today. */
 function ages(age: number | null, targetAge: number | null): { age: number | null; targetAge: number | null } {
   if (age !== null && targetAge !== null && targetAge < age) {
-    throw new FieldError("Your stop age can't be before your age. If you've already stopped working, use your age.");
+    throw new FieldProblem("Your stop age can't be before your age. If you've already stopped working, use your age.", ['Your age', 'Stop age']);
   }
   return { age, targetAge };
 }
@@ -175,15 +198,37 @@ export function AboutForm(props: SaveProps) {
       <div className="sheet-form">
         <label className="field">
           Your age
-          <input type="number" inputMode="numeric" value={age} onChange={(e) => setAge(e.target.value)} placeholder="Not set" disabled={s.saving || !!props.scenario} />
+          <input
+            type="number"
+            inputMode="numeric"
+            value={age}
+            onChange={(e) => setAge(e.target.value)}
+            placeholder="Not set"
+            {...s.field('Your age')}
+            disabled={s.saving || !!props.scenario}
+          />
         </label>
+        {s.under('Your age')}
         {props.scenario && <p className="panel-note">Your age is {SAME_IN_EVERY_PLAN}</p>}
         <label className="field">
           Stop age
-          <input type="number" inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="Not set" disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="numeric"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="Not set"
+            {...s.field('Stop age')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('Stop age')}
       </div>
-      {s.error && <div className="error">{s.error}</div>}
+      {s.error && (
+        <Notice level="critical" role="alert">
+          {s.error}
+        </Notice>
+      )}
       <Buttons
         scenario={props.scenario}
         paused={props.paused}
@@ -304,8 +349,17 @@ export function FigureForm(
         <div className="sheet-form">
           <label className="field">
             {t.field}
-            <input type="number" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
+            <input
+              type="number"
+              inputMode="decimal"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={NO_EXAMPLE}
+              {...s.field(t.field)}
+              disabled={s.saving}
+            />
           </label>
+          {s.under(t.field)}
         </div>
       )}
       {kind === 'assets' && (
@@ -364,7 +418,11 @@ export function FigureForm(
           ))}
         </>
       )}
-      {s.error && <div className="error">{s.error}</div>}
+      {s.error && (
+        <Notice level="critical" role="alert">
+          {s.error}
+        </Notice>
+      )}
       <Buttons
         scenario={props.scenario}
         paused={props.paused}
@@ -505,7 +563,7 @@ export function AssumptionsForm(
   function build(): FirePlan {
     const stocksPct = readNumber(stocks, 'Stocks', 0, 100, { integer: true }) as number;
     const bondsPct = readNumber(bonds, 'Bonds', 0, 100, { integer: true }) as number;
-    if (stocksPct + bondsPct > 100) throw new FieldError('Stocks and bonds add up to more than 100%.');
+    if (stocksPct + bondsPct > 100) throw new FieldProblem('Stocks and bonds add up to more than 100%.', ['Stocks', 'Bonds']);
     return {
       ...plan,
       withdrawalRate: readNumber(rate, 'The withdrawal rate', ...LIMITS.withdrawalRate, { scale: 0.01 }) as number,
@@ -532,23 +590,62 @@ export function AssumptionsForm(
       <div className="sheet-form">
         <label className="field">
           Withdrawal rate (% a year)
-          <input type="number" inputMode="decimal" data-percent step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="decimal"
+            data-percent
+            step="0.1"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            {...s.field('The withdrawal rate')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The withdrawal rate')}
         <p className="helper">How much you&apos;d draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests.</p>
         <label className="field">
           Growth after inflation until FI (% a year)
-          <input type="number" inputMode="decimal" data-percent step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="decimal"
+            data-percent
+            step="0.5"
+            value={ret}
+            onChange={(e) => setRet(e.target.value)}
+            {...s.field('Growth after inflation')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('Growth after inflation')}
         <p className="helper">Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The simulation uses market history instead.</p>
         <label className="field">
           Tax on withdrawals (% of each withdrawal)
-          <input type="number" inputMode="decimal" data-percent step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="decimal"
+            data-percent
+            step="1"
+            value={tax}
+            onChange={(e) => setTax(e.target.value)}
+            {...s.field('The tax rate')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The tax rate')}
         <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
-          <input type="number" inputMode="decimal" value={partTime} onChange={(e) => setPartTime(e.target.value)} placeholder="None" disabled={s.saving || !!props.scenario} />
+          <input
+            type="number"
+            inputMode="decimal"
+            value={partTime}
+            onChange={(e) => setPartTime(e.target.value)}
+            placeholder="None"
+            {...s.field('Part-time income')}
+            disabled={s.saving || !!props.scenario}
+          />
         </label>
+        {s.under('Part-time income')}
         {props.scenario && <p className="helper">The part-time income for Barista FI is your plan’s: {SAME_IN_EVERY_PLAN} Part-time work in this scenario is a life event.</p>}
       </div>
 
@@ -587,14 +684,31 @@ export function AssumptionsForm(
           <div className="plan-pair">
             <label className="field">
               Floor (% of the first year)
-              <input type="number" inputMode="decimal" data-percent value={floor} onChange={(e) => setFloor(e.target.value)} disabled={s.saving} />
+              <input
+                type="number"
+                inputMode="decimal"
+                data-percent
+                value={floor}
+                onChange={(e) => setFloor(e.target.value)}
+                {...s.field('The floor')}
+                disabled={s.saving}
+              />
             </label>
             <label className="field">
               Ceiling (% of the first year)
-              <input type="number" inputMode="decimal" data-percent value={ceiling} onChange={(e) => setCeiling(e.target.value)} disabled={s.saving} />
+              <input
+                type="number"
+                inputMode="decimal"
+                data-percent
+                value={ceiling}
+                onChange={(e) => setCeiling(e.target.value)}
+                {...s.field('The ceiling')}
+                disabled={s.saving}
+              />
             </label>
           </div>
         )}
+        {s.under('The floor', 'The ceiling')}
         <label className="field">
           Start with
           <select value={start} onChange={(e) => setStart(e.target.value as FirePlan['start'])} disabled={s.saving}>
@@ -615,23 +729,42 @@ export function AssumptionsForm(
         {start === 'custom' && (
           <label className="field">
             Starting balance
-            <input type="number" inputMode="decimal" value={balance} onChange={(e) => setBalance(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
+            <input
+              type="number"
+              inputMode="decimal"
+              value={balance}
+              onChange={(e) => setBalance(e.target.value)}
+              placeholder={NO_EXAMPLE}
+              {...s.field('The starting balance')}
+              disabled={s.saving}
+            />
           </label>
         )}
+        {s.under('The starting balance')}
         <label className="field">
           Length in years (empty: to age 95, or 30 years without an age)
-          <input type="number" inputMode="numeric" value={horizon} onChange={(e) => setHorizon(e.target.value)} placeholder="To age 95" disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="numeric"
+            value={horizon}
+            onChange={(e) => setHorizon(e.target.value)}
+            placeholder="To age 95"
+            {...s.field('The length')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The length')}
         <div className="plan-pair" ref={mixRef}>
           <label className="field">
             Stocks %
-            <input type="number" inputMode="numeric" value={stocks} onChange={(e) => setStocks(e.target.value)} disabled={s.saving} />
+            <input type="number" inputMode="numeric" value={stocks} onChange={(e) => setStocks(e.target.value)} {...s.field('Stocks')} disabled={s.saving} />
           </label>
           <label className="field">
             Bonds %
-            <input type="number" inputMode="numeric" value={bonds} onChange={(e) => setBonds(e.target.value)} disabled={s.saving} />
+            <input type="number" inputMode="numeric" value={bonds} onChange={(e) => setBonds(e.target.value)} {...s.field('Bonds')} disabled={s.saving} />
           </label>
         </div>
+        {s.under('Stocks', 'Bonds')}
         <p className="helper">
           {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'}{' '}
           <Masked>
@@ -673,10 +806,24 @@ export function AssumptionsForm(
         </label>
         <label className="field">
           Fund fees (% a year)
-          <input type="number" inputMode="decimal" data-percent step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="decimal"
+            data-percent
+            step="0.01"
+            value={fee}
+            onChange={(e) => setFee(e.target.value)}
+            {...s.field('The fee')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The fee')}
       </div>
-      {s.error && <div className="error">{s.error}</div>}
+      {s.error && (
+        <Notice level="critical" role="alert">
+          {s.error}
+        </Notice>
+      )}
       <Buttons scenario={props.scenario} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </div>
   );
@@ -690,7 +837,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
   const [adjusted, setAdjusted] = useState(item?.inflationAdjusted ?? true);
   const s = useSave(props);
   const build = (): FirePlan => {
-    if (!label.trim()) throw new FieldError('Give it a name.');
+    if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanIncome = {
       id: item?.id ?? crypto.randomUUID(),
       label: label.trim().slice(0, LIMITS.label),
@@ -709,16 +856,34 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       <div className="sheet-form">
         <label className="field">
           Name
-          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={LIMITS.label} disabled={s.saving} />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={LIMITS.label} {...s.field('Name')} disabled={s.saving} />
         </label>
+        {s.under('Name')}
         <label className="field">
           A year, after tax
-          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder={NO_EXAMPLE}
+            {...s.field('The amount')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The amount')}
         <label className="field">
           From age
-          <input type="number" inputMode="numeric" value={fromAge} onChange={(e) => setFromAge(e.target.value)} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="numeric"
+            value={fromAge}
+            onChange={(e) => setFromAge(e.target.value)}
+            {...s.field('The starting age')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The starting age')}
       </div>
       <label className="plan-check">
         <input type="checkbox" checked={adjusted} onChange={(e) => setAdjusted(e.target.checked)} disabled={s.saving} />
@@ -730,7 +895,11 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
           inflation until it starts, so scale it down first; from then on the plan takes inflation off it every year.
         </p>
       )}
-      {s.error && <div className="error">{s.error}</div>}
+      {s.error && (
+        <Notice level="critical" role="alert">
+          {s.error}
+        </Notice>
+      )}
       <Buttons
         scenario={props.scenario}
         paused={props.paused}
@@ -757,7 +926,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
   const [atAge, setAtAge] = useState(asText(item?.atAge ?? null));
   const s = useSave(props);
   const build = (): FirePlan => {
-    if (!label.trim()) throw new FieldError('Give it a name.');
+    if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanExpense = {
       id: item?.id ?? crypto.randomUUID(),
       label: label.trim().slice(0, LIMITS.label),
@@ -775,18 +944,40 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
       <div className="sheet-form">
         <label className="field">
           Name
-          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={LIMITS.label} placeholder="e.g. New roof" disabled={s.saving} />
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            maxLength={LIMITS.label}
+            placeholder="e.g. New roof"
+            {...s.field('Name')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('Name')}
         <label className="field">
           Amount
-          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
+          <input
+            type="number"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder={NO_EXAMPLE}
+            {...s.field('The amount')}
+            disabled={s.saving}
+          />
         </label>
+        {s.under('The amount')}
         <label className="field">
           At age
-          <input type="number" inputMode="numeric" value={atAge} onChange={(e) => setAtAge(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="numeric" value={atAge} onChange={(e) => setAtAge(e.target.value)} {...s.field('The age')} disabled={s.saving} />
         </label>
+        {s.under('The age')}
       </div>
-      {s.error && <div className="error">{s.error}</div>}
+      {s.error && (
+        <Notice level="critical" role="alert">
+          {s.error}
+        </Notice>
+      )}
       <Buttons
         scenario={props.scenario}
         paused={props.paused}

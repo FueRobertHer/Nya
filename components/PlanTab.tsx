@@ -86,7 +86,7 @@ import { investedAssets, type AssetInstitution, type InvestedAssets, type Traili
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
-import TotalCaveats from './TotalCaveats';
+import TotalCaveats, { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
@@ -1106,16 +1106,22 @@ export default function PlanTab({
     <>
       {state.status === 'error' && (
         <div className="card">
-          <div className="error" style={{ marginTop: 0 }}>
+          <Notice level="critical" role="alert">
             {state.error}
-          </div>
+          </Notice>
           <p className="panel-note">The figures below use the default assumptions until your saved ones load.</p>
           <button className="secondary" style={{ marginTop: 12 }} onClick={() => void store.load()}>
             Try again
           </button>
         </div>
       )}
-      {state.saveError && <div className="error plan-save-error">{state.saveError}</div>}
+      {state.saveError && (
+        <div className="plan-save-error">
+          <Notice level="critical" role="alert">
+            {state.saveError}
+          </Notice>
+        </div>
+      )}
       {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving && currencyKnown} onSave={savers.repair} money={money} />}
       {planLoaded && currencyCard}
       <div className="visually-hidden" role="status">
@@ -1405,13 +1411,13 @@ export function RepairCard({ fixed, editable, onSave, money }: { fixed: Repair[]
   const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding');
   return (
     <div className="card">
-      <div className="error" style={{ marginTop: 0 }}>
+      <Notice level="critical" role="alert">
         <Masked>
           {whole
             ? "Your saved plan can't be used by this version of Nya, so the figures below use the defaults."
             : `Your saved plan has ${fixed.length === 1 ? 'a value' : 'values'} this version of Nya can't use: ${what}.`}
         </Masked>
-      </div>
+      </Notice>
       <p className="panel-note">
         {whole
           ? 'Nothing is saved until you choose Save it this way, and editing is paused until then.'
@@ -2385,7 +2391,11 @@ export function EventsCard({
           />
         ))}
       </div>
-      {restoreError && <div className="error">{restoreError}</div>}
+      {restoreError && (
+        <Notice level="critical" role="alert">
+          {restoreError}
+        </Notice>
+      )}
       <div className="card-actions">
         <button className="secondary" onClick={() => open({ kind: 'income', item: null })} disabled={!editable || plan.income.length >= 5}>
           Add income
