@@ -76,22 +76,26 @@ describe('reads begun together', () => {
       h.release();
       await run;
     } finally {
+      h.release();
       h.restore();
     }
   });
 
-  test("a sync asks for the Item's blocked marker and its stored rows before either answers", async () => {
+  test("a sync asks for the Item's blocked marker beside its credentials, and its stored rows only once the marker lets it go on", async () => {
     fake.reset();
     const item = { item_id: 'item_a', institution_name: 'Test Bank', encrypted_access_token: await encrypt(TEST_CTX, 'access-token') };
     const h = hold();
     try {
       const run = syncItemTransactions(TEST_CTX, item);
       await untilWaiting();
-      expect(h.asked).toContain(`get ${ctxKey('txns-blocked:item_a')}`);
-      expect(h.asked).toContain(`get ${ctxKey('txns:item_a')}`);
+      expect(h.asked).toEqual([`get ${ctxKey('txns-blocked:item_a')}`]);
       h.release();
       await run.catch(() => {});
+      // The rows were asked for after the marker answered: an Item blocked
+      // as too large never fetches its blob, which can be megabytes.
+      expect(h.asked).toContain(`get ${ctxKey('txns:item_a')}`);
     } finally {
+      h.release();
       h.restore();
     }
   });

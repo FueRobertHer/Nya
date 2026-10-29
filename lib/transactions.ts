@@ -683,11 +683,10 @@ export class StateUnreadableError extends Error {
   }
 }
 
-async function readState(ctx: Ctx, item_id: string, begun?: Promise<string | null>): Promise<ItemState> {
+async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
   let blob: string | null;
   try {
-    // `begun`: the blob's read, begun beside another (syncItem).
-    blob = await (begun ?? redis().get<string>(stateKey(ctx, item_id)));
+    blob = await redis().get<string>(stateKey(ctx, item_id));
   } catch (err) {
     // A Redis blip is NOT an empty store: treating it as one would re-pull and
     // persist the bank's short window over years of retained rows.
@@ -1052,11 +1051,10 @@ async function syncItem(ctx: Ctx,
   item: StoredItem,
   opts: SyncOptions = {}
 ): Promise<SyncOutcome> {
-  // The marker's read and the stored blob's, begun together (one round trip)
-  // and each used where it was read before: different keys, and clearing the
-  // marker never touches the blob's.
+  // The marker's read, begun beside the decrypt and used where it was read
+  // before. Not the stored blob's: an Item blocked as too large, or whose
+  // credentials can't be read, stops before it, and its blob can be megabytes.
   const markerRead = begin(() => redis().get<string>(blockedKey(ctx, item.item_id)));
-  const stateRead = begin(() => redis().get<string>(stateKey(ctx, item.item_id)));
   let access_token: string;
   try {
     access_token = await decrypt(ctx, item.encrypted_access_token);
@@ -1099,7 +1097,7 @@ async function syncItem(ctx: Ctx,
   // will re-serve, so this must never reach writeState.
   let stored: ItemState;
   try {
-    stored = await readState(ctx, item.item_id, stateRead);
+    stored = await readState(ctx, item.item_id);
   } catch (err) {
     if (err instanceof StateUnreadableError) {
       console.error(err.message, err.reason);
