@@ -614,19 +614,6 @@ export default function MigrationSheet({
   );
 }
 
-/** The way in, under the Accounts tab's buttons and on the first screen with
- *  nothing connected. */
-export function SwitchingLink({ onOpen }: { onOpen: () => void }) {
-  return (
-    <p className="panel-note migration-link">
-      Switching from another app?{' '}
-      <button className="link-btn" onClick={onOpen}>
-        Bring your history from Monarch, YNAB, Lunch Money, Actual Budget or ZeroSum
-      </button>
-    </p>
-  );
-}
-
 /** Which app the file is from, and which column is which: for a header Nya
  *  doesn't know (lib/import/apps/read.ts). */
 export function MappingStep({ q, options, busy, error, onAnswer }: { q: Extract<Question, { needs: 'mapping' }>; options: Options; busy: boolean; error: string; onAnswer: (o: Options) => void }) {

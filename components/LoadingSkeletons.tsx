@@ -172,8 +172,10 @@ export function LinesSkeleton({ status, lines }: { status: string; lines: number
 }
 
 /** A card of rows while they load, its title still to come: what a segment
- *  without a skeleton of its own shows (Budgets' Goals, Activity's Shared). */
-function CardSkeleton({ label }: { label: string }) {
+ *  without a skeleton of its own shows (Budgets' Goals, Activity's Shared),
+ *  and a Settings card while its code is on its way
+ *  (components/SettingsCardsLoader.tsx). */
+export function CardSkeleton({ label }: { label: string }) {
   useInStep();
   return (
     <div aria-busy="true">
