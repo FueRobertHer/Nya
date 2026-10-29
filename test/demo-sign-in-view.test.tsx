@@ -10,18 +10,17 @@ await mockForFile('@clerk/nextjs', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { default: DemoSignIn } = await import('@/components/DemoSignIn');
 const { DEMO_UNAVAILABLE } = await import('@/lib/demo');
-const { DEFAULT_SCENARIO, SCENARIOS, demoHolds } = await import('@/lib/demo-seed/scenarios');
 const { TAGLINE } = await import('@/lib/tagline');
 
 // The sign-in page's first screen (app/sign-in, components/DemoSignIn.tsx):
-// one line on what Nya is, then the demo accounts as tonal buttons that say
-// what each is set up to hold, so Clerk's Continue is the one filled button.
+// one line on what Nya is, then the demo accounts as tonal buttons with
+// their names, so Clerk's Continue is the one filled button.
 // The flow itself (a form per account, posted, or signed in in place) is
 // test/demo-sign-in.test.ts's and test/sign-in-flow-view.test.tsx's.
 
 const demos = [
-  { id: 'user_alex', label: 'Alex', holds: demoHolds('Alex') },
-  { id: 'user_sam', label: 'Sam', holds: demoHolds('Sam') },
+  { id: 'user_alex', label: 'Alex' },
+  { id: 'user_sam', label: 'Sam' },
 ];
 const html = (unavailable = false) => renderToStaticMarkup(<DemoSignIn demos={demos} unavailable={unavailable} />);
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -32,26 +31,13 @@ describe('the demo card', () => {
     expect(forms).toEqual(['user_alex', 'user_sam']);
   });
 
-  test('each button tonal, never filled, saying its name and then what it holds, apart when spoken', () => {
+  test('each button tonal, never filled, saying only its name', () => {
+    // Nothing on what it holds: anyone may reset either account to any
+    // scenario, so a line on that could be wrong.
     const buttons = [...html().matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)];
     expect(buttons).toHaveLength(2);
-    for (const [, attrs] of buttons) expect(attrs).toContain('class="btn secondary btn-block demo-account"');
-    expect(buttons[0][2]).toBe(
-      `<span class="list-row-text"><span class="list-row-title">Alex</span><span class="list-row-sub"><span class="visually-hidden">, </span>${demos[0].holds}</span></span>`
-    );
-    expect(buttons[1][2]).toContain(`<span class="list-row-title">Sam</span>`);
-  });
-
-  test('what each holds is its default scenario’s, a few words without dashes', () => {
-    for (const name of ['Alex', 'Sam'] as const) {
-      const scenario = SCENARIOS.find((s) => s.id === DEFAULT_SCENARIO[name])!;
-      expect(demoHolds(name)).toBe(scenario.holds);
-      expect(scenario.holds.length).toBeGreaterThan(0);
-      // One line under the name on a 320px phone (measured there).
-      expect(scenario.holds.length).toBeLessThanOrEqual(34);
-      expect(scenario.holds).not.toMatch(/[\u2013\u2014]/);
-    }
-    expect(demoHolds('Someone else')).toBe('');
+    for (const [, attrs] of buttons) expect(attrs).toContain('class="btn secondary btn-block"');
+    expect(buttons.map((b) => b[2])).toEqual(['Alex', 'Sam']);
   });
 
   test('keeps its warning that the accounts are shared, word for word', () => {

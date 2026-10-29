@@ -9,15 +9,15 @@ import DeletionReceiptNotice from '@/components/DeletionReceipt';
 import { SignInFlow, SignInPlaceholder } from '@/components/SignInFlow';
 import DemoSignIn from '@/components/DemoSignIn';
 import { Why } from '@/components/Why';
-import { demoHolds } from '@/lib/demo-seed/scenarios';
 import { TAGLINE } from '@/lib/tagline';
 
 // Clerk's sign-in (lib/auth-mode.ts). Without Clerk keys the app signs in with
 // the shared password instead. First the name and one line on what Nya is
 // (lib/tagline.ts). A deletion of an account ends here, so its receipt is
 // shown next, above the rest (components/DeletionReceipt.tsx). Off
-// production, the one-click demo accounts, Alex and Sam, each saying what it
-// is set up to hold (lib/demo.ts, lib/demo-seed/scenarios.ts), above Clerk's
+// production, the one-click demo accounts, Alex and Sam, by name only
+// (lib/demo.ts): anyone may reset either to any scenario, so a line on what
+// one holds could be wrong (lib/demo-seed/scenarios.ts). They sit above Clerk's
 // form: the form changes height from step to step, so nothing under it holds
 // a button. Clerk's own Continue is the one filled button; the demo's are
 // tonal. Which banks connect is folded away under the form.
@@ -29,9 +29,7 @@ import { TAGLINE } from '@/lib/tagline';
 // while it loads (app/page.tsx).
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (!clerkEnabled()) redirect('/login');
-  // What each says it holds, read here on the server, so the seed's code
-  // never reaches the browser.
-  const demos = demoUsers().map((u) => ({ ...u, holds: demoHolds(u.label) }));
+  const demos = demoUsers();
   const params = await searchParams;
   const unavailable = params.demo === 'unavailable';
   // A demo form's ticket (app/api/demo/sign-in), when it posted before Clerk
