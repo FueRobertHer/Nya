@@ -8,8 +8,8 @@ import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SETTINGS_TITLES, SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor } from './device-cache';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { usePlaidLink, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { usePlaidLink, type PlaidLinkOnEvent, type PlaidLinkOnExit, type PlaidLinkOnSuccess, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
 import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountLinks from './AccountLinks';
@@ -186,6 +186,38 @@ function useLast<T>(value: T | null): T | null {
   const last = useRef<T | null>(value);
   if (value !== null) last.current = value;
   return last.current;
+}
+
+/** Plaid Link, opened as soon as a fresh token is ready. usePlaidLink loads
+ *  Plaid's script from its CDN as it mounts, token or not, so the dashboard
+ *  mounts this only once a connection is first started (plaidWanted). `exit`
+ *  goes out through a ref: see onEvent in Dashboard. */
+function PlaidLinkHandler({
+  token,
+  onSuccess,
+  onEvent,
+  onExit,
+  exitRef,
+  openRef,
+}: {
+  token: string | null;
+  onSuccess: PlaidLinkOnSuccess;
+  onEvent: PlaidLinkOnEvent;
+  onExit: PlaidLinkOnExit;
+  exitRef: MutableRefObject<(opts?: { force?: boolean }) => void>;
+  openRef: MutableRefObject<boolean>;
+}) {
+  const { open, ready, exit } = usePlaidLink({ token, onSuccess, onEvent, onExit });
+  useLayoutEffect(() => {
+    exitRef.current = exit as (opts?: { force?: boolean }) => void;
+  }, [exit, exitRef]);
+  useEffect(() => {
+    if (token && ready) {
+      openRef.current = true;
+      open();
+    }
+  }, [token, ready, open, openRef]);
+  return null;
 }
 
 /** The account menu's button, the avatar, once Clerk has drawn it. */
@@ -1431,33 +1463,22 @@ export default function Dashboard({
     [linkMode, institutions]
   );
 
-  const { open, ready, exit } = usePlaidLink({
-    token: linkToken,
-    onSuccess,
-    onEvent,
-    onExit: (err) => {
-      linkOpenRef.current = false;
-      // Closed by onEvent above: not a cancellation, and the redirect sheet
-      // says what happens next.
-      if (redirectingRef.current) {
-        redirectingRef.current = false;
-      } else if (err) {
-        setError('Connection cancelled or failed.');
-      }
-      setLinkToken(null);
-    },
-  });
-  useLayoutEffect(() => {
-    exitLinkRef.current = exit as (opts?: { force?: boolean }) => void;
-  }, [exit]);
-
-  // Open Link automatically as soon as a fresh token is ready
-  useEffect(() => {
-    if (linkToken && ready) {
-      linkOpenRef.current = true;
-      open();
+  const onLinkExit: PlaidLinkOnExit = (err) => {
+    linkOpenRef.current = false;
+    // Closed by onEvent above: not a cancellation, and the redirect sheet
+    // says what happens next.
+    if (redirectingRef.current) {
+      redirectingRef.current = false;
+    } else if (err) {
+      setError('Connection cancelled or failed.');
     }
-  }, [linkToken, ready, open]);
+    setLinkToken(null);
+  };
+  // Plaid's script loads only once a connection is first started, beside the
+  // fetch of its token, rather than on every open of the app; Link then stays
+  // mounted as it always was.
+  const [plaidWanted, setPlaidWanted] = useState(false);
+  if ((connecting || linkToken) && !plaidWanted) setPlaidWanted(true);
 
   const toggleHoldings = useCallback((item_id: string) => {
     setExpandedHoldings((prev) => {
@@ -1664,6 +1685,26 @@ export default function Dashboard({
   }, [accountOpen, openedAccount]);
   // What the closing sheet keeps showing while it slides out.
   const shownAccount = useLast(openedAccount);
+
+  // The accounts the Home tab's insights weigh, hidden ones dropped. Kept
+  // while the accounts are, so Insights' own work over the year of rows runs
+  // again only when they or the rows change, not on every render here.
+  const insightAccounts = useMemo(
+    () =>
+      institutions.flatMap((i) =>
+        i.accounts
+          .filter((a) => !a.hidden)
+          .map((a) => ({
+            name: a.name,
+            type: a.type,
+            subtype: a.subtype,
+            balance: a.balance,
+            currency: a.currency,
+            liability: a.liability,
+          }))
+      ),
+    [institutions]
+  );
 
   // Investment accounts carrying enough uninvested cash to be worth a Home-tab
   // line. Built from `institutions`, not `sortedInstitutions`, so that an
@@ -2239,6 +2280,7 @@ export default function Dashboard({
 
   return (
     <>
+      {plaidWanted && <PlaidLinkHandler token={linkToken} onSuccess={onSuccess} onEvent={onEvent} onExit={onLinkExit} exitRef={exitLinkRef} openRef={linkOpenRef} />}
       <main className="wrap app-page">
         {/* Everything above the links, taking the room the page has left, so
             the links sit at its foot on a short tab (.app-page). */}
@@ -2392,18 +2434,7 @@ export default function Dashboard({
                     dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
                     incomplete={txnIncomplete}
                     stopped={stoppedTxns}
-                    accounts={institutions.flatMap((i) =>
-                      i.accounts
-                        .filter((a) => !a.hidden)
-                        .map((a) => ({
-                          name: a.name,
-                          type: a.type,
-                          subtype: a.subtype,
-                          balance: a.balance,
-                          currency: a.currency,
-                          liability: a.liability,
-                        }))
-                    )}
+                    accounts={insightAccounts}
                     // This month's last row: the FI line (the Plan's years to
                     // FI, FI number and savings rate, from the same inputs and
                     // plan as the Plan tab). Last: it appears only once its

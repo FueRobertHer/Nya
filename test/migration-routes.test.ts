@@ -47,7 +47,7 @@ const { assembleBankRows, finishActivity } = await import('@/lib/activity');
 const { spendingByCategory } = await import('@/lib/totals');
 const { getManualAccounts, saveManualAccount } = await import('@/lib/manual');
 const { readTaxonomy, ensureTaxonomy } = await import('@/lib/category-store');
-const { readTagSet } = await import('@/lib/tags');
+const { readTagSet } = await import('@/lib/tags-store');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { importedTxnStore, importedTwinsStore } = await import('@/lib/history-import/store');
 const { splitStore } = await import('@/lib/splits');
@@ -647,7 +647,8 @@ describe('the review', () => {
     expect(refused.status).toBe(409);
     expect(await getManualAccounts(ctx)).toEqual([]);
     // Too many tags for the room left: imported without them instead.
-    const { changeTagSet, addTag } = await import('@/lib/tags');
+    const { addTag } = await import('@/lib/tags');
+    const { changeTagSet } = await import('@/lib/tags-store');
     await changeTagSet(ctx, (s) => {
       let next = s;
       for (let i = 0; i < 250; i++) next = addTag(next, { name: `tag ${i}` }, () => crypto.randomUUID()).set;

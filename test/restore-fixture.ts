@@ -112,9 +112,9 @@ export async function seedOld(fake: FakeRedis, ctx: Ctx): Promise<void> {
   const taxonomy = seedTaxonomy([], () => `cat${++n}`);
   await taxonomyStore.set(ctx, taxonomy);
   const food = taxonomy.categories.find((c) => c.provider_keys.some((p) => p.key === 'FOOD_AND_DRINK'))!;
-  const { tagStore } = await import('@/lib/tags');
+  const { tagStore } = await import('@/lib/tags-store');
   await tagStore.set(ctx, { version: 1, tags: [{ id: 'tag1', name: 'Trip', color: 'blue', created_at: NOW }] });
-  const { rulesStore } = await import('@/lib/rules');
+  const { rulesStore } = await import('@/lib/rules-store');
   await rulesStore.set(ctx, {
     version: 1,
     rules: [{ id: 'rule1', enabled: true, priority: 1, conditions: [{ field: 'name', op: 'contains', value: 'coffee' }], actions: { set_category: food.id }, created_at: NOW, updated_at: NOW }],

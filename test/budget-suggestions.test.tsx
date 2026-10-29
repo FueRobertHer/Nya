@@ -47,7 +47,7 @@ const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { syncsStore } = await import('@/lib/connection-records');
 const { setExcluded } = await import('@/lib/txn-annotations');
-const { rulesStore } = await import('@/lib/rules');
+const { rulesStore } = await import('@/lib/rules-store');
 const monthRoute = await import('@/app/api/budgets/month/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
 

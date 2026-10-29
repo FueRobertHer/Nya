@@ -11,7 +11,8 @@
 import type { Ctx } from './containers';
 import { accountLabels, firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
 import { bankRows } from './split-rows';
-import { readRuleSet, ruleProblem, ruleSentence, sortedRules, withCurrentCategories, withLiveTags, type RuleActions, type RuleCondition } from './rules';
+import { ruleProblem, ruleSentence, sortedRules, withCurrentCategories, withLiveTags, type RuleActions, type RuleCondition } from './rules';
+import { readRuleSet } from './rules-store';
 import { liveTagIds } from './tags';
 import { historyCount } from './spending';
 

@@ -27,6 +27,7 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 const { encrypt, decrypt } = await import('@/lib/crypto');
+const { decodeJsonBlob } = await import('@/lib/blob');
 const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { rememberAccounts } = await import('@/lib/last-known');
@@ -91,7 +92,7 @@ describe('the dashboard’s load', () => {
 
   test('never cached: a cached load reads it afresh, so a decline ends it at once', async () => {
     await load();
-    const cached = JSON.parse(await decrypt(TEST_CTX, (await fake.get<string>(ctxKey('cache:net-worth')))!));
+    const cached = await decodeJsonBlob<{ link_offer?: unknown }>(TEST_CTX, (await fake.get<string>(ctxKey('cache:net-worth')))!);
     expect(cached.link_offer).toBeUndefined();
     const again = await load('');
     expect(again.from_cache).toBe(true);

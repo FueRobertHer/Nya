@@ -26,9 +26,10 @@
 // was being deleted, after the sweep, is swept by its own save (app/api/rules).
 
 import type { Ctx } from './containers';
-import { changeTagSet, emptyTagSet, markDeleted, readTagSet, sweptAway, type TagSet } from './tags';
+import { emptyTagSet, markDeleted, sweptAway, type TagSet } from './tags';
+import { changeTagSet, readTagSet } from './tags-store';
 import { sweepAnnotationTags } from './txn-annotations';
-import { sweepRuleTags } from './rules';
+import { sweepRuleTags } from './rules-store';
 
 /** Deletes a tag (see the header) and returns the tags as they are after, and
  *  how many transactions' records and rules it came off. TagError (404) for

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
-import { emptyTagSet, readTagSet, TagError, type TagSet } from '@/lib/tags';
+import { emptyTagSet, TagError, type TagSet } from '@/lib/tags';
+import { readTagSet } from '@/lib/tags-store';
 import { txnAnnotationStore } from '@/lib/txn-annotations';
 import { changeTags } from '@/lib/tag-actions';
 
