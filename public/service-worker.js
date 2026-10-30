@@ -252,19 +252,23 @@ function buildOf(text) {
     const found = id(text.slice(Math.max(start, end - 200), end));
     if (found) return found;
   }
-  // A page's are in its scripts' strings, read one after another (a row
-  // can go on in the next): there a row ends at the escape \n, and other
-  // escapes (a line break in some text, \\n) are part of it. Nothing outside
-  // those strings is read, and each part once.
+  // A page's rows are in its scripts' strings, read one after another (a
+  // row can go on in the next): there a row ends at the escape \n, and
+  // other escapes (a line break in some text, \\n) are part of it. A long
+  // text row has no line end, so a script's string starting a row is read as
+  // a start too. Nothing outside those strings is read, and each part once.
   const PUSH = 'self.__next_f.push([1,"';
   let head = '';
+  let pushHead = null;
   let tail = '';
   const rowEnded = () => {
-    const found = head.startsWith('0:{') ? id(tail) : null;
+    const found = head.startsWith('0:{') || pushHead?.startsWith('0:{') ? id(tail) : null;
     head = tail = '';
+    pushHead = null;
     return found;
   };
   for (let i = text.indexOf(PUSH); i !== -1; i = text.indexOf(PUSH, i)) {
+    pushHead = '';
     for (i += PUSH.length; i < text.length && text[i] !== '"'; ) {
       if (text[i] === '\\' && text[i + 1] === 'n') {
         const found = rowEnded();
@@ -274,6 +278,7 @@ function buildOf(text) {
       }
       const part = text.slice(i, text[i] === '\\' ? i + 2 : i + 1);
       if (head.length < 3) head += part;
+      if (pushHead !== null && pushHead.length < 3) pushHead += part;
       tail += part;
       if (tail.length > 400) tail = tail.slice(-200);
       i += part.length;
