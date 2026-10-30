@@ -263,6 +263,17 @@ describe.skipIf(!hasRedis && !process.env.CI)('the one-step read, on a real Redi
     expect(upstash.sent).toEqual(['eval_ro']);
   });
 
+  // An entry that decodes to nothing (stored as "null") is no entry, as the
+  // read before it took it: on to the claim step, which finds the entry there
+  // and so has nothing to give, rather than refusing it as not a container.
+  test('an entry that decodes to nothing is taken as none', async () => {
+    const send = (command: string, args: string[]) => real!.client.send(command, args);
+    await send('HSET', [ownersKey(), 'user', 'null']);
+    await send('HSET', [registryKey(), TEST_CONTAINER, JSON.stringify({ status: 'active', primary: true, created_at: '2026-01-01T00:00:00.000Z' })]);
+    forgetEpochs();
+    await expect(ownerContainer('user')).rejects.toThrow('No container to claim.');
+  });
+
   // What the two reads it replaces would have handed the same checks: the
   // owners entry, and the registry entry for it, each decoded as Upstash
   // decodes it, whatever was stored.
