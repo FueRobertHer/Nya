@@ -4,7 +4,7 @@ import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, Simulati
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import PlanFanChart from '@/components/PlanFanChart';
 import { DrawnWidth } from '@/components/drawn-width';
-import { FigureForm } from '@/components/PlanForms';
+import { ExpenseForm, FigureForm, IncomeForm } from '@/components/PlanForms';
 import PlanGrid from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
 import { dayName, monthName, pct, progressText, successText, wholeMoney } from '@/components/plan-text';
@@ -827,6 +827,38 @@ describe('income and one-offs', () => {
     const aged = plan({ ...p, targetAge: 50, horizon: 5 });
     const late = text(renderToStaticMarkup(<EventsCard plan={aged} engine={enginePlan(aged, fiView(aged, measured))} money={money} editable open={noop} />));
     expect(late).toContain("Roof $30,000 at age 60. After the plan ends at 55: only the grid's longer columns reach it.");
+  });
+
+  test('says where they count: in Will it last? from where it starts, never the FI date; a one-off before then nowhere', () => {
+    const p = plan({
+      targetAge: 50,
+      income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }],
+      expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 45 }],
+    });
+    const t = text(renderToStaticMarkup(<EventsCard plan={p} engine={enginePlan(p, fiView(p, measured))} money={money} editable open={noop} />));
+    expect(t).toContain('They count in Will it last? from age 50, where it starts, never in your FI date or FI number.');
+    expect(t).toContain("Roof $30,000 at age 45. Before 50, where Will it last? starts, so it isn't counted anywhere.");
+    // Without an age to place them, no line about where they count: each says to add it.
+    const none = plan({ expenses: p.expenses });
+    const n = text(renderToStaticMarkup(<EventsCard plan={none} engine={enginePlan(none, fiView(none, measured))} money={money} editable open={noop} />));
+    expect(n).not.toContain('They count in');
+    expect(n).toContain('Roof $30,000 at age 45. Not in the simulation: add your age.');
+    // One before today: already spent, so your measured figures may count it.
+    const past = plan({ age: 40, targetAge: 50, expenses: [{ id: 'car', label: 'Car', amount: 20_000, atAge: 38 }] });
+    expect(text(renderToStaticMarkup(<EventsCard plan={past} engine={enginePlan(past, fiView(past, measured))} money={money} editable open={noop} />))).toContain("Car $20,000 at age 38. Before today, so it isn't counted: your measured figures may already count it.");
+  });
+
+  test('their sheets say where they count, and point to where a life event goes: What if… on your plan, the scenario’s own life events in one', () => {
+    const roof = { id: "roof", label: "Roof", amount: 30_000, atAge: 45 };
+    const sheet = (Form: typeof IncomeForm | typeof ExpenseForm, scenario: string | null, item: typeof roof | null = null) =>
+      text(renderToStaticMarkup(<Form plan={plan(item ? { expenses: [item] } : {})} item={item as never} onSave={async () => true} onDone={noop} editable scenario={scenario} />));
+    expect(sheet(IncomeForm, null)).toContain("Counts in Will it last?, never in your FI date or FI number. Part-time work is a life choice in What if…, and Barista FI's part-time income is in Assumptions.");
+    expect(sheet(IncomeForm, "Retire at 50")).toContain("Part-time work is a life event in this scenario, and Barista FI's part-time income is in Assumptions.");
+    // A new one goes there instead; one kept here as well would count twice.
+    expect(sheet(ExpenseForm, null)).toContain("Counts in Will it last? once your age places it, never in your FI date. To move your FI date with it, try it in What if… as a life choice instead of here.");
+    expect(text(renderToStaticMarkup(<ExpenseForm plan={plan({ targetAge: 55 })} item={null} onSave={async () => true} onDone={noop} editable />))).toContain("Counts in Will it last? at 55 or later, where that starts, never in your FI date.");
+    expect(sheet(ExpenseForm, null, roof)).toContain("try it in What if… as a life choice instead, and remove it here, or it counts twice.");
+    expect(sheet(ExpenseForm, "Retire at 50", roof)).toContain("To move this scenario's FI date with it, add it to its life events instead, and remove it here, or it counts twice.");
   });
 });
 
