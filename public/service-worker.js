@@ -162,7 +162,7 @@ async function tidyOnce(request, clientId) {
   const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   if (clientId ? windows.some((w) => w.id !== clientId) : windows.length > 1) return;
 
-  const build = buildOf(pageText);
+  const build = buildOf(pageText, true);
   const day = Math.floor(now / DAY);
   const unused = {};
   // Found unused again; true once it has been for long enough to go.
@@ -186,7 +186,8 @@ async function tidyOnce(request, clientId) {
     const type = kept?.headers.get('Content-Type') ?? '';
     if (!/text\/html|text\/x-component/.test(type)) continue;
     const text = await kept.text();
-    pages.push({ key, path, text, group: `${type.includes('html') ? 'html' : 'rsc'} ${path}`, build: buildOf(text) });
+    const html = type.includes('html');
+    pages.push({ key, path, text, group: `${html ? 'html' : 'rsc'} ${path}`, build: buildOf(text, html) });
   }
   const current = new Set(pages.filter((p) => build && p.build === build).map((p) => p.group));
   const roots = [];
@@ -238,27 +239,27 @@ async function tidyOnce(request, clientId) {
   await notes.put(NOTES, new Response(JSON.stringify({ tidied: now, refs, unused }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
-/** The deploy a page or RSC payload belongs to: Next's build id, or the
- *  deployment id it carries instead when there is one. */
-function buildOf(text) {
+/** The deploy a page (`html`) or RSC payload belongs to: Next's build id,
+ *  or the deployment id a page carries instead when there is one. */
+function buildOf(text, html) {
+  if (!html) return rootBuild(text);
   return rootBuild(flightOf(text)) ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
 }
 
-/** An RSC payload as it is; a page's, put back together from the strings
- *  Next writes it into, one script each (self.__next_f.push([1,"..."])).
- *  Null when a part was written as bytes ([3,...]), which can't be read in
- *  order here. */
+/** A page's RSC payload, put back together from the strings Next writes
+ *  it into, one script each (self.__next_f.push([1,"..."])). Null when a
+ *  part was written as bytes ([3,...]), which can't be read in order here,
+ *  or the page was cut short. */
 function flightOf(text) {
   const PUSH = 'self.__next_f.push([1,"';
-  if (!text.includes(PUSH)) return text;
-  if (text.includes('self.__next_f.push([3,')) return null;
+  if (/<script[^>]*>self\.__next_f\.push\(\[3,/.test(text)) return null;
   let flight = '';
   for (let at = text.indexOf(PUSH); at !== -1; ) {
     const start = at + PUSH.length - 1;
     // The string's closing quote: one not escaped by a backslash.
     let end = text.indexOf('"', start + 1);
     for (;;) {
-      if (end === -1) return flight;
+      if (end === -1) return null;
       let slashes = 0;
       while (text[end - 1 - slashes] === '\\') slashes++;
       if (slashes % 2 === 0) break;
@@ -300,12 +301,12 @@ function rootBuild(flight) {
     // Other rows sized in bytes carry binary data, which a text can't count.
     if (tag && 'AOobUSsLlGgMmV'.includes(tag)) return null;
     const end = flight.indexOf('\n', colon);
+    if (end === -1) return null;
     if (flight.startsWith('0:{', i)) {
-      const row = flight.slice(i, end === -1 ? flight.length : end);
+      const row = flight.slice(i, end);
       const id = row.slice(-1000).match(/"(?:b|buildId)":"([\w-]+)"\}$/)?.[1] ?? row.match(/^0:\{"buildId":"([\w-]+)"/)?.[1];
       if (id) return id;
     }
-    if (end === -1) return null;
     i = end + 1;
   }
   return null;

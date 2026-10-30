@@ -719,3 +719,26 @@ describe('the daily tidy', () => {
     expect([...w.stores.keys()].sort()).toEqual(['nya-v3', 'nya-v3-tidy']);
   });
 });
+
+describe('the deploy a kept page or payload belongs to', () => {
+  const { buildOf } = new Function('self', `${readFileSync(join(import.meta.dir, '..', 'public', 'service-worker.js'), 'utf8')}; return { buildOf };`)({
+    location: { origin: ORIGIN },
+    addEventListener: () => {},
+  }) as { buildOf: (text: string, html: boolean) => string | null };
+  const push = (text: string) => `<script>self.__next_f.push([1,${JSON.stringify(text)}])</script>`;
+
+  test('a payload is read as a payload, even when a long text in it looks like a page', () => {
+    const note = `${'x'.repeat(1100)}${push('0:{"b":"not-a-build"}\n')}`;
+    expect(buildOf(`0:{"P":null,"b":"build-1"}\n4:T${Buffer.byteLength(note).toString(16)},${note}`, false)).toBe('build-1');
+  });
+
+  test('a page cut short has no deploy', () => {
+    expect(buildOf(`${push('1:x\n')}<script>self.__next_f.push([1,"0:{\\"t\\":{\\"b\\":\\"not-a-build\\"}`, true)).toBeNull();
+    expect(buildOf('0:{"t":{"b":"not-a-build"}', false)).toBeNull();
+  });
+
+  test('only Next’s own scripts say a part was written as bytes', () => {
+    expect(buildOf(`<p>self.__next_f.push([3,</p>${push('0:{"P":null,"b":"build-1"}\n')}`, true)).toBe('build-1');
+    expect(buildOf(`<script nonce="n">self.__next_f.push([3,"AAEC"])</script>${push('0:{"P":null,"b":"build-1"}\n')}`, true)).toBeNull();
+  });
+});
