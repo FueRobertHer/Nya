@@ -256,16 +256,18 @@ function buildOf(text) {
   // and other escapes (a line break in some text, \\n) are part of it, and
   // a row can go on in the next script's string.
   const PUSH = 'self.__next_f.push([1,"';
+  // Where the last row read ended: what looks like a row's start before
+  // there was inside that row (text holding "\n0:{"), so each part of the
+  // page is read once.
+  let read = 0;
   for (let at = text.indexOf('0:{'); at !== -1; at = text.indexOf('0:{', at + 1)) {
-    if (!text.endsWith('[1,"', at) && !text.endsWith('\\n', at)) continue;
+    if (at < read || (!text.endsWith('[1,"', at) && !text.endsWith('\\n', at))) continue;
     let tail = '';
-    for (let i = at; i < text.length; ) {
+    let i = at;
+    while (i < text.length) {
       const c = text[i];
-      if (c === '\\' && text[i + 1] === 'n') {
-        const found = id(tail);
-        if (found) return found;
-        break;
-      } else if (c === '\\') {
+      if (c === '\\' && text[i + 1] === 'n') break;
+      if (c === '\\') {
         tail += text.slice(i, i + 2);
         i += 2;
       } else if (c === '"') {
@@ -278,6 +280,9 @@ function buildOf(text) {
       }
       if (tail.length > 400) tail = tail.slice(-200);
     }
+    const found = id(tail);
+    if (found) return found;
+    read = i;
   }
   // A segment prefetch names it "buildId".
   return text.match(/\\?"buildId\\?":\\?"([\w-]+)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;

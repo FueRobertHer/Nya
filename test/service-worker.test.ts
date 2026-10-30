@@ -591,6 +591,25 @@ describe('the daily tidy', () => {
     expect(Object.keys((await notes(w))!.unused).sort()).toEqual([at('/?tab=home'), at('/?tab=plan')]);
   });
 
+  test('reads each part of a page once, however much of its text looks like a row’s start', async () => {
+    let w = worker();
+    const push = (text: string) => `<script>self.__next_f.push([1,${JSON.stringify(text)}])</script>`;
+    // Text someone typed, with "0:{" after line breaks, in a row before the root row.
+    const typed = `${'z'.repeat(1000)}\n0:{`.repeat(1000);
+    const page = (build: string, src: string) =>
+      `<html><script src="${src}"></script>${push(`3:${JSON.stringify({ children: typed })}\n0:{"P":null,"b":"${build}"}\n`)}</html>`;
+    w.net.answers.set(at('/?tab=plan'), { body: page('build-1', js('a1')), type: 'text/html' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '', [js('a2')]: '' });
+    await w.load('/?tab=plan', [js('a1')]);
+    w = later(w, 1);
+    w.net.answers.set(at('/'), { body: page('build-2', js('a2')), type: 'text/html' });
+    const started = performance.now();
+    await w.load('/', [js('a2')]);
+    // Reading a candidate's row afresh each time took seconds here.
+    expect(performance.now() - started).toBeLessThan(3000);
+    expect((await notes(w))!.unused).toHaveProperty([at('/?tab=plan')]);
+  });
+
   test('reads a segment prefetch’s build, so an old one doesn’t keep its files', async () => {
     let w = twoDeploys();
     const segment = (build: string) => `1:I[1,[],"x"]\n0:{"buildId":"${build}","rsc":"$@1"}\n`;
