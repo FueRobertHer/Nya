@@ -1,17 +1,20 @@
 'use client';
 
 // A scenario's life events (lib/fire/events.ts), on the Plan tab while the
-// scenario is open: each with its own figures, where it counts, and what of
-// it is left out and why; and the form to add or change one. Every amount
-// and length is the person's own: nothing is filled in but the kind's name,
-// no field holds an example, and nothing suggests what something "usually"
-// costs.
+// scenario is open, under Your figures where the What if… card is on your
+// plan: each with its own figures, where it counts, and what of it is left
+// out and why; the same life choices as the What if… card, each added to
+// the scenario, so several stack in one; and the form to add or change one,
+// with how it moves the FI age as it is typed. Every amount and length is
+// the person's own: nothing is filled in but the choice's name, no field
+// holds an example, and nothing suggests what something "usually" costs.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
-import { EVENT_KINDS, EVENT_LIMITS, parseLifeEvent, type EventNote, type LifeEvent, type LifeEventKind } from '@/lib/fire/events';
+import { EVENT_LIMITS, parseLifeEvent, type EventNote, type LifeEvent, type LifeEventKind } from '@/lib/fire/events';
 import { EVENT_NAMES, EVENT_PART_TEXT, eventCountsText, eventText } from './plan-scenario-text';
+import { WHAT_IF_TEMPLATES, type WhatIfTemplate } from './plan-what-if';
 import { ScenarioTag } from './ScenarioTag';
 import { Notice } from './TotalCaveats';
 
@@ -38,6 +41,9 @@ const KIND_NOTES: Record<LifeEventKind, string> = {
     'How much less you would spend a year, for good, once a loan is paid off: its payments, which are in your measured spending until then. You save that much more from then until FI. Paid off by the time you stop, it is part of your spending in retirement, and so of your FI number.',
 };
 
+/** A drawer's event: a new one from a life choice, or one to change. */
+type Opened = { kind: LifeEventKind; event: LifeEvent | null; template: WhatIfTemplate | null };
+
 export function LifeEventsCard({
   scenarioName,
   version,
@@ -46,6 +52,7 @@ export function LifeEventsCard({
   money,
   editable,
   onSave,
+  preview,
 }: {
   scenarioName: string;
   /** The scenario's version: a drawer opened on one closes when it changes
@@ -56,14 +63,18 @@ export function LifeEventsCard({
   money: (n: number) => string;
   editable: boolean;
   onSave: SaveEvents;
+  /** How the form's event moves the scenario's FI age, as it is typed
+   *  (components/PlanWhatIf.tsx DraftPreview). */
+  preview?: (draft: Checked, kind: LifeEventKind) => ReactNode;
 }) {
-  const [sheet, setSheet] = useState<{ kind: LifeEventKind; event: LifeEvent | null } | null>(null);
+  const [sheet, setSheet] = useState<Opened | null>(null);
   const [opened, setOpened] = useState(0);
-  const [shown, setShown] = useState<{ kind: LifeEventKind; event: LifeEvent | null } | null>(null);
+  const [shown, setShown] = useState<Opened | null>(null);
   const versionRef = useRef(version);
   versionRef.current = version;
   const openedOn = useRef(version);
-  const open = (s: { kind: LifeEventKind; event: LifeEvent | null }) => {
+  const titleRef = useRef<HTMLDivElement | null>(null);
+  const open = (s: Opened) => {
     setOpened((n) => n + 1);
     openedOn.current = version;
     setSheet(s);
@@ -73,6 +84,21 @@ export function LifeEventsCard({
   useEffect(() => {
     setSheet(null);
   }, [version]);
+  // Closed: the sheet gives focus back to the choice or Edit that opened it,
+  // as its own effect ends, before this one. When that one is off now (the
+  // tenth event just added) or gone (the event removed), focus stays in the
+  // sheet as it slides out, or is lost: then to the card's title.
+  const sheetOpen = !!sheet;
+  const wasOpen = useRef(sheetOpen);
+  useEffect(() => {
+    const closed = wasOpen.current && !sheetOpen;
+    wasOpen.current = sheetOpen;
+    if (!closed) return;
+    const at = document.activeElement;
+    let lost = !at || at === document.body || !at.isConnected || (at as HTMLButtonElement).disabled === true;
+    for (let n: Element | null = at; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
+    if (lost) titleRef.current?.focus({ preventScroll: true });
+  }, [sheetOpen]);
   /** Saves only on the version the drawer was opened on. */
   const guarded: SaveEvents = async (next) =>
     openedOn.current === versionRef.current ? onSave(next) : 'This scenario changed since this was opened, so nothing was saved: open it again.';
@@ -81,10 +107,12 @@ export function LifeEventsCard({
     <div className="card">
       <ScenarioTag name={scenarioName} />
       <div className="inst-header">
-        <div className="inst-name">Life events</div>
+        <div className="inst-name" tabIndex={-1} ref={titleRef}>
+          Life events
+        </div>
       </div>
       {events.length === 0 ? (
-        <p className="empty-note">Add a home, a child, a sabbatical, part-time work, a change in spending, a car, a raise, a windfall or a loan paid off, with your own figures, to see how it changes this scenario.</p>
+        <p className="empty-note">Add a life choice with your own figures to see how it changes this scenario. Add more than one and they count together.</p>
       ) : (
         <div className="plan-rows">
           {events.map((e) => (
@@ -104,7 +132,7 @@ export function LifeEventsCard({
                       </span>
                     ))}
                 </span>
-                <button className="plan-edit" onClick={() => open({ kind: e.kind, event: e })} disabled={!editable} aria-label={`Edit ${e.label}`}>
+                <button className="plan-edit" onClick={() => open({ kind: e.kind, event: e, template: null })} disabled={!editable} aria-label={`Edit ${e.label}`}>
                   Edit
                 </button>
               </div>
@@ -112,22 +140,26 @@ export function LifeEventsCard({
           ))}
         </div>
       )}
-      <div className="plan-event-kinds" role="group" aria-label="Add a life event">
-        {EVENT_KINDS.map((k) => (
-          <button key={k} className="secondary" onClick={() => open({ kind: k, event: null })} disabled={!editable || full}>
-            {EVENT_NAMES[k]}
+      <div className="chip-row" role="group" aria-label="Add a life choice">
+        {WHAT_IF_TEMPLATES.map((t) => (
+          <button key={t.id} type="button" className="chip" aria-haspopup="dialog" onClick={() => open({ kind: t.kind, event: null, template: t })} disabled={!editable || full}>
+            {t.label}
           </button>
         ))}
       </div>
       {full && <p className="panel-note">A scenario holds at most {EVENT_LIMITS.events} life events.</p>}
-      <Sheet open={!!sheet} title={shown ? `${EVENT_NAMES[shown.kind]} (${scenarioName})` : ''} onClose={close}>
+      <Sheet open={!!sheet} title={shown ? `${shown.template?.label ?? EVENT_NAMES[shown.kind]} (${scenarioName})` : ''} onClose={close}>
         {shown && (
           <EventForm
             key={opened}
             kind={shown.kind}
             event={shown.event}
+            name={shown.template?.name}
             editable={editable}
             onCancel={close}
+            saveText={shown.event ? 'Save' : 'Add to this scenario'}
+            savingText={shown.event ? 'Saving…' : 'Adding…'}
+            preview={preview ? (draft) => preview(draft, shown.kind) : undefined}
             onSave={async (e) => {
               const next = shown.event ? events.map((x) => (x.id === shown.event!.id ? e : x)) : [...events, e];
               const ok = await guarded(next);
