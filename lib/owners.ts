@@ -16,6 +16,7 @@ import { redis, kEnv } from './storage';
 import {
   ContainerError,
   asContainerId,
+  containerRecord,
   getContainer,
   isContainerId,
   registryKey,
@@ -98,7 +99,11 @@ export async function ownersOf(container: ContainerId): Promise<string[]> {
 }
 
 async function owned(userId: string): Promise<ContainerId | null> {
-  const id = await redis().hget<string>(ownersKey(), userId);
+  return ownedId(await redis().hget<string>(ownersKey(), userId));
+}
+
+/** An owners entry, as read: null for none, else the container it names. */
+function ownedId(id: unknown): ContainerId | null {
   if (id === null || id === undefined) return null;
   if (typeof id === 'string' && id.startsWith(DELETION_MARKER)) throw new ContainerError('This account is being deleted.');
   if (typeof id !== 'string' || !isContainerId(id)) throw new ContainerError('This account maps to something that is not a container.');
@@ -113,16 +118,33 @@ export async function ownedContainer(userId: string): Promise<ContainerId | null
   return owned(userId);
 }
 
+/**
+ * The account's owners entry and the registry's record for what it names, in
+ * one read-only step: every signed-in request reads both, and the second
+ * needs the first's answer, so separately they are two round trips. False
+ * (null) when the account has no entry; else [entry, record], the record nil
+ * (null) when the registry has none. Read-only, so a replica can answer it.
+ * The first line names the script for the test double.
+ */
+export const OWNED_WITH_RECORD = `-- nya:owner-container
+local id = redis.call('HGET', KEYS[1], ARGV[1])
+if not id then return false end
+return {id, redis.call('HGET', KEYS[2], id)}`;
+
 /** The container this signed-in account owns, set up on its first sign-in.
  *  Throws ContainerError when it can't be reached. */
 export async function ownerContainer(userId: string, now: number = Date.now()): Promise<ContainerId> {
-  let id = await owned(userId);
-  if (!id) {
+  const answer = await redis().evalRo(OWNED_WITH_RECORD, [ownersKey(), registryKey()], [userId]);
+  const [entry, stored] = Array.isArray(answer) ? answer : [null, null];
+  let id = ownedId(entry);
+  let record: ContainerRecord | null;
+  if (id) record = containerRecord(id, stored);
+  else {
     const dep = await deploymentContainer(now);
     const fresh = asContainerId(crypto.randomUUID());
-    const record: ContainerRecord = { status: 'active', primary: false, created_at: new Date(now).toISOString() };
+    const made: ContainerRecord = { status: 'active', primary: false, created_at: new Date(now).toISOString() };
     const got = await setUp(
-      [userId, dep.kind === 'container' ? dep.container : '', fresh, JSON.stringify(record)],
+      [userId, dep.kind === 'container' ? dep.container : '', fresh, JSON.stringify(made)],
       // Made before the step, since its id goes into its own lock; unused
       // when the account claims the existing data instead.
       await birthKey(fresh, now)
@@ -130,8 +152,8 @@ export async function ownerContainer(userId: string, now: number = Date.now()): 
     if (got === '' || got === null) throw new ContainerError(dep.kind === 'container' ? 'No container to claim.' : dep.kind === 'none' ? 'No container exists yet.' : dep.reason);
     if (typeof got !== 'string' || !isContainerId(got)) throw new ContainerError('Setting up this account’s container returned something that is not a container.');
     id = got;
+    record = await getContainer(id);
   }
-  const record = await getContainer(id);
   if (!record) throw new ContainerError('This account’s container is not in the registry.');
   if (record.status !== 'active') throw new ContainerError(`This account’s container is ${record.status}.`);
   return id;

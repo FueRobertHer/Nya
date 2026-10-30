@@ -1,18 +1,20 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { clerk } from './clerk-mock';
-import { startRedis, type RealRedis } from './real-redis';
+import { startRedis, upstashOn, type RealRedis } from './real-redis';
 import { FakeRedis, storageMock, registerTestContainer, TEST_CONTAINER, testKey } from './fake-redis';
 
 // Clerk's auth(), reduced to who is signed in.
 
 const fake = new FakeRedis();
-mock.module('@/lib/storage', () => storageMock(fake));
+// The fake, or a real Redis answering as Upstash does (the last suite).
+let client: unknown = fake;
+mock.module('@/lib/storage', () => ({ ...storageMock(fake), redis: () => client, rawRedis: () => client }));
 
 const { dataCtx, deploymentCtx } = await import('@/lib/data-ctx');
 const ingest = await import('@/app/api/ingest/balance/route');
 const { ownerContainer, ownersKey } = await import('@/lib/owners');
 const { forgetEpochs } = await import('@/lib/sessions');
-const { registryKey } = await import('@/lib/containers');
+const { registryKey, isContainerId } = await import('@/lib/containers');
 
 const saved = { ...process.env };
 beforeEach(async () => {
@@ -108,6 +110,28 @@ describe('which container a Clerk account reaches', () => {
 
   test('signed out reaches nothing', async () => {
     await expect(dataCtx()).rejects.toThrow('Not signed in');
+  });
+});
+
+describe('one read on every request', () => {
+  test('a mapped account’s container and its record come in one step', async () => {
+    await fake.hset(ownersKey(), { user_owner: TEST_CONTAINER });
+    const before = fake.ops;
+    expect(String(await ownerContainer('user_owner'))).toBe(TEST_CONTAINER);
+    expect(fake.ops - before).toBe(1);
+  });
+
+  test('what it refuses, it refuses as before, in the same words', async () => {
+    const other = '00000000-0000-4000-8000-0000000000aa';
+    await fake.hset(ownersKey(), { deleting: `deleted:${TEST_CONTAINER}`, junk: 'not-a-container', unregistered: other });
+    await expect(ownerContainer('deleting')).rejects.toThrow('This account is being deleted.');
+    await expect(ownerContainer('junk')).rejects.toThrow('This account maps to something that is not a container.');
+    await expect(ownerContainer('unregistered')).rejects.toThrow('This account’s container is not in the registry.');
+    await registerTestContainer(fake, 'restoring');
+    await fake.hset(ownersKey(), { user_owner: TEST_CONTAINER });
+    await expect(ownerContainer('user_owner')).rejects.toThrow('This account’s container is restoring.');
+    await fake.hset(registryKey(), { [TEST_CONTAINER]: 'not json' });
+    await expect(ownerContainer('user_owner')).rejects.toThrow(`The registry entry for ${TEST_CONTAINER} is unreadable.`);
   });
 });
 
@@ -212,5 +236,67 @@ describe.skipIf(!hasRedis && !process.env.CI)('the owner claim, on a real Redis'
     expect(await run('user_f', 'c7', 'k7-ffffffff')).toBe('c1');
     expect(await r.send('HEXISTS', ['map', 'c1'])).toBe(0);
     expect(await r.send('HEXISTS', ['keys', 'k7-ffffffff'])).toBe(0);
+  });
+});
+
+describe.skipIf(!hasRedis && !process.env.CI)('the one-step read, on a real Redis', () => {
+  let real: RealRedis | null = null;
+  let upstash: ReturnType<typeof upstashOn>;
+  beforeEach(async () => {
+    real ??= await startRedis();
+    await real.client.send('FLUSHALL', []);
+    upstash = upstashOn(real.client);
+    client = upstash;
+  });
+  afterAll(() => {
+    real?.stop();
+    real = null;
+    client = fake;
+  });
+
+  test('a mapped account’s container, in one read-only command', async () => {
+    const send = (command: string, args: string[]) => real!.client.send(command, args);
+    await send('HSET', [ownersKey(), 'user_owner', TEST_CONTAINER]);
+    await send('HSET', [registryKey(), TEST_CONTAINER, JSON.stringify({ status: 'active', primary: true, created_at: '2026-01-01T00:00:00.000Z' })]);
+    upstash.sent.length = 0;
+    expect(String(await ownerContainer('user_owner'))).toBe(TEST_CONTAINER);
+    expect(upstash.sent).toEqual(['eval_ro']);
+  });
+
+  // An entry that decodes to nothing (stored as "null") is no entry, as the
+  // read before it took it: on to the claim step, which finds the entry there
+  // and so has nothing to give, rather than refusing it as not a container.
+  test('an entry that decodes to nothing is taken as none', async () => {
+    const send = (command: string, args: string[]) => real!.client.send(command, args);
+    await send('HSET', [ownersKey(), 'user', 'null']);
+    await send('HSET', [registryKey(), TEST_CONTAINER, JSON.stringify({ status: 'active', primary: true, created_at: '2026-01-01T00:00:00.000Z' })]);
+    forgetEpochs();
+    await expect(ownerContainer('user')).rejects.toThrow('No container to claim.');
+  });
+
+  // What the two reads it replaces would have handed the same checks: the
+  // owners entry, and the registry entry for it, each decoded as Upstash
+  // decodes it, whatever was stored.
+  test('decodes as the two reads did, whatever is stored', async () => {
+    const send = (command: string, args: string[]) => real!.client.send(command, args);
+    const { OWNED_WITH_RECORD } = await import('@/lib/owners');
+    const entries = [TEST_CONTAINER, 'null', '123', '1e400', 'true', '""', '{"a":1}', '[1,2]', `deleted:${TEST_CONTAINER}`, ' 7 '];
+    const records = ['{"status":"active","primary":true,"created_at":"x"}', 'null', '42', '9007199254740993', 'not json', null];
+    for (const entry of entries) {
+      for (const record of records) {
+        await send('FLUSHALL', []);
+        await send('HSET', [ownersKey(), 'user', entry]);
+        if (record !== null) await send('HSET', [registryKey(), entry, record]);
+        const first: unknown = await upstash.hget(ownersKey(), 'user');
+        const answer = (await upstash.evalRo(OWNED_WITH_RECORD, [ownersKey(), registryKey()], ['user'])) as unknown[] | null;
+        expect(answer?.[0] ?? null).toEqual(first as object | null);
+        // The record is read only for an entry that names a container: any
+        // other is refused before it, either way.
+        if (typeof first === 'string' && isContainerId(first)) expect(answer?.[1] ?? null).toEqual((await upstash.hget(registryKey(), first)) as object | null);
+      }
+    }
+    // No entry at all.
+    await send('FLUSHALL', []);
+    expect(await upstash.evalRo(OWNED_WITH_RECORD, [ownersKey(), registryKey()], ['user'])).toBeNull();
   });
 });
