@@ -610,6 +610,27 @@ describe('the daily tidy', () => {
     expect((await notes(w))!.unused).toHaveProperty([at('/?tab=plan')]);
   });
 
+  test('reads rows only in Next’s scripts, not page text that looks like them', async () => {
+    let w = worker();
+    const push = (text: string) => `<script>self.__next_f.push([1,${JSON.stringify(text)}])</script>`;
+    // A note someone typed, shown in the page, with no quote after it
+    // before the root row's script; a later row ending as the root row does.
+    const page = (build: string, src: string) =>
+      `<html><script src="${src}"></script><p>see \\n0:{ here</p><script>(self.__next_f=self.__next_f||[]).push([0])</script>` +
+      push(`0:{"P":null,"b":"${build}"}\n`) +
+      push(`5:{"t":"a","b":"not-a-build"}\n`) +
+      '</html>';
+    w.net.answers.set(at('/?tab=plan'), { body: page('build-1', js('a1')), type: 'text/html' });
+    w.net.answers.set(at('/'), { body: page('build-1', js('a1')), type: 'text/html' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '' });
+    await w.load('/', [js('a1')]);
+    await w.load('/?tab=plan', [js('a1')]);
+    w = later(w, 1);
+    w.net.answers.set(at('/'), { body: page('build-2', js('a1')), type: 'text/html' });
+    await w.load('/', [js('a1')]);
+    expect((await notes(w))!.unused).toHaveProperty([at('/?tab=plan')]);
+  });
+
   test('reads a segment prefetch’s build, so an old one doesn’t keep its files', async () => {
     let w = twoDeploys();
     const segment = (build: string) => `1:I[1,[],"x"]\n0:{"buildId":"${build}","rsc":"$@1"}\n`;

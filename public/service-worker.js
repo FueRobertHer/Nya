@@ -252,38 +252,35 @@ function buildOf(text) {
     const found = id(text.slice(Math.max(start, end - 200), end));
     if (found) return found;
   }
-  // A page's are in its scripts' strings, where a row ends at the escape \n
-  // and other escapes (a line break in some text, \\n) are part of it, and
-  // a row can go on in the next script's string.
+  // A page's are in its scripts' strings, read one after another (a row
+  // can go on in the next): there a row ends at the escape \n, and other
+  // escapes (a line break in some text, \\n) are part of it. Nothing outside
+  // those strings is read, and each part once.
   const PUSH = 'self.__next_f.push([1,"';
-  // Where the last row read ended: what looks like a row's start before
-  // there was inside that row (text holding "\n0:{"), so each part of the
-  // page is read once.
-  let read = 0;
-  for (let at = text.indexOf('0:{'); at !== -1; at = text.indexOf('0:{', at + 1)) {
-    if (at < read || (!text.endsWith('[1,"', at) && !text.endsWith('\\n', at))) continue;
-    let tail = '';
-    let i = at;
-    while (i < text.length) {
-      const c = text[i];
-      if (c === '\\' && text[i + 1] === 'n') break;
-      if (c === '\\') {
-        tail += text.slice(i, i + 2);
+  let head = '';
+  let tail = '';
+  const rowEnded = () => {
+    const found = head.startsWith('0:{') ? id(tail) : null;
+    head = tail = '';
+    return found;
+  };
+  for (let i = text.indexOf(PUSH); i !== -1; i = text.indexOf(PUSH, i)) {
+    for (i += PUSH.length; i < text.length && text[i] !== '"'; ) {
+      if (text[i] === '\\' && text[i + 1] === 'n') {
+        const found = rowEnded();
+        if (found) return found;
         i += 2;
-      } else if (c === '"') {
-        const next = text.indexOf(PUSH, i);
-        if (next === -1) break;
-        i = next + PUSH.length;
-      } else {
-        tail += c;
-        i++;
+        continue;
       }
+      const part = text.slice(i, text[i] === '\\' ? i + 2 : i + 1);
+      if (head.length < 3) head += part;
+      tail += part;
       if (tail.length > 400) tail = tail.slice(-200);
+      i += part.length;
     }
-    const found = id(tail);
-    if (found) return found;
-    read = i;
   }
+  const found = rowEnded();
+  if (found) return found;
   // A segment prefetch names it "buildId".
   return text.match(/\\?"buildId\\?":\\?"([\w-]+)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
 }
