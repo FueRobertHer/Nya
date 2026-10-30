@@ -31,7 +31,8 @@ export type FakeCommand =
   | 'rename'
   | 'ttl'
   | 'getrange'
-  | 'eval';
+  | 'eval'
+  | 'evalRo';
 
 /** Upstash's `set` options used by this codebase: `ex` (lib/cache.ts), and
  *  `nx` with `px` for the rotation lock (lib/crypto.ts). */
@@ -103,6 +104,9 @@ class Hashes extends Map<string, Map<string, string>> {
     return super.set(key, w);
   }
 }
+
+/** The scripts EVAL_RO may run: those that only read. */
+const READ_ONLY_SCRIPTS = new Set(['-- nya:owner-container']);
 
 export class FakeRedis {
   /**
@@ -530,6 +534,18 @@ export class FakeRedis {
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     this.gate('eval');
+    return this.runScript(script, keys, args);
+  }
+
+  /** EVAL_RO: as eval, for the scripts that only read; one that may write is
+   *  refused, as Redis refuses its writes. */
+  async evalRo(script: string, keys: string[], args: string[]): Promise<unknown> {
+    this.gate('evalRo');
+    if (!READ_ONLY_SCRIPTS.has(script.split('\n', 1)[0])) throw new Error('FakeRedis: evalRo of a script that may write');
+    return this.runScript(script, keys, args);
+  }
+
+  private async runScript(script: string, keys: string[], args: string[]): Promise<unknown> {
     const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
     const name = script.split('\n', 1)[0];
     if (name === '-- nya:probe') return sha1('nya');
@@ -733,6 +749,12 @@ export class FakeRedis {
       this.ttls.delete(keys[0]);
       this.hdelNow(keys[1], [args[1]]);
       return 1;
+    }
+    // The signed-in account's entry and its container's record (lib/owners.ts).
+    if (name === '-- nya:owner-container') {
+      const id = this.hashes.get(keys[0])?.get(args[0]);
+      if (id === undefined) return null;
+      return [this.out(id), this.out(this.hashes.get(keys[1])?.get(id))];
     }
     if (name === '-- nya:owner-claim-or-create') {
       const have = this.hashes.get(keys[0])?.get(args[0]);

@@ -168,5 +168,7 @@ export function upstashOn(client: RedisClient) {
     },
     eval: async (script: string, keys: string[], args: string[]) =>
       upstashParse(await call('eval', [script, String(keys.length), ...keys, ...args])),
+    evalRo: async (script: string, keys: string[], args: string[]) =>
+      upstashParse(await call('eval_ro', [script, String(keys.length), ...keys, ...args])),
   };
 }

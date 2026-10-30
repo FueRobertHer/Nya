@@ -113,7 +113,12 @@ export async function listContainers(): Promise<(ContainerRecord & { id: Contain
 }
 
 export async function getContainer(id: ContainerId): Promise<ContainerRecord | null> {
-  const value = await redis().hget(registryKey(), id);
+  return containerRecord(id, await redis().hget(registryKey(), id));
+}
+
+/** A registry entry as read (lib/owners.ts reads one with the owners entry):
+ *  null for none. Throws ContainerError when it is unreadable. */
+export function containerRecord(id: ContainerId, value: unknown): ContainerRecord | null {
   return value === null || value === undefined ? null : parseRecord(id, value);
 }
 
