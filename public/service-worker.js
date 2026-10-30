@@ -252,7 +252,7 @@ function buildOf(text, html) {
  *  or the page was cut short. */
 function flightOf(text) {
   const PUSH = 'self.__next_f.push([1,"';
-  if (/<script[^>]*>self\.__next_f\.push\(\[3,/.test(text)) return null;
+  if (/<script(?: nonce="[^"]*")?>self\.__next_f\.push\(\[3,/.test(text)) return null;
   let flight = '';
   for (let at = text.indexOf(PUSH); at !== -1; ) {
     const start = at + PUSH.length - 1;

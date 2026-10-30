@@ -733,6 +733,7 @@ describe('the deploy a kept page or payload belongs to', () => {
   });
 
   test('a page cut short has no deploy', () => {
+    expect(buildOf(`${push('0:{"P":null,"b":"build-1"}\n')}<script>self.__next_f.push([1,"1:x`, true)).toBeNull();
     expect(buildOf(`${push('1:x\n')}<script>self.__next_f.push([1,"0:{\\"t\\":{\\"b\\":\\"not-a-build\\"}`, true)).toBeNull();
     expect(buildOf('0:{"t":{"b":"not-a-build"}', false)).toBeNull();
   });
