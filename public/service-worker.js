@@ -241,53 +241,74 @@ async function tidyOnce(request, clientId) {
 /** The deploy a page or RSC payload belongs to: Next's build id, or the
  *  deployment id it carries instead when there is one. */
 function buildOf(text) {
-  // The build id is the last key of the payload's root row (row 0):
-  // ..."b":"<id>"} and the row's end. Read by scanning, not one regular
-  // expression over the row, which can be too long for one.
-  const id = (row) => row.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}$/)?.[1];
-  // A payload's rows end at a newline.
-  for (let at = text.startsWith('0:{') ? 0 : text.indexOf('\n0:{'); at !== -1; at = text.indexOf('\n0:{', at + 1)) {
-    const start = text[at] === '\n' ? at + 1 : at;
-    const end = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
-    const found = id(text.slice(Math.max(start, end - 200), end));
-    if (found) return found;
-  }
-  // A page's rows are in its scripts' strings, read one after another (a
-  // row can go on in the next): there a row ends at the escape \n, and
-  // other escapes (a line break in some text, \\n) are part of it. A long
-  // text row has no line end, so a script's string starting a row is read as
-  // a start too. Nothing outside those strings is read, and each part once.
+  return rootBuild(flightOf(text)) ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
+}
+
+/** An RSC payload as it is; a page's, put back together from the strings
+ *  Next writes it into, one script each (self.__next_f.push([1,"..."])).
+ *  Null when a part was written as bytes ([3,...]), which can't be read in
+ *  order here. */
+function flightOf(text) {
   const PUSH = 'self.__next_f.push([1,"';
-  let head = '';
-  let pushHead = null;
-  let tail = '';
-  const rowEnded = () => {
-    const found = head.startsWith('0:{') || pushHead?.startsWith('0:{') ? id(tail) : null;
-    head = tail = '';
-    pushHead = null;
-    return found;
-  };
-  for (let i = text.indexOf(PUSH); i !== -1; i = text.indexOf(PUSH, i)) {
-    pushHead = '';
-    for (i += PUSH.length; i < text.length && text[i] !== '"'; ) {
-      if (text[i] === '\\' && text[i + 1] === 'n') {
-        const found = rowEnded();
-        if (found) return found;
-        i += 2;
-        continue;
-      }
-      const part = text.slice(i, text[i] === '\\' ? i + 2 : i + 1);
-      if (head.length < 3) head += part;
-      if (pushHead !== null && pushHead.length < 3) pushHead += part;
-      tail += part;
-      if (tail.length > 400) tail = tail.slice(-200);
-      i += part.length;
+  if (!text.includes(PUSH)) return text;
+  if (text.includes('self.__next_f.push([3,')) return null;
+  let flight = '';
+  for (let at = text.indexOf(PUSH); at !== -1; ) {
+    const start = at + PUSH.length - 1;
+    // The string's closing quote: one not escaped by a backslash.
+    let end = text.indexOf('"', start + 1);
+    for (;;) {
+      if (end === -1) return flight;
+      let slashes = 0;
+      while (text[end - 1 - slashes] === '\\') slashes++;
+      if (slashes % 2 === 0) break;
+      end = text.indexOf('"', end + 1);
     }
+    try {
+      flight += JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+    at = text.indexOf(PUSH, end);
   }
-  const found = rowEnded();
-  if (found) return found;
-  // A segment prefetch names it "buildId".
-  return text.match(/\\?"buildId\\?":\\?"([\w-]+)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
+  return flight;
+}
+
+/** The build id in a payload's root row (row 0): its last key, "b" (or
+ *  "buildId", first or last, in a segment prefetch). Rows are read in order
+ *  as React reads them: most end at a line end, and a text row (T) is as
+ *  many bytes as its header says, so text in it is never read as a row. */
+function rootBuild(flight) {
+  if (!flight) return null;
+  for (let i = 0; i < flight.length; ) {
+    const colon = flight.indexOf(':', i);
+    if (colon === -1) return null;
+    const tag = flight[colon + 1];
+    if (tag === 'T') {
+      const comma = flight.indexOf(',', colon);
+      let bytes = parseInt(flight.slice(colon + 2, comma), 16);
+      if (comma === -1 || !(bytes >= 0)) return null;
+      // Counted as UTF-8, as React counts it.
+      for (i = comma + 1; bytes > 0 && i < flight.length; ) {
+        const c = flight.charCodeAt(i);
+        const pair = c >= 0xd800 && c < 0xdc00 && (flight.charCodeAt(i + 1) & 0xfc00) === 0xdc00;
+        bytes -= c < 0x80 ? 1 : c < 0x800 ? 2 : pair ? 4 : 3;
+        i += pair ? 2 : 1;
+      }
+      continue;
+    }
+    // Other rows sized in bytes carry binary data, which a text can't count.
+    if (tag && 'AOobUSsLlGgMmV'.includes(tag)) return null;
+    const end = flight.indexOf('\n', colon);
+    if (flight.startsWith('0:{', i)) {
+      const row = flight.slice(i, end === -1 ? flight.length : end);
+      const id = row.slice(-1000).match(/"(?:b|buildId)":"([\w-]+)"\}$/)?.[1] ?? row.match(/^0:\{"buildId":"([\w-]+)"/)?.[1];
+      if (id) return id;
+    }
+    if (end === -1) return null;
+    i = end + 1;
+  }
+  return null;
 }
 
 /** The scripts and stylesheets a page loads itself (not a noModule

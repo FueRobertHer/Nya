@@ -620,9 +620,12 @@ describe('the daily tidy', () => {
       push(`0:{"P":null,"b":"${build}"}\n`) +
       push(`5:{"t":"a","b":"not-a-build"}\n`) +
       '</html>';
-    // A long text before the root row, written as a text row with no line end.
+    // A long text before the root row, in the same script: a text row, sized
+    // in bytes and with no line end, holding a line that looks like a root
+    // row of another deploy.
+    const text = `${'é'.repeat(800)}\n0:{"P":null,"b":"not-a-build"}\n${'t'.repeat(1200)}`;
     const long = (build: string, src: string) =>
-      `<html><script src="${src}"></script>${push('6:T800,')}${push('t'.repeat(2048))}${push(`0:{"P":null,"b":"${build}"}\n`)}</html>`;
+      `<html><script src="${src}"></script>${push(`6:T${Buffer.byteLength(text).toString(16)},${text}0:{"P":null,"b":"${build}"}\n`)}</html>`;
     w.net.answers.set(at('/?tab=home'), { body: long('build-1', js('a1')), type: 'text/html' });
     w.net.answers.set(at('/?tab=plan'), { body: page('build-1', js('a1')), type: 'text/html' });
     w.net.answers.set(at('/'), { body: page('build-1', js('a1')), type: 'text/html' });
@@ -634,6 +637,19 @@ describe('the daily tidy', () => {
     w.net.answers.set(at('/'), { body: long('build-2', js('a1')), type: 'text/html' });
     await w.load('/', [js('a1')]);
     expect(Object.keys((await notes(w))!.unused).sort()).toEqual([at('/?tab=home'), at('/?tab=plan')]);
+  });
+
+  test('leaves a page alone when part of its payload was written as bytes', async () => {
+    let w = worker();
+    const page = (build: string, src: string, bytes: boolean) =>
+      `<html><script src="${src}"></script>${bytes ? '<script>self.__next_f.push([3,"AAEC"])</script>' : ''}<script>self.__next_f.push([1,${JSON.stringify(`0:{"P":null,"b":"${build}"}\n`)}])</script></html>`;
+    w.net.answers.set(at('/?tab=plan'), { body: page('build-1', js('a1'), true), type: 'text/html' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '' });
+    await w.load('/?tab=plan', [js('a1')]);
+    w = later(w, 1);
+    w.net.answers.set(at('/'), { body: page('build-2', js('a1'), false), type: 'text/html' });
+    await w.load('/', [js('a1')]);
+    expect((await notes(w))!.unused).toEqual({});
   });
 
   test('reads a segment prefetch’s build, so an old one doesn’t keep its files', async () => {
