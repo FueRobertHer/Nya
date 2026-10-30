@@ -23,8 +23,8 @@
 //     balances that are old or short (components/plan-figure-notes.ts). How
 //     a measured figure was worked out is behind Why? in its sheet. A figure
 //     that may be short says so; none is presented as complete when it may
-//     not be. Then other income and one-off expenses, and an open scenario's
-//     life events.
+//     not be. Then the What if… card on your plan, or an open scenario's
+//     life events in its place, and other income and one-off expenses.
 //   - Stress test: one notice when the spending or invested assets the
 //     simulation uses may be low, then "Will it last?": the plan run through
 //     history or Monte Carlo (lib/fire/simulate.ts), with the success rate
@@ -113,8 +113,9 @@ import PlanBar, { planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { ScenarioTag } from './ScenarioTag';
-import { LifeEventsCard } from './PlanEvents';
-import { WhatIfCard } from './PlanWhatIf';
+import { LifeEventsCard, type Checked } from './PlanEvents';
+import type { LifeEvent } from '@/lib/fire/events';
+import { DraftPreview, WhatIfCard } from './PlanWhatIf';
 import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
 import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
@@ -866,6 +867,22 @@ export default function PlanTab({
               : null;
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, scenario: entry?.name ?? null, paused };
   const scenarioName = entry?.name ?? null;
+  // The open scenario's life events: saved as its own, and each form says how
+  // its event moves the scenario's FI age as it is now. On a refused one
+  // there is nothing to move from, so its fix says what the event makes of
+  // it: still not worked out, or the FI age it comes to.
+  const lifeEvents = entry
+    ? {
+        scenarioName: entry.name,
+        version: shownFor ?? '',
+        events: entry.events,
+        editable: editable && !other,
+        onSave: (events: LifeEvent[]) => persist({ ...changesOf(entry), events }),
+        preview: (checked: Checked, kind: LifeEvent['kind']) => (
+          <DraftPreview checked={checked} kind={kind} base={basePlan} measured={measured} changes={changesOf(entry)} against={shown} where="scenario" money={money} />
+        ),
+      }
+    : null;
 
   // What each figure the plan shown rests on says, worked out once for the
   // rows under the FI card, their sheets' Why? and the Stress test's notice
@@ -1207,17 +1224,7 @@ export default function PlanTab({
       {entry && (
         <div ref={cardRef}>
           {scenarioCard}
-          {refused && (
-            <LifeEventsCard
-              scenarioName={entry.name}
-              version={shownFor ?? ''}
-              events={entry.events}
-              notes={[]}
-              money={money}
-              editable={editable && !other}
-              onSave={(events) => persist({ ...changesOf(entry), events })}
-            />
-          )}
+          {refused && lifeEvents && <LifeEventsCard {...lifeEvents} notes={[]} money={money} />}
         </div>
       )}
 
@@ -1269,6 +1276,10 @@ export default function PlanTab({
               currency={currencyInFigures ? currencyCard : null}
             />
 
+            {/* With a scenario open, its life events take the What if…
+                card's place, with the same choices, added to the scenario. */}
+            {lifeEvents && shown && <LifeEventsCard {...lifeEvents} notes={shown.events?.notes ?? []} money={money} />}
+
             {/* Only over your saved plan, never the defaults; the card is
                 drawn with your plan shown, and its sheet stays mounted. */}
             {planLoaded && (
@@ -1293,18 +1304,6 @@ export default function PlanTab({
             )}
 
             <EventsCard plan={plan} engine={engine} money={money} editable={editable} open={open} scenario={scenarioMarks} />
-
-            {entry && shown && (
-              <LifeEventsCard
-                scenarioName={entry.name}
-                version={shownFor ?? ''}
-                events={entry.events}
-                notes={shown.events?.notes ?? []}
-                money={money}
-                editable={editable && !other}
-                onSave={(events) => persist({ ...changesOf(entry), events })}
-              />
-            )}
           </>
         )}
         {/* Progress against the plan saved as your plan (rollout 8e): the

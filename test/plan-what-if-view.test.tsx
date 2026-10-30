@@ -29,7 +29,7 @@ const { createRoot } = require('react-dom/client') as typeof import('react-dom/c
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { NO_CHANGES, MAX_PLAN_SCENARIOS } = await import('@/lib/fire/scenarios');
-const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText, fiWhen } = await import('@/components/plan-what-if');
+const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText, fiWhen, scenarioRowText, withDraft } = await import('@/components/plan-what-if');
 const { setAmountsHidden } = await import('@/lib/format');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type Entry = import('@/components/plan-scenarios').ScenarioEntry;
@@ -444,8 +444,157 @@ describe('the What if… card', () => {
   });
 });
 
+describe('life choices stacked in a scenario', () => {
+  /** Saves a scenario as the server would, recording what was sent. */
+  const saving = (sent: any[]): Record<string, Answer> => ({
+    'PUT /api/plan-scenarios': (call) => {
+      sent.push(call.body);
+      return [200, { scenario: { ...entry(), ...call.body.scenario, id: call.body.id, rev: `r${sent.length + 1}` } }];
+    },
+  });
+  const panel = (tab: Awaited<ReturnType<typeof render>>) => tab.container.findAll((e) => e.getAttribute('role') === 'tabpanel')[0];
+  const titled = (words: string) => (e: FakeElement) => classOf(e).includes('card') && e.findAll((t) => classOf(t).includes('inst-name') && t.textContent.trim() === words).length > 0;
+  const lifeCard = (tab: Awaited<ReturnType<typeof render>>) => panel(tab).findAll(titled('Life events'))[0] ?? null;
+  const chipIn = (within: FakeElement, label: string) => within.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('chip') && e.textContent.trim() === label)[0] ?? null;
+  const spending = (n: number): LifeEvent => ({ id: `g${n}`, kind: 'spending', label: `Gym ${n}`, fromAge: 60, yearly: 10, years: 1 });
+
+  test('in an open scenario its life events take the What if… card’s place, with the same choices, and one more adds to it, previewed against the scenario', async () => {
+    const sent: any[] = [];
+    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })), ...saving(sent) });
+    await press(tab.row('Buy a home at 45'));
+    const cards = panel(tab).findAll((e) => e.tagName === 'SECTION' || classOf(e).includes('card'));
+    const at = (pred: (e: FakeElement) => boolean) => cards.findIndex(pred);
+    const figures = at((e) => classOf(e).includes('plan-inputs'));
+    const life = at(titled('Life events'));
+    expect(life).toBeGreaterThan(figures);
+    expect(at(titled('Income and one-off expenses'))).toBeGreaterThan(life);
+    const card = lifeCard(tab)!;
+    expect(WHAT_IF_TEMPLATES.map((t) => chipIn(card, t.label) !== null)).toEqual(WHAT_IF_TEMPLATES.map(() => true));
+    await press(chipIn(card, 'A career break'));
+    const sheet = tab.dialog() as FakeElement;
+    expect(sheet.textContent).toContain('A career break (Buy a home at 45)');
+    expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A career break');
+    expect(preview(sheet)).toBe('Fill in the figures to see how it moves this scenario’s FI age.');
+    await fill(sheet, 'From age', '45');
+    await fill(sheet, 'For how many years', '2');
+    await fill(sheet, 'Saved less a year', '30000');
+    // Against the scenario as it is (FI around 56 with its home), not your plan.
+    expect(previewLines(sheet)).toEqual(['In this scenario, FI moves from around 56 to around 57 (1 year later).']);
+    expect(button(sheet, 'Save')).toBeNull();
+    await press(button(sheet, 'Add to this scenario'));
+    expect(sent.length).toBe(1);
+    expect(sent[0].based_on).toBe('r1');
+    expect(sent[0].scenario.events.map((e: LifeEvent) => e.kind)).toEqual(['house', 'sabbatical']);
+    // Both are listed, and the scenario's answer counts both.
+    expect(tab.dialog()).toBeNull();
+    expect(lifeCard(tab)!.textContent).toContain('Buying a home');
+    expect(lifeCard(tab)!.textContent).toContain('A career break');
+    expect(panel(tab).textContent).toContain('Around age 57');
+    // Nothing was saved to your plan.
+    expect(tab.calls.filter((c) => c.url === '/api/fire-plan' && c.method !== 'GET')).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('changing one of its events previews the change alone, against the scenario as it is', async () => {
+    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
+    await press(tab.row('Buy a home at 45'));
+    await press(lifeCard(tab)!.findAll((e) => e.getAttribute('aria-label') === 'Edit Buying a home')[0]);
+    const sheet = tab.dialog() as FakeElement;
+    expect(preview(sheet)).toBe('In this scenario, FI stays around 56.');
+    await fill(sheet, 'Paid from your investments', '100000');
+    expect(preview(sheet)).toBe('In this scenario, FI moves from around 56 to around 54 (2 years sooner).');
+    expect(button(sheet, 'Save')).not.toBeNull();
+    await tab.unmount();
+  });
+
+  test('the tenth turns the choices off, says why, and focus goes to the card’s title', async () => {
+    const sent: any[] = [];
+    const nine = Array.from({ length: 9 }, (_, i) => spending(i));
+    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Many', events: nine })), ...saving(sent) });
+    await press(tab.row('Many'));
+    const windfall = chipIn(lifeCard(tab)!, 'A windfall')!;
+    expect(windfall.disabled).toBe(false);
+    // As a browser: pressed, it takes focus, and once off it can't (mini-dom
+    // would focus it anyway), so the sheet's giving focus back to it leaves
+    // focus in the sheet as it slides out.
+    const focusIt = windfall.focus.bind(windfall);
+    windfall.focus = () => {
+      if (!windfall.disabled) focusIt();
+    };
+    await act(async () => windfall.focus());
+    await press(windfall);
+    const sheet = tab.dialog() as FakeElement;
+    await fill(sheet, 'At age', '60');
+    await fill(sheet, 'Amount, after tax', '1000');
+    await press(button(sheet, 'Add to this scenario'));
+    await settle(400);
+    expect(sent[0].scenario.events.length).toBe(10);
+    const card = lifeCard(tab)!;
+    expect(WHAT_IF_TEMPLATES.every((t) => chipIn(card, t.label)?.disabled)).toBe(true);
+    expect(card.textContent).toContain('A scenario holds at most 10 life events.');
+    expect(dom.document.activeElement?.textContent).toBe('Life events');
+    await tab.unmount();
+  });
+
+  test('an event removed: its Edit is gone, so focus goes to the card’s title', async () => {
+    const sent: any[] = [];
+    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Two', events: [spending(1), spending(2)] })), ...saving(sent) });
+    await press(tab.row('Two'));
+    const edit = lifeCard(tab)!.findAll((e) => e.getAttribute('aria-label') === 'Edit Gym 1')[0];
+    await act(async () => edit.focus());
+    await press(edit);
+    await press(button(tab.dialog() as FakeElement, 'Remove from this scenario'));
+    await settle(400);
+    expect(sent[0].scenario.events.map((e: LifeEvent) => e.id)).toEqual(['g2']);
+    expect(dom.document.activeElement?.textContent).toBe('Life events');
+    await tab.unmount();
+  });
+
+  test('what the scenario’s other events leave out isn’t said under a new one’s preview', async () => {
+    const child: LifeEvent = { id: 'c', kind: 'child', label: 'A child', fromAge: 30, yearly: 10_000, years: 5 };
+    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Kids', events: [child] })) });
+    await press(tab.row('Kids'));
+    // The child is before today, and its row says so.
+    expect(lifeCard(tab)!.textContent).toContain('Some of it is before today');
+    await press(chipIn(lifeCard(tab)!, 'A career break'));
+    const sheet = tab.dialog() as FakeElement;
+    await fill(sheet, 'From age', '45');
+    await fill(sheet, 'For how many years', '2');
+    await fill(sheet, 'Saved less a year', '30000');
+    expect(previewLines(sheet)).toEqual(['In this scenario, FI moves from around 52 to around 53 (1 year later).']);
+    await tab.unmount();
+  });
+
+  test('a scenario with more than one life event says how many in its row', async () => {
+    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Two', events: [spending(1), spending(2)] })) });
+    expect(tab.rows()[0][1]).toMatch(/ \(2 life events\)$/);
+    await tab.unmount();
+  });
+});
+
 describe('its words', () => {
   const plan = { kind: 'age', age: 52 } as const;
+  test('in a scenario: the preview against it as it is, a stack’s row, and a draft among its events', () => {
+    const money = (n: number) => `$${n}`;
+    const now = { kind: 'age', age: 56 } as const;
+    const say = (when: Parameters<typeof previewText>[0], kind: LifeEvent['kind'] | null = null) => previewText(when, now, money, kind, true, 'scenario');
+    expect(say({ kind: 'age', age: 57 })).toBe('In this scenario, FI moves from around 56 to around 57 (1 year later).');
+    expect(say({ kind: 'age', age: 56 })).toBe('In this scenario, FI stays around 56.');
+    expect(say({ kind: 'age', age: 56 }, 'part-time')).toBe('In this scenario, FI stays around 56: part-time work counts from the stop age on, in Will it last?, not in when you reach FI.');
+    expect(previewText({ kind: 'age', age: 50 }, { kind: 'not-run' }, money, null, true, 'scenario')).toBe('In this scenario, FI comes around 50.');
+    expect(say({ kind: 'now' })).toBe('In this scenario, you’re at FI.');
+    expect(say({ kind: 'never' })).toBe('In this scenario, FI isn’t reached at this savings rate.');
+    expect(say({ kind: 'not-run' })).toBe('In this scenario, the figures can’t be worked out: a lasting change takes spending in retirement below zero.');
+    expect(say(null)).toBe('Fill in the figures to see how it moves this scenario’s FI age.');
+    expect(scenarioRowText(0, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
+    expect(scenarioRowText(1, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
+    expect(scenarioRowText(3, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later (3 life events)');
+    const a = home(1);
+    const b = { ...home(2), id: 'b' };
+    expect(withDraft([a], b)).toEqual([a, b]);
+    // The same id: in its place.
+    expect(withDraft([a, b], home(5))).toEqual([home(5), b]);
+  });
   test('a scenario’s line', () => {
     expect(lifeChoiceText({ kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
     expect(lifeChoiceText({ kind: 'age', age: 49 }, plan)).toBe('FI around 49, 3 years sooner');

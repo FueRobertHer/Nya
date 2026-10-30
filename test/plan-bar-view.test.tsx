@@ -659,7 +659,7 @@ describe('the scenario’s card, on every segment', () => {
     const tab = await mount();
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Income and one-off expenses', 'Life events', 'Progress']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Life events', 'Income and one-off expenses', 'Progress']);
     expect(tab.panelOf('Stress test').textContent).toContain('as the Life events card on Your path says');
     await tab.unmount();
   });
