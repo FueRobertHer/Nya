@@ -242,15 +242,44 @@ async function tidyOnce(request, clientId) {
  *  deployment id it carries instead when there is one. */
 function buildOf(text) {
   // The build id is the last key of the payload's root row (row 0):
-  // ..."b":"<id>"} and the row's end. A payload's rows end at a newline; in
-  // a page they are in a script's string, where a row ends at the escape \n
-  // and other escapes (a line break in some text, \\n) are part of the row.
-  // A segment prefetch names it "buildId".
-  const rows = [...text.matchAll(/(?:^|\n)0:(\{[^\n]*)/g), ...text.matchAll(/(?:\[1,"|\\n)0:(\{(?:[^\\"]|\\[^n])*)/g)];
-  for (const [, row] of rows) {
-    const id = row.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}$/)?.[1];
-    if (id) return id;
+  // ..."b":"<id>"} and the row's end. Read by scanning, not one regular
+  // expression over the row, which can be too long for one.
+  const id = (row) => row.match(/\\?"b\\?":\\?"([\w-]+)\\?"\}$/)?.[1];
+  // A payload's rows end at a newline.
+  for (let at = text.startsWith('0:{') ? 0 : text.indexOf('\n0:{'); at !== -1; at = text.indexOf('\n0:{', at + 1)) {
+    const start = text[at] === '\n' ? at + 1 : at;
+    const end = text.indexOf('\n', start) === -1 ? text.length : text.indexOf('\n', start);
+    const found = id(text.slice(Math.max(start, end - 200), end));
+    if (found) return found;
   }
+  // A page's are in its scripts' strings, where a row ends at the escape \n
+  // and other escapes (a line break in some text, \\n) are part of it, and
+  // a row can go on in the next script's string.
+  const PUSH = 'self.__next_f.push([1,"';
+  for (let at = text.indexOf('0:{'); at !== -1; at = text.indexOf('0:{', at + 1)) {
+    if (!text.endsWith('[1,"', at) && !text.endsWith('\\n', at)) continue;
+    let tail = '';
+    for (let i = at; i < text.length; ) {
+      const c = text[i];
+      if (c === '\\' && text[i + 1] === 'n') {
+        const found = id(tail);
+        if (found) return found;
+        break;
+      } else if (c === '\\') {
+        tail += text.slice(i, i + 2);
+        i += 2;
+      } else if (c === '"') {
+        const next = text.indexOf(PUSH, i);
+        if (next === -1) break;
+        i = next + PUSH.length;
+      } else {
+        tail += c;
+        i++;
+      }
+      if (tail.length > 400) tail = tail.slice(-200);
+    }
+  }
+  // A segment prefetch names it "buildId".
   return text.match(/\\?"buildId\\?":\\?"([\w-]+)/)?.[1] ?? text.match(/data-dpl-id="([^"]+)"/)?.[1] ?? null;
 }
 

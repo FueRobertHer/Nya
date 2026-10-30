@@ -570,6 +570,27 @@ describe('the daily tidy', () => {
     expect(Object.keys((await notes(w))!.unused).sort()).toEqual([at('/?_rsc=1'), at('/?tab=plan')]);
   });
 
+  test('reads the build from a root row split across two scripts, or of any length', async () => {
+    let w = worker();
+    const push = (text: string) => `<script>self.__next_f.push([1,${JSON.stringify(text)}])</script>`;
+    const row = (build: string, text: string) => `0:${JSON.stringify({ t: text, b: build })}\n`;
+    const split = (build: string, src: string) => {
+      const r = row(build, 'y'.repeat(50));
+      return `<html><script src="${src}"></script>${push(r.slice(0, r.length - 6))}${push(r.slice(-6))}</html>`;
+    };
+    // Longer than one regular expression can take in some browsers.
+    const long = (build: string, src: string) => `<html><script src="${src}"></script>${push(row(build, 'z\n"'.repeat(600_000)))}</html>`;
+    w.net.answers.set(at('/?tab=plan'), { body: split('build-1', js('a1')), type: 'text/html' });
+    w.net.answers.set(at('/?tab=home'), { body: long('build-1', js('a1')), type: 'text/html' });
+    deploy(w, 'build-1', {}, { [js('a1')]: '', [js('a2')]: '' });
+    await w.load('/?tab=plan', [js('a1')]);
+    await w.load('/?tab=home', [js('a1')]);
+    w = later(w, 1);
+    w.net.answers.set(at('/'), { body: split('build-2', js('a2')), type: 'text/html' });
+    await w.load('/', [js('a2')]);
+    expect(Object.keys((await notes(w))!.unused).sort()).toEqual([at('/?tab=home'), at('/?tab=plan')]);
+  });
+
   test('reads a segment prefetch’s build, so an old one doesn’t keep its files', async () => {
     let w = twoDeploys();
     const segment = (build: string) => `1:I[1,[],"x"]\n0:{"buildId":"${build}","rsc":"$@1"}\n`;
