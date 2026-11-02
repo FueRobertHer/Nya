@@ -307,7 +307,7 @@ describe('a plan saved before its currency was recorded', () => {
       'GET /api/fire-plan': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
     });
-    const tab = await render({ segment: 'stress' });
+    const tab = await render({ segment: 'drawdown' });
     await press(tab.buttons('They’re in USD')[0]);
     expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
     expect(dom.document.activeElement).toBe(tab.heading());

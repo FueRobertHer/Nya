@@ -192,7 +192,7 @@ export function AboutForm(props: SaveProps) {
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
         Your age places Social Security, pensions and one-off expenses in the plan. Your stop age is when you would like to
-        stop working: the stress test starts there (unless it starts with what you have today), and Coast FI counts the years
+        stop working: Drawdown starts there (unless it starts with what you have today), and Coast FI counts the years
         to it.
       </p>
       <div className="sheet-form">
@@ -493,8 +493,8 @@ export type AssumptionsAt = 'stress' | 'mix';
  * one sheet, each with what it changes under it. The FI number's (the
  * withdrawal rate, growth after inflation, tax, part-time income), then the
  * stress test's (method, rule, where it starts, length, mix, rebalancing,
- * fees). One Save saves the whole plan. Opened at the stress test's part
- * from Stress test's row, and at its mix, filled in from your allocation,
+ * fees), under Drawdown. One Save saves the whole plan. Opened at the stress
+ * test's part from Drawdown's row, and at its mix, filled in from your allocation,
  * from Portfolio's "Use my allocation in the plan": nothing changes until
  * Save.
  */
@@ -650,7 +650,7 @@ export function AssumptionsForm(
       </div>
 
       <h3 className="plan-heading" ref={stressRef}>
-        Stress test
+        Drawdown
       </h3>
       <div className="sheet-form">
         <label className="field">

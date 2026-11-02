@@ -112,7 +112,7 @@ export default function PlanCompare({
           US market history, monthly returns from {monthName(span.first)} to {monthName(span.last)}, in today’s dollars.
         </li>
         <li>The same measured spending, savings and invested assets (Your path says where they come from), unless a plan types its own.</li>
-        <li>{HYPOTHETICAL_LABEL} About these numbers, on Stress test, says more.</li>
+        <li>{HYPOTHETICAL_LABEL} About these numbers, on Drawdown, says more.</li>
       </ul>
     </div>
   );

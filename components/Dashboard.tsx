@@ -316,8 +316,9 @@ export default function Dashboard({
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>('transactions');
   // Budgets' segment, kept the same way.
   const [budgetsSegment, setBudgetsSegment] = useState<BudgetsSegment>('month');
-  // And the Plan's.
-  const [planSegment, setPlanSegment] = useState<PlanSegment>('path');
+  // And the Plan's, null until it has decided where it opens (Drawdown once
+  // the stop age has come, components/PlanBar.tsx openingSegment).
+  const [planSegment, setPlanSegment] = useState<PlanSegment | null>(null);
   // The month Activity and Budgets show, shared between them and kept the
   // same way (components/view-month-state.ts); Home's links reset it.
   const viewMonth = useViewMonth();
