@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { installDom, click, FakeEvent, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, FakeEvent, type FakeElement } from './mini-dom';
 import { CLERK_APPEARANCE, colorScheme, statusBarStyle, themeChoice, themeColors } from '@/lib/theme';
 
 // The theme (rollout phase 7): System, Dark or Light for this device, kept in
@@ -65,7 +65,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { ThemeCard } = await import('@/components/ThemeCard');
 
 // What the browser holds: the cookies written, and the metas the layout sent.

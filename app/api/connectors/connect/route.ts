@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { connect, othersOf, reconnect } from '@/lib/connectors/manage';
+import { connectorOffered } from '@/lib/connectors/switch';
+import { requestWho } from '@/lib/flag-read';
 import { connectionsStore, connectorAccountsStore } from '@/lib/connectors/store';
 import { connectionView, offersIn } from '@/lib/connectors/view';
 import { requestsLeft } from '@/lib/connectors/sync';
@@ -33,7 +35,7 @@ export async function POST(req: Request) {
 
     const connection_id = body.connection_id ?? null;
     const result = connection_id ? await reconnect(ctx, connection_id, body.token, Date.now(), body.connector) : null;
-    const made = connection_id ? null : await connect(ctx, body.connector, body.token);
+    const made = connection_id ? null : await connect(ctx, body.connector, body.token, Date.now(), await connectorOffered(body.connector, await requestWho(ctx)));
     const id = connection_id ?? made!.connection_id;
     const outcome = result ?? made!.result;
     const [conn, accounts, requests] = await Promise.all([connectionsStore.get(ctx, id), connectorAccountsStore.getAll(ctx), requestsLeft(ctx)]);

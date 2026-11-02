@@ -196,10 +196,17 @@ describe('the list of keys', () => {
     // lib/move.ts builds keys only from its own lists, which test/move.test.ts
     // checks against every key the code builds; they are classified below.
     // lib/repo.ts builds a declared store's key from its name, in a
-    // container (kc) or, for a public store, environment-wide (kEnv), which
+    // container (kc) or, for a public or environment store, environment-wide
+    // (kEnv, and an environment store's record from its own name too), which
     // classify() reads from the declaration itself (test/repo.test.ts).
     expect(
-      opaque.filter((o) => !o.startsWith('lib/move.ts: kc(ctx, ') && !o.startsWith('lib/repo.ts: kc(ctx, name)') && !o.startsWith('lib/repo.ts: kEnv(name)'))
+      opaque.filter(
+        (o) =>
+          !o.startsWith('lib/move.ts: kc(ctx, ') &&
+          !o.startsWith('lib/repo.ts: kc(ctx, name)') &&
+          !o.startsWith('lib/repo.ts: kEnv(name)') &&
+          !o.startsWith('lib/repo.ts: kEnv(logName)')
+      )
     ).toEqual([]);
     const { MOVED_KEYS, MOVED_PREFIXES } = await import('@/lib/move');
     for (const key of [...MOVED_KEYS, ...MOVED_PREFIXES.map((p) => `${p}x`)]) names.add(key);

@@ -75,8 +75,11 @@ export function splitScoped(key: string): { container: ContainerId | null; key: 
  *  storage seam, inside their container, never under this prefix
  *  (test/rate-limit-keys.test.ts checks every rate-limit key the code builds).
  *  "fx:" is public data the seam keeps once for everyone (lib/repo.ts
- *  definePublicMapStore): the ECB's exchange rates (lib/fx/ecb-store.ts). */
-export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:', 'fx:'] as const;
+ *  definePublicMapStore): the ECB's exchange rates (lib/fx/ecb-store.ts).
+ *  "flags:" is the feature switches and their record of changes, settings
+ *  of this copy of Nya (lib/repo.ts defineEnvironmentStore,
+ *  lib/flag-store.ts). */
+export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:', 'fx:', 'flags:'] as const;
 
 export function isEnvWide(key: string): boolean {
   return ENV_WIDE_PREFIXES.some((p) => key === p || (p.endsWith(':') && key.startsWith(p)));

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
 
 // One account's sheet (rollout phase 3), which replaced the row that expanded
 // in place and the buttons inside it: what it shows for each kind of account,
@@ -20,7 +20,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { default: AccountSheet } = await import('@/components/AccountSheet');
 type Props = import('@/components/AccountSheet').AccountSheetProps;

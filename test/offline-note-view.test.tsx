@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, FakeEvent, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, FakeEvent, type FakeElement } from './mini-dom';
 
 // Offline (design-system.md, Status and honesty): Nya keeps the last numbers
 // and puts a caution on Home's total, "Offline. Showing balances from 9:41
@@ -12,7 +12,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { default: NetWorthCard } = await import('@/components/NetWorthCard');
 const { offlineCaveats, offlineWords, useOfflineCaveats } = await import('@/components/online');
@@ -47,21 +47,16 @@ function Home({ asOf }: { asOf: string | null }) {
   );
 }
 
-const mounted = new Set<() => void>();
 afterEach(() => {
-  for (const unmount of mounted) unmount();
   delete nav.onLine;
 });
 
 function mount(node: React.ReactNode) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
+  // Unmounted after the test, by trackRoots (test/mini-dom.ts).
   const root = createRoot(host as unknown as HTMLElement);
   act(() => root.render(node));
-  const unmount = () => {
-    if (mounted.delete(unmount)) act(() => root.unmount());
-  };
-  mounted.add(unmount);
   const notices = () => host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('notice'));
   return { host, notices };
 }

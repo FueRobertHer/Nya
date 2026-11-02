@@ -1,9 +1,8 @@
-// What a page or a view says only where this copy lets API tokens write
-// (API_WRITES_ENABLED): the words of writing, for the tests that hold every
-// page and the API tokens card to saying none of them while it is off
-// (test/public-pages.test.tsx, test/developers.test.tsx,
-// test/api-tokens-view.test.tsx). Wording added for writing that is drawn
-// whatever the switch says would carry one of these, and fail them.
+// The words of writing through an API token (the `api-writes` feature
+// switch). The API tokens card says none of them while the switch is off for
+// the account (test/api-tokens-view.test.tsx), and the public pages, which
+// can't read a switch and describe writing as offered where it is turned on,
+// say several (test/public-pages.test.tsx, test/developers.test.tsx).
 
 export const WRITING_WORDS: readonly RegExp[] = [
   /make changes/i,

@@ -111,7 +111,8 @@ export default function PlanTabLoader(props: PlanTabProps) {
     );
   }
   // The tab as it will be while its code is on its way: the bar on the
-  // segment it opens on, unavailable until then, over the segment's card.
+  // segment it was last on, unavailable until then, over the segment's card;
+  // none on a first visit, before the Plan has decided where it opens.
   if (!mod) return <PlanSkeleton segment={props.segment} />;
   const Plan = mod.default;
   return (

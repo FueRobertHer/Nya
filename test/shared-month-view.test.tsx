@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 
 // Activity and Budgets share the month (look and feel step 2b2,
@@ -20,7 +20,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
 const { default: BudgetsTab } = await import('@/components/BudgetsTab');
 const { useViewMonth } = await import('@/components/view-month-state');

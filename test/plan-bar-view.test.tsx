@@ -1,10 +1,10 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
 
 // The Plan tab's pinned bar and segments (rollout phase 6b,
 // docs/design/information-architecture.md#plan), used as a person would
 // (react-dom/client over test/mini-dom.ts): "Your plan" or the scenario open
-// as its heading, over Your path, Stress test and Portfolio, each its own
+// as its heading, over Your path, Drawdown and Portfolio, each its own
 // panel and all three mounted; the bar there before the plan has loaded, and
 // the same bar, heading and Scenarios sheet once it has; the Scenarios sheet
 // from the bar and from the open scenario's card, and where focus goes as a
@@ -74,9 +74,9 @@ afterAll(() => {
 // React's client reads what the document supports once, when it loads: it is
 // loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
-const { default: PlanBar, PLAN_TITLE } = await import('@/components/PlanBar');
+const { default: PlanBar, PLAN_TITLE, openingSegment } = await import('@/components/PlanBar');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { NO_CHANGES } = await import('@/lib/fire/scenarios');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
@@ -192,9 +192,9 @@ const key = (el: FakeElement, k: string) =>
 
 const has = (e: FakeElement, cls: string) => (e.getAttribute('class') ?? '').split(' ').includes(cls);
 
-/** Stress test's rows, by their titles (rollout 6d). */
-const stressRows = (tab: { panelOf: (label: string) => FakeElement }) =>
-  tab.panelOf('Stress test').findAll((e) => has(e, 'list-row-title')).map((e) => e.textContent);
+/** Drawdown's rows, by their titles (rollout 6d). */
+const drawdownRows = (tab: { panelOf: (label: string) => FakeElement }) =>
+  tab.panelOf('Drawdown').findAll((e) => has(e, 'list-row-title')).map((e) => e.textContent);
 
 async function mount(props: Partial<PlanTabProps> = {}) {
   const container = dom.document.createElement('div');
@@ -298,7 +298,7 @@ describe('the bar, before and after the plan loads', () => {
     expect(tab.title().tagName).toBe('H2');
     // Focusable by script, so Home's FI line and an opened scenario land on it.
     expect(tab.title().getAttribute('tabindex')).toBe('-1');
-    expect(tab.tabs().map((e) => e.textContent)).toEqual(['Your path', 'Stress test', 'Portfolio']);
+    expect(tab.tabs().map((e) => e.textContent)).toEqual(['Your path', 'Drawdown', 'Portfolio']);
     expect(tab.panels().length).toBe(3);
     for (const p of tab.panels()) {
       expect(p.findAll((e) => e.getAttribute('role') === 'status' && e.textContent === 'Loading your plan').length).toBe(1);
@@ -348,7 +348,7 @@ describe('the segments', () => {
     serve();
     const tab = await mount();
     expect(tab.selected()).toEqual(['Your path']);
-    for (const label of ['Your path', 'Stress test', 'Portfolio']) {
+    for (const label of ['Your path', 'Drawdown', 'Portfolio']) {
       expect(tab.tab(label).getAttribute('aria-controls')).toBe(tab.panelOf(label).getAttribute('id'));
       expect(tab.panelOf(label).getAttribute('aria-labelledby')).toBe(tab.tab(label).getAttribute('id'));
     }
@@ -356,8 +356,8 @@ describe('the segments', () => {
     const list = tab.bar().findAll((e) => e.getAttribute('role') === 'tablist')[0];
     expect(list.getAttribute('aria-label')).toBe('Plan');
     key(list, 'ArrowRight');
-    expect(tab.selected()).toEqual(['Stress test']);
-    expect(dom.document.activeElement).toBe(tab.tab('Stress test'));
+    expect(tab.selected()).toEqual(['Drawdown']);
+    expect(dom.document.activeElement).toBe(tab.tab('Drawdown'));
     key(list, 'End');
     expect(tab.selected()).toEqual(['Portfolio']);
     key(list, 'ArrowRight');
@@ -375,14 +375,14 @@ describe('the segments', () => {
     const tab = await mount();
     expect(tab.shown()).toEqual(['Your path']);
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'What if…', 'Income and one-off expenses', 'Progress']);
-    const stress = tab.titles(tab.panelOf('Stress test'));
-    expect(stress).toEqual(['Will it last?', 'By withdrawal rate and length']);
+    const drawdown = tab.titles(tab.panelOf('Drawdown'));
+    expect(drawdown).toEqual(['Will it last?', 'By withdrawal rate and length']);
     // Then its settings and About these numbers, as rows (rollout 6d).
-    expect(stressRows(tab)).toEqual(['Assumptions', 'About these numbers']);
+    expect(drawdownRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))[0]).toBe('Allocation');
-    for (const label of ['Stress test', 'Portfolio']) expect(tab.panelOf(label).hasAttribute('hidden')).toBe(true);
-    await act(async () => click(tab.tab('Stress test')));
-    expect(tab.shown()).toEqual(['Stress test']);
+    for (const label of ['Drawdown', 'Portfolio']) expect(tab.panelOf(label).hasAttribute('hidden')).toBe(true);
+    await act(async () => click(tab.tab('Drawdown')));
+    expect(tab.shown()).toEqual(['Drawdown']);
     expect(tab.panelOf('Your path').hasAttribute('hidden')).toBe(true);
     // The bar comes before the panels.
     expect(tab.order(tab.bar())).toBeLessThan(Math.min(...tab.panels().map(tab.order)));
@@ -392,16 +392,152 @@ describe('the segments', () => {
   test('kept by the dashboard: shown as it says, and a choice handed to it', async () => {
     serve();
     const chosen: PlanSegment[] = [];
-    const tab = await mount({ segment: 'stress', onSegment: (s) => chosen.push(s) });
-    expect(tab.selected()).toEqual(['Stress test']);
-    expect(tab.shown()).toEqual(['Stress test']);
+    const tab = await mount({ segment: 'drawdown', onSegment: (s) => chosen.push(s) });
+    expect(tab.selected()).toEqual(['Drawdown']);
+    expect(tab.shown()).toEqual(['Drawdown']);
     await act(async () => click(tab.tab('Portfolio')));
     expect(chosen).toEqual(['portfolio']);
     // Still what the dashboard says, until it says otherwise.
-    expect(tab.selected()).toEqual(['Stress test']);
+    expect(tab.selected()).toEqual(['Drawdown']);
     await tab.rerender({ segment: 'portfolio', onSegment: (s) => chosen.push(s) });
     expect(tab.shown()).toEqual(['Portfolio']);
     await tab.unmount();
+  });
+});
+
+// Where the Plan opens (D2 of the tax plan, T1): on Your path, as every tab
+// does, but on Drawdown once the stop age is today or earlier, when "will it
+// last?" is the live question. Picked once the plan has loaded, with none
+// selected until then, so nothing jumps under the person; then kept, by the
+// dashboard as a segment chosen is.
+describe('where the Plan opens', () => {
+  const STOPPED = { ...PLAN, age: 50, targetAge: 50 };
+
+  test('Drawdown once the stop age is today or earlier, else Your path', () => {
+    expect(openingSegment({ age: 50, targetAge: 50 })).toBe('drawdown');
+    expect(openingSegment({ age: 51, targetAge: 50 })).toBe('drawdown');
+    expect(openingSegment({ age: 40, targetAge: 55 })).toBe('path');
+    expect(openingSegment({ age: null, targetAge: 50 })).toBe('path');
+    expect(openingSegment({ age: 50, targetAge: null })).toBe('path');
+  });
+
+  test('a plan whose stop age has come opens on Drawdown, and hands it to the dashboard to keep', async () => {
+    serve({ plan: { plan: STOPPED, currency: 'USD' } });
+    const chosen: PlanSegment[] = [];
+    const tab = await mount({ onSegment: (s) => chosen.push(s) });
+    expect(tab.selected()).toEqual(['Drawdown']);
+    expect(tab.shown()).toEqual(['Drawdown']);
+    expect(chosen).toEqual(['drawdown']);
+    await tab.unmount();
+    // Kept by the tab itself, the same.
+    serve({ plan: { plan: STOPPED, currency: 'USD' } });
+    const own = await mount();
+    expect(own.shown()).toEqual(['Drawdown']);
+    expect(own.tabs().map((e) => e.getAttribute('tabindex'))).toEqual(['-1', '0', '-1']);
+    await own.unmount();
+  });
+
+  test('a stop still to come, or no ages, opens on Your path', async () => {
+    for (const plan of [PLAN, DEFAULT_PLAN]) {
+      serve({ plan: { plan, currency: 'USD' } });
+      const chosen: PlanSegment[] = [];
+      const tab = await mount({ onSegment: (s) => chosen.push(s) });
+      expect(tab.shown()).toEqual(['Your path']);
+      expect(chosen).toEqual(['path']);
+      await tab.unmount();
+    }
+  });
+
+  test('before the plan has loaded: no segment selected, the first the tab stop, every panel hidden, and one skeleton in none of them', async () => {
+    serve({ plan: new Promise(() => {}) });
+    const chosen: PlanSegment[] = [];
+    const tab = await mount({ onSegment: (s) => chosen.push(s) });
+    expect(tab.selected()).toEqual([]);
+    expect(tab.tabs().map((e) => e.getAttribute('tabindex'))).toEqual(['0', '-1', '-1']);
+    expect(tab.shown()).toEqual([]);
+    // mini-dom draws the hidden panels' skeletons too: the one shown is the
+    // one in none of them, with no segment's words.
+    const shown = tab.container.findAll((e) => e.getAttribute('aria-busy') === 'true' && !tab.panels().some((p) => p.contains(e)));
+    expect(shown.length).toBe(1);
+    expect(shown[0].findAll((e) => has(e, 'plan-skeleton-label')).length).toBe(1);
+    expect(shown[0].textContent).toBe('Loading your plan');
+    // Nothing is handed on until the Plan has decided.
+    expect(chosen).toEqual([]);
+    // The keys move from the tab stop, the first.
+    const list = tab.bar().findAll((e) => e.getAttribute('role') === 'tablist')[0];
+    key(list, 'ArrowRight');
+    expect(chosen).toEqual(['drawdown']);
+    await tab.unmount();
+  });
+
+  test('a segment chosen while the plan loads is kept as it arrives, whatever the stop age', async () => {
+    let release!: () => void;
+    serve({ plan: new Promise((r) => (release = () => r({ plan: STOPPED, currency: 'USD' }))) });
+    const tab = await mount();
+    await act(async () => click(tab.tab('Your path')));
+    expect(tab.selected()).toEqual(['Your path']);
+    await act(async () => release());
+    await settle();
+    expect(tab.text()).toContain('FI number');
+    expect(tab.selected()).toEqual(['Your path']);
+    expect(tab.shown()).toEqual(['Your path']);
+    await tab.unmount();
+  });
+
+  test('decided once: a stop age saved as today on Your path doesn’t move the screen', async () => {
+    serve({ answers: { 'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan, currency: 'USD' }] } });
+    // Handed to a dashboard that doesn't say it back, so the tab's own
+    // decision is all that holds Your path.
+    const chosen: PlanSegment[] = [];
+    const tab = await mount({ onSegment: (s) => chosen.push(s) });
+    expect(tab.shown()).toEqual(['Your path']);
+    await press(tab.row('Ages'));
+    const form = tab.sheet('Your ages')!;
+    await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '40'));
+    await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
+    await settle(100);
+    expect(tab.text()).toContain('stop at 40');
+    expect(tab.shown()).toEqual(['Your path']);
+    expect(chosen).toEqual(['path']);
+    await tab.unmount();
+  });
+
+  test('the dashboard’s segment wins over the rule', async () => {
+    serve({ plan: { plan: STOPPED, currency: 'USD' } });
+    const chosen: PlanSegment[] = [];
+    const tab = await mount({ segment: 'portfolio', onSegment: (s) => chosen.push(s) });
+    expect(tab.shown()).toEqual(['Portfolio']);
+    expect(chosen).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('a load that fails shows Your path over the defaults, decides nothing, and Try again opens where the plan says', async () => {
+    let gets = 0;
+    serve({ plan: { plan: STOPPED, currency: 'USD' }, answers: { 'GET /api/fire-plan': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
+    const chosen: PlanSegment[] = [];
+    const tab = await mount({ onSegment: (s) => chosen.push(s) });
+    expect(tab.shown()).toEqual(['Your path']);
+    expect(tab.selected()).toEqual(['Your path']);
+    expect(chosen).toEqual([]);
+    await press(tab.container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Try again')[0]);
+    await settle(100);
+    expect(tab.shown()).toEqual(['Drawdown']);
+    expect(chosen).toEqual(['drawdown']);
+    await tab.unmount();
+  });
+
+  test('nothing on screen says "stress test" any more: the three segments, and the sheets that point there', async () => {
+    /** What a person reads or hears of an element: its text and every label. */
+    const said = (el: FakeElement) => [el.textContent, ...el.findAll((e) => e.hasAttribute('aria-label')).map((e) => e.getAttribute('aria-label'))].join(' ');
+    for (const row of ['Assumptions', 'Ages']) {
+      serve({ scenarios: [RETIRE] });
+      const tab = await mount();
+      expect(said(tab.container)).not.toMatch(/stress/i);
+      await press(tab.row(row));
+      expect(tab.dialog()).not.toBeNull();
+      expect(said(tab.dialog()!)).not.toMatch(/stress/i);
+      await tab.unmount();
+    }
   });
 });
 
@@ -451,14 +587,14 @@ describe('Scenarios, from the bar and from the card', () => {
   test('Open closes the sheet with the scenario shown, on the segment chosen: the heading names it and has focus, and its card is above the panels', async () => {
     serve({ scenarios: [RETIRE, SABBATICAL] });
     const tab = await mount();
-    await act(async () => click(tab.tab('Stress test')));
+    await act(async () => click(tab.tab('Drawdown')));
     const title = tab.title();
     await openFromBar(tab, 'Retire at 50');
     expect(tab.dialog()).toBeNull();
     expect(tab.title()).toBe(title);
     expect(title.textContent).toBe('Scenario: Retire at 50');
     expect(dom.document.activeElement).toBe(title);
-    expect(tab.selected()).toEqual(['Stress test']);
+    expect(tab.selected()).toEqual(['Drawdown']);
     // The bar has its arrow back, and no Scenarios of its own: the card has it.
     expect(tab.arrow()).not.toBeNull();
     expect(tab.scenarios()).toBeNull();
@@ -625,15 +761,15 @@ describe('the scenario’s card, on every segment', () => {
     expect(card.textContent).toContain('1 life event.');
     expect(card.textContent).not.toContain('1 life event, below.');
     expect(card.textContent).not.toContain('1 life event, on Your path.');
-    for (const label of ['Your path', 'Stress test', 'Portfolio']) {
+    for (const label of ['Your path', 'Drawdown', 'Portfolio']) {
       await act(async () => click(tab.tab(label)));
       expect(tab.card()).toBe(card);
       expect(tab.order(card)).toBeLessThan(tab.order(tab.panelOf(label)));
     }
     // Only the Progress card, which is about the plan saved as your plan, never the scenario.
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Progress']);
-    expect(tab.titles(tab.panelOf('Stress test'))).toEqual([]);
-    expect(stressRows(tab)).toEqual(['Assumptions', 'About these numbers']);
+    expect(tab.titles(tab.panelOf('Drawdown'))).toEqual([]);
+    expect(drawdownRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))).toEqual([]);
     // No life events card to point to.
     expect(tab.text()).not.toContain('Life events');
@@ -660,7 +796,7 @@ describe('the scenario’s card, on every segment', () => {
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Life events', 'Income and one-off expenses', 'Progress']);
-    expect(tab.panelOf('Stress test').textContent).toContain('as the Life events card on Your path says');
+    expect(tab.panelOf('Drawdown').textContent).toContain('as the Life events card on Your path says');
     await tab.unmount();
   });
 });
@@ -670,7 +806,7 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     serve();
     const tab = await mount();
     layout({ panel: 160 });
-    await act(async () => click(tab.tab('Stress test')));
+    await act(async () => click(tab.tab('Drawdown')));
     expect(scrolls).toEqual([]);
     layout({ panel: -900 });
     await act(async () => click(tab.tab('Portfolio')));
@@ -688,7 +824,7 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     layout({ card: -500, panel: -900 });
     await openFromBar(tab, 'Retire at 50');
     expect(scrolls).toEqual([-628]);
-    await act(async () => click(tab.tab('Stress test')));
+    await act(async () => click(tab.tab('Drawdown')));
     expect(scrolls).toEqual([-628, -1028]);
     await press(tab.cardScenarios());
     await press(tab.inSheet('Open Retire at 30'));
@@ -719,9 +855,9 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0]);
     // Worked out still, its notice on the card.
     expect(tab.card()!.textContent).toContain(stale);
-    expect(tab.titles(tab.panelOf('Stress test'))[0]).toBe('Will it last?');
+    expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Will it last?');
     layout({ card: -500, panel: -900 });
-    await act(async () => click(tab.tab('Stress test')));
+    await act(async () => click(tab.tab('Drawdown')));
     expect(scrolls).toEqual([-628]);
     await tab.unmount();
   });

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { installDom, click, type, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement, FakeEvent } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 
 // The Budgets tab's pinned bar and segments (rollout phase 6a1,
@@ -28,7 +28,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: BudgetsTab } = await import('@/components/BudgetsTab');
 const { BUDGETS_MONTH_TITLE } = await import('@/components/BudgetsBar');
 const { localMonth } = await import('@/lib/local-date');

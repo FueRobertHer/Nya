@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
-import { installDom, click, outline, pressThrough, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, outline, pressThrough, type, FakeElement } from './mini-dom';
 
 // The Plan tab and the currency its typed figures are in, rendered
 // (react-dom/client over test/mini-dom.ts):
@@ -31,7 +31,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
@@ -53,16 +53,8 @@ const AS_OF = '2026-10-23T12:00:00.000Z';
 beforeAll(() => setSystemTime(new Date(AS_OF)));
 afterAll(() => setSystemTime());
 
-// A tab a test leaves mounted (it failed before its own unmount) is unmounted
-// after it: once afterAll takes the DOM away, a late update to it throws in
-// whichever file runs next.
-const mounted = new Set<{ unmount: () => void }>();
-afterEach(async () => {
-  setAmountsHidden(false);
-  const left = [...mounted];
-  mounted.clear();
-  for (const root of left) await act(async () => root.unmount());
-});
+afterEach(() => setAmountsHidden(false));
+
 const USD = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: 'usd', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 300_000, currency: 'USD', ...over });
 const EUR = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: 'eur', name: 'Depot', type: 'investment', subtype: 'brokerage', balance: 250_000, currency: 'EUR', ...over });
 const broker = (accounts: AssetAccount[]): AssetInstitution[] => [{ name: 'Broker', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts }];
@@ -122,7 +114,6 @@ async function render(props: Partial<PlanTabProps> = {}) {
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  mounted.add(root);
   const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: broker([USD()]), balancesAsOf: AS_OF, currency: 'USD', holdings: [], ...props };
   await act(async () => root.render(<PlanTab {...all} />));
   await settle();
@@ -132,10 +123,7 @@ async function render(props: Partial<PlanTabProps> = {}) {
       await act(async () => root.render(<PlanTab {...all} {...more} />));
       await settle();
     },
-    unmount: () => {
-      mounted.delete(root);
-      return act(async () => root.unmount());
-    },
+    unmount: () => act(async () => root.unmount()),
     text: () => container.textContent,
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
     /** One of Your figures' rows (on Your path), by its title: it opens its sheet. */
@@ -327,7 +315,7 @@ describe('a plan saved before its currency was recorded', () => {
       'GET /api/fire-plan': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
     });
-    const tab = await render({ segment: 'stress' });
+    const tab = await render({ segment: 'drawdown' });
     await press(tab.buttons('They’re in USD')[0]);
     expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
     expect(dom.document.activeElement).toBe(tab.heading());

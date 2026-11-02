@@ -1,8 +1,11 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import './clerk-mock';
 import { FakeRedis, storageMock, registerTestContainer } from './fake-redis';
 import { writingIn } from './writing-words';
+
+const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 // The developer page (app/developers) and its reference (lib/api-examples.ts),
 // held to the code: every endpoint, parameter and tool the code has is on the
@@ -113,7 +116,7 @@ describe('the page', () => {
     }
   });
 
-  test('a long document: prose under headings, a contents list of its parts, and an index of every endpoint, writing on or off', () => {
+  test('a long document: prose under headings, a contents list of its parts, and an index of every endpoint, the same whatever API_WRITES_ENABLED says', () => {
     for (const on of ['0', '1']) {
       process.env.API_WRITES_ENABLED = on;
       const html = renderToStaticMarkup(<DevelopersPage />);
@@ -123,7 +126,7 @@ describe('the page', () => {
       const contents = [...nav.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]);
       const sections = [...html.matchAll(/<section class="info-section info-prose" id="([^"]+)"/g)].map((m) => m[1]);
       expect(contents).toEqual(sections);
-      expect(contents.includes('writing')).toBe(on === '1');
+      expect(contents.includes('writing')).toBe(true);
       // Every id once, and every link on the page lands on one.
       const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
       expect(new Set(ids).size).toBe(ids.length);
@@ -131,10 +134,10 @@ describe('the page', () => {
       // The index names every endpoint, linking to its part.
       const endpoints = html.slice(html.indexOf('id="endpoints"'));
       for (const op of OPERATION_SPECS) expect(endpoints).toContain(`<a href="#${op.name}"><code>GET /api/v1/${op.name}</code></a>`);
-      for (const spec of RESOURCE_SPECS) expect([spec.name, endpoints.includes(`<a href="#${spec.name}">`)]).toEqual([spec.name, on === '1']);
-      // Where tokens can write, each kind of endpoint under a heading of its own.
-      expect(endpoints.includes('<h3>Endpoints that read your data</h3><ul class="info-index" role="list">')).toBe(on === '1');
-      expect(endpoints.match(/<ul class="info-index" role="list">/g)).toHaveLength(on === '1' ? 2 : 1);
+      for (const spec of RESOURCE_SPECS) expect([spec.name, endpoints.includes(`<a href="#${spec.name}">`)]).toEqual([spec.name, true]);
+      // Each kind of endpoint under a heading of its own.
+      expect(endpoints.includes('<h3>Endpoints that read your data</h3><ul class="info-index" role="list">')).toBe(true);
+      expect(endpoints.match(/<ul class="info-index" role="list">/g)).toHaveLength(2);
       // A list without bullets is still read as a list.
       expect(html).toContain('<ol role="list">');
       // In Nya's voice: never "we", "our" or "us" ("US" is the country).
@@ -142,23 +145,21 @@ describe('the page', () => {
     }
   });
 
-  test('while this copy lets no token write, the page says nothing of writing', () => {
+  test('writing is a feature switch the page can’t read, so it documents writing as offered where turned on, the same whatever API_WRITES_ENABLED says', () => {
     delete process.env.API_WRITES_ENABLED;
-    const p = page();
-    expect(p).toContain('JSON over HTTPS, read only. Nothing you call can change your data.');
-    expect(p).toContain('Writing anything: adding transactions, changing categories, budgets or balances.');
-    expect(p).toContain('Every tool is read only, and reads what the API above reads.');
-    expect(writingIn(p)).toEqual([]);
-    for (const word of ['If-Match', 'Idempotency-Key', 'make changes', 'writes', 'version_mismatch', 'Write-RateLimit', 'balances or write', 'undo']) {
-      expect([word, p.includes(word)]).toEqual([word, false]);
-    }
-    for (const spec of RESOURCE_SPECS) expect(p).not.toContain(`${spec.method} /api/v1/${spec.path}`);
-    for (const tool of WRITE_TOOL_SPECS) expect([tool.name, new RegExp(`\\b${tool.name}\\b`).test(p)]).toEqual([tool.name, false]);
-    expect(generateMetadata().description).toBe('Nya’s read-only API and MCP server: read your own data from your own programs.');
+    const off = page();
+    process.env.API_WRITES_ENABLED = '1';
+    expect(page()).toBe(off);
+    expect(off).toContain('Writing is offered where whoever runs this copy of Nya has turned it on. Elsewhere every token reads only: a change sent to a path that reads is answered 405, and a path only writing brought is answered 404');
+    expect(off).toContain('Elsewhere every token reads only, and nothing you call can change your data.');
+    expect(off).toContain('Where tokens may make changes, with one made to make changes the assistant also gets the write tools below');
+    expect(off).not.toContain('read only. Nothing you call can change your data.');
+    expect(off).not.toContain('Writing anything: adding transactions');
+    expect(source('app/developers/page.tsx')).not.toMatch(/flag-read|flag-store|api-writes-enabled/);
+    expect(generateMetadata().description).toBe('Nya’s API and MCP server: read your own data, and where it is turned on change some of it with a token made for it, from your own programs.');
   });
 
-  test('while it does, it documents writing from the code: each endpoint, field, tool and limit', () => {
-    process.env.API_WRITES_ENABLED = '1';
+  test('it documents writing from the code: each endpoint, field, tool and limit', () => {
     const p = page();
     for (const spec of RESOURCE_SPECS) {
       expect(p).toContain(`${spec.method} /api/v1/${spec.path}`);
@@ -179,9 +180,7 @@ describe('the page', () => {
     expect(p).toContain('it records no point in your history by itself');
     expect(writingIn(p).length).toBeGreaterThan(10);
     expect(p).not.toContain('Writing anything: adding transactions');
-    expect(p).not.toContain('Nothing you call can change your data.');
     expect(p).toContain('in 10 minutes, or, for a change, more than 30 writes a minute');
-    expect(generateMetadata().description).toContain('with a token made for it change some of it');
   });
 });
 

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 
 // The filters on Activity's Transactions (rollout phase 5b,
@@ -15,7 +15,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: MonthBreakdown, emptyListWords } = await import('@/components/MonthBreakdown');
 const { localMonth } = await import('@/lib/local-date');
 type Txn = import('@/components/MonthBreakdown').Txn;

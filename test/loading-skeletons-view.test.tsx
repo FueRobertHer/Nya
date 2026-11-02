@@ -142,20 +142,37 @@ describe('Your path while the plan loads', () => {
     expect(html.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero plan-hero" aria-hidden="true"><div><h3 class="total-label">Financial independence</h3><div class="total-value plan-answer">')).toBe(true);
     expect(html.indexOf('plan-skeleton-chart')).toBeLessThan(html.indexOf('<section class="card stack"'));
     expect(renderToStaticMarkup(<PlanSkeleton segment="path" />)).toContain(html);
-    for (const segment of ['stress', 'portfolio'] as const) {
+    for (const segment of ['drawdown', 'portfolio'] as const) {
       const other = renderToStaticMarkup(<PlanPanelSkeleton segment={segment} />);
       expect(other.startsWith('<div aria-busy="true"><section class="card stack" aria-hidden="true">')).toBe(true);
       expect(other).not.toContain('plan-hero');
     }
   });
+
+  test('before the Plan has decided where it opens: no segment selected, the first the tab stop, and the answer’s shape with no label, which would be one segment’s words', () => {
+    const none = renderToStaticMarkup(<PlanPanelSkeleton segment={null} />);
+    expect(none.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero plan-hero" aria-hidden="true"><div><h3 class="total-label"><span class="skeleton plan-skeleton-label"></span></h3><div class="total-value plan-answer">')).toBe(true);
+    expect(none).not.toContain('Financial independence');
+    // The same shape as Your path's, so nothing moves as the common case arrives.
+    const path = renderToStaticMarkup(<PlanPanelSkeleton segment="path" />);
+    expect(none.replace('<span class="skeleton plan-skeleton-label"></span>', 'Financial independence')).toBe(path);
+    const bar = renderToStaticMarkup(<PlanSkeleton segment={null} />);
+    expect(bar.match(/aria-selected="true"/g)).toBeNull();
+    expect([...bar.matchAll(/role="tab" id="plan-tab-(\w+)" aria-selected="false" aria-controls="[^"]+" tabindex="(-?\d)"/g)].map((m) => [m[1], m[2]])).toEqual([
+      ['path', '0'],
+      ['drawdown', '-1'],
+      ['portfolio', '-1'],
+    ]);
+    expect(bar).toContain(none);
+  });
 });
 
 describe('every tab while it loads', () => {
   const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8');
-  // Classes the tabs' own lists carry with no rule of their own (txn-list,
-  // budget-rows): the skeleton is drawn on them too.
+  // Classes the tabs' own lists and heroes carry with no rule of their own
+  // (txn-list, budget-rows, plan-hero): the skeleton is drawn on them too.
   const realClasses = new Set(
-    ['MonthBreakdown.tsx', 'BudgetsCard.tsx'].flatMap((f) =>
+    ['MonthBreakdown.tsx', 'BudgetsCard.tsx', 'PlanTab.tsx'].flatMap((f) =>
       [...readFileSync(join(import.meta.dir, '..', 'components', f), 'utf8').matchAll(/className="([^"]+)"/g)].flatMap((m) => m[1].split(' '))
     )
   );
@@ -188,7 +205,8 @@ describe('every tab while it loads', () => {
     ['Budgets, Month', renderToStaticMarkup(<BudgetsSkeleton segment="month" />), 'Loading budgets'],
     ['Budgets, Upcoming', renderToStaticMarkup(<BudgetsSkeleton segment="upcoming" />), 'Loading what is coming'],
     ['Budgets, Goals', renderToStaticMarkup(<BudgetsSkeleton segment="goals" />), 'Loading goals'],
-    ['Plan', renderToStaticMarkup(<PlanSkeleton segment="stress" />), 'Loading your plan'],
+    ['Plan', renderToStaticMarkup(<PlanSkeleton segment="drawdown" />), 'Loading your plan'],
+    ['Plan, before it has decided where it opens', renderToStaticMarkup(<PlanSkeleton segment={null} />), 'Loading your plan'],
     ['Shared with me', renderToStaticMarkup(<SharedWithMeSkeleton />), 'Loading what is shared with you'],
     ['Progress', renderToStaticMarkup(<LinesSkeleton status="Loading your saved plan" lines={2} />), 'Loading your saved plan'],
   ];
@@ -293,7 +311,9 @@ describe('every tab while it loads', () => {
     expect(renderToStaticMarkup(<TabSkeleton tab="accounts" />)).toBe(renderToStaticMarkup(<AccountsSkeleton />));
     expect(renderToStaticMarkup(<TabSkeleton tab="activity" segments={{ activity: 'spending' }} />)).toBe(renderToStaticMarkup(<ActivitySkeleton segment="spending" />));
     expect(renderToStaticMarkup(<TabSkeleton tab="budgets" segments={{ budgets: 'goals' }} />)).toBe(renderToStaticMarkup(<BudgetsSkeleton segment="goals" />));
-    expect(renderToStaticMarkup(<TabSkeleton tab="plan" />)).toBe(renderToStaticMarkup(<PlanSkeleton segment="path" />));
+    expect(renderToStaticMarkup(<TabSkeleton tab="plan" segments={{ plan: 'drawdown' }} />)).toBe(renderToStaticMarkup(<PlanSkeleton segment="drawdown" />));
+    // The Plan before it has decided where it opens: none.
+    expect(renderToStaticMarkup(<TabSkeleton tab="plan" />)).toBe(renderToStaticMarkup(<PlanSkeleton segment={null} />));
   });
 
   test('the app loading, as a page, draws the tab the address asks for', () => {

@@ -3,7 +3,8 @@ import { Products, CountryCode, type LinkTokenCreateRequest } from 'plaid';
 import { plaidClient } from '@/lib/plaid';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { webhookUrlFor } from '@/lib/webhook-url';
-import { brokerageLinkEnabled, isLinkKind, TRANSACTIONS_DAYS_REQUESTED, type LinkKind } from '@/lib/item-products';
+import { isLinkKind, TRANSACTIONS_DAYS_REQUESTED, type LinkKind } from '@/lib/item-products';
+import { flagOnFresh, requestWho } from '@/lib/flag-read';
 import { loggable } from '@/lib/log-safe';
 
 // The link token for a new connection, of one of two kinds:
@@ -14,7 +15,8 @@ import { loggable } from '@/lib/log-safe';
 //   investments  Investments required; consent to Transactions collected, and
 //                nothing more; Liabilities optional. Brokerages and retirement
 //                plans, including those the bank kind can't show. Refused
-//                unless PLAID_BROKERAGE_LINK=1 (brokerageLinkEnabled).
+//                unless the `brokerage-link` feature switch is on for the
+//                person asking (lib/flags.ts), read fresh.
 //
 // WHY TWO. Plaid's Link lets someone pick only an institution that supports
 // every product in `products`, shows only the account types compatible with
@@ -95,7 +97,7 @@ export async function POST(req: Request) {
     }
     // Hidden in the app while off, and refused here too, so no Item without
     // Transactions exists until the operator turns it on (lib/item-products.ts).
-    if (kind === 'investments' && !brokerageLinkEnabled()) {
+    if (kind === 'investments' && !(await flagOnFresh('brokerage-link', await requestWho(ctx)))) {
       return NextResponse.json({ error: "Connecting a brokerage or retirement account isn't turned on here" }, { status: 400 });
     }
     const response = await plaidClient.linkTokenCreate({

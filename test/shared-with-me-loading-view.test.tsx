@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, FakeElement } from './mini-dom';
+import { installDom, trackRoots, FakeElement } from './mini-dom';
 
 // Shared with me is read only once it is on screen (components/Sharing.tsx
 // SharedWithMe: each read counts as a showing in the sharer's record). Until
@@ -12,7 +12,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { SharedWithMe, rememberShares } = await import('@/components/Sharing');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

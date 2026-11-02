@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
 import { cashPosition } from '@/lib/forecast';
 import { RUNWAY_WINDOWS, buildRunwayInputs } from '@/lib/report/runway';
 import type { RunwayReport } from '@/lib/report/runway-read';
@@ -17,7 +17,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: ReportsPage } = await import('@/components/ReportsPage');
 
 const position = cashPosition([
