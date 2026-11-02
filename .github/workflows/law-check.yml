@@ -1,0 +1,77 @@
+name: Tax law check
+
+# Compares the tax law tables (lib/fire/tax/law/) with the official sources
+# that publish machine-readable figures, and watches for the notices the
+# tables don't hold yet (scripts/law-check.ts). When a figure differs, a new
+# notice is out, or a source answered in a shape the check doesn't know, it
+# opens one issue labelled law-check, or updates the one already open.
+#
+# Not part of CI: it needs the network, and the sources change on their own
+# calendar, not with a pull request. A source that can't be reached fails the
+# run without touching the issue; next week's run tries again.
+
+on:
+  schedule:
+    # Mondays at 14:00 UTC.
+    - cron: '0 14 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: law-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+
+      - run: bun install --frozen-lockfile
+
+      # Writes the report only when the issue needs it. Its exit (1 on a
+      # difference, a shape it doesn't know or a source it can't reach) is
+      # kept for the last step, so the issue is updated first.
+      - name: Compare the tables with the official sources
+        id: check
+        continue-on-error: true
+        run: bun run law:check --report "$RUNNER_TEMP/law-check.md"
+
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ runner.temp }}/law-check.md
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ ! -f "$REPORT" ]; then
+            echo "Nothing differs and no new notice is out."
+            exit 0
+          fi
+          number=$(gh issue list --label law-check --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            gh label create law-check --color FBCA04 --description "The weekly tax law check found something" --force
+            gh issue create --title "Tax law tables: the official sources need a look" --label law-check --body-file "$REPORT"
+            exit 0
+          fi
+          # Edited only when the report changed, with a comment so the change
+          # notifies; the same report week after week stays quiet.
+          current=$(gh issue view "$number" --json body --jq .body | tr -d '\r')
+          if [ "$current" = "$(tr -d '\r' < "$REPORT")" ]; then
+            echo "Issue #$number already says this."
+          else
+            gh issue edit "$number" --body-file "$REPORT"
+            gh issue comment "$number" --body "The report changed in $RUN."
+          fi
+
+      - name: Fail on a difference, an unknown shape or an unreachable source
+        if: steps.check.outcome == 'failure'
+        run: |
+          echo "::error::The law check failed: see the Compare step's output."
+          exit 1
