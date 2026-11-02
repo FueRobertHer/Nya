@@ -78,7 +78,7 @@ import { institutionRef, needsSign, nyaBalance, trackedElsewhere } from './insti
 import type { ConnectorKind } from './types';
 import { CLAIM_TIMEOUT_MS } from './simplefin';
 import { carryOn, waitingRestored } from './continue';
-import { carryOnEnabled } from '../user-restore/enabled';
+import { flagOnFresh, flagWho } from '../flag-read';
 import { getManualAccounts, newManualId, saveManualAccount, MANUAL_TYPES, type ManualType } from '../manual';
 import { removeAccountTxns } from '../manual-txns';
 import { forgetAnnotations } from '../txn-annotations';
@@ -130,11 +130,20 @@ async function takeClaim(ctx: Ctx): Promise<void> {
  * keeps the credential, and lists the accounts with one balances-only
  * request. Returns the new connection's id and what that request came to (a
  * failure there leaves the connection in place, its accounts to list later).
+ * `offered` is whether this kind may be connected for the person asking
+ * (lib/connectors/switch.ts connectorOffered), which the route works out
+ * with who they are; without it, the container's alone.
  */
-export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now: number = Date.now()): Promise<{ connection_id: string; result: SyncResult }> {
+export async function connect(
+  ctx: Ctx,
+  kind: ConnectorKind,
+  input: string,
+  now: number = Date.now(),
+  offered?: boolean
+): Promise<{ connection_id: string; result: SyncResult }> {
   // Before anything is counted or sent (lib/connectors/switch.ts): turned off,
   // no new connection, while those made keep working.
-  if (!connectorOffered(kind)) {
+  if (!(offered ?? (await connectorOffered(kind, flagWho(ctx.container, null))))) {
     throw new ConnectorRefused(`Connecting ${connectorOf(kind).label} isn't turned on for this copy of Nya.`, 403);
   }
   if ((await connectionsStore.count(ctx)) >= MAX_CONNECTIONS) {
@@ -194,17 +203,26 @@ export type TrackChoice = { remote_id: string; type: ManualType; continues?: str
  * Tracks accounts the connection offers (its `available` list, from its
  * latest answer: an account it doesn't offer can't be tracked), then fetches
  * their recent window. Returns what that fetch came to, or null when nothing
- * new was tracked.
+ * new was tracked. `carryOnAllowed` is whether a restored account may be carried on
+ * for the person asking (the `restore-carry-on` feature switch, read by the
+ * route with who they are); without it, the container's alone.
  */
-export async function trackAccounts(ctx: Ctx, connection_id: string, choices: TrackChoice[], now: number = Date.now()): Promise<SyncResult | null> {
+export async function trackAccounts(
+  ctx: Ctx,
+  connection_id: string,
+  choices: TrackChoice[],
+  now: number = Date.now(),
+  carryOnAllowed?: boolean
+): Promise<SyncResult | null> {
   const conn = await connectionsStore.get(ctx, connection_id);
   if (!conn) throw new ConnectorRefused('That connection no longer exists.', 404);
   const offered = new Map(conn.available.map((a) => [a.remote_id, a]));
   // Carrying a restored account on (lib/connectors/continue.ts): asked while
   // one waits, never assumed.
   const carrying = choices.some((c) => typeof c.continues === 'string');
-  if (carrying && !carryOnEnabled()) throw new ConnectorRefused('Carrying an account from your download on isn’t turned on for this copy of Nya.', 400);
-  const waiting = carryOnEnabled() ? await waitingRestored(ctx) : [];
+  const carryOnHere = carryOnAllowed ?? (await flagOnFresh('restore-carry-on', flagWho(ctx.container, null)));
+  if (carrying && !carryOnHere) throw new ConnectorRefused('Carrying an account from your download on isn’t turned on for this copy of Nya.', 400);
+  const waiting = carryOnHere ? await waitingRestored(ctx) : [];
   for (const c of choices) {
     const a = offered.get(c.remote_id);
     if (!a) throw new ConnectorRefused('An account you chose is no longer offered. Refresh, then choose again.', 409);

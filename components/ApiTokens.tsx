@@ -5,8 +5,8 @@
 // the API (/api/v1) and the MCP server (/api/mcp) that an AI assistant can
 // use. The developer page (/developers) says what each reads.
 //
-// WHAT IT CAN DO is chosen when a token is made, while this copy lets tokens
-// write (`writes`, lib/api-writes-enabled.ts): read (the default), update
+// WHAT IT CAN DO is chosen when a token is made, while tokens may make
+// changes for this account (`writes`, the `api-writes` feature switch): read (the default), update
 // balances, or read and make changes; never changed after. While it doesn't,
 // the card reads as it did before tokens could write, and makes read tokens
 // alone. The changes tokens made are listed under it (components/

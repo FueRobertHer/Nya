@@ -241,7 +241,7 @@ describe('reading it', () => {
 
   test('whether the nightly backups copy each kind is what a backup taken now holds', async () => {
     const { exportLines } = await import('@/lib/export');
-    const { declaredPublicStores } = await import('@/lib/stores');
+    const { declaredPublicStores, declaredEnvironmentStores } = await import('@/lib/stores');
     const { isEnvWide } = await import('@/lib/containers');
     delete process.env.BLOB_READ_WRITE_TOKEN;
     expect((await readInventory(ctx, { userId: null, now: NOW })).backups).toBe('none');
@@ -253,7 +253,12 @@ describe('reading it', () => {
     // One key of every kind, where it lives (a prefix's with a name after it),
     // in text no client parses, as the archive needs.
     const where = new Map<string, string>();
-    for (const name of [...families(), ...declaredStores().map((s) => s.name), ...declaredPublicStores().map((s) => s.name)]) {
+    for (const name of [
+      ...families(),
+      ...declaredStores().map((s) => s.name),
+      ...declaredPublicStores().map((s) => s.name),
+      ...declaredEnvironmentStores().flatMap((s) => [s.name, s.logName]),
+    ]) {
       const key = name.endsWith(':') ? `${name}one` : name;
       const full = isEnvWide(name) ? testKey(key) : ctxKey(key);
       if (name !== 'containers') await fake.hset(full, { f: 'stored-text' });

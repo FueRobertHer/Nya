@@ -192,6 +192,24 @@
 // containers' stores (the download, deletion) meets it. classify() in
 // lib/reencrypt.ts knows it as plain text. Never for anything about a person:
 // declaring one is a reviewed change, like adding to kEnv's list.
+//
+// SETTINGS OF THE WHOLE ENVIRONMENT, THE SECOND EXCEPTION:
+// defineEnvironmentStore. Settings of this copy of Nya rather than of anyone's
+// account (the feature switches, lib/flag-store.ts), kept once for the whole
+// environment as plain JSON, a field per id, with a record of every change
+// beside them (the last `logCap`, oldest dropped first). Plain because they
+// hold only ids, times and the list of who may sign in, as the container and
+// owners registries hold ids; that list's emails are named on the privacy page
+// and in lib/inventory.ts. Unlike public data they can't be fetched again, so
+// they are backed up and restored like the registries. Both keys must be under
+// a prefix listed as environment-wide, and neither refetched nor left out of
+// backups. A hash each, never a Redis list: backups carry only strings and
+// hashes (lib/export.ts), and a restore refuses an archive with anything else.
+// Its one write is update(), a compare-and-set that records the change in the
+// same step, so the record never disagrees with what it replaced; the change
+// is built and checked here, and the script only compares and writes, so the
+// record holds exactly the text checked. classify() in lib/reencrypt.ts knows
+// both keys as plain text. Declaring one is a reviewed change, as above.
 
 import { createHash } from 'node:crypto';
 import { redis, kc, kEnv, containerPrefix } from './storage';
@@ -1514,6 +1532,180 @@ export function definePublicMapStore<T>(name: string, opts: PublicStoreOptions<T
   return store;
 }
 
+// ---- Settings of the whole environment ----
+
+/** One change an environment store records: when, which id, its value before
+ *  (null when it had none) and after, and who made it. */
+export type EnvironmentChange<T> = { at: string; key: string; from: T | null; to: T; by: string };
+
+/** An environment store's options: its record's key, what it holds, for
+ *  messages, the check of each value, which may depend on its id (each field
+ *  holds its own shape), and how many changes the record keeps. */
+export type EnvironmentStoreOptions<T> = {
+  log: string;
+  what: string;
+  isValid: (v: unknown, id: string) => v is T;
+  logCap: number;
+};
+
+export type EnvironmentStore<T> = {
+  readonly kind: 'environment';
+  /** Its values' key, environment-wide: "<env>:<name>". */
+  readonly name: string;
+  /** Its record's key, environment-wide too. */
+  readonly logName: string;
+  readonly what: string;
+  readonly logCap: number;
+  /** Every value, by id, in id order, and the ids whose values can't be used
+   *  (not JSON, or refused by the check), named rather than thrown: plain text
+   *  has no damaged bytes to tell apart, so all are unrecognised. One HGETALL;
+   *  a storage failure throws. */
+  getAllReport(): Promise<{ entries: Map<string, T>; unrecognised: string[] }>;
+  /** Changes one value safely: reads it exactly and strictly (one that can't
+   *  be used throws UnreadableEntriesError naming it, and nothing is written
+   *  over it), computes the new one with `fn`, and writes it with its change
+   *  in one step, only if the value is still what was read; else reads again,
+   *  a few times before UpdateConflictError. `fn` answering what it was given
+   *  writes nothing. Trims the record to `logCap`. Returns what is there. */
+  update(id: string, fn: (current: T | null) => T | Promise<T>, by: string, now?: number): Promise<T>;
+  /** The record, latest first, and the ids of changes that can't be used. */
+  changes(): Promise<{ entries: EnvironmentChange<T>[]; unrecognised: string[] }>;
+};
+
+/**
+ * Writes an environment store's value and its change only if the value still
+ * holds what was read (compared by SHA-1, "" for "had none", as UPDATE_ENTRY
+ * compares), then drops the record's lowest ids, oldest first, while it holds
+ * more than the cap. KEYS: the values, the record. ARGV: the id, the SHA-1
+ * read, the value, the change's id, the change, the cap. Nothing is decoded
+ * or encoded here, so both are written exactly as they were checked.
+ */
+export const ENV_UPDATE = `-- nya:repo-env-update
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if (cur and redis.sha1hex(cur) or '') ~= ARGV[2] then return 0 end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
+local cap = tonumber(ARGV[6])
+if redis.call('HLEN', KEYS[2]) > cap then
+  local ids = redis.call('HKEYS', KEYS[2])
+  table.sort(ids)
+  for i = 1, #ids - cap do redis.call('HDEL', KEYS[2], ids[i]) end
+end
+return 1`;
+
+// Environment stores, by name: a registry apart from the containers' stores.
+const environmentDeclared = new Map<string, EnvironmentStore<unknown>>();
+
+/** Why a key can't be an environment store's, or null. */
+function environmentKeyTaken(key: string): string | null {
+  if (!NAME.test(key) || key.length > 64) return 'not lowercase words joined by "-" or ":", at most 64 long';
+  if (!isEnvWide(key)) return 'not under a prefix lib/containers.ts lists as environment-wide';
+  if (isRefetched(key)) return 'refetched public data, which backups leave out (lib/export.ts)';
+  if (isExcluded(key)) return 'a key backups leave out (lib/export.ts)';
+  if (listedKind(key) !== null) return 'a key family stored the old way (lib/key-families.ts)';
+  return null;
+}
+
+/**
+ * Declares an environment store (see SETTINGS OF THE WHOLE ENVIRONMENT above):
+ * one environment-wide hash of plain JSON values, a field per id, and its
+ * record of changes beside it.
+ */
+export function defineEnvironmentStore<T>(name: string, opts: EnvironmentStoreOptions<T>): EnvironmentStore<T> {
+  const { log: logName, what, isValid, logCap } = opts;
+  for (const key of [name, logName]) {
+    const taken = environmentKeyTaken(key);
+    if (taken) throw new Error(`"${key}" cannot name an environment store: it is ${taken}.`);
+  }
+  if (name === logName) throw new Error(`An environment store's record needs a key of its own.`);
+  if (!Number.isSafeInteger(logCap) || logCap < 1) throw new Error(`An environment store keeps at least one change.`);
+  const values = () => kEnv(name);
+  const record = () => kEnv(logName);
+
+  const isChange = (v: unknown): v is EnvironmentChange<T> => {
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+    const c = v as Record<string, unknown>;
+    return (
+      Object.keys(c).length === 5 &&
+      typeof c.at === 'string' &&
+      Number.isFinite(Date.parse(c.at)) &&
+      typeof c.key === 'string' &&
+      ID.test(c.key) &&
+      (c.from === null || isValid(c.from, c.key)) &&
+      isValid(c.to, c.key) &&
+      typeof c.by === 'string' &&
+      c.by.length > 0 &&
+      c.by.length <= 200
+    );
+  };
+
+  /** Each field of a hash, judged as plain JSON. */
+  const report = async <V>(key: string, ok: (v: unknown, id: string) => v is V) => {
+    // Uncaught: a failure to reach storage is never an empty map.
+    const stored = (await redis().hgetall<Record<string, unknown>>(key)) ?? {};
+    const entries = new Map<string, V>();
+    const unrecognised: string[] = [];
+    for (const id of Object.keys(stored).sort()) {
+      const v = plainValue(stored[id]);
+      if (v.ok && ok(v.value, id)) entries.set(id, v.value);
+      else unrecognised.push(id);
+    }
+    return { entries, unrecognised };
+  };
+
+  const store: EnvironmentStore<T> = {
+    kind: 'environment',
+    name,
+    logName,
+    what,
+    logCap,
+    getAllReport: () => report(values(), isValid),
+    async update(id, fn, by, now = Date.now()) {
+      checkId(what, id);
+      if (typeof by !== 'string' || by.length === 0 || by.length > 200) throw new TypeError(`Invalid change to ${what}: it must say who made it.`);
+      for (let attempt = 1; ; attempt++) {
+        const answer = await redis().eval(READ_ENTRIES, [values()], [id]);
+        if (!Array.isArray(answer) || answer.length !== 1 || typeof answer[0] !== 'string') throw new Error(`repo: unexpected answer reading ${name}`);
+        const stored = answer[0] === '' ? null : (answer[0] as string).slice(1);
+        let current: T | null = null;
+        if (stored !== null) {
+          const v = plainValue(stored);
+          if (!v.ok || !isValid(v.value, id)) throw new UnreadableEntriesError(what, [], [id]);
+          current = v.value;
+        }
+        const next = await fn(current);
+        const text = JSON.stringify(next);
+        // Checked as it will read back, and written exactly as checked.
+        if (text === undefined || !isValid(JSON.parse(text), id)) throw new TypeError(`Refusing to save ${what}: the value does not have the shape they are stored in.`);
+        if (text === stored) return current as T;
+        const at = new Date(now).toISOString();
+        const change: EnvironmentChange<T> = { at, key: id, from: current, to: JSON.parse(text) as T, by };
+        const changeText = JSON.stringify(change);
+        if (!isChange(JSON.parse(changeText))) throw new TypeError(`Refusing to record a change to ${what}: it does not have the shape they are recorded in.`);
+        const changeId = `${at}.${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+        const chars = id.length + text.length + changeId.length + changeText.length + SHA1_HEX;
+        const limit = maxBlobChars();
+        if (chars > limit) throw new StoredValueTooLargeError(what, chars, limit);
+        const seen = stored === null ? '' : sha1(stored);
+        const written = Number(await redis().eval(ENV_UPDATE, [values(), record()], [id, seen, text, changeId, changeText, String(logCap)]));
+        if (written === 1) return JSON.parse(text) as T;
+        if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
+        await pause(attempt);
+      }
+    },
+    async changes() {
+      const { entries, unrecognised } = await report(record(), (v, _id): v is EnvironmentChange<T> => isChange(v));
+      // Ids begin with the time, always 24 characters, so their order is time's.
+      const latest = [...entries.keys()].sort().reverse();
+      return { entries: latest.map((id) => entries.get(id)!), unrecognised };
+    },
+  };
+  // The same name declared again is its module being evaluated again (a
+  // development reload): the new declaration replaces the old.
+  environmentDeclared.set(name, store as EnvironmentStore<unknown>);
+  return store;
+}
+
 // ---- Measuring a whole container ----
 
 /** One key of a container, as measured (measureContainer). Characters are
@@ -1683,6 +1875,12 @@ export function publicStoresDeclaredSoFar(): ReadonlyMap<string, PublicMapStore<
   return publicDeclared;
 }
 
+/** Every environment store declared so far, by name. For lib/stores.ts only,
+ *  as storesDeclaredSoFar is. */
+export function environmentStoresDeclaredSoFar(): ReadonlyMap<string, EnvironmentStore<unknown>> {
+  return environmentDeclared;
+}
+
 /**
  * Every store declared so far, by name. For lib/stores.ts, which imports every
  * declaring module before it reads this, so its answer is complete. Read
@@ -1697,4 +1895,5 @@ export function storesDeclaredSoFar(): ReadonlyMap<string, Store> {
 export function forgetDeclaredStore(name: string): void {
   declared.delete(name);
   publicDeclared.delete(name);
+  environmentDeclared.delete(name);
 }

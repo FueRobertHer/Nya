@@ -9,7 +9,7 @@ import { isManualId } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
 import { countedBanks } from '@/lib/user-restore/answering';
 import { carryOnView } from '@/lib/connectors/continue';
-import { carryOnEnabled } from '@/lib/user-restore/enabled';
+import { flagOnCached, requestWho } from '@/lib/flag-read';
 
 // The connections to SimpleFIN or Lunch Flow the person made
 // (lib/connectors/): GET lists them for the Accounts tab, with their
@@ -34,7 +34,7 @@ export async function GET() {
     // Carrying an account a restore brought back on (lib/connectors/
     // continue.ts): what Choose accounts asks, and what the first answers
     // found for each account carried on.
-    const { carry, evidence } = await carryOnView(ctx, connections, all, carryOnEnabled());
+    const { carry, evidence } = await carryOnView(ctx, connections, all, await flagOnCached('restore-carry-on', await requestWho(ctx)));
     return NextResponse.json({
       connections: [...connections].map(([id, c]) => connectionView(id, c, all, othersOf(id), evidence)),
       carry_on: carry,

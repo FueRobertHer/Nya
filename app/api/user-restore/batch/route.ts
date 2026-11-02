@@ -12,7 +12,8 @@ import { BatchRefused, checkBatch } from '@/lib/user-restore/check';
 import { JsonReadError, parseStrict } from '@/lib/user-restore/stream';
 import { BatchNotWritten, finishWrites, writeBatch } from '@/lib/user-restore/commit';
 import { restoredRepairsView } from '@/lib/sign-repair';
-import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
+import { RESTORE_OFF } from '@/lib/user-restore/enabled';
+import { flagOnFresh, requestWho } from '@/lib/flag-read';
 
 // One batch of a restore (docs/data-export.md, "Bringing it back"; the page
 // builds them, lib/user-restore/file.ts), and its finish. The body is the
@@ -123,13 +124,13 @@ function notWriting(record: UserRestoreRecord | null): NextResponse {
 }
 
 export async function POST(req: Request) {
-  if (!restoreEnabled()) return refuse(RESTORE_OFF, 403);
   let ctx: Ctx;
   try {
     ctx = await dataCtx();
   } catch (err) {
     return containerUnavailable(err) ?? storeFailure(err, 'Couldn’t write this part of the download');
   }
+  if (!(await flagOnFresh('restore', await requestWho(ctx)))) return refuse(RESTORE_OFF, 403);
   const params = new URL(req.url).searchParams;
   try {
     if (params.get('check') === '1') return await checkOnly(ctx, req, params);

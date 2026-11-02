@@ -5,7 +5,7 @@ import { changeMaker, changeStore, forgetChange, forgetTokenChanges, isChangeId,
 import { apiTokenStore } from '@/lib/api-token-store';
 import { undoChange } from '@/lib/api-undo';
 import { ApiFailure } from '@/lib/api-spec';
-import { apiWritesEnabled } from '@/lib/api-writes-enabled';
+import { flagOnCached, requestWho } from '@/lib/flag-read';
 import { loggable } from '@/lib/log-safe';
 import { getManualAccountsReport } from '@/lib/manual';
 
@@ -84,7 +84,7 @@ export async function GET(req: Request) {
         unreadable: page.unreadable,
         unrecognised: page.unrecognised,
         accounts,
-        writes: apiWritesEnabled(),
+        writes: await flagOnCached('api-writes', await requestWho(ctx)),
       },
       { headers: { 'Cache-Control': 'no-store' } }
     );

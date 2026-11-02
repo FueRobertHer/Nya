@@ -103,7 +103,10 @@ describe('the two ways to connect', () => {
     const sheet = dashboard.slice(dashboard.indexOf('<AddAccountSheet'), dashboard.indexOf('<MigrationSheet'));
     expect(sheet).toContain('brokerage={brokerageLink}');
     expect(sheet).toContain('onConnect={startConnect}');
+    // The `brokerage-link` feature switch, as the server evaluated it for this
+    // account (app/page.tsx, lib/flag-read.ts clientFlags).
+    expect(dashboard).toContain("const brokerageLink = flags['brokerage-link'];");
     const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
-    expect(page).toContain('const brokerageLink = brokerageLinkEnabled();');
+    expect(page.match(/<Dashboard [^>]*flags=\{/g)?.length).toBe(2);
   });
 });

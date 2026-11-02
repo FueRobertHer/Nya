@@ -61,6 +61,7 @@ import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
+import type { ClientFlags } from '@/lib/flag-read';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
@@ -279,12 +280,14 @@ const TAB_LABELS: Record<Tab, string> = {
   plan: 'Plan',
 };
 
+/** Every feature switch off: what a page sent without them (a test) shows. */
+const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false };
+
 export default function Dashboard({
   clerk = false,
   viewer,
   admin = false,
-  brokerageLink = false,
-  lunchFlow = false,
+  flags = NO_FLAGS,
   initialTab = 'home',
   initialSettings = null,
 }: {
@@ -292,13 +295,10 @@ export default function Dashboard({
   viewer?: string;
   /** Set by the server (app/page.tsx): only the admin is sent the admin panel. */
   admin?: boolean;
-  /** Set by the server (app/page.tsx): whether to offer connecting a brokerage
-   *  or retirement account (PLAID_BROKERAGE_LINK, lib/item-products.ts). */
-  brokerageLink?: boolean;
-  /** Set by the server (app/page.tsx): whether to offer connecting Lunch Flow
-   *  (LUNCHFLOW_ENABLED, lib/connectors/switch.ts). Connections made before it
-   *  was turned off are still shown and work. */
-  lunchFlow?: boolean;
+  /** Set by the server (app/page.tsx): the feature switches (lib/flags.ts) as
+   *  they stand for this account, evaluated there (lib/flag-read.ts
+   *  clientFlags), as booleans; never who else they are on for. */
+  flags?: ClientFlags;
   /** The tab the address asks for (lib/dashboard-tab.ts), read by the server
    *  (app/page.tsx): a reload comes back to the tab it left. */
   initialTab?: Tab;
@@ -306,6 +306,11 @@ export default function Dashboard({
    *  the server the same way: a reload in Settings comes back to it. */
   initialSettings?: SettingsView | null;
 }) {
+  // Whether to offer connecting a brokerage or retirement account
+  // (lib/item-products.ts), and Lunch Flow (lib/connectors/switch.ts): a
+  // connection made before either was turned off is still shown and works.
+  const brokerageLink = flags['brokerage-link'];
+  const lunchFlow = flags.lunchflow;
   const cacheKey = cacheKeyFor(viewer);
   // Hiding amounts (components/hide-amounts.ts) changes what every formatter
   // writes, so the whole dashboard draws again when the switch changes.
