@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import './clerk-mock';
@@ -210,6 +210,7 @@ describe('the reference, held to the API’s real answers', () => {
     await seedPerson(fake);
     token = (await createToken(ctx, 'Docs')).token;
   });
+  afterEach(() => setSystemTime());
 
   const answer = async (name: string, query: string) => {
     const route = await import(`@/app/api/v1/${name}/route`);
@@ -265,7 +266,13 @@ describe('the reference, held to the API’s real answers', () => {
     const step = (name: string) => [/\.create$/, /\.get$/, /\.(update|balance)$/, /\.delete$/, /^changes\.list$/, /^changes\.undo$/].findIndex((r) => r.test(name));
     const ordered = [...RESOURCE_SPECS].sort((a, b) => step(a.name) - step(b.name));
     expect(ordered).toHaveLength(RESOURCE_SPECS.length);
+    // Each request a second after the one before, as a person's would be.
+    // Two changes in the same millisecond tie on time, and the list breaks
+    // the tie by id, so on a fast machine tag.update could fall out of the
+    // two newest that changes.list's example asks for.
+    let clock = Date.now();
     for (const spec of ordered) {
+      setSystemTime(new Date((clock += 1000)));
       const kind = kindOf(spec.name);
       const id = spec.name === 'changes.undo' ? ids.change : spec.id ? ids[kind] : null;
       const real = await send(spec, id, bodyFor(spec.name), spec.versioned ? versions[kind] : undefined);
