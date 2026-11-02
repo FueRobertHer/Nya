@@ -360,7 +360,10 @@ describe('the route', () => {
     }, new Uint8Array(0));
     const entries = listZip(opened, LIMITS) as never[];
     expect(readEntry(opened, entries[0], LIMITS)).toEqual(new Uint8Array(a));
-  });
+    // Two keys derived at the real setting (scrypt at 2^18), the route's and
+    // this test's: fixed work, which a busy machine stretches toward bun's
+    // 5 s. A bound against a hang, never a measure of speed.
+  }, 30_000);
 
   test('every field checked; making it ready counts nothing', async () => {
     await attach('t1', jpeg(3000));
