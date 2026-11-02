@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
-import { installDom, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, FakeEvent } from './mini-dom';
 
 // Every chart has every point behind Show as a table (design-system.md):
 // Activity's Income vs spend (components/MonthFlowChart.tsx) and the
@@ -18,7 +18,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: MonthFlowChart } = await import('@/components/MonthFlowChart');
 const { default: RunwayChart } = await import('@/components/RunwayChart');
 const { formatMoney, MASK, setAmountsHidden } = await import('@/lib/format');
@@ -27,21 +27,14 @@ type RunwayProjection = import('@/lib/report/runway').RunwayProjection;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const mounted = new Set<() => void>();
-afterEach(() => {
-  for (const unmount of mounted) unmount();
-  setAmountsHidden(false);
-});
+afterEach(() => setAmountsHidden(false));
 
 function mount(node: React.ReactNode) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
+  // Unmounted after the test, by trackRoots (test/mini-dom.ts).
   const root = createRoot(host as unknown as HTMLElement);
   act(() => root.render(node));
-  const unmount = () => {
-    if (mounted.delete(unmount)) act(() => root.unmount());
-  };
-  mounted.add(unmount);
   const tag = (name: string) => host.findAll((e) => e.tagName.toLowerCase() === name);
   return {
     host,

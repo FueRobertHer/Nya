@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
 
 // The Plan tab's pinned bar and segments (rollout phase 6b,
 // docs/design/information-architecture.md#plan), used as a person would
@@ -74,7 +74,7 @@ afterAll(() => {
 // React's client reads what the document supports once, when it loads: it is
 // loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { default: PlanBar, PLAN_TITLE, openingSegment } = await import('@/components/PlanBar');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');

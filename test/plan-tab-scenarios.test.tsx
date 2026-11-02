@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, outline, holdPress, pressThrough, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, outline, holdPress, pressThrough, FakeElement } from './mini-dom';
 
 // The Plan tab with scenarios, rendered and used as a person would
 // (react-dom/client over test/mini-dom.ts): what is saved where when a
@@ -34,7 +34,7 @@ const { act } = React;
 // input event among it). In a run of many suites it may have loaded before
 // this file put a document there: it is loaded afresh, after.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { NO_CHANGES } = await import('@/lib/fire/scenarios');

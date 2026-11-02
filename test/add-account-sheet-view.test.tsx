@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
 
 // The Add account sheet (rollout phase 3): every way to add an account, one
 // row each, with what each service reaches and costs behind "Which should I
@@ -12,7 +12,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { default: AddAccountSheet } = await import('@/components/AddAccountSheet');
 const { LUNCHFLOW_OPTION, SIMPLEFIN_OPTION } = await import('@/components/ConnectButtons');

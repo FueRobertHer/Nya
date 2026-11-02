@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { installDom, click, type, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, type FakeElement } from './mini-dom';
 
 // The one month control (look and feel, step 2b1): components/MonthStepper.tsx,
 // used as a person would (react-dom/client over test/mini-dom.ts).
@@ -12,7 +12,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: MonthStepper } = await import('@/components/MonthStepper');
 
 const MONTHS = ['2026-10', '2026-09', '2026-08'];

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, FakeElement, FakeEvent } from './mini-dom';
 
 // Home's hero (look and feel, step 5): dragging across its chart moves the
 // figure to the day under the finger, the change line's place says which
@@ -26,7 +26,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: NetWorthCard } = await import('@/components/NetWorthCard');
 const { default: NetWorthChart } = await import('@/components/NetWorthChart');
 const { formatMoney, MASK, setAmountsHidden } = await import('@/lib/format');
@@ -62,21 +62,14 @@ const card = (chart: React.ReactNode) => (
   />
 );
 
-const mounted = new Set<() => void>();
-afterEach(() => {
-  for (const unmount of mounted) unmount();
-  setAmountsHidden(false);
-});
+afterEach(() => setAmountsHidden(false));
 
 function mount(node: React.ReactNode) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
+  // Unmounted after the test, by trackRoots (test/mini-dom.ts).
   const root = createRoot(host as unknown as HTMLElement);
   act(() => root.render(node));
-  const unmount = () => {
-    if (mounted.delete(unmount)) act(() => root.unmount());
-  };
-  mounted.add(unmount);
   const one = (cls: string) => host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes(cls))[0] ?? null;
   const svg = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
   const fire = (type: string, props: Record<string, unknown>) =>

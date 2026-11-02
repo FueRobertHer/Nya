@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement, FakeEvent } from './mini-dom';
 
 // Budgets > Upcoming's Recurring and Planned cards and their sheets (rollout
 // phase 6a3, docs/design/information-architecture.md#budgets), used as a
@@ -18,7 +18,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: RecurringCard } = await import('@/components/RecurringCard');
 const { default: PlannedCard } = await import('@/components/PlannedCard');
 const { detectRecurring, scheduleDates } = await import('@/lib/recurring');

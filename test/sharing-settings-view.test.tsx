@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
 
 // Settings > Sharing (components/Sharing.tsx SharingSettings), used as a
 // person would (react-dom/client over test/mini-dom.ts), with the sharing
@@ -24,7 +24,7 @@ const { act } = React;
 // React's client reads what the document supports once, when it loads: it is
 // loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { SharingSettings } = await import('@/components/Sharing');
 
 (g as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

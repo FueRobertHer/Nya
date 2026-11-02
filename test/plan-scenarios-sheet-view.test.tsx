@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
 
 // The Scenarios sheet (components/PlanScenarios.tsx ScenariosSheet, rollout
 // phase 6b), used as a person would (react-dom/client over test/mini-dom.ts),
@@ -23,7 +23,7 @@ const { act, useEffect, useMemo, useState } = React;
 // React's client reads what the document supports once, when it loads: it is
 // loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { ScenariosSheet } = await import('@/components/PlanScenarios');
 const { INITIAL_SCENARIOS, createScenarioClient } = await import('@/components/plan-scenarios');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');

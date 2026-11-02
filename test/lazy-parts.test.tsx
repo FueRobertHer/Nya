@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { installDom, click, FakeElement, type FakeNode } from './mini-dom';
+import { installDom, trackRoots, click, FakeElement, type FakeNode } from './mini-dom';
 
 // The parts of the dashboard whose code is loaded when first needed, not with
 // Home (components/lazy-part.tsx): Home's own code never reaches them by a
@@ -15,7 +15,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { lazyPart, onPartShown, preloadParts, useLazyPart, PartBoundary, PartUnavailable } = await import('@/components/lazy-part');
 const { LazySheet, SLOW_MS } = await import('@/components/LazySheets');

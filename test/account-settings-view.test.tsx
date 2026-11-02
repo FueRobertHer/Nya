@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, type FakeElement } from './mini-dom';
 import { mockForFile } from './scoped-mock';
 
 // Settings > Account (components/AccountSettings.tsx, look and feel step 2c),
@@ -42,7 +42,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: AccountSettings } = await import('@/components/AccountSettings');
 const { default: ClerkAccount } = await import('@/components/ClerkAccount');
 const { DATA_PAGE } = await import('@/components/ProfileWindow');

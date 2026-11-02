@@ -1,5 +1,5 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, FakeElement, FakeEvent } from './mini-dom';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { installDom, trackRoots, FakeElement, FakeEvent } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 
 // The charts drawn at their own width (components/drawn-width.ts): Activity's
@@ -56,7 +56,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = require('react-dom/server') as typeof import('react-dom/server');
 const { default: MonthFlowChart } = await import('@/components/MonthFlowChart');
 const { default: CashFlowSankey } = await import('@/components/CashFlowSankey');
@@ -164,22 +164,14 @@ const CHARTS = [
   },
 ];
 
-// What a failed test left mounted is unmounted before the next, so its
-// watchers aren't counted against that one.
-const mounted = new Set<() => void>();
-afterEach(() => {
-  for (const unmount of mounted) unmount();
-});
-
 function mount(node: React.ReactNode) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
+  // What a failed test left mounted is unmounted before the next (trackRoots,
+  // test/mini-dom.ts), so its watchers aren't counted against that one.
   const root = createRoot(host as unknown as HTMLElement);
   act(() => root.render(node));
-  const unmount = () => {
-    if (mounted.delete(unmount)) act(() => root.unmount());
-  };
-  mounted.add(unmount);
+  const unmount = () => act(() => root.unmount());
   // The chart: the svg drawn as an image (an icon's is hidden from a screen reader).
   const svg = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && ['img', 'slider'].includes(e.getAttribute('role') ?? ''))[0] ?? null;
   const lines = (test: (e: FakeElement) => boolean) => svg()!.findAll((e) => e.tagName.toLowerCase() === 'line' && test(e));
