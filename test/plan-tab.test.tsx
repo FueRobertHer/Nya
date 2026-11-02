@@ -410,7 +410,7 @@ describe('the FI card', () => {
     expect(t).not.toContain('Years to FI');
     expect(t.match(/Around age/g)?.length).toBe(1);
     // The simulation is on another segment (rollout phase 6b).
-    expect(t).toContain("Real markets don't move steadily; the simulation on Stress test shows how much that matters.");
+    expect(t).toContain("Real markets don't move steadily; the simulation on Drawdown shows how much that matters.");
   });
 });
 
@@ -594,7 +594,7 @@ describe('the simulation card', () => {
 
   test('what it needs and isn’t measured is said so, in compare mode’s words, never as none to count (review round 3)', () => {
     const assets = read(plan({ start: 'assets' }), { spending: 40_000, savings: 30_000, assets: null, unmeasured: ['assets'] });
-    // Said on Stress test, of the figures on Your path (rollout phase 6b),
+    // Said on Drawdown, of the figures on Your path (rollout phase 6b),
     // whose rows say why (6c).
     expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (Your path says why). Type them on Your path, or start from your FI number (Assumptions, below).');
     expect(assets).not.toContain('none to count yet');
@@ -953,7 +953,14 @@ describe('the savings sheet', () => {
 describe('the tab', () => {
   test('shows its skeleton in each segment until the saved plan has loaded, never the defaults as if they were saved, under the bar', () => {
     const html = renderToStaticMarkup(<PlanTab txns={[]} txnsLoading={false} txnNotes={[]} institutions={[]} balancesAsOf={null} currency="USD" holdings={[]} />);
-    expect(html.match(/<p class="visually-hidden" role="status">Loading your plan<\/p>/g)?.length).toBe(3);
+    const status = '<p class="visually-hidden" role="status">Loading your plan</p>';
+    const at = [...html.matchAll(new RegExp(status, 'g'))].map((m) => m.index);
+    expect(at.length).toBe(4);
+    // Where the Plan opens waits for the plan (Drawdown once the stop age has
+    // come): every segment's panel is hidden, and one more skeleton, after
+    // the last panel and in none of them, is the one shown.
+    expect(html.match(/role="tabpanel"[^>]*hidden=""/g)?.length).toBe(3);
+    expect(html.slice(at[2]).startsWith(`${status}</div></div><div class="stack loose" aria-busy="true">`)).toBe(true);
     expect(html).not.toContain('class="spinner"');
     expect(html).not.toContain('FI number');
     // The bar is there already, its heading for Home's FI line to land on.
