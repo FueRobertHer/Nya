@@ -1,0 +1,784 @@
+<html>
+<head>
+<title>Federal Register, Volume 90 Issue 210 (Monday, November 3, 2025)</title>
+</head>
+<body><pre>
+[Federal Register Volume 90, Number 210 (Monday, November 3, 2025)]
+[Notices]
+[Pages 49047-49053]
+From the Federal Register Online via the Government Publishing Office [<a href="http://www.gpo.gov">www.gpo.gov</a>]
+[FR Doc No: 2025-19763]
+
+
+=======================================================================
+-----------------------------------------------------------------------
+
+SOCIAL SECURITY ADMINISTRATION
+
+[Docket No. SSA-2025-0255]
+
+
+Cost-of-Living Increase and Other Determinations for 2026
+
+AGENCY: Social Security Administration (SSA).
+
+ACTION: Notice.
+
+-----------------------------------------------------------------------
+
+SUMMARY: Under title II of the Social Security Act (Act), there will be 
+a 2.8 percent cost-of-living increase in Social Security benefits 
+effective December 2025. In addition, the national average wage index 
+for 2024 is $69,846.57. The cost-of-living increase and national 
+average wage index affect other program parameters as described below.
+
+FOR FURTHER INFORMATION CONTACT: Kathleen K. Sutton, Actuarial 
+Services, Social Security Administration, 6401 Security Boulevard, 
+Baltimore, MD 21235, (410) 965-3000. Information relating to this 
+announcement is available at <a href="http://www.ssa.gov/oact/cola/index.html">www.ssa.gov/oact/cola/index.html</a>. For 
+information on eligibility or claiming benefits, visit <a href="http://www.ssa.gov">www.ssa.gov</a> or 
+call 1-800-772-1213 (TTY 1-800-325-0778).
+
+SUPPLEMENTARY INFORMATION: Because of the 2.8 percent cost-of-living 
+increase, the following items will increase for 2026:
+    (1) The maximum Federal Supplemental Security Income (SSI) monthly 
+payment amounts for 2026 under title XVI of the Act will be $994 for an 
+eligible individual; $1,491 for an eligible individual with an eligible 
+spouse; and $498 for an essential person.
+    (2) The special benefit amount under title VIII of the Act for 
+certain World War II (WWII) veterans will be $745.50 for 2026.
+    (3) The student earned income exclusion under title XVI of the Act 
+will be $2,410 per month in 2026, but not more than $9,730 for all of 
+2026.
+    (4) The dollar fee limit for services performed as a representative 
+payee will be $57 per month ($106 per month in the case of a 
+beneficiary who is determined to be disabled, has an alcoholism or drug 
+addiction condition, and is incapable of managing benefits) in 2026.
+    (5) The assessment (or ``user fee'') dollar limit on the 
+administrative cost charged when the agency pays authorized 
+representative fees and court-awarded attorney fees directly out of a 
+claimant's past due benefits will be $123, beginning in December 2025.
+    The national average wage index for 2024 is $69,846.57. This index 
+affects the following amounts:
+    (1) The Old-Age, Survivors, and Disability Insurance (OASDI) 
+contribution and benefit base will be $184,500 for remuneration paid in 
+2026 and self-employment income earned in tax years beginning in 2026.
+    (2) The monthly exempt amounts under the OASDI retirement earnings 
+test for tax years ending in calendar year 2026 will be $2,040 for 
+beneficiaries who will attain their Normal Retirement Age (NRA) 
+(defined in the Retirement Earnings Test Exempt Amounts section below) 
+after 2026 and $5,430 for those who attain NRA in 2026.
+    (3) The dollar amounts (bend points) used in the primary insurance 
+amount (PIA) formula for workers who become eligible for benefits or 
+who die before becoming eligible, in 2026, will be $1,286 and $7,749.
+    (4) The bend points used in the formula for computing maximum 
+family
+
+[[Page 49048]]
+
+benefits for workers who become eligible for retirement benefits, or 
+who die before becoming eligible, in 2026, will be $1,643, $2,371, and 
+$3,093.
+    (5) The taxable earnings a person must have in 2026 to be credited 
+with a quarter of coverage will be $1,890.
+    (6) The ``old-law'' contribution and benefit base under title II of 
+the Act will be $137,100 for 2026.
+    (7) The monthly amount of earnings deemed to constitute substantial 
+gainful activity (SGA) for statutorily blind people under title II of 
+the Act will be $2,830 in 2026. The corresponding amount of earnings 
+for non-blind people with a determined disability under titles II and 
+XVI of the Act will be $1,690.
+    (8) The earnings threshold establishing a month as a part of a 
+trial work period will be $1,210 for 2026.
+    (9) Coverage thresholds for 2026 will be $3,000 for domestic 
+workers and $2,500 for election officials and election workers.
+    According to section 215(i)(2)(D) of the Act, we must publish the 
+benefit increase percentage and the revised table of ``special 
+minimum'' benefits within 45 days after the close of the third calendar 
+quarter of 2025.
+    We must also publish the following by November 1: the national 
+average wage index for 2024 (215(a)(1)(D)), the OASDI fund ratio for 
+2025 (section 215(i)(2)(C)(ii)), the OASDI contribution and benefit 
+base for 2026 (section 230(a)), the earnings required to be credited 
+with a quarter of coverage in 2026 (section 213(d)(2)), the monthly 
+exempt amounts under the Social Security retirement earnings test for 
+2026 (section 203(f)(8)(A)), the formula for computing a PIA for 
+workers who first become eligible for benefits or die in 2026 (section 
+215(a)(1)(D)), and the formula for computing the maximum benefits 
+payable to the family of a worker who first becomes eligible for old-
+age benefits or dies in 2026 (section 203(a)(2)(C)).
+
+Cost-of-Living Increases
+
+General
+
+    The cost-of-living increase is 2.8 percent for monthly benefits 
+under title II and for monthly payments under title XVI of the Act. 
+Under title II, OASDI monthly benefits will increase by 2.8 percent for 
+individuals eligible for December 2025 benefits, payable in January 
+2026 and thereafter. We base this increase on the authority contained 
+in section 215(i) of the Act.
+    Pursuant to section 1617 of the Act, Federal SSI benefit rates will 
+also increase by 2.8 percent effective for payments made for January 
+2026 but paid on December 31, 2025.
+
+Computation
+
+    Computation of the cost-of-living increase is based on an increase 
+in a Consumer Price Index (CPI) produced by the Bureau of Labor 
+Statistics. At the time the Act was amended to provide automatic cost-
+of-living increases starting in 1975, only one CPI existed, namely the 
+index now referred to as CPI for Urban Wage Earners and Clerical 
+Workers (CPI-W). Although the Bureau of Labor Statistics has since 
+developed other CPIs, we follow precedent by continuing to use the CPI-
+W. We refer to this index in the following paragraphs as the CPI.
+    Section 215(i)(1)(B) of the Act defines a ``computation quarter'' 
+to be a third calendar quarter in which the average CPI exceeded the 
+average CPI in the previous computation quarter. The last cost-of-
+living increase, effective for those eligible to receive title II 
+benefits for December 2024, was based on the CPI increase from the 
+third quarter of 2023 to the third quarter of 2024. Therefore, the last 
+computation quarter is the third quarter of 2024. The law states that a 
+cost-of-living increase for benefits is determined based on the 
+percentage increase, if any, in the CPI from the last computation 
+quarter to the third quarter of the current year. Therefore, we compute 
+the increase in the CPI from the third quarter of 2024 to the third 
+quarter of 2025.
+    Section 215(i)(1) of the Act states that the CPI for a cost-of-
+living computation quarter is the arithmetic mean of this index for the 
+3 months in that quarter. In accordance with 20 CFR 404.275, we round 
+the arithmetic mean, if necessary, to the nearest 0.001. The CPI for 
+each month in the quarter ending September 30, 2024, the last 
+computation quarter, is: for July 2024, 308.501; for August 2024, 
+308.640; and for September 2024, 309.046. The arithmetic mean for the 
+calendar quarter ending September 30, 2024, is 308.729. The CPI for 
+each month in the quarter ending September 30, 2025, is: for July 2025, 
+316.349; for August 2025, 317.306; and for September 2025, 318.139. The 
+arithmetic mean for the calendar quarter ending September 30, 2025, is 
+317.265. The CPI for the calendar quarter ending September 30, 2025, 
+exceeds that for the calendar quarter ending September 30, 2024, by 2.8 
+percent (rounded to the nearest 0.1). Therefore, beginning December 
+2025, a cost-of-living benefit increase of 2.8 percent is effective for 
+benefits under title II of the Act.
+    Section 215(i) also specifies that a benefit increase under title 
+II, effective for December of any year, will be limited to the increase 
+in the national average wage index for the prior year if the OASDI fund 
+ratio for that year is below 20.0 percent. The OASDI fund ratio for a 
+year is the ratio of the combined asset reserves of the OASI and DI 
+Trust Funds at the beginning of that year to the combined cost of the 
+programs during that year. For 2025, the OASDI fund ratio is reserves 
+of $2,721,466 million divided by estimated cost of $1,610,266 million, 
+or 169.0 percent. Because the 169.0 percent OASDI fund ratio exceeds 
+20.0 percent, the benefit increase for December 2025 is not limited to 
+the increase in the national average wage index.
+
+Program Amounts That Change Based on the Cost-of-Living Increase
+
+    The following program amounts change based on the cost-of-living 
+increase: (1) title II benefits; (2) title XVI payments; (3) title VIII 
+benefits; (4) the student earned income exclusion; (5) the fee for 
+services performed by a representative payee; and (6) the assessment 
+for direct payment of fees.
+
+Title II Benefit Amounts
+
+    In accordance with section 215(i) of the Act, for workers and 
+family members for whom eligibility for benefits (that is, the worker's 
+attainment of age 62, or disability or death before age 62) occurred 
+before 2026, benefits will increase by 2.8 percent beginning with 
+benefits for December 2025, which are payable in January 2026. For 
+those first eligible after 2025, the 2.8 percent increase will not 
+apply.
+    For eligibility after 1978, we determine benefits using a formula 
+provided by the Social Security Amendments of 1977 (Pub. L. 95-216), as 
+described later in this notice. For eligibility before 1979, we 
+determine benefits by using a benefit table. The table is available at 
+<a href="http://www.ssa.gov/oact/ProgData/tableForm.html">www.ssa.gov/oact/ProgData/tableForm.html</a> or by writing to: Social 
+Security Administration, Customer and Public Inquiries CPI, 6401 
+Security Boulevard, Baltimore, MD 21235.
+    Section 215(i)(2)(D) of the Act requires that, when we determine an 
+increase in Social Security benefits, we will publish in the Federal 
+Register a revision of the range of the PIAs and maximum family 
+benefits based on the dollar amount and other provisions described in 
+section 215(a)(1)(C)(i). We refer to these benefits as ``special 
+minimum'' benefits. These benefits are payable to certain individuals 
+with long periods of low earnings. To qualify for these benefits, an 
+individual must have at least 11 years of coverage. To earn a year of 
+coverage for purposes of the special minimum benefit, a person must
+
+[[Page 49049]]
+
+earn at least a certain proportion of the old-law contribution and 
+benefit base (described later in this notice). For years before 1991, 
+the proportion is 25 percent; for years after 1990, it is 15 percent. 
+In accordance with section 215(a)(1)(C)(i), the table below shows the 
+revised range of PIAs and maximum family benefit amounts after the 2.8 
+percent benefit increase.
+
+  Special Minimum PIAs and Maximum Family Benefits Payable for December
+                                  2025
+------------------------------------------------------------------------
+                                                                Maximum
+           Number of  years of  coverage               PIA      family
+                                                                benefit
+------------------------------------------------------------------------
+11................................................    $53.50      $81.90
+12................................................    109.80      166.60
+13................................................    166.30      251.40
+14................................................    222.30      335.50
+15................................................    278.20      419.50
+16................................................    335.00      504.30
+17................................................    391.30      589.30
+18................................................    447.50      673.40
+19................................................    503.80      758.10
+20................................................    560.30      841.80
+21................................................    616.80      927.30
+22................................................    672.60    1,011.20
+23................................................    729.90    1,097.20
+24................................................    786.10    1,180.90
+25................................................    841.80    1,264.90
+26................................................    899.10    1,350.50
+27................................................    954.70    1,434.90
+28................................................  1,011.00    1,519.00
+29................................................  1,067.50    1,604.10
+30................................................  1,123.70    1,687.60
+------------------------------------------------------------------------
+
+Title XVI Payment Amounts
+
+    In accordance with section 1617 of the Act, the Federal benefit 
+rates used in computing Federal SSI payments for the aged, blind, and 
+disabled will increase by 2.8 percent effective January 2026. For 2025, 
+we determined the monthly payment amounts to be--$967 for an eligible 
+individual, $1,450 for an eligible individual with an eligible spouse, 
+and $484 for an essential person. These amounts were derived from 
+yearly, unrounded Federal SSI payment amounts of $11,604.53, 
+$17,404.87, and $5,815.57, respectively. For 2026, these yearly 
+unrounded amounts increase by 2.8 percent to $11,929.46, $17,892.21, 
+and $5,978.41, respectively. We must round each of these resulting 
+amounts, when not a multiple of $12, to the next lower multiple of $12. 
+Therefore, the annual amounts, effective for 2026, are $11,928, 
+$17,892, and $5,976. Dividing the yearly amounts by 12 gives the 
+respective monthly amounts for 2026--$994, $1,491, and $498. For an 
+eligible individual with an eligible spouse, we equally divide the 
+amount payable between the two spouses.
+
+Title VIII Benefit Amount
+
+    Title VIII of the Act provides for special benefits to certain WWII 
+veterans who reside outside the United States. Section 805 of the Act 
+provides that ``[t]he benefit under this title payable to a qualified 
+individual for any month shall be in an amount equal to 75 percent of 
+the Federal benefit rate [the maximum amount for an eligible 
+individual] under title XVI for the month, reduced by the amount of the 
+qualified individual's benefit income for the month.'' Therefore, the 
+maximum monthly benefit for 2026 under this provision is 75 percent of 
+$994, or $745.50.
+
+Student Earned Income Exclusion
+
+    Children who are blind or have a determined disability can have 
+limited earnings that do not count against their SSI payments if they 
+are students regularly attending school, college, university, or a 
+course of vocational or technical training. The maximum amount of such 
+income that we may exclude in 2025 is $2,350 per month, but not more 
+than $9,460 in all of 2025. These amounts increase based on a formula 
+set forth in regulation 20 CFR 416.1112.
+    To compute each of the monthly and yearly maximum amounts for 2026, 
+we increase the unrounded amount for 2025 by the latest cost-of-living 
+increase. If the calculated amount is not a multiple of $10, we round 
+it to the nearest multiple of $10. The unrounded monthly amount for 
+2025 is $2,347.90. We increase this amount by 2.8 percent to $2,413.64, 
+which we then round to $2,410. Similarly, we increase the unrounded 
+yearly amount for 2025, $9,464.33, by 2.8 percent to $9,729.33 and 
+round this to $9,730. Therefore, the maximum amount of the income 
+exclusion applicable to a student in 2026 is $2,410 per month, but not 
+more than $9,730 in all of 2026.
+
+Fee for Services Performed as a Representative Payee
+
+    Sections 205(j)(4)(A)(i) and 1631(a)(2)(D)(i) of the Act permit a 
+qualified organization to collect a monthly fee from a beneficiary for 
+expenses incurred in providing services as the beneficiary's 
+representative payee. In 2025, the fee is limited to the lesser of: (1) 
+10 percent of the monthly benefit involved; or (2) $55 each month ($103 
+each month when the beneficiary is entitled to disability benefits, has 
+an alcoholism or drug addiction condition, and is incapable of managing 
+such benefits). The dollar fee limits are subject to increase by the 
+cost-of-living increase, with the resulting amounts rounded to the 
+nearest whole dollar amount. Therefore, we increase the current amounts 
+by 2.8 percent to $57 and $106 for 2026.
+
+Assessment for Direct Payment of Fees
+
+    Under sections 206(d) and 1631(d) of the Act, whenever the agency 
+pays authorized representative fees or court-awarded fees directly out 
+of a claimant's past due benefits, we must impose an assessment (or 
+``user fee'') to cover administrative costs. The user fee applied is 
+the lesser amount of 6.3 percent of the representative's authorized or 
+awarded fee or a dollar amount that is subject to the cost-of-living 
+increase. We derive the dollar limit for December 2025, by increasing 
+the unrounded limit for December 2024, $120.19, by 2.8 percent, which 
+is $123.56. We then round $123.56 to the next lowest multiple of $1. 
+The dollar limit effective for December 2025 is, therefore, $123.
+
+National Average Wage Index for 2024
+
+Computation
+
+    We determined the national average wage index for calendar year 
+2024. It is based on the 2023 national average wage index of 
+$66,621.80, which was published in the Federal Register on October 25, 
+2024 (89 FR 85276), and on the percentage increase in average wages 
+from 2023 to 2024, as measured by annual wage data. We tabulate the 
+annual wage data, including contributions to deferred compensation 
+plans, as required by section 209(k) of the Act. The average amounts of 
+wages calculated from these data were $63,932.64 for 2023 and 
+$67,027.24 for 2024. To determine the national average wage index for 
+2024 at a level consistent with the national average wage indexing 
+series for 1951 through 1977 (published December 29, 1978, at 43 FR 
+61016), we multiply the 2023 national average wage index of $66,621.80 
+by the percentage increase in average wages from 2023 to 2024 (based on 
+SSA-tabulated wage data) as follows. We round the result to the nearest 
+cent.
+
+National Average Wage Index Amount
+
+    Multiplying the national average wage index for 2023 ($66,621.80) 
+by the ratio of the average wage for 2024 ($67,027.24) to that for 2023 
+($63,932.64) produces the 2024 index, $69,846.57. The national average 
+wage index for calendar year 2024 is about 4.84 percent higher than the 
+2023 index.
+
+[[Page 49050]]
+
+Program Amounts That Change Based on the National Average Wage Index
+
+    Under the Act, the following amounts change with annual changes in 
+the national average wage index: (1) the OASDI contribution and benefit 
+base; (2) the exempt amounts under the retirement earnings test; (3) 
+the dollar amounts, or bend points, in the PIA formula; (4) the bend 
+points in the maximum family benefit formula; (5) the earnings required 
+to credit a worker with a quarter of coverage; (6) the old-law 
+contribution and benefit base (as determined under section 230 of the 
+Act as in effect before the 1977 amendments); (7) the SGA amount 
+applicable to statutorily blind individuals; and (8) the coverage 
+threshold for election officials and election workers. Additionally, 
+under section 3121(x) of the Internal Revenue Code, the domestic 
+employee coverage threshold is based on changes in the national average 
+wage index.
+    Two amounts also increase under regulatory requirements--the SGA 
+amount applicable to non-blind individuals with a determined 
+disability, and the monthly earnings threshold that establishes a month 
+as part of a trial work period for beneficiaries with a determined 
+disability.
+
+OASDI Contribution and Benefit Base
+
+General
+
+    The OASDI contribution and benefit base is $184,500 for 
+remuneration paid in 2026 and self-employment income earned in tax 
+years beginning in 2026. The OASDI contribution and benefit base serves 
+as the maximum annual earnings on which OASDI taxes are paid. It is 
+also the maximum annual earnings used in determining a person's OASDI 
+benefits.
+
+Computation
+
+    Section 230(b) of the Act provides the formula used to determine 
+the OASDI contribution and benefit base. Under the formula, the base 
+for 2026 is the larger of: (1) the 1994 base of $60,600 multiplied by 
+the ratio of the national average wage index for 2024 to that for 1992; 
+or (2) the current base ($176,100). If the resulting amount is not a 
+multiple of $300, we round it to the nearest multiple of $300.
+
+OASDI Contribution and Benefit Base Amount
+
+    Multiplying the 1994 OASDI contribution and benefit base ($60,600) 
+by the ratio of the national average wage index for 2024 ($69,846.57 as 
+determined above) to that for 1992 ($22,935.42) produces $184,548.71. 
+We round this amount to $184,500. Because $184,500 exceeds the current 
+base amount of $176,100, the OASDI contribution and benefit base is 
+$184,500 for 2026.
+
+Retirement Earnings Test Exempt Amounts
+
+General
+
+    We withhold Social Security benefits when a beneficiary under the 
+NRA has earnings more than the applicable retirement earnings test 
+exempt amount. The NRA is the age when retirement benefits (before 
+rounding) are equal to the PIA. The NRA is age 66 for those born in 
+1943-54. It gradually increases to age 67 for those born in 1960 or 
+later. A higher exempt amount applies in the year in which a person 
+attains NRA, but only for earnings in months before such attainment. A 
+lower exempt amount applies at all other ages below NRA. Section 
+203(f)(8)(B) of the Act provides formulas for determining the monthly 
+exempt amounts. The annual exempt amounts are exactly 12 times the 
+monthly amounts.
+    For beneficiaries who attain NRA in the year, we withhold $1 in 
+benefits for every $3 of earnings over the annual exempt amount for 
+months before NRA. For all other beneficiaries under NRA, we withhold 
+$1 in benefits for every $2 of earnings over the annual exempt amount.
+
+Computation
+
+    Under the formula that applies to beneficiaries attaining NRA after 
+2026, the lower monthly exempt amount for 2026 is the larger of: (1) 
+the 1994 monthly exempt amount multiplied by the ratio of the national 
+average wage index for 2024 to that for 1992; or (2) the 2025 monthly 
+exempt amount ($1,950). If the resulting amount is not a multiple of 
+$10, we round it to the nearest multiple of $10.
+    Under the formula that applies to beneficiaries attaining NRA in 
+2026, the higher monthly exempt amount for 2026 is the larger of: (1) 
+the 2002 monthly exempt amount multiplied by the ratio of the national 
+average wage index for 2024 to that for 2000; or (2) the 2025 monthly 
+exempt amount ($5,180). If the resulting amount is not a multiple of 
+$10, we round it to the nearest multiple of $10.
+
+Lower Exempt Amount
+
+    Multiplying the 1994 retirement earnings test monthly exempt amount 
+of $670 by the ratio of the national average wage index for 2024 
+($69,846.57) to that for 1992 ($22,935.42) produces $2,040.39. We round 
+this to $2,040. Because $2,040 exceeds the current exempt amount of 
+$1,950, the lower retirement earnings test monthly exempt amount is 
+$2,040 for 2026. The lower annual exempt amount is $24,480 under the 
+retirement earnings test.
+
+Higher Exempt Amount
+
+    Multiplying the 2002 retirement earnings test monthly exempt amount 
+of $2,500 by the ratio of the national average wage index for 2024 
+($69,846.57) to that for 2000 ($32,154.82) produces $5,430.49. We round 
+this to $5,430. Because $5,430 exceeds the current exempt amount of 
+$5,180, the higher retirement earnings test monthly exempt amount is 
+$5,430 for 2026. The higher annual exempt amount is $65,160 under the 
+retirement earnings test.
+
+Primary Insurance Amount Formula
+
+General
+
+    The Social Security Amendments of 1977 provided a method for 
+computing benefits that generally applies when a worker first becomes 
+eligible for benefits after 1978. This method uses the worker's average 
+indexed monthly earnings (AIME) to compute the PIA. We adjust the 
+formula each year to reflect changes in general wage levels, as 
+measured by the national average wage index.
+    We also adjust, or index, a worker's earnings to reflect the change 
+in the general wage levels that occurred during the worker's years of 
+employment. Such indexing ensures that a worker's future benefit level 
+will reflect the general rise in the standard of living that will occur 
+during their working lifetime. To compute the AIME, we first determine 
+the required number of years of earnings. We then select the number of 
+years with the highest indexed earnings, add the indexed earnings for 
+those years, and divide the total amount by the total number of months 
+in those years. We then round the resulting average amount down to the 
+next lower dollar amount. The result is the AIME.
+
+Computing the PIA
+
+    The PIA is the sum of three separate percentages of portions of the 
+AIME. In 1979 (the first year the formula was in effect), these 
+portions were the first $180, the amount between $180 and $1,085, and 
+the amount above $1,085. We call the dollar amounts in the formula 
+governing the portions of the AIME the bend points of the formula. 
+Therefore, the bend points for 1979 were $180 and $1,085.
+    To obtain the bend points for 2026, we multiply each of the 1979 
+bend-
+
+[[Page 49051]]
+
+point amounts by the ratio of the national average wage index for 2024 
+to that average for 1977. We then round these results to the nearest 
+dollar. Multiplying the 1979 amounts of $180 and $1,085 by the ratio of 
+the national average wage index for 2024 ($69,846.57) to that for 1977 
+($9,779.44) produces the amounts of $1,285.59 and $7,749.27. We round 
+these to $1,286 and $7,749. Therefore, the portions of the AIME to be 
+used in 2026 are the first $1,286, the amount between $1,286 and 
+$7,749, and the amount above $7,749. Therefore, for individuals who 
+first become eligible for old-age insurance benefits or disability 
+insurance benefits in 2026, or who die in 2026 before becoming eligible 
+for benefits, their PIA will be the sum of:
+    (a) 90 percent of the first $1,286 of their AIME, plus
+    (b) 32 percent of their AIME between $1,286 and $7,749, plus
+    (c) 15 percent of their AIME above $7,749.
+    We round this amount to the next lower multiple of $0.10 if it is 
+not already a multiple of $0.10. This formula and the rounding 
+adjustment are stated in section 215(a) of the Act.
+
+Maximum Benefits Payable to a Family
+
+General
+
+    The 1977 amendments continued the policy of limiting the total 
+monthly benefits that a worker's family may receive based on the 
+worker's PIA. Those amendments also continued the relationship between 
+maximum family benefits and PIAs but changed the method of computing 
+the maximum benefits that may be paid to a worker's family. The Social 
+Security Disability Amendments of 1980 (Pub. L. 96-265) established a 
+formula for computing the maximum benefits payable to the family of a 
+worker with a determined disability. This formula applies to the family 
+benefits of workers who first become entitled to disability insurance 
+benefits after June 30, 1980, and who first become eligible for these 
+benefits after 1978. For workers with determined disabilities who are 
+initially entitled to disability benefits before July 1980 or whose 
+disability began before 1979, we compute the family maximum payable the 
+same as the old-age and survivor family maximum.
+
+Computing the Old-Age and Survivor Family Maximum
+
+    The formula used to compute the family maximum is similar to that 
+used to compute the PIA. It involves computing the sum of four separate 
+percentages of portions of the worker's PIA. In 1979, these portions 
+were the first $230, the amount between $230 and $332, the amount 
+between $332 and $433, and the amount above $433. We refer to such 
+dollar amounts in the formula as the bend points of the family-maximum 
+formula.
+    To obtain the bend points for 2026, we multiply each of the 1979 
+bend-point amounts by the ratio of the national average wage index for 
+2024 to that average for 1977. Then we round this amount to the nearest 
+dollar. Multiplying the amounts of $230, $332, and $433 by the ratio of 
+the national average wage index for 2024 ($69,846.57) to that for 1977 
+($9,779.44) produces the amounts of $1,642.70, $2,371.21, and 
+$3,092.57. We round these amounts to $1,643, $2,371, and $3,093. 
+Therefore, the portions of the PIAs to be used in 2026 are the first 
+$1,643, the amount between $1,643 and $2,371, the amount between $2,371 
+and $3,093, and the amount above $3,093.
+    So, for the family of a worker who becomes age 62 or dies in 2026 
+before age 62, we compute the total benefits payable to them so that it 
+does not exceed:
+    (a) 150 percent of the first $1,643 of the worker's PIA, plus
+    (b) 272 percent of the worker's PIA between $1,643 and $2,371, plus
+    (c) 134 percent of the worker's PIA between $2,371 and $3,093, plus
+    (d) 175 percent of the worker's PIA above $3,093.
+    We then round this amount to the next lower multiple of $0.10 if it 
+is not already a multiple of $0.10. This formula and the rounding 
+adjustment are stated in section 203(a) of the Act.
+
+Quarter of Coverage Amount
+
+General
+
+    The earnings required for a quarter of coverage in 2026 is $1,890. 
+A quarter of coverage is the basic unit for determining if a worker is 
+insured under the Social Security program. For years before 1978, we 
+generally credited an individual with (1) a quarter of coverage for 
+each quarter in which they were paid wages of $50 or more or (2) four 
+quarters of coverage for every tax year in which they earned $400 or 
+more of self-employment income. Beginning in 1978, employers generally 
+report wages annually instead of quarterly. With the change to yearly 
+reporting, section 352(b) of the Social Security Amendments of 1977 
+amended section 213(d) of the Act to provide that a quarter of coverage 
+would be credited for each $250 of an individual's total wages and 
+self-employment income for calendar year 1978 up to a maximum of four 
+quarters of coverage for the year. The amendment also provided a 
+formula for years after 1978.
+
+Computation
+
+    Under the prescribed formula, the quarter of coverage amount for 
+2026 is the larger of: (1) the 1978 amount of $250 multiplied by the 
+ratio of the national average wage index for 2024 to that for 1976; or 
+(2) the current amount ($1,810). Section 213(d) provides that if the 
+resulting amount is not a multiple of $10, we round it to the nearest 
+multiple of $10.
+
+Quarter of Coverage Amount
+
+    Multiplying the 1978 quarter of coverage amount ($250) by the ratio 
+of the national average wage index for 2024 ($69,846.57) to that for 
+1976 ($9,226.48) produces $1,892.56. We then round this amount to 
+$1,890. Because $1,890 exceeds the current amount of $1,810, the 
+quarter of coverage amount is $1,890 for 2026.
+
+Old-Law Contribution and Benefit Base
+
+General
+
+    The old-law contribution and benefit base for 2026 is $137,100. 
+This base would have been effective under the Act without the enactment 
+of the 1977 amendments.
+    The old-law contribution and benefit base is used by:
+    (a) the Railroad Retirement program to determine certain tax 
+liabilities and tier II benefits payable under that program to 
+supplement the tier I payments that correspond to basic Social Security 
+benefits,
+    (b) the Pension Benefit Guaranty Corporation to determine the 
+maximum amount of pension guaranteed under the Employee Retirement 
+Income Security Act (section 230(d) of the Act),
+    (c) Social Security to determine a year of coverage in computing 
+the special minimum benefit, as described earlier, and
+    (d) Social Security to compute benefits for people who are also 
+eligible and receiving pensions based on employment not covered under 
+section 210 of the Act. We credit a year of coverage, for this purpose 
+only, for each year in which earnings equal or exceed 25 percent of the 
+old-law base.
+
+Computation
+
+    The old-law contribution and benefit base is the larger of: (1) the 
+1994 old-law base ($45,000) multiplied by the ratio of the national 
+average wage index for 2024 to that for 1992; or (2) the current old-
+law base ($130,800). If the resulting amount is not a multiple of $300, 
+we round it to the nearest multiple of $300.
+
+[[Page 49052]]
+
+Old-Law Contribution and Benefit Base Amount
+
+    Multiplying the 1994 old-law contribution and benefit base 
+($45,000) by the ratio of the national average wage index for 2024 
+($69,846.57) to that for 1992 ($22,935.42) produces $137,041.12. We 
+round this amount to $137,100. Because $137,100 exceeds the current 
+amount of $130,800, the old-law contribution and benefit base is 
+$137,100 for 2026.
+
+Substantial Gainful Activity Amounts
+
+General
+
+    A finding of disability under titles II and XVI of the Act requires 
+that a person be unable to engage in SGA, or for a child with 
+disability determined under title XVI, not engaging in SGA. A person 
+who is earning more than a certain monthly amount is ordinarily 
+considered to be engaging in SGA. The monthly earnings considered as 
+SGA depends on the nature of a person's disability. Section 
+223(d)(4)(A) of the Act specifies the formula for determining the SGA 
+amount for statutorily blind individuals under title II while our 
+regulations (20 CFR 404.1574 and 416.974) specify the formula for 
+determining the SGA amount for non-blind individuals with a determined 
+disability.
+
+Computation
+
+    The monthly SGA amount for statutorily blind individuals under 
+title II for 2026 is the larger of: (1) the amount for 1994 multiplied 
+by the ratio of the national average wage index for 2024 to that for 
+1992; or (2) the amount for 2025. The monthly SGA amount for non-blind 
+individuals with a determined disability for 2026 is the larger of: (1) 
+the amount for 2000 multiplied by the ratio of the national average 
+wage index for 2024 to that for 1998; or (2) the amount for 2025. In 
+either case, if the resulting amount is not a multiple of $10, we round 
+it to the nearest multiple of $10.
+
+SGA Amount for Statutorily Blind Individuals
+
+    Multiplying the 1994 monthly SGA amount for statutorily blind 
+individuals ($930) by the ratio of the national average wage index for 
+2024 ($69,846.57) to that for 1992 ($22,935.42) produces $2,832.18. We 
+then round this amount to $2,830. Because $2,830 exceeds the current 
+amount of $2,700, the monthly SGA amount for statutorily blind 
+individuals is $2,830 for 2026.
+
+SGA Amount for Non-Blind Individuals Who Have a Determined Disability
+
+    Multiplying the 2000 monthly SGA amount for non-blind individuals 
+with a determined disability ($700) by the ratio of the national 
+average wage index for 2024 ($69,846.57) to that for 1998 ($28,861.44) 
+produces $1,694.05. We then round this amount to $1,690. Because $1,690 
+exceeds the current amount of $1,620, the monthly SGA amount for non-
+blind individuals with a determined disability is $1,690 for 2026.
+
+Trial Work Period Earnings Threshold
+
+General
+
+    During a trial work period of 9 months in a rolling 60-month 
+period, a beneficiary receiving Social Security disability benefits may 
+test their ability to work and still receive monthly benefit payments. 
+To be considered a trial work period month, earnings must be over a 
+certain level. In 2026, any month in which earnings exceed $1,210 is 
+considered a month of services for an individual's trial work period.
+
+Computation
+
+    The method used to determine the new amount is set forth in our 
+regulations at 20 CFR 404.1592(b). Monthly earnings in 2026, used to 
+determine whether a month is part of a trial work period, is the larger 
+of: (1) the amount for 2001 ($530) multiplied by the ratio of the 
+national average wage index for 2024 to that for 1999; or (2) the 
+amount for 2025. If the resulting amount is not a multiple of $10, we 
+round it to the nearest multiple of $10.
+
+Trial Work Period Earnings Threshold Amount
+
+    Multiplying the 2001 monthly earnings threshold ($530) by the ratio 
+of the national average wage index for 2024 ($69,846.57) to that for 
+1999 ($30,469.84) produces $1,214.93. We then round this amount to 
+$1,210. Because $1,210 exceeds the current amount of $1,160, the 
+monthly earnings threshold is $1,210 for 2026.
+
+Domestic Employee Coverage Threshold
+
+General
+
+    The minimum amount a domestic worker must earn so that such 
+earnings are covered under Social Security or Medicare is the domestic 
+employee coverage threshold. For 2026, this threshold is $3,000. 
+Section 3121(x) of the Internal Revenue Code provides the formula for 
+increasing the threshold.
+
+Computation
+
+    Under the formula, the domestic employee coverage threshold for 
+2026 is equal to the 1995 amount of $1,000 multiplied by the ratio of 
+the national average wage index for 2024 to that for 1993. If the 
+resulting amount is not a multiple of $100, we round it to the next 
+lower multiple of $100.
+
+Domestic Employee Coverage Threshold Amount
+
+    Multiplying the 1995 domestic employee coverage threshold ($1,000) 
+by the ratio of the national average wage index for 2024 ($69,846.57) 
+to that for 1993 ($23,132.67) produces $3,019.39. We then round this 
+amount to $3,000. Therefore, the domestic employee coverage threshold 
+amount is $3,000 for 2026.
+
+Election Official and Election Worker Coverage Threshold
+
+General
+
+    The minimum amount an election official and election worker must 
+earn so the earnings are covered under Social Security or Medicare is 
+the election official and election worker coverage threshold. For 2026, 
+this threshold is $2,500. Section 218(c)(8)(B) of the Act provides the 
+formula for increasing the threshold.
+
+Computation
+
+    Under the formula, the election official and election worker 
+coverage threshold for 2026 is equal to the 1999 amount of $1,000 
+multiplied by the ratio of the national average wage index for 2024 to 
+that for 1997. If the amount we determine is not a multiple of $100, we 
+round it to the nearest multiple of $100.
+
+Election Official and Election Worker Coverage Threshold Amount
+
+    Multiplying the 1999 coverage threshold amount ($1,000) by the 
+ratio of the national average wage index for 2024 ($69,846.57) to that 
+for 1997 ($27,426.00) produces $2,546.73. We then round this amount to 
+$2,500. Therefore, the election official and election worker coverage 
+threshold amount is $2,500 for 2026.
+
+(Catalog of Federal Domestic Assistance: Program Nos. 96.001 Social 
+Security-Disability Insurance; 96.002 Social Security-Retirement 
+Insurance; 96.004 Social Security-Survivors Insurance; 96.006 
+Supplemental Security Income)
+
+
+[[Page 49053]]
+
+
+    Dated: October 30, 2025.
+Mark A. Steffensen,
+Chief of Law, Policy & Legislative Affairs, General Counsel, Social 
+Security Administration.
+[FR Doc. 2025-19763 Filed 10-31-25; 8:45 am]
+BILLING CODE 4191-02-P
+
+
+</pre></body>
+</html>
