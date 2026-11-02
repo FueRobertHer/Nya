@@ -81,6 +81,11 @@ export function cspMode(raw: string | undefined): CspMode {
   return 'report-only';
 }
 
+/** The request header the proxy tells a page the mode in (proxy.ts pass),
+ *  so the Security page can say which this copy uses while reading no stored
+ *  data. Set by the proxy alone: one a visitor sends is dropped. */
+export const CSP_MODE_HEADER = 'x-nya-csp-mode';
+
 /** The response header that carries the policy in this mode. */
 export function cspHeaderName(mode: Exclude<CspMode, 'off'>): 'Content-Security-Policy' | 'Content-Security-Policy-Report-Only' {
   return mode === 'enforce' ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only';

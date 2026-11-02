@@ -9,9 +9,7 @@ import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules'
 import { MANUAL_RUN_WINDOW_SECONDS } from '@/lib/nightly-run-limit';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS, CHANGES_KEEP_DAYS, IDEMPOTENCY_HOURS } from '@/lib/api-limits';
-import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
-import { restoreEnabled } from '@/lib/user-restore/enabled';
 import { UNDO_DAYS } from '@/lib/user-restore/ids';
 import { attachmentsMode, type AttachmentsMode } from '@/lib/attachments-mode';
 
@@ -32,8 +30,10 @@ export const metadata: Metadata = {
 // (lib/deletion-receipt.ts), as the security page says it; whether it names an email
 // provider, or says a download is emailed, from sendsEmail()
 // (lib/notice-recipients.ts): mail set up, and someone it may write to, which
-// is whether this copy sends email at all; whether it offers bringing a
-// download back, from RESTORE_ENABLED (lib/user-restore/enabled.ts).
+// is whether this copy sends email at all. Bringing a download back and
+// letting tokens make changes are feature switches (lib/flags.ts), which can
+// be on for some accounts and not others and live in stored data, so the page
+// says each is offered where whoever runs this copy has turned it on.
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
@@ -88,7 +88,7 @@ function receiptsCommitment(files: AttachmentsMode): Commitment {
   };
 }
 
-const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean, writes: boolean, files: AttachmentsMode): Commitment[] => [
+const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, files: AttachmentsMode): Commitment[] => [
   {
     promise: 'Nya never sells or shares your financial data.',
     today:
@@ -97,19 +97,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today: `Download my data, in Settings under Your data and privacy, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}${
-      restore
-        ? ' Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.'
-        : ''
-    }${files.connected ? ' Your receipts and documents come as ZIP files of their own, under Receipts and documents beside it.' : ''}`,
-    ...(restore
-      ? {}
-      : {
-          next: {
-            label: 'Not turned on here' as const,
-            text: 'Bringing a download into another copy of Nya, or into a new account: built, and off on this copy of Nya until whoever runs it turns it on.',
-          },
-        }),
+    today: `Download my data, in Settings under Your data and privacy, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)} Where whoever runs this copy of Nya has turned it on, Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.${files.connected ? ' Your receipts and documents come as ZIP files of their own, under Receipts and documents beside it.' : ''}`,
   },
   {
     promise: 'You can delete everything, and it reaches backups and connected services.',
@@ -146,11 +134,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
   receiptsCommitment(files),
   {
     promise: 'AI features are opt-in and act only on what you point them at.',
-    today: `Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.${
-      writes
-        ? ` With a token you make to make changes, it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads, so each change is listed for you under API tokens for ${CHANGES_KEEP_DAYS} days, where most can be undone.`
-        : ''
-    }`,
+    today: `Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms. Where whoever runs this copy of Nya lets tokens make changes, with a token you make to make changes it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads, so each change is listed for you under API tokens for ${CHANGES_KEEP_DAYS} days, where most can be undone.`,
     next: { label: 'Planned', text: 'Reading receipts: off unless you turn it on, and only for the receipt you choose.' },
   },
   {
@@ -158,15 +142,13 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
     today: (
       <>
         You can download everything stored about you, and delete your account and everything stored for you, at any time.
-        {writes
-          ? ' An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags (see the '
-          : ' A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the '}
+        {' An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, where whoever runs this copy of Nya lets tokens make changes, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags (see the '}
         <a href="/developers">Developers page</a>).
       </>
     ),
     next: {
       label: 'Not built yet',
-      text: `${writes ? 'Writing your bank’s transactions through the API' : 'Writing through the API'}, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.`,
+      text: 'Writing your bank’s transactions through the API, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
     },
   },
 ];
@@ -178,7 +160,7 @@ function databaseBackups(days: number | null): string {
   return '';
 }
 
-const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, writes: boolean, files: AttachmentsMode): [string, string][] => [
+const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, files: AttachmentsMode): [string, string][] => [
   [
     'Vercel',
     `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'}${
@@ -209,7 +191,7 @@ const processors = (backups: BackupRetention, mail: boolean, dbDays: number | nu
     ? ([
         [
           'Resend',
-          `Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made${writes ? ' (saying what it can do)' : ''}, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com), and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.`,
+          `Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com), and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.`,
         ],
       ] as [string, string][])
     : []),
@@ -261,7 +243,7 @@ function backupsRow(backups: BackupRetention): string {
   return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
 }
 
-const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: boolean, files: AttachmentsMode): [string, string][] => [
+const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: AttachmentsMode): [string, string][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'How each bank connection is doing',
@@ -308,24 +290,18 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ['Counts that limit how often you can do something', countsRow(backups)],
   [
     'API tokens',
-    `Until you revoke them, or delete your account. Each is kept as its name, ${writes ? 'what it can do, ' : ''}the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.`,
+    `Until you revoke them, or delete your account. Each is kept as its name, what it can do, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.`,
   ],
   [
     'Requests counted for each API token',
     `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.${
-      writes
-        ? ` For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours (each counted from the first), and all your tokens’ changes in the current 24 hours, whether a token set each manual account’s balance in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
-        : ''
+      ` Where tokens may make changes, for a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours (each counted from the first), and all your tokens’ changes in the current 24 hours, whether a token set each manual account’s balance in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
     }`,
   ],
-  ...(writes
-    ? ([
-        [
-          'Changes made with API tokens',
-          `${CHANGES_KEEP_DAYS} days, or until you delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days. Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`,
-        ],
-      ] as [string, string][])
-    : []),
+  [
+    'Changes made with API tokens',
+    `Where tokens may make changes: ${CHANGES_KEEP_DAYS} days, or until you delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days. Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`,
+  ],
   [
     'The weekly summary',
     `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`,
@@ -337,6 +313,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   [
     'Your home currency and your own exchange rates',
     'Until you change them, or delete your account. Encrypted, and in your download. Nothing converted is kept by Nya’s server: each figure is worked out again when it is shown (your device keeps the last ones it showed, with the rest of what the app last showed). The European Central Bank’s rates are public, kept once for everyone in plain text, and left out of Nya’s nightly backups.',
+  ],
+  [
+    'Feature switches and their changes',
+    'Settings of this copy of Nya, not of your account: who each feature is turned on for, which can name your account by its random id, and who may sign in, which can name your sign-in by its id or its email. Kept until whoever runs this copy changes them, beside a record of the last 500 changes (when, which switch, what it was and became, and who changed it), which keeps what it names, a deleted account’s id among them, until the change drops out of it. Plain text, in backups, and never in your download.',
   ],
   ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
   ['Reads of what is shared with you, and of what someone sees of yours', `Counted for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`],
@@ -356,10 +336,6 @@ export default function PrivacyPage() {
   const mail = sendsEmail();
   const dbDays = databaseBackupDays();
   const keys = keyDeletionText({ envelope: masterKeyConfigured(), backups, databaseDays: dbDays });
-  const restore = restoreEnabled();
-  // What tokens can do here: the wording about changes shows only where
-  // they can make them (lib/api-writes-enabled.ts).
-  const writes = apiWritesEnabled();
   // Whether receipts and documents can be kept here, from the settings alone
   // (filesHere).
   const files = filesHere();
@@ -371,7 +347,7 @@ export default function PrivacyPage() {
       title: 'Nya’s commitments',
       body: (
         <>
-          {commitments(backups, mail, keys, restore, writes, files).map((c) => (
+          {commitments(backups, mail, keys, files).map((c) => (
             <section className="info-commitment" key={c.promise}>
               <h3>{c.promise}</h3>
               <dl className="info-status">
@@ -397,7 +373,7 @@ export default function PrivacyPage() {
           <table className="info-table">
             <caption className="visually-hidden">Who processes your data</caption>
             <tbody>
-              {processors(backups, mail, dbDays, writes, files).map(([name, what]) => (
+              {processors(backups, mail, dbDays, files).map(([name, what]) => (
                 <tr key={name}>
                   <th scope="row">{name}</th>
                   <td>{what}</td>
@@ -431,7 +407,7 @@ export default function PrivacyPage() {
               </tr>
             </thead>
             <tbody>
-              {retention(backups, mail, keys, writes, files).map(([what, howLong]) => (
+              {retention(backups, mail, keys, files).map(([what, howLong]) => (
                 <tr key={what}>
                   <th scope="row">{what}</th>
                   <td>{howLong}</td>
@@ -475,17 +451,16 @@ export default function PrivacyPage() {
               with a passphrase, since they show what you bought. The JSON file lists them, without the files themselves.
             </p>
           )}
-          {restore && (
-            <p>
-              Bring back a download, beside it, brings a JSON download into an account with nothing in it yet, in this copy of
-              Nya or another. The file is read in your browser and never stored: only what it holds is written, into your
-              account, encrypted as the rest of your data is. A fresh sign-in comes first, and{' '}
-              {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
-              Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again.
-              {files.connected ? ' Nor, yet, do your receipts and documents: keep your ZIP download of them.' : ''} Undo,
-              offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
-            </p>
-          )}
+          <p>
+            Where whoever runs this copy of Nya has turned it on, Bring back a download, beside it, brings a JSON download
+            into an account with nothing in it yet, in this copy of Nya or another. The file is read in your browser and
+            never stored: only what it holds is written, into your account, encrypted as the rest of your data is. A fresh
+            sign-in comes first, and{' '}
+            {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
+            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again.
+            {files.connected ? ' Nor, yet, do your receipts and documents: keep your ZIP download of them.' : ''} Undo,
+            offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
+          </p>
         </>
       ),
     },

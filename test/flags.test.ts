@@ -36,7 +36,7 @@ afterEach(() => {
 
 /** Stores a value as /dev/flags would. */
 const store = (key: string, value: unknown) => fake.hset(testKey('flags:values'), { [key]: JSON.stringify(value) });
-const audience = (on: string, containers: string[] = []) => ({ on, containers, updatedAt: AT });
+const audience = (on: (typeof flags.AUDIENCES)[number], containers: string[] = []) => ({ on, containers: containers as never[], updatedAt: AT });
 const who = (container: string | null, opts: { demo?: boolean; admin?: boolean } = {}): ReturnType<typeof read.flagWho> => ({
   container: container as never,
   demo: opts.demo ?? false,
@@ -115,7 +115,7 @@ describe('the registry', () => {
     for (const [kind, key] of Object.entries(byKind)) {
       for (const [other, value] of Object.entries(good)) expect([key, other, flags.isFlagValue(key, value)]).toEqual([key, other, other === kind]);
     }
-    expect(flags.isFlagValue('restore', audience('somebody'))).toBe(false);
+    expect(flags.isFlagValue('restore', audience('somebody' as never))).toBe(false);
     expect(flags.isFlagValue('restore', audience('everyone', ['not-a-container']))).toBe(false);
     expect(flags.isFlagValue('restore', audience('everyone', [C1, C1]))).toBe(false);
     expect(flags.isFlagValue('restore', { ...audience('everyone'), extra: 1 })).toBe(false);

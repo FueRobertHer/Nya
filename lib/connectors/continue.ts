@@ -5,8 +5,8 @@
 // when the new access gives the same account other ids (a new SimpleFIN
 // Bridge account after the old one lapsed, a bank added again there,
 // another server, Lunch Flow in place of SimpleFIN or the reverse):
-// docs/data-export.md, "Bringing it back". Behind RESTORE_CARRY_ON_ENABLED
-// (lib/user-restore/enabled.ts carryOnEnabled).
+// docs/data-export.md, "Bringing it back". Behind the `restore-carry-on`
+// feature switch (lib/flags.ts; RESTORE_CARRY_ON_ENABLED while set).
 //
 // ASKED, NEVER ASSUMED. While a restored connector account waits (the
 // restore's record is finished, and since it started no answer has held the

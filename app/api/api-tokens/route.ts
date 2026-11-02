@@ -10,7 +10,7 @@ import { loggable } from '@/lib/log-safe';
 import { sendAccessNotice } from '@/lib/download-notice';
 import { background } from '@/lib/background';
 import { ACCESS, type Access } from '@/lib/api-limits';
-import { apiWritesEnabled } from '@/lib/api-writes-enabled';
+import { flagOnCached, flagOnFresh, requestWho } from '@/lib/flag-read';
 
 // The API tokens card (components/ApiTokens.tsx): the person's own tokens for
 // the read-only API and the MCP server (lib/api-tokens.ts). Behind the session
@@ -77,7 +77,8 @@ export async function GET() {
   try {
     const ctx = await dataCtx();
     const { tokens, unreadable, unrecognised } = await listTokens(ctx);
-    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes: apiWritesEnabled() }, { headers: noStore });
+    const writes = await flagOnCached('api-writes', await requestWho(ctx));
+    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes }, { headers: noStore });
   } catch (err) {
     return failure(err, 'read');
   }
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `access is one of ${ACCESS.join(', ')}.` }, { status: 400 });
   }
   const access = (rawAccess ?? 'read') as Access;
-  if (access !== 'read' && !apiWritesEnabled()) {
+  if (access !== 'read' && !(await flagOnFresh('api-writes', await requestWho(ctx)))) {
     return NextResponse.json({ error: 'This copy of Nya doesn’t let tokens make changes: make one that reads.' }, { status: 403 });
   }
   if (typeof rawLabel === 'string' && rawLabel.length > LABEL_FIELD_MAX) return NextResponse.json({ error: 'That name is too long.' }, { status: 400 });

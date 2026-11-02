@@ -54,10 +54,9 @@
 import type { Authenticated } from './api-tokens';
 import { argsFromJson, inputSchema, operation, BadRequest, NotFound, type Args } from './api-ops';
 import { TOOL_SPECS, WRITE_TOOL_SPECS, DATA_NOT_INSTRUCTIONS, ASK_FIRST, PROTOCOL_VERSIONS, ApiFailure, resourceSpec, allowsOf, type ToolSpec, type WriteToolSpec } from './api-spec';
-import { checkAccess, gate, mayRun, writesNeeded, type Gated } from './api-run';
+import { checkAccess, gate, mayRun, writesNeeded, writesOn, type Gated } from './api-run';
 import { runResource } from './api-writes';
 import { readIfMatch } from './api-versions';
-import { apiWritesEnabled } from './api-writes-enabled';
 import { StoreRefusedError } from './repo';
 import type { Access } from './api-limits';
 import { readNetWorthAndHistory, readNetWorth, type ApiMissing, type Interval } from './api-read';
@@ -87,10 +86,11 @@ export const WRITE_INSTRUCTIONS = [
   'Every change is recorded with what it changed: undo_change reverses one while nothing has changed it since, and the person can see and undo every change in Nya.',
 ].join(' ');
 
-/** The instructions a token is given, by what it may do. */
-export function instructionsFor(auth: Pick<Authenticated, 'access'>): string {
-  if (auth.access === 'write' && apiWritesEnabled()) return `${INSTRUCTIONS} ${WRITE_INSTRUCTIONS}`;
-  if (auth.access === 'balances' && apiWritesEnabled()) {
+/** The instructions a token is given, by what it may do: `writes`, whether
+ *  tokens may make changes for it (lib/api-run.ts writesOn). */
+export function instructionsFor(auth: Pick<Authenticated, 'access'>, writes: boolean): string {
+  if (auth.access === 'write' && writes) return `${INSTRUCTIONS} ${WRITE_INSTRUCTIONS}`;
+  if (auth.access === 'balances' && writes) {
     return `${INSTRUCTIONS} This token reads only the person’s accounts (list_accounts), and can set a manual account’s balance (set_account_balance). ${ASK_FIRST}`;
   }
   return INSTRUCTIONS;
@@ -438,21 +438,27 @@ export const WRITE_TOOLS: readonly WriteTool[] = WRITE_TOOL_SPECS.map((spec) => 
 
 /** Whether a token may call a tool now: its access, and the switch for one
  *  that needs more than reading. */
-const callable = (auth: Pick<Authenticated, 'access'>, spec: { allows?: readonly Access[] }) =>
-  mayRun(auth, spec) && (!writesNeeded(spec) || apiWritesEnabled());
+const callable = (auth: Pick<Authenticated, 'access'>, spec: { allows?: readonly Access[] }, writes: boolean) =>
+  mayRun(auth, spec) && (!writesNeeded(spec) || writes);
+
+/** Whether tokens may make changes, as the instructions and the tool list
+ *  describe it: never asked for a token that only reads, and through this
+ *  instance's copy for one that may write (a call to a write tool asks
+ *  again, fresh). */
+const describedWrites = (auth: Authenticated): Promise<boolean> => (auth.access === 'read' ? Promise.resolve(false) : writesOn(auth, false));
 
 /** tools/list's answer, for this token: only what it may call. */
-export function listTools(auth: Pick<Authenticated, 'access'>): { tools: unknown[] } {
+export function listTools(auth: Pick<Authenticated, 'access'>, writes: boolean): { tools: unknown[] } {
   return {
     tools: [
-      ...TOOLS.filter((t) => callable(auth, t)).map((t) => ({
+      ...TOOLS.filter((t) => callable(auth, t, writes)).map((t) => ({
         name: t.name,
         title: t.title,
         description: t.description,
         inputSchema: inputSchema(t.args),
         annotations: { title: t.title, ...ANNOTATIONS },
       })),
-      ...WRITE_TOOLS.filter((t) => callable(auth, t)).map((t) => ({
+      ...WRITE_TOOLS.filter((t) => callable(auth, t, writes)).map((t) => ({
         name: t.name,
         title: t.title,
         description: t.description,
@@ -469,8 +475,10 @@ async function callWriteTool(auth: Authenticated, tool: WriteTool, raw: unknown)
   const spec = resourceSpec(tool.resource);
   let gated: Gated;
   try {
-    checkAccess(auth, tool);
-    gated = await gate(auth, spec);
+    // Read once, fresh, for both checks.
+    const writes = await writesOn(auth, true);
+    checkAccess(auth, tool, writes);
+    gated = await gate(auth, spec, Date.now(), writes);
   } catch (err) {
     if (err instanceof ApiFailure) return toolError(err.message);
     throw err;
@@ -525,7 +533,7 @@ export async function callTool(auth: Authenticated, name: string, raw: unknown):
   // The gate every operation passes, whatever tools/list showed: a balances
   // token reads its accounts alone.
   try {
-    checkAccess(auth, tool);
+    checkAccess(auth, tool, writesNeeded(tool) ? await writesOn(auth, true) : false);
   } catch (err) {
     if (err instanceof ApiFailure) return toolError(err.message);
     throw err;
@@ -590,12 +598,12 @@ export async function handleMessage(auth: Authenticated, msg: unknown): Promise<
     case 'initialize': {
       const asked = p.protocolVersion;
       const protocolVersion = typeof asked === 'string' && (PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : LATEST_PROTOCOL;
-      return rpcResult(id, { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: instructionsFor(auth) });
+      return rpcResult(id, { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO, instructions: instructionsFor(auth, await describedWrites(auth)) });
     }
     case 'ping':
       return rpcResult(id, {});
     case 'tools/list':
-      return rpcResult(id, listTools(auth));
+      return rpcResult(id, listTools(auth, await describedWrites(auth)));
     case 'tools/call': {
       if (typeof p.name !== 'string') return rpcError(id, RPC.invalidParams, 'tools/call needs the tool’s name.');
       if (!TOOLS.some((t) => t.name === p.name) && !WRITE_TOOLS.some((t) => t.name === p.name)) return rpcError(id, RPC.invalidParams, `Unknown tool: ${p.name.slice(0, 60)}`);

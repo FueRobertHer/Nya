@@ -14,7 +14,8 @@ import { isUserRestoreId, UNDO_DAYS } from '@/lib/user-restore/ids';
 import { isPartName } from '@/lib/user-restore/check';
 import { planDigest } from '@/lib/user-restore/file';
 import { undoRestore, emptyAccount, UndoRefused, EMPTY_WORDS } from '@/lib/user-restore/undo';
-import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
+import { RESTORE_OFF } from '@/lib/user-restore/enabled';
+import { flagOnCached, flagOnFresh, requestWho } from '@/lib/flag-read';
 import { waitingAccounts } from '@/lib/user-restore/restored';
 import { earlierAccountLabel, forgettableAccounts, liveAccountIds, loadSuggestionInputs, whyUnlisted } from '@/lib/links';
 import { earlierNames } from '@/lib/earlier-names';
@@ -284,7 +285,8 @@ export async function GET(req: Request) {
       waitingAccounts(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true })),
     ]);
     const answer: Record<string, unknown> = {
-      enabled: restoreEnabled(),
+      // Describes, so through this instance's copy; starting one reads fresh.
+      enabled: await flagOnCached('restore', await requestWho(ctx)),
       demo,
       record: viewOf(report.value),
       // A record that can't be read holds the totals as an unfinished one does
@@ -328,7 +330,7 @@ export async function POST(req: Request) {
   if (!isObject(raw)) return NextResponse.json({ error: 'Send { action }.' }, { status: 400 });
   const action = raw.action;
   if (action !== 'start' && action !== 'empty') return NextResponse.json({ error: 'action must be start or empty.' }, { status: 400 });
-  if (!restoreEnabled()) return NextResponse.json({ error: RESTORE_OFF }, { status: 403 });
+  if (!(await flagOnFresh('restore', await requestWho(ctx)))) return NextResponse.json({ error: RESTORE_OFF }, { status: 403 });
   const password = passwordOf(raw.password);
   if (password === 'bad') return NextResponse.json({ error: 'password must be text.' }, { status: 400 });
   let candidate: UserRestoreRecord | null = null;

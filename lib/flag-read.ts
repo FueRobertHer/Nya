@@ -49,7 +49,7 @@ import {
   type FlagKey,
   type FlagValue,
 } from './flags';
-import type { ContainerId } from './containers';
+import type { ContainerId, Ctx } from './containers';
 import type { CspMode } from './security-headers';
 
 /** The stored values this release can use, by flag. */
@@ -159,6 +159,17 @@ export function flagWho(container: ContainerId | null, userId: string | null, op
       return admin;
     },
   };
+}
+
+/** Who a signed-in request is for: its container, and its Clerk account
+ *  where Clerk is on (with the shared password there are no people). For a
+ *  route that has resolved its container (lib/data-ctx.ts). */
+export async function requestWho(ctx: Ctx): Promise<Who> {
+  const { clerkEnabled } = await import('./auth-mode');
+  if (!clerkEnabled()) return flagWho(ctx.container, null);
+  const { auth } = await import('@clerk/nextjs/server');
+  const { userId } = await auth();
+  return flagWho(ctx.container, userId ?? null);
 }
 
 // ---- Evaluating ----
