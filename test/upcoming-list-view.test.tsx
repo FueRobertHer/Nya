@@ -2,7 +2,7 @@ import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { installDom, click, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, FakeElement } from './mini-dom';
 import { notesIn } from './budget-notes-fixture';
 import { CAR, KINDS, REFUND, RENT_AND_PAY, TODAY, chase, txn } from './upcoming-notes-fixture';
 import { ecbTable } from './fx-fixture';
@@ -26,7 +26,7 @@ afterEach(() => setAmountsHidden(false));
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: UpcomingList } = await import('@/components/UpcomingList');
 const { default: CalendarView } = await import('@/components/CalendarView');
 

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, FakeElement } from './mini-dom';
 import { cardOf, shared as sharedOf } from './shared-expenses-fixture';
 
 // The first steps the screen review after step 5 gave Goals, Shared and
@@ -18,7 +18,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { GoalsCardView } = await import('@/components/GoalsCard');
 const { default: SharedExpensesCard } = await import('@/components/SharedExpensesCard');
 const { default: TemplateOffer, TEMPLATE_OFFER_KEY } = await import('@/components/TemplateOffer');

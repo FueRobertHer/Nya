@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement, FakeNode } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement, FakeNode } from './mini-dom';
 
 // The figures the Plan rests on (rollout phase 6c, docs/design/rollout.md),
 // used as a person would (react-dom/client over test/mini-dom.ts): Your
@@ -72,7 +72,7 @@ afterAll(() => {
 // React's client reads what the document supports once, when it loads: it is
 // loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { FigureForm } = await import('@/components/PlanForms');
 const { planPanelId } = await import('@/components/PlanBar');

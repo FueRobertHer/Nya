@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { installDom, click, type, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, type FakeElement } from './mini-dom';
 
 // The feature switches card (components/FeatureSwitchesCard.tsx), as
 // /dev/flags shows it: a card per switch, what it does, whether the
@@ -17,7 +17,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: FeatureSwitchesCard } = await import('@/components/FeatureSwitchesCard');
 type SwitchRow = import('@/components/FeatureSwitchesCard').SwitchRow;
 

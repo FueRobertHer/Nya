@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, FakeElement, FakeEvent } from './mini-dom';
 
 // A sheet keeps Tab inside it (design-system.md, Sheet): from its last control
 // to its first, Shift+Tab from its first to its last, and focus that has left
@@ -12,7 +12,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { Sheet } = await import('@/components/Sheet');
 
 /** The time a sheet takes to slide in (one frame). */

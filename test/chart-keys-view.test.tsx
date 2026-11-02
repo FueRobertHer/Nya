@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, FakeEvent, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, FakeEvent, type FakeElement } from './mini-dom';
 
 // The charts read by the keys as the net worth chart is
 // (components/chart-keys.ts): Income vs spend, the cash forecast, the payoff
@@ -20,7 +20,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: MonthFlowChart } = await import('@/components/MonthFlowChart');
 const { default: ForecastChart, fmtDay } = await import('@/components/ForecastChart');
 const { NO_INPUTS, PayoffPanel, monthLabel } = await import('@/components/DebtPayoff');
@@ -153,21 +153,14 @@ const CHARTS: { name: string; node: () => React.ReactNode; rest: 'first' | 'last
   },
 ];
 
-const mounted = new Set<() => void>();
-afterEach(() => {
-  for (const unmount of mounted) unmount();
-  setAmountsHidden(false);
-});
+afterEach(() => setAmountsHidden(false));
 
 function mount(node: React.ReactNode) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
+  // Unmounted after the test, by trackRoots (test/mini-dom.ts).
   const root = createRoot(host as unknown as HTMLElement);
   act(() => root.render(node));
-  const unmount = () => {
-    if (mounted.delete(unmount)) act(() => root.unmount());
-  };
-  mounted.add(unmount);
   const plot = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
   return {
     host,

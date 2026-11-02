@@ -8,6 +8,14 @@
 // globalThis, and returns a function that takes them all away again: every
 // test file runs in one process, and the next file must find no browser,
 // as lib/format.ts and components/hide-amounts.ts expect where there is none.
+//
+// trackRoots() wraps react-dom/client so each root it makes is unmounted
+// after its test, whether or not the test got to its own unmount: a root
+// still mounted when the file's afterAll takes the document away throws on
+// its next update (React reads window.event) in whichever file runs next.
+
+import { act } from 'react';
+import { resetEachTest } from './shared-reset';
 
 type Listener = { fn: (e: FakeEvent) => void; capture: boolean };
 
@@ -383,6 +391,36 @@ export function installDom(): { document: FakeDocument; uninstall: () => void } 
         if (d) Object.defineProperty(g, name, d);
         else delete g[name];
       }
+    },
+  };
+}
+
+type Client = typeof import('react-dom/client');
+const roots = new Set<{ unmount: () => void }>();
+
+// Run before and after each test of every file (test/preload.ts); the run
+// after comes before the file's afterAll takes the document away. All in one
+// act, so an error one root's cleanup throws is thrown once every root is
+// unmounted.
+resetEachTest(() => {
+  if (!roots.size) return;
+  const left = [...roots];
+  roots.clear();
+  act(() => {
+    for (const root of left) root.unmount();
+  });
+});
+
+/** react-dom/client's createRoot, with each root it makes unmounted after the
+ *  test that made it if still mounted, so a test that fails before its own
+ *  unmount leaves nothing for the next file. Unmounting a root twice does
+ *  nothing, so a test's own unmount stays as it is. */
+export function trackRoots(client: Client): Pick<Client, 'createRoot'> {
+  return {
+    createRoot: (container, options) => {
+      const root = client.createRoot(container, options);
+      roots.add(root);
+      return root;
     },
   };
 }
