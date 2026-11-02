@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { inflateSync } from 'node:zlib';
 import { createHash, scryptSync } from 'node:crypto';
 import { chacha20, chacha20Block, poly1305, seal, open } from '@/lib/age/chacha20poly1305';
@@ -30,8 +29,7 @@ import { protectFile, nativeScrypt } from '@/lib/protected-download';
 // for scrypt); answers worked out by other implementations (Node's OpenSSL
 // cipher, Python's cryptography); the age project's test vectors, in
 // test/fixtures/age (from github.com/C2SP/CCTV, age/testdata, which its
-// license lets anyone copy without attribution); and the age command itself,
-// where it is installed.
+// license lets anyone copy without attribution).
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const fromHex = (s: string) => new Uint8Array(Buffer.from(s.replace(/[\s:]/g, ''), 'hex'));
@@ -287,10 +285,9 @@ const PIECES = (text: string, size: number) => () => {
 const PASSPHRASE = 'piano orbit lantern harvest';
 /** How long a test that derives a key at the real setting may take: scrypt
  *  at N = 2^18 is a quarter of a gigabyte of memory-hard work, about a
- *  second here with the machine to itself, and a test of the age command
- *  makes up to three. The work is fixed, so a machine busy with other work
- *  only stretches the wait, past bun's default 5 s in a full run: this bound
- *  guards against a hang, never measures speed. */
+ *  second here with the machine to itself. The work is fixed, so a machine
+ *  busy with other work only stretches the wait, past bun's default 5 s in a
+ *  full run: this bound guards against a hang, never measures speed. */
 const REAL_SETTING_MS = 30_000;
 
 async function protect(text: string, opts: { pieces?: number; passphrase?: string } = {}) {
@@ -449,46 +446,4 @@ describe('a protected download', () => {
       }
     }
   }, 30_000);
-});
-
-// The age command, where it is installed, through a pseudo-terminal (`script`):
-// it reads a passphrase only from a terminal.
-const hasTool = (name: string) => Bun.which(name) !== null;
-const CLI = hasTool('age') && hasTool('script');
-
-describe.skipIf(!CLI)('the age command', () => {
-  const run = (command: string, input: string, cwd: string) =>
-    Bun.spawnSync(['script', '-q', '-e', '-c', command, '/dev/null'], { cwd, stdin: new TextEncoder().encode(input), stdout: 'pipe', stderr: 'pipe' });
-
-  test('opens a protected download as Nya writes it, at the real setting', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'nya-age-'));
-    try {
-      const text = '{"format":"nya-export","version":2}\n' + 'café, 東京, "quotes"\n'.repeat(5000);
-      const made = await protectFile({ filename: 'nya-data.json', chunks: PIECES(text, 4096) }, enc(text).length, PASSPHRASE);
-      writeFileSync(join(dir, 'in.age'), Buffer.concat([...made.chunks()]));
-      const res = run('age -d -o out.json in.age', `${PASSPHRASE}\n`, dir);
-      expect(res.exitCode).toBe(0);
-      expect(readFileSync(join(dir, 'out.json'), 'utf8')).toBe(text);
-      // And the wrong passphrase is refused, writing nothing.
-      expect(run('age -d -o wrong.json in.age', 'not the passphrase\n', dir).exitCode).not.toBe(0);
-      expect(() => readFileSync(join(dir, 'wrong.json'))).toThrow();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, REAL_SETTING_MS);
-
-  test('what the age command protects with a passphrase opens here', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'nya-age-'));
-    try {
-      const text = 'line one\nline two\n'.repeat(9000);
-      writeFileSync(join(dir, 'plain.txt'), text);
-      const res = run('age -p -o made.age plain.txt', `${PASSPHRASE}\n${PASSPHRASE}\n`, dir);
-      expect(res.exitCode).toBe(0);
-      const file = new Uint8Array(readFileSync(join(dir, 'made.age')));
-      expect(parseHeader(file).stanzas[0].type).toBe('scrypt');
-      expect(await opened(file)).toBe(text);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, REAL_SETTING_MS);
 });

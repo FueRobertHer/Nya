@@ -73,7 +73,6 @@ const { setOverride, getOverrides } = await import('@/lib/overrides');
 const {
   syncItemTransactions,
   readItemTransactions,
-  getItemAccountIds,
   clearItemTransactions,
   TXN_SCHEMA_VERSION,
 } =
@@ -169,13 +168,6 @@ describe('persistence round trip', () => {
     const after = await syncItemTransactions(ctx, ITEM);
 
     expect(after.txns.map((t) => t.transaction_id)).toEqual(['t2']);
-  });
-
-  test('getItemAccountIds reads the persisted account map', async () => {
-    pages = [{ added: [txn()], accounts: [acct(), acct({ account_id: 'acct_2', name: 'Savings' })] }];
-    await syncItemTransactions(ctx, ITEM);
-
-    expect((await getItemAccountIds(ctx, 'item_a')).sort()).toEqual(['acct_1', 'acct_2']);
   });
 });
 

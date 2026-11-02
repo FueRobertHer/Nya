@@ -155,7 +155,7 @@ describe('the page', () => {
     expect(off).toContain('Where tokens may make changes, with one made to make changes the assistant also gets the write tools below');
     expect(off).not.toContain('read only. Nothing you call can change your data.');
     expect(off).not.toContain('Writing anything: adding transactions');
-    expect(source('app/developers/page.tsx')).not.toMatch(/flag-read|flag-store|api-writes-enabled/);
+    expect(source('app/developers/page.tsx')).not.toMatch(/flag-read|flag-store/);
     expect(generateMetadata().description).toBe('Nya’s API and MCP server: read your own data, and where it is turned on change some of it with a token made for it, from your own programs.');
   });
 

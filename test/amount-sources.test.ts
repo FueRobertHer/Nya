@@ -441,6 +441,12 @@ describe('what of a child expression is drawn', () => {
   });
 });
 
+// The tests that scan the whole app build its model (modelOf), about three
+// seconds on CI with the runner to itself and past bun's 5 s on a loaded one,
+// as test/hide-amounts.test.tsx's scans: so each has its own time. A bound
+// against a hang, never a measure of speed.
+const SCAN_MS = 30_000;
+
 describe('a field the CSS hook covers while amounts are hidden', () => {
   test('has a placeholder, so an empty one shows it rather than the mask', () => {
     const found = scan({
@@ -458,7 +464,7 @@ describe('a field the CSS hook covers while amounts are hidden', () => {
   test('every one the app has', () => {
     const root = join(import.meta.dir, '..');
     expect(fieldsWithoutPlaceholder(root, clientModules(root))).toEqual([]);
-  });
+  }, SCAN_MS);
 });
 
 /** What the app draws in <Masked> that never holds an amount (a count, a
@@ -524,5 +530,5 @@ describe('held to the app’s own shapes', () => {
     expect(sites.length).toBeGreaterThan(250);
     const missed = sites.filter((site) => !reported.has(site.split(' ')[0])).map((site) => site.replace(/:\d+ /, ' '));
     expect(missed.sort()).toEqual(NEVER_AN_AMOUNT);
-  });
+  }, SCAN_MS);
 });

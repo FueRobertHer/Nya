@@ -14,7 +14,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
-const { checkVanished, checkVanishedAll, forgetVanished } = await import('@/lib/vanished');
+const { checkVanishedAll, forgetVanished } = await import('@/lib/vanished');
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-06-15T12:00:00.000Z');
@@ -36,15 +36,7 @@ async function remember(item_id: string, ids: string[]): Promise<void> {
 
 const asAccounts = (ids: string[]) => ids.map((account_id) => ({ account_id }));
 
-/**
- * Drive ONE institution through checkVanishedAll.
- *
- * Deliberately not `checkVanished`: production calls only the batch form, and
- * the two source `remembered` through different code. rememberedIdsForItem
- * accepts any string account_id; recallByItem, behind rememberedIdsByItem, also
- * drops entries whose `type` is not a string and drops the Item entirely if
- * that leaves none. Testing the single form would leave the real path unproven.
- */
+/** Drive ONE institution through checkVanishedAll. */
 async function check(item_id: string, freshIds: string[], now: number) {
   const all = await checkVanishedAll(ctx, [{ item_id, accounts: asAccounts(freshIds) }], now);
   return all[item_id] ?? { unconfirmed: [], accepted: [] };
@@ -328,22 +320,6 @@ describe('cost', () => {
     fake.ops = 0;
     expect(await checkVanishedAll(ctx, [], NOW)).toEqual({});
     expect(fake.ops).toBe(0);
-  });
-});
-
-describe('the single-Item form', () => {
-  // Still exported for callers with one Item in hand; production uses the batch
-  // form. Covered so it cannot rot unnoticed.
-  test('behaves like the batch form', async () => {
-    await remember('item_a', ['acct_1', 'acct_2']);
-
-    const res = await checkVanished(ctx, 'item_a', ['acct_1'], NOW);
-    expect(res.unconfirmed).toEqual(['acct_2']);
-  });
-
-  test('refuses an empty account list too', async () => {
-    await remember('item_a', ['acct_1', 'acct_2']);
-    expect(await checkVanished(ctx, 'item_a', [], NOW)).toEqual({ unconfirmed: [], accepted: [] });
   });
 });
 

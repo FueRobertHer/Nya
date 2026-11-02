@@ -12,8 +12,8 @@
 // `age` command, or its other implementations), with no part of Nya needed.
 // It is built only from standard primitives: scrypt, HKDF-SHA256,
 // HMAC-SHA256 and ChaCha20-Poly1305. test/age.test.ts holds this code to the
-// age project's own test vectors, and to the age command where it is
-// installed.
+// age project's own test vectors, and to what an independent age writer
+// makes, byte for byte.
 //
 // THE LAYOUT. A text header, then the payload:
 //
