@@ -406,7 +406,10 @@ describe('a protected download', () => {
     expect(await why(at(head + 3))).toBe('payload'); // the nonce: another payload key
     expect(await why(at(file.length - 3))).toBe('payload');
     expect(await why(at(head + 16 + CHUNK_SIZE + 20))).toBe('payload');
-  });
+    // A key derived for most bytes of the header (about a hundred): fixed
+    // work, which a busy machine stretches toward bun's 5 s. A bound against
+    // a hang, never a measure of speed.
+  }, 30_000);
 
   test('something that isn’t an age file is said to be so', async () => {
     expect(await why(decryptWithPassphrase(enc('{"format":"nya-export"}'), PASSPHRASE, { scrypt }))).toBe('not-age');
