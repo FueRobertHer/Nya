@@ -109,12 +109,14 @@ function bankTxn(id: string, account_id: string, days: number, amount: number, o
   };
 }
 
-const BANK = [
+/** The bank's rows, dated back from today: the clock's, in a test that holds it. */
+const bankRows = () => [
   bankTxn('b_first', 'acc_chk', 60, 10, { name: 'FIRST ROW' }),
   bankTxn('b_rent', 'acc_chk', 55, 1850, { name: 'ZELLE PAYMENT TO LANDLORD', merchant_name: 'Landlord', category: 'rent and utilities' }),
   bankTxn('b_pay', 'acc_chk', 45, -2500, { name: 'ACME PAYROLL', merchant_name: 'Acme Corp', category: 'income' }),
   bankTxn('b_recent', 'acc_chk', 3, 20, { name: 'GROCER' }),
 ];
+const BANK = bankRows();
 
 async function seed(c = ctx, rows: ReturnType<typeof bankTxn>[] = BANK) {
   await saveItem(c, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(c, 'access-sandbox-chase') });
@@ -1545,9 +1547,17 @@ describe('a linked account’s answers', () => {
 });
 
 describe('the download of my data', () => {
+  // On a clock of its own: the YNAB file is dated (its Checking to 15 Sep
+  // 2026) and the bank's rows back from today, so as the days pass one comes
+  // within MATCH_DAYS after the file's last day, a pair only the person can
+  // answer (lib/history-import/match.ts, ACROSS AN EDGE), and the import waits
+  // for that answer. Today is held at the day this was written.
+  beforeEach(() => setSystemTime(new Date('2026-10-17T12:00:00Z')));
+  afterEach(() => setSystemTime());
+
   test('holds everything an import from another app wrote, with nothing added to it for it', async () => {
     const { collectUserData, buildUserExport, exportFile } = await import('@/lib/user-export');
-    await seed();
+    await seed(ctx, bankRows());
     // YNAB's Checking into the linked account, the rest into new manual ones.
     const lines = readFileSync(join(FIXTURES, 'ynab-register.csv'), 'utf8');
     const { done, migration_id } = await importReviewed(lines, {
