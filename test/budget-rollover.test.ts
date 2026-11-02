@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import './clerk-mock';
 import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys, TEST_CTX, testKey } from './fake-redis';
 import { ecbHash } from './fx-fixture';
@@ -154,21 +154,29 @@ const rollover = (t: Taxonomy, name: string, from: string, kind: 'category' | 'g
   post({ action: 'rollover', kind, id: kind === 'category' ? named(t, name).id : group(t, name).id, on: true, from, month: NOW });
 
 describe('with a home currency', () => {
+  // The ECB's rows end on 14 Sep 2026 (test/fx-fixture.ts), so last month's
+  // euros have a day's rate of their own, apart from the newest, only while
+  // last month is September: this month is October 2026, and the clock is
+  // held in it for the routes' checks of which month is this one.
+  const OCT = '2026-10';
+  beforeEach(() => setSystemTime(new Date('2026-10-20T12:00:00Z')));
+  afterEach(() => setSystemTime());
+
   test('budgets stay in theirs, and spending in another counts against them converted, carries too, to the cent', async () => {
     const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
     await fake.hset(testKey('fx:ecb'), ecbHash());
     const t = await budgetBefore({ 'food and drink': 400 });
     await seedBank([
-      row('u1', on(-1), 200),
-      row('e1', on(-1), 100, 'food and drink', { iso_currency_code: 'EUR' }),
-      row('u0', on(0, 2), 120),
-      row('u2', on(0, 4), 30),
-      row('e0', on(0, 3), 50, 'food and drink', { iso_currency_code: 'EUR' }),
+      row('u1', '2026-09-10', 200),
+      row('e1', '2026-09-10', 100, 'food and drink', { iso_currency_code: 'EUR' }),
+      row('u0', '2026-10-02', 120),
+      row('u2', '2026-10-04', 30),
+      row('e0', '2026-10-03', 50, 'food and drink', { iso_currency_code: 'EUR' }),
     ]);
-    await rollover(t, 'food and drink', M(-1));
+    expect((await post({ action: 'rollover', kind: 'category', id: named(t, 'food and drink').id, on: true, from: '2026-09', month: OCT })).status).toBe(200);
     const food = named(t, 'food and drink').id;
     // No home currency: the euros named, never added.
-    let body = (await month()).body;
+    let body = (await month(OCT, OCT)).body;
     expect([body.currency, body.spent[food], body.carries.categories[food].carry]).toEqual(['USD', 150, 200]);
     expect(body.left_out_text).toBe("1 transaction in EUR isn't in these budgets, which are in USD.");
     expect(body.converted_text).toBeNull();
@@ -176,7 +184,7 @@ describe('with a home currency', () => {
     // them at each day's rate (the ECB's of 10 Sep, 1.1616; of 14 Sep, the
     // newest, 1.1551, for October).
     await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
-    body = (await month()).body;
+    body = (await month(OCT, OCT)).body;
     expect(body.currency).toBe('USD');
     expect(body.budgets.categories[food]).toEqual({ amount: 400 });
     expect(body.spent[food]).toBe(150 + 57.76); // 50 × 1.1551
