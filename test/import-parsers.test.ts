@@ -36,17 +36,45 @@ function ready(text: string, options: ImportOptions = {}): Extract<ReadResult, {
 }
 const rows = (records: RawRecord[]) => normalizeRecords(records, { today: TODAY, currency: 'USD' });
 
+/** How far process.cpuUsage() moves at a time, in milliseconds: about 16 on
+ *  Windows, which counts processor time in clock ticks of 15.6 ms, and a few
+ *  microseconds on Linux, which counts it as it goes. The middle of three
+ *  moves, so one that caught another thread's work as well doesn't count. */
+const CPU_STEP_MS = (() => {
+  const used = () => {
+    const { user, system } = process.cpuUsage();
+    return user + system;
+  };
+  const moves: number[] = [];
+  for (let last = used(); moves.length < 3; ) {
+    const now = used();
+    if (now !== last) {
+      moves.push(now - last);
+      last = now;
+    }
+  }
+  return moves.sort((a, b) => a - b)[1] / 1000;
+})();
+
 /** How long `read` takes, in milliseconds: the smaller of its processor time
  *  (process.cpuUsage()) and its wall clock's time. Both hold the read's own
  *  work plus noise of their own: the processor time counts the whole
  *  process, the collector's and compiler's threads included (and so work an
  *  earlier test left them), and the wall clock stretches on a machine busy
- *  with other work. So the smaller is the closer. A full collection before
- *  each run keeps an earlier test's garbage off the read's time, and the best
- *  of three runs counts, stopping at the first under `under` (with none, all
- *  three run): a busy machine only ever adds time, and a read really too slow
- *  is over every time. A test whose bound is more than a second gives itself
- *  a timeout with room for the three. The bounds below are on it. What they
+ *  with other work. So the smaller is the closer. The processor time moves
+ *  in steps, though (CPU_STEP_MS; on Windows, one for each of the process's
+ *  threads a clock tick finds at work), so a read run in one stretch can
+ *  come up to a step short of its work: on Windows a 10 ms read reads 0
+ *  about half the time, and the best of three once picked out such a 0 for
+ *  a hostile file's eighth, which held its file to 50 ms. So each run counts
+ *  a step more than it reads, and its processor time, like the wall clock,
+ *  then only adds to the read's work (so on Windows the wall clock times a
+ *  read that takes less than a step). A full collection before each run
+ *  keeps an earlier test's garbage off the read's time, and the best of three
+ *  runs counts, stopping at the first under `under` (with none, all three
+ *  run): a busy machine only ever adds time, and a read really too slow is
+ *  over every time. A test whose bound is more than a second gives itself a
+ *  timeout with room for the three. The bounds below are on it. What they
  *  guard against is a read whose work grows faster than the file (a 3 MB
  *  file read in quadratic time takes minutes, not seconds), not a slow
  *  machine; each is a few times the most the read takes here. */
@@ -59,7 +87,7 @@ function readMs(read: () => unknown, under = 0): number {
     read();
     const wallMs = performance.now() - wall;
     const { user, system } = process.cpuUsage(cpu);
-    best = Math.min(best, wallMs, (user + system) / 1000);
+    best = Math.min(best, wallMs, (user + system) / 1000 + CPU_STEP_MS);
   }
   return best;
 }
