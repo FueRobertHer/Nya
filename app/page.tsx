@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import Dashboard from '@/components/Dashboard';
 import { AppLoading } from '@/components/LoadingSkeletons';
 import { clerkEnabled } from '@/lib/auth-mode';
-import { clientFlags, flagWho, type ClientFlags } from '@/lib/flag-read';
+import { clientFlags, flagsNameAccounts, flagWho, type ClientFlags } from '@/lib/flag-read';
 import type { ContainerId } from '@/lib/containers';
 import { parseSettings, parseTab, type SettingsView, type Tab } from '@/lib/dashboard-tab';
 
@@ -31,16 +31,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ [
   );
 }
 
-/** The one person's feature switches, as the admin, in the deployment's
- *  container (only a stored audience naming accounts needs it; none known,
- *  and only Everyone and the variables count). */
+/** The one person's feature switches, as the admin, who sees every audience
+ *  but nobody: the deployment's container is read only when a stored audience
+ *  names accounts (none known, and only those listed don't count). */
 async function passwordFlags(): Promise<ClientFlags> {
   let container: ContainerId | null = null;
-  try {
-    const { deploymentCtx } = await import('@/lib/data-ctx');
-    container = (await deploymentCtx()).container;
-  } catch {
-    container = null;
+  if (await flagsNameAccounts()) {
+    try {
+      const { deploymentCtx } = await import('@/lib/data-ctx');
+      container = (await deploymentCtx()).container;
+    } catch {
+      container = null;
+    }
   }
   return clientFlags(flagWho(container, null, { admin: true }));
 }

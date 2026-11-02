@@ -9,9 +9,9 @@
 //   operation, then off. While off, the route answers 404, as if it did not
 //   exist, so a leaked OPS_SECRET is useless on its own. The stored switch is
 //   looked at in this instance's copy first (lib/flag-read.ts), so a probe of
-//   these public paths reads nothing, and read again, fresh, once the secret
-//   matched: turning it off holds at once, turning it on takes up to 30
-//   seconds. A new environment has no stored switch yet (no account owns a
+//   these public paths reads nothing while it is off, and read again, fresh,
+//   before the secret is checked: turning it off holds at once, for every
+//   request, and turning it on takes up to 30 seconds. A new environment has no stored switch yet (no account owns a
 //   container to set one), so OPS_ENABLED=1 is how one is set up.
 // - POST ONLY, with the secret in a header. A GET would invite putting the
 //   secret in a URL, and URLs end up in logs, browser history and caches.
@@ -35,6 +35,7 @@ export function notFound(): Response {
 /** A response to send instead of running the operation, or null to proceed. */
 export async function opsGuard(req: Request): Promise<Response | null> {
   if (!(await opsOnCached())) return notFound();
+  if (!(await opsOnFresh())) return notFound();
 
   const secret = process.env.OPS_SECRET;
   const header = req.headers.get('authorization') ?? '';
@@ -44,7 +45,6 @@ export async function opsGuard(req: Request): Promise<Response | null> {
   if (!secret || !presented || !(await secretsMatch(presented, secret))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (!(await opsOnFresh())) return notFound();
   return null;
 }
 

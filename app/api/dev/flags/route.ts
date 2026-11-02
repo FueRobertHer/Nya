@@ -43,7 +43,8 @@ export async function PUT(req: Request) {
   const choice = body?.choice;
   if (valueFromChoice(key, choice, null) === null) return json(400, { error: 'That isn’t a choice this switch takes.' });
   try {
-    const value = await flagsStore.update(key, (current: FlagValue | null) => valueFromChoice(key, choice, current)!, 'local development');
+    // The choice already stored writes nothing, and records no change.
+    const value = await flagsStore.update(key, (current: FlagValue | null) => (current !== null && choiceOf(key, current) === choice ? current : valueFromChoice(key, choice, current)!), 'local development');
     flagCache.forget();
     return json(200, { key, choice: choiceOf(key, value) });
   } catch (err) {

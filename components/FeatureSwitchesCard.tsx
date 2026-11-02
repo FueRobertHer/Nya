@@ -114,7 +114,7 @@ export function SwitchCard({ row, demos }: { row: SwitchRow; demos: boolean }) {
                 </select>
               </label>
               {stored === null && <p className="helper">Not set: its default, {word(row.defaultChoice)}, applies.</p>}
-              {choice !== shown || (stored === null && choice !== '') ? (
+              {choice !== shown ? (
                 <div className="btn-row">
                   <button type="button" className="btn secondary" onClick={save} disabled={saving}>
                     {saving ? 'Saving…' : 'Save'}

@@ -16,14 +16,18 @@
 // at most CACHE_MS old (lib/flag-cache.ts holds it). Callers at the same time
 // share one read, and its time is noted before it is awaited, so a slow or
 // failing Redis costs one read per instance per CACHE_MS; a cached read waits
-// at most WAIT_MS. A failed read keeps the last value read, or, with none read
-// yet, the defaults, and tries again after RETRY_MS. Every instance (and the
+// at most WAIT_MS. A failed read keeps the last value read and tries again
+// CACHE_MS after it failed; with none read yet, it gives the defaults (and the
+// sign-in list unknown) and tries again RETRY_MS after it failed. A read that
+// a forget overtook is made again. Every instance (and the
 // proxy apart from the route handlers in one) keeps its own copy, so a change
 // reaches pages, the proxy and the CSP within CACHE_MS.
 //
 // LENIENT PER FIELD. A stored field for a flag this release doesn't know is
 // skipped, so a rollback ignores a newer flag; a known flag's value this
-// release can't read takes the default and is logged, by its key alone.
+// release can't read takes the default and is logged, by its key alone, but
+// for the sign-in list, which is then unknown: a stored list that can't be
+// read never turns away the people on it.
 //
 // The deployment's owners, whom the sign-in list always lets in, are cached
 // the same way beside the flags, read apart and only when the sign-in list is
@@ -52,8 +56,11 @@ import {
 import type { ContainerId, Ctx } from './containers';
 import type { CspMode } from './security-headers';
 
-/** The stored values this release can use, by flag. */
-export type StoredFlags = ReadonlyMap<FlagKey, FlagValue>;
+/** A known flag's stored value this release can't read. */
+export const UNREADABLE: unique symbol = Symbol('unreadable');
+/** The stored values this release can use, by flag, and UNREADABLE for a
+ *  known flag's it can't. */
+export type StoredFlags = ReadonlyMap<FlagKey, FlagValue | typeof UNREADABLE>;
 /** Where a cached answer came from: a read within CACHE_MS, the last read
  *  kept through a failed one, or none read yet (the defaults). */
 export type Source = 'read' | 'last' | 'none';
@@ -66,10 +73,12 @@ export const WAIT_MS = 2_000;
  *  can't be read. */
 export async function readFlagsFresh(): Promise<StoredFlags> {
   const report = await flagsStore.getAllReport();
-  const out = new Map<FlagKey, FlagValue>();
+  const out = new Map<FlagKey, FlagValue | typeof UNREADABLE>();
   for (const [id, value] of report.entries) if (isFlagKey(id)) out.set(id, value);
   for (const id of report.unrecognised) {
-    if (isFlagKey(id)) console.error(`Flags: the stored value of ${id} can't be read, so its default applies.`);
+    if (!isFlagKey(id)) continue;
+    out.set(id, UNREADABLE);
+    console.error(`Flags: the stored value of ${id} can't be read, so its default applies.`);
   }
   return out;
 }
@@ -83,13 +92,14 @@ function withLimit<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /** A cached read of one slot (see the header). */
-async function cached(slot: 'flags' | 'owners', read: () => Promise<unknown>, what: string, now: number): Promise<{ value: unknown; source: Source }> {
+async function cached(slot: 'flags' | 'owners', read: () => Promise<unknown>, what: string, now: number, again = true): Promise<{ value: unknown; source: Source }> {
   const held = flagCache[slot];
+  const generation = flagCache.generation;
   if (!held.inFlight) {
     const wait = held.value === undefined ? RETRY_MS : CACHE_MS;
     if (held.triedAt === 0 || now - held.triedAt >= wait) {
-      const generation = flagCache.generation;
       held.triedAt = now;
+      const started = Date.now();
       const run = async () => {
         try {
           const value = await withLimit(read(), WAIT_MS);
@@ -99,6 +109,9 @@ async function cached(slot: 'flags' | 'owners', read: () => Promise<unknown>, wh
         } catch (err) {
           if (flagCache.generation !== generation) return;
           held.ok = false;
+          // The wait before the next try counts from the failure, not the start:
+          // a read that ran out its WAIT_MS is not tried again at once.
+          held.triedAt = now + (Date.now() - started);
           const kept = held.value === undefined ? 'the defaults apply' : 'the last read is used';
           console.error(`Flags: ${what} could not be read, so ${kept}:`, err instanceof Error ? err.message : typeof err);
         }
@@ -110,7 +123,9 @@ async function cached(slot: 'flags' | 'owners', read: () => Promise<unknown>, wh
     }
   }
   if (held.inFlight) await held.inFlight;
-  // A forget meanwhile left a slot of its own, with nothing read in it.
+  // A forget meanwhile left a slot of its own, with nothing read in it: read
+  // into that one, once, rather than answer with nothing.
+  if (flagCache.generation !== generation && again) return cached(slot, read, what, now, false);
   const after = flagCache[slot];
   return { value: after.value, source: after.value === undefined ? 'none' : after.ok ? 'read' : 'last' };
 }
@@ -232,6 +247,14 @@ export async function flagOnForAnyone(key: AudienceKey): Promise<boolean> {
   return audience.on !== 'nobody' || audience.containers.length > 0;
 }
 
+/** Whether any stored audience names accounts it is also on for, through
+ *  this instance's copy: whether judging one needs the request's container. */
+export async function flagsNameAccounts(): Promise<boolean> {
+  if (AUDIENCE_KEYS.every((key) => audienceVariable(key) !== undefined)) return false;
+  const { flags } = await cachedFlags();
+  return AUDIENCE_KEYS.some((key) => audienceOf(key, flags).containers.length > 0);
+}
+
 /** Every audience flag for `who`, as the browser gets them with the page's
  *  other server values: booleans only, never the accounts or the lists. */
 export type ClientFlags = Record<AudienceKey, boolean>;
@@ -285,5 +308,6 @@ export async function signInFromStore(): Promise<{ list: { ids: string[]; emails
   const [{ flags, source }, owners] = await Promise.all([cachedFlags(), cachedOwners()]);
   if (source === 'none') return { list: null, owners };
   const stored = flags.get('sign-in');
+  if (stored === UNREADABLE) return { list: null, owners };
   return { list: stored && isListValue(stored) ? { ids: stored.ids, emails: stored.emails } : { ids: [], emails: [] }, owners };
 }

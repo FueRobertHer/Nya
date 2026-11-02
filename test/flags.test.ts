@@ -11,6 +11,7 @@ const flags = await import('@/lib/flags');
 const read = await import('@/lib/flag-read');
 const { flagsStore } = await import('@/lib/flag-store');
 const { flagCache } = await import('@/lib/flag-cache');
+const { opsGuard } = await import('@/lib/ops');
 
 const VARIABLES = ['RESTORE_ENABLED', 'RESTORE_CARRY_ON_ENABLED', 'LUNCHFLOW_ENABLED', 'PLAID_BROKERAGE_LINK', 'API_WRITES_ENABLED', 'CSP_MODE', 'OPS_ENABLED', 'CLERK_ALLOWED_USER_IDS'];
 const C1 = '5d1c7e2a-9b3f-4c6d-8e1a-2b3c4d5e6f70';
@@ -216,7 +217,10 @@ describe('reading them', () => {
     await fake.hset(testKey('flags:values'), { restore: '{"on":"everyone","containers":[],"updatedAt":"x","secret":"value"}' });
     await store('lunchflow', audience('everyone'));
     const got = await read.readFlagsFresh();
-    expect([...got.keys()]).toEqual(['lunchflow']);
+    expect([...got.keys()].sort()).toEqual(['lunchflow', 'restore']);
+    expect(got.get('restore')).toBe(read.UNREADABLE);
+    // Its default applies.
+    expect(await read.flagOnFresh('restore', who(C1, { admin: true }))).toBe(false);
     expect(errors.some((e) => e.includes('restore') && !e.includes('secret'))).toBe(true);
     expect(errors.some((e) => e.includes('a-newer-flag'))).toBe(false);
   });
@@ -285,12 +289,31 @@ describe('the cache', () => {
     }
   }, 10_000);
 
-  test('a read under way when the cache is forgotten never lands after it', async () => {
+  test('a read under way when the cache is forgotten never lands after it, and its caller reads again', async () => {
     await store('csp', { mode: 'enforce', updatedAt: AT });
     const pending = read.cachedFlags(T);
+    const before = flagCache.flags;
     flagCache.forget();
-    await pending;
-    expect(flagCache.flags.value).toBeUndefined();
+    await store('csp', { mode: 'off', updatedAt: AT });
+    const answer = await pending;
+    // The old slot was never written; the caller read the store again.
+    expect(before.value).toBeUndefined();
+    expect(answer.source).toBe('read');
+    expect(answer.flags.get('csp')).toMatchObject({ mode: 'off' });
+  });
+
+  test('a failed read waits before trying again from when it failed, not from when it began', async () => {
+    fake.failNext('hgetall');
+    expect((await read.cachedFlags(T)).source).toBe('none');
+    const reads = fake.ops;
+    expect((await read.cachedFlags(T + read.RETRY_MS - 1)).source).toBe('none');
+    expect(fake.ops).toBe(reads);
+    expect((await read.cachedFlags(T + read.RETRY_MS)).source).toBe('read');
+  });
+
+  test('a stored sign-in list that can’t be read leaves who may sign in unknown, never refusing those on it', async () => {
+    await fake.hset(testKey('flags:values'), { 'sign-in': '{"ids":"not a list"}' });
+    expect((await read.signInFromStore()).list).toBeNull();
   });
 
   test('a page’s flags: booleans for the audience flags only', async () => {
@@ -298,6 +321,31 @@ describe('the cache', () => {
     await store('sign-in', { ids: ['user_a'], emails: [], updatedAt: AT });
     const sent = await read.clientFlags(who(C1));
     expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': true });
+  });
+});
+
+describe('the ops routes', () => {
+  const ask = (secret?: string) => opsGuard(new Request('https://nya.test/api/ops/export', { method: 'POST', headers: secret ? { authorization: `Bearer ${secret}` } : {} }));
+
+  test('turned off holds at once for every request, signed with the secret or not, even while this copy still says on', async () => {
+    process.env.OPS_SECRET = 'the-secret';
+    await store('ops', { on: true, updatedAt: AT });
+    expect(await ask('the-secret')).toBeNull();
+    expect((await ask('wrong'))!.status).toBe(401);
+    await store('ops', { on: false, updatedAt: AT });
+    // This instance's copy still says on: the fresh read decides.
+    expect((await read.cachedFlags()).flags.get('ops')).toMatchObject({ on: true });
+    expect((await ask('wrong'))!.status).toBe(404);
+    expect((await ask())!.status).toBe(404);
+    expect((await ask('the-secret'))!.status).toBe(404);
+  });
+
+  test('off, a probe reads nothing', async () => {
+    process.env.OPS_SECRET = 'the-secret';
+    await read.cachedFlags();
+    const reads = fake.ops;
+    expect((await ask('the-secret'))!.status).toBe(404);
+    expect(fake.ops).toBe(reads);
   });
 });
 

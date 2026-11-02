@@ -80,6 +80,14 @@ describe('setting a switch', () => {
     expect(fake.hashes.get(testKey('flags:values'))).toBeUndefined();
   });
 
+  test('the choice already stored writes nothing and records no change', async () => {
+    expect((await put({ key: 'ops', choice: 'on' })).status).toBe(200);
+    const values = String(fake.hashes.get(testKey('flags:values'))!.get('ops'));
+    expect((await put({ key: 'ops', choice: 'on' })).status).toBe(200);
+    expect(String(fake.hashes.get(testKey('flags:values'))!.get('ops'))).toBe(values);
+    expect(fake.hashes.get(testKey('flags:log'))!.size).toBe(1);
+  });
+
   test('never writes over a stored value it can’t read', async () => {
     await fake.hset(testKey('flags:values'), { ops: 'not json' });
     const res = await put({ key: 'ops', choice: 'on' });

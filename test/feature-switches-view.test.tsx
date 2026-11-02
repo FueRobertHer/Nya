@@ -88,6 +88,9 @@ describe('the feature switches card', () => {
     expect(page.text('plan-tax')).toContain('to be removed by 2027-06-30');
     expect(page.text('csp')).not.toContain('Set by the environment');
     expect(page.text('restore')).toContain('Not set: its default, Nobody, applies.');
+    // Nothing to save until a choice differs from what applies.
+    expect(page.button('restore')).toBeUndefined();
+    expect(page.button('csp')).toBeUndefined();
     expect(page.options('plan-tax')).toEqual(['Nobody', 'The admin', 'The admin and the demo accounts', 'Everyone']);
     expect(page.options('csp')).toEqual(['Off', 'Report only', 'Enforce']);
     page.unmount();
