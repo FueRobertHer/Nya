@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --parallel",
     "restore": "bun scripts/restore.ts",
     "move-data": "bun scripts/move-data.ts",
     "fire-data": "bun scripts/fire-data.ts",

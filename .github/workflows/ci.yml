@@ -42,4 +42,16 @@ jobs:
       # without one locally, but fail under CI rather than pass unseen.
       - run: sudo apt-get update && sudo apt-get install -y redis-server
 
-      - run: bun test
+      # Each file's duration in the last run, so the slowest files start first
+      # rather than one holding up the end. Every passing run saves its own
+      # (the key never repeats, re-runs included) and restores the newest; the
+      # first restores nothing.
+      - uses: actions/cache@v6
+        with:
+          path: .bun-test-timings.json
+          key: bun-test-timings-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: bun-test-timings-
+
+      # `bun test --parallel`: the files run across the runner's cores, each in
+      # a fresh global. Run in one process, the suite took about five minutes.
+      - run: bun run test --timings=.bun-test-timings.json --update-timings
