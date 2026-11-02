@@ -23,9 +23,13 @@
 // request (docs/operations.md, "The tax law tables, each year").
 //
 // Prints one line per part: match, differ, not out (the notice isn't out
-// yet), new (out, but not in the tables yet), unrecognised (a source answered
-// in a shape this doesn't know, or a notice the tables cite can't be found)
-// or unreachable (a network error, or the source answered 5xx or 429).
+// yet), new (out, but not in the tables yet, or a correction to a notice the
+// tables hold), by hand (the notice can't be read here: CMS printed its
+// tables as images, as in its 2024 and 2025 notices, or a correction changed
+// a figure), unrecognised (a source answered in a shape this doesn't know, or
+// a notice the tables hold can't be found) or unreachable (a network error,
+// or the source answered 5xx or 429). A correction counts as read once its
+// citation is in that part's `sources[part].source`.
 // Exits 1 on differ, unrecognised or unreachable, else 0. With --report, it
 // also writes a Markdown report to that path when anything differs, is new or
 // is unrecognised (the weekly workflow, .github/workflows/law-check.yml, opens
@@ -40,7 +44,7 @@ export type CheckedPart = 'creditPoverty' | 'medicaidPoverty' | 'medicare' | 'wa
 
 export const CHECKED_PARTS: readonly CheckedPart[] = ['creditPoverty', 'medicaidPoverty', 'medicare', 'wageBase'];
 
-export type Status = 'match' | 'differ' | 'not out' | 'new' | 'unrecognised' | 'unreachable';
+export type Status = 'match' | 'differ' | 'not out' | 'new' | 'by hand' | 'unrecognised' | 'unreachable';
 
 export type Row = { year: number; part: CheckedPart; status: Status; detail: string };
 
@@ -187,10 +191,12 @@ export function frSearchUrl(title: string): string {
 
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-/** The one notice with exactly this title, or null when there is none yet. A
- *  phrase search also finds longer titles (a correction's), which are left
- *  out; two notices with the same title is a shape this doesn't know. */
-export function parseFrSearch(body: string, title: string): FrDocument | null {
+/** The one notice with exactly this title, or null when there is none yet,
+ *  and the corrections to it: the longer titles the phrase search also finds
+ *  that say "Correction" (as "Office of the Commissioner; Cost-of-Living
+ *  Increase and Other Determinations for 2011; Correction", 75 FR 74123,
+ *  did). Two notices with the same title is a shape this doesn't know. */
+export function parseFrSearch(body: string, title: string): { notice: FrDocument; corrections: FrDocument[] } | null {
   let json: unknown;
   try {
     json = JSON.parse(body);
@@ -202,17 +208,27 @@ export function parseFrSearch(body: string, title: string): FrDocument | null {
   if (count === 0) return null;
   if (!Array.isArray(results)) throw new Unrecognised(`The Federal Register's search for "${title}" counts ${count} but lists none`);
   const want = squash(title).toLowerCase();
-  const matches = results.filter(
-    (r): r is FrDocument =>
-      typeof r === 'object' && r !== null && typeof r.title === 'string' && squash(r.title).toLowerCase() === want,
-  );
+  const titled = (r: unknown): r is FrDocument =>
+    typeof r === 'object' && r !== null && typeof (r as FrDocument).title === 'string';
+  const named = (r: FrDocument) => squash(r.title).toLowerCase();
+  const matches = results.filter((r): r is FrDocument => titled(r) && named(r) === want);
   if (matches.length === 0) return null;
   if (matches.length > 1) throw new Unrecognised(`The Federal Register has ${matches.length} notices titled "${title}"`);
-  const doc = matches[0];
-  if (typeof doc.citation !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(String(doc.publication_date))) {
-    throw new Unrecognised(`The Federal Register's entry for "${title}" has no citation or date`);
+  const corrections = results.filter(
+    (r): r is FrDocument => titled(r) && named(r) !== want && named(r).includes(want) && named(r).includes('correction'),
+  );
+  for (const doc of [matches[0], ...corrections]) {
+    if (!/^\d+ FR \d+$/.test(String(doc.citation)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(doc.publication_date))) {
+      throw new Unrecognised(`The Federal Register's entry for "${doc.title}" has no citation or date`);
+    }
   }
-  return doc;
+  return { notice: matches[0], corrections };
+}
+
+/** Whether a source's text names this citation ("75 FR 74123"), whole: "75 FR
+ *  741" doesn't count as named by "75 FR 74123". */
+export function cites(source: string, citation: string): boolean {
+  return new RegExp(`(?<!\\d)${citation.replace(/ /g, '\\s+')}(?!\\d)`).test(source);
 }
 
 /** Strips tags and decodes the entities the Federal Register's XML and text use. */
@@ -267,13 +283,16 @@ const HEADINGS = [/individual tax returns/i, /joint tax returns/i, /income-relat
  *  thresholds, the adjustment and the total. The married filing separately
  *  table (3 columns) and the immunosuppressive drug tables are left out. The
  *  bands must run on without a gap, and each total must be the standard
- *  premium plus its adjustment, or the table isn't the one this knows. */
-export function parsePartB(xml: string, year: number): PartB {
+ *  premium plus its adjustment, or the table isn't the one this knows.
+ *  Null when the notice has no tables and prints them as images instead, as
+ *  CMS's 2024 and 2025 notices did (the 2023 and 2026 ones have tables). */
+export function parsePartB(xml: string, year: number): PartB | null {
   const subject = /<SUBJECT>([\s\S]*?)<\/SUBJECT>/.exec(xml);
   if (!subject || squash(plain(subject[1])) !== partBTitle(year)) {
     throw new Unrecognised(`The Part B notice for ${year} doesn't have its title as its subject`);
   }
   const tables = [...xml.matchAll(/<GPOTABLE\b([^>]*)>([\s\S]*?)<\/GPOTABLE>/g)];
+  if (tables.length === 0 && /<GPH\b/.test(xml)) return null;
   const full = tables.find((t) => squash(plain(/<TTITLE>([\s\S]*?)<\/TTITLE>/.exec(t[2])?.[1] ?? '')) === 'Full Part B Coverage');
   if (!full) throw new Unrecognised(`The Part B notice for ${year} has no "Full Part B Coverage" table`);
   const heads = [...full[2].matchAll(/<CHED\b[^>]*>([\s\S]*?)<\/CHED>/g)].map((m) => squash(plain(m[1])));
@@ -355,20 +374,26 @@ export function parseWageBase(text: string, year: number): number {
 // ---- The check ----
 
 /** What an official source says for one part of one law year: not out yet,
- *  or its value with where it was printed. */
-type Official<T> = { out: false; what: string } | { out: true; what: string; value: T; where: string };
+ *  or its value (null: printed as images) with where it was printed and the
+ *  corrections to it. */
+type Official<T> =
+  | { out: false; what: string }
+  | { out: true; what: string; value: T | null; where: string; corrections: FrDocument[] };
 
 async function officialPoverty(guidelinesYear: number, get: Get): Promise<Official<PovertySizes>> {
   const what = `HHS ${guidelinesYear} guidelines`;
   const sizes = await fetchGuidelines(guidelinesYear, get);
-  return sizes ? { out: true, what, value: sizes, where: 'ASPE API' } : { out: false, what };
+  return sizes ? { out: true, what, value: sizes, where: 'ASPE API', corrections: [] } : { out: false, what };
 }
 
-async function officialNotice<T>(title: string, what: string, get: Get, read: (doc: FrDocument) => Promise<T>): Promise<Official<T>> {
-  const doc = parseFrSearch(await get(frSearchUrl(title)), title);
-  if (!doc) return { out: false, what };
-  return { out: true, what, value: await read(doc), where: `${doc.citation}, ${doc.publication_date}` };
+async function officialNotice<T>(title: string, what: string, get: Get, read: (doc: FrDocument) => Promise<T | null>): Promise<Official<T>> {
+  const found = parseFrSearch(await get(frSearchUrl(title)), title);
+  if (!found) return { out: false, what };
+  const { notice, corrections } = found;
+  return { out: true, what, value: await read(notice), where: `${notice.citation}, ${notice.publication_date}`, corrections };
 }
+
+const cite = (docs: readonly FrDocument[]) => docs.map((d) => `${d.citation}, ${d.publication_date}`).join(' and ');
 
 async function officialFor(part: CheckedPart, year: number, get: Get): Promise<Official<Value>> {
   switch (part) {
@@ -416,21 +441,40 @@ function differences(part: CheckedPart, ours: Value, official: Value): string[] 
 async function checkPart(part: CheckedPart, year: number, law: PartialLaw | undefined, get: Get): Promise<Row> {
   const row = (status: Status, detail: string): Row => ({ year, part, status, detail });
   const ours = law && oursFor(part, law);
-  const held = law
-    ? `ours: none yet (published ${law.sources[part].published ?? 'null'}, due ${law.sources[part].due})`
-    : `ours: no ${year} table`;
   try {
     const official = await officialFor(part, year, get);
-    if (ours === undefined) {
-      return official.out
-        ? row('new', `${official.what} now out (${official.where}): ${summary(part, official.value)}; ${held}`)
-        : row('not out', `${official.what}; ${held}`);
+    if (!law || ours === undefined) {
+      const held = law
+        ? `ours: none yet (published ${law.sources[part].published ?? 'null'}, due ${law.sources[part].due})`
+        : `ours: no ${year} table`;
+      if (!official.out) return row('not out', `${official.what}; ${held}`);
+      const figures = official.value === null ? 'its tables are images, so read the figures by hand' : summary(part, official.value);
+      const corrected = official.corrections.length > 0 ? `, corrected by ${cite(official.corrections)}` : '';
+      const start = law ? '' : ` (start lib/fire/tax/law/${year}.ts and add it to LAW_YEARS)`;
+      return row('new', `${official.what} now out (${official.where}${corrected}): ${figures}; ${held}${start}`);
     }
     if (!official.out) return row('unrecognised', `${official.what} can't be found, but the table holds ${summary(part, ours)}`);
+    const at = `${official.what} (${official.where})`;
+    // A correction is read by hand: until its citation is in the part's
+    // source, it is news.
+    const unread = official.corrections.filter((c) => !cites(law.sources[part].source, c.citation));
+    if (unread.length > 0) {
+      return row('new', `${cite(unread)} corrects ${at}: read it, make the table agree, then add its citation to sources.${part}.source`);
+    }
+    const corrected = official.corrections.length > 0 ? `, corrected by ${cite(official.corrections)}` : '';
+    if (official.value === null) {
+      return row('by hand', `${at}${corrected} prints its tables as images, which this can't read: check the table (${summary(part, ours)}) against it by hand`);
+    }
     const found = differences(part, ours, official.value);
-    return found.length === 0
-      ? row('match', `${official.what} (${official.where}): ${summary(part, official.value)}`)
-      : row('differ', `${official.what} (${official.where}): ${found.join('; ')}`);
+    if (found.length === 0) return row('match', `${at}${corrected}: ${summary(part, official.value)}`);
+    // The check can't read a correction, so a table that differs from the
+    // notice as first printed may agree with it. That holds for every figure
+    // of the part, a later slip included, which is why the line lists each
+    // difference.
+    if (official.corrections.length > 0) {
+      return row('by hand', `${at} as first printed: ${found.join('; ')}; corrected by ${cite(official.corrections)}, which this can't read: check the table against the correction by hand`);
+    }
+    return row('differ', `${at}: ${found.join('; ')}`);
   } catch (e) {
     if (e instanceof Unrecognised) return row('unrecognised', e.message);
     if (e instanceof Unreachable) return row('unreachable', e.message);
@@ -483,7 +527,8 @@ export function reportMarkdown(rows: readonly Row[]): string {
     PART_D_NOTE,
     '',
     '- **differ**: a table disagrees with its source. Check the source and fix the table.',
-    '- **new**: a notice the tables don\'t hold yet is out. Add it to the year\'s file with its source and date.',
+    "- **new**: a notice the tables don't hold yet is out (add it to the year's file with its source and date, starting the file if there is none), or a correction to one they hold (make the table agree, then add the correction's citation to that part's `sources[part].source`).",
+    "- **by hand**: the check can't read the source (its tables are images, or a correction changed it). Check that part against it yourself.",
     "- **unrecognised**: a source answered in a shape the check doesn't know, or a notice a table holds can't be found. The check (`scripts/law-check.ts`) needs a look.",
     '',
     'Each figure changes only through a reviewed pull request: see "The tax law tables, each year" in `docs/operations.md`.',
@@ -499,20 +544,25 @@ function premium(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-/** Fetches with a time limit. A network error, a 5xx or a 429 is unreachable
- *  (likely passing); any other answer that isn't 2xx means the source moved
- *  or changed, which is unrecognised. */
-export const fetchText: Get = async (url) => {
-  let res: Response;
-  try {
-    res = await fetch(url, { headers: { 'user-agent': 'Nya law check' }, signal: AbortSignal.timeout(30_000) });
-  } catch (e) {
-    throw new Unreachable(`${url}: ${e instanceof Error ? e.message : String(e)}`);
-  }
-  if (res.status >= 500 || res.status === 429) throw new Unreachable(`${url} answered ${res.status}`);
-  if (!res.ok) throw new Unrecognised(`${url} answered ${res.status}`);
-  return res.text();
-};
+/** Fetches with a time limit, which covers reading the body too. A network
+ *  error, a time out, a 5xx or a 429 is unreachable (likely passing); any
+ *  other answer that isn't 2xx means the source moved or changed, which is
+ *  unrecognised. */
+export function fetcher(timeoutMs: number): Get {
+  return async (url) => {
+    try {
+      const res = await fetch(url, { headers: { 'user-agent': 'Nya law check' }, signal: AbortSignal.timeout(timeoutMs) });
+      if (res.status >= 500 || res.status === 429) throw new Unreachable(`${url} answered ${res.status}`);
+      if (!res.ok) throw new Unrecognised(`${url} answered ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      if (e instanceof Unreachable || e instanceof Unrecognised) throw e;
+      throw new Unreachable(`${url}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+}
+
+export const fetchText = fetcher(30_000);
 
 if (import.meta.main) {
   const argv = process.argv.slice(2);

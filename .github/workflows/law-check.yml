@@ -3,8 +3,9 @@ name: Tax law check
 # Compares the tax law tables (lib/fire/tax/law/) with the official sources
 # that publish machine-readable figures, and watches for the notices the
 # tables don't hold yet (scripts/law-check.ts). When a figure differs, a new
-# notice is out, or a source answered in a shape the check doesn't know, it
-# opens one issue labelled law-check, or updates the one already open.
+# notice or correction is out, or a source answered in a shape the check
+# doesn't know, it opens one issue labelled law-check, or updates the one
+# already open.
 #
 # Not part of CI: it needs the network, and the sources change on their own
 # calendar, not with a pull request. A source that can't be reached fails the
@@ -51,7 +52,7 @@ jobs:
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ ! -f "$REPORT" ]; then
-            echo "Nothing differs and no new notice is out."
+            echo "No report was written, so the issue is left as it is."
             exit 0
           fi
           number=$(gh issue list --label law-check --state open --json number --jq '.[0].number // empty')
