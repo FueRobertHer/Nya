@@ -3,7 +3,8 @@ import { clerkMiddleware } from '@clerk/nextjs/server';
 import { clerkEnabled, clerkUserAllowed } from '@/lib/auth-mode';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 import { sessionCurrent } from '@/lib/sessions';
-import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-headers';
+import { buildCsp, cspHeaderName, CSP_MODE_HEADER, newNonce } from '@/lib/security-headers';
+import { cspModeCached } from '@/lib/flag-read';
 import { isAdminSignIn } from '@/lib/admin-gate';
 
 // Everything is protected EXCEPT: the login API; the public pages (PUBLIC_PAGES
@@ -24,7 +25,8 @@ import { isAdminSignIn } from '@/lib/admin-gate';
 //   - Plaid's webhook, by verifying Plaid's signature (lib/plaid-webhook.ts);
 //   - the ops routes (export, rotate-master, reencrypt, containers,
 //     container-keys, sign-repair), via
-//     OPS_SECRET, and off entirely unless OPS_ENABLED=1 (lib/ops.ts);
+//     OPS_SECRET, and off entirely unless the `ops` feature switch is on
+//     (lib/ops.ts);
 //   - the demo sign-in (Preview only, and only ever as a listed demo account;
 //     lib/demo.ts);
 //   - the link that turns a weekly summary off (api/weekly-summary/
@@ -62,8 +64,10 @@ export const config = {
 const PUBLIC_PAGES: ReadonlySet<string> = new Set(['/login', '/security', '/privacy', '/developers', '/open-download', '/unsubscribe']);
 
 // Request headers a nonce could be read from (by Next.js, and by Clerk for its
-// script tags). Only this proxy sets them: whatever a request brings is dropped.
-const NONCE_CARRIERS = ['x-nonce', 'content-security-policy', 'content-security-policy-report-only'];
+// script tags), and the one that tells the Security page which mode the page
+// was sent with (CSP_MODE_HEADER). Only this proxy sets them: whatever a
+// request brings is dropped.
+const NONCE_CARRIERS = ['x-nonce', 'content-security-policy', 'content-security-policy-report-only', CSP_MODE_HEADER];
 
 // Where to come back to after signing in with Clerk: this path and its query,
 // so the link in a notice email (/?view=connections, lib/connection-notices.ts)
@@ -83,7 +87,9 @@ function returnPath(req: NextRequest): string | null {
 const forConnections = (req: NextRequest) => req.nextUrl.pathname === '/' && req.nextUrl.searchParams.get('view') === 'connections';
 
 // Lets a request through. A page also gets its Content-Security-Policy
-// (lib/security-headers.ts), in the mode CSP_MODE sets, with a nonce made for
+// (lib/security-headers.ts), in the mode the `csp` feature switch sets
+// (CSP_MODE while set; read through this instance's copy, lib/flag-read.ts,
+// which keeps the last mode read if a read fails), with a nonce made for
 // this request alone and passed on in the request headers as well: Next.js
 // reads it there to put it on its own scripts, and Clerk on its. An API call
 // is answered with JSON, not a document, so it gets none; but a browser that
@@ -94,16 +100,19 @@ const forConnections = (req: NextRequest) => req.nextUrl.pathname === '/' && req
 // policy as every page does. A receipt or document (ATTACHMENT_FILE) is the
 // exception: a navigation to one asks for HTML too, and the page's policy
 // would stop a browser's own viewer, so its route sends a policy of its own
-// (lib/attachment-http.ts fileHeaders), stricter for what it is.
+// (lib/attachment-http.ts fileHeaders), stricter for what it is. Every page,
+// off included, is told the mode in CSP_MODE_HEADER, for the Security page to
+// say which this copy uses without reading stored data itself.
 const ATTACHMENT_FILE = /^\/api\/attachments\/[0-9a-f-]{36}\/(file|thumb)$/;
-function pass(req: NextRequest, to?: string): NextResponse {
+async function pass(req: NextRequest, to?: string): Promise<NextResponse> {
   const go = (init?: { request: { headers: Headers } }) => (to ? NextResponse.rewrite(new URL(to, req.url), init) : NextResponse.next(init));
   const path = req.nextUrl.pathname;
   const document = !ATTACHMENT_FILE.test(path) && (!path.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html'));
   if (!document) return go();
   const headers = new Headers(req.headers);
   for (const name of NONCE_CARRIERS) headers.delete(name);
-  const mode = cspMode();
+  const mode = await cspModeCached();
+  headers.set(CSP_MODE_HEADER, mode);
   if (mode === 'off') return go({ request: { headers } });
   const nonce = newNonce();
   const policy = buildCsp({
@@ -138,8 +147,8 @@ const MISSING = '/__nya-no-such-page__';
 async function adminPage(req: NextRequest, userId: string | null): Promise<NextResponse | null> {
   const path = req.nextUrl.pathname;
   const asked = ADMIN_PAGES.exec(path);
-  if (asked) return (await isAdminSignIn(userId)) ? pass(req, `/admin-view${asked[1] ?? ''}${req.nextUrl.search}`) : pass(req);
-  if (ADMIN_VIEW.test(path) && !(await isAdminSignIn(userId))) return pass(req, MISSING);
+  if (asked) return (await isAdminSignIn(userId)) ? await pass(req, `/admin-view${asked[1] ?? ''}${req.nextUrl.search}`) : await pass(req);
+  if (ADMIN_VIEW.test(path) && !(await isAdminSignIn(userId))) return await pass(req, MISSING);
   return null;
 }
 
@@ -151,7 +160,7 @@ async function adminPage(req: NextRequest, userId: string | null): Promise<NextR
 let clerkProxy: NextMiddleware | null = null;
 const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) => {
   const path = req.nextUrl.pathname;
-  if (path.startsWith('/sign-in') || path === '/not-allowed' || PUBLIC_PAGES.has(path)) return pass(req);
+  if (path.startsWith('/sign-in') || path === '/not-allowed' || PUBLIC_PAGES.has(path)) return await pass(req);
   const { userId } = await auth();
   if (!userId) {
     if (path.startsWith('/api/')) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -166,7 +175,7 @@ const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) =
     if (path.startsWith('/api/')) return NextResponse.json({ error: 'This account is not allowed here yet.' }, { status: 403 });
     return NextResponse.redirect(new URL('/not-allowed', req.url));
   }
-  return (await adminPage(req, userId)) ?? pass(req);
+  return (await adminPage(req, userId)) ?? (await pass(req));
 });
 
 // The read-only API's endpoints skip this proxy (the matcher above), so a path
@@ -194,7 +203,7 @@ export async function proxy(req: NextRequest, event?: NextFetchEvent) {
 // (lib/auth.ts) and not revoked (lib/sessions.ts). The last needs one Redis
 // read, reused for a few seconds per instance; this proxy runs on Node.
 async function passwordProxy(req: NextRequest) {
-  if (PUBLIC_PAGES.has(req.nextUrl.pathname)) return pass(req);
+  if (PUBLIC_PAGES.has(req.nextUrl.pathname)) return await pass(req);
 
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token);
@@ -211,5 +220,5 @@ async function passwordProxy(req: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  return (await adminPage(req, null)) ?? pass(req);
+  return (await adminPage(req, null)) ?? (await pass(req));
 }

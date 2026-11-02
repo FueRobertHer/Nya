@@ -1,7 +1,7 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
-import SecurityPage from '@/app/security/page';
+import { mockForFile } from './scoped-mock';
 import PrivacyPage from '@/app/privacy/page';
 import UnsubscribePage from '@/app/unsubscribe/page';
 import OpenDownloadPage from '@/app/open-download/page';
@@ -40,6 +40,15 @@ const { INVITE_HOURS, SHARED_TXN_DAYS } = await (async () => {
 
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+// The Security page states the CSP mode the proxy sent the page with, from the
+// request (x-nya-csp-mode); rendered here without the proxy, it has none and
+// goes by CSP_MODE, as the page itself does then.
+let toldMode: string | null = null;
+const realHeaders = await import('next/headers');
+await mockForFile('next/headers', () => ({ ...realHeaders, headers: async () => new Headers(toldMode === null ? {} : { 'x-nya-csp-mode': toldMode }) }));
+const { default: SecurityPage, SecurityBody } = await import('@/app/security/page');
+const { cspFromVariable } = await import('@/lib/flags');
+
 /** The page as text: tags dropped, the entities React writes decoded, spaces collapsed. */
 function text(html: string): string {
   return html
@@ -57,7 +66,7 @@ afterEach(() => {
   process.env = { ...saved };
 });
 
-const securityHtml = () => renderToStaticMarkup(<SecurityPage />);
+const securityHtml = () => renderToStaticMarkup(<SecurityBody csp={cspFromVariable()} />);
 const privacyHtml = () => renderToStaticMarkup(<PrivacyPage />);
 const security = () => text(securityHtml());
 const privacy = () => text(privacyHtml());
@@ -228,7 +237,7 @@ describe('the security page', () => {
 
   test('sharing: what is encrypted, what is plain text, and who reads the records of when it was shown', () => {
     const page = security();
-    expect(page).toContain('manual accounts, how each bank connection is doing, the records of when shared accounts were shown, and the short-lived copies');
+    expect(page).toContain('manual accounts, how each bank connection is doing, the records of when shared accounts were shown, the record of changes made with API tokens, and the short-lived copies');
     expect(page).toContain(
       'which accounts each of you shares at which level and until when, which of your net worth, spending, holdings, budgets and goals each of you shares, at which level (with the random ids of the goals chosen), and for each connection a random id, which its records of when shared accounts were shown are kept under, and when those records began (what they record is encrypted), never the balances, amounts or transactions themselves.'
     );
@@ -277,6 +286,25 @@ describe('the security page', () => {
     const off = security();
     expect(off).toContain('This copy of Nya has it switched off.');
     expect(off).not.toContain('Every page also carries');
+  });
+
+  test('takes the mode from the proxy’s header, which stands for the stored switch, and CSP_MODE only without one', async () => {
+    const shown = async () => text(renderToStaticMarkup(await SecurityPage()));
+    process.env.CSP_MODE = 'enforce';
+    try {
+      toldMode = 'off';
+      expect(await shown()).toContain('This copy of Nya has it switched off.');
+      toldMode = 'report-only';
+      expect(await shown()).toContain('which this copy of Nya is still checking against live Plaid and Clerk sign-ins');
+      toldMode = 'nonsense';
+      expect(await shown()).toContain('which this copy of Nya enforces: it may only run scripts');
+      toldMode = null;
+      expect(await shown()).toContain('which this copy of Nya enforces: it may only run scripts');
+    } finally {
+      toldMode = null;
+    }
+    // And the page reads no stored data to say it: no flag reader.
+    expect(source('app/security/page.tsx')).not.toMatch(/flag-read|flag-store/);
   });
 
   test('says where bank connections work, and that a manual account is in a currency of its own', () => {
@@ -426,22 +454,26 @@ describe('the privacy page', () => {
   });
 
   // Built now: OFX, the passphrase, the email, and bringing a download back,
-  // which says whether this copy of Nya has turned it on (RESTORE_ENABLED).
-  test('says bringing a download back is built, and whether this copy has turned it on', () => {
+  // a feature switch (`restore`, lib/flags.ts) that can be on for some
+  // accounts and not others, so the pages say it is offered where turned on,
+  // whatever RESTORE_ENABLED says.
+  test('says bringing a download back is built, and offered where whoever runs this copy has turned it on', () => {
     const card = () => {
       const html = privacyHtml();
       return text(html.slice(html.indexOf('You can download everything stored about you'), html.indexOf('You can delete everything')));
     };
     const saved = process.env.RESTORE_ENABLED;
     try {
-      delete process.env.RESTORE_ENABLED;
-      expect(card()).toContain('Not turned on here Bringing a download into another copy of Nya, or into a new account: built, and off on this copy of Nya until whoever runs it turns it on.');
-      expect(card()).not.toContain('Not built yet');
-      expect(card()).not.toMatch(/OFX files for other money apps, a passphrase|an email each time a download happens\./);
-      expect(security()).not.toContain('Bringing a download back');
-      process.env.RESTORE_ENABLED = '1';
-      expect(card()).toContain('Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.');
-      expect(card()).not.toContain('Not turned on here');
+      for (const value of [undefined, '1']) {
+        if (value === undefined) delete process.env.RESTORE_ENABLED;
+        else process.env.RESTORE_ENABLED = value;
+        expect(card()).toContain('Where whoever runs this copy of Nya has turned it on, Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.');
+        expect(card()).not.toContain('Not turned on here');
+        expect(card()).not.toContain('Not built yet');
+        expect(card()).not.toMatch(/OFX files for other money apps, a passphrase|an email each time a download happens\./);
+        expect(privacy()).toContain('Where whoever runs this copy of Nya has turned it on, Bring back a download, beside it, brings a JSON download into an account with nothing in it yet');
+        expect(security()).toContain('Where whoever runs this copy of Nya has turned it on, Bring back a download reads the file in your browser');
+      }
       expect(privacy()).toContain('The file is read in your browser and never stored: only what it holds is written, into your account, encrypted as the rest of your data is.');
       expect(security()).toContain('Bring back a download reads the file in your browser, a few megabytes at a time, and checks every part of it there');
       expect(security()).toContain('Undo, while a restore is unfinished and for 7 days after it finishes, empties the account again, as emptying it does');
@@ -465,10 +497,10 @@ describe('the privacy page', () => {
   test('says a download is emailed only where this copy sends email', () => {
     mailIs(true);
     expect(privacy()).toContain('Each download is emailed to you: when it happened and which format, never what is in it.');
-    expect(privacy()).toContain('And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and the weekly summary, if you turn it on.');
+    expect(privacy()).toContain('And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and the weekly summary, if you turn it on.');
     expect(security()).toContain('Each download is emailed to you, so one you didn’t make shows.');
     expect(security()).toContain(
-      'each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.'
+      'each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.'
     );
     mailIs(false);
     for (const page of [privacy(), security()]) {
@@ -689,15 +721,16 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
 describe('API tokens, on both pages', () => {
   test('the security page: who can read what through one, how it is kept and checked, and what ends it', () => {
     const page = security();
-    expect(page).toContain('Programs you give an API token to What the read-only API and the MCP server serve (the Developers page lists it)');
-    expect(page).toContain('until you revoke the token. Never your sign-in or your bank logins, and they can never change anything.');
+    expect(page).toContain('Programs you give an API token to What the API and the MCP server serve (the Developers page lists it)');
+    expect(page).toContain('until you revoke the token. Never your sign-in or your bank logins, and no token changes your shared expenses. A token made to read changes nothing.');
     expect(page).toContain('Nya shows it once and never stores it: it keeps a SHA-256 hash of the token’s secret, inside your own data and encrypted with it');
     expect(page).toContain('A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong secret, or another person’s data)');
     expect(page).toContain('one whose secret doesn’t match costs the same work whoever’s data it names');
     expect(page).toContain('Only a token whose secret checks out is told more: that its data is being restored, say, and to try again later.');
     expect(page).toContain('Requests with tokens that don’t work are counted by the address they come from');
     expect(page).toContain('Making one needs a fresh sign-in, as downloading your data does.');
-    expect(page).toContain(`makes at most ${REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out everywhere or a change of the shared password`);
+    expect(page).toContain(`A token makes at most ${REQUESTS_PER_MINUTE} requests a minute;`);
+    expect(page).toContain('A token works until you revoke it, even after Sign out everywhere or a change of the shared password');
     expect(page).toContain('it stops when the account that made it is taken off the list of people allowed in.');
     expect(page).toContain('Deleting your account deletes every token with the rest of your data, and restoring a backup ends every token, since backups leave them out.');
     // Backups: the same kinds of data, but no tokens.
@@ -711,8 +744,9 @@ describe('API tokens, on both pages', () => {
     const page = security();
     expect(page).toContain('of your API tokens (random, and not enough to use one), and of the people you split costs with');
     expect(page).toContain(
-      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many times a link to turn it off was used, kept for an hour.`
+      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens; where tokens may make changes,`
     );
+    expect(page).toContain('the window ends; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many times a link to turn it off was used, kept for an hour.');
     expect(page).toContain(`of a device that sent API tokens, or links to turn off a weekly summary, that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
   });
 
@@ -721,12 +755,13 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain(
       'Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.'
     );
-    expect(page).toContain('A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the Developers page');
-    // The API exists now: only writing through it is to come.
-    expect(page).toContain('Not built yet Writing through the API, and a license that lets anyone run their own copy of Nya.');
+    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, where whoever runs this copy of Nya lets tokens make changes,');
+    // The API exists now, and writing through it where turned on: only
+    // writing a bank's transactions is to come.
+    expect(page).toContain('Not built yet Writing your bank’s transactions through the API, and a license that lets anyone run their own copy of Nya.');
     expect(page).not.toContain('A public API');
     expect(page).toContain(
-      'API tokens Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'
+      'API tokens Until you revoke them, or delete your account. Each is kept as its name, what it can do, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'
     );
     expect(page).toContain(`Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
     expect(page).toContain(
@@ -737,63 +772,64 @@ describe('API tokens, on both pages', () => {
   });
 });
 
-// Writing through a token (API_WRITES_ENABLED, lib/api-writes-enabled.ts):
-// the pages describe it only while this copy lets tokens write, and read
-// exactly as before while it doesn't.
-describe('writing through a token, on both pages, only while this copy lets tokens write', () => {
+// Writing through a token: the `api-writes` feature switch (lib/flags.ts),
+// which can be on for some accounts and not others and lives in stored data.
+// The pages read no stored data, so they describe writing as offered where
+// whoever runs this copy has turned it on, the same whatever
+// API_WRITES_ENABLED says.
+describe('writing through a token, on both pages, offered where turned on', () => {
   const mailOn = () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.MAIL_FROM = 'Nya <nya@example.com>';
     process.env.NOTIFY_EMAIL = 'me@example.com';
-    process.env.RESTORE_ENABLED = '1';
   };
 
-  test('off: nothing of writing on either page', () => {
-    delete process.env.API_WRITES_ENABLED;
+  test('the same pages whatever API_WRITES_ENABLED says', () => {
     mailOn();
-    for (const [name, page] of [['security', security()], ['privacy', privacy()]] as const) expect([name, writingIn(page)]).toEqual([name, []]);
-    expect(security()).toContain('A token can read but never change anything');
-    expect(security()).toContain('the read-only API, the MCP server and what you share answer nothing from it.');
-    expect(privacy()).toContain('Not built yet Writing through the API');
+    delete process.env.API_WRITES_ENABLED;
+    const [offSecurity, offPrivacy] = [security(), privacy()];
+    process.env.API_WRITES_ENABLED = '1';
+    expect(security()).toBe(offSecurity);
+    expect(privacy()).toBe(offPrivacy);
+    // And neither page reads a flag: what it says can't depend on one.
+    for (const path of ['app/security/page.tsx', 'app/privacy/page.tsx']) expect([path, source(path)]).not.toEqual([path, expect.stringMatching(/flag-read|flag-store|api-writes-enabled/)]);
   });
 
-  test('on, the security page: what each kind of token reaches, its limits, versions and the record, and what a restore holds back', () => {
-    process.env.API_WRITES_ENABLED = '1';
+  test('the security page: what each kind of token reaches where tokens may make changes, its limits, versions and the record, and what a restore holds back', () => {
     mailOn();
     const page = security();
     expect(page).toContain('Programs you give an API token to What the API and the MCP server serve (the Developers page lists it)');
     expect(page).toContain(
-      'A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).'
+      'A token made to read changes nothing. Where whoever runs this copy of Nya lets tokens make changes, one made to update balances sees only your accounts and their balances and changes only a manual account’s balance, and one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).'
     );
     expect(page).not.toContain('and they can never change anything.');
-    expect(page).toContain('lets a program read your data, and, if you choose when you make it, change some of it, through Nya’s API and its MCP server');
+    expect(page).toContain('lets a program read your data, and, where whoever runs this copy of Nya lets tokens make changes and you choose when you make it, change some of it, through Nya’s API and its MCP server');
+    expect(page).toContain('A token only reads, unless, where whoever runs this copy of Nya lets tokens make changes, you chose when you made it that it may update manual accounts’ balances or make changes.');
     expect(page).toContain('That choice is kept with it and can never be widened, and a token never gains kinds of changes added to Nya after it was made.');
     expect(page).toContain('one that can update balances or make changes at most 30 writes a minute and 500 changes a day, with 2,000 changes a day for all your tokens.');
     expect(page).toContain('Every change to something that already exists, but a balance, names the version it was made from');
     expect(page).toContain('Every change is recorded for 30 days under API tokens, with what it changed, where most can be undone or forgotten.');
     expect(page).toContain('the record of changes made with API tokens, and the short-lived copies');
-    expect(page).toContain('for the record of changes made with API tokens: the day each change was made and which token made it (what it changed is encrypted).');
-    expect(page).toContain('for a token that can update balances or make changes, its writes in the current minute and its changes in the current 24 hours, all your tokens’ changes in the current 24 hours, and the manual accounts whose balance a token set in the current 24 hours, by their ids');
+    expect(page).toContain('for the record of changes made with API tokens, where tokens may make changes: the day each change was made and which token made it (what it changed is encrypted).');
+    expect(page).toContain('where tokens may make changes, for a token that can update balances or make changes, its writes in the current minute and its changes in the current 24 hours, all your tokens’ changes in the current 24 hours, and the manual accounts whose balance a token set in the current 24 hours, by their ids');
     expect(page).toContain('or an API token is made (saying what it can do)');
     expect(page).toContain('the API and the MCP server answer nothing from it and change nothing in it');
-    // The words the off page is held to not saying are said here.
     expect(writingIn(page).length).toBeGreaterThan(3);
     expect(page).not.toMatch(/[\u2013\u2014]/);
   });
 
-  test('on, the privacy page: the AI caveat, leaving, the record’s row, and the counts', () => {
-    process.env.API_WRITES_ENABLED = '1';
+  test('the privacy page: the AI caveat, leaving, the record’s row, and the counts, each where tokens may make changes', () => {
     mailOn();
     const page = privacy();
-    expect(page).toContain('With a token you make to make changes, it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads');
-    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts');
+    expect(page).toContain('Where whoever runs this copy of Nya lets tokens make changes, with a token you make to make changes it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads');
+    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, where whoever runs this copy of Nya lets tokens make changes, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts');
     expect(page).toContain('Not built yet Writing your bank’s transactions through the API');
-    expect(page).toContain('Changes made with API tokens 30 days, or until you delete your account: each change a token made');
+    expect(page).toContain('Changes made with API tokens Where tokens may make changes: 30 days, or until you delete your account: each change a token made');
     // A forgotten change keeps its line: Forget removes what it changed.
     expect(page).toContain('Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the 30 days.');
     expect(page).toContain('whether a token set each manual account’s balance in the current 24 hours');
     expect(page).toContain('A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.');
-    expect(page).toContain('For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours');
+    expect(page).toContain('Where tokens may make changes, for a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours');
     expect(page).toContain('Each is kept as its name, what it can do, the sign-in account that made it');
     expect(writingIn(page).length).toBeGreaterThan(3);
     expect(page).toContain('or an API token is made (saying what it can do)');
@@ -937,16 +973,12 @@ function* setups() {
   for (const master of [undefined, MASTER]) {
     for (const backups of ['none', 'kept', 'invalid'] as const) {
       for (const mail of [false, true]) {
-        for (const restore of [false, true]) {
-          process.env = { ...saved };
-          if (master) process.env.MASTER_KEY = master;
-          else delete process.env.MASTER_KEY;
-          backupsAre(backups);
-          mailIs(mail);
-          if (restore) process.env.RESTORE_ENABLED = '1';
-          else delete process.env.RESTORE_ENABLED;
-          yield `${master ? 'key' : 'no key'}, backups ${backups}, mail ${mail}, restore ${restore}`;
-        }
+        process.env = { ...saved };
+        if (master) process.env.MASTER_KEY = master;
+        else delete process.env.MASTER_KEY;
+        backupsAre(backups);
+        mailIs(mail);
+        yield `${master ? 'key' : 'no key'}, backups ${backups}, mail ${mail}`;
       }
     }
   }
@@ -987,10 +1019,10 @@ describe('the public pages as documents', () => {
         expect([setup, new Set(ids).size]).toEqual([setup, ids.length]);
       }
     }
-    // The parts that come and go with the setup come and go in the contents too.
-    delete process.env.RESTORE_ENABLED;
+    // The parts that come and go with the setup come and go in the contents
+    // too; bringing a download back, offered where turned on, is always there.
     mailIs(false);
-    expect(anchors(securityHtml()).contents).not.toContain('bringing-back');
+    expect(anchors(securityHtml()).contents).toContain('bringing-back');
     expect(anchors(securityHtml()).contents).not.toContain('weekly-summary');
   });
 

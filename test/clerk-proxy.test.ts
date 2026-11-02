@@ -2,6 +2,13 @@ import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
 import { mockForFile } from './scoped-mock';
 import { NextRequest } from 'next/server';
+import { FakeRedis, storageMock, registerTestContainer, testKey, TEST_CONTAINER } from './fake-redis';
+
+// Who may sign in is the `sign-in` feature switch: its variable while set,
+// else the deployment's owners and the stored list, read from this file's own
+// store, as is the CSP mode the proxy reads with CSP_MODE unset.
+const fake = new FakeRedis({ deserialize: true });
+mock.module('@/lib/storage', () => storageMock(fake));
 
 // An account's verified emails, mocked at our own module, not Clerk's, for
 // this file only (test/scoped-mock.ts): other files ask the real one, which
@@ -22,10 +29,13 @@ await mockForFile('@/lib/clerk-emails', () => ({
 }));
 
 const { proxy } = await import('@/proxy');
-const { clerkEnabled, clerkUserAllowed, forgetEmails, EMAILS_REUSE_MS, EMAILS_STALE_MS } = await import('@/lib/auth-mode');
+const { clerkEnabled, clerkUserAllowed, clerkUserAccess, forgetEmails, EMAILS_REUSE_MS, EMAILS_STALE_MS } = await import('@/lib/auth-mode');
+const { forgetEpochs } = await import('@/lib/sessions');
 
 const saved = { ...process.env };
 beforeEach(() => {
+  fake.reset();
+  forgetEpochs();
   clerk.signedIn = null;
   for (const k of Object.keys(emailsOf)) delete emailsOf[k];
   for (const k of Object.keys(unverifiedOf)) delete unverifiedOf[k];
@@ -132,12 +142,39 @@ describe('with Clerk on', () => {
     expect((await call('/api/net-worth')).status).toBe(403);
   });
 
-  test('no allowlist lets nobody in', async () => {
+  test('a list of nothing but commas lets nobody in, the owner included', async () => {
+    await registerTestContainer(fake);
+    await fake.hset(testKey('owners'), { user_owner: TEST_CONTAINER });
+    process.env.CLERK_ALLOWED_USER_IDS = ' , ';
+    clerk.signedIn = 'user_owner';
+    expect(await clerkUserAllowed('')).toBe(false);
+    expect((await call('/api/net-worth')).status).toBe(403);
+  });
+
+  test('with no allowlist, the deployment’s owners and the stored list get in, and nobody else', async () => {
     delete process.env.CLERK_ALLOWED_USER_IDS;
     clerk.signedIn = 'user_owner';
+    // No container, so no owners, and nothing stored: nobody.
+    expect(await clerkUserAccess('user_owner')).toBe('denied');
     expect((await call('/api/net-worth')).status).toBe(403);
-    process.env.CLERK_ALLOWED_USER_IDS = ' , ';
-    expect(await clerkUserAllowed('')).toBe(false);
+    await registerTestContainer(fake);
+    await fake.hset(testKey('owners'), { user_owner: TEST_CONTAINER });
+    await fake.hset(testKey('flags:values'), { 'sign-in': JSON.stringify({ ids: ['user_partner'], emails: ['friend@example.com'], updatedAt: '2026-11-01T12:00:00.000Z' }) });
+    const { flagCache } = await import('@/lib/flag-cache');
+    flagCache.forget();
+    forgetEpochs();
+    expect((await call('/api/net-worth')).status).toBe(200);
+    expect(await clerkUserAccess('user_partner')).toBe('allowed');
+    emailsOf.user_friend = ['Friend@example.com'];
+    expect(await clerkUserAccess('user_friend')).toBe('allowed');
+    expect(await clerkUserAccess('user_stranger')).toBe('denied');
+  });
+
+  test('with no allowlist and the switches not read yet, whether an account may come in can’t be told', async () => {
+    delete process.env.CLERK_ALLOWED_USER_IDS;
+    fake.failNext('hgetall', 10);
+    expect(await clerkUserAccess('user_stranger')).toBe('unknown');
+    clerk.signedIn = 'user_stranger';
     expect((await call('/api/net-worth')).status).toBe(403);
   });
 

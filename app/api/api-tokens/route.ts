@@ -10,7 +10,7 @@ import { loggable } from '@/lib/log-safe';
 import { sendAccessNotice } from '@/lib/download-notice';
 import { background } from '@/lib/background';
 import { ACCESS, type Access } from '@/lib/api-limits';
-import { apiWritesEnabled } from '@/lib/api-writes-enabled';
+import { flagOnCached, flagOnFresh, requestWho } from '@/lib/flag-read';
 
 // The API tokens card (components/ApiTokens.tsx): the person's own tokens for
 // the read-only API and the MCP server (lib/api-tokens.ts). Behind the session
@@ -23,8 +23,8 @@ import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 //           token is in this answer and nowhere else, ever: only its hash is
 //           kept. `access` is read (also when absent), balances or write
 //           (lib/api-limits.ts ACCESS), chosen now and never changed; the last
-//           two only while this copy lets tokens write (`writes`,
-//           lib/api-writes-enabled.ts), else 403.
+//           two only while tokens may make changes for this account (`writes`,
+//           the `api-writes` feature switch, read fresh), else 403.
 //   DELETE  { id, unreadable? }   revokes one: { revoked: true }, or 404.
 //
 // Making a token needs a FRESH SIGN-IN (lib/fresh-sign-in.ts, as downloading
@@ -77,7 +77,8 @@ export async function GET() {
   try {
     const ctx = await dataCtx();
     const { tokens, unreadable, unrecognised } = await listTokens(ctx);
-    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes: apiWritesEnabled() }, { headers: noStore });
+    const writes = await flagOnCached('api-writes', await requestWho(ctx));
+    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes }, { headers: noStore });
   } catch (err) {
     return failure(err, 'read');
   }
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `access is one of ${ACCESS.join(', ')}.` }, { status: 400 });
   }
   const access = (rawAccess ?? 'read') as Access;
-  if (access !== 'read' && !apiWritesEnabled()) {
+  if (access !== 'read' && !(await flagOnFresh('api-writes', await requestWho(ctx)))) {
     return NextResponse.json({ error: 'This copy of Nya doesn’t let tokens make changes: make one that reads.' }, { status: 403 });
   }
   if (typeof rawLabel === 'string' && rawLabel.length > LABEL_FIELD_MAX) return NextResponse.json({ error: 'That name is too long.' }, { status: 400 });

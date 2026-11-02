@@ -8,7 +8,9 @@ import InstitutionCard from '@/components/InstitutionCard';
 import type { Institution } from '@/components/accounts-format';
 import { connectorHealth, connectorHealthText } from '@/lib/connectors/health';
 import { connectorBalanceDay, connectorLabel, CONNECTOR_WORDS, ANY_CONNECTOR } from '@/lib/connectors/types';
-import { connectorOffered, lunchFlowEnabled } from '@/lib/connectors/switch';
+import { connectorOffered } from '@/lib/connectors/switch';
+import { audienceVariable } from '@/lib/flags';
+import { flagWho } from '@/lib/flag-read';
 import type { ConnectionView } from '@/lib/connectors/view';
 
 // What the screens say of Lunch Flow (components/Connectors.tsx,
@@ -62,29 +64,34 @@ describe('the option to connect', () => {
   test('the dashboard offers it in both places it offers SimpleFIN, only where the deployment turned it on', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
     expect(dashboard).toContain("setConnectorAsk({ kind: 'connect', connector: 'lunchflow' })");
-    expect(dashboard).toContain('lunchFlow = false,');
+    expect(dashboard).toContain('const lunchFlow = flags.lunchflow;');
     expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
     expect(dashboard).toContain('const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;');
-    // Decided on the server, from LUNCHFLOW_ENABLED, for both kinds of sign-in.
+    // Decided on the server, from the `lunchflow` feature switch, for both
+    // kinds of sign-in (lib/flag-read.ts clientFlags).
     const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
-    expect(page).toContain('const lunchFlow = lunchFlowEnabled();');
-    expect(page.match(/<Dashboard [^>]*lunchFlow=\{lunchFlow\}/g)?.length).toBe(2);
+    expect(page.match(/<Dashboard [^>]*flags=\{/g)?.length).toBe(2);
+    expect(page).toContain('clientFlags(flagWho(');
   });
 
-  test('the switch is on only for LUNCHFLOW_ENABLED=1, and never stands in SimpleFIN’s way', () => {
+  test('its variable decides it for LUNCHFLOW_ENABLED=1 alone, and it never stands in SimpleFIN’s way', async () => {
     const saved = process.env.LUNCHFLOW_ENABLED;
+    const who = flagWho(null, null);
     try {
+      // Unset or blank, the variable leaves it to the stored switch (test/flags.test.ts).
+      for (const value of [undefined, '', '  ']) {
+        if (value === undefined) delete process.env.LUNCHFLOW_ENABLED;
+        else process.env.LUNCHFLOW_ENABLED = value;
+        expect([value, audienceVariable('lunchflow')]).toEqual([value, undefined]);
+      }
       for (const [value, on] of [
-        [undefined, false],
-        ['', false],
         ['0', false],
         ['true', false],
         ['yes', false],
         ['1', true],
       ] as const) {
-        if (value === undefined) delete process.env.LUNCHFLOW_ENABLED;
-        else process.env.LUNCHFLOW_ENABLED = value;
-        expect([value, lunchFlowEnabled(), connectorOffered('lunchflow'), connectorOffered('simplefin')]).toEqual([value, on, on, true]);
+        process.env.LUNCHFLOW_ENABLED = value;
+        expect([value, audienceVariable('lunchflow'), await connectorOffered('lunchflow', who), await connectorOffered('simplefin', who)]).toEqual([value, on, on, true]);
       }
     } finally {
       if (saved === undefined) delete process.env.LUNCHFLOW_ENABLED;

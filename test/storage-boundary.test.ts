@@ -447,6 +447,10 @@ describe("the seam's own hooks", () => {
       using('publicStoresDeclaredSoFar').filter((f) => f !== 'lib/repo.ts' && f !== 'lib/stores.ts'),
       'Read public stores through declaredPublicStores() or declaredPublicStore() in lib/stores.ts, which loads every declaring module first.'
     ).toEqual([]);
+    expect(
+      using('environmentStoresDeclaredSoFar').filter((f) => f !== 'lib/repo.ts' && f !== 'lib/stores.ts'),
+      'Read environment stores through declaredEnvironmentStores() or declaredEnvironmentStore() in lib/stores.ts, which loads every declaring module first.'
+    ).toEqual([]);
   });
 
   test('forgetting a declared store is for tests only', () => {

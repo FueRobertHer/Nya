@@ -62,14 +62,15 @@ const MODES: readonly CspMode[] = ['report-only', 'enforce', 'off'];
 let warnedMode: string | undefined;
 
 /**
- * CSP_MODE, read per request so a redeploy with a new value is all a switch
- * takes. Unset is report-only: violations are logged in the browser console
- * and nothing is blocked, until a live Plaid Link and Clerk session has been
- * checked (docs/deployment.md). A value that is not one of the three is also
+ * A CSP mode as CSP_MODE spells it (the `csp` feature switch's variable,
+ * lib/flags.ts, which the proxy reads through lib/flag-read.ts). Unset is
+ * report-only: violations are logged in the browser console and nothing is
+ * blocked, until a live Plaid Link and Clerk session has been checked
+ * (docs/deployment.md). A value that is not one of the three is also
  * report-only, never enforce: a typo must not break sign-in or Link. It is
  * logged once per instance, so the typo is found.
  */
-export function cspMode(raw: string | undefined = process.env.CSP_MODE): CspMode {
+export function cspMode(raw: string | undefined): CspMode {
   const value = (raw ?? '').trim().toLowerCase();
   if (!value) return 'report-only';
   if ((MODES as readonly string[]).includes(value)) return value as CspMode;
@@ -79,6 +80,11 @@ export function cspMode(raw: string | undefined = process.env.CSP_MODE): CspMode
   }
   return 'report-only';
 }
+
+/** The request header the proxy tells a page the mode in (proxy.ts pass),
+ *  so the Security page can say which this copy uses while reading no stored
+ *  data. Set by the proxy alone: one a visitor sends is dropped. */
+export const CSP_MODE_HEADER = 'x-nya-csp-mode';
 
 /** The response header that carries the policy in this mode. */
 export function cspHeaderName(mode: Exclude<CspMode, 'off'>): 'Content-Security-Policy' | 'Content-Security-Policy-Report-Only' {
