@@ -260,18 +260,22 @@ describe('the cache', () => {
     const kept = await read.cachedFlags(T + read.CACHE_MS);
     expect(kept.source).toBe('last');
     expect(kept.flags.get('csp')).toMatchObject({ mode: 'enforce' });
-    expect((await read.cachedFlags(T + read.CACHE_MS + read.RETRY_MS)).source).toBe('last'); // not again yet
-    expect((await read.cachedFlags(T + 2 * read.CACHE_MS)).source).toBe('read');
+    // The wait runs from the failure, which the real time the read took moves
+    // past T + CACHE_MS (see "from when it failed" below).
+    const failedAt = flagCache.flags.triedAt;
+    expect((await read.cachedFlags(failedAt + read.RETRY_MS)).source).toBe('last'); // not again yet
+    expect((await read.cachedFlags(failedAt + read.CACHE_MS)).source).toBe('read');
   });
 
   test('with nothing read yet a failure gives the defaults, as none, and tries again two seconds on', async () => {
     fake.failNext('hgetall');
     const none = await read.cachedFlags(T);
+    const failedAt = flagCache.flags.triedAt;
     expect(none.source).toBe('none');
     expect(none.flags.size).toBe(0);
     expect(await read.cspModeCached()).toBe('report-only');
     expect((await read.signInFromStore()).list).toBeNull();
-    expect((await read.cachedFlags(T + read.RETRY_MS)).source).toBe('read');
+    expect((await read.cachedFlags(failedAt + read.RETRY_MS)).source).toBe('read');
   });
 
   test('stops waiting on a slow read, and counts it as failed', async () => {
