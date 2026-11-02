@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import { LAW_YEARS } from '@/lib/fire/tax/law/index';
-import type { PartialLaw, PovertyRegion } from '@/lib/fire/tax/law/types';
+import type { PartialLaw } from '@/lib/fire/tax/law/types';
 import {
+  POVERTY_TITLE,
   Unreachable,
   Unrecognised,
   checkLaw,
@@ -20,7 +21,6 @@ import {
   parsePoverty,
   parseWageBase,
   partBTitle,
-  povertyUrl,
   reportMarkdown,
   ssaTitle,
   type Get,
@@ -28,45 +28,73 @@ import {
 
 // The law check (scripts/law-check.ts) over saved copies of the official
 // answers in test/fixtures/law-check/, fetched on 2026-11-02 from the URLs the
-// script builds: ASPE's poverty API (a year it has, a year it doesn't, and a
-// state it doesn't know), the Federal Register's search, CMS's 2026 Part B
-// notice (90 FR 52063) and its 2025 one (89 FR 90002, its tables printed as
-// images) as XML, and SSA's 2026 and 2027 cost-of-living notices (90 FR 49047,
-// 91 FR 67380) as text. No test reaches the network.
+// script builds: the Federal Register's search, HHS's 2025 and 2026 poverty
+// guidelines notices (90 FR 5917, 91 FR 1797), CMS's 2026 Part B notice (90
+// FR 52063) and its 2025 one (89 FR 90002, its tables printed as images) as
+// XML, and SSA's 2026 and 2027 cost-of-living notices (90 FR 49047, 91 FR
+// 67380) as text. No test reaches the network.
 
 const fixture = (name: string) => readFileSync(join(import.meta.dir, 'fixtures', 'law-check', name), 'utf8');
 
+const POVERTY_2025 = fixture('poverty-2025.xml');
+const POVERTY_2026 = fixture('poverty-2026.xml');
 const PART_B_XML = fixture('partb-2026.xml');
 const PART_B_IMAGES = fixture('partb-2025.xml');
 const SSA_2026 = fixture('ssa-2026.txt');
 const SSA_2027 = fixture('ssa-2027.txt');
 
-describe("ASPE's poverty API", () => {
-  test('reads the guideline from data.income', () => {
-    expect(parsePoverty(fixture('aspe-2026-us-1.json'), 2026, 'contiguous', 1)).toEqual({ out: true, income: 15_960 });
+/** Sizes 1 to 8 of guidelines that start at `first` and add `added` a person. */
+const even = (first: number, added: number) => [1, 2, 3, 4, 5, 6, 7, 8].map((n) => first + (n - 1) * added);
+
+describe("HHS's poverty guidelines notice", () => {
+  test('reads sizes 1 to 8 for the contiguous states, Alaska and Hawaii', () => {
+    expect(parsePoverty(POVERTY_2026, 2026)).toEqual({
+      contiguous: even(15_960, 5_680),
+      AK: even(19_950, 7_100),
+      HI: even(18_360, 6_530),
+    });
+    expect(parsePoverty(POVERTY_2025, 2025)).toEqual({
+      contiguous: even(15_650, 5_500),
+      AK: even(19_550, 6_880),
+      HI: even(17_990, 6_330),
+    });
   });
 
-  test('a year it lacks comes back as its default year, which reads as not out', () => {
-    // Asked 2027/us/3 on 2026-11-02, it answered 2026's guideline for 3.
-    expect(parsePoverty(fixture('aspe-2027-us-3.json'), 2027, 'contiguous', 3)).toEqual({ out: false });
+  test("a heading split over two lines, as 2024's was, reads the same", () => {
+    const split = POVERTY_2026.replaceAll('<CHED H="1">Persons in family/household</CHED>', '<CHED H="1">\n Persons in family/\n <LI>household</LI>\n</CHED>');
+    expect(split).not.toBe(POVERTY_2026);
+    expect(parsePoverty(split, 2026)).toEqual(parsePoverty(POVERTY_2026, 2026));
   });
 
-  test('an answer for another state or size is refused, not read', () => {
-    // Asked 2026/zz/9, it answered for "us" (and gave income as a number).
-    // The same answer to a question about Alaska must not pass for Alaska's.
-    expect(() => parsePoverty(fixture('aspe-2026-zz-9.json'), 2026, 'AK', 9)).toThrow(
-      new Unrecognised('ASPE answered 2026/us/9 when asked 2026/ak/9'),
+  test("another year's notice, or a notice without a region's table, is unrecognised", () => {
+    expect(() => parsePoverty(POVERTY_2026, 2027)).toThrow(
+      'has 0 tables titled "2027 Poverty Guidelines for the 48 Contiguous States and the District of Columbia"',
     );
-    expect(() => parsePoverty(fixture('aspe-2026-us-1.json'), 2026, 'contiguous', 2)).toThrow(Unrecognised);
+    const noHawaii = POVERTY_2026.replace('2026 Poverty Guidelines for Hawaii', '2026 Poverty Guidelines for Guam');
+    expect(() => parsePoverty(noHawaii, 2026)).toThrow('has 0 tables titled "2026 Poverty Guidelines for Hawaii"');
+    const twoAlaskas = POVERTY_2026.replace('2026 Poverty Guidelines for Hawaii', '2026 Poverty Guidelines for Alaska');
+    expect(() => parsePoverty(twoAlaskas, 2026)).toThrow('has 2 tables titled "2026 Poverty Guidelines for Alaska"');
+    const subject = POVERTY_2026.replace(`<SUBJECT>${POVERTY_TITLE}</SUBJECT>`, '<SUBJECT>Poverty Guidelines</SUBJECT>');
+    expect(subject).not.toBe(POVERTY_2026);
+    expect(() => parsePoverty(subject, 2026)).toThrow("doesn't have its title as its subject");
   });
 
-  test('an answer without its fields, or with an income that is not a whole number, is unrecognised', () => {
-    expect(() => parsePoverty('<html>Not found</html>', 2026, 'contiguous', 1)).toThrow(Unrecognised);
-    expect(() => parsePoverty('{"data":{"year":"2026","state":"US","household_size":"1"}}', 2026, 'contiguous', 1)).toThrow(
-      "ASPE's answer for 2026/us/1 has no income",
+  test('a table whose columns or rows are not the ones known is unrecognised', () => {
+    const columns = POVERTY_2026.replace('<CHED H="1">Persons in family/household</CHED>', '<CHED H="1">Persons</CHED>');
+    expect(() => parsePoverty(columns, 2026)).toThrow(
+      "The 2026 poverty guidelines notice's table for contiguous: its columns aren't persons in family/household and poverty guideline",
     );
-    const body = fixture('aspe-2026-us-1.json').replace('"15960"', '"15,960"');
-    expect(() => parsePoverty(body, 2026, 'contiguous', 1)).toThrow(Unrecognised);
+    const guideline = POVERTY_2026.replace('Poverty\n                            <LI>guideline</LI>', 'Poverty\n                            <LI>threshold</LI>');
+    expect(guideline).not.toBe(POVERTY_2026);
+    expect(() => parsePoverty(guideline, 2026)).toThrow("table for contiguous: its columns aren't");
+    const cell = POVERTY_2026.replace('<ENT>27,320</ENT>', '<ENT>27,32</ENT>');
+    expect(() => parsePoverty(cell, 2026)).toThrow('table for contiguous: row 3 reads "3 | 27,32"');
+    const order = POVERTY_2026.replace('<ENT I="01">3</ENT>', '<ENT I="01">4</ENT>');
+    expect(() => parsePoverty(order, 2026)).toThrow('table for contiguous: row 3 reads "4 | 27,320"');
+    const falls = POVERTY_2026.replace('<ENT>21,640</ENT>', '<ENT>11,640</ENT>');
+    expect(() => parsePoverty(falls, 2026)).toThrow("table for contiguous: the guidelines don't rise with the size");
+    const nine = POVERTY_2026.replace('</GPOTABLE>', '<ROW><ENT I="01">9</ENT><ENT>61,400</ENT></ROW></GPOTABLE>');
+    expect(() => parsePoverty(nine, 2026)).toThrow('table for contiguous: 9 rows');
   });
 });
 
@@ -131,6 +159,21 @@ describe("the Federal Register's search", () => {
     const url = new URL(frSearchUrl(ssaTitle(2027)));
     expect(url.searchParams.get('conditions[term]')).toBe('"Cost-of-Living Increase and Other Determinations for 2027"');
     expect(url.searchParams.getAll('conditions[type][]')).toEqual(['NOTICE']);
+    expect(url.searchParams.has('conditions[publication_date][year]')).toBe(false);
+  });
+
+  test('the poverty notice, titled the same every year, is searched for by the year it came out', () => {
+    const url = new URL(frSearchUrl(POVERTY_TITLE, 2026));
+    expect(url.searchParams.get('conditions[term]')).toBe('"Annual Update of the HHS Poverty Guidelines"');
+    expect(url.searchParams.get('conditions[publication_date][year]')).toBe('2026');
+    expect(parseFrSearch(fixture('fr-poverty-2026.json'), POVERTY_TITLE)).toMatchObject({
+      notice: {
+        citation: '91 FR 1797',
+        publication_date: '2026-01-15',
+        full_text_xml_url: 'https://www.federalregister.gov/documents/full_text/xml/2026/01/15/2026-00755.xml',
+      },
+      corrections: [],
+    });
   });
 });
 
@@ -192,42 +235,21 @@ describe("SSA's cost-of-living notice", () => {
   });
 });
 
-/** The official guidelines the fake API knows (HHS, checked on 2026-11-02). */
-const GUIDELINES: Record<number, Record<PovertyRegion, [number, number]>> = {
-  2025: { contiguous: [15_650, 5_500], AK: [19_550, 6_880], HI: [17_990, 6_330] },
-  2026: { contiguous: [15_960, 5_680], AK: [19_950, 7_100], HI: [18_360, 6_530] },
-};
-
-const STATE = { contiguous: 'US', AK: 'AK', HI: 'HI' } as const;
-
 /** A fake web serving the fixtures at the URLs the script builds, as the
  *  sources stood on 2026-11-02, with `changes` laid over it. Counts each URL's
  *  fetches. */
-function fakeWeb(changes: Record<string, string | Error> = {}, guidelines = GUIDELINES) {
+function fakeWeb(changes: Record<string, string | Error> = {}) {
   const pages = new Map<string, string | Error>();
-  for (const year of [2025, 2026, 2027, 2028]) {
-    for (const region of ['contiguous', 'AK', 'HI'] as const) {
-      for (let size = 1; size <= 8; size++) {
-        // A year the API lacks is answered with its default year, 2026.
-        const known = guidelines[year];
-        const answered = known ? year : 2026;
-        const [first, added] = (known ?? guidelines[2026])[region];
-        pages.set(
-          povertyUrl(year, region, size),
-          JSON.stringify({
-            data: { year: String(answered), household_size: String(size), income: String(first + (size - 1) * added), state: STATE[region] },
-            method: 'GET',
-            status: 200,
-          }),
-        );
-      }
-    }
-  }
   const none = fixture('fr-partb-2027.json');
   for (const year of [2026, 2027, 2028]) {
     pages.set(frSearchUrl(partBTitle(year)), none);
     pages.set(frSearchUrl(ssaTitle(year)), none);
+    pages.set(frSearchUrl(POVERTY_TITLE, year), none);
   }
+  pages.set(frSearchUrl(POVERTY_TITLE, 2025), fixture('fr-poverty-2025.json'));
+  pages.set(frSearchUrl(POVERTY_TITLE, 2026), fixture('fr-poverty-2026.json'));
+  pages.set('https://www.federalregister.gov/documents/full_text/xml/2025/01/17/2025-01377.xml', POVERTY_2025);
+  pages.set('https://www.federalregister.gov/documents/full_text/xml/2026/01/15/2026-00755.xml', POVERTY_2026);
   pages.set(frSearchUrl(partBTitle(2026)), fixture('fr-partb-2026.json'));
   pages.set(frSearchUrl(ssaTitle(2026)), fixture('fr-ssa-2026.json'));
   pages.set(frSearchUrl(ssaTitle(2027)), fixture('fr-ssa-2027.json'));
@@ -274,7 +296,11 @@ describe('the whole check', () => {
       '2028 medicare not out',
       '2028 wageBase not out',
     ]);
+    expect(rows[0].detail).toBe(
+      "HHS's 2025 poverty guidelines (90 FR 5917, 2025-01-17): contiguous $15,650 + $5,500; AK $19,550 + $6,880; HI $17,990 + $6,330",
+    );
     expect(rows[2].detail).toBe("CMS's Part B notice for 2026 (90 FR 52063, 2025-11-19): Part B $202.90, 5 single and 5 joint IRMAA tiers");
+    expect(rows[5].detail).toBe("HHS's 2027 poverty guidelines; ours: none yet (published null, due January 2027)");
     expect(rows[6].detail).toBe("CMS's Part B notice for 2027; ours: none yet (published null, due Mid-November 2026)");
     expect(rows[11].detail).toBe("SSA's notice for 2028; ours: no 2028 table");
     expect(exitCode(rows)).toBe(0);
@@ -297,7 +323,7 @@ describe('the whole check', () => {
     const rows = await checkLaw([law, ...LAW_YEARS.slice(1)], fakeWeb().get);
     const differ = rows.filter((r) => r.status === 'differ');
     expect(differ.map((r) => r.part)).toEqual(['medicaidPoverty', 'medicare', 'wageBase']);
-    expect(differ[0].detail).toStartWith('HHS 2026 guidelines (ASPE API): ak size 2 ours $26,950, official $27,050; ak size 3');
+    expect(differ[0].detail).toStartWith("HHS's 2026 poverty guidelines (91 FR 1797, 2026-01-15): AK size 2 ours $26,950, official $27,050; AK size 3");
     expect(differ[1].detail).toBe("CMS's Part B notice for 2026 (90 FR 52063, 2025-11-19): joint tier 2 threshold ours $276,000, official $274,000");
     expect(differ[2].detail).toBe("SSA's notice for 2026 (90 FR 49047, 2025-11-03): ours $184,800, official $184,500");
     expect(exitCode(rows)).toBe(1);
@@ -313,18 +339,24 @@ describe('the whole check', () => {
       publication_date: '2026-11-18',
       full_text_xml_url: 'https://www.federalregister.gov/documents/full_text/xml/2026/11/18/2026-23000.xml',
     };
-    const { get } = fakeWeb(
-      {
-        [frSearchUrl(partBTitle(2027))]: JSON.stringify(search),
-        'https://www.federalregister.gov/documents/full_text/xml/2026/11/18/2026-23000.xml': PART_B_XML.replaceAll(partBTitle(2026), partBTitle(2027)),
-      },
-      { ...GUIDELINES, 2027: { contiguous: [16_300, 5_800], AK: [20_380, 7_250], HI: [18_750, 6_670] } },
-    );
+    const poverty = JSON.parse(fixture('fr-poverty-2026.json'));
+    poverty.results[0] = {
+      ...poverty.results[0],
+      citation: '92 FR 2000',
+      publication_date: '2027-01-14',
+      full_text_xml_url: 'https://example.test/poverty-2027.xml',
+    };
+    const { get } = fakeWeb({
+      [frSearchUrl(partBTitle(2027))]: JSON.stringify(search),
+      'https://www.federalregister.gov/documents/full_text/xml/2026/11/18/2026-23000.xml': PART_B_XML.replaceAll(partBTitle(2026), partBTitle(2027)),
+      [frSearchUrl(POVERTY_TITLE, 2027)]: JSON.stringify(poverty),
+      'https://example.test/poverty-2027.xml': POVERTY_2026.replaceAll('2026 Poverty Guidelines', '2027 Poverty Guidelines'),
+    });
     const rows = await checkLaw(LAW_YEARS, get);
     const news = rows.filter((r) => r.status === 'new');
     expect(news.map((r) => `${r.year} ${r.part}`)).toEqual(['2027 medicaidPoverty', '2027 medicare', '2028 creditPoverty']);
     expect(news[0].detail).toBe(
-      'HHS 2027 guidelines now out (ASPE API): us $16,300 + $5,800; ak $20,380 + $7,250; hi $18,750 + $6,670; ours: none yet (published null, due January 2027)',
+      "HHS's 2027 poverty guidelines now out (92 FR 2000, 2027-01-14): contiguous $15,960 + $5,680; AK $19,950 + $7,100; HI $18,360 + $6,530; ours: none yet (published null, due January 2027)",
     );
     expect(news[1].detail).toStartWith("CMS's Part B notice for 2027 now out (91 FR 70000, 2026-11-18): Part B $202.90");
     // The next year has no file yet: the line says to start one.
@@ -394,12 +426,17 @@ describe('the whole check', () => {
     expect(needsAttention(rows)).toBe(true);
   });
 
-  test('ASPE having only part of a year is unrecognised', async () => {
-    const half = JSON.stringify({ data: { year: '2027', household_size: '1', income: '16300', state: 'US' }, method: 'GET', status: 200 });
-    const rows = await checkLaw(LAW_YEARS, fakeWeb({ [povertyUrl(2027, 'contiguous', 1)]: half }).get);
-    const row = rows.find((r) => r.year === 2027 && r.part === 'medicaidPoverty')!;
-    expect(row.status).toBe('unrecognised');
-    expect(row.detail).toBe("ASPE has 1 of the 2027 guidelines' 24 figures and not the other 23");
+  test("a poverty notice without a region's table is unrecognised for each part it serves", async () => {
+    const noHawaii = POVERTY_2026.replace('2026 Poverty Guidelines for Hawaii', '2026 Poverty Guidelines for Guam');
+    const { get, fetched } = fakeWeb({ 'https://www.federalregister.gov/documents/full_text/xml/2026/01/15/2026-00755.xml': noHawaii });
+    const rows = await checkLaw(LAW_YEARS, get);
+    const missing = 'The 2026 poverty guidelines notice has 0 tables titled "2026 Poverty Guidelines for Hawaii"';
+    expect(rows.filter((r) => r.status === 'unrecognised').map((r) => `${r.year} ${r.part}: ${r.detail}`)).toEqual([
+      `2026 medicaidPoverty: ${missing}`,
+      `2027 creditPoverty: ${missing}`,
+    ]);
+    expect(fetched.get('https://www.federalregister.gov/documents/full_text/xml/2026/01/15/2026-00755.xml')).toBe(1);
+    expect(exitCode(rows)).toBe(1);
   });
 
   test('an unreachable source fails the run but asks for no report', async () => {

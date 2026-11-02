@@ -7,9 +7,9 @@
 //   bun run law:check [--report <path>]
 //
 // It reads, for each law year Nya holds and the year after the newest:
-//   - the poverty guidelines, from HHS ASPE's API (`creditPoverty` is the year
-//     before's guidelines, `medicaidPoverty` that year's), sizes 1 to 8 in the
-//     contiguous states, Alaska and Hawaii;
+//   - the poverty guidelines, from HHS's notice in the Federal Register
+//     (`creditPoverty` is the year before's guidelines, `medicaidPoverty` that
+//     year's), sizes 1 to 8 in the contiguous states, Alaska and Hawaii;
 //   - Part B's standard premium and the IRMAA tiers, from CMS's Part B notice
 //     in the Federal Register (its first "Full Part B Coverage" table, the one
 //     for single and joint returns);
@@ -60,69 +60,61 @@ export type Get = (url: string) => Promise<string>;
 export const PART_D_NOTE =
   "Part D's IRMAA amounts aren't in CMS's Federal Register notice (only on its fact sheet), so they aren't checked.";
 
-// ---- The poverty guidelines (HHS ASPE) ----
+// ---- The poverty guidelines (HHS) ----
 
-const ASPE = 'https://aspe.hhs.gov/topics/poverty-economic-mobility/poverty-guidelines/api';
-
-/** The API's name for each region. */
-const ASPE_STATE: Record<PovertyRegion, 'us' | 'ak' | 'hi'> = { contiguous: 'us', AK: 'ak', HI: 'hi' };
+/** HHS's yearly notice of the poverty guidelines in the Federal Register.
+ *  Its title is the same every year, so a year's guidelines are in the notice
+ *  published that year (in January or February, each year from 2011 to 2026).
+ *  A correction is found only with the notice published the same year, so one
+ *  published the year after would be missed; there has been none since 1995. */
+export const POVERTY_TITLE = 'Annual Update of the HHS Poverty Guidelines';
 
 const REGIONS: readonly PovertyRegion[] = ['contiguous', 'AK', 'HI'];
 
+/** Where each region's table says it applies. */
+const REGION_TITLE: Record<PovertyRegion, string> = {
+  contiguous: 'the 48 Contiguous States and the District of Columbia',
+  AK: 'Alaska',
+  HI: 'Hawaii',
+};
+
 const SIZES = [1, 2, 3, 4, 5, 6, 7, 8] as const;
-
-export function povertyUrl(year: number, region: PovertyRegion, size: number): string {
-  return `${ASPE}/${year}/${ASPE_STATE[region]}/${size}`;
-}
-
-/** One answer from the poverty API: the guideline, or `out: false` when the
- *  API has no guidelines for that year yet. It answers a year it doesn't have
- *  (and any other input it doesn't know) with its defaults instead of an
- *  error, so the year, state and size it echoes are checked against the
- *  question. Its value is `data.income` (its documentation says
- *  `poverty_threshold`). */
-export function parsePoverty(body: string, year: number, region: PovertyRegion, size: number): { out: false } | { out: true; income: number } {
-  const asked = `${year}/${ASPE_STATE[region]}/${size}`;
-  let json: unknown;
-  try {
-    json = JSON.parse(body);
-  } catch {
-    throw new Unrecognised(`ASPE's answer for ${asked} isn't JSON`);
-  }
-  const data = (json as { data?: unknown } | null)?.data;
-  if (typeof data !== 'object' || data === null) throw new Unrecognised(`ASPE's answer for ${asked} has no data`);
-  const d = data as Record<string, unknown>;
-  for (const key of ['year', 'state', 'household_size', 'income']) {
-    if (typeof d[key] !== 'string' && typeof d[key] !== 'number') throw new Unrecognised(`ASPE's answer for ${asked} has no ${key}`);
-  }
-  const answered = `${d.year}/${String(d.state).toLowerCase()}/${d.household_size}`;
-  if (String(d.state).toLowerCase() !== ASPE_STATE[region] || String(d.household_size) !== String(size)) {
-    throw new Unrecognised(`ASPE answered ${answered} when asked ${asked}`);
-  }
-  if (String(d.year) !== String(year)) return { out: false };
-  const income = String(d.income);
-  if (!/^\d+$/.test(income) || Number(income) <= 0) throw new Unrecognised(`ASPE's income for ${asked} is ${JSON.stringify(d.income)}`);
-  return { out: true, income: Number(income) };
-}
 
 /** A year's guidelines, by region, for sizes 1 to 8. */
 export type PovertySizes = Record<PovertyRegion, number[]>;
 
-async function fetchGuidelines(year: number, get: Get): Promise<PovertySizes | null> {
-  const found: Partial<PovertySizes> = {};
-  let out = 0;
-  let notOut = 0;
-  for (const region of REGIONS) {
-    const answers = await Promise.all(SIZES.map(async (size) => parsePoverty(await get(povertyUrl(year, region, size)), year, region, size)));
-    found[region] = answers.map((a) => (a.out ? a.income : 0));
-    for (const a of answers) {
-      if (a.out) out++;
-      else notOut++;
+/** The guidelines from the notice's XML: one table per region, titled "2026
+ *  Poverty Guidelines for Alaska" and so on, of persons in the family or
+ *  household (1 to 8) and the guideline. A region's table missing, a table
+ *  for another year, or one in a shape this doesn't know is unrecognised. */
+export function parsePoverty(xml: string, year: number): PovertySizes {
+  const notice = `The ${year} poverty guidelines notice`;
+  const subject = /<SUBJECT>([\s\S]*?)<\/SUBJECT>/.exec(xml);
+  if (!subject || squash(plain(subject[1])) !== POVERTY_TITLE) throw new Unrecognised(`${notice} doesn't have its title as its subject`);
+  const tables = [...xml.matchAll(/<GPOTABLE\b[^>]*>([\s\S]*?)<\/GPOTABLE>/g)].map((t) => t[1]);
+  const sizes = (region: PovertyRegion): number[] => {
+    const title = `${year} Poverty Guidelines for ${REGION_TITLE[region]}`;
+    const found = tables.filter((t) => squash(plain(/<TTITLE>([\s\S]*?)<\/TTITLE>/.exec(t)?.[1] ?? '')) === title);
+    if (found.length !== 1) throw new Unrecognised(`${notice} has ${found.length} tables titled "${title}"`);
+    const bad = (why: string) => new Unrecognised(`${notice}'s table for ${region}: ${why}`);
+    const heads = [...found[0].matchAll(/<CHED\b[^>]*>([\s\S]*?)<\/CHED>/g)].map((m) => squash(plain(m[1])));
+    // 2024's heading reads "Persons in family/ household".
+    if (heads.length !== 2 || !/^persons in family\/ ?household$/i.test(heads[0]) || !/^poverty guideline$/i.test(heads[1])) {
+      throw bad("its columns aren't persons in family/household and poverty guideline");
     }
-  }
-  if (out === 0) return null;
-  if (notOut > 0) throw new Unrecognised(`ASPE has ${out} of the ${year} guidelines' 24 figures and not the other ${notOut}`);
-  return found as PovertySizes;
+    const rows = [...found[0].matchAll(/<ROW>([\s\S]*?)<\/ROW>/g)].map((r) =>
+      [...r[1].matchAll(/<ENT\b[^>]*>([\s\S]*?)<\/ENT>/g)].map((e) => squash(plain(e[1]))),
+    );
+    if (rows.length !== SIZES.length) throw bad(`${rows.length} rows`);
+    const guidelines = rows.map((cells, i) => {
+      const guideline = /^\$?(\d{1,3}(?:,\d{3})*)$/.exec(cells[1] ?? '');
+      if (cells.length !== 2 || cells[0] !== String(SIZES[i]) || !guideline) throw bad(`row ${i + 1} reads "${cells.join(' | ')}"`);
+      return dollars(guideline[1]);
+    });
+    if (guidelines.some((g, i) => g <= (guidelines[i - 1] ?? 0))) throw bad("the guidelines don't rise with the size");
+    return guidelines;
+  };
+  return { contiguous: sizes('contiguous'), AK: sizes('AK'), HI: sizes('HI') };
 }
 
 /** A table's guidelines for sizes 1 to 8: first + (n - 1) * added. */
@@ -138,7 +130,7 @@ function describeSizes(sizes: PovertySizes): string {
     const s = sizes[region];
     const added = s[1] - s[0];
     const even = s.every((v, i) => v === s[0] + i * added);
-    return `${ASPE_STATE[region]} ${even ? `${money(s[0])} + ${money(added)}` : s.map(money).join(', ')}`;
+    return `${region} ${even ? `${money(s[0])} + ${money(added)}` : s.map(money).join(', ')}`;
   }).join('; ');
 }
 
@@ -148,7 +140,7 @@ export function povertyDifferences(ours: PovertySizes, official: PovertySizes): 
   for (const region of REGIONS) {
     SIZES.forEach((size, i) => {
       if (ours[region][i] !== official[region][i]) {
-        out.push(`${ASPE_STATE[region]} size ${size} ours ${money(ours[region][i])}, official ${money(official[region][i])}`);
+        out.push(`${region} size ${size} ours ${money(ours[region][i])}, official ${money(official[region][i])}`);
       }
     });
   }
@@ -179,11 +171,13 @@ export function ssaTitle(year: number): string {
   return `Cost-of-Living Increase and Other Determinations for ${year}`;
 }
 
-/** A search for notices with this exact title (as a quoted phrase). */
-export function frSearchUrl(title: string): string {
+/** A search for notices with this exact title (as a quoted phrase), only
+ *  those published in `publishedIn` when it is given. */
+export function frSearchUrl(title: string, publishedIn?: number): string {
   const params = new URLSearchParams();
   params.set('conditions[term]', `"${title}"`);
   params.append('conditions[type][]', 'NOTICE');
+  if (publishedIn !== undefined) params.set('conditions[publication_date][year]', String(publishedIn));
   for (const field of FR_FIELDS) params.append('fields[]', field);
   params.set('per_page', '20');
   return `${FR_SEARCH}?${params}`;
@@ -381,13 +375,15 @@ type Official<T> =
   | { out: true; what: string; value: T | null; where: string; corrections: FrDocument[] };
 
 async function officialPoverty(guidelinesYear: number, get: Get): Promise<Official<PovertySizes>> {
-  const what = `HHS ${guidelinesYear} guidelines`;
-  const sizes = await fetchGuidelines(guidelinesYear, get);
-  return sizes ? { out: true, what, value: sizes, where: 'ASPE API', corrections: [] } : { out: false, what };
+  const what = `HHS's ${guidelinesYear} poverty guidelines`;
+  return officialNotice(POVERTY_TITLE, what, get, async (doc) => {
+    if (!doc.full_text_xml_url) throw new Unrecognised(`The ${guidelinesYear} poverty guidelines notice has no XML`);
+    return parsePoverty(await get(doc.full_text_xml_url), guidelinesYear);
+  }, guidelinesYear);
 }
 
-async function officialNotice<T>(title: string, what: string, get: Get, read: (doc: FrDocument) => Promise<T | null>): Promise<Official<T>> {
-  const found = parseFrSearch(await get(frSearchUrl(title)), title);
+async function officialNotice<T>(title: string, what: string, get: Get, read: (doc: FrDocument) => Promise<T | null>, publishedIn?: number): Promise<Official<T>> {
+  const found = parseFrSearch(await get(frSearchUrl(title, publishedIn)), title);
   if (!found) return { out: false, what };
   const { notice, corrections } = found;
   return { out: true, what, value: await read(notice), where: `${notice.citation}, ${notice.publication_date}`, corrections };

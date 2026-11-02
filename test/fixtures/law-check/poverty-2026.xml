@@ -1,0 +1,219 @@
+<NOTICE>
+            <PREAMB>
+                <AGENCY TYPE="S">DEPARTMENT OF HEALTH AND HUMAN SERVICES</AGENCY>
+                <SUBAGY>Office of the Secretary</SUBAGY>
+                <SUBJECT>Annual Update of the HHS Poverty Guidelines</SUBJECT>
+                <AGY>
+                    <HD SOURCE="HED">AGENCY:</HD>
+                    <P>Department of Health and Human Services.</P>
+                </AGY>
+                <ACT>
+                    <HD SOURCE="HED">ACTION:</HD>
+                    <P>Notice.</P>
+                </ACT>
+                <SUM>
+                    <HD SOURCE="HED">SUMMARY:</HD>
+                    <P>This notice provides an update of the Department of Health and Human Services (HHS) poverty guidelines to account for last calendar year's increase in prices as measured by the Consumer Price Index.</P>
+                </SUM>
+                <DATES>
+                    <HD SOURCE="HED">DATES:</HD>
+                    <P>
+                        <E T="03">Effective Date:</E>
+                         January 13, 2026 unless an office administering a program using the guidelines specifies a different effective date for that particular program.
+                    </P>
+                </DATES>
+                <ADD>
+                    <HD SOURCE="HED">ADDRESSES:</HD>
+                    <P>Office of the Assistant Secretary for Planning and Evaluation, Room 404E, Humphrey Building, Department of Health and Human Services, Washington, DC 20201.</P>
+                </ADD>
+                <FURINF>
+                    <HD SOURCE="HED">FOR FURTHER INFORMATION CONTACT:</HD>
+                    <P>For information about how the guidelines are used or how income is defined in a particular program, contact the Federal, state, or local office that is responsible for that program. For information about poverty figures for immigration forms, the Hill-Burton Uncompensated Services Program, and the number of people in poverty, use the specific telephone numbers and addresses given below.</P>
+                    <P>
+                        For general questions about the poverty guidelines themselves, visit 
+                        <E T="03">http://aspe.hhs.gov/poverty/</E>
+                         or contact Jennifer Burnszynski in the HHS Office of the Assistant Secretary for Planning and Evaluation at 
+                        <E T="03">osaspeinfo@hhs.gov</E>
+                         or (202) 690-7858.
+                    </P>
+                    <P>
+                        For information about the percentage multiple of the poverty guidelines to be used on immigration forms such as USCIS Form I-864, Affidavit of Support, contact U.S. Citizenship and Immigration Services at 1-800-375-5283. You also may visit 
+                        <E T="03">https://www.uscis.gov/i-864.</E>
+                    </P>
+                    <P>
+                        For information about the Hill-Burton Uncompensated Services Program (free or reduced-fee health care services at certain hospitals and other facilities for persons meeting eligibility criteria involving the poverty guidelines), visit 
+                        <E T="03">https://www.hrsa.gov/get-health-care/affordable/hill-burton/index.html.</E>
+                    </P>
+                    <P>
+                        For information about the number of people in poverty, visit the Poverty section of the Census Bureau's website at 
+                        <E T="03">https://www.census.gov/topics/income-poverty/poverty.html</E>
+                         or contact the Census Bureau's Customer Service Center at 1-800-923-8282 (toll-free) or visit 
+                        <E T="03">https://ask.census.gov</E>
+                         for further information.
+                    </P>
+                </FURINF>
+            </PREAMB>
+            <SUPLINF>
+                <HD SOURCE="HED">SUPPLEMENTARY INFORMATION:</HD>
+                <HD SOURCE="HD1">Background</HD>
+                <P>
+                    Section 673(2) of the Omnibus Budget Reconciliation Act (OBRA) of 1981 (42 U.S.C. 9902(2)) requires the Secretary of the Department of Health and Human Services to update the poverty guidelines at least annually, adjusting them on the basis of the Consumer Price Index for All Urban Consumers (CPI-U). The poverty guidelines are used by Medicaid and a number of other Federal programs as a criterion for some or all eligibility determinations. The 
+                    <E T="03">poverty guidelines</E>
+                     issued here are a simplified version of the 
+                    <E T="03">poverty thresholds</E>
+                     that the Census Bureau uses to prepare its estimates of the number of individuals and families in poverty.
+                </P>
+                <P>
+                    As required by law, this update is accomplished by increasing the latest published Census Bureau poverty thresholds by the applicable percentage change in the Consumer Price Index for All Urban Consumers (CPI-U). The guidelines in this 2026 notice reflect the 2.63 percent price increase between calendar years 2024 and 2025. After updating for inflation, the guidelines are rounded and standardized to establish the same interval between each family size. In rare circumstances, rounding and standardizing in the formula result in small decreases in the poverty guidelines for some household sizes even when the inflation factor is not negative. In cases where the year-to-year change in inflation is not negative and rounding and standardizing in the formula result in reductions to the guidelines from the previous year for some household sizes, the guidelines for 
+                    <PRTPAGE P="1798"/>
+                    the affected household sizes are fixed at the prior year's guidelines. As in prior years, these 2026 guidelines are roughly equal to the poverty thresholds for calendar year 2025, which the Census Bureau expects to publish in final form in September 2026.
+                </P>
+                <P>The poverty guidelines continue to be derived from the Census Bureau's current official poverty thresholds; they are not derived from the Census Bureau's Supplemental Poverty Measure (SPM).</P>
+                <P>The following guideline figures represent annual income.</P>
+                <GPOTABLE COLS="2" OPTS="L2,i1" CDEF="s25,9">
+                    <TTITLE>2026 Poverty Guidelines for the 48 Contiguous States and the District of Columbia</TTITLE>
+                    <BOXHD>
+                        <CHED H="1">Persons in family/household</CHED>
+                        <CHED H="1">
+                            Poverty
+                            <LI>guideline</LI>
+                        </CHED>
+                    </BOXHD>
+                    <ROW>
+                        <ENT I="01">1</ENT>
+                        <ENT>$15,960</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">2</ENT>
+                        <ENT>21,640</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">3</ENT>
+                        <ENT>27,320</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">4</ENT>
+                        <ENT>33,000</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">5</ENT>
+                        <ENT>38,680</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">6</ENT>
+                        <ENT>44,360</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">7</ENT>
+                        <ENT>50,040</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">8</ENT>
+                        <ENT>55,720</ENT>
+                    </ROW>
+                </GPOTABLE>
+                <P>For families/households with more than 8 persons, add $5,680 for each additional person.</P>
+                <GPOTABLE COLS="2" OPTS="L2,i1" CDEF="s25,9">
+                    <TTITLE>2026 Poverty Guidelines for Alaska</TTITLE>
+                    <BOXHD>
+                        <CHED H="1">Persons in family/household</CHED>
+                        <CHED H="1">
+                            Poverty
+                            <LI>guideline</LI>
+                        </CHED>
+                    </BOXHD>
+                    <ROW>
+                        <ENT I="01">1</ENT>
+                        <ENT>$19,950</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">2</ENT>
+                        <ENT>27,050</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">3</ENT>
+                        <ENT>34,150</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">4</ENT>
+                        <ENT>41,250</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">5</ENT>
+                        <ENT>48,350</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">6</ENT>
+                        <ENT>55,450</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">7</ENT>
+                        <ENT>62,550</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">8</ENT>
+                        <ENT>69,650</ENT>
+                    </ROW>
+                </GPOTABLE>
+                <P>For families/households with more than 8 persons, add $7,100 for each additional person.</P>
+                <GPOTABLE COLS="2" OPTS="L2,i1" CDEF="s25,9">
+                    <TTITLE>2026 Poverty Guidelines for Hawaii</TTITLE>
+                    <BOXHD>
+                        <CHED H="1">Persons in family/household</CHED>
+                        <CHED H="1">
+                            Poverty
+                            <LI>guideline</LI>
+                        </CHED>
+                    </BOXHD>
+                    <ROW>
+                        <ENT I="01">1</ENT>
+                        <ENT>$18,360</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">2</ENT>
+                        <ENT>24,890</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">3</ENT>
+                        <ENT>31,420</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">4</ENT>
+                        <ENT>37,950</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">5</ENT>
+                        <ENT>44,480</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">6</ENT>
+                        <ENT>51,010</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">7</ENT>
+                        <ENT>57,540</ENT>
+                    </ROW>
+                    <ROW>
+                        <ENT I="01">8</ENT>
+                        <ENT>64,070</ENT>
+                    </ROW>
+                </GPOTABLE>
+                <P>For families/households with more than 8 persons, add $6,530 for each additional person.</P>
+                <P>Separate poverty guideline figures for Alaska and Hawaii reflect Office of Economic Opportunity administrative practice beginning in the 1966-1970 period. (Note that the Census Bureau poverty thresholds—the version of the poverty measure used for statistical purposes—have never had separate figures for Alaska and Hawaii.) The poverty guidelines are not defined for Puerto Rico or other outlying jurisdictions. In cases in which a Federal program using the poverty guidelines serves any of those jurisdictions, the Federal office that administers the program is generally responsible for deciding whether to use the contiguous-states-and-DC guidelines for those jurisdictions or to follow some other procedure.</P>
+                <P>
+                    Due to confusing legislative language dating back to 1972, the poverty guidelines sometimes have been mistakenly referred to as the “OMB” (Office of Management and Budget) poverty guidelines or poverty line. In fact, OMB has never issued the guidelines; the guidelines are issued each year by the Department of Health and Human Services. The poverty guidelines may be formally referenced as “the poverty guidelines updated periodically in the 
+                    <E T="04">Federal Register</E>
+                     by the U.S. Department of Health and Human Services under the authority of 42 U.S.C. 9902(2).”
+                </P>
+                <P>Some federal programs use a percentage multiple of the guidelines (for example, 125 percent or 185 percent of the guidelines), as noted in relevant authorizing legislation or program regulations. Non-Federal organizations that use the poverty guidelines under their own authority in non-Federally-funded activities also may choose to use a percentage multiple of the guidelines.</P>
+                <P>The poverty guidelines do not make a distinction between farm and non-farm families, or between aged and non-aged units. (Only the Census Bureau poverty thresholds have separate figures for aged and non-aged one-person and two-person units.)</P>
+                <P>This notice does not provide definitions of such terms as “income” or “family” as there is considerable variation of these terms among programs that use the poverty guidelines. The legislation or regulations governing each program define these terms and determine how the program applies the poverty guidelines. In cases where legislation or regulations do not establish these definitions, the entity that administers or funds the program is responsible to define such terms as “income” and “family.” Therefore, questions such as net or gross income, counted or excluded income, or household size should be directed to the entity that administers or funds the program.</P>
+                <SIG>
+                    <DATED>Date: January 13, 2026.</DATED>
+                    <NAME>Robert F. Kennedy, Jr.,</NAME>
+                    <TITLE>Secretary, Department of Health and Human Services.</TITLE>
+                </SIG>
+            </SUPLINF>
+            <FRDOC>[FR Doc. 2026-00755 Filed 1-14-26; 8:45 am]</FRDOC>
+            <BILCOD>BILLING CODE 4150-05-P</BILCOD>
+        </NOTICE>
