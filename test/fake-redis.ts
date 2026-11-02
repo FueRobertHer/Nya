@@ -793,6 +793,17 @@ export class FakeRedis {
       const value = this.hashes.get(keys[0])?.get(args[0]);
       return value === undefined ? ['', ''] : [`v${value}`, `v${this.storedSha1(keys[0], args[0])}`];
     }
+    if (name === '-- nya:repo-env-update') {
+      if (this.strings.has(keys[0]) || this.strings.has(keys[1])) throw new Error('WRONGTYPE');
+      if ((this.storedSha1(keys[0], args[0]) ?? '') !== args[1]) return 0;
+      this.hash(keys[0]).set(args[0], args[2]);
+      const record = this.hash(keys[1]);
+      record.set(args[3], args[4]);
+      const cap = Number(args[5]);
+      const ids = [...record.keys()].sort();
+      for (const id of ids.slice(0, Math.max(0, ids.length - cap))) record.delete(id);
+      return 1;
+    }
     if (name === '-- nya:repo-update-entry') {
       if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
       if ((this.storedSha1(keys[0], args[0]) ?? '') !== args[1]) return 0;
@@ -1017,7 +1028,7 @@ export async function registerTestContainer(fake: FakeRedis, status: 'active' | 
 }
 
 /** Environment-wide stores (kEnv): the only keys allowed outside a container. */
-const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:', 'owners', 'grants', 'connections', 'invites:', 'fx:'];
+const ENV_WIDE = ['containers', 'crypto:', 'ratelimit:', 'sessions:legacy-cutoff', 'backups:', 'owners', 'grants', 'connections', 'invites:', 'fx:', 'flags:'];
 
 /**
  * Every key the fake holds that is stored data outside any container. After

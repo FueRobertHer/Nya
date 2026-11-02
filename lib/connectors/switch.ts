@@ -1,8 +1,9 @@
 // lib/connectors/switch.ts
 //
-// Whether this deployment offers connecting Lunch Flow: off unless
-// LUNCHFLOW_ENABLED=1 (docs/deployment.md, docs/operations.md). Off by
-// default for two reasons the owner settles before turning it on:
+// Whether this deployment offers connecting Lunch Flow: the `lunchflow`
+// feature switch (lib/flags.ts), LUNCHFLOW_ENABLED=1 while that is set
+// (docs/deployment.md, docs/operations.md). Off by default for two reasons
+// the owner settles before turning it on:
 //
 //   - Lunch Flow's documentation points an app that accesses other users'
 //     data to its Platform API, and a hosted Nya looks like one from its side
@@ -18,18 +19,16 @@
 // accounts and Disconnect), so nobody's accounts stop updating, or are left
 // with nothing to do about them, because of a switch they can't see.
 //
-// Server only: the page reads it (app/page.tsx) and the connect route refuses
-// a new connection with it off (lib/connectors/manage.ts connect).
+// Server only: the page reads it with the page's other flags (app/page.tsx)
+// and the connect route refuses a new connection with it off, read fresh
+// (lib/connectors/manage.ts connect).
 
 import type { ConnectorKind } from './types';
+import { flagOnFresh, type Who } from '../flag-read';
 
-/** Whether new Lunch Flow connections may be made: LUNCHFLOW_ENABLED=1, and
- *  any other value (or none) is off. */
-export function lunchFlowEnabled(): boolean {
-  return process.env.LUNCHFLOW_ENABLED === '1';
-}
-
-/** Whether a new connection of this kind may be made here. */
-export function connectorOffered(kind: ConnectorKind): boolean {
-  return kind !== 'lunchflow' || lunchFlowEnabled();
+/** Whether a new connection of this kind may be made for `who`, now: Lunch
+ *  Flow's while its switch is on for them, SimpleFIN's always. A read that
+ *  fails answers off. */
+export async function connectorOffered(kind: ConnectorKind, who: Who): Promise<boolean> {
+  return kind !== 'lunchflow' || (await flagOnFresh('lunchflow', who));
 }

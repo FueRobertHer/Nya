@@ -221,7 +221,7 @@ export async function loginContainer(): Promise<ContainerId> {
   if (dep.kind === 'container') return dep.container;
   if (dep.kind === 'none') {
     throw new ContainerError(
-      'No container exists yet, so no one can log in. Create one: with OPS_ENABLED=1 and OPS_SECRET set, POST {"create":true} to /api/ops/containers (see "Containers" in docs/operations.md).'
+      'No container exists yet, so no one can log in. Create one: with OPS_ENABLED=1 and OPS_SECRET set (the variable, since no feature switch can be set before an account owns a container), POST {"create":true} to /api/ops/containers (see "Containers" in docs/operations.md).'
     );
   }
   throw new ContainerError(`No one can log in until this is fixed: ${dep.reason}`);

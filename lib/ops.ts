@@ -4,9 +4,15 @@
 // database or change its keys. Shared so every such route is locked the same
 // way:
 //
-// - OFF UNLESS OPS_ENABLED=1. Set it for the length of an operation, then
-//   remove it. While off, the route answers 404, as if it did not exist, so a
-//   leaked OPS_SECRET is useless on its own.
+// - OFF UNLESS THE `ops` FEATURE SWITCH IS ON (lib/flags.ts): OPS_ENABLED=1
+//   while that is set, else the stored switch. Turn it on for the length of an
+//   operation, then off. While off, the route answers 404, as if it did not
+//   exist, so a leaked OPS_SECRET is useless on its own. The stored switch is
+//   looked at in this instance's copy first (lib/flag-read.ts), so a probe of
+//   these public paths reads nothing while it is off, and read again, fresh,
+//   before the secret is checked: turning it off holds at once, for every
+//   request, and turning it on takes up to 30 seconds. A new environment has no stored switch yet (no account owns a
+//   container to set one), so OPS_ENABLED=1 is how one is set up.
 // - POST ONLY, with the secret in a header. A GET would invite putting the
 //   secret in a URL, and URLs end up in logs, browser history and caches.
 //   Every other method answers 404 explicitly: left undefined, Next answers
@@ -20,6 +26,7 @@
 
 import { NextResponse } from 'next/server';
 import { secretsMatch } from './auth';
+import { opsOnCached, opsOnFresh } from './flag-read';
 
 export function notFound(): Response {
   return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -27,7 +34,8 @@ export function notFound(): Response {
 
 /** A response to send instead of running the operation, or null to proceed. */
 export async function opsGuard(req: Request): Promise<Response | null> {
-  if (process.env.OPS_ENABLED !== '1') return notFound();
+  if (!(await opsOnCached())) return notFound();
+  if (!(await opsOnFresh())) return notFound();
 
   const secret = process.env.OPS_SECRET;
   const header = req.headers.get('authorization') ?? '';

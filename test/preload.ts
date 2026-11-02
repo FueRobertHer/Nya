@@ -16,6 +16,10 @@
 // that wants one set does so in its own beforeEach (this file's runs first),
 // or in the test itself.
 //
+// The local feature switches page's switch (NYA_DEV_FLAGS, lib/dev-flags.ts)
+// is cleared the same way, and so is what the feature switches' reads keep in
+// memory (lib/flag-cache.ts): every test reads what its own store holds.
+//
 // The same holds for a shared test helper's own state: its module is loaded
 // once for the whole run, so what one file leaves in it reaches every file
 // after it that imports it (test/restore-run.ts's `sent`, which one test sets
@@ -25,11 +29,16 @@
 
 import { afterEach, beforeEach } from 'bun:test';
 import { runSharedResets } from './shared-reset';
+import { flagCache } from '../lib/flag-cache';
 
-const RESET = ['MAX_TXN_BLOB_CHARS', 'LUNCHFLOW_ENABLED', 'ATTACHMENTS_QUOTA_MB'];
+const RESET = ['MAX_TXN_BLOB_CHARS', 'LUNCHFLOW_ENABLED', 'ATTACHMENTS_QUOTA_MB', 'NYA_DEV_FLAGS'];
 
 function reset() {
   for (const name of RESET) delete process.env[name];
+  // The feature switches read in this instance's memory (lib/flag-cache.ts,
+  // which imports nothing): what one file's reads cached would otherwise
+  // answer the next file's, whatever its own store holds.
+  flagCache.forget();
   runSharedResets();
 }
 

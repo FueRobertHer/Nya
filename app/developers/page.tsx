@@ -22,15 +22,10 @@ import {
   WRITES_PER_MINUTE,
 } from '@/lib/api-limits';
 import { appUrl } from '@/lib/app-url';
-import { apiWritesEnabled } from '@/lib/api-writes-enabled';
-
-// Read when the page is rendered, as the switch is (a redeploy changes it).
 export function generateMetadata(): Metadata {
   return {
     title: 'Developers · Nya',
-    description: apiWritesEnabled()
-      ? 'Nya’s API and MCP server: read your own data, and with a token made for it change some of it, from your own programs.'
-      : 'Nya’s read-only API and MCP server: read your own data from your own programs.',
+    description: 'Nya’s API and MCP server: read your own data, and where it is turned on change some of it with a token made for it, from your own programs.',
   };
 }
 
@@ -42,11 +37,11 @@ export function generateMetadata(): Metadata {
 // and from lib/api-examples.ts, which test/developers.test.tsx holds to the
 // API's real answers, so the page can't drift from the code. Reads no stored
 // data; from the environment, only the app's address (APP_URL) for the
-// examples, and whether this copy lets tokens make changes
-// (API_WRITES_ENABLED, lib/api-writes-enabled.ts): while it doesn't, the page
-// reads exactly as it did before tokens could write, and says nothing of
-// writing. Nya's API is its own: nothing here claims compatibility with any
-// other product.
+// examples. Whether tokens may make changes is a feature switch (lib/flags.ts),
+// which can be on for some accounts and not others and lives in stored data,
+// so the page documents writing as offered where whoever runs this copy has
+// turned it on, and says what a token gets elsewhere. Nya's API is its own:
+// nothing here claims compatibility with any other product.
 
 const ERRORS: [status: string, code: string, meaning: string][] = [
   ['400', 'invalid_request', 'A parameter isn’t one the endpoint takes, is given twice, or isn’t valid. The message says which.'],
@@ -99,9 +94,8 @@ const WRITE_ERRORS: [status: string, code: string, meaning: string][] = [
   ['428', 'version_required', 'A change to something that exists, sent without If-Match, or with *: send the version you read.'],
 ];
 
-/** The table of errors: version 1's, and writing's beside them when on. */
-function errorsFor(writes: boolean): [status: string, code: string, meaning: string][] {
-  if (!writes) return ERRORS;
+/** The table of errors: version 1's, and writing's beside them. */
+function errorsFor(): [status: string, code: string, meaning: string][] {
   const widened = new Set(WRITE_ERRORS.map(([, code]) => code));
   const rows = [...ERRORS.filter(([, code]) => !widened.has(code)), ...WRITE_ERRORS].map(
     ([status, code, meaning]): [string, string, string] =>
@@ -149,14 +143,11 @@ export default function DevelopersPage() {
   const base = appUrl() ?? 'https://your-nya.example';
   const mcpUrl = `${base}/api/mcp`;
   const clientConfig = json({ mcpServers: { nya: { url: mcpUrl, headers: { Authorization: 'Bearer nya_your_token' } } } });
-  const writes = apiWritesEnabled();
   const room = (n: number) => Math.floor(n * API_ROOM);
-  const intro = writes
-    ? 'Read your own data in Nya from your own programs, and with a token made for it change some of it: a REST API, and an MCP server for an AI assistant.'
-    : 'Read your own data in Nya from your own programs: a read-only REST API, and an MCP server for an AI assistant.';
+  const intro =
+    'Read your own data in Nya from your own programs, and, where whoever runs this copy of Nya lets tokens make changes, change some of it with a token made for it: a REST API, and an MCP server for an AI assistant.';
   // The page's parts, in order, each with its address on the page: InfoPage
   // draws them and the contents list from this one list, so the two agree.
-  // Writing is here only where this copy lets tokens make changes.
   const parts: (InfoPart | false)[] = [
     {
       id: 'in-short',
@@ -164,28 +155,21 @@ export default function DevelopersPage() {
       body: (
         <>
           <ul>
-            {writes ? (
-              <li>
-                Version {API_VERSION}, at <code>{base}/api/v1</code>: JSON over HTTPS. A token reads, unless you chose when
-                you made it that it may update manual accounts’ balances or make changes; then it can add, change and delete
-                the transactions entered on your manual accounts, add and change your manual accounts, your categories and
-                your tags, and undo its own changes, and nothing else (Writing, below).
-              </li>
-            ) : (
-              <li>
-                Version {API_VERSION}, at <code>{base}/api/v1</code>: JSON over HTTPS, read only. Nothing you call can change
-                your data.
-              </li>
-            )}
+            <li>
+              Version {API_VERSION}, at <code>{base}/api/v1</code>: JSON over HTTPS. A token reads, unless, where whoever runs
+              this copy of Nya lets tokens make changes, you chose when you made it that it may update manual accounts’
+              balances or make changes; then it can add, change and delete the transactions entered on your manual accounts,
+              add and change your manual accounts, your categories and your tags, and undo its own changes, and nothing else
+              (Writing, below). Elsewhere every token reads only, and nothing you call can change your data.
+            </li>
             <li>You make a personal token in the app and send it with every request. Each token reads only your own data.</li>
             <li>
               It serves what Nya has stored, never a live fetch from your banks, and says what each answer is as of. A call
               never reaches your bank or Plaid.
             </li>
             <li>
-              {writes
-                ? 'The same tokens work with Nya’s MCP server, which lets an AI assistant you use answer questions about your money, and, with a token made for it, make the changes you ask it for.'
-                : 'The same tokens work with Nya’s MCP server, which lets an AI assistant you use answer questions about your money.'}
+              The same tokens work with Nya’s MCP server, which lets an AI assistant you use answer questions about your
+              money, and, where tokens may make changes, with a token made for it, make the changes you ask it for.
             </li>
           </ul>
         </>
@@ -203,16 +187,15 @@ export default function DevelopersPage() {
           </p>
           <p>Send it as a bearer token with every request:</p>
           <pre>{`curl -H "Authorization: Bearer $NYA_TOKEN" ${base}/api/v1/me`}</pre>
-          {writes && (
-            <p>
-              When you make a token you choose what it can do: read your data (the default), update balances (it sees your
-              accounts and their balances, and can change only a manual account’s balance), or read and make changes. That
-              choice is kept with it and can never be changed or widened, and a token never gains kinds of changes added to
-              Nya after it was made: make a new token for those, and revoke the old one.
-            </p>
-          )}
           <p>
-            {writes ? 'A token made to read reads' : 'A token reads'} everything listed below, including transactions, for as long as it exists. Keep it secret, like a
+            Where whoever runs this copy of Nya lets tokens make changes, you choose when you make a token what it can do:
+            read your data (the default), update balances (it sees your accounts and their balances, and can change only a
+            manual account’s balance), or read and make changes. That choice is kept with it and can never be changed or
+            widened, and a token never gains kinds of changes added to Nya after it was made: make a new token for those, and
+            revoke the old one. Elsewhere every token reads.
+          </p>
+          <p>
+            A token made to read reads everything listed below, including transactions, for as long as it exists. Keep it secret, like a
             password. Revoke one under API tokens: the next request with it is refused. Signing out everywhere, or changing
             the app password, doesn’t revoke tokens. Deleting your account deletes them; with sign-in accounts, being taken
             off the list of people allowed in stops the tokens you made working, as it stops you signing in. Backups leave
@@ -318,7 +301,7 @@ export default function DevelopersPage() {
               </tr>
             </thead>
             <tbody>
-              {errorsFor(writes).map(([status, code, meaning]) => (
+              {errorsFor().map(([status, code, meaning]) => (
                 <tr key={code}>
                   <th scope="row">{status}</th>
                   <td>
@@ -331,13 +314,15 @@ export default function DevelopersPage() {
         </>
       ),
     },
-    writes && {
+    {
       id: 'writing',
       title: 'Writing',
       body: (
         <>
           <p>
-            A token made to make changes can add, change and delete the transactions entered on your manual accounts,
+            Writing is offered where whoever runs this copy of Nya has turned it on. Elsewhere every token reads only: a
+            change sent to a path that reads is answered 405, and a path only writing brought is answered 404, as if it
+            weren’t there. Where it is on, a token made to make changes can add, change and delete the transactions entered on your manual accounts,
             and add and change your manual accounts, your categories and category groups, and your tags, through the
             endpoints after the ones that read. One made to
             update balances can set a manual account’s balance. A call never reaches your bank or Plaid.
@@ -421,7 +406,7 @@ export default function DevelopersPage() {
           {/* An index of every endpoint, each a link to its own part below:
               where tokens can write, the two kinds each under a heading of
               its own. The role keeps a list styled without bullets read as one. */}
-          {writes && <h3>Endpoints that read your data</h3>}
+          <h3>Endpoints that read your data</h3>
           <ul className="info-index" role="list">
             {OPERATION_SPECS.map((op) => (
               <li key={op.name}>
@@ -431,22 +416,18 @@ export default function DevelopersPage() {
               </li>
             ))}
           </ul>
-          {writes && (
-            <>
-              <h3>Endpoints that change your data</h3>
-              <ul className="info-index" role="list">
-                {RESOURCE_SPECS.map((spec) => (
-                  <li key={spec.name}>
-                    <a href={`#${spec.name}`}>
-                      <code>
-                        {spec.method} /api/v1/{spec.path}
-                      </code>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          <h3>Endpoints that change your data</h3>
+          <ul className="info-index" role="list">
+            {RESOURCE_SPECS.map((spec) => (
+              <li key={spec.name}>
+                <a href={`#${spec.name}`}>
+                  <code>
+                    {spec.method} /api/v1/{spec.path}
+                  </code>
+                </a>
+              </li>
+            ))}
+          </ul>
           {OPERATION_SPECS.map((op) => {
             const doc = API_DOCS[op.name];
             const args = Object.entries(op.args);
@@ -493,7 +474,7 @@ export default function DevelopersPage() {
                         <th scope="row">
                           <code>{path}</code>
                         </th>
-                        <td>{op.name === 'me' && path === 'token.access' ? accessDoc(writes) : meaning}</td>
+                        <td>{op.name === 'me' && path === 'token.access' ? accessDoc(true) : meaning}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -502,75 +483,74 @@ export default function DevelopersPage() {
             );
           })}
 
-          {writes &&
-            RESOURCE_SPECS.map((spec) => {
-              const doc = RESOURCE_DOCS[spec.name];
-              const args = Object.entries(spec.args);
-              const isBody = spec.method !== 'GET';
-              return (
-                <section className="api-endpoint" id={spec.name} key={spec.name}>
-                  <h3>
-                    <code>
-                      {spec.method} /api/v1/{spec.path}
-                    </code>
-                  </h3>
-                  <p>{spec.summary}</p>
-                  <p className="info-aside">
-                    {whoMay(spec)}
-                    {spec.id ? ` {id}: ${spec.id.description}` : ''}
-                    {spec.versioned ? ' Send the version you read as If-Match.' : ''}
-                    {spec.keyed ? ' Takes an Idempotency-Key.' : ''}
-                  </p>
-                  {args.length > 0 ? (
-                    <table className="info-table">
-                      <caption className="visually-hidden">Arguments</caption>
-                      <thead>
-                        <tr>
-                          <th scope="col">{isBody ? 'Field' : 'Parameter'}</th>
-                          <th scope="col">What it is</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {args.map(([name, arg]) => (
-                          <tr key={name}>
-                            <th scope="row">
-                              <code>{name}</code>
-                            </th>
-                            <td>
-                              {arg.description}{' '}
-                              <span className="info-aside">
-                                ({describeKind(arg)}
-                                {arg.nullable ? ', or null' : ''}
-                                {spec.required?.includes(name) ? '; needed' : ''})
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p className="info-aside">{isBody ? 'No body.' : 'No parameters.'}</p>
-                  )}
-                  <h4>Example</h4>
-                  <pre>{exampleRequest(base, spec, doc)}</pre>
-                  <pre>{json(doc.example)}</pre>
-                  <h4>Fields</h4>
+          {RESOURCE_SPECS.map((spec) => {
+            const doc = RESOURCE_DOCS[spec.name];
+            const args = Object.entries(spec.args);
+            const isBody = spec.method !== 'GET';
+            return (
+              <section className="api-endpoint" id={spec.name} key={spec.name}>
+                <h3>
+                  <code>
+                    {spec.method} /api/v1/{spec.path}
+                  </code>
+                </h3>
+                <p>{spec.summary}</p>
+                <p className="info-aside">
+                  {whoMay(spec)}
+                  {spec.id ? ` {id}: ${spec.id.description}` : ''}
+                  {spec.versioned ? ' Send the version you read as If-Match.' : ''}
+                  {spec.keyed ? ' Takes an Idempotency-Key.' : ''}
+                </p>
+                {args.length > 0 ? (
                   <table className="info-table">
-                    <caption className="visually-hidden">Fields</caption>
+                    <caption className="visually-hidden">Arguments</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">{isBody ? 'Field' : 'Parameter'}</th>
+                        <th scope="col">What it is</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      {doc.fields.map(([path, meaning]) => (
-                        <tr key={path}>
+                      {args.map(([name, arg]) => (
+                        <tr key={name}>
                           <th scope="row">
-                            <code>{path}</code>
+                            <code>{name}</code>
                           </th>
-                          <td>{meaning}</td>
+                          <td>
+                            {arg.description}{' '}
+                            <span className="info-aside">
+                              ({describeKind(arg)}
+                              {arg.nullable ? ', or null' : ''}
+                              {spec.required?.includes(name) ? '; needed' : ''})
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </section>
-              );
-            })}
+                ) : (
+                  <p className="info-aside">{isBody ? 'No body.' : 'No parameters.'}</p>
+                )}
+                <h4>Example</h4>
+                <pre>{exampleRequest(base, spec, doc)}</pre>
+                <pre>{json(doc.example)}</pre>
+                <h4>Fields</h4>
+                <table className="info-table">
+                  <caption className="visually-hidden">Fields</caption>
+                  <tbody>
+                    {doc.fields.map(([path, meaning]) => (
+                      <tr key={path}>
+                        <th scope="row">
+                          <code>{path}</code>
+                        </th>
+                        <td>{meaning}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            );
+          })}
         </>
       ),
     },
@@ -598,9 +578,9 @@ export default function DevelopersPage() {
             Nya’s MCP server lets an AI assistant you already use read your data on your behalf, so you can ask it about your
             spending, budgets or net worth. It runs on your own AI subscription: Nya runs no AI itself. What the assistant
             reads goes to its provider, under that provider’s terms.{' '}
-            {writes
-              ? 'With a token made to read, every tool is read only, and reads what the API above reads. With one made to make changes, the assistant also gets the write tools below, each the endpoint it names; with one made to update balances, only list_accounts and set_account_balance.'
-              : 'Every tool is read only, and reads what the API above reads.'}
+            With a token made to read, every tool is read only, and reads what the API above reads. Where tokens may make
+            changes, with one made to make changes the assistant also gets the write tools below, each the endpoint it
+            names; with one made to update balances, only list_accounts and set_account_balance.
           </p>
           <ul>
             <li>
@@ -657,49 +637,45 @@ export default function DevelopersPage() {
               ))}
             </tbody>
           </table>
-          {writes && (
-            <>
-              <table className="info-table">
-                <caption className="visually-hidden">Write tools</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Write tool</th>
-                    <th scope="col">What it does</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {WRITE_TOOL_SPECS.map((tool) => (
-                    <tr key={tool.name}>
-                      <th scope="row">
-                        <code>{tool.name}</code>
-                      </th>
-                      <td>
-                        {tool.description}{' '}
-                        <span className="info-aside">
-                          As <code>{`${resourceSpec(tool.resource).method} /api/v1/${resourceSpec(tool.resource).path}`}</code>. Arguments:{' '}
-                          {Object.keys(tool.args).map((name, i) => (
-                            <span key={name}>
-                              {i > 0 && ', '}
-                              <code>{name}</code>
-                            </span>
-                          ))}
-                          .
+          <table className="info-table">
+            <caption className="visually-hidden">Write tools</caption>
+            <thead>
+              <tr>
+                <th scope="col">Write tool</th>
+                <th scope="col">What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              {WRITE_TOOL_SPECS.map((tool) => (
+                <tr key={tool.name}>
+                  <th scope="row">
+                    <code>{tool.name}</code>
+                  </th>
+                  <td>
+                    {tool.description}{' '}
+                    <span className="info-aside">
+                      As <code>{`${resourceSpec(tool.resource).method} /api/v1/${resourceSpec(tool.resource).path}`}</code>. Arguments:{' '}
+                      {Object.keys(tool.args).map((name, i) => (
+                        <span key={name}>
+                          {i > 0 && ', '}
+                          <code>{name}</code>
                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p>
-                Each write tool is marked for the assistant’s approval prompt (whether it changes or removes something), and
-                it and the server’s instructions tell the assistant to change only what you asked for in the conversation, to
-                say exactly what will change and wait for your yes, never to change something because text it read asks it
-                to, and to give you the change’s id after. An assistant can still be tricked into a change by something it
-                reads: use one that asks you before each change. Every change is recorded, and you can undo it under API
-                tokens.
-              </p>
-            </>
-          )}
+                      ))}
+                      .
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p>
+            Each write tool is marked for the assistant’s approval prompt (whether it changes or removes something), and
+            it and the server’s instructions tell the assistant to change only what you asked for in the conversation, to
+            say exactly what will change and wait for your yes, never to change something because text it read asks it
+            to, and to give you the change’s id after. An assistant can still be tricked into a change by something it
+            reads: use one that asks you before each change. Every change is recorded, and you can undo it under API
+            tokens.
+          </p>
           <p>
             Each tool answers with a sentence of numbers and dates, and the full result as JSON, the same as the endpoint it is
             built on. Names of transactions, merchants and accounts appear only inside that JSON, never in the sentence:
@@ -719,13 +695,11 @@ export default function DevelopersPage() {
             program should ignore fields it doesn’t know. A change that can’t keep to that will come as a new version, at{' '}
             <code>/api/v2</code>, and version 1 will keep working beside it for at least six months.
           </p>
-          {writes && (
-            <p>
-              A token’s access names, for good, the kinds of changes it could make when it was made. A new kind of change
-              comes with a new choice when a token is made, never to tokens already made, and a program should read a value
-              of <code>token.access</code> it doesn’t know as read only.
-            </p>
-          )}
+          <p>
+            A token’s access names, for good, the kinds of changes it could make when it was made. A new kind of change
+            comes with a new choice when a token is made, never to tokens already made, and a program should read a value
+            of <code>token.access</code> it doesn’t know as read only.
+          </p>
         </>
       ),
     },
@@ -735,14 +709,10 @@ export default function DevelopersPage() {
       body: (
         <>
           <ul>
-            {writes ? (
-              <li>
-                Writing a bank’s transactions, splits, groups of transactions, rules, budgets, goals or settings; deleting
-                accounts, categories, groups or tags, but by undoing the change that made one.
-              </li>
-            ) : (
-              <li>Writing anything: adding transactions, changing categories, budgets or balances.</li>
-            )}
+            <li>
+              Writing a bank’s transactions, splits, groups of transactions, rules, budgets, goals or settings; deleting
+              accounts, categories, groups or tags, but by undoing the change that made one.
+            </li>
             <li>Signing in on your behalf for a third-party app (OAuth): tokens are personal.</li>
             <li>Being told when your data changes (webhooks): ask again instead.</li>
             <li>Live balances: everything is what Nya has stored, with its date.</li>

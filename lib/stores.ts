@@ -30,6 +30,7 @@ import './connection-records';
 import './connectors/store';
 import './demo-seed/store';
 import './fire-plan';
+import './flag-store';
 import './fx/ecb-store';
 import './fx/settings';
 import './goal-plans';
@@ -61,7 +62,7 @@ import './user-restore/store';
 import './vendor-default-store';
 import './weekly-summary/store';
 
-import { publicStoresDeclaredSoFar, storesDeclaredSoFar, type PublicMapStore, type Store } from './repo';
+import { environmentStoresDeclaredSoFar, publicStoresDeclaredSoFar, storesDeclaredSoFar, type EnvironmentStore, type PublicMapStore, type Store } from './repo';
 
 /** Every declared store, in name order. */
 export function declaredStores(): Store[] {
@@ -82,4 +83,16 @@ export function declaredPublicStores(): PublicMapStore<unknown>[] {
 /** The public store declared under a name, or null. */
 export function declaredPublicStore(name: string): PublicMapStore<unknown> | null {
   return publicStoresDeclaredSoFar().get(name) ?? null;
+}
+
+/** Every environment store (lib/repo.ts defineEnvironmentStore), in name
+ *  order: settings of this copy of Nya, apart from the containers' stores. */
+export function declaredEnvironmentStores(): EnvironmentStore<unknown>[] {
+  return [...environmentStoresDeclaredSoFar().values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** The environment store one of whose two keys (its values, or its record of
+ *  changes) is this one, or null. */
+export function declaredEnvironmentStore(key: string): EnvironmentStore<unknown> | null {
+  return declaredEnvironmentStores().find((s) => s.name === key || s.logName === key) ?? null;
 }

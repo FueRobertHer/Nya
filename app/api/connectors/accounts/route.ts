@@ -7,6 +7,7 @@ import { confirmSigns, keepRefusal, othersOf, releaseAccounts, retypeAccountsRep
 import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId, MANUAL_TYPES, type ManualType } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
+import { flagOnFresh, requestWho } from '@/lib/flag-read';
 
 // Choosing which of a connection's accounts to track (SimpleFIN's or Lunch
 // Flow's), and what kind each is (lib/connectors/manage.ts), in one request:
@@ -102,7 +103,7 @@ export async function PUT(req: Request) {
       if (retype.length > 0) ({ changed: retyped, note: retypeNote } = await retypeAccountsReport(ctx, retype));
       if (sign.length > 0) signed = await confirmSigns(ctx, sign);
       if (stop && stop.account_ids.length > 0) released = await releaseAccounts(ctx, stop.account_ids, stop.keep);
-      if (track.length > 0) fetched = await trackAccounts(ctx, body.connection_id, track);
+      if (track.length > 0) fetched = await trackAccounts(ctx, body.connection_id, track, Date.now(), await flagOnFresh('restore-carry-on', await requestWho(ctx)));
     } catch (err) {
       const saved = retyped + signed + released.kept.length + released.removed.length > 0;
       if (saved && err instanceof ConnectorRefused) throw new ConnectorRefused(`${err.message} The changes before it were saved.`, err.status);
