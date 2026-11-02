@@ -1,5 +1,6 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
+import { afterAll, afterEach, describe, expect, jest, test } from 'bun:test';
+import { installDom, trackRoots, click, type, outline, fakeClock, FakeElement, FakeEvent } from './mini-dom';
+import { simulateOnPage } from './plan-on-page';
 
 // The Plan tab's pinned bar and segments (rollout phase 6b,
 // docs/design/information-architecture.md#plan), used as a person would
@@ -171,7 +172,9 @@ function serve({ plan = { plan: PLAN, currency: 'USD' } as unknown, scenarios = 
 }
 
 /** A sheet slides in a frame after it mounts, and a request is answered. */
-const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const realWorkers = simulateOnPage();
+const settle = (ms = 30) => pass(ms);
 
 /** A click, after the focus a browser gives the button pressed. */
 const press = async (el: FakeElement | null | undefined) => {
@@ -220,6 +223,9 @@ async function mount(props: Partial<PlanTabProps> = {}) {
     inTheGap: async (more: Partial<PlanTabProps>, then: () => void) => {
       const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
       g.IS_REACT_ACT_ENVIRONMENT = false;
+      // React's own scheduling, stepped by hand, on real timers: on the fake
+      // clock the effects aren't left waiting after the commit.
+      jest.useRealTimers();
       manual = true;
       try {
         root.render(<PlanTab {...all} {...more} />);
@@ -233,6 +239,7 @@ async function mount(props: Partial<PlanTabProps> = {}) {
         manual = false;
         while (runOne());
         g.IS_REACT_ACT_ENVIRONMENT = true;
+        jest.useFakeTimers();
       }
       await settle(400);
     },
@@ -790,13 +797,18 @@ describe('the scenario’s card, on every segment', () => {
     await tab.unmount();
   });
 
+  // Worked out in lib/fire/plan.worker.ts, on its own thread, as in a
+  // browser: the one test in these suites whose answers come from there.
   test('one worked out with life events: they are on Your path, and the card says so', async () => {
+    const posted = realWorkers();
+    jest.useRealTimers();
     serve({ scenarios: [GYM] });
     const tab = await mount();
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Life events', 'Income and one-off expenses', 'Progress']);
     expect(tab.panelOf('Drawdown').textContent).toContain('as the Life events card on Your path says');
+    expect(posted()).toBeGreaterThan(0);
     await tab.unmount();
   });
 });

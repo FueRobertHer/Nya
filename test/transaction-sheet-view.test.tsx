@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, type FakeElement, fakeClock } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 import type { CategoryChoice } from '@/components/transaction-edits';
 
@@ -127,7 +127,8 @@ function served(): Txn[] {
 }
 
 /** The time a sheet takes to slide in (one frame) and to come off the page. */
-const settle = (ms = 5) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const settle = (ms = 5) => pass(ms);
 
 type Props = Partial<React.ComponentProps<typeof MonthBreakdown>>;
 function mount(props: Props = {}) {

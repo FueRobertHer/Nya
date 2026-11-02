@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, outline, holdPress, pressThrough, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, outline, holdPress, pressThrough, fakeClock, FakeElement } from './mini-dom';
+import { simulateOnPage } from './plan-on-page';
 
 // The Plan tab with scenarios, rendered and used as a person would
 // (react-dom/client over test/mini-dom.ts): what is saved where when a
@@ -81,7 +82,9 @@ function serve(answers: Record<string, Answer | [number, unknown]>) {
 }
 
 const listing = (...scenarios: Entry[]): [number, unknown] => [200, { scenarios, unreadable_ids: [], unrecognised_ids: [] }];
-const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+simulateOnPage();
+const settle = (ms = 30) => pass(ms);
 
 /** Renders a node into the document, with what a test looks for in it. */
 async function mount(node: React.ReactNode) {

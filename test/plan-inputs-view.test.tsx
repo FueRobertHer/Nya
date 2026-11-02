@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, FakeElement, FakeNode } from './mini-dom';
+import { installDom, trackRoots, click, type, fakeClock, FakeElement, FakeNode } from './mini-dom';
+import { simulateOnPage } from './plan-on-page';
 
 // The figures the Plan rests on (rollout phase 6c, docs/design/rollout.md),
 // used as a person would (react-dom/client over test/mini-dom.ts): Your
@@ -167,8 +168,11 @@ function serve({ plan = { plan: PLAN, currency: null } as unknown, answers = {} 
   return calls;
 }
 
-/** A sheet slides in a frame after it mounts, and a request is answered. */
-const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+/** A sheet slides in a frame after it mounts, and a request is answered:
+ *  `ms` on the fake clock. */
+const pass = fakeClock();
+simulateOnPage();
+const settle = (ms = 30) => pass(ms);
 
 /** A click, after the focus a browser gives the button pressed. */
 const press = async (el: FakeElement | null | undefined) => {

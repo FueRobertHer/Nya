@@ -19,6 +19,20 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
+// A passphrase is stretched with scrypt at work factor 18 (2^18 rounds), a
+// fraction of a second each. The one test that checks the factor keeps it;
+// the rest of this file's downloads use 12, so the file doesn't spend seconds
+// on them. Off again after each test, should the mock outlast the file.
+let workFactor: number | undefined;
+beforeEach(() => void (workFactor = 12));
+afterEach(() => void (workFactor = undefined));
+const protection = await import('@/lib/protected-download');
+const { protectFile } = protection;
+mock.module('@/lib/protected-download', () => ({
+  ...protection,
+  protectFile: (...[file, bytes, passphrase, opts]: Parameters<typeof protectFile>) => protectFile(file, bytes, passphrase, { workFactor, ...opts }),
+}));
+
 const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveManualAccount } = await import('@/lib/manual');
@@ -457,6 +471,7 @@ describe('a passphrase', () => {
   const opened = async (bytes: Uint8Array, passphrase = PASSPHRASE) => Buffer.concat(await decryptWithPassphrase(bytes, passphrase, { scrypt: nativeScrypt }));
 
   test('protects the JSON file: the same document, in the age format, named .age, its size announced first', async () => {
+    workFactor = undefined; // the route's own
     const plain = await download({ format: 'json' });
     const res = await download({ format: 'json', passphrase: PASSPHRASE });
     expect(res.status).toBe(200);
