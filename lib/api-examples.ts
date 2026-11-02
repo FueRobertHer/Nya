@@ -2367,8 +2367,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
  * `like` names that list (each field of `account` is described as the same
  * field of accounts[] is), and only what the list doesn't have is described
  * here. test/developers.test.tsx holds these to real answers as it holds the
- * endpoints'. The developer page shows them only while this copy lets tokens
- * write (lib/api-writes-enabled.ts).
+ * endpoints'. The developer page shows them as offered where tokens may make
+ * changes (the `api-writes` feature switch, lib/flags.ts).
  */
 export type ResourceDoc = {
   body?: Readonly<Record<string, unknown>>;

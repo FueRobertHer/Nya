@@ -23,8 +23,8 @@ import { flagOnCached, flagOnFresh, requestWho } from '@/lib/flag-read';
 //           token is in this answer and nowhere else, ever: only its hash is
 //           kept. `access` is read (also when absent), balances or write
 //           (lib/api-limits.ts ACCESS), chosen now and never changed; the last
-//           two only while this copy lets tokens write (`writes`,
-//           lib/api-writes-enabled.ts), else 403.
+//           two only while tokens may make changes for this account (`writes`,
+//           the `api-writes` feature switch, read fresh), else 403.
 //   DELETE  { id, unreadable? }   revokes one: { revoked: true }, or 404.
 //
 // Making a token needs a FRESH SIGN-IN (lib/fresh-sign-in.ts, as downloading

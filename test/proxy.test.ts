@@ -1,6 +1,13 @@
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { NextRequest } from 'next/server';
+import { FakeRedis, storageMock } from './fake-redis';
+
+// The proxy reads the CSP mode through its copy of the feature switches
+// (lib/flag-read.ts) when CSP_MODE is unset: from this file's own store,
+// empty, so the switch's default, never another file's.
+const fake = new FakeRedis({ deserialize: true });
+mock.module('@/lib/storage', () => storageMock(fake));
 
 const { config, proxy } = await import('@/proxy');
 

@@ -11,8 +11,9 @@
 //      token's access (lib/api-limits.ts ACCESS): a balances token reaches
 //      /me, /accounts and the balance write, a read token every read, a write
 //      token every read and WRITE_V1. Refused: 403 insufficient_scope.
-//   2. THE SWITCH, for anything beyond reading: off (lib/api-writes-enabled.ts),
-//      403 writes_off.
+//   2. THE SWITCH, for anything beyond reading: the `api-writes` feature
+//      switch off for the token's account (writesOn, read fresh), 403
+//      writes_off.
 //   3. THE MINUTE, for a write: WRITES_PER_MINUTE per token, every write sent,
 //      valid or not, so garbage is bounded too. 429 rate_limited.
 //

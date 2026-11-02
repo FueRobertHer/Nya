@@ -3,9 +3,9 @@
 // Nya's MCP server: the Model Context Protocol, on the same tokens as the API
 // (lib/api-tokens.ts). It lets a person's own AI assistant answer questions
 // about their money, on their own AI subscription, so it costs Nya no
-// inference; and, with a token the person made to make changes, where this
-// copy lets tokens write (lib/api-writes-enabled.ts), make the changes they
-// ask it for. Served at /api/mcp (app/api/mcp/route.ts).
+// inference; and, with a token the person made to make changes, where tokens
+// may make changes for them (the `api-writes` feature switch, lib/api-run.ts
+// writesOn), make the changes they ask it for. Served at /api/mcp (app/api/mcp/route.ts).
 //
 // WHAT A TOKEN MAY CALL. tools/list lists only the tools the token's access
 // allows (a read token's list is the read tools, exactly as before writing
