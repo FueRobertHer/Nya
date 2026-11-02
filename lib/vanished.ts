@@ -39,7 +39,7 @@
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
-import { rememberedIdsForItem, rememberedIdsByItem } from './last-known';
+import { rememberedIdsByItem } from './last-known';
 import { getLinks, resolveId, effectiveLinks, type Link } from './link-core';
 import {
   readLifecycleEntries,
@@ -380,16 +380,6 @@ async function checkOne(ctx: Ctx,
 
   if (changed) await writeRecord(ctx, item_id, record);
   return { unconfirmed, accepted };
-}
-
-/** Single-institution check. Prefer checkVanishedAll when checking several. */
-export async function checkVanished(ctx: Ctx, 
-  item_id: string,
-  freshIds: string[],
-  now: number = Date.now()
-): Promise<VanishedResult> {
-  const [remembered, inputs] = await Promise.all([rememberedIdsForItem(ctx, item_id), loadVanishedInputs(ctx)]);
-  return checkOne(ctx, item_id, freshIds, remembered, now, undefined, answersAt(inputs, now), assumeWith(ctx, inputs, now));
 }
 
 /**

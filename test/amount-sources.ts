@@ -359,11 +359,6 @@ export function withoutComments(text: string, jsx = true): string {
   return lex(text, jsx).code;
 }
 
-/** The elements, JSX expressions and code blocks of a module's text. */
-export function jsxOf(text: string): Jsx {
-  return lex(text, true).jsx;
-}
-
 /** The index of the bracket closing the one at `open`, or -1, in code (lex):
  *  past strings, template text, regular expressions and comments. */
 export function closing(text: string | Lexed, open: number): number {
@@ -1602,17 +1597,6 @@ function modelOf(root: string, modules: readonly string[]): Model {
   }
   models.set(key, model);
   return model;
-}
-
-/**
- * The functions that write an amount, by module: those calling a formatter
- * (FORMATTERS), formatting one past it, calling or handing on another that
- * writes one (in their module or imported, or a prop given one), or reading a
- * variable or prop given one, to a fixed point. `modules` are files relative
- * to `root`.
- */
-export function amountWriters(root: string, modules: readonly string[]): Map<string, Set<string>> {
-  return modelOf(root, modules).writers;
 }
 
 export type StaleMemo = { file: string; line: number; text: string };

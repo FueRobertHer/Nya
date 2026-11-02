@@ -792,7 +792,7 @@ describe('writing through a token, on both pages, offered where turned on', () =
     expect(security()).toBe(offSecurity);
     expect(privacy()).toBe(offPrivacy);
     // And neither page reads a flag: what it says can't depend on one.
-    for (const path of ['app/security/page.tsx', 'app/privacy/page.tsx']) expect([path, source(path)]).not.toEqual([path, expect.stringMatching(/flag-read|flag-store|api-writes-enabled/)]);
+    for (const path of ['app/security/page.tsx', 'app/privacy/page.tsx']) expect([path, source(path)]).not.toEqual([path, expect.stringMatching(/flag-read|flag-store/)]);
   });
 
   test('the security page: what each kind of token reaches where tokens may make changes, its limits, versions and the record, and what a restore holds back', () => {

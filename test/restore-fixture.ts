@@ -12,7 +12,6 @@ import { ctxKey, type FakeRedis } from './fake-redis';
 import type { Ctx } from '@/lib/containers';
 
 export const OLD_ITEM = 'item_chase';
-export const FID_ITEM = 'item_fid';
 
 export const bankTxn = (over: Record<string, unknown>) => ({
   transaction_id: 't',

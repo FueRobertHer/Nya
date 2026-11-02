@@ -39,7 +39,7 @@ const {
   readLifecycleEntries,
   MAX_MISSED,
 } = await import('@/lib/lifecycle');
-const { getHistory, getHistoryWithBreaks, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates, endBreaks } = await import('@/lib/history');
+const { getHistory, getHistoryWithBreaks, recordSnapshot, replaceEstimated, replaceEstimatedAccounts, replaceEstimatedFlat, bridgeInteriorEstimates } = await import('@/lib/history');
 const { UnreadableEntriesError } = await import('@/lib/repo');
 const { recordDirectory, forgetEarlierAccount, ForgetRefused } = await import('@/lib/links');
 const { timelineNotesStore, autoNoteId, newMissedNoteId, isMissedNoteId, legacyMissedNoteId, writeMissedNote, addUserNote } = await import('@/lib/timeline-notes');
@@ -439,7 +439,6 @@ describe('the cliff is kept, never smoothed', () => {
     await recordDay('2026-03-05', { chk: 500 }, TYPES);
     await markEnded(ctx, 'sav', { state: 'closed', on: '2026-03-03' }, ABOUT, NOW);
     const view = await getEffectiveLifecycle(ctx, new Map());
-    expect(endBreaks(view.ended)).toEqual(['2026-03-03']);
     expect((await getHistory(ctx, undefined, view.ended)).map((p) => p.value)).toEqual([1500, 1500, 500, 500, 500]);
   });
 

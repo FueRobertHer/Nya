@@ -885,19 +885,6 @@ export async function readStoredItem(
 }
 
 /**
- * The account ids this Item is known to own, straight from the persisted state
- * (no Plaid call). A partial answer: an investments-only Item, or one linked
- * and never synced, persists no transaction state, so this is empty for it.
- */
-export async function getItemAccountIds(ctx: Ctx, item_id: string): Promise<string[]> {
-  try {
-    return Object.keys((await readState(ctx, item_id)).accounts);
-  } catch {
-    return [];
-  }
-}
-
-/**
  * Every account id an Item's store mentions: its account map and every
  * stored row's account. Strict (throws when it can't be read), for a caller
  * that deletes on the answer: forgetting an earlier account must not take an

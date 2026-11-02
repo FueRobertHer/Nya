@@ -254,7 +254,6 @@ const PLACES: [string, string][] = [
   ]),
   [instantDay(`${addMonths(NOW, -1)}-15T12:00:00.000Z`) ?? '', '{day}'],
 ];
-export const placeheld = (s: string) => PLACES.reduce((t, [real, place]) => t.split(real).join(place), s);
 export const filled = (s: string) => PLACES.reduce((t, [real, place]) => t.split(place).join(real), s);
 
 /** The pool before it began, and with no transactions to count yet. */
