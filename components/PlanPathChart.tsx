@@ -3,7 +3,7 @@
 // Your path's chart (rollout phase 8b): invested assets from today to the
 // age you'd like to stop, growing a steady amount after inflation, with the
 // FI number as a flat dashed line, a marker where the line reaches it, and
-// the stop age. No band (Stress test keeps it) and no event pins. Its points
+// the stop age. No band (Drawdown keeps it) and no event pins. Its points
 // are lib/fire/path.ts planPath's, the same figures as the FI card's rows, so
 // the point at the stop age is the At age row's.
 //
@@ -176,7 +176,7 @@ export default function PlanPathChart(props: PathChartProps) {
         ))}
       </svg>
       <div className="as-of">
-        {`At a steady ${pct(realReturn)} a year after inflation${withEvents ? ', with this scenario’s life events' : ''}. Real markets don’t move steadily; Stress test shows how much that matters.`}
+        {`At a steady ${pct(realReturn)} a year after inflation${withEvents ? ', with this scenario’s life events' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
       </div>
       {recorded && (
         <div className="as-of">{`Before today: your invested assets as recorded since ${dayName(recorded.from)} (the solid line), and where your plan from ${dayName(recorded.savedDay)} had them (the dotted line), in each day’s money. Progress, below, says more.`}</div>

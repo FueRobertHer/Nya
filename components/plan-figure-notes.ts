@@ -4,7 +4,7 @@
 // spending, invested assets, annual savings, the ages and the assumptions,
 // each a row of Your path's Your figures card (components/PlanTab.tsx
 // InputsCard) that opens its sheet. One source for the words, so the rows,
-// the sheets' Why?, the FI card's lines on the number and the Stress test's
+// the sheets' Why?, the FI card's lines on the number and Drawdown's
 // notice say the same thing. For each figure:
 //   - its sub: where it comes from, in a few words ("A year, from
 //     transactions", "2 accounts, as of Oct 6, 3:12 PM");
@@ -496,7 +496,7 @@ function assetsText(a: FigureArgs): FigureText {
 
 /** What the FI card says on its number of the figures under it ("May be
  *  low: spending is missing …", "Invested assets may be low"), and what the
- *  Stress test's notice reads: what measured spending is missing, or null,
+ *  Drawdown's notice reads: what measured spending is missing, or null,
  *  and whether measured invested assets may be low (a stale balance is
  *  still counted, so it alone leaves them as they were). */
 export function inputFlags(a: Pick<FigureArgs, 'view' | 'unread' | 'withoutTransactions' | 'transactionCount' | 'assets'>): {
@@ -511,9 +511,9 @@ export function inputFlags(a: Pick<FigureArgs, 'view' | 'unread' | 'withoutTrans
 }
 
 /**
- * The Stress test's notice (rollout phase 6c): a caution for each input the
- * simulation uses that may be low, naming the figure and what the test does
- * with it, since less spending reads safer, not lower. None while it can't
+ * Drawdown's notice (rollout phase 6c; Stress test's until T1): a caution
+ * for each input the simulation uses that may be low, naming the figure and
+ * what the test does with it, since less spending reads safer, not lower. None while it can't
  * run ('missing' in engine), where its card says what it needs.
  *   - Spending measured and short: every rule but VPW withdraws it. VPW sets
  *     its own spending from the balance: it starts from the FI number the

@@ -28,7 +28,7 @@ describe('Home’s FI line and the Plan tab', () => {
   });
 
   test('the Plan keeps its segment with the dashboard, and is handed the landing, which it clears once landed', () => {
-    expect(src).toContain("const [planSegment, setPlanSegment] = useState<PlanSegment>('path');");
+    expect(src).toContain('const [planSegment, setPlanSegment] = useState<PlanSegment | null>(null);');
     expect(src).toContain('const [planLanding, setPlanLanding] = useState<number | null>(null);');
     const tag = from('<PlanTabLoader', '/>');
     expect(tag).toContain('segment={planSegment}');

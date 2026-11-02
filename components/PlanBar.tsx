@@ -1,7 +1,7 @@
 'use client';
 
 // The Plan tab's pinned bar (docs/design/information-architecture.md#plan):
-// its heading over its three segments, Your path, Stress test and Portfolio.
+// its heading over its three segments, Your path, Drawdown and Portfolio.
 // On your plan the heading is "Your plan", with the button that opens the
 // Scenarios sheet beside it; with a scenario open it is the scenario's name,
 // after a back arrow to your plan, and the scenario's card under the bar
@@ -12,14 +12,23 @@
 
 import { useRef, type KeyboardEvent, type Ref } from 'react';
 import { chevron, LEFT, segmentKey } from './ActivityBar';
+import type { FirePlan } from '@/lib/fire/plan';
 
-export type PlanSegment = 'path' | 'stress' | 'portfolio';
+export type PlanSegment = 'path' | 'drawdown' | 'portfolio';
 
 export const PLAN_SEGMENTS: readonly { key: PlanSegment; label: string }[] = [
   { key: 'path', label: 'Your path' },
-  { key: 'stress', label: 'Stress test' },
+  { key: 'drawdown', label: 'Drawdown' },
   { key: 'portfolio', label: 'Portfolio' },
 ];
+
+/** The segment the Plan opens on (D2): Drawdown once the stop age is today
+ *  or earlier, when "will it last?" is the live question, else Your path,
+ *  as every tab opens on its first. A stop before the age is refused on
+ *  save and cleared by the repair, so in practice it is the two being equal. */
+export function openingSegment(plan: Pick<FirePlan, 'age' | 'targetAge'>): PlanSegment {
+  return plan.age !== null && plan.targetAge !== null && plan.targetAge <= plan.age ? 'drawdown' : 'path';
+}
 
 /** The id of a segment's tab, which its panel is labelled by. */
 export const planTabId = (s: PlanSegment) => `plan-tab-${s}`;
@@ -45,7 +54,9 @@ export default function PlanBar({
   titleRef?: Ref<HTMLHeadingElement>;
   /** The Scenarios button, which the tab focuses once a scenario is left. */
   scenariosRef?: Ref<HTMLButtonElement>;
-  segment: PlanSegment;
+  /** Null until the Plan has decided where it opens: no tab is selected,
+   *  and the first is the tab stop. */
+  segment: PlanSegment | null;
   onSegment: (s: PlanSegment) => void;
   /** The open scenario's name; null with your plan shown. */
   scenario: string | null;
@@ -59,9 +70,12 @@ export default function PlanBar({
 }) {
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const at = PLAN_SEGMENTS.findIndex((s) => s.key === segment);
+  // With none selected, the first tab is the tab stop, and the keys move
+  // from it.
+  const stop = Math.max(at, 0);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const to = segmentKey(e.key, at, PLAN_SEGMENTS.length);
+    const to = segmentKey(e.key, stop, PLAN_SEGMENTS.length);
     if (to === null) return;
     e.preventDefault();
     onSegment(PLAN_SEGMENTS[to].key);
@@ -99,7 +113,7 @@ export default function PlanBar({
             id={planTabId(s.key)}
             aria-selected={s.key === segment}
             aria-controls={planPanelId(s.key)}
-            tabIndex={s.key === segment ? 0 : -1}
+            tabIndex={i === stop ? 0 : -1}
             onClick={() => onSegment(s.key)}
           >
             {s.label}

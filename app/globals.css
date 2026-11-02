@@ -3701,6 +3701,13 @@ button.danger-outline {
   max-width: 100%;
 }
 
+/* The Plan's hero label before it has decided where it opens
+   (components/LoadingSkeletons.tsx PlanPanelSkeleton), in the label's line. */
+.plan-skeleton-label {
+  width: 9em;
+  max-width: 100%;
+}
+
 /* Upcoming's Cash forecast and a Plan segment's chart, in the shape the
    charts draw at (150 to 340, components/NetWorthChart.tsx's cardFrame and
    components/ForecastChart.tsx). */

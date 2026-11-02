@@ -11,7 +11,7 @@ import { installDom, click, type, FakeElement, FakeNode } from './mini-dom';
 // their sheet's Save off and saying why while saving is paused, and the rows
 // held while the saved plan is read again; each row's notes under it,
 // outside its button, one in full and two or more gathered into a line that
-// opens to every note; Why? in a figure's sheet; and the Stress test's
+// opens to every note; Why? in a figure's sheet; and Drawdown's
 // notice when an input the simulation uses may be low. What each figure
 // says, in every state, is test/plan-figure-notes.test.ts's. Every request
 // is answered here, by path; nothing reaches a network.
@@ -906,15 +906,15 @@ describe('a sheet holds the saved plan it opened on', () => {
   });
 });
 
-describe('the Stress test’s notice', () => {
+describe('Drawdown’s notice', () => {
   const SPENDING = "Your annual spending may be low: it is missing transactions Plaid doesn't provide, and the simulation withdraws it (Your path says which).";
   const ASSETS = "Your invested assets may be low: some couldn't be counted (Your path says which).";
   /** The simulation card's own start note, drawn when it starts with more
    *  than the walk from today's assets comes to (lib/fire/plan-figures.ts
    *  startsWith.more). */
   const MORE = 'it starts with money it wouldn’t have then';
-  /** The first thing in the Stress test's panel, inside its stack. */
-  const top = (tab: Tab) => kids(kids(tab.panel('stress'))[0])[0];
+  /** The first thing in Drawdown's panel, inside its stack. */
+  const top = (tab: Tab) => kids(kids(tab.panel('drawdown'))[0])[0];
   /** What the notice at the top says: the gathered line's, then each
    *  note's class and words; null when the panel opens on the simulation,
    *  which `none` checks says nothing of the kind anywhere in the panel. */
@@ -928,20 +928,20 @@ describe('the Stress test’s notice', () => {
   /** No notice: nothing at the top, and no "may be low" anywhere in the panel. */
   const none = (tab: Tab) => {
     expect(notice(tab)).toBeNull();
-    expect(tab.panel('stress').textContent).not.toContain('may be low');
+    expect(tab.panel('drawdown').textContent).not.toContain('may be low');
   };
 
   test('one caution in full at the top of its panel, above the simulation, hidden with the panel; none on Your path or Portfolio', async () => {
     serve();
     const tab = await mount({ txnWithout: REFUSED });
     expect(notice(tab)).toEqual({ line: null, each: [['notice caution', `Caution: ${SPENDING}`]] });
-    const stack = kids(tab.panel('stress'))[0];
+    const stack = kids(tab.panel('drawdown'))[0];
     expect(stack.getAttribute('class')).toBe('stack loose');
-    expect(tab.titles(tab.panel('stress'))[0]).toBe('Will it last?');
+    expect(tab.titles(tab.panel('drawdown'))[0]).toBe('Will it last?');
     // Inside the panel, so hidden while another segment is shown.
-    expect([tab.panel('stress').hasAttribute('hidden'), tab.panel('stress').contains(top(tab))]).toEqual([true, true]);
-    await act(async () => click(tab.tab('Stress test')));
-    expect(tab.panel('stress').hasAttribute('hidden')).toBe(false);
+    expect([tab.panel('drawdown').hasAttribute('hidden'), tab.panel('drawdown').contains(top(tab))]).toEqual([true, true]);
+    await act(async () => click(tab.tab('Drawdown')));
+    expect(tab.panel('drawdown').hasAttribute('hidden')).toBe(false);
     expect(notice(tab)?.each).toEqual([['notice caution', `Caution: ${SPENDING}`]]);
     for (const s of ['path', 'portfolio'] as const) {
       expect(tab.panel(s).textContent).not.toContain('Your annual spending may be low');
@@ -1002,13 +1002,13 @@ describe('the Stress test’s notice', () => {
     serve({ plan: { plan: { ...PLAN, targetAge: 42 }, currency: null } });
     const more = await mount(short);
     expect(notice(more)).toEqual(said);
-    expect(more.panel('stress').textContent).toContain(MORE);
+    expect(more.panel('drawdown').textContent).toContain(MORE);
     await more.unmount();
     // At 55 they would grow past it: projected, but the card says nothing of them.
     serve();
     const enough = await mount(short);
     none(enough);
-    expect(enough.panel('stress').textContent).not.toContain(MORE);
+    expect(enough.panel('drawdown').textContent).not.toContain(MORE);
     await enough.unmount();
     // No age: nothing is projected from them.
     serve({ plan: { plan: { ...PLAN, age: null }, currency: null } });
@@ -1024,7 +1024,7 @@ describe('the Stress test’s notice', () => {
     serve({ plan: { plan: { ...PLAN, start: 'assets' }, currency: null } });
     const tab = await mount({ txnWithout: REFUSED, institutions: [] });
     none(tab);
-    expect(tab.panel('stress').textContent).toContain('The simulation starts with your invested assets, and there are none to count yet.');
+    expect(tab.panel('drawdown').textContent).toContain('The simulation starts with your invested assets, and there are none to count yet.');
     await tab.unmount();
   });
 
@@ -1047,24 +1047,24 @@ describe('the Stress test’s notice', () => {
 });
 
 // Rollout 6d: every rate and setting in one Assumptions sheet, opened from
-// Your figures and from Stress test's own row; About these numbers said once,
-// in a sheet; and a badge on each Stress test card its notice is about.
-describe('the Assumptions sheet, and Stress test’s rows', () => {
+// Your figures and from Drawdown's own row; About these numbers said once,
+// in a sheet; and a badge on each Drawdown card its notice is about.
+describe('the Assumptions sheet, and Drawdown’s rows', () => {
   const puts = (calls: Call[]) => calls.filter((c) => c.method === 'PUT' && c.url === '/api/fire-plan');
   /** A sheet's field by the words of its label. */
   const field = (sheet: FakeElement, label: string) =>
     sheet.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith(label))[0]?.findAll((e) => e.tagName === 'INPUT' || e.tagName === 'SELECT')[0] ?? null;
-  /** Stress test's rows, by title. */
-  const stressRow = (tab: Tab, title: string) =>
-    tab.panel('stress').findAll((e) => e.tagName === 'BUTTON' && has(e, 'list-row') && part(e, 'list-row-title')?.textContent === title)[0] ?? null;
+  /** Drawdown's rows, by title. */
+  const drawdownRow = (tab: Tab, title: string) =>
+    tab.panel('drawdown').findAll((e) => e.tagName === 'BUTTON' && has(e, 'list-row') && part(e, 'list-row-title')?.textContent === title)[0] ?? null;
 
-  test('one sheet of the FI number’s and the stress test’s settings, under their headings; one Save sends them all, and the rest of the plan as it was', async () => {
+  test('one sheet of the FI number’s and Drawdown’s settings, under their headings; one Save sends them all, and the rest of the plan as it was', async () => {
     const calls = serve({ answers: { 'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan, currency: c.body.currency }] } });
     const tab = await mount();
     await press(tab.row('Assumptions'));
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe('Assumptions');
-    expect(sheet.findAll((e) => e.tagName === 'H3' && has(e, 'plan-heading')).map((e) => e.textContent)).toEqual(['FI number', 'Stress test']);
+    expect(sheet.findAll((e) => e.tagName === 'H3' && has(e, 'plan-heading')).map((e) => e.textContent)).toEqual(['FI number', 'Drawdown']);
     for (const label of ['Withdrawal rate', 'Growth after inflation until FI', 'Tax on withdrawals', 'Part-time income', 'Method', 'Withdrawal rule', 'Start with', 'Length in years', 'Stocks %', 'Bonds %', 'Rebalancing', 'Fund fees']) {
       expect([label, field(sheet, label) !== null]).toEqual([label, true]);
     }
@@ -1084,21 +1084,21 @@ describe('the Assumptions sheet, and Stress test’s rows', () => {
     await settle(400);
     expect(tab.dialog()).toBeNull();
     // Said on the card and on its row.
-    expect(tab.panel('stress').textContent).toContain('Will it last?Monte Carlo');
-    expect(part(stressRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
+    expect(tab.panel('drawdown').textContent).toContain('Will it last?Monte Carlo');
+    expect(part(drawdownRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
     expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation until FI · 0% tax');
     await tab.unmount();
   });
 
-  test('Stress test’s rows open the sheet and About these numbers, and focus comes back to the row', async () => {
+  test('Drawdown’s rows open the sheet and About these numbers, and focus comes back to the row', async () => {
     serve();
     const tab = await mount();
-    await act(async () => click(tab.tab('Stress test')));
-    const assumptions = stressRow(tab, 'Assumptions')!;
+    await act(async () => click(tab.tab('Drawdown')));
+    const assumptions = drawdownRow(tab, 'Assumptions')!;
     expect(part(assumptions, 'list-row-sub')?.textContent).toBe('Historical cycles · 75/25/0 · Constant · 0.1% fee');
     // The About card is gone: its words are in the row's sheet.
-    expect(tab.panel('stress').textContent).not.toContain('These results are hypothetical');
-    await tap(stressRow(tab, 'About these numbers'));
+    expect(tab.panel('drawdown').textContent).not.toContain('These results are hypothetical');
+    await tap(drawdownRow(tab, 'About these numbers'));
     const about = tab.dialog()!;
     expect(about.getAttribute('aria-label')).toBe('About these numbers');
     expect(about.textContent).toContain(
@@ -1108,12 +1108,12 @@ describe('the Assumptions sheet, and Stress test’s rows', () => {
     expect(about.textContent).toContain("What this can't tell you: other countries' markets");
     await act(async () => click(closeOf(about)!));
     await settle(400);
-    expect(dom.document.activeElement).toBe(stressRow(tab, 'About these numbers'));
+    expect(dom.document.activeElement).toBe(drawdownRow(tab, 'About these numbers'));
     await tap(assumptions);
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Assumptions');
     await act(async () => click(closeOf(tab.dialog()!)!));
     await settle(400);
-    expect(dom.document.activeElement).toBe(stressRow(tab, 'Assumptions'));
+    expect(dom.document.activeElement).toBe(drawdownRow(tab, 'Assumptions'));
     await tab.unmount();
   });
 
@@ -1133,9 +1133,9 @@ describe('the Assumptions sheet, and Stress test’s rows', () => {
     await tab.unmount();
   });
 
-  test('a badge on each card Stress test’s notice is about, and none without it', async () => {
+  test('a badge on each card Drawdown’s notice is about, and none without it', async () => {
     serve();
-    const badges = (tab: Tab) => tab.panel('stress').findAll((e) => has(e, 'plan-card-badge')).map((e) => e.textContent);
+    const badges = (tab: Tab) => tab.panel('drawdown').findAll((e) => has(e, 'plan-card-badge')).map((e) => e.textContent);
     const short = await mount({ txnWithout: REFUSED });
     expect(badges(short)).toEqual(['An input may be low', 'An input may be low']);
     await short.unmount();
