@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
-import { installDom, trackRoots, click, outline, pressThrough, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, outline, pressThrough, type, fakeClock, FakeElement } from './mini-dom';
+import { simulateOnPage } from './plan-on-page';
 
 // The Plan tab and the currency its typed figures are in, rendered
 // (react-dom/client over test/mini-dom.ts):
@@ -107,7 +108,10 @@ function planServer(start: { plan: any; record?: { currency: string; amounts: un
   };
 }
 
-const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+// Each test's fake clock starts at the same day (it forgets setSystemTime).
+const pass = fakeClock({ now: new Date(AS_OF) });
+simulateOnPage();
+const settle = (ms = 30) => pass(ms);
 const EMPTY = { scenarios: [], unreadable_ids: [], unrecognised_ids: [] };
 
 async function render(props: Partial<PlanTabProps> = {}) {

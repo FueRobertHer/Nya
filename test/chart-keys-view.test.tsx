@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, FakeEvent, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, FakeEvent, type FakeElement, fakeClock } from './mini-dom';
 
 // The charts read by the keys as the net worth chart is
 // (components/chart-keys.ts): Income vs spend, the cash forecast, the payoff
@@ -188,7 +188,8 @@ function mount(node: React.ReactNode) {
   };
 }
 
-const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 600))));
+const pass = fakeClock();
+const settle = () => pass(600);
 const last = (plot: FakeElement) => Number(plot.getAttribute('aria-valuemax')) - 1;
 
 for (const c of CHARTS) {

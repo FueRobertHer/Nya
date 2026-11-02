@@ -342,7 +342,7 @@ describe('what Lunch Flow answers', () => {
   test('at most four requests at once, the tracked accounts first; past the fetch’s time the rest are Nya’s, asked again', async () => {
     seed();
     server.accounts = Array.from({ length: 10 }, (_, i) => lfAccount({ id: 5000 + i, name: `Pot ${i}`, transactions: [lfTxn(`t${i}`, 1, -1, 'Shop')] }));
-    server.slowMs = 200;
+    server.slowMs = 50;
     const tracked = server.accounts.slice(0, 6).map((a) => String(a.id));
     const answer = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: tracked }, T);
     expect(server.maxInFlight).toBe(4);
@@ -352,11 +352,12 @@ describe('what Lunch Flow answers', () => {
     const asked = server.requests('balance').map((r) => r.path.split('/')[4]);
     expect(asked.slice(0, 6).sort()).toEqual([...tracked].sort());
     // A fetch whose time runs out: what wasn't asked yet is a problem on
-    // Nya's side, to ask again, and what came is kept.
+    // Nya's side, to ask again, and what came is kept. At a fifth of the
+    // real times (a request needs a second left, here 200 ms).
     server.reset();
     server.accounts = Array.from({ length: 10 }, (_, i) => lfAccount({ id: 5000 + i, name: `Pot ${i}` }));
-    server.slowMs = 500;
-    const short = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: server.accounts.map((a) => String(a.id)) }, { timeoutMs: 3_000 });
+    server.slowMs = 100;
+    const short = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: server.accounts.map((a) => String(a.id)) }, { timeoutMs: 600, minLeftMs: 200 });
     const late = short.problems.filter((p) => p.side === 'nya');
     expect(late.length).toBeGreaterThan(0);
     expect(late.every((p) => p.kind === 'retry' && p.message.endsWith('Nya’s time for this update ran out before it asked Lunch Flow.'))).toBe(true);
@@ -386,7 +387,7 @@ describe('what Lunch Flow answers', () => {
     const big = await fetchLunchFlow(server.key, window(5), T);
     expect(big.problems[0]).toMatchObject({ message: expect.stringContaining('larger than Nya reads'), accounts: ['1470'] });
     server.behaviours = [{ on: 'accounts', delayMs: 3_000 }];
-    const slow = await fetchLunchFlow(server.key, window(5), { timeoutMs: 1_500 }).catch((e) => e);
+    const slow = await fetchLunchFlow(server.key, window(5), { timeoutMs: 200, minLeftMs: 0 }).catch((e) => e);
     expect([slow.kind, slow.message]).toEqual(['down', 'Lunch Flow didn’t answer in time.']);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 // The feature switches: the registry (lib/flags.ts), and reading and
@@ -278,16 +278,26 @@ describe('the cache', () => {
     const slow = fake.hgetall.bind(fake);
     let release: () => void = () => {};
     (fake as unknown as { hgetall: unknown }).hgetall = () => new Promise((resolve) => (release = () => resolve(null)));
+    // On a fake clock: no answer a moment before the wait is up, one at it.
+    jest.useFakeTimers();
     try {
       const started = Date.now();
-      const answer = await read.cachedFlags(T);
+      let answered = false;
+      const pending = read.cachedFlags(T).finally(() => (answered = true));
+      await new Promise((resolve) => setImmediate(resolve));
+      jest.advanceTimersByTime(read.WAIT_MS - 1);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(answered).toBe(false);
+      jest.advanceTimersByTime(1);
+      const answer = await pending;
       expect(answer.source).toBe('none');
       expect(Date.now() - started).toBeGreaterThanOrEqual(read.WAIT_MS - 50);
     } finally {
+      jest.useRealTimers();
       (fake as unknown as { hgetall: unknown }).hgetall = slow;
       release();
     }
-  }, 10_000);
+  });
 
   test('a read under way when the cache is forgotten never lands after it, and its caller reads again', async () => {
     await store('csp', { mode: 'enforce', updatedAt: AT });

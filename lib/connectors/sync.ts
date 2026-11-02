@@ -609,7 +609,7 @@ async function applyAnswer(ctx: Ctx, tracked: ConnectorAccount[], answer: Remote
  * window that fails is noted on the connection's history and tried again the
  * next night.
  */
-async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secret: string, now: number, deadline: number): Promise<{ windows: number; added: number }> {
+async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secret: string, now: number, deadline: number, minRequestMs: number): Promise<{ windows: number; added: number }> {
   const done = { windows: 0, added: 0 };
   const today = utcDay(now);
   const limit = addDays(today, -HISTORY_DAYS);
@@ -628,7 +628,7 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
     const window = next.start < limit ? { ...next, start: limit } : next;
     const tracked = await trackedOf(ctx, connection_id);
     if (tracked.length === 0) break;
-    if (deadline - Date.now() < MIN_REQUEST_MS) break;
+    if (deadline - Date.now() < minRequestMs) break;
     if (!(await takeRequest(ctx, DAILY_REQUESTS - REFRESH_RESERVE))) break;
     let answer: RemoteAnswer;
     try {
@@ -700,10 +700,19 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
 export async function syncConnection(
   ctx: Ctx,
   connection_id: string,
-  opts: { purpose: SyncPurpose; now?: number; deadline?: number; /** False leaves older history to syncOlderHistory. */ backfill?: boolean }
+  opts: {
+    purpose: SyncPurpose;
+    now?: number;
+    deadline?: number;
+    /** False leaves older history to syncOlderHistory. */
+    backfill?: boolean;
+    /** For tests: less than MIN_REQUEST_MS. */
+    minRequestMs?: number;
+  }
 ): Promise<SyncResult> {
   const now = opts.now ?? Date.now();
   const deadline = opts.deadline ?? Date.now() + REQUEST_TIMEOUT_MS;
+  const minRequestMs = opts.minRequestMs ?? MIN_REQUEST_MS;
   const result: SyncResult = { record: null, skipped: null, answer: null, backfilled: { windows: 0, added: 0 } };
   const conn = await connectionsStore.get(ctx, connection_id);
   if (!conn) return { ...result, skipped: 'gone' };
@@ -720,7 +729,7 @@ export async function syncConnection(
   let changed = false;
 
   if (fresh) result.skipped = 'fresh';
-  else if (deadline - Date.now() < MIN_REQUEST_MS) result.skipped = 'time';
+  else if (deadline - Date.now() < minRequestMs) result.skipped = 'time';
   else if (!(await takeRequest(ctx))) result.skipped = 'budget';
   else {
     const kept = await secretOf(ctx, connection_id, conn.connector);
@@ -761,7 +770,7 @@ export async function syncConnection(
   // Cached payloads hold the balances and transactions from before.
   if (changed) await clearCaches(ctx);
   if (opts.purpose === 'daily' && opts.backfill !== false) {
-    result.backfilled = await syncOlderHistory(ctx, connection_id, result, { now, deadline, secret });
+    result.backfilled = await syncOlderHistory(ctx, connection_id, result, { now, deadline, secret, minRequestMs });
   }
   return result;
 }
@@ -775,7 +784,7 @@ export async function syncOlderHistory(
   ctx: Ctx,
   connection_id: string,
   recent: SyncResult,
-  opts: { now?: number; deadline?: number; secret?: string | null } = {}
+  opts: { now?: number; deadline?: number; secret?: string | null; /** For tests: less than MIN_REQUEST_MS. */ minRequestMs?: number } = {}
 ): Promise<{ windows: number; added: number }> {
   const none = { windows: 0, added: 0 };
   if (recent.skipped === 'budget' || recent.skipped === 'time' || recent.skipped === 'gone') return none;
@@ -790,7 +799,7 @@ export async function syncOlderHistory(
     if (kept instanceof ConnectorFailure) return none;
     secret = kept;
   }
-  const done = await backfill(ctx, connection_id, connectorOf(conn.connector), secret, now, deadline);
+  const done = await backfill(ctx, connection_id, connectorOf(conn.connector), secret, now, deadline, opts.minRequestMs ?? MIN_REQUEST_MS);
   if (done.added > 0) await clearCaches(ctx);
   return done;
 }

@@ -287,17 +287,20 @@ export function checkKey(input: string): string {
 
 type Got = { status: number; body: string };
 
-/** One GET to the API with the key, within `deadline` (a time): its status
- *  and body. Throws ConnectorFailure when no answer came, never with the key
+/** When a fetch's time is up, and how much of it must be left to start a
+ *  request (MIN_LEFT_MS, less in tests). */
+type Time = { deadline: number; minLeftMs: number };
+
+/** One GET to the API with the key, within `time`: its status and body. Throws ConnectorFailure when no answer came, never with the key
  *  or the URL in it. */
-async function get(path: string, key: string, deadline: number, query: Record<string, string> = {}): Promise<Got> {
+async function get(path: string, key: string, time: Time, query: Record<string, string> = {}): Promise<Got> {
   const { base, trusted } = api();
   const url = new URL(base.href);
   url.pathname = `${base.pathname.replace(/\/+$/, '')}${path}`;
   for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
-  const timeoutMs = deadline - Date.now();
+  const timeoutMs = time.deadline - Date.now();
   // Nya's own time for the fetch, not Lunch Flow's slowness: nothing was asked.
-  if (timeoutMs < MIN_LEFT_MS) throw new ConnectorFailure('down', 'nya', 'Nya’s time for this update ran out before it asked Lunch Flow.');
+  if (timeoutMs < time.minLeftMs) throw new ConnectorFailure('down', 'nya', 'Nya’s time for this update ran out before it asked Lunch Flow.');
   try {
     const { status, body } = await guardedRequest({
       method: 'GET',
@@ -365,10 +368,10 @@ type Asked = { ok: true; json: unknown } | { ok: false; gone: boolean; failure: 
 /** Lunch Flow's own words for an account it doesn't have ([mcp]). */
 const NO_SUCH_ACCOUNT = /account not found/i;
 
-async function ask(path: string, key: string, deadline: number, query?: Record<string, string>): Promise<Asked> {
+async function ask(path: string, key: string, time: Time, query?: Record<string, string>): Promise<Asked> {
   let got: Got;
   try {
-    got = await get(path, key, deadline, query);
+    got = await get(path, key, time, query);
   } catch (err) {
     if (err instanceof ConnectorFailure && err.kind !== 'blocked') return { ok: false, gone: false, failure: err, why: err.message };
     throw err;
@@ -624,12 +627,12 @@ function keptProblems(problems: RemoteProblem[]): RemoteProblem[] {
  * yet (`offered` names those it does: only listed, with their names). Throws
  * ConnectorFailure (never with the key in it).
  */
-export async function fetchLunchFlow(secret: string, request: FetchRequest, opts: { timeoutMs: number }): Promise<RemoteAnswer> {
+export async function fetchLunchFlow(secret: string, request: FetchRequest, opts: { timeoutMs: number; /** For tests: less than MIN_LEFT_MS. */ minLeftMs?: number }): Promise<RemoteAnswer> {
   const key = secret.trim();
   if (!key) throw new ConnectorFailure('credentials', 'nya', 'The API key Nya keeps for Lunch Flow isn’t one it can use.');
-  const deadline = Date.now() + opts.timeoutMs;
+  const time = { deadline: Date.now() + opts.timeoutMs, minLeftMs: opts.minLeftMs ?? MIN_LEFT_MS };
 
-  const listing = await get('/accounts', key, deadline);
+  const listing = await get('/accounts', key, time);
   if (listing.status !== 200) throw failureOfStatus(listing.status, saidIn(listing.body, key));
   let json: unknown;
   try {
@@ -652,12 +655,12 @@ export async function fetchLunchFlow(secret: string, request: FetchRequest, opts
   // day, and sends it once it posts (see the header).
   const query = window ? { from: window.start, ...(window.end ? { to: addDays(window.end, -1) } : {}) } : undefined;
   const since = request.balancesOnly ? null : (request.since ?? request.start);
-  const balanceOf = (a: Listed) => ask(`/accounts/${encodeURIComponent(a.remote_id)}/balance`, key, deadline);
+  const balanceOf = (a: Listed) => ask(`/accounts/${encodeURIComponent(a.remote_id)}/balance`, key, time);
   const asked = await inTurn(wanted, async (a) => {
     const balance = await balanceOf(a);
     // An account whose balance didn't come has its problem already: its
     // transactions wait for the next update with it.
-    const transactions = window && balance.ok ? await ask(`/accounts/${encodeURIComponent(a.remote_id)}/transactions`, key, deadline, query) : null;
+    const transactions = window && balance.ok ? await ask(`/accounts/${encodeURIComponent(a.remote_id)}/transactions`, key, time, query) : null;
     return { balance, transactions };
   });
   const fresh = others.filter((a) => !offered.has(a.remote_id));
@@ -755,7 +758,7 @@ export async function checkWithLunchFlow(input: string, opts: { timeoutMs?: numb
   const key = checkKey(input);
   let got: Got;
   try {
-    got = await get('/accounts', key, Date.now() + (opts.timeoutMs ?? CHECK_TIMEOUT_MS));
+    got = await get('/accounts', key, { deadline: Date.now() + (opts.timeoutMs ?? CHECK_TIMEOUT_MS), minLeftMs: MIN_LEFT_MS });
   } catch (err) {
     if (err instanceof ConnectorFailure && err.kind === 'blocked') throw new ExchangeFailure('blocked', err.message);
     if (err instanceof ConnectorFailure && err.kind === 'answer') throw new ExchangeFailure('answer', 'Lunch Flow’s answer couldn’t be read. Try again in a few minutes.');

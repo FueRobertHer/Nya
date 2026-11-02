@@ -1,7 +1,7 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, jest, test } from 'bun:test';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { installDom, trackRoots, click, FakeElement, type FakeNode } from './mini-dom';
+import { installDom, trackRoots, click, FakeElement, type FakeNode, fakeClock } from './mini-dom';
 
 // The parts of the dashboard whose code is loaded when first needed, not with
 // Home (components/lazy-part.tsx): Home's own code never reaches them by a
@@ -28,7 +28,8 @@ const { default: SharedExpensesCard, SharedSheets, SharedUnavailable, sharedExpe
 
 const noop = () => {};
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;|&apos;/g, "'").replace(/\s+/g, ' ').trim();
-const settle = (ms = 5) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const settle = (ms = 5) => pass(ms);
 
 function elements(n: FakeNode): FakeElement[] {
   return n.childNodes.flatMap((c) => (c instanceof FakeElement ? [c, ...elements(c)] : []));
@@ -280,6 +281,8 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
   });
 
   test("its rows' sheets are on their way from when Activity opens, before any is asked for", async () => {
+    // Their code comes from the disk, in real time.
+    jest.useRealTimers();
     expect(sharedExpensesPart.loaded()).toBeNull();
     const shared = { open: null, setOpen: noop } as unknown as Parameters<typeof SharedSheets>[0]['shared'];
     const m = mount(<SharedSheets shared={shared} tags={[]} taxonomy={null} currency="USD" />);

@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
@@ -95,7 +95,7 @@ describe('the daily cron finishes a due master rotation', () => {
 // the real snapshot: one container, holding its own data.
 const { saveManualAccount } = await import('@/lib/manual');
 const { registryKey } = await import('@/lib/containers');
-const { readRuns } = await import('@/lib/snapshot-job');
+const { readRuns, REGISTRY_RETRY_MS } = await import('@/lib/snapshot-job');
 const { readCache, writeCache, CacheKey } = await import('@/lib/cache');
 const catchup = await import('@/app/api/snapshot/catchup/route');
 
@@ -190,16 +190,34 @@ describe('the cron reports what it recorded, per container', () => {
     const errors = console.error;
     console.error = () => {};
     try {
+      // On a fake clock: the run waits once, REGISTRY_RETRY_MS, before
+      // reading again.
+      jest.useFakeTimers();
+      const waited = async (run: Promise<Response>) => {
+        let done = false;
+        let waits = 0;
+        void run.finally(() => (done = true)).catch(() => {});
+        while (!done) {
+          await new Promise((resolve) => setImmediate(resolve));
+          if (jest.getTimerCount() > 0) {
+            waits++;
+            jest.advanceTimersByTime(REGISTRY_RETRY_MS);
+          }
+        }
+        expect(waits).toBe(1);
+        return run;
+      };
       fake.failNext('hgetall', 2);
-      const res = await cron();
+      const res = await waited(cron());
       expect(res.status).toBe(500);
       expect((await res.json()).error).toContain('registry');
       expect(await readRuns({ container: A })).toEqual([]);
       expect(await fake.hgetall(ctxKey('history:net-worth'))).toBeNull();
 
       fake.failNext('hgetall', 1); // one failure is retried
-      expect((await cron()).status).toBe(200);
+      expect((await waited(cron())).status).toBe(200);
     } finally {
+      jest.useRealTimers();
       console.error = errors;
     }
   });

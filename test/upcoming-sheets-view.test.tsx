@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, fakeClock, FakeElement, FakeEvent } from './mini-dom';
 
 // Budgets > Upcoming's Recurring and Planned cards and their sheets (rollout
 // phase 6a3, docs/design/information-architecture.md#budgets), used as a
@@ -58,7 +58,8 @@ const RENT = SERIES.find((s) => s.name === 'Rent')!;
 const PAYROLL = SERIES.find((s) => s.name === 'Payroll')!;
 
 /** The time a sheet takes to slide in (one frame), or out. */
-const settle = (ms = 5) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const settle = (ms = 5) => pass(ms);
 
 function harness(host: FakeElement) {
   const all = (test: (e: FakeElement) => boolean, within: FakeElement = host) => within.findAll(test);
