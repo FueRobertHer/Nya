@@ -4,7 +4,7 @@
 
 ## Commands
 
-- `bun test` runs the whole suite; `bun test test/<name>.test.ts` runs one file.
+- `bun run test` runs the whole suite, its files spread across worker processes (`bun test --parallel`); `bun test test/<name>.test.ts` runs one file. A plain `bun test` still runs every file in one process, slower but useful for a leak between files.
 - `bun run typecheck` runs `tsc --noEmit`.
 - Run both before calling a change done.
 - CI (`.github/workflows/ci.yml`, Ubuntu with a real Redis) runs the same pair and is the reference. Tests that fail on Windows but pass in CI are a portability bug in the test: compare paths with `/` (`relative(...).replaceAll('\\', '/')`), find tools with `Bun.which`, not `sh`. Before blaming a change, run the suite on `main` and compare the failing sets.
