@@ -637,15 +637,17 @@ export function BudgetsSkeleton({ segment = 'month' }: { segment?: BudgetsSegmen
  *  Your path, its shape since the screen review: the answer on the page (the
  *  hero, its label already there), its line and its chart, then Your
  *  figures' card, 16px apart as the loaded panel's are, so nothing moves as
- *  the plan arrives. */
-export function PlanPanelSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
+ *  the plan arrives. With no segment, before the Plan has decided where it
+ *  opens (on Drawdown once the stop age has come): the same shape, the
+ *  common case, with no label, which would be one segment's words. */
+export function PlanPanelSkeleton({ segment = null }: { segment?: PlanSegment | null }) {
   useInStep();
-  if (segment === 'path') {
+  if (segment === 'path' || segment === null) {
     return (
       <div className="stack loose" aria-busy="true">
         <section className="stack hero plan-hero" aria-hidden="true">
           <div>
-            <h3 className="total-label">Financial independence</h3>
+            <h3 className="total-label">{segment === 'path' ? 'Financial independence' : <span className="skeleton plan-skeleton-label" />}</h3>
             <div className="total-value plan-answer">
               <span className="skeleton plan-skeleton-answer" />
             </div>
@@ -685,8 +687,8 @@ export function PlanPanelSkeleton({ segment = 'path' }: { segment?: PlanSegment 
 
 /** The Plan tab before its code is in (components/PlanTabLoader.tsx) or while
  *  the dashboard loads: its bar, unavailable until then, over a segment's
- *  skeleton. */
-export function PlanSkeleton({ segment = 'path' }: { segment?: PlanSegment }) {
+ *  skeleton; with none selected until the Plan has decided where it opens. */
+export function PlanSkeleton({ segment = null }: { segment?: PlanSegment | null }) {
   return (
     <>
       <div inert>
@@ -736,7 +738,7 @@ export function TabSkeleton({
   segments = {},
 }: {
   tab: Tab;
-  segments?: { activity?: ActivitySegment; budgets?: BudgetsSegment; plan?: PlanSegment };
+  segments?: { activity?: ActivitySegment; budgets?: BudgetsSegment; plan?: PlanSegment | null };
 }) {
   switch (tab) {
     case 'accounts':

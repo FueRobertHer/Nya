@@ -13,7 +13,9 @@
 // the scenario open, over three segments, and with a scenario open its card
 // under the bar, above every segment. All three segments stay mounted, the
 // others hidden, and the bar is drawn before the plan has loaded, so Home's
-// FI line has its heading to land on:
+// FI line has its heading to land on. It opens on Your path, or on Drawdown
+// once the stop age has come (D2 of the tax plan), decided once the plan has
+// loaded, with none selected until then:
 //   - Your path: the FI view (lib/fire/plan.ts fiView): the FI card, with
 //     the FI number, years to FI, Coast and Barista FI, and on the number
 //     what may leave it short; then the figures it rests on (rollout phase
@@ -25,8 +27,8 @@
 //     that may be short says so; none is presented as complete when it may
 //     not be. Then the What if… card on your plan, or an open scenario's
 //     life events in its place, and other income and one-off expenses.
-//   - Stress test: one notice when the spending or invested assets the
-//     simulation uses may be low, then "Will it last?": the plan run through
+//   - Drawdown (Stress test until T1 of the tax plan): one notice when the
+//     spending or invested assets the simulation uses may be low, then "Will it last?": the plan run through
 //     history or Monte Carlo (lib/fire/simulate.ts), with the success rate
 //     and its definition, for a flexible rule the spending cuts beside it, a
 //     fan chart, the worst starting years, and every assumption listed under
@@ -109,7 +111,7 @@ import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
 import { ScenarioCard, ScenariosSheet, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
-import PlanBar, { planPanelId, planTabId, type PlanSegment } from './PlanBar';
+import PlanBar, { openingSegment, planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { ScenarioTag } from './ScenarioTag';
@@ -251,8 +253,8 @@ export type PlanTabProps = {
   txnFx?: FxTable | null;
   balanceFx?: PageFx | null;
   /** The segment shown, kept by the dashboard so the tab comes back on it;
-   *  left out, the tab keeps its own. */
-  segment?: PlanSegment;
+   *  null until one is shown, and left out, the tab keeps its own. */
+  segment?: PlanSegment | null;
   onSegment?: (s: PlanSegment) => void;
   /** When Home's FI line opened the tab (Date.now()): the bar's heading takes
    *  focus once, if that was under ten seconds ago. */
@@ -279,9 +281,6 @@ export default function PlanTab({
   landing = null,
   onLanded,
 }: PlanTabProps) {
-  const [ownSegment, setOwnSegment] = useState<PlanSegment>('path');
-  const segment = segmentShown ?? ownSegment;
-  const chooseSegment = onSegment ?? setOwnSegment;
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   // The plan as the server last confirmed it, and the currency its typed
   // figures are in as the route answered with it (lib/fire/plan-currency.ts):
@@ -322,6 +321,24 @@ export default function PlanTab({
   // While a repair waits, nothing but "Save it this way" saves: a save from
   // anywhere else would commit it unseen, dropping what it leaves out.
   const repairing = repair.fixed.length > 0;
+
+  // The segment shown: the one chosen, or kept by the dashboard; else where
+  // the Plan opens (components/PlanBar.tsx openingSegment), decided once the
+  // saved plan has loaded and never again while the tab is open, so a stop
+  // age changed on Your path doesn't move the screen. Until then none is
+  // selected, so nothing jumps under the person as the plan arrives; after a
+  // failed load, Your path, over the defaults, until Try again loads it.
+  const [ownSegment, setOwnSegment] = useState<PlanSegment | null>(null);
+  const chosen = segmentShown !== undefined ? segmentShown : ownSegment;
+  const chooseSegment = onSegment ?? setOwnSegment;
+  const [firstSegment, setFirstSegment] = useState<PlanSegment | null>(null);
+  if (firstSegment === null && chosen === null && state.status === 'ready') setFirstSegment(openingSegment(basePlan));
+  const segment = chosen ?? firstSegment ?? (state.status === 'error' ? 'path' : null);
+  // Handed on, so the tab comes back on it while the app is open, as it does
+  // on a segment chosen.
+  useEffect(() => {
+    if (chosen === null && firstSegment !== null) chooseSegment(firstSegment);
+  }, [chosen, firstSegment, chooseSegment]);
 
   // The Plan's scenarios, and the one open, if any. None opens before the
   // Plan has loaded, or while a repair of it waits (one open closes): a
@@ -885,7 +902,7 @@ export default function PlanTab({
     : null;
 
   // What each figure the plan shown rests on says, worked out once for the
-  // rows under the FI card, their sheets' Why? and the Stress test's notice
+  // rows under the FI card, their sheets' Why? and Drawdown's notice
   // (components/plan-figure-notes.ts). Cheap, and not memoized: it holds
   // amounts, which are written as they are drawn.
   const figureArgs: FigureArgs = {
@@ -1315,7 +1332,7 @@ export default function PlanTab({
       )}
 
       {panel(
-        'stress',
+        'drawdown',
         <>
           {/* What may leave the inputs the simulation uses low, once, above
               the cards it is about, each of which has its badge. */}
@@ -1379,6 +1396,9 @@ export default function PlanTab({
           />
         )
       )}
+      {/* Before the Plan has decided where it opens, no panel is shown: a
+          skeleton in none of them, of no segment's words. */}
+      {segment === null && <PlanPanelSkeleton segment={null} />}
 
       <Sheet
         open={!!sheet}
@@ -1594,7 +1614,7 @@ export function FiCard({
 }) {
   const { spending, savings, assets } = view;
   // What the figures under the card may be missing, said on the number:
-  // the same flags as the Stress test's notice (components/plan-figure-notes.ts),
+  // the same flags as Drawdown's notice (components/plan-figure-notes.ts),
   // from the same inputs as the rows that say which.
   const { spendingMissing, assetsShort } = inputFlags({ view, unread, withoutTransactions, transactionCount, assets: measuredAssets });
 
@@ -1770,7 +1790,7 @@ export function FiCard({
           />
         )}
         {view.atTargetAge !== null && plan.targetAge !== null && (
-          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Stress test shows how much that matters.`} />
+          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
         )}
         {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && plan.targetAge !== null && (
           <Row
@@ -1786,7 +1806,7 @@ export function FiCard({
   );
 }
 
-/** A figure's notes, or the Stress test's notice, as TotalCaveats draws
+/** A figure's notes, or Drawdown's notice, as TotalCaveats draws
  *  them: one in full, two or more gathered into a line that opens in place,
  *  each note's words through Masked. */
 function FigureCaveats({ notes }: { notes: readonly FigureNote[] }) {
@@ -1797,7 +1817,7 @@ function FigureCaveats({ notes }: { notes: readonly FigureNote[] }) {
 export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptions';
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
- *  Your figures', Stress test's, and Portfolio's "Use my allocation". */
+ *  Your figures', Drawdown's, and Portfolio's "Use my allocation". */
 type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-what-if' | 'what-if-first';
 
 /** A rule's name in a few words, for the Assumptions row. */
@@ -1810,7 +1830,7 @@ const RULE_SHORT: Record<FirePlan['rule'], string> = {
 };
 
 /**
- * Stress test's last card (rollout 6d): Assumptions, a row opening the sheet
+ * Drawdown's last card (rollout 6d): Assumptions, a row opening the sheet
  * of every setting the test uses at its part, its sub what is set ("Historical
  * cycles · 75/25/0 · Constant · 0.1% fee"); and About these numbers, a row
  * opening the full statement and the data sources, said once here where each
@@ -1850,7 +1870,7 @@ export function StressRows({
     </li>
   );
   return (
-    <ul className="card list-rows" aria-label="The stress test's settings">
+    <ul className="card list-rows" aria-label="Drawdown's settings">
       {row('stress-assumptions', 'Assumptions', `${METHOD_NAMES[plan.method]} · ${plan.stocksPct}/${plan.bondsPct}/${cash} · ${RULE_SHORT[plan.rule]} · ${pct(plan.fee)} fee`)}
       {row('numbers', 'About these numbers', null)}
     </ul>
@@ -2007,7 +2027,7 @@ function InputRow({
   );
 }
 
-// Said on Stress test, of the figures on Your path (Your figures).
+// Said on Drawdown, of the figures on Your path (Your figures).
 const MISSING_TEXT: Record<Missing, string> = {
   spending: 'The simulation withdraws your annual spending, so it needs it. Type it on Your path, or connect accounts with transactions.',
   assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them on Your path, or start from your FI number (Assumptions, below).',
@@ -2057,7 +2077,7 @@ export function SimulationCard({
   pending: boolean;
   money: (n: number) => string;
   currency: string | null;
-  /** Stress test's notice is about this card's inputs: its badge. */
+  /** Drawdown's notice is about this card's inputs: its badge. */
   badge?: string | null;
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
@@ -2301,7 +2321,7 @@ export function GridCard({
   current: { rate: number | null; years: number };
   startBalance: number;
   money: (n: number) => string;
-  /** Stress test's notice is about this card's inputs: its badge. */
+  /** Drawdown's notice is about this card's inputs: its badge. */
   badge?: string | null;
 }) {
   const noun = plan.method === 'historical' ? 'starts' : 'runs';

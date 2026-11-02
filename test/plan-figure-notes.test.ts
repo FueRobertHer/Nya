@@ -19,7 +19,7 @@ afterAll(() => setSystemTime());
 // What each figure the Plan rests on says (components/plan-figure-notes.ts,
 // rollout phase 6c): every state of the plan's table (the sub, the value's
 // second line, `why`, and each note's words, level, kind and order), the
-// kind words, the keys, the Stress test's notice and the FI card's flags.
+// kind words, the keys, Drawdown's notice and the FI card's flags.
 // The rows themselves are rendered by test/plan-inputs-view.test.tsx.
 
 const money = (n: number) => wholeMoney(n, 'USD');
@@ -482,7 +482,7 @@ const unreachable = assets({ caveats: [{ kind: 'unreachable', institution: 'Schw
  *  today's assets can't pay it. */
 const HOME: LifeEvent[] = [{ id: 'h', kind: 'house', label: 'Our home', atAge: 41, cost: 800_000, yearly: 0, years: null }];
 
-describe('the Stress test’s notice', () => {
+describe('Drawdown’s notice', () => {
   test('spending that may be low: withdrawn by every rule but VPW; under VPW, said of the FI number it starts from, or of the first year’s spending its card compares with it', () => {
     const unread = [{ institution: 'Chase', reason: 'x' }];
     expect(notice({ unread })).toEqual([SPENDING_LOW("transactions that couldn't be read")]);

@@ -50,7 +50,7 @@ describe('the path chart', () => {
     expect(label(html)).toBe(
       `Invested assets grow from ${c(250_000)} at 40, reach the ${c(1_000_000)} FI number around 53, and are about ${c(projectBalance(250_000, 30_000, 0.05, 25))} at 65, growing a steady 5% a year after inflation.`
     );
-    expect(html).toContain('At a steady 5% a year after inflation. Real markets don’t move steadily; Stress test shows how much that matters.');
+    expect(html).toContain('At a steady 5% a year after inflation. Real markets don’t move steadily; Drawdown shows how much that matters.');
   });
 
   // The light accent review: the wash is the solid --data-tint, so it is
