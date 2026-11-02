@@ -19,6 +19,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Sharing more than accounts, and rolling back](#sharing-more-than-accounts-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [Exchange rates, and rolling back](#exchange-rates-and-rolling-back)
+- [The tax law tables, each year](#the-tax-law-tables-each-year)
 - [Turning on restores](#turning-on-restores)
 - [Shared expenses: the phone check, and rolling back](#shared-expenses-the-phone-check-and-rolling-back)
 - [Receipts and documents](#receipts-and-documents)
@@ -532,6 +533,16 @@ The currency the Plan's typed figures are in is a value store beside the plan, `
 **This is my plan** on the Plan tab keeps a value store of its own, `fire-plan-saved` ([architecture.md](architecture.md#storage-seam)), beside the plan. Nothing to run: it is empty until someone saves one.
 
 **What a rollback sees.** The release before never reads the store: its Plan tab has no Progress card, and nothing else changes. A download from the release before has no `fire-plan-saved` part. The release before refuses a download from this one that holds a saved plan, as it refuses any part it doesn't know. Rolling forward again, the saved plan is where it was, and its comparison is worked out again from the balances recorded meanwhile.
+
+## The tax law tables, each year
+
+The detailed model's law is code (`lib/fire/tax/law/<year>.ts`, [architecture.md](architecture.md#tax-law-and-the-year)): a value changes only through a reviewed pull request whose golden tests pass. Nothing in the app reads the tables until the tax plan's T3. Each year:
+
+1. **As each part comes out,** add it to the next year's file with its source and date beside it, and set its `published` in `sources`. The ACA's applicable percentages come in an IRS revenue procedure (about July); the brackets, standard deduction and gains bands in another (October or November); Part B and IRMAA from CMS (mid-November); Medicaid's poverty guidelines from HHS (January); the wage base from SSA (October); and the health growth defaults when CMS publishes its National Health Expenditure projections (about June).
+2. **Check every figure against its primary source,** never a summary, and run `bun test test/tax-*.test.ts`. `test/tax-law.test.ts` names the parts a year still lacks.
+3. **Move Tax-Calculator's pin** once its `LAST_KNOWN_YEAR` (`taxcalc/policy.py`) reaches the new year: copy `taxcalc/policy_current_law.json` byte for byte from that commit into `test/fixtures/taxcalc/`, and update `COMMIT`, `SHA256` and `LAST_KNOWN_YEAR` in `test/tax-calculator.test.ts`.
+4. **By December 1** the coming year's file should be complete. Until it is, plans keep the latest complete year and say so ("2026 tax law: 2027's isn't in Nya yet").
+5. **Law that changes mid-year** (an act of Congress, a state's Medicaid expansion, CMS's work rule, Georgia's Pathways approval) is a table edit and a deploy. The ACA switch (D10) already covers the enhanced credits' return.
 
 ## Turning on restores
 
