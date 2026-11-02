@@ -22,9 +22,28 @@ import { usMarket } from '@/lib/fire/us-market';
 // The runs' returns are drawn before the timed region; each year's balances
 // are the year before's close, as the drawdown will chain them.
 
+/** How far process.cpuUsage() moves at a time, in milliseconds (about 16 on
+ *  Windows, microseconds on Linux), as import-parsers.test.ts measures it. */
+const CPU_STEP_MS = (() => {
+  const used = () => {
+    const { user, system } = process.cpuUsage();
+    return user + system;
+  };
+  const moves: number[] = [];
+  for (let last = used(); moves.length < 3; ) {
+    const now = used();
+    if (now !== last) {
+      moves.push(now - last);
+      last = now;
+    }
+  }
+  return moves.sort((a, b) => a - b)[1] / 1000;
+})();
+
 /** How long `work` takes, in milliseconds: the smaller of processor and wall
- *  time, the best of three after a full collection (as import-parsers.test.ts
- *  times its reads). */
+ *  time, the processor time counted a step more than it reads (a short job
+ *  can read a step short on Windows), the best of three after a full
+ *  collection, as import-parsers.test.ts times its reads. */
 function readMs(work: () => unknown): number {
   let best = Infinity;
   for (let run = 0; run < 3; run++) {
@@ -34,7 +53,7 @@ function readMs(work: () => unknown): number {
     work();
     const wallMs = performance.now() - wall;
     const { user, system } = process.cpuUsage(cpu);
-    best = Math.min(best, wallMs, (user + system) / 1000);
+    best = Math.min(best, wallMs, (user + system) / 1000 + CPU_STEP_MS);
   }
   return best;
 }
