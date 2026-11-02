@@ -16,3 +16,6 @@ scripts/screenshots.ts
 # Backups from /api/ops/export and scripts/restore.ts. They hold your financial
 # data (encrypted, but with plain-text ids and dates) and must never be committed.
 *.ndjson
+
+# Per-file test durations that CI keeps between runs (.github/workflows/ci.yml).
+.bun-test-timings.json

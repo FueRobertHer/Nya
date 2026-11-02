@@ -1,4 +1,5 @@
 [test]
 # Clears, before and after each test, what a test file may have set for the
-# files after it (every file runs in one process).
+# files after it (a plain `bun test` runs every file in one process;
+# `bun run test`, with --parallel, gives each file a fresh global).
 preload = ["./test/preload.ts"]
