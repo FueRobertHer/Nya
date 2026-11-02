@@ -1276,13 +1276,6 @@ export async function readHistoryPoints(
   return { points: sorted, breaks: ending.length > 0 ? await movingBreaks(ctx, sorted, ending, sources) : [] };
 }
 
-/** The days the ended accounts stop counting: bridgeInteriorEstimates keeps a
- *  step on each rather than a line across it. Every end, moving or not:
- *  getHistory keeps only those that move a total (movingBreaks). */
-export function endBreaks(ended: Iterable<readonly [string, { from: string }]>): string[] {
-  return [...new Set([...ended].map(([, e]) => e.from))].sort();
-}
-
 /**
  * The end days that move a total: an end where the last point before it
  * counted the account with a balance, or with one that can't be told. An end
@@ -1390,7 +1383,7 @@ export function bridgeInteriorEstimates(points: HistoryPoint[], breaks: readonly
  *
  * Bridged again afterwards: today's point can be the real one that closes a
  * hole, turning trailing estimates into interior ones. `breaks` as for
- * bridgeInteriorEstimates (endBreaks of the accounts that ended).
+ * bridgeInteriorEstimates.
  */
 export function withTodayPoint(
   history: HistoryPoint[],

@@ -6,7 +6,7 @@
 // node:crypto doesn't either, while the page that opens a protected file
 // (app/open-download) runs in a browser. Pure, safe to import from client
 // code, with no dependencies. test/age.test.ts holds it to the RFC's own test
-// vectors, and to the age command-line tool.
+// vectors, and to OpenSSL's answers.
 //
 // CHACHA20 is the 20-round stream cipher on 32-bit words: a 256-bit key, a
 // 96-bit nonce and a 32-bit block counter make each 64-byte block of

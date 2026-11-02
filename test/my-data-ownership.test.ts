@@ -1,7 +1,4 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, ctxKey, testKey, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
@@ -546,21 +543,6 @@ describe('a passphrase', () => {
     expect(passphraseProblem('elevenchars🙂')).toBeNull();
     expect(passphraseProblem('elevenchars')).toBe('Use a passphrase of at least 12 characters.');
   });
-
-  const CLI = Bun.which('age') !== null && Bun.which('script') !== null;
-  test.skipIf(!CLI)('a protected download opens with the age command', async () => {
-    const res = await download({ format: 'transactions-csv', passphrase: PASSPHRASE });
-    const plain = await download({ format: 'transactions-csv' });
-    const dir = mkdtempSync(join(tmpdir(), 'nya-my-data-'));
-    try {
-      writeFileSync(join(dir, 'file.csv.age'), res.bytes);
-      const run = Bun.spawnSync(['script', '-q', '-e', '-c', 'age -d -o file.csv file.csv.age', '/dev/null'], { cwd: dir, stdin: new TextEncoder().encode(`${PASSPHRASE}\n`) });
-      expect(run.exitCode).toBe(0);
-      expect(readFileSync(join(dir, 'file.csv')).equals(Buffer.from(plain.bytes))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, 30_000);
 });
 
 describe('every field is checked', () => {

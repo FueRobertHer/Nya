@@ -21,11 +21,9 @@ import { loggable } from '@/lib/log-safe';
 // keep showing what was stored when the institution is down.
 //
 // Takes item_id from the caller rather than resolving it from account_id: there
-// is no reverse index (getItemAccountIds reads the transaction store, which an
-// investments-only Item never writes, and the disconnect route's workaround
-// unions with the net-worth cache, empty whenever it has expired or any
-// institution is erroring). The Accounts tab renders each account inside its
-// institution, so it passes the id it has.
+// is no reverse index (an Item's transaction store lists its accounts, but an
+// investments-only Item never writes one). The Accounts tab renders each
+// account inside its institution, so it passes the id it has.
 
 const RECENT_LIMIT = 25;
 
