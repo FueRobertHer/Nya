@@ -2,7 +2,7 @@
 //
 // The 2026 law: every figure the detailed model reads, each from its primary
 // source, checked against it on 2026-11-01. A value changes only through a
-// reviewed pull request whose golden tests pass (D20). The Tax-Calculator
+// reviewed pull request whose golden tests pass. The Tax-Calculator
 // cross-check (test/tax-calculator.test.ts) compares the parameters both hold.
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
@@ -41,8 +41,8 @@ export const STATUTE: Statute = {
   credit: { floor: 1 },
   // SSA 1902(a)(10)(A)(i)(VII) and 1902(l)(1)(B) to (D), (l)(2)(C): Medicaid
   // for children under 19 to at least 133% of the poverty line in every
-  // state, plus the 5% disregard (42 CFR 435.603(d)(4)). Children's own
-  // Medicaid and CHIP lines above it are said, not modeled.
+  // state, plus the 5% disregard (42 CFR 435.603(d)(4)). States' higher
+  // Medicaid and CHIP lines for children aren't modeled.
   childMedicaid: 1.38,
   // IRC 36B(b)(3)(A)(iii) as in effect for 2021 to 2025 (ARPA sec. 9661, IRA
   // sec. 12001), the table the 2025 Form 8962 instructions' Table 2 prints:
@@ -135,7 +135,7 @@ export const UNIFORM_DIVISORS: readonly number[] = [
  *  $124,127, 3.56% a year. So health costs rise 2.06 points a year faster than
  *  prices and incomes 1.13 points, over 2027 to 2034, the years after the
  *  near-term rise the projections expect (2024 to 2034 gives 2.63 and 1.27).
- *  A projection, not law: About these numbers says so. */
+ *  A projection, not law. */
 export const HEALTH_GROWTH = { overPrices: 0.021, incomeOverPrices: 0.011 } as const;
 
 export const LAW_2026: TaxLaw = {

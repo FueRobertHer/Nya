@@ -1,8 +1,9 @@
 // lib/fire/tax/health.ts
 //
 // One year's health coverage cost for a household, per person, from one
-// function (D12): the ACA before 65, with its credit worked out as Form 8962
-// works it out, the Medicaid line and its work rule, and Medicare from 65.
+// function, so every result counts health once and the same way: the ACA
+// before 65, with its credit worked out as Form 8962 works it out, the
+// Medicaid line and its work rule, and Medicare from 65.
 //
 //   - Before 65 on the ACA, each covered person is priced at the benchmark
 //     (the second lowest cost silver plan) quoted today for one adult at one
@@ -16,11 +17,12 @@
 //     times income; the credit, the benchmark less that, never below zero.
 //     Under 2026 law the schedule's percentages rise each year by premium
 //     growth over income growth (IRC 36B(b)(3)(A)(ii)); the enhanced schedule
-//     (D10) is fixed by statute.
+//     (`acaLaw: 'enhanced'`, for a plan that assumes the 2021 to 2025
+//     credits return) is fixed by statute.
 //   - The family size is everyone on the return, a spouse on Medicare
 //     included (IRC 36B(d)(1)); the benchmark covers only those the credit
 //     can (Treas. Reg. 1.36B-3(f)).
-//   - The Medicaid line (D6): at or under the state's line (on Medicaid's own
+//   - The Medicaid line: at or under the state's line (on Medicaid's own
 //     poverty line, this year's guidelines), a person is on Medicaid if the
 //     rule is met: always before 2027; from 2027 by the household's MAGI of at
 //     least the federal minimum wage times 80 hours a month (42 CFR
@@ -33,11 +35,12 @@
 //     supplement, and IRMAA on IRMAA's MAGI from two years before, against
 //     tiers that are two years of inflation higher in today's dollars.
 //
-// Said, not modeled: out-of-pocket costs, cost-sharing reductions' value
-// (said as "lower deductibles" under 250%), state programs and Basic Health
-// Programs, children's Medicaid and CHIP lines, rating only the three oldest
-// children under 21, a work rule tested month by month (a year stands in for
-// even months), and plans other than the benchmark.
+// Not modeled: out-of-pocket costs, cost-sharing reductions' value (only
+// flagged, `lowerDeductibles`, on the credit at or under 250%), state
+// programs and Basic Health Programs, children's Medicaid and CHIP lines,
+// rating only the three oldest children under 21, a work rule tested month
+// by month (a year stands in for even months), and plans other than the
+// benchmark.
 //
 // The ACA's MAGI is a Lin (lib/fire/tax/piece.ts), so the year's solver gets
 // the cost's slope and its kinks; inside a sloped band the contribution steps

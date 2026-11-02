@@ -5,14 +5,14 @@ import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import { newPersonYear, newYearResult, runYear, type YearInput, type YearResult } from '@/lib/fire/tax/year';
 import { usMarket } from '@/lib/fire/us-market';
 
-// What the year costs (Overview: Performance and reliability): the year in a
-// 5,000 by 40 loop, as T5's stress test would run it, timed against today's
-// flat Monte Carlo job of the same size on the same machine, so a slow runner
-// slows both. T5 ships only if a job with taxes meets 1 s on a mid-range
-// phone; T0 measures. The bound guards against the year's work growing (a
-// solver that walks every cell, say), not against a slow machine: a ratio a
-// few times what the Overview expects (50 to 100). Set TAX_TIMING=1 to print
-// the figures the plan's modules record.
+// What the year costs: the year in a 5,000 by 40 loop, as a Monte Carlo job
+// with taxes would run it, timed against today's flat Monte Carlo job of the
+// same size on the same machine, so a slow runner slows both. A job with
+// taxes is meant to take under 1 s on a mid-range phone; this test only
+// measures. The bound guards against the year's work growing (a solver that
+// walks every cell, say), not against a slow machine: a ratio of 200, about
+// three times the 60 to 66 measured. Set TAX_TIMING=1 to print the figures,
+// which docs/architecture.md records.
 //
 // The workload: a couple, 50 and 48 in Nevada, from 50 to 89. On the ACA to
 // 65 (benchmark $11,000 at 50, health costs 2.1 points over prices), then

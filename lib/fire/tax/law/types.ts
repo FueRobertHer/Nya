@@ -6,15 +6,16 @@
 //
 // Dollar amounts are in the law year's dollars. A plan's years hold indexed
 // amounts constant in today's dollars and shrink the ones the law doesn't
-// index by the price level (Tax engine: Today's dollars and nominal law);
-// each comment says which a value is. Percentages are fractions (0.22 is
-// 22%), except the ACA's applicable percentages, which are kept as the
-// revenue procedures print them, in percent (3.14 is 3.14%).
+// index by the price level, since a fixed nominal amount is worth less in
+// today's dollars each year; each comment says which a value is.
+// Percentages are fractions (0.22 is 22%), except the ACA's applicable
+// percentages, which are kept as the revenue procedures print them, in
+// percent (3.14 is 3.14%).
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 /** The filing statuses the model covers (head of household and married
- *  filing separately are said, not modeled). */
+ *  filing separately aren't modeled). */
 export type Filing = 'single' | 'joint';
 
 /** The 50 states and DC. */
@@ -74,8 +75,9 @@ export type Statute = {
   /** The line every state's Medicaid covers children under 19 to, as a
    *  multiple of Medicaid's poverty line, the 5% disregard included. */
   childMedicaid: number;
-  /** The applicable percentage table if the enhanced credits return (D10):
-   *  the 2021 to 2025 schedule, fixed by statute, never indexed, no cliff. */
+  /** The applicable percentage table for a plan that assumes the enhanced
+   *  credits return (health's `acaLaw: 'enhanced'`): the 2021 to 2025
+   *  schedule, fixed by statute, never indexed, no cliff. */
   enhanced: AcaSchedule;
   /** The Medicaid community engagement rule (SSA 1902(xx)): from the first
    *  calendar year it applies, for adults of these ages, met in a month by
@@ -120,14 +122,16 @@ export type Medicare = { partB: number; irmaa: Record<Filing, readonly IrmaaTier
  *  the last applies at every age after it. */
 export type Uniform = { firstAge: number; divisors: readonly number[] };
 
-/** Projections, not law, kept beside the tables (D12): how many points a year
- *  health costs rise faster than prices, and incomes (GDP per capita) faster
- *  than prices, for the ACA's indexing. */
+/** Projections, not law, kept beside the tables and updated with them
+ *  (docs/operations.md): how many points a year health costs rise faster
+ *  than prices, and incomes (GDP per capita) faster than prices, for the
+ *  ACA's indexing. */
 export type HealthGrowth = { overPrices: number; incomeOverPrices: number };
 
 /** Where a part comes from: its source, when it was published (null: not yet,
- *  the year's table lacks it) and when it is due. Read by T2's Tax law card and
- *  the upkeep workflow. */
+ *  the year's table lacks it) and when it is due. Data, so the app can show
+ *  each figure's source and the yearly update (docs/operations.md) can see
+ *  what is still to come. */
 export type PartSource = { source: string; published: string | null; due: string };
 
 /** One law year, every part present. */

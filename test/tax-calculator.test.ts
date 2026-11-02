@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import type { Filing } from '@/lib/fire/tax/law/types';
 
-// A second source for the figures where typos are likeliest (D20): PSL
+// A second source for the figures where typos are likeliest: PSL
 // Tax-Calculator's current-law parameters, copied byte for byte as a fixture
 // from the pinned commit below. Tax-Calculator is in the public domain in the
 // United States and dedicated worldwide under CC0 1.0 (its LICENSE). It can
 // lag the IRS by weeks, so it is compared only for the years it marks as
 // known (LAST_KNOWN_YEAR in taxcalc/policy.py at the same commit); a new law
 // year is checked first by its golden tests, and the pin moves when
-// Tax-Calculator catches up (the upkeep issue lists it). A parameter holds
+// Tax-Calculator catches up (docs/operations.md, step 3). A parameter holds
 // its latest value at or before a year, as Tax-Calculator carries values
 // forward.
 

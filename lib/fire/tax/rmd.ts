@@ -4,7 +4,7 @@
 // closing tax-deferred balance (457(b) money included) over the Uniform
 // Lifetime Table's divisor for the age reached this year.
 //
-// Said, not modeled: the joint table for a spouse more than 10 years younger
+// Not modeled: the joint table for a spouse more than 10 years younger
 // who is the sole beneficiary (Treas. Reg. 1.401(a)(9)-5(d)(1)(ii)), and
 // putting the first RMD off to April 1 of the next year.
 //

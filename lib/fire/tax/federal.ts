@@ -32,7 +32,7 @@
 // Amounts the law doesn't index (Social Security's base amounts, NIIT's
 // thresholds, the senior deduction, the loss limit) are divided by
 // `priceLevel`, prices this year over the law year's, since a plan's dollars
-// are today's (Tax engine: Today's dollars and nominal law).
+// are today's.
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 

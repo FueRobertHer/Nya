@@ -1,13 +1,14 @@
 // lib/fire/tax/year.ts
 //
-// One plan year after you stop, in the detailed model (Tax engine: The year):
+// One plan year after you stop working, in the detailed tax model:
 //
 //   1. RMDs per owner, from last year's closing tax-deferred and 457(b)
 //      money, paid out whatever the need; then a fixed conversion, if any.
 //   2. Fixed income: Social Security, pensions, wages, the taxable yield
 //      (paid out), income given after tax, a windfall.
-//   3. The ceiling, if the rule has one (T4 maps each rule to it).
-//   4. Withdrawals in the standard order, each step one category across both
+//   3. The ceiling, if the caller sets one: a withdrawal strategy's limit on
+//      ordinary taxable income (a bracket's top) or on the ACA's MAGI.
+//   4. Withdrawals in this order, each step one category across both
 //      owners, the older owner's first:
 //        a. an HSA of an owner 65 or older, untaxed, up to the household's
 //           Part B premiums and IRMAA;
@@ -16,13 +17,14 @@
 //        d. an HSA of an owner 65 or older, taxed like tax-deferred money;
 //        e. reachable Roth money (contributions and conversions five tax
 //           years old; all of it from 60);
-//        f. younger conversions, which owe only the 10% before 60;
+//        f. conversions under five tax years old, which owe only the 10%
+//           before 60;
 //        g. tax-deferred money with the 10%;
 //        h. Roth earnings, taxed and with the 10%;
 //        i. an HSA of an owner under 65, taxed and with the 20%.
 //      With a ceiling, a source whose next dollar raises the ceiling's
 //      measure stops there, the sources that don't follow, and only then the
-//      rest, over it: the year says it crossed.
+//      rest, over it, with `crossed` set.
 //   5 and 6. Tax and health (lib/fire/tax/federal.ts, lib/fire/tax/health.ts).
 //   7. The least withdrawal that pays the year: see the solver below.
 //   8. The year's end: growth (taxable at growth less its yield), and basis,
@@ -97,14 +99,16 @@ export type PersonYear = {
   socialSecurity: number;
   pension: number;
   wages: number;
-  /** A fixed conversion this year (0 under None; T4 picks it). */
+  /** A Roth conversion of a fixed amount this year, taken after the RMD from
+   *  tax-deferred money then 457(b) (0 for none). */
   conversion: number;
   /** Meets the Medicaid work rule or an exemption by work, service, school or otherwise. */
   meetsRule: boolean;
 };
 
-/** A rule's ceiling this year: on ordinary taxable income (a bracket's top),
- *  or on the ACA's MAGI. */
+/** A limit the year's withdrawals stay under while any source allows (the
+ *  header's step 4): on ordinary taxable income (a bracket's top), or on the
+ *  ACA's MAGI. */
 export type Ceiling = { on: 'ordinary' | 'magi'; at: number };
 
 export type YearInput = {

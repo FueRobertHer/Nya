@@ -2,9 +2,10 @@
 //
 // Which law a plan uses. A plan's dollars are today's, so it uses the law of
 // today's year: from January 1, 2027, the 2027 law in 2027 dollars. A year's
-// table is used only once every part is out (D20); until then the latest
-// complete one, and the plan says it is behind. Later years hold that law
-// constant in today's dollars, with its scheduled changes by calendar year.
+// table is used only once every part is out, so a plan never mixes two years'
+// law; until then the latest complete one, with `behind` set so the plan can
+// say so. Later years hold that law constant in today's dollars, with its
+// scheduled changes by calendar year.
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 

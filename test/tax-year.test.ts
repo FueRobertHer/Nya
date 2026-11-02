@@ -10,10 +10,10 @@ import {
 } from '@/lib/fire/tax/year';
 
 // The year (lib/fire/tax/year.ts): hand-worked years, then properties over
-// seeded random households. The properties are the plan's (Tax engine: Steps
-// 7 and 8): cost rises with income outside the lines where it falls, the
-// cliff is exactly at 400%, and the solver's answer is the least withdrawal
-// that pays, checked independently of the solver's own pieces.
+// seeded random households. The properties: cost rises with income outside
+// the lines where it falls, the cliff is exactly at 400%, and the solver's
+// answer is the least withdrawal that pays, checked independently of the
+// solver's own pieces.
 
 const law = LAW_2026;
 
