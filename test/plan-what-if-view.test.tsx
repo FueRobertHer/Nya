@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement } from './mini-dom';
 
 // The What if… card on Your path (rollout phase 8c), rendered in the Plan tab
 // and used as a person would (react-dom/client over test/mini-dom.ts): where
@@ -25,7 +25,7 @@ const { act } = React;
 // React's client reads what the document supports once, when it loads: it is
 // loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { NO_CHANGES, MAX_PLAN_SCENARIOS } = await import('@/lib/fire/scenarios');

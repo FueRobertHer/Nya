@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom } from './mini-dom';
+import { installDom, trackRoots } from './mini-dom';
 
 // The screen review: React logged hundreds of duplicate-key errors on the
 // demo, which has two sandbox banks linked to one account, with the same
@@ -14,7 +14,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { AllocationNotes, HistoryBody } = await import('@/components/AllocationCard');
 const { PayoffPanel, NO_INPUTS } = await import('@/components/DebtPayoff');
 const { allocate } = await import('@/lib/allocation/allocation');

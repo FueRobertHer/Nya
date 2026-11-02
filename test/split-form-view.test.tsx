@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, type FakeElement } from './mini-dom';
 
 // The form behind Classify a holding and Target allocation (AllocationCard's
 // SplitForm), used as a person would (react-dom/client over
@@ -13,7 +13,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { SplitForm } = await import('@/components/AllocationCard');
 type Split = import('@/lib/allocation/classes').Split;
 

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { installDom, click, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
 
 // The admin's Nightly jobs page (/admin/jobs, components/AdminJobs.tsx): each
 // job, how it last went, and Run now (/api/admin/jobs). Rendered and used as
@@ -16,7 +16,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: AdminJobs } = await import('@/components/AdminJobs');
 type JobView = import('@/lib/backup').JobView;
 

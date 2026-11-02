@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
-import { installDom, click, outline, pressThrough, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, outline, pressThrough, type, FakeElement } from './mini-dom';
 
 // The Plan tab and the currency its typed figures are in, rendered
 // (react-dom/client over test/mini-dom.ts):
@@ -31,7 +31,7 @@ afterAll(() => {
 const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');

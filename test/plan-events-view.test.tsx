@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type, FakeElement } from './mini-dom';
 
 // The life event forms rollout 8d added (components/PlanEvents.tsx): a car,
 // once or every few years; a raise; a windfall; a loan paid off. Rendered and
@@ -16,7 +16,7 @@ const { act } = React;
 // React's client reads what the document supports once, when it loads (the
 // input event among it): loaded afresh, after this file put a document there.
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { EventForm } = await import('@/components/PlanEvents');
 type LifeEvent = import('@/lib/fire/events').LifeEvent;
 type Kind = import('@/lib/fire/events').LifeEventKind;

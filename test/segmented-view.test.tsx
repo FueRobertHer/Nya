@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { installDom, click, FakeEvent, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, FakeEvent, type FakeElement } from './mini-dom';
 
 // The underline switch (look and feel, step 2a): components/Segmented.tsx,
 // a radio group setting a value or tabs over one panel, one tab stop, the
@@ -14,7 +14,7 @@ afterAll(() => dom.uninstall());
 const React = await import('react');
 const { act, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
-const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
+const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { Segmented } = await import('@/components/Segmented');
 const { default: NetWorthChart } = await import('@/components/NetWorthChart');
 
