@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { installDom, click, outline, pressThrough, type, FakeElement } from './mini-dom';
 
 // The Plan tab and the currency its typed figures are in, rendered
@@ -41,12 +41,28 @@ type AssetInstitution = import('@/lib/fire/inputs').AssetInstitution;
 type AssetAccount = import('@/lib/fire/inputs').AssetAccount;
 type Txn = import('@/components/MonthBreakdown').Txn;
 
-afterEach(() => setAmountsHidden(false));
-
 // Spending typed, assets measured: what the accounts hold counts.
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000 };
 const UNTYPED = { ...DEFAULT_PLAN, age: 40 };
 const AS_OF = '2026-10-23T12:00:00.000Z';
+
+// The transactions are dated (October 2025 to September 2026) and the Plan
+// measures the year back from today (lib/fire/inputs.ts trailingFlows), so
+// today is held at the balances' own day: a later one moves the year's start
+// past the earliest row, and what the figures say with it.
+beforeAll(() => setSystemTime(new Date(AS_OF)));
+afterAll(() => setSystemTime());
+
+// A tab a test leaves mounted (it failed before its own unmount) is unmounted
+// after it: once afterAll takes the DOM away, a late update to it throws in
+// whichever file runs next.
+const mounted = new Set<{ unmount: () => void }>();
+afterEach(async () => {
+  setAmountsHidden(false);
+  const left = [...mounted];
+  mounted.clear();
+  for (const root of left) await act(async () => root.unmount());
+});
 const USD = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: 'usd', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 300_000, currency: 'USD', ...over });
 const EUR = (over: Partial<AssetAccount> = {}): AssetAccount => ({ account_id: 'eur', name: 'Depot', type: 'investment', subtype: 'brokerage', balance: 250_000, currency: 'EUR', ...over });
 const broker = (accounts: AssetAccount[]): AssetInstitution[] => [{ name: 'Broker', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts }];
@@ -106,6 +122,7 @@ async function render(props: Partial<PlanTabProps> = {}) {
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
+  mounted.add(root);
   const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: broker([USD()]), balancesAsOf: AS_OF, currency: 'USD', holdings: [], ...props };
   await act(async () => root.render(<PlanTab {...all} />));
   await settle();
@@ -115,7 +132,10 @@ async function render(props: Partial<PlanTabProps> = {}) {
       await act(async () => root.render(<PlanTab {...all} {...more} />));
       await settle();
     },
-    unmount: () => act(async () => root.unmount()),
+    unmount: () => {
+      mounted.delete(root);
+      return act(async () => root.unmount());
+    },
     text: () => container.textContent,
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
     /** One of Your figures' rows (on Your path), by its title: it opens its sheet. */
