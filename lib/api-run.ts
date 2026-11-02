@@ -11,8 +11,9 @@
 //      token's access (lib/api-limits.ts ACCESS): a balances token reaches
 //      /me, /accounts and the balance write, a read token every read, a write
 //      token every read and WRITE_V1. Refused: 403 insufficient_scope.
-//   2. THE SWITCH, for anything beyond reading: off (lib/api-writes-enabled.ts),
-//      403 writes_off.
+//   2. THE SWITCH, for anything beyond reading: the `api-writes` feature
+//      switch off for the token's account (writesOn, read fresh), 403
+//      writes_off.
 //   3. THE MINUTE, for a write: WRITES_PER_MINUTE per token, every write sent,
 //      valid or not, so garbage is bounded too. 429 rate_limited.
 //
@@ -34,7 +35,7 @@
 import type { Authenticated } from './api-tokens';
 import { apiWriteCount, apiWriteDays } from './api-token-store';
 import { ApiFailure, allowsOf } from './api-spec';
-import { apiWritesEnabled } from './api-writes-enabled';
+import { flagOnCached, flagOnFresh, flagWho } from './flag-read';
 import { UnreadableEntriesError, type CounterMapStore } from './repo';
 import { CHANGES_PER_DAY, CREATES_PER_DAY, PERSON_CHANGES_PER_DAY, WRITES_PER_MINUTE, type Access } from './api-limits';
 
@@ -51,14 +52,32 @@ export const mayRun = (auth: Pick<Authenticated, 'access'>, spec: { allows?: rea
 /** Whether something needs more than reading: the switch decides it. */
 export const writesNeeded = (spec: { allows?: readonly Access[]; write?: boolean }): boolean => spec.write === true || !allowsOf(spec).includes('read');
 
-/** Step 1 and 2: may this token run it, here and now? Throws ApiFailure. */
-export function checkAccess(auth: Pick<Authenticated, 'access'>, spec: { allows?: readonly Access[]; write?: boolean }): void {
+/**
+ * Whether tokens may make changes for this token's account: the `api-writes`
+ * feature switch (lib/flags.ts), API_WRITES_ENABLED=1 while that is set, for
+ * its container and the account that made it. Off, the default: no token can
+ * be made with more than read access, every write through the API or the MCP
+ * server is refused (`writes_off`), no write tool is listed, and the API
+ * tokens card reads as it did before writing existed. Tokens already made go
+ * on reading what their access lets them, and the record of changes, with
+ * its Undo and Forget, stays in the app. `fresh` for a gate, which turning it
+ * off must stop at once; else through this instance's copy.
+ */
+export async function writesOn(auth: Pick<Authenticated, 'ctx' | 'token'>, fresh: boolean): Promise<boolean> {
+  const who = flagWho(auth.ctx.container, auth.token.user_id);
+  return fresh ? flagOnFresh('api-writes', who) : flagOnCached('api-writes', who);
+}
+
+/** Step 1 and 2: may this token run it, here and now? `writes` is whether
+ *  tokens may make changes for it (writesOn), asked only where it needs more
+ *  than reading. Throws ApiFailure. */
+export function checkAccess(auth: Pick<Authenticated, 'access'>, spec: { allows?: readonly Access[]; write?: boolean }, writes = false): void {
   if (!mayRun(auth, spec)) {
     throw new ApiFailure(403, 'insufficient_scope', `${CAN[auth.access]} Make a token that may do this under API tokens.`, {
       'WWW-Authenticate': 'Bearer realm="Nya", error="insufficient_scope"',
     });
   }
-  if (writesNeeded(spec) && !apiWritesEnabled()) {
+  if (writesNeeded(spec) && !writes) {
     throw new ApiFailure(403, 'writes_off', 'This copy of Nya doesn’t let tokens make changes.');
   }
 }
@@ -102,9 +121,15 @@ export type Gated = { readonly [GATED]: string; readonly headers: Record<string,
 /** Whether `gated` came from the gate, for the operation named. */
 export const passedGate = (gated: Gated | undefined, name: string): boolean => !!gated && gated[GATED] === name;
 
-/** The whole gate (steps 1 to 3) for an operation. */
-export async function gate(auth: Authenticated, spec: { name: string; allows?: readonly Access[]; write?: boolean }, now: number = Date.now()): Promise<Gated> {
-  checkAccess(auth, spec);
+/** The whole gate (steps 1 to 3) for an operation. `writes`, when the caller
+ *  has read it already; else read fresh here, only for what needs it. */
+export async function gate(
+  auth: Authenticated,
+  spec: { name: string; allows?: readonly Access[]; write?: boolean },
+  now: number = Date.now(),
+  writes?: boolean
+): Promise<Gated> {
+  checkAccess(auth, spec, writesNeeded(spec) ? (writes ?? (await writesOn(auth, true))) : false);
   const headers = spec.write ? await takeWrite(auth, now) : {};
   return { [GATED]: spec.name, headers };
 }

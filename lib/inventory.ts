@@ -28,13 +28,15 @@
 // Most of it is in the person's own container. A few kinds are kept for the
 // whole environment and only partly about them (OUTSIDE): their account's
 // record, which sign-in is theirs, their sharing connections, unused invite
-// links, their data key; and what is about nobody by name (failed sign-ins by
-// address, the backups' last outcome, the ECB's public rates).
+// links, their data key, the feature switches (which can name their account,
+// or their sign-in on the list of who may sign in) and their record of
+// changes; and what is about nobody by name (failed sign-ins by address, the
+// backups' last outcome, the ECB's public rates).
 //
 // Nothing here reads storage. Words only, in the docs' plain voice.
 
 import { EXACT, PREFIXES, listedKind, type Kind } from './key-families';
-import { declaredPublicStore, declaredPublicStores, declaredStore, declaredStores } from './stores';
+import { declaredEnvironmentStore, declaredEnvironmentStores, declaredPublicStore, declaredPublicStores, declaredStore, declaredStores } from './stores';
 import { RUNS_KEEP_DAYS } from './snapshot-job';
 
 /** The rows of the privacy page's "How long things are kept" table that the
@@ -57,6 +59,7 @@ export const RETENTION_ROWS = [
   'API tokens',
   'Requests counted for each API token',
   'Changes made with API tokens',
+  'Feature switches and their changes',
   'The weekly summary',
   'Your home currency and your own exchange rates',
   'Weekly summaries you asked for now, and uses of a link to turn one off',
@@ -1119,8 +1122,9 @@ const STORES: Readonly<Record<string, Entry>> = {
 };
 
 /** What is kept for the whole environment, outside every container: the key
- *  families lib/containers.ts lists as environment-wide, and the public
- *  stores (lib/repo.ts definePublicMapStore). */
+ *  families lib/containers.ts lists as environment-wide, and the public and
+ *  environment stores (lib/repo.ts definePublicMapStore,
+ *  defineEnvironmentStore), each of an environment store's two keys apart. */
 const OUTSIDE: Readonly<Record<string, Outside>> = {
   containers: {
     group: 'access',
@@ -1206,6 +1210,26 @@ const OUTSIDE: Readonly<Record<string, Outside>> = {
     download: 'Not in your download: about this copy of Nya, not about you.',
     about_you: false,
   },
+  'flags:values': {
+    group: 'access',
+    name: 'Feature switches',
+    about: 'Settings of this copy of Nya, not of your account: who each feature is turned on for, which can name your account by its random id, and who may sign in, which can name your sign-in by its id or its email.',
+    unit: ['switch', 'switches'],
+    kept: 'Feature switches and their changes',
+    plain: 'All of it, as plain text.',
+    download: 'Not in your download: settings of this copy of Nya.',
+    about_you: true,
+  },
+  'flags:log': {
+    group: 'access',
+    name: 'Changes to feature switches',
+    about: 'The last 500: when, which switch, what it was and became, and who changed it, by account id, which can name your account or your sign-in as the switches do.',
+    unit: ['change', 'changes'],
+    kept: 'Feature switches and their changes',
+    plain: 'All of it, as plain text.',
+    download: 'Not in your download: settings of this copy of Nya.',
+    about_you: true,
+  },
   'fx:ecb': {
     group: 'settings',
     name: 'The European Central Bank’s exchange rates',
@@ -1224,8 +1248,8 @@ export function families(): string[] {
 }
 
 /** The entry for a kind kept for the whole environment (a family
- *  lib/containers.ts lists as environment-wide, or a public store), never in
- *  a container. */
+ *  lib/containers.ts lists as environment-wide, a public store, or a key of an
+ *  environment store), never in a container. */
 export function outsideEntry(name: string): Outside | null {
   return Object.hasOwn(OUTSIDE, name) ? OUTSIDE[name] : null;
 }
@@ -1248,14 +1272,19 @@ export function kindOf(name: string): Kind | null {
   const listed = listedKind(name);
   if (listed) return listed;
   const store = declaredStore(name);
-  if (!store) return declaredPublicStore(name) ? 'plain' : null;
+  if (!store) return declaredPublicStore(name) || declaredEnvironmentStore(name) ? 'plain' : null;
   return store.kind === 'value' ? 'string' : store.kind === 'map' ? 'hash' : 'plain';
 }
 
 /** Families and stores with no entry, and entries naming neither: what the
  *  test checks is empty both ways. */
 export function registryGaps(): { missing: string[]; stale: string[] } {
-  const known = new Set([...families(), ...declaredStores().map((s) => s.name), ...declaredPublicStores().map((s) => s.name)]);
+  const known = new Set([
+    ...families(),
+    ...declaredStores().map((s) => s.name),
+    ...declaredPublicStores().map((s) => s.name),
+    ...declaredEnvironmentStores().flatMap((s) => [s.name, s.logName]),
+  ]);
   const listed = [...Object.keys(FAMILIES), ...Object.keys(STORES), ...Object.keys(OUTSIDE)];
   const missing = [...known].filter((name) => containerEntry(name) === null && outsideEntry(name) === null);
   const stale = listed.filter((name) => !known.has(name));

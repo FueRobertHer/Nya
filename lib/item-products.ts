@@ -13,7 +13,13 @@
 //     the person's consent to it, and its reference says such products "will
 //     not be billed until you start using them by calling the relevant
 //     endpoints". No Item from this option has Transactions when it is linked.
-//     It is off unless PLAID_BROKERAGE_LINK=1 (brokerageLinkEnabled).
+//     It is the `brokerage-link` feature switch (lib/flags.ts), off by
+//     default and PLAID_BROKERAGE_LINK=1 while that is set: off so that a
+//     release which reads Items made without Transactions (the check below)
+//     runs before any such Item exists, since an older release calls
+//     /transactions/sync on every Item and would start Transactions on each
+//     of them. Turn it on once this release has been deployed for a while,
+//     and never roll back past it after (docs/operations.md).
 //
 // WHY A SYNC MUST ASK FIRST. On an Item without the product, /transactions/sync
 // is not a harmless empty answer: Plaid's reference says a first call to it
@@ -66,18 +72,6 @@ export type LinkKind = (typeof LINK_KINDS)[number];
 
 export function isLinkKind(v: unknown): v is LinkKind {
   return typeof v === 'string' && (LINK_KINDS as readonly string[]).includes(v);
-}
-
-/**
- * Whether the brokerage and retirement option is offered: off unless
- * PLAID_BROKERAGE_LINK=1. Off by default so that a release which reads Items
- * made without Transactions (the check above) runs before any such Item
- * exists: an older release calls /transactions/sync on every Item, and would
- * start Transactions on each of them. Turn it on once this release has been
- * deployed for a while, and never roll back past it after (docs/operations.md).
- */
-export function brokerageLinkEnabled(): boolean {
-  return process.env.PLAID_BROKERAGE_LINK === '1';
 }
 
 /**

@@ -57,8 +57,8 @@ import { loggable } from './log-safe';
 import { argsFromQuery, BadRequest, NotFound, type Operation } from './api-ops';
 import { restoreUnfinished } from './user-restore/restored';
 import { ApiFailure, bodyFromJson, idFromPath, OPERATION_SPECS, RESOURCE_SPECS, type Args, type ResourceSpec } from './api-spec';
-import { checkAccess, gate } from './api-run';
-import { apiWritesEnabled } from './api-writes-enabled';
+import { checkAccess, gate, writesNeeded, writesOn } from './api-run';
+import { flagOnForAnyone } from './flag-read';
 import { runResource } from './api-writes';
 import { readIfMatch } from './api-versions';
 import { WRITE_BODY_MAX } from './api-limits';
@@ -185,8 +185,9 @@ export async function serve(req: Request, op: Operation): Promise<NextResponse> 
   if (admitted instanceof NextResponse) return admitted;
   try {
     // The gate every operation passes: a balances token reads /me and
-    // /accounts alone.
-    checkAccess(admitted.auth, op);
+    // /accounts alone. Whether tokens may make changes is read only for an
+    // operation that needs more than reading.
+    checkAccess(admitted.auth, op, writesNeeded(op) ? await writesOn(admitted.auth, true) : false);
     const args = argsFromQuery(op, new URL(req.url).searchParams);
     const body = await op.run(admitted.auth, args);
     return NextResponse.json(body, { headers: { ...NO_STORE, ...admitted.limits } });
@@ -264,11 +265,13 @@ async function readBody(req: Request, spec: ResourceSpec): Promise<Args> {
  * its write limits.
  */
 export async function serveResource(req: Request, spec: ResourceSpec, rawId?: string): Promise<NextResponse> {
-  // While this copy doesn't let tokens make changes, the API answers as it
+  // While this copy lets nobody's tokens make changes, the API answers as it
   // did before writing existed: a write to a path that reads is a 405, and a
   // path only writing brought (one resource by id, a write's) is no endpoint
   // at all, its reads too: they are documented, and needed, only for writing.
-  if (!apiWritesEnabled()) return notTaken(spec.path);
+  // Asked before the token is (through this instance's copy of the feature
+  // switches); the gate then asks for this token's account, fresh.
+  if (!(await flagOnForAnyone('api-writes'))) return notTaken(spec.path);
   const admitted = await admit(req);
   if (admitted instanceof NextResponse) return admitted;
   const headers: Record<string, string> = { ...admitted.limits };
@@ -293,12 +296,13 @@ export async function serveResource(req: Request, spec: ResourceSpec, rawId?: st
 }
 
 /** The answer for a method a path doesn't take, as this copy is set up: the
- *  methods its operations take (one resource's only while tokens may make
- *  changes), or no endpoint at all where none is left. */
-export function notTaken(path: string): NextResponse {
+ *  methods its operations take (one resource's only while anyone's tokens may
+ *  make changes: no account is known here), or no endpoint at all where none
+ *  is left. */
+export async function notTaken(path: string): Promise<NextResponse> {
   const methods = new Set<string>();
   if (OPERATION_SPECS.some((o) => o.name === path)) methods.add('GET');
-  if (apiWritesEnabled()) for (const r of RESOURCE_SPECS) if (r.path === path) methods.add(r.method);
+  if (await flagOnForAnyone('api-writes')) for (const r of RESOURCE_SPECS) if (r.path === path) methods.add(r.method);
   const allow = ['GET', 'POST', 'PATCH', 'DELETE'].filter((m) => methods.has(m)).join(', ');
   return allow ? methodNotAllowed(allow) : apiError(404, 'not_found', 'There is no such endpoint. The endpoints are listed at /developers.');
 }

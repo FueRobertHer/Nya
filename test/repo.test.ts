@@ -37,6 +37,7 @@ const {
   defineCounterStore,
   defineCounterMapStore,
   definePublicMapStore,
+  defineEnvironmentStore,
   forgetDeclaredStore,
   StoredDataUnreadableError,
   UnreadableEntriesError,
@@ -58,7 +59,7 @@ const {
   HEADS_STEP_BYTES,
 } = await import('@/lib/repo');
 const { encodeJsonText } = await import('@/lib/blob');
-const { declaredStores, declaredStore, declaredPublicStore } = await import('@/lib/stores');
+const { declaredStores, declaredStore, declaredPublicStore, declaredEnvironmentStore } = await import('@/lib/stores');
 const connectorStores = await import('@/lib/connectors/store');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
 const { listedKind } = await import('@/lib/key-families');
@@ -113,8 +114,19 @@ const counter = defineCounterStore('seam-contract-counter', { what: 'test counts
 const counters = defineCounterMapStore('seam-contract-counters', { what: 'test counts', windowSeconds: WINDOW });
 // Public, environment-wide: its id "refused" is one its check refuses.
 const shared = definePublicMapStore<Note>('fx:seam-contract', { what: 'test rates', isValid: (v, id): v is Note => isNote(v) && id !== 'refused' });
+// Settings of the environment, with their record of changes, kept to three;
+// its id "refused" is one its check refuses.
+type Setting = { on: string; containers: string[] };
+const isSetting = (v: unknown): v is Setting =>
+  typeof v === 'object' && v !== null && typeof (v as Setting).on === 'string' && Array.isArray((v as Setting).containers) && Object.keys(v).length === 2;
+const settings = defineEnvironmentStore<Setting>('flags:contract', {
+  log: 'flags:contract-log',
+  what: 'test switches',
+  isValid: (v, id): v is Setting => isSetting(v) && id !== 'refused',
+  logCap: 3,
+});
 afterAll(() => {
-  for (const s of [list, notes, bigList, bigNotes, counter, counters, shared]) forgetDeclaredStore(s.name);
+  for (const s of [list, notes, bigList, bigNotes, counter, counters, shared, settings]) forgetDeclaredStore(s.name);
   client = recordedFake;
 });
 
@@ -1608,6 +1620,132 @@ function contract(b: Backend) {
     });
   });
 
+  describe('an environment store', () => {
+    const values = testKey('flags:contract');
+    const record = testKey('flags:contract-log');
+    const OFF: Setting = { on: 'nobody', containers: [] };
+    const ON: Setting = { on: 'everyone', containers: [] };
+    const T0 = Date.parse('2026-11-01T12:00:00.000Z');
+
+    test('writes a value and its change in one step, environment-wide, as plain JSON, and reads both back', async () => {
+      expect(await settings.update('restore', () => ON, 'local development', T0)).toEqual(ON);
+      expect(JSON.parse((await b.raw.hget(values, 'restore'))!)).toEqual(ON);
+      expect((await settings.getAllReport()).entries).toEqual(new Map([['restore', ON]]));
+      const { entries, unrecognised } = await settings.changes();
+      expect(unrecognised).toEqual([]);
+      expect(entries).toEqual([{ at: '2026-11-01T12:00:00.000Z', key: 'restore', from: null, to: ON, by: 'local development' }]);
+      // Nothing in a container.
+      expect(await b.raw.hgetall(ctxKey('flags:contract'))).toEqual({});
+    });
+
+    test('records what it replaced, empty lists kept as lists, latest first', async () => {
+      await settings.update('restore', () => OFF, 'local development', T0);
+      await settings.update('restore', (current) => ({ ...current!, on: 'admin' }), 'local development', T0 + 1000);
+      const { entries } = await settings.changes();
+      expect(entries.map((c) => [c.from, c.to])).toEqual([
+        [OFF, { on: 'admin', containers: [] }],
+        [null, OFF],
+      ]);
+      // The stored text, exactly: a list stays a list (a script that decoded
+      // and encoded it would make [] an object).
+      for (const text of Object.values(await b.raw.hgetall(record))) expect(text).toContain('"containers":[]');
+    });
+
+    test('writes nothing when the value is what is there', async () => {
+      await settings.update('restore', () => ON, 'local development', T0);
+      const before = b.sent().length;
+      expect(await settings.update('restore', (current) => current!, 'local development', T0 + 1000)).toEqual(ON);
+      expect(b.sent().slice(before)).toEqual(['eval']); // the read alone
+      expect((await settings.changes()).entries).toHaveLength(1);
+    });
+
+    test('keeps the last changes up to its cap, dropping the oldest', async () => {
+      for (let i = 0; i < 5; i++) await settings.update('restore', () => ({ on: i % 2 ? 'admin' : 'everyone', containers: [] }), `change ${i}`, T0 + i * 1000);
+      const { entries } = await settings.changes();
+      expect(entries.map((c) => c.by)).toEqual(['change 4', 'change 3', 'change 2']);
+      expect(Object.keys(await b.raw.hgetall(record))).toHaveLength(3);
+    });
+
+    test('reads again when the value changed between its read and its write', async () => {
+      await settings.update('restore', () => OFF, 'first', T0);
+      const seen: (Setting | null)[] = [];
+      const other: Setting = { on: 'admin', containers: [] };
+      await settings.update(
+        'restore',
+        async (current) => {
+          seen.push(current);
+          // Another writer, between this read and this write, the first time.
+          if (seen.length === 1) await b.raw.hset(values, 'restore', JSON.stringify(other));
+          return { ...current!, on: 'everyone' };
+        },
+        'second',
+        T0 + 1000
+      );
+      expect(seen).toEqual([OFF, other]);
+      expect((await settings.changes()).entries[0]).toMatchObject({ from: other, to: ON, by: 'second' });
+    });
+
+    test('gives up on a value that keeps changing, writing nothing', async () => {
+      await settings.update('restore', () => OFF, 'first', T0);
+      let n = 0;
+      const err = await settings
+        .update(
+          'restore',
+          async () => {
+            n += 1;
+            await b.raw.hset(values, 'restore', JSON.stringify({ on: n % 2 ? 'admin' : 'admin-and-demo', containers: [] }));
+            return ON;
+          },
+          'second',
+          T0 + 1000
+        )
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UpdateConflictError);
+      expect((await settings.changes()).entries.map((c) => c.by)).toEqual(['first']);
+    });
+
+    test('never writes over a value it can’t read, naming it', async () => {
+      await b.raw.hset(values, 'restore', 'not json');
+      await b.raw.hset(values, 'refused', JSON.stringify(ON));
+      for (const id of ['restore', 'refused']) {
+        const err = await settings.update(id, () => ON, 'local development', T0).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(UnreadableEntriesError);
+        expect((err as InstanceType<typeof UnreadableEntriesError>).unrecognised).toEqual([id]);
+      }
+      expect(await b.raw.hget(values, 'restore')).toBe('not json');
+      expect(await b.raw.hgetall(record)).toEqual({});
+      expect((await settings.getAllReport()).unrecognised).toEqual(['refused', 'restore']);
+    });
+
+    test('refuses a value its check refuses, or a change without who made it, before anything is sent', async () => {
+      await expect(settings.update('restore', () => ({ on: 7 }) as unknown as Setting, 'local development', T0)).rejects.toThrow(TypeError);
+      await expect(settings.update('restore', () => ON, '', T0)).rejects.toThrow(TypeError);
+      await expect(settings.update('not an id', () => ON, 'local development', T0)).rejects.toThrow(TypeError);
+      expect(await b.raw.hgetall(values)).toEqual({});
+    });
+
+    test('a change it can’t read is named, never taken for none', async () => {
+      await settings.update('restore', () => ON, 'local development', T0);
+      await b.raw.hset(record, '2026-11-01T11:00:00.000Z.000000000000', 'not json');
+      const { entries, unrecognised } = await settings.changes();
+      expect(entries).toHaveLength(1);
+      expect(unrecognised).toEqual(['2026-11-01T11:00:00.000Z.000000000000']);
+    });
+
+    test('refuses a write over the ceiling whole', async () => {
+      process.env.MAX_TXN_BLOB_CHARS = '60';
+      const err = await settings.update('restore', () => ON, 'local development', T0).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(StoredValueTooLargeError);
+      expect(await b.raw.hgetall(values)).toEqual({});
+    });
+
+    test('a storage failure throws as it is', async () => {
+      b.failNext('hgetall');
+      await notBlamed(() => settings.getAllReport());
+      b.failNext('eval');
+      await notBlamed(() => settings.update('restore', () => ON, 'local development', T0));
+    });
+  });
   describe('measuring a whole container', () => {
     test("every key, the older stores' and the seam's, measured as stored, and nothing of another container's", async () => {
       await list.set(A, [NOTE]);
@@ -2007,8 +2145,11 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
   afterEach(async () => {
     // Nothing outside a container but the key store, as on the double.
     const keys = (await send('KEYS', ['*'])) as string[];
-    // And the public stores (lib/repo.ts definePublicMapStore), environment-wide by design.
-    expect(keys.filter((key) => !key.startsWith('test:c:') && !key.startsWith('test:crypto:') && !key.startsWith('test:fx:'))).toEqual([]);
+    // And the public and environment stores (lib/repo.ts definePublicMapStore,
+    // defineEnvironmentStore), environment-wide by design.
+    expect(
+      keys.filter((key) => !key.startsWith('test:c:') && !key.startsWith('test:crypto:') && !key.startsWith('test:fx:') && !key.startsWith('test:flags:'))
+    ).toEqual([]);
   });
   afterAll(() => {
     real?.stop();
@@ -2173,6 +2314,30 @@ describe('the key inventory', () => {
     expect(declaredPublicStore('fx:ecb')?.kind).toBe('public-map');
     // Never among the containers' stores, which the download and deletion walk.
     expect(declaredStores().some((s) => s.name.startsWith('fx:'))).toBe(false);
+  });
+
+  test('an environment store’s two keys are in it as plain text, outside containers only', () => {
+    expect(classify('flags:contract')).toBe('plain');
+    expect(classify('flags:contract-log')).toBe('plain');
+    expect(classify('flags:values')).toBe('plain');
+    expect(classify('flags:log')).toBe('plain');
+    expect(classify(`${c}flags:values`)).toBeNull();
+    expect(classify('flags:undeclared')).toBeNull();
+    expect(declaredEnvironmentStore('flags:log')?.name).toBe('flags:values');
+    expect(declaredStores().some((s) => s.name.startsWith('flags:'))).toBe(false);
+  });
+
+  test('an environment store’s keys must be environment-wide, backed up, and no old key family', () => {
+    const isAny = (v: unknown): v is unknown => true;
+    const opts = (log: string) => ({ log, what: 'x', isValid: isAny, logCap: 5 });
+    expect(() => defineEnvironmentStore('seam-contract-settings', opts('flags:contract-x-log'))).toThrow(/environment-wide/);
+    expect(() => defineEnvironmentStore('flags:contract-x', opts('seam-contract-x-log'))).toThrow(/environment-wide/);
+    expect(() => defineEnvironmentStore('fx:contract-x', opts('flags:contract-x-log'))).toThrow(/refetched/);
+    expect(() => defineEnvironmentStore('flags:Upper', opts('flags:contract-x-log'))).toThrow(/lowercase/);
+    expect(() => defineEnvironmentStore('flags:contract-x', opts('flags:contract-x'))).toThrow(/key of its own/);
+    expect(() => defineEnvironmentStore('flags:contract-x', { ...opts('flags:contract-x-log'), logCap: 0 })).toThrow(/at least one/);
+    // And a container store can't take a name under its prefix.
+    expect(() => defineMapStore('flags:contract-container', { what: 'x', isValid: isNote, exportable: false })).toThrow(/environment-wide/);
   });
 
   test('a public store’s name must be environment-wide, refetched, and no old key family', () => {

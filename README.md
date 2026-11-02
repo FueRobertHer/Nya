@@ -99,6 +99,8 @@ You need a [Plaid](https://dashboard.plaid.com/signup) account (the free sandbox
    bun run dev
    ```
 
+   `bun run dev` answers only this machine and opens `/dev/flags` for setting the feature switches locally; `bun run dev:lan` answers your network, to try the app on a phone ([docs/deployment.md](docs/deployment.md#5-local-development)).
+
    Open <http://localhost:3000>. Logging in with the shared password needs a container to exist; see [Containers](docs/operations.md#containers).
 5. **Connect an account.** Log in and click **Connect a bank or card** (or, with `PLAID_BROKERAGE_LINK=1` set, **Connect a brokerage or retirement account** for a 401(k), IRA or brokerage). In sandbox mode, search for any institution and use username `user_good` and password `pass_good`.
 6. **Deploy** with `vercel deploy --prod`, then install it on your phone from the browser's share or install menu.

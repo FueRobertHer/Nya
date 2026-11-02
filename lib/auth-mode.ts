@@ -4,15 +4,21 @@
 // both of its keys are set; otherwise the shared password (lib/auth.ts),
 // unchanged. Turning Clerk on or off is a change of environment, not of code.
 //
-// Only people on CLERK_ALLOWED_USER_IDS get in. It is comma-separated, and each
-// entry is a Clerk user id (user_...) or an email address. An email matches an
-// account that has it as a verified address, in any case: Clerk has proved the
-// person holds that inbox, so typing someone else's address into an account gets
-// nobody in. An account matching more than one entry (its id and its email) is
-// simply allowed; to turn someone away, remove every entry that matches them.
-// Unset or empty lets nobody in: a signed-in stranger must never reach the data.
-// Which data an allowed account reaches is lib/owners.ts: the first to sign in
-// owns what is already here, each other its own.
+// Who may sign in is the `sign-in` feature switch (lib/flags.ts). While
+// CLERK_ALLOWED_USER_IDS is set, only people on it get in, as always. It is
+// comma-separated, and each entry is a Clerk user id (user_...) or an email
+// address. An email matches an account that has it as a verified address, in
+// any case: Clerk has proved the person holds that inbox, so typing someone
+// else's address into an account gets nobody in. An account matching more than
+// one entry (its id and its email) is simply allowed; to turn someone away,
+// remove every entry that matches them. Set to nothing but commas and blanks,
+// it lets nobody in. Unset or empty, the deployment's owners (the accounts that
+// own its container, lib/owners.ts) get in, and so does anyone on the stored
+// list (set on the admin page from F2), which holds the same ids and emails;
+// until the flags have been read once here, nobody else can be told apart, and
+// the answer is 'unknown'. A signed-in stranger never reaches the data. Which
+// data an allowed account reaches is lib/owners.ts: the first to sign in owns
+// what is already here, each other its own.
 //
 // Ids are checked first and need nothing else. Emails need the account's
 // addresses from Clerk: looked up only when an email entry exists and the id
@@ -23,21 +29,11 @@
 // by id: ids never depend on Clerk answering.
 
 import { isDemoUser } from './demo';
+import { signInVariable } from './flags';
+import { signInFromStore } from './flag-read';
 
 export function clerkEnabled(): boolean {
   return !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && !!process.env.CLERK_SECRET_KEY;
-}
-
-function allowlist(): { ids: Set<string>; emails: Set<string> } {
-  const ids = new Set<string>();
-  const emails = new Set<string>();
-  for (const raw of (process.env.CLERK_ALLOWED_USER_IDS ?? '').split(',')) {
-    const entry = raw.trim();
-    if (!entry) continue;
-    if (entry.includes('@')) emails.add(entry.toLowerCase());
-    else ids.add(entry);
-  }
-  return { ids, emails };
 }
 
 export const EMAILS_REUSE_MS = 60_000;
@@ -89,13 +85,28 @@ export async function clerkUserAllowed(userId: string, now: number = Date.now())
  */
 export async function clerkUserAccess(userId: string, now: number = Date.now()): Promise<'allowed' | 'denied' | 'unknown'> {
   if (!userId) return 'denied';
-  const { ids, emails } = allowlist();
-  if (ids.has(userId)) return 'allowed';
-  // Preview's demo accounts (lib/demo.ts), wherever demos are on.
+  const listed = signInVariable();
+  if (listed !== undefined) {
+    if (listed.ids.includes(userId)) return 'allowed';
+    // Preview's demo accounts (lib/demo.ts), wherever demos are on.
+    if (isDemoUser(userId)) return 'allowed';
+    return byEmail(userId, listed.emails, now);
+  }
   if (isDemoUser(userId)) return 'allowed';
-  if (emails.size === 0) return 'denied';
+  const { owners, list } = await signInFromStore();
+  if (owners?.includes(userId) || list?.ids.includes(userId)) return 'allowed';
+  const answer = list ? await byEmail(userId, list.emails, now) : 'denied';
+  if (answer === 'allowed') return 'allowed';
+  // Not read yet here: whether this account may come in can't be told.
+  if (owners === null || list === null) return 'unknown';
+  return answer;
+}
+
+/** Whether one of an account's verified emails is among these. */
+async function byEmail(userId: string, emails: readonly string[], now: number): Promise<'allowed' | 'denied' | 'unknown'> {
+  if (emails.length === 0) return 'denied';
   try {
-    return (await emailsOf(userId, now)).some((e) => emails.has(e)) ? 'allowed' : 'denied';
+    return (await emailsOf(userId, now)).some((e) => emails.includes(e)) ? 'allowed' : 'denied';
   } catch (err) {
     console.error('Allowlist: the account’s emails could not be read from Clerk', err instanceof Error ? err.name : err);
     return 'unknown';

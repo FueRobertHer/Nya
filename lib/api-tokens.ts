@@ -69,8 +69,9 @@
 // Stored on the record only for balances and write (lib/api-token-store.ts),
 // written by createToken alone and never changed: more access is a new token.
 // What each operation allows is checked by the one runner every request goes
-// through, REST or MCP (lib/api-run.ts), and only while this copy lets tokens
-// write (lib/api-writes-enabled.ts) for anything beyond reading. A read
+// through, REST or MCP (lib/api-run.ts), and only while tokens may make
+// changes for the account (the `api-writes` feature switch, lib/api-run.ts
+// writesOn) for anything beyond reading. A read
 // token's requests write nothing of the person's: only its own bookkeeping,
 // its count, and when it was last used, at most once every LAST_USED_EVERY_MS.
 //

@@ -23,7 +23,10 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     ciphertext in the new ones;
 //   - what it writes into a container with a key of its own reads here;
 //   - its first key numbers past every key, and this release's next one past
-//     that.
+//     that;
+//   - its pass classifies every key outside the containers this release
+//     writes, but the feature switches', which this release writes only on
+//     /dev/flags in local development, and its export and restore carry them.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -54,6 +57,18 @@ const ISO = '2026-10-01T00:00:00.000Z';
  */
 const looksEncrypted = (v: unknown) =>
   typeof v === 'string' && (/^v2\.k[0-9]/.test(v) || (v.length >= 40 && v.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(v)));
+
+/**
+ * The release before's pass, classifying a key outside every container
+ * (lib/reencrypt.ts classify at main eae98c9c, copied here as looksEncrypted
+ * is): a key family on its lists, which the fixture's key-families.ts is byte
+ * for byte, or a public store it declares. A key it classifies as null stops
+ * its pass reporting complete. When the release before changes, copy its
+ * classification here: F2, whose release before is F1, copies F1's, which
+ * knows the feature switches' keys as plain text.
+ */
+const RELEASE_BEFORE_PUBLIC_STORES = ['fx:ecb'];
+const oldClassifyOutside = (key: string) => oFamilies.listedKind(key) ?? (RELEASE_BEFORE_PUBLIC_STORES.includes(key) ? 'plain' : null);
 
 async function oldExportText(): Promise<string> {
   let text = '';
@@ -104,6 +119,10 @@ async function deleteC() {
   await fake.hdel(testKey('containers'), C);
   await n.destroyContainerKeys({ container: C } as any);
 }
+
+const { classify } = await import('@/lib/reencrypt');
+const { ENV_WIDE_PREFIXES } = await import('@/lib/containers');
+const { declaredEnvironmentStores } = await import('@/lib/stores');
 
 describe('the release before’s own code', () => {
   test('is kept byte for byte, as its git blobs', () => {
@@ -251,6 +270,51 @@ describe('the release before, reading what this release writes', () => {
     expect(keyId === 'k0' || JSON.parse(String(fake.hashes.get(n.keysHashKey())!.get(keyId))).container === undefined).toBe(true);
     await fake.set(ctxKey('budgets', { container: B }), written);
     expect(await n.decrypt({ container: B } as any, written)).toBe('written while rolled back');
+  });
+
+  test('its pass classifies every key outside the containers this release writes but the feature switches’, as this release does', () => {
+    // One key under each environment-wide prefix or name, as this release
+    // writes them (a prefix's with a name after it), and every environment
+    // store's two keys.
+    const flagKeys = declaredEnvironmentStores().flatMap((s) => [s.name, s.logName]);
+    expect(flagKeys.sort()).toEqual(['flags:log', 'flags:values']);
+    const keys = [
+      ...ENV_WIDE_PREFIXES.filter((p) => p !== 'flags:').map((p) => (p.endsWith(':') ? `${p}one` : p)),
+      'fx:ecb',
+      'crypto:keys',
+      'backups:keys-lock',
+      'ratelimit:login:1.2.3.4',
+      'invites:abc',
+    ];
+    for (const key of keys) expect([key, oldClassifyOutside(key)]).toEqual([key, classify(key)]);
+    // The feature switches: plain text here, and unknown to the release
+    // before, whose pass would list them as unclassified and never report
+    // complete. So F1 writes them only on /dev/flags, in local development;
+    // F2 may write them, since its release before is this one.
+    for (const key of flagKeys) {
+      expect([key, classify(key)]).toEqual([key, 'plain']);
+      expect([key, oldClassifyOutside(key)]).toEqual([key, null]);
+    }
+  });
+
+  test('backs up the feature switches, which it doesn’t know, as plain text, and this release restores them', async () => {
+    await seedNewValues();
+    const values = JSON.stringify({ on: 'everyone', containers: [P], updatedAt: ISO });
+    await fake.hset(testKey('flags:values'), { restore: values });
+    await fake.hset(testKey('flags:log'), { [`${ISO}.000000000000`]: JSON.stringify({ at: ISO, key: 'restore', from: null, to: JSON.parse(values), by: 'local development' }) });
+    const text = await oldExportText();
+    const old = oRestore.verifyArchive(text).records.map((r: { key: string }) => r.key);
+    expect(old).toContain('flags:values');
+    expect(old).toContain('flags:log');
+    for (const key of ['flags:values', 'flags:log']) {
+      for (const v of fake.hashes.get(testKey(key))!.values()) expect(looksEncrypted(v)).toBe(false);
+    }
+    // This release takes its archive, and writes them back.
+    const plan = nRestore.planRestore(nRestore.verifyArchive(text), null, { tombstones: new Map(), keySeq: null });
+    expect(plan.left_out).toEqual([]);
+    const mine = nRestore.verifyArchive(text).records.map((r) => r.key);
+    expect(mine).toContain('flags:values');
+    expect(mine).toContain('flags:log');
   });
 
   test('numbers its first key past every key, container keys included, and this release’s next one never clashes with it', async () => {
