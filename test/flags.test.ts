@@ -305,10 +305,15 @@ describe('the cache', () => {
   test('a failed read waits before trying again from when it failed, not from when it began', async () => {
     fake.failNext('hgetall');
     expect((await read.cachedFlags(T)).source).toBe('none');
+    // The failure is kept as T plus the real time the read took (a millisecond
+    // or more once earlier files have warmed the process up), never before T:
+    // the wait runs from there.
+    const failedAt = flagCache.flags.triedAt;
+    expect(failedAt).toBeGreaterThanOrEqual(T);
     const reads = fake.ops;
-    expect((await read.cachedFlags(T + read.RETRY_MS - 1)).source).toBe('none');
+    expect((await read.cachedFlags(failedAt + read.RETRY_MS - 1)).source).toBe('none');
     expect(fake.ops).toBe(reads);
-    expect((await read.cachedFlags(T + read.RETRY_MS)).source).toBe('read');
+    expect((await read.cachedFlags(failedAt + read.RETRY_MS)).source).toBe('read');
   });
 
   test('a stored sign-in list that can’t be read leaves who may sign in unknown, never refusing those on it', async () => {
