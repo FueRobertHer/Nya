@@ -14,6 +14,7 @@
 // still mounted when the file's afterAll takes the document away throws on
 // its next update (React reads window.event) in whichever file runs next.
 
+import { afterEach, beforeEach, jest } from 'bun:test';
 import { act } from 'react';
 import { resetEachTest } from './shared-reset';
 
@@ -465,6 +466,39 @@ export function holdPress(el: FakeElement): () => unknown {
 /** A press a disabled control lets through anyway, now. */
 export function pressThrough(el: FakeElement): unknown {
   return holdPress(el)();
+}
+
+/** How far the fake clock moves between looks at what has settled. */
+const STEP_MS = 10;
+
+/** Lets the promises a step started settle: a few microtask turns. Never one
+ *  of the event loop's, so nothing from outside the process (a thread's
+ *  answer, a file read) can land in one run and not the next. */
+async function drain() {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+/** Puts every test of the calling file on a fake clock (bun:test's fake
+ *  timers), and returns how a test lets `ms` pass on it: the page's timers
+ *  run STEP_MS at a time, with what they start let settle between steps, so
+ *  a sheet's frame, a debounce or a request's answer comes in its order with
+ *  no real waiting, the same every run. What another thread or the disk
+ *  delivers (a Worker's answer, a module's first import) never arrives on
+ *  it: a test that needs one calls jest.useRealTimers() first, and then `ms`
+ *  is waited in real time. Switching timers either way forgets
+ *  setSystemTime, so a file that pins the date passes it as `now`. */
+export function fakeClock(opts: { now?: Date } = {}): (ms: number) => Promise<void> {
+  beforeEach(() => void jest.useFakeTimers(opts.now ? { now: opts.now } : undefined));
+  afterEach(() => void jest.useRealTimers());
+  return (ms) =>
+    act(async () => {
+      if (!jest.isFakeTimers()) return void (await new Promise((resolve) => setTimeout(resolve, ms)));
+      for (let t = 0; t < ms; t += STEP_MS) {
+        await drain();
+        jest.advanceTimersByTime(Math.min(STEP_MS, ms - t));
+      }
+      await drain();
+    });
 }
 
 /** Typing a whole new value into a field. */

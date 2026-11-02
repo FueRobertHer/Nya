@@ -499,8 +499,9 @@ describe('the Access URL', () => {
       ];
       for (const b of behaviours) {
         server.behaviour = b;
-        // A timeout shorter than the server's delay, as a slow answer would meet.
-        const res = b?.delayMs ? await import('@/lib/connectors/sync').then((s) => s.syncConnection(ctx, id, { purpose: 'refresh', deadline: Date.now() + 3_500 })) : null;
+        // A timeout shorter than the server's delay, as a slow answer would
+        // meet: a short one, with the time a request needs left cut to match.
+        const res = b?.delayMs ? await import('@/lib/connectors/sync').then((s) => s.syncConnection(ctx, id, { purpose: 'refresh', deadline: Date.now() + 300, minRequestMs: 100 })) : null;
         const route = b?.delayMs ? null : await call(refreshRoute.POST, 'POST', { connection_id: id });
         if (route) check(`refresh answer (${route.status})`, route.text);
         if (res) check('sync result', JSON.stringify(res));

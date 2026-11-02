@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, fakeClock, FakeElement, FakeEvent } from './mini-dom';
 
 // Home's hero (look and feel, step 5): dragging across its chart moves the
 // figure to the day under the finger, the change line's place says which
@@ -348,7 +348,8 @@ describe('the hero, scrubbed', () => {
 // a day at a time, Home and End jump to the ends, Escape or leaving the plot
 // brings back today, and the new figure is said once movement stops.
 describe('the hero, by the keys', () => {
-  const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 600))));
+  const pass = fakeClock();
+  const settle = () => pass(600);
 
   test('the plot is a slider in the tab order, named by its summary and told how to use', () => {
     const v = mount(card(<NetWorthChart hero points={POINTS} currency="USD" />));

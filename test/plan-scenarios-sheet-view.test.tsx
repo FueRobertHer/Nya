@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, outline, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, outline, fakeClock, FakeElement, FakeEvent } from './mini-dom';
 
 // The Scenarios sheet (components/PlanScenarios.tsx ScenariosSheet, rollout
 // phase 6b), used as a person would (react-dom/client over test/mini-dom.ts),
@@ -94,7 +94,8 @@ function store(initial: Entry[], unreadable: string[] = [], { hold = false } = {
 }
 
 /** The time a sheet takes to slide in (one frame) and a request to be answered. */
-const settle = (ms = 10) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const settle = (ms = 10) => pass(ms);
 
 type Shown = { planState?: 'loading' | 'ready' | 'error'; whyNot?: string | null; canOpen?: boolean };
 

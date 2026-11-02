@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type, FakeElement, FakeEvent } from './mini-dom';
+import { installDom, trackRoots, click, type, fakeClock, FakeElement, FakeEvent } from './mini-dom';
 import { categoriesFor } from './category-fixture';
 import { row } from './budget-notes-fixture';
 
@@ -75,7 +75,8 @@ const settings = (rolling: Record<string, string> = {}): RolloverSettings => ({
 });
 
 /** The time a sheet takes to slide in (one frame), or out. */
-const settle = (ms = 5) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const settle = (ms = 5) => pass(ms);
 
 function harness(host: FakeElement) {
   const all = (test: (e: FakeElement) => boolean) => host.findAll(test);

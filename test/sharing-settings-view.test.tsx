@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
+import { installDom, trackRoots, click, type FakeElement, fakeClock } from './mini-dom';
 
 // Settings > Sharing (components/Sharing.tsx SharingSettings), used as a
 // person would (react-dom/client over test/mini-dom.ts), with the sharing
@@ -51,7 +51,8 @@ globalThis.fetch = (async (url: string, init?: RequestInit) => {
 }) as typeof fetch;
 (dom.document.defaultView as Record<string, unknown>).confirm = () => true;
 
-const settle = (ms = 5) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
+const pass = fakeClock();
+const settle = (ms = 5) => pass(ms);
 const all = (root: FakeElement, pick: (e: FakeElement) => boolean) => root.findAll(pick);
 const button = (root: FakeElement, label: string) => all(root, (e) => e.tagName === 'BUTTON' && (e.textContent.trim() === label || e.getAttribute('aria-label') === label))[0];
 const dialog = () => all(dom.document.body, (e) => e.getAttribute('role') === 'dialog')[0];
