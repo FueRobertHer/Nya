@@ -11,7 +11,7 @@ import { INITIAL_SCENARIOS, createScenarioClient, type ScenarioEntry, type Scena
 import { currencyText, startLineText, startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
-import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { NO_CHANGES, scenarioChanges, type ScenarioChanges } from '@/lib/fire/scenarios';
 import { runPlanJob } from '@/lib/fire/jobs';
 import { usMarket } from '@/lib/fire/us-market';
@@ -19,6 +19,7 @@ import { HISTORY_COUNT, HISTORY_FIRST, historySpan } from '@/lib/fire/history-sp
 import { simulate, type SimResult } from '@/lib/fire/simulate';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
+import { figuresOf, OFF } from './plan-gen';
 
 // Compare mode (components/plan-compare.ts, PlanCompare.tsx) and the
 // scenario cards: one seed and one dataset, what each cell says, what a plan
@@ -29,7 +30,7 @@ const money = (n: number) => wholeMoney(n, 'USD');
 const TODAY = '2026-10-23';
 const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
 const measured: Measured = { spending: 40_000, savings: 30_000, assets: 300_000 };
-const figs = (p: FirePlan, events: ScenarioChanges['events'] = []): PlanFigures => planFigures(p, measured, events) as PlanFigures;
+const figs = (p: FirePlan, events: ScenarioChanges['events'] = []): PlanFigures => figuresOf(p, measured, events) as PlanFigures;
 const entry = (over: Partial<ScenarioEntry> = {}): ScenarioEntry => ({
   id: 's1',
   version: 1,
@@ -69,8 +70,8 @@ describe('one seed and one dataset', () => {
     const base = plan({ age: 40, targetAge: 55, method: 'monte-carlo' });
     const outcomes = [
       { kind: 'figures' as const, figures: figs(base) },
-      scenarioOutcome(base, entry(), measured, 'USD'),
-      scenarioOutcome(base, entry({ id: 's2', name: 'Spend more', set: { spending: 50_000 } }), measured, 'USD'),
+      scenarioOutcome(base, entry(), measured, OFF, 'USD'),
+      scenarioOutcome(base, entry({ id: 's2', name: 'Spend more', set: { spending: 50_000 } }), measured, OFF, 'USD'),
       { kind: 'not-run' as const },
     ];
     const jobs = compareJobs(outcomes, 'monte-carlo');
@@ -204,7 +205,7 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     const house = figs(plan({ age: 40, targetAge: 60 }), [{ id: 'h', kind: 'house', label: 'Our home', atAge: 42, cost: 800_000, yearly: 0, years: null }]);
     expect(house.short?.kind).toBe('cost');
     expect(fiDateText(house, TODAY)).toBe('none: a cost it can’t pay from its investments (below)');
-    const off = planFigures(plan({ age: 40, targetAge: 60 }), { ...measured, assets: 50_000 }, [{ id: 's', kind: 'sabbatical', label: 'Off', fromAge: 40, years: 1, savingsLost: 120_000 }]) as PlanFigures;
+    const off = figuresOf(plan({ age: 40, targetAge: 60 }), { ...measured, assets: 50_000 }, [{ id: 's', kind: 'sabbatical', label: 'Off', fromAge: 40, years: 1, savingsLost: 120_000 }]) as PlanFigures;
     expect(off.short?.kind).toBe('savings');
     expect(fiDateText(off, TODAY)).toBe('none: a year takes out more than there is (below)');
   });
@@ -223,9 +224,9 @@ describe('what the cells say (review: retiring before the FI date)', () => {
   });
 
   test('one that needs a figure that isn’t measured says so, for invested assets and for spending, rather than that it needs one (review round 3)', () => {
-    const noAssets = planFigures(plan({ age: 40, targetAge: 55, start: 'assets' }), { ...measured, assets: null, unmeasured: ['assets'] }, []) as PlanFigures;
-    const noSpending = planFigures(base, { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] }, []) as PlanFigures;
-    const none = planFigures(base, { spending: null, savings: null, assets: 300_000 }, []) as PlanFigures;
+    const noAssets = figuresOf(plan({ age: 40, targetAge: 55, start: 'assets' }), { ...measured, assets: null, unmeasured: ['assets'] }, []) as PlanFigures;
+    const noSpending = figuresOf(base, { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] }, []) as PlanFigures;
+    const none = figuresOf(base, { spending: null, savings: null, assets: 300_000 }, []) as PlanFigures;
     const cells = compareRows(
       [
         { id: 'plan', name: 'Your plan', isPlan: true, outcome: { kind: 'figures', figures: fBase, result: run(fBase) } },
@@ -339,7 +340,7 @@ describe('the words', () => {
   test('typed in another currency while the Plan’s isn’t known: it points at the question at the top of the Plan tab, on the card and in compare mode', () => {
     const said = 'Its amounts were typed in EUR, and which currency your plan’s figures are in isn’t known yet (at the top of the Plan tab). Nothing is converted, so it isn’t worked out until you have said.';
     expect(currencyText('EUR', 'USD', false)).toBe(said);
-    expect(scenarioOutcome(plan({ age: 40, targetAge: 55 }), entry({ currency: 'EUR', set: { spending: 45_000 } }), measured, 'USD', false)).toEqual({ kind: 'not-run', reason: said });
+    expect(scenarioOutcome(plan({ age: 40, targetAge: 55 }), entry({ currency: 'EUR', set: { spending: 45_000 } }), measured, OFF, 'USD', false)).toEqual({ kind: 'not-run', reason: said });
   });
 
   test('a cost the walk can’t pay', () => {
@@ -445,6 +446,7 @@ describe('the scenario cards', () => {
         state={state}
         client={createScenarioClient(() => {})}
         base={base}
+        count={OFF}
         baseFigures={figs(base)}
         measured={measured}
         planCurrency="USD"
@@ -524,7 +526,7 @@ describe('the scenario cards', () => {
     const inputs = renderToStaticMarkup(<Inputs />);
     expect(text(inputs)).toContain('Scenario: Retire at 45');
     const sim = renderToStaticMarkup(
-      <SimulationCard scenarioName="Retire at 45" plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />
+      <SimulationCard scenarioName="Retire at 45" plan={f.plan} notes={f.itemNotes} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />
     );
     const st = text(sim);
     expect(st).toContain('Scenario: Retire at 45');
@@ -544,7 +546,7 @@ describe('the scenario cards', () => {
   test('a plan run from money it wouldn’t have says so on its simulation card', () => {
     const p = plan({ age: 40, targetAge: 45 });
     const f = figs(p);
-    const t = text(renderToStaticMarkup(<SimulationCard startsWith={f.startsWith} plan={p} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />));
+    const t = text(renderToStaticMarkup(<SimulationCard startsWith={f.startsWith} plan={f.plan} notes={f.itemNotes} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />));
     expect(t).toContain('It starts with $1,000,000, your FI number at 45: you’d have about $548,653 then, $451,347 less: it starts with money it wouldn’t have then, so it reads safer than it is.');
   });
 });

@@ -57,6 +57,9 @@ export async function PUT(req: Request) {
       return bad('Invalid plan');
     }
     const b = typeof body === 'object' && body !== null ? (body as { plan?: unknown; currency?: unknown }) : {};
+    // This release saves version 1 only; version 2 is read, never written
+    // (lib/fire/plan-v2.ts).
+    if (typeof b.plan === 'object' && b.plan !== null && (b.plan as { version?: unknown }).version === 2) return bad('This plan holds what only a newer version of Nya can save');
     const parsed = parsePlan(b.plan);
     if ('error' in parsed) return bad(`Invalid plan: ${parsed.error}`);
     // Absent from a page of the release before, still open: the plan alone,

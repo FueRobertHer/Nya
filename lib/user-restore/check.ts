@@ -129,6 +129,10 @@ const SPECS: Readonly<Record<string, Spec>> = {
   'budget-months': { maps: ['categories', 'groups'] },
   categories: { maps: ['merged'] },
   'import-settings': { maps: ['csv.columns'] },
+  // A plan this release reads but doesn't save (lib/fire/plan-v2.ts): a
+  // restore writes what a save would.
+  'fire-plan': { extra: (v) => (isRecord(v) && v.version === 2 ? 'version: is a plan only a newer version of Nya can save' : null) },
+  'fire-plan-saved': { extra: (v) => (isRecord(v) && isRecord(v.plan) && v.plan.version === 2 ? 'plan.version: is a plan only a newer version of Nya can save' : null) },
 };
 
 const POISONS: readonly unknown[] = ['\u0000nya-restore-probe', { '\u0000nya-restore-probe': true }];

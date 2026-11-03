@@ -29,6 +29,9 @@ import { MAX_PLAN_SCENARIOS, NO_CHANGES, resolveScenario, type ScenarioChanges }
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { EventNote, LifeEvent } from '@/lib/fire/events';
 import type { FirePlan, Measured } from '@/lib/fire/plan';
+import type { Count } from '@/lib/fire/compile';
+import { eventItems } from '@/lib/fire/items';
+import { planOf } from '@/lib/fire/plan-v2';
 
 /** Said when the Plan has no currency to give a scenario's amounts, as a
  *  save into an open scenario says it (components/PlanTab.tsx persistIn). */
@@ -37,11 +40,11 @@ const NO_CURRENCY = 'Your plan has no currency yet (no accounts to take it from)
 /** A scenario with this event in it, as it would open: when it reaches FI,
  *  and what of this event (not the others) is left out and why
  *  (lib/fire/plan-figures.ts). On your plan, `changes` is none. */
-function draftOutcome(base: FirePlan, measured: Measured, changes: ScenarioChanges, event: LifeEvent): { when: FiWhen; notes: EventNote[] } {
+function draftOutcome(base: FirePlan, measured: Measured, count: Count, changes: ScenarioChanges, event: LifeEvent): { when: FiWhen; notes: EventNote[] } {
   const events = withDraft(changes.events, event);
   const r = resolveScenario(base, { ...changes, events });
   if (!r.ok) return { when: { kind: 'not-run' }, notes: [] };
-  const f = planFigures(r.plan, measured, events);
+  const f = planFigures(planOf(r.plan), measured, { events: eventItems(events), count });
   if ('refused' in f) return { when: { kind: 'not-run' }, notes: [] };
   return { when: fiWhen(f), notes: (f.events?.notes ?? []).filter((n) => n.id === event.id) };
 }
@@ -54,6 +57,7 @@ export function DraftPreview({
   kind,
   base,
   measured,
+  count,
   changes,
   against,
   where,
@@ -64,6 +68,7 @@ export function DraftPreview({
   kind: LifeEvent['kind'];
   base: FirePlan;
   measured: Measured;
+  count: Count;
   changes: ScenarioChanges;
   /** What it moves from: your plan's figures, or the scenario's now (null
    *  when they aren't worked out). */
@@ -74,7 +79,7 @@ export function DraftPreview({
   children?: ReactNode;
 }) {
   const draft = 'ok' in checked ? checked.ok : null;
-  const d = draft ? draftOutcome(base, measured, changes, draft) : null;
+  const d = draft ? draftOutcome(base, measured, count, changes, draft) : null;
   return (
     <div className="notice info">
       {INFO}
@@ -98,6 +103,7 @@ export function WhatIfCard({
   base,
   baseFigures,
   measured,
+  count,
   state,
   client,
   planCurrency,
@@ -114,10 +120,12 @@ export function WhatIfCard({
   /** The card is drawn: your plan is shown. Its sheet stays mounted either
    *  way, so one closing as its scenario opens slides out. */
   shown: boolean;
-  /** Your plan as the tab shows it, loaded. */
+  /** Your plan as the tab shows it, loaded, in version 1 (scenarios are
+   *  kept against it). */
   base: FirePlan;
   baseFigures: PlanFigures;
   measured: Measured;
+  count: Count;
   state: ScenariosState;
   client: ScenarioClient;
   planCurrency: string | null;
@@ -191,7 +199,7 @@ export function WhatIfCard({
           savingText="Trying…"
           whereText="Your plan stays as it is."
           preview={(checked: Checked) => (
-            <DraftPreview checked={checked} kind={held.kind} base={base} measured={measured} changes={NO_CHANGES} against={baseFigures} where="what-if" money={money}>
+            <DraftPreview checked={checked} kind={held.kind} base={base} measured={measured} count={count} changes={NO_CHANGES} against={baseFigures} where="what-if" money={money}>
               {'ok' in checked && <p>{`Try it makes this the scenario “${whatIfName(held, checked.ok, list)}”, and opens it.`}</p>}
             </DraftPreview>
           )}
@@ -265,7 +273,7 @@ export function WhatIfCard({
           {ready && list.length > 0 && (
             <ul className="list-rows" aria-label="Your scenarios">
               {list.map((s) => {
-                const outcome = scenarioOutcome(base, s, measured, planCurrency, planCurrencyKnown);
+                const outcome = scenarioOutcome(base, s, measured, count, planCurrency, planCurrencyKnown);
                 const when = fiWhen(outcome.kind === 'figures' ? outcome.figures : null);
                 return (
                   <li key={s.id}>

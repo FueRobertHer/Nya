@@ -123,6 +123,15 @@ export const FLAGS = {
     defaults: NOBODY,
     offMeans: 'A detailed plan says it uses the flat rate, and a plan can’t be saved as detailed.',
   },
+  'plan-items-in-fi': {
+    name: 'One-offs and income in the FI date',
+    about: 'Counts a plan’s one-off costs and income in the walk to its FI date, in Home’s FI line and in a saved plan’s Progress line.',
+    kind: 'release',
+    removeBy: '2027-04-30',
+    value: 'audience',
+    defaults: NOBODY,
+    offMeans: 'A plan’s one-offs and income count only from the age Will it last? starts, as before. Nothing stored changes.',
+  },
   csp: {
     name: 'Content security policy',
     about: 'How pages send their Content-Security-Policy: enforced, only reported, or off.',

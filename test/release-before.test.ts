@@ -27,7 +27,11 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //   - its pass classifies every key outside the containers this release
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
-//     and its export and restore carry them.
+//     and its export and restore carry them;
+//   - its Plan (test/fixtures/release-before/fire) reads every plan, saved
+//     plan, scenario and currency record this release writes: E1 reads
+//     version 2 and edits through version 2's views, and writes version 1
+//     only, which a download keeps.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -137,6 +141,23 @@ describe('the release before’s own code', () => {
       'export.ts': '5906750754885798848a4dff583f00219bacb519',
       'restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
       'key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
+      // The plan's readers and arithmetic as at 5d366bd0, where E1 began
+      // (test/release-before-plan.test.ts; fire/inputs.ts is a type stub).
+      'fire/plan.ts': '77d77ae84e01d143a866b7a8831bc0304c9bf220',
+      'fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
+      'fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
+      'fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
+      'fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
+      'fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
+      'fire/events.ts': '9e334a6c3967f4a3e5390b2315b39d6a5bf8daff',
+      'fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
+      'fire/saved-plan.ts': 'd920ab9d4e4b8a266a600a3575945ba9e391a0e9',
+      'fire/plan-currency.ts': 'e9829d2c641a036f1a04a6dd146e3628aff814db',
+      'fire/plan-figures.ts': 'd3f8fb004fcd0c6af9ba720e283c844c4e179121',
+      'fire/path.ts': '3bfa79634c981f2e3dda76a77d8bc4a230a05ace',
+      'manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
+      'format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
+      'local-date.ts': '23883717b80397910e368084e865ca84f367f988',
     };
     for (const [file, blob] of Object.entries(blobs)) {
       const bytes = readFileSync(join(import.meta.dir, 'fixtures', 'release-before', file));
@@ -335,5 +356,72 @@ describe('the release before, reading what this release writes', () => {
     // commits to its key.
     const p = await n.prepareContainerKey(B as any, { born: false });
     expect(ids).not.toContain(p!.id);
+  });
+});
+
+// The Plan's modules, the release before's and this one's.
+const oPlan = await import('./fixtures/release-before/fire/plan');
+const oSaved = await import('./fixtures/release-before/fire/saved-plan');
+const oScenarios = await import('./fixtures/release-before/fire/scenarios');
+const oCurrency = await import('./fixtures/release-before/fire/plan-currency');
+const { planOf, toStored, upgradeStoredPlan } = await import('@/lib/fire/plan-v2');
+const { expensesOf, incomeOf, withExpenses, withIncome } = await import('@/lib/fire/items');
+const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
+const { NO_CHANGES, recordSave } = await import('@/lib/fire/scenarios');
+const { genPlan, rand } = await import('./plan-gen');
+
+describe('the Plan, as E1 writes it', () => {
+  /** A version 1 plan, edited as the cards edit it (an income dropped and
+   *  one added, every one-off's amount changed, a figure typed), sent as a
+   *  save sends it. Null where the edit makes more than version 1 takes. */
+  const edited = (seed: number) => {
+    const g = rand(seed);
+    const p = genPlan(g, seed % 3 === 0);
+    let v2 = planOf(p);
+    const income = incomeOf(v2);
+    v2 = withIncome(v2, [...income.slice(1), { id: `new${seed}`, label: 'Pension', amount: g.int(1, 40) * 1000, fromAge: g.int(50, 70), inflationAdjusted: g.chance(0.5) }]);
+    v2 = withExpenses(v2, expensesOf(v2).map((x) => ({ ...x, amount: x.amount + 1000 })));
+    v2 = { ...v2, spending: g.int(20, 90) * 1000 };
+    const sent = toStored(v2, 1);
+    return { before: p, sent: 'error' in sent ? null : sent.plan };
+  };
+  const plans = Array.from({ length: 300 }, (_, i) => edited(9100 + i));
+
+  test('its reader takes every plan E1 saves, as it is', () => {
+    let saved = 0;
+    for (const { sent } of plans) {
+      if (!sent) continue;
+      saved++;
+      expect(sent.version).toBe(1);
+      expect(oPlan.isFirePlan(sent)).toBe(true);
+      expect(oPlan.upgradePlan(sent)).toEqual(sent);
+    }
+    expect(saved).toBeGreaterThan(250);
+  });
+
+  test('its saved plan, scenario and currency record readers take what E1 writes beside it', () => {
+    for (const [i, { before, sent }] of plans.entries()) {
+      if (!sent) continue;
+      const saved = { version: 1, plan: sent, savings: 10_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: `r${i}` };
+      expect(oSaved.isSavedPlan(saved)).toBe(true);
+      // A scenario saved from an edit made on top of the plan (lib/fire/
+      // scenarios.ts, unchanged in E1, its base the plan as version 1).
+      const changes = recordSave(before, NO_CHANGES, sent);
+      if ('ok' in changes) {
+        const scenario = { ...changes.ok, name: 'Edited', currency: 'USD', version: 1, createdAt: '2026-11-01T12:00:00.000Z', savedAt: '2026-11-01T12:00:00.000Z', rev: `s${i}` };
+        expect(oScenarios.isPlanScenario(scenario)).toBe(true);
+      }
+      const record = currencyRecord(sent, 'USD');
+      expect(oCurrency.isPlanCurrencyRecord(record)).toBe(true);
+      expect(typedAmounts(sent)).toEqual(oCurrency.typedAmounts(sent));
+      if (oCurrency.hasTypedAmounts(sent)) expect(oCurrency.recordedCurrency(sent, record)).toBe('USD');
+    }
+  });
+
+  test('a version 1 plan downloads as version 1, as the release before downloads it', () => {
+    for (const { before } of plans) {
+      expect(upgradeStoredPlan(before)).toEqual(oPlan.upgradePlan(before));
+      expect((upgradeStoredPlan(before) as { version: number }).version).toBe(1);
+    }
   });
 });

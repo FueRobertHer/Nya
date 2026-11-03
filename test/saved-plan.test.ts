@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
-import { changedSince, isSavedPlan, parseSavedDraft, plannedAt, upgradeSavedPlan, yearsBetween, type SavedPlan } from '@/lib/fire/saved-plan';
+import { changedSince, isSavedPlan, parseSavedDraft, plannedAt, upgradeSavedPlan, yearsBetween, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
+import { resolveSaved } from '@/lib/fire/plan-figures';
 
 // The plan saved as your plan (lib/fire/saved-plan.ts): what a save must
 // meet, what a stored one must be to read back, where the plan has you on a
@@ -105,6 +106,46 @@ describe('where the saved plan has you on a day', () => {
 
   test('a growth rate the formula doesn’t take gives nothing, never a guess', () => {
     expect(plannedAt({ ...SAVED, plan: { ...PLAN, realReturn: -1 } }, start, '2025-10-26')).toBeNull();
+  });
+});
+
+describe('a saved plan’s one-offs and income on its line', () => {
+  const start = { day: '2024-10-26', total: 100_000 };
+  const walk = (over: Partial<SavedItems['walk']>): SavedItems => ({ from: '2024-10-26', age: 35, walk: { moneyIn: [], costs: [], spans: [], ...over }, counted: [] });
+
+  test('by hand: a cost at the start of its year, grown from then', () => {
+    // 164,651.875 four years on (above), less 20,000 taken two years in and
+    // its two years of growth (22,050), raised by 3% inflation a year.
+    expect(plannedAt(SAVED, start, '2028-10-26', walk({ costs: [{ year: 2, amount: 20_000 }] }))).toBeCloseTo((164_651.875 - 22_050) * 1.03 ** 4, 6);
+    expect(plannedAt(SAVED, start, '2028-10-26', walk({ moneyIn: [{ year: 2, amount: 20_000 }] }))).toBeCloseTo((164_651.875 + 22_050) * 1.03 ** 4, 6);
+    // Not yet come: nothing.
+    expect(plannedAt(SAVED, start, '2025-10-26', walk({ costs: [{ year: 2, amount: 20_000 }] }))).toBe(plannedAt(SAVED, start, '2025-10-26'));
+  });
+
+  test('a year that starts before the start day is left out: the measured start holds it', () => {
+    const later = { day: '2025-10-26', total: 100_000 };
+    expect(plannedAt(SAVED, later, '2027-10-26', walk({ costs: [{ year: 0, amount: 20_000 }] }))).toBe(plannedAt(SAVED, later, '2027-10-26'));
+    // Year 1 starts 365.25 days after the saved day, a day after the start.
+    const years = yearsBetween(later.day, '2027-10-26');
+    const at = 1 - yearsBetween('2024-10-26', later.day);
+    expect(plannedAt(SAVED, later, '2027-10-26', walk({ costs: [{ year: 1, amount: 20_000 }] }))).toBeCloseTo(plannedAt(SAVED, later, '2027-10-26')! - 20_000 * 1.05 ** (years - at) * 1.03 ** years, 6);
+  });
+
+  test('a change to savings is added through the years it covers, as the savings are', () => {
+    const flat = { ...SAVED, plan: { ...PLAN, realReturn: 0 }, inflation: 0 };
+    expect(plannedAt(flat, start, '2028-10-26', walk({ spans: [{ from: 1, to: 3, delta: -10_000 }] }))).toBeCloseTo(140_000 - 20_000, 6);
+    expect(plannedAt(flat, start, '2028-10-26', walk({ spans: [{ from: 3, to: null, delta: 5_000 }] }))).toBeCloseTo(140_000 + 5_000, 6);
+  });
+
+  test('placed once from the saved copy, with D15’s switch: one-offs and income only with it on', () => {
+    const saved = { ...SAVED, plan: { ...PLAN, expenses: [{ id: 'roof', label: 'Roof', amount: 20_000, atAge: 37 }] } };
+    expect(resolveSaved(saved, start, 40_000, { planInWalk: false })).toBeNull();
+    const on = resolveSaved(saved, start, 40_000, { planInWalk: true });
+    expect(on?.walk.costs).toEqual([{ year: 2, amount: 20_000 }]);
+    expect(on?.counted.map((c) => [c.item.label, c.ages])).toEqual([['Roof', { start: 37, end: null }]]);
+    expect(resolveSaved(saved, start, 40_000, { planInWalk: true })).toBe(on);
+    // No age: nothing placed, a steady line as before.
+    expect(resolveSaved({ ...saved, rev: 'r2', plan: { ...saved.plan, age: null } }, start, 40_000, { planInWalk: true })).toBeNull();
   });
 });
 

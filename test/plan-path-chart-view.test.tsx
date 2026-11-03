@@ -6,9 +6,10 @@ import { projectBalance } from '@/lib/fire/fi';
 import { FiCard } from '@/components/PlanTab';
 import { leftOutText, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
-import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { planPath } from '@/lib/fire/path';
 import type { LifeEvent } from '@/lib/fire/events';
+import { figuresOf } from './plan-gen';
 
 // The summary says each amount in full, in whole dollars, never "$1.2M".
 const c = (n: number) => wholeMoney(n, 'USD');
@@ -131,7 +132,7 @@ describe('the path chart', () => {
   test('a windfall that reaches the FI number the day it comes: the line steps up at that age, and the marker is on the step (8d)', () => {
     // FI number $1,000,000; $653,750 at 42, and $400,000 in then.
     const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
-    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 500_000, savings: 50_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
+    const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 500_000, savings: 50_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
     expect(f.view.fiAge).toBe(42);
     const p = planPath(f)!;
     const html = draw(props({ points: p.points, stopAge: 55, fiNumber: f.view.fiNumber, fiAge: f.view.fiAge, withEvents: true }));
@@ -185,7 +186,7 @@ describe('the answer over the chart', () => {
     // A $250,000 one-year drop in spending at 41 lifts it to FI around 42;
     // then $50,000 a year out runs it down before 80.
     const drop: LifeEvent = { id: 'd', kind: 'spending', label: 'Drop', fromAge: 41, yearly: -250_000, years: 1 };
-    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 80, spending: 30_000, assets: 600_000, savings: -50_000 }, { spending: null, savings: null, assets: null }, [drop]) as PlanFigures;
+    const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 80, spending: 30_000, assets: 600_000, savings: -50_000 }, { spending: null, savings: null, assets: null }, [drop]) as PlanFigures;
     const p = planPath(f)!;
     expect(f.short).toBeNull();
     expect(p.short).not.toBeNull();
@@ -197,7 +198,7 @@ describe('the answer over the chart', () => {
   test('a windfall that takes it to FI, then savings below zero that run it out, says both (8d)', () => {
     // FI number $750,000; $207,750 at 42, $600,000 in then, $60,000 a year out.
     const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 600_000 };
-    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 80, spending: 30_000, assets: 300_000, savings: -60_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
+    const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 80, spending: 30_000, assets: 300_000, savings: -60_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
     const p = planPath(f)!;
     expect([f.short, f.view.yearsToFi]).toEqual([null, 2]);
     expect(p.short?.kind).toBe('savings');
@@ -207,7 +208,7 @@ describe('the answer over the chart', () => {
   });
 
   test('one that never runs out says nothing of it', () => {
-    const f = planFigures({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 250_000, savings: 30_000 }, { spending: null, savings: null, assets: null }, []) as PlanFigures;
+    const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 250_000, savings: 30_000 }, { spending: null, savings: null, assets: null }, []) as PlanFigures;
     expect(card(f)).not.toContain('runs out');
   });
 });
@@ -219,7 +220,7 @@ describe('Whole path', () => {
   const none = { spending: null, savings: null, assets: null };
   const base = { ...DEFAULT_PLAN, age: 41, targetAge: 50, spending: 60_000, savings: 50_000, assets: 595_000 };
   const whole = (p: typeof base, over: Partial<PathChartProps> = {}, width = 320) => {
-    const f = planFigures(p, none) as PlanFigures;
+    const f = figuresOf(p, none) as PlanFigures;
     const path = planPath(f)!;
     const chart: PathChartProps = {
       points: path.points,

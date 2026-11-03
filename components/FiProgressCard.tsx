@@ -8,11 +8,13 @@
 // THE PLAN'S OWN FIGURES. It reads the saved plan from the copy of the
 // Plan's inputs it shares with the Plan tab (lib/plan-inputs-store.ts: one
 // request between the two, taken as it is for five minutes), repairs
-// it as the Plan tab does (lib/fire/plan.ts repairPlan), measures from the
+// it as the Plan tab does (lib/fire/plan-v2.ts basePlanOf), measures from the
 // same hook (components/plan-inputs.ts: a year of transactions, invested
 // assets, workplace plan contributions) and works the figures out with the
-// same function (lib/fire/progress.ts fiFigures), so Home and the Plan
-// always agree. Never a simulation: the engine's code stays out of Home's
+// same functions (lib/fire/plan-figures.ts planFigures, with the plan's items
+// and D15's switch as the Plan has it, and lib/fire/path.ts planPath for
+// where it runs out), so Home and the Plan always agree. Never a simulation:
+// the engine's code stays out of Home's
 // bundle (components/FiProgressLoader.tsx loads this after Home paints), and
 // nothing here runs it.
 //
@@ -47,10 +49,14 @@ import type { Txn } from './MonthBreakdown';
 import { usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
-import { DEFAULT_PLAN, isFirePlan, projectFrom, repairPlan, type FirePlan } from '@/lib/fire/plan';
+import { projectFrom, type PlanCore } from '@/lib/fire/plan';
+import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
+import { planFigures } from '@/lib/fire/plan-figures';
+import { planPath } from '@/lib/fire/path';
+import { shortText } from './plan-scenario-text';
 import { projectionShort } from '@/lib/fire/fi';
 import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, shownFrom, unconfirmedText, type CurrencyAnswer } from '@/lib/fire/plan-currency';
-import { assetsGap, assetsLeftOut, fiFigures, gapText, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
@@ -78,24 +84,26 @@ export type FiProgressProps = {
   /** The copy of the Plan's inputs Home shares with the Plan tab
    *  (components/Dashboard.tsx); left out, the card keeps its own. */
   planInputs?: PlanInputsStore;
+  /** D15's switch (the flag 'plan-items-in-fi'), as the Plan tab has it. */
+  planInWalk?: boolean;
 };
 
 /** What /api/plan-inputs answered of the plan: the saved plan, or null for
  *  none, and the currency its figures are in; a saved plan that can't be
  *  read; or a request that failed. Null before any answer. */
-type Loaded = { plan: FirePlan | null; currency: CurrencyAnswer } | 'unreadable' | 'failed' | null;
+type Loaded = { plan: StoredPlan | null; currency: CurrencyAnswer } | 'unreadable' | 'failed' | null;
 
 function loadedFrom(answered: PlanInputsCopy['plan']): Loaded {
   if (!answered) return null;
   const { status, body } = answered;
   const plan: unknown = body?.plan;
-  if (status === 200 && (plan === null || isFirePlan(plan))) return { plan, currency: readCurrencyAnswer(body) };
+  if (status === 200 && (plan === null || isStoredPlan(plan))) return { plan, currency: readCurrencyAnswer(body) };
   // The store says it can't read it, or it holds a plan this release can't
   // take (a newer one's): said. Anything else failed to arrive.
   return (status === 409 && body?.unreadable === true) || (status === 200 && plan !== undefined) ? 'unreadable' : 'failed';
 }
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
   const shared = useSharedPlanInputs(own, institutions);
   const answered = shared.copy.plan;
@@ -104,7 +112,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   const answer = loaded && typeof loaded === 'object' ? loaded.currency : NO_ANSWER;
   // As the Plan tab works from it: a value this release can't take is
   // replaced by its default there too, with the same result.
-  const repair = useMemo(() => repairPlan(stored ?? DEFAULT_PLAN), [stored]);
+  const repair = useMemo(() => basePlanOf(stored), [stored]);
   const plan = repair.plan;
   const inputs = usePlanInputs({
     txns,
@@ -118,7 +126,16 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     currency: answer.currency,
     contributions: shared.contributions,
   });
-  const figures = fiFigures(plan, inputs, currency);
+  // The Plan's own figures: its items placed and counted as the Plan's are,
+  // the answer the walk's and where the path runs out the path's.
+  const planned = useMemo(() => {
+    const f = planFigures(plan, measuredInputs(inputs), { count: { planInWalk } });
+    if ('refused' in f) return null;
+    const path = planPath(f);
+    return { view: f.view, short: f.short, runsOutAt: !f.short && path?.short && plan.age !== null ? plan.age + path.short.year : null };
+  }, [plan, inputs, planInWalk]);
+  const measured = fiFigures(plan, inputs, currency);
+  const figures = planned ? { ...measured, view: planned.view } : measured;
   if (loaded === 'unreadable') return <FiRow what="FI isn’t worked out" detail="Your saved plan couldn’t be read: the Plan tab says why." onOpenPlan={onOpenPlan} notes={[]} />;
   if (
     !ready({
@@ -139,6 +156,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       repaired={repair.fixed.length > 0}
       inputs={inputs}
       onOpenPlan={onOpenPlan}
+      walk={planned ? { short: planned.short && shortText(planned.short, plan.age, (n) => wholeMoney(n, figures.currency)), runsOutAt: planned.runsOutAt } : { short: null, runsOutAt: null, refused: true }}
     />
   );
 }
@@ -168,18 +186,25 @@ export function FiProgressView({
   repaired,
   inputs,
   onOpenPlan,
+  walk = null,
 }: {
   figures: FiFigures;
   /** Which currency the plan's typed figures are in isn't known yet: what
    *  to say (lib/fire/plan-currency.ts unconfirmedText). */
   unconfirmed?: string | null;
-  plan: FirePlan;
+  plan: PlanCore;
   /** A plan was saved; otherwise these are the defaults. */
   saved: boolean;
   /** The saved plan had values this release can't use (the Plan tab shows them). */
   repaired: boolean;
   inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows' | 'rates'>;
   onOpenPlan: () => void;
+  /** From the Plan's figures (lib/fire/plan-figures.ts): why the walk has no
+   *  FI date (a cost it can't pay), in the Plan's words; the age the path
+   *  runs out at; or `refused`, lasting changes that take spending in
+   *  retirement below zero, which the Plan tab says. Left out, where the
+   *  steady projection runs out is worked out here. */
+  walk?: { short: string | null; runsOutAt: number | null; refused?: boolean } | null;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
   // Without a home currency, a figure that would rest on a part of what it
@@ -192,7 +217,8 @@ export function FiProgressView({
   const flowsGap = view.spending.source === 'unmeasured' ? yearGap : null;
   const yearText = yearGap && !flowsGap ? gapText(yearGap, view.savings.source === 'typed' ? 'rate' : 'year') : null;
   const accountsGap = view.assets.source === 'unmeasured' ? assetsGap(inputs.assets, inputs.rates) : null;
-  const waitsFor = view.yearsToFi === null ? notMeasuredWhat(view) : null;
+  if (walk?.refused) return <FiRow what="FI isn’t worked out" detail="Your plan’s changes take spending in retirement below zero: the Plan tab says which." onOpenPlan={onOpenPlan} notes={[]} />;
+  const waitsFor = view.yearsToFi === null && !walk?.short ? notMeasuredWhat(view) : null;
   const notWorkedOut = waitsFor ? `Years to FI aren’t worked out: ${waitsFor} measured (above), and a figure that isn’t measured is never counted as zero.` : null;
   // Every note the card said, in its words and its level (amber where it says
   // a figure may be off or isn't measured, neutral where it explains): under
@@ -259,6 +285,7 @@ export function FiProgressView({
   if (yearText) notes.push({ key: 'year', severity: 'caution', summary: 'savings not measured', body: yearText });
   if (accountsGap) notes.push({ key: 'accounts-gap', severity: 'caution', summary: 'invested assets not measured', body: gapText(accountsGap) });
   if (notWorkedOut) notes.push({ key: 'not-worked-out', severity: 'caution', summary: 'years to FI not worked out', body: notWorkedOut });
+  if (walk?.short) notes.push({ key: 'no-date', severity: 'caution', summary: 'no FI date', body: <Masked>{walk.short}</Masked> });
   if (unconfirmed) notes.push({ key: 'unconfirmed', severity: 'caution', summary: 'the plan’s currency not confirmed', body: unconfirmed });
   if (convertedNote) notes.push({ key: 'converted', severity: 'info', summary: 'converted into the Plan’s currency', body: convertedNote });
   if (repaired)
@@ -273,15 +300,18 @@ export function FiProgressView({
   // is invested of the FI number, how far, the savings rate). At FI already,
   // but with savings that run the steady projection out before the stop
   // age, it says so, as the Plan does.
-  const from = projectFrom(plan, view);
+  const from = walk ? null : projectFrom(plan, view);
   const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, plan.realReturn, from.years) : null;
-  const head = fiHeadline(view, plan, { runsOutAt: runsOut && plan.age !== null ? plan.age + runsOut.year : null });
+  const runsOutAt = walk ? walk.runsOutAt : runsOut && plan.age !== null ? plan.age + runsOut.year : null;
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!walk?.short, runsOutAt });
   const there = view.progress !== null ? progressText(view.progress) : null;
   const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
   const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
   let title: string;
   let withNumber = true;
-  if (head.kind === 'age') title = `FI around age ${head.age}${head.against ? `, ${lower(head.against)}` : ''}`;
+  if (head.kind === 'age' && plan.stopAtFi) title = `FI and your stop around ${head.age}`;
+  else if (head.kind === 'age') title = `FI around age ${head.age}${head.against ? `, ${lower(head.against)}` : ''}`;
+  else if (head.kind === 'no-date') title = 'No FI date';
   else if (head.kind === 'years' || head.kind === 'later') title = `FI ${lower(head.headline)}`;
   else if (head.kind === 'there') title = head.against ? `You’re at FI, but ${lower(head.against)}` : 'You’re at FI';
   else if (head.kind === 'never') title = `FI ${lower(head.headline)}`;
