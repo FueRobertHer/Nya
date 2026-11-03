@@ -3,7 +3,7 @@
 // Imports nothing heavy: no engine, no data.
 
 import type { RuleKind } from '@/lib/fire/rules';
-import type { FiView } from '@/lib/fire/plan';
+import { PLAN_TO_AGE, type FiView } from '@/lib/fire/plan';
 import { amountsHidden, formatDay, hiddenMoney, MINUS, trueMinus } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
 import type { PathAfter } from '@/lib/fire/path';
@@ -125,22 +125,28 @@ export type FiHeadline = {
 
 const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
 
+/** Today's age and the stop the figures are at (FiView's stopAge, from
+ *  lib/fire/plan.ts stopOf), and whether the stop is "when I reach FI". */
+export type StopAges = { age: number | null; stopAge: number | null; stopAtFi?: boolean };
+
 /** `runsOutAt`: the age the steady projection can't go on at, when it can't
  *  before the stop age (lib/fire/path.ts); `noDate`: the walk can't get to
  *  FI at all (a cost it can't pay); `need`: what an answer not worked out
  *  waits for, said as the answer (figuresNeed), where the Plan draws it. */
 export function fiHeadline(
   view: { yearsToFi: number | null; fiAge: number | null },
-  ages: { age: number | null; targetAge: number | null },
+  ages: StopAges,
   o: { noDate?: boolean; runsOutAt?: number | null; need?: string | null } = {}
 ): FiHeadline {
-  const ask: FiHeadline['ask'] = ages.age === null && ages.targetAge === null ? 'both' : ages.age === null ? 'age' : ages.targetAge === null ? 'stop' : null;
+  // Under "stop when I reach FI" there is no stop age to ask for.
+  const noStop = ages.stopAge === null && !ages.stopAtFi;
+  const ask: FiHeadline['ask'] = ages.age === null && noStop ? 'both' : ages.age === null ? 'age' : noStop ? 'stop' : null;
   const base = { against: null, age: null, before: null, ask, runsOut: null };
   const y = view.yearsToFi;
   if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
   if (y === null) return { ...base, kind: 'unknown', headline: o.need ?? '--' };
   if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
-  if (y === Infinity) return { ...base, kind: 'never', headline: 'Not reached at this savings rate' };
+  if (y === Infinity) return { ...base, kind: 'never', headline: ages.stopAtFi ? `Not by ${PLAN_TO_AGE}` : 'Not reached at this savings rate' };
   const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
   if (view.fiAge === null) {
     if (y >= OLDEST) return { ...base, kind: 'later', headline: `Not within ${OLDEST} years at this savings rate` };
@@ -148,7 +154,9 @@ export function fiHeadline(
   }
   const age = Math.round(view.fiAge);
   if (age > OLDEST) return { ...base, kind: 'later', headline: `Not before age ${OLDEST} at this savings rate` };
-  const t = ages.targetAge;
+  // The stop is FI's age: one answer for both (lib/fire/steady.ts).
+  if (ages.stopAtFi) return { ...base, kind: 'age', headline: `FI and your stop: around ${age}`, age, before: 0, runsOut };
+  const t = ages.stopAge;
   const before = t === null ? null : t - age;
   const against =
     t === null || before === null ? null : before > 0 ? `${years(before)} before you stop at ${t}` : before < 0 ? `${years(-before)} after you stop at ${t}` : `Right when you stop at ${t}`;
@@ -197,11 +205,11 @@ export function projectionNeed(view: Pick<FiView, 'savings' | 'assets'>, takes: 
 
 /** Coast FI's value when it isn't worked out: the ages it counts the years
  *  between first, then what the FI number needs. */
-export function coastNeed(ages: { age: number | null; targetAge: number | null }, view: Pick<FiView, 'fiNumber' | 'spending' | 'savings' | 'assets'>, takes: boolean): string {
+export function coastNeed(ages: StopAges, view: Pick<FiView, 'fiNumber' | 'spending' | 'savings' | 'assets'>, takes: boolean): string {
   if (!takes) return ASSUMPTIONS_NEED;
-  if (ages.age === null && ages.targetAge === null) return 'Needs your ages';
+  if (ages.age === null && ages.stopAge === null && !ages.stopAtFi) return 'Needs your ages';
   if (ages.age === null) return 'Needs your age';
-  if (ages.targetAge === null) return 'Needs your stop age';
+  if (ages.stopAge === null) return ages.stopAtFi ? `No stop by ${PLAN_TO_AGE}` : 'Needs your stop age';
   return figuresNeed(view, takes) ?? SPENDING_NEED;
 }
 

@@ -24,7 +24,7 @@
 
 import type { ItemAges } from './compile';
 import { ONCE_KINDS, type PlanItem, type When } from './items';
-import { PLAN_TO_AGE } from './plan';
+import { PLAN_TO_AGE, stopOf } from './plan';
 
 /** Why an item isn't placed, or why it runs no years. */
 export type Unplaced = 'not-reached' | 'waits-on-stop' | 'waits-on-fi' | 'no-age' | 'no-years';
@@ -188,7 +188,7 @@ function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number 
 /** Each item's ages on the steady path, the stop, and FI where it was
  *  searched for. */
 export function resolveItems(plan: Plan, world: SteadyWorld): Resolution {
-  const fixedStop = plan.stopAtFi ? null : plan.targetAge;
+  const fixedStop = stopOf(plan);
   const onFi = anchoredOn(plan, 'fi');
   if (!plan.stopAtFi && !onFi) {
     const r = settle(plan, world, fixedStop, null);

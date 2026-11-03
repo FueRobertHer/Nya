@@ -1340,10 +1340,10 @@ export default function PlanTab({
               walkedSavings={shown?.walkedSavings ?? null}
               fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
               stopShort={
-                stopShort && plan.targetAge !== null
+                stopShort && view.stopAge !== null
                   ? sameShort(stopShort, shown?.short ?? null)
-                    ? `Nothing is projected at ${plan.targetAge}, for the reason under the answer.`
-                    : shortText(stopShort, plan.age, money, `nothing is projected at ${plan.targetAge}`)
+                    ? `Nothing is projected at ${view.stopAge}, for the reason under the answer.`
+                    : shortText(stopShort, plan.age, money, `nothing is projected at ${view.stopAge}`)
                   : null
               }
               stopWalked={stopWalked}
@@ -1743,7 +1743,7 @@ export function FiCard({
   // it), it says so; a walk that never gets there says why under the answer.
   // Not worked out, the answer names what it needs, never "--".
   const runsOutAt = !fiShort && path?.short && plan.age !== null ? plan.age + path.short.year : null;
-  const head = fiHeadline(view, plan, { noDate: !!fiShort, runsOutAt, need });
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!fiShort, runsOutAt, need });
   // What qualifies the answer, under it by the hero's rules (design-system.md
   // "Status and honesty"): one in full, two or more on one line that opens to
   // each, every note in its own words. None is critical.
@@ -1848,11 +1848,11 @@ export function FiCard({
           <Masked>{n}</Masked>
         </div>
       ))}
-      {path && (path.points.length >= 2 || wholeShown(path.points, path.after, range)) && plan.age !== null && plan.targetAge !== null && (
+      {path && (path.points.length >= 2 || wholeShown(path.points, path.after, range)) && plan.age !== null && view.stopAge !== null && (
         <PlanPathChart
           points={path.points}
           today={plan.age}
-          stopAge={plan.targetAge}
+          stopAge={view.stopAge}
           fiNumber={view.fiNumber}
           fiAge={view.fiAge}
           realReturn={plan.realReturn}
@@ -1870,10 +1870,10 @@ export function FiCard({
       <div className="plan-rows">
         <Row
           label="Coast FI"
-          value={view.coast ? money(view.coast.number) : coastNeed(plan, view, takes)}
+          value={view.coast ? money(view.coast.number) : coastNeed({ age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, view, takes)}
           note={
             view.coast
-              ? `With this much invested today you could stop saving now: growing ${pct(plan.realReturn)} a year after inflation, it reaches your FI number by age ${plan.targetAge}. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
+              ? `With this much invested today you could stop saving now: growing ${pct(plan.realReturn)} a year after inflation, it reaches your FI number by age ${view.stopAge}. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
               : undefined
           }
         />
@@ -1884,12 +1884,12 @@ export function FiCard({
             note={`With ${money(plan.partTimeIncome)} a year of part-time income covering part of your spending${view.barista.yearsTo !== null ? (view.barista.yearsTo === 0 ? '. You have that much.' : view.barista.yearsTo === Infinity ? '. Not reached at this rate.' : `, ${yearsText(view.barista.yearsTo)} away.`) : notMeasuredWhat(view) ? `. How far away isn’t worked out: ${notMeasuredWhat(view)} measured (below).` : '.'}`}
           />
         )}
-        {view.atTargetAge !== null && plan.targetAge !== null && (
-          <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
+        {view.atTargetAge !== null && view.stopAge !== null && (
+          <Row label={`At age ${view.stopAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
         )}
-        {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && plan.targetAge !== null && (
+        {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && view.stopAge !== null && (
           <Row
-            label={`At age ${plan.targetAge}`}
+            label={`At age ${view.stopAge}`}
             // Projected from the invested assets and savings alone, so what
             // it needs is one of them, never the spending.
             value={notWorkedOut ? (projectionNeed(view, takes) ?? 'Not worked out') : 'Not projected'}
@@ -2218,7 +2218,7 @@ export function SimulationCard({
   // What it starts from, against what the steady path has where Whole path
   // starts drawing: with more, the caution it always had (it reads safer
   // than it is); with less, or from today's assets, a note.
-  const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: plan.targetAge, atStop: view.atTargetAge }) : null;
+  const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: view.stopAge, atStop: view.atTargetAge }) : null;
   const startNote = startsWith?.more ? (
     <Notice level="caution">
       <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>

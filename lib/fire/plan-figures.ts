@@ -219,7 +219,7 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { events = [],
       return 'refused' in b ? null : b.view.fiAge;
     },
   };
-  const resolution = resolveItems({ items, age: plan.age, partnerAge: plan.partnerAge, targetAge: plan.targetAge, stopAtFi: plan.stopAtFi }, world);
+  const resolution = resolveItems({ ...plan, items }, world);
   const b = build(plan, measured, items, resolution.ages, resolution.stop, count);
   if ('refused' in b) return b;
   const f = assemble(plan, items, n, b, resolution);

@@ -15,7 +15,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, stopOf, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { expensesOf, incomeOf, withExpenses, withIncome } from '@/lib/fire/items';
 import { planOf, toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
@@ -485,7 +485,8 @@ function startConsequence(
   const money = (n: number) => wholeMoney(n, props.currency);
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
   if (start === 'fi-number') {
-    return `Stops working at your stop age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
+    const stop = stopOf(plan);
+    return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
   }
   const actual = startRate(start, props, typed, tax);
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your stop age with the balance you type`;

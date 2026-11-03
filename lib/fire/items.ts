@@ -26,7 +26,7 @@
 //
 // Imports no data and no storage: the Plan tab runs this in the browser.
 
-import { LIMITS, type PlanExpense, type PlanIncome } from './plan';
+import { LIMITS, stopOf, type PlanExpense, type PlanIncome } from './plan';
 import { EVENT_LIMITS, type LifeEvent } from './events';
 import { MAX_YEARS } from './simulate';
 import type { FirePlanV2 } from './plan-v2';
@@ -367,7 +367,7 @@ export function fixedEdges(plan: Pick<FirePlanV2, 'items' | 'age' | 'partnerAge'
   const index = new Map(plan.items.map((x, i) => [x.id, i]));
   const out = new Map<string, number>();
   const busy = new Set<string>();
-  const stop = plan.stopAtFi ? null : plan.targetAge;
+  const stop = stopOf(plan);
   const shift = plan.age !== null && plan.partnerAge !== null ? plan.age - plan.partnerAge : null;
   const whenAge = (w: When, owner: PlanItem['owner']): number | null => {
     const a = w.anchor;
