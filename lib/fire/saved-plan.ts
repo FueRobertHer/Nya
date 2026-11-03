@@ -31,12 +31,13 @@
 // next. Imports no data and no storage.
 
 import { projectBalance } from './fi';
-import { isFirePlan, parsePlan, upgradePlan, type FirePlan, type PlanCore } from './plan';
+import { parsePlan, type PlanCore } from './plan';
+import { isStoredPlan, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 
 export type SavedPlan = {
   version: 1;
   /** The Plan's assumptions when it was saved. */
-  plan: FirePlan;
+  plan: StoredPlan;
   /** The annual savings the Plan used that day, in today's dollars then:
    *  the typed figure if there was one, else Nya's measurement. */
   savings: number;
@@ -84,11 +85,12 @@ export const isDay = (s: unknown): s is string =>
   typeof s === 'string' && DAY.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 /** A stored saved plan in the current shape: its plan upgraded as the Plan's
- *  store upgrades it (lib/fire/plan.ts upgradePlan). Anything else is
- *  returned as it is, for isSavedPlan to refuse. Never throws. */
+ *  store upgrades it (lib/fire/plan-v2.ts upgradeStoredPlan, which keeps its
+ *  version). Anything else is returned as it is, for isSavedPlan to refuse.
+ *  Never throws. */
 export function upgradeSavedPlan(stored: unknown): unknown {
   if (!isObject(stored) || stored.version !== 1 || !Object.hasOwn(stored, 'plan')) return stored;
-  return { ...stored, plan: upgradePlan(stored.plan) };
+  return { ...stored, plan: upgradeStoredPlan(stored.plan) };
 }
 
 /** Whether a value is a saved plan as stored: the shape and types, whatever
@@ -96,7 +98,7 @@ export function upgradeSavedPlan(stored: unknown): unknown {
  *  understand: a later release's, say. */
 export function isSavedPlan(v: unknown): v is SavedPlan {
   if (!isObject(v) || !exactly(v, KEYS) || v.version !== 1) return false;
-  if (!isFirePlan(v.plan)) return false;
+  if (!isStoredPlan(v.plan)) return false;
   if (typeof v.savings !== 'number' || !Number.isFinite(v.savings)) return false;
   if (v.currency !== null && !(typeof v.currency === 'string' && CURRENCY.test(v.currency))) return false;
   if (typeof v.inflation !== 'number' || !Number.isFinite(v.inflation) || v.inflation <= -1) return false;

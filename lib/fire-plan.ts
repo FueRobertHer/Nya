@@ -21,14 +21,17 @@
 import { defineValueStore } from './repo';
 import { eager } from './eager';
 import type { Ctx } from './containers';
-import { isFirePlan, upgradePlan, type FirePlan } from './fire/plan';
+import { isStoredPlan, upgradeStoredPlan, type StoredPlan } from './fire/plan-v2';
 import { hasTypedAmounts, isPlanCurrencyRecord, recordedCurrency, type PlanCurrencyRecord } from './fire/plan-currency';
 
-export const firePlanStore = defineValueStore<FirePlan>('fire-plan', {
+// Either version reads, and each stays the version it was stored as
+// (lib/fire/plan-v2.ts upgradeStoredPlan); this release writes version 1
+// only (app/api/fire-plan, and a restore, refuse version 2).
+export const firePlanStore = defineValueStore<StoredPlan>('fire-plan', {
   what: 'plan assumptions',
-  isValid: isFirePlan,
+  isValid: isStoredPlan,
   exportable: true, // what the person chose and typed
-  upgrade: upgradePlan,
+  upgrade: upgradeStoredPlan,
 });
 
 // The currency the plan's typed figures are in (lib/fire/plan-currency.ts),
@@ -58,14 +61,14 @@ export async function readCurrencyRecord(ctx: Ctx): Promise<{ record: PlanCurren
 }
 
 /** A record there, for typed amounts it isn't of. */
-const isStale = (plan: FirePlan | null, record: PlanCurrencyRecord | null) => !!plan && !!record && hasTypedAmounts(plan) && recordedCurrency(plan, record) === null;
+const isStale = (plan: StoredPlan | null, record: PlanCurrencyRecord | null) => !!plan && !!record && hasTypedAmounts(plan) && recordedCurrency(plan, record) === null;
 
 /** What the Plan is told of its plan: { plan, currency } (null and null when
  *  nothing was ever saved); `currency` is the recorded one when the record
  *  holds for the plan, else null, and `currency_problem` says why a record
  *  there doesn't: "stale" (a record of other amounts, its currency in
  *  `currency_was`), "unreadable" or "newer". */
-export function planAnswer(plan: FirePlan | null, record: PlanCurrencyRecord | null, problem: CurrencyProblem) {
+export function planAnswer(plan: StoredPlan | null, record: PlanCurrencyRecord | null, problem: CurrencyProblem) {
   if (problem) return { plan, currency: null, currency_problem: problem };
   if (isStale(plan, record)) return { plan, currency: null, currency_problem: 'stale', currency_was: record!.currency };
   return { plan, currency: recordedCurrency(plan, record) };
