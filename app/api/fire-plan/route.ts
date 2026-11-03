@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
-import { firePlanStore, planCurrencyStore } from '@/lib/fire-plan';
-import { parsePlan, type FirePlan } from '@/lib/fire/plan';
-import { CURRENCY_CODE, currencyRecord, hasTypedAmounts, isTypedAmounts, recordedCurrency, sameAmounts, typedAmounts, type PlanCurrencyRecord } from '@/lib/fire/plan-currency';
+import { firePlanStore, planAnswer as answer, planCurrencyStore, readCurrencyRecord as readRecord, readPlanAnswer } from '@/lib/fire-plan';
+import { parsePlan } from '@/lib/fire/plan';
+import { CURRENCY_CODE, currencyRecord, hasTypedAmounts, isTypedAmounts, recordedCurrency, sameAmounts, typedAmounts } from '@/lib/fire/plan-currency';
 
 // The Plan tab's saved assumptions, and the currency their typed figures are
 // in (lib/fire/plan-currency.ts). GET answers { plan, currency } ({ plan:
@@ -16,7 +16,9 @@ import { CURRENCY_CODE, currencyRecord, hasTypedAmounts, isTypedAmounts, recorde
 // (lib/fire/plan.ts parsePlan), and records `currency` with it when given.
 // POST records the currency alone, for the plan as stored: when the person
 // says which it is (`answered`), or, with no record at all, when the tab can
-// tell it. A record is replaced only on the person's answer.
+// tell it. A record is replaced only on the person's answer. What GET
+// answers is lib/fire-plan.ts readPlanAnswer's, which the Plan's inputs
+// (app/api/plan-inputs) answer too.
 
 /** The answer for an error, as every route on the storage seam gives it. */
 function failure(err: unknown, doing: string): NextResponse {
@@ -34,35 +36,12 @@ function failure(err: unknown, doing: string): NextResponse {
   return NextResponse.json({ error: `Failed to ${doing} plan assumptions` }, { status: 500 });
 }
 
-type Ctx = Awaited<ReturnType<typeof dataCtx>>;
-type Problem = 'unreadable' | 'newer' | null;
-
-/** The record as it reads: strict about deployment problems, but a record
- *  that can't be used is said, never thrown, so the plan still loads (the
- *  page then asks which currency the figures are in). */
-async function readRecord(ctx: Ctx): Promise<{ record: PlanCurrencyRecord | null; problem: Problem }> {
-  const r = await planCurrencyStore.getReport(ctx);
-  return { record: r.value, problem: r.unrecognised ? 'newer' : r.unreadable ? 'unreadable' : null };
-}
-
-/** A record there, for typed amounts it isn't of. */
-const isStale = (plan: FirePlan | null, record: PlanCurrencyRecord | null) => !!plan && !!record && hasTypedAmounts(plan) && recordedCurrency(plan, record) === null;
-
-const answer = (plan: FirePlan | null, record: PlanCurrencyRecord | null, problem: Problem) => {
-  if (problem) return { plan, currency: null, currency_problem: problem };
-  if (isStale(plan, record)) return { plan, currency: null, currency_problem: 'stale', currency_was: record!.currency };
-  return { plan, currency: recordedCurrency(plan, record) };
-};
-
 const NEWER = 'The currency your plan’s figures are in was recorded by a newer version of Nya, so it can’t be changed here.';
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 
 export async function GET() {
   try {
-    const ctx = await dataCtx();
-    const plan = await firePlanStore.get(ctx);
-    const { record, problem } = await readRecord(ctx);
-    return NextResponse.json(answer(plan, record, problem));
+    return NextResponse.json(await readPlanAnswer(await dataCtx()));
   } catch (err) {
     return failure(err, 'load');
   }

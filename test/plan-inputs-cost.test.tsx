@@ -13,7 +13,11 @@ import { simulateOnPage } from './plan-on-page';
 // cached costs a sync that reads the store but asks Plaid nothing.
 //
 // The numbers are the ones the pull request that brought the plan's inputs
-// into one request (D16) reports, before and after.
+// into one request (D16) reports, before and after. Before, each screen
+// asked for the plan (GET /api/fire-plan) and for each workplace plan's row
+// (GET /api/investment-activity) every time it was shown: Home's first load
+// was 4 requests and 28 commands with no row cached, and every return to
+// Home, and every time the Plan opened, 4 requests and 12 commands.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 const env = { ...process.env };
@@ -99,6 +103,9 @@ const { dataCtx } = await import('@/lib/data-ctx');
 const { localDate } = await import('@/lib/local-date');
 const firePlan = await import('@/app/api/fire-plan/route');
 const activity = await import('@/app/api/investment-activity/route');
+const planInputs = await import('@/app/api/plan-inputs/route');
+const { createPlanInputsStore, FRESH_MS } = await import('@/lib/plan-inputs-store');
+type PlanInputsStore = import('@/lib/plan-inputs-store').PlanInputsStore;
 type Txn = import('@/components/MonthBreakdown').Txn;
 type AssetInstitution = import('@/lib/fire/inputs').AssetInstitution;
 
@@ -133,6 +140,7 @@ let inflight = 0;
 const ROUTES: Record<string, (req: Request) => Promise<Response>> = {
   'GET /api/fire-plan': () => firePlan.GET(),
   'GET /api/investment-activity': (req) => activity.GET(req),
+  'GET /api/plan-inputs': (req) => planInputs.GET(req),
 };
 const STUBS: Record<string, unknown> = {
   'GET /api/plan-scenarios': { scenarios: [], unreadable_ids: [], unrecognised_ids: [] },
@@ -189,19 +197,19 @@ async function measure(what: () => Promise<unknown>) {
 }
 
 type Root = ReturnType<typeof createRoot>;
-async function mountHome(): Promise<{ root: Root; text: () => string }> {
+async function mountHome(store?: PlanInputsStore): Promise<{ root: Root; text: () => string }> {
   const container = dom.document.createElement('ul');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  await act(async () => root.render(<FiProgressCard txns={YEAR} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} />));
+  await act(async () => root.render(<FiProgressCard txns={YEAR} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={store} />));
   return { root, text: () => container.textContent };
 }
-async function mountPlan(): Promise<Root> {
+async function mountPlan(store?: PlanInputsStore): Promise<Root> {
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
   await act(async () =>
-    root.render(<PlanTab txns={YEAR} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} balancesAsOf={new Date().toISOString()} currency="USD" holdings={[]} />)
+    root.render(<PlanTab txns={YEAR} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} balancesAsOf={new Date().toISOString()} currency="USD" holdings={[]} planInputs={store} />)
   );
   return root;
 }
@@ -225,37 +233,58 @@ beforeAll(async () => {
 
 // What the Plan asks for besides its inputs: the same before and after.
 const PLAN_OTHERS = { 'GET /api/allocation-settings': 1, 'GET /api/saved-plan': 1, 'GET /api/plan-scenarios': 1, 'POST /api/allocation-history': 1 };
+const NOTHING = { requests: {}, commands: {}, byCommand: {}, others: {} };
+// One request with every row cached: whose container it is, then the plan,
+// its currency and every row, read together.
+const ONE = { requests: { 'GET /api/plan-inputs': 1 }, commands: { 'GET /api/plan-inputs': 4 }, byCommand: { evalRo: 1, get: 2, hmget: 1 } };
 
 describe('what the plan’s inputs cost', () => {
-  test('today: Home and the Plan each ask for the plan and for every workplace plan’s row, every time they mount', async () => {
-    // Home's first load, no row cached: the plan, and each plan's row, each
-    // request reading whose container it is (evalRo). A row not cached
-    // syncs its item (the lock, the store, the lock let go) and caches the
-    // row (hset, expire); the two plans in one item race for its lock.
+  test('one request between Home and the Plan, none on a return to Home within five minutes, and the same figures throughout', async () => {
+    let clock = Date.now();
+    const store = createPlanInputsStore({ now: () => clock });
+
+    // Home's first load, no row cached: the plan and the rows asked for
+    // together (2 commands for the plan, one HMGET for the rows), then one
+    // sync=1 request for the rows not cached, which syncs each item once
+    // (its lock, its store, the lock let go) and caches each row.
     let home!: Awaited<ReturnType<typeof mountHome>>;
-    expect(await measure(async () => (home = await mountHome()))).toEqual({
-      requests: { 'GET /api/fire-plan': 1, 'GET /api/investment-activity': 3 },
-      commands: { 'GET /api/fire-plan': 3, 'GET /api/investment-activity': 25 },
-      byCommand: { evalRo: 4, get: 7, hgetall: 3, hget: 3, set: 3, del: 2, hset: 3, expire: 3 },
+    expect(await measure(async () => (home = await mountHome(store)))).toEqual({
+      requests: { 'GET /api/plan-inputs': 2 },
+      commands: { 'GET /api/plan-inputs': 21 },
+      byCommand: { evalRo: 2, get: 6, hmget: 2, hgetall: 1, set: 2, del: 2, hset: 3, expire: 3 },
       others: {},
     });
-    expect(home.text()).toContain('FI');
     const shown = home.text();
+    expect(shown).toContain('FI');
     await unmount(home.root);
 
-    // Back on Home, the rows cached now: every request again.
-    const cached = {
-      requests: { 'GET /api/fire-plan': 1, 'GET /api/investment-activity': 3 },
-      commands: { 'GET /api/fire-plan': 3, 'GET /api/investment-activity': 9 },
-      byCommand: { evalRo: 4, get: 2, hgetall: 3, hget: 3 },
-    };
-    expect(await measure(async () => (home = await mountHome()))).toEqual({ ...cached, others: {} });
+    // Back on Home within five minutes: nothing asked.
+    expect(await measure(async () => (home = await mountHome(store)))).toEqual(NOTHING);
     expect(home.text()).toBe(shown);
     await unmount(home.root);
 
-    // The Plan opened: every request again, from its own store and hook.
+    // The Plan always asks, once, and Home's copy takes its answer.
     let plan!: Root;
-    expect(await measure(async () => (plan = await mountPlan()))).toEqual({ ...cached, others: PLAN_OTHERS });
+    expect(await measure(async () => (plan = await mountPlan(store)))).toEqual({ ...ONE, others: PLAN_OTHERS });
     await unmount(plan);
+    expect(await measure(async () => (home = await mountHome(store)))).toEqual(NOTHING);
+    expect(home.text()).toBe(shown);
+    await unmount(home.root);
+
+    // After five minutes, one request; the copy is shown while it loads.
+    clock += FRESH_MS;
+    expect(await measure(async () => (home = await mountHome(store)))).toEqual({ ...ONE, others: {} });
+    expect(home.text()).toBe(shown);
+
+    // A refresh, a link or a restore (the dashboard invalidates the copy):
+    // one request from the screen showing it.
+    expect(await measure(() => act(async () => store.invalidate()))).toEqual({ ...ONE, others: {} });
+    expect(home.text()).toBe(shown);
+    await unmount(home.root);
+
+    // A new page, the rows cached: one request.
+    expect(await measure(async () => (home = await mountHome(createPlanInputsStore())))).toEqual({ ...ONE, others: {} });
+    expect(home.text()).toBe(shown);
+    await unmount(home.root);
   });
 });

@@ -7,13 +7,13 @@
 // a home currency chosen, excluded rows left out, cash withdrawals and the cash
 // spending entered on an account marked as cash on hand counted once), the
 // invested assets from its accounts, what went into workplace plans, from
-// one /api/investment-activity request per plan (as the Accounts tab makes
-// when an account is opened), and what the connections that bring in no
+// the copy of /api/plan-inputs the two screens share (lib/plan-inputs-store.ts,
+// useSharedPlanInputs below), and what the connections that bring in no
 // transactions mean for those figures (lib/no-transactions.ts). Both screens
 // run this and lib/fire/progress.ts on the same plan, so they can't
 // disagree.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { localDate } from '@/lib/local-date';
 import {
@@ -39,6 +39,7 @@ import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
 import { useCurrencySettings } from './currency-state';
 import { historyCount } from '@/lib/spending';
+import type { PlanInputsCopy, PlanInputsStore } from '@/lib/plan-inputs-store';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -52,49 +53,59 @@ export function workplacePlansOf(institutions: AssetInstitution[]) {
   );
 }
 
-/** One workplace plan contributions request per account, as the Accounts tab
- *  makes when an account is opened. Null until every answer is in. */
-export function useWorkplaceContributions(institutions: AssetInstitution[]): PlanContributions[] | null {
-  const plans = workplacePlansOf(institutions);
-  const key = plans.map((p) => `${p.item_id}:${p.account_id}`).join(',');
+/** A workplace plan's id in the Plan's inputs (lib/plan-inputs-store.ts):
+ *  its item and account. */
+export const planId = (p: { item_id: string; account_id: string }) => `${p.item_id}:${p.account_id}`;
+
+/** Each workplace plan's contributions from the shared copy, in the order
+ *  given (workplacePlansOf's: lib/fire/inputs.ts workplaceSavings matches
+ *  transfers plan by plan, so the order counts). A plan whose row couldn't
+ *  be had measures nothing. Null while any plan's row is still coming, or
+ *  the copy is for other plans (one linked, hidden or shown since): never
+ *  "nothing measured" for a plan not asked about yet. */
+export function contributionsFrom(copy: PlanInputsCopy, plans: ReturnType<typeof workplacePlansOf>): PlanContributions[] | null {
+  if (copy.key !== plans.map(planId).join(',')) return null;
+  const out: PlanContributions[] = [];
+  for (const p of plans) {
+    const data = copy.rows[planId(p)];
+    if (!data || data.pending) return null;
+    const base = { account_id: p.account_id, name: p.name, institution: p.institution };
+    if (data.failed) {
+      out.push({ ...base, amount: null, from: null, partial: false, rows: [], activityFrom: null, note: null });
+      continue;
+    }
+    const rows: unknown = data.contributions_12m_rows;
+    out.push({
+      ...base,
+      amount: typeof data.contributions_12m === 'number' ? data.contributions_12m : null,
+      from: typeof data.contributions_12m_from === 'string' ? data.contributions_12m_from : null,
+      partial: data.contributions_12m_partial === true,
+      rows: Array.isArray(rows)
+        ? rows.filter((r): r is Payment => typeof r?.date === 'string' && typeof r?.amount === 'number' && Number.isFinite(r.amount))
+        : [],
+      activityFrom: typeof data.contributions_12m_activity_from === 'string' ? data.contributions_12m_activity_from : null,
+      note: typeof data.note === 'string' ? data.note : null,
+    });
+  }
+  return out;
+}
+
+/** The shared copy of the Plan's inputs, and the workplace plans'
+ *  contributions from it. Loads when the screen is shown, when its plans
+ *  change and when the copy is invalidated, and at no other time: a copy
+ *  that stays stale costs a request a screen, never a loop. A copy for the
+ *  same plans is shown while a newer one loads. */
+export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null } {
+  const copy = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const plans = useMemo(() => workplacePlansOf(institutions), [institutions]);
+  const key = plans.map(planId).join(',');
   const plansRef = useRef(plans);
   plansRef.current = plans;
-  const [state, setState] = useState<{ key: string; plans: PlanContributions[] } | null>(null);
   useEffect(() => {
-    const wanted = plansRef.current;
-    let live = true;
-    Promise.all(
-      wanted.map(async (p): Promise<PlanContributions> => {
-        const base = { account_id: p.account_id, name: p.name, institution: p.institution };
-        const none = { ...base, amount: null, from: null, partial: false, rows: [], activityFrom: null, note: null };
-        try {
-          const res = await fetch(`/api/investment-activity?id=${encodeURIComponent(p.account_id)}&item_id=${encodeURIComponent(p.item_id)}`);
-          if (!res.ok) return none;
-          const data = await res.json();
-          const rows: unknown = data?.contributions_12m_rows;
-          return {
-            ...base,
-            amount: typeof data?.contributions_12m === 'number' ? data.contributions_12m : null,
-            from: typeof data?.contributions_12m_from === 'string' ? data.contributions_12m_from : null,
-            partial: data?.contributions_12m_partial === true,
-            rows: Array.isArray(rows)
-              ? rows.filter((r): r is Payment => typeof r?.date === 'string' && typeof r?.amount === 'number' && Number.isFinite(r.amount))
-              : [],
-            activityFrom: typeof data?.contributions_12m_activity_from === 'string' ? data.contributions_12m_activity_from : null,
-            note: typeof data?.note === 'string' ? data.note : null,
-          };
-        } catch {
-          return none;
-        }
-      })
-    ).then((answers) => {
-      if (live) setState({ key, plans: answers });
-    });
-    return () => {
-      live = false;
-    };
-  }, [key]);
-  return state && state.key === key ? state.plans : null;
+    void store.load(plansRef.current.map(planId));
+  }, [store, key, copy.asked]);
+  const contributions = useMemo(() => contributionsFrom(copy, plans), [copy, plans]);
+  return { copy, contributions };
 }
 
 export type PlanInputs = FiInputs & {
@@ -131,6 +142,7 @@ export function usePlanInputs({
   fx = null,
   balanceFx = null,
   currency = null,
+  contributions,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
@@ -149,6 +161,9 @@ export function usePlanInputs({
    *  recorded (lib/fire/plan-currency.ts): everything measured is in it.
    *  Null follows the accounts, as before. */
   currency?: string | null;
+  /** What went into workplace plans (useSharedPlanInputs), null while it
+   *  loads. */
+  contributions: PlanContributions[] | null;
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
@@ -179,7 +194,6 @@ export function usePlanInputs({
   // Rows the accounts hold, never an IOU's (lib/spending.ts isHistoryRow).
   const transactionCount = txns ? historyCount(txns) : 0;
   const coverage = useMemo(() => transactionCoverage(without, transactionCount), [without, transactionCount]);
-  const contributions = useWorkplaceContributions(institutions);
   // Payments out of the bank that may have paid for a contribution, so it
   // isn't counted twice (lib/fire/inputs.ts workplaceSavings).
   const bankOut = useMemo(() => (txns ? transfersOut(txns, today) : []), [txns, today]);

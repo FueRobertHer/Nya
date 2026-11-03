@@ -11,7 +11,9 @@ import { readCurrencyAnswer, type CurrencyAnswer, type TypedAmounts } from '@/li
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
-export type Recorded = { ok: true; answer: CurrencyAnswer; plan: FirePlan | null } | { ok: false; error: string; stale: boolean };
+/** `body` is the whole answer, for the copy of the Plan's inputs
+ *  (lib/plan-inputs-store.ts adopt). */
+export type Recorded = { ok: true; answer: CurrencyAnswer; plan: FirePlan | null; body: Record<string, unknown> | null } | { ok: false; error: string; stale: boolean };
 
 /** Records `currency` for the plan whose typed amounts are `amounts` (the one
  *  the server last confirmed: a plan changed since on another device is
@@ -26,7 +28,7 @@ export async function recordPlanCurrency(currency: string, amounts: TypedAmounts
       body: JSON.stringify({ currency, amounts, ...(answered ? { answered: true } : {}) }),
     });
     const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    if (res.ok) return { ok: true, answer: readCurrencyAnswer(body), plan: isFirePlan(body?.plan) ? body.plan : null };
+    if (res.ok) return { ok: true, answer: readCurrencyAnswer(body), plan: isFirePlan(body?.plan) ? body.plan : null, body };
     return { ok: false, error: typeof body?.error === 'string' ? body.error : 'It wasn’t recorded. Try again in a moment.', stale: body?.stale === true };
   } catch {
     return { ok: false, error: 'It wasn’t recorded: check your connection, and try again.', stale: false };

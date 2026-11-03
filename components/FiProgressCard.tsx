@@ -5,7 +5,9 @@
 // savings rate, opening the Plan tab; every note the FI card said sits under
 // it, gathered into one line when there are two or more.
 //
-// THE PLAN'S OWN FIGURES. It reads the saved plan (/api/fire-plan), repairs
+// THE PLAN'S OWN FIGURES. It reads the saved plan from the copy of the
+// Plan's inputs it shares with the Plan tab (lib/plan-inputs-store.ts: one
+// request between the two, taken as it is for five minutes), repairs
 // it as the Plan tab does (lib/fire/plan.ts repairPlan), measures from the
 // same hook (components/plan-inputs.ts: a year of transactions, invested
 // assets, workplace plan contributions) and works the figures out with the
@@ -18,9 +20,11 @@
 // rate, a 5% real return), says so, and links to the Plan tab: the FI number
 // is a person's own spending over a rate the plan names, which is worth
 // seeing before anything is set, and nothing in it is a guess about them.
-// It shows nothing while what it needs loads, when there is no spending to
-// work from, or when the plan couldn't be fetched (a request that failed:
-// Home stays as it was). A saved plan that can't be read (the store says
+// It shows nothing while what it needs first loads, when there is no
+// spending to work from, or when the plan couldn't be fetched (a request
+// that failed: Home stays as it was). A copy already there is shown while a
+// newer one loads (after five minutes, or a refresh), so the line doesn't
+// blink. A saved plan that can't be read (the store says
 // so, or this release can't take its shape) gets a row saying so, which
 // opens the Plan tab, where it says why (rollout phase 8b, from 4c's review).
 //
@@ -38,9 +42,10 @@
 // shown in the accounts' currency, said to be unconfirmed: the Plan tab
 // records it, or asks.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { Txn } from './MonthBreakdown';
-import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
+import { usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
+import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
 import { DEFAULT_PLAN, isFirePlan, projectFrom, repairPlan, type FirePlan } from '@/lib/fire/plan';
 import { projectionShort } from '@/lib/fire/fi';
@@ -70,34 +75,31 @@ export type FiProgressProps = {
   balanceFx?: PageFx | null;
   /** Opens the Plan tab. */
   onOpenPlan: () => void;
+  /** The copy of the Plan's inputs Home shares with the Plan tab
+   *  (components/Dashboard.tsx); left out, the card keeps its own. */
+  planInputs?: PlanInputsStore;
 };
 
-/** What /api/fire-plan answered: the saved plan, or null for none, and the
- *  currency its figures are in; a saved plan that can't be read; or a
- *  request that failed. */
+/** What /api/plan-inputs answered of the plan: the saved plan, or null for
+ *  none, and the currency its figures are in; a saved plan that can't be
+ *  read; or a request that failed. Null before any answer. */
 type Loaded = { plan: FirePlan | null; currency: CurrencyAnswer } | 'unreadable' | 'failed' | null;
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan }: FiProgressProps) {
-  const [loaded, setLoaded] = useState<Loaded>(null);
-  useEffect(() => {
-    let live = true;
-    fetch('/api/fire-plan')
-      .then(async (res) => {
-        const body = await res.json().catch(() => null);
-        const plan: unknown = body?.plan;
-        if (!live) return;
-        if (res.ok && (plan === null || isFirePlan(plan))) setLoaded({ plan, currency: readCurrencyAnswer(body) });
-        // The store says it can't read it, or it holds a plan this release
-        // can't take (a newer one's): said. Anything else failed to arrive.
-        else setLoaded((res.status === 409 && body?.unreadable === true) || (res.ok && plan !== undefined) ? 'unreadable' : 'failed');
-      })
-      .catch(() => {
-        if (live) setLoaded('failed');
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+function loadedFrom(answered: PlanInputsCopy['plan']): Loaded {
+  if (!answered) return null;
+  const { status, body } = answered;
+  const plan: unknown = body?.plan;
+  if (status === 200 && (plan === null || isFirePlan(plan))) return { plan, currency: readCurrencyAnswer(body) };
+  // The store says it can't read it, or it holds a plan this release can't
+  // take (a newer one's): said. Anything else failed to arrive.
+  return (status === 409 && body?.unreadable === true) || (status === 200 && plan !== undefined) ? 'unreadable' : 'failed';
+}
+
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs }: FiProgressProps) {
+  const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
+  const shared = useSharedPlanInputs(own, institutions);
+  const answered = shared.copy.plan;
+  const loaded = useMemo(() => loadedFrom(answered), [answered]);
   const stored = loaded && typeof loaded === 'object' ? loaded.plan : null;
   const answer = loaded && typeof loaded === 'object' ? loaded.currency : NO_ANSWER;
   // As the Plan tab works from it: a value this release can't take is
@@ -114,6 +116,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     fx: txnFx,
     balanceFx,
     currency: answer.currency,
+    contributions: shared.contributions,
   });
   const figures = fiFigures(plan, inputs, currency);
   if (loaded === 'unreadable') return <FiRow what="FI isn’t worked out" detail="Your saved plan couldn’t be read: the Plan tab says why." onOpenPlan={onOpenPlan} notes={[]} />;
@@ -145,7 +148,9 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
  * moment later: the plan read (a plan that can't be read shows nothing, and
  * the Plan tab says why), the first load of transactions done (a refresh
  * keeps the card, with the transactions on screen, as the Plan tab does), and
- * the contributions to workplace plans in, since they change savings.
+ * the contributions to workplace plans in, since they change savings. A
+ * shared copy being refreshed counts as read: it is shown until the newer
+ * one is in.
  */
 export function ready(s: { plan: 'loading' | 'failed' | 'loaded'; txns: Txn[] | null; txnsLoading: boolean; contributionsPending: boolean }): boolean {
   if (s.plan !== 'loaded') return false;
