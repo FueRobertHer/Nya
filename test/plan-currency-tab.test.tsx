@@ -740,7 +740,10 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     // The answer names what it needs; the line on the FI number says why,
     // once, without the need again.
     expect(tab.text()).toContain('Financial independenceNeeds your annual spendingAdd your age and when you’d like to stopYour annual spending isn’t measured (below).Coast FI');
-    expect(tab.text().match(/Needs your annual spending/g)?.length).toBe(1);
+    // Once on each segment's answer: Your path's, and Drawdown's hero (the tax
+    // plan's P), which can't be worked out without it either.
+    expect(tab.text().match(/Needs your annual spending/g)?.length).toBe(2);
+    expect(tab.text()).toContain('Will it last?Needs your annual spendingThe simulation withdraws your annual spending');
     expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
     expect(tab.text()).not.toContain('connect accounts with transactions');
     expect(tab.text()).not.toContain('$1,097');

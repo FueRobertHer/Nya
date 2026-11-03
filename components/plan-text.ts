@@ -6,6 +6,7 @@ import type { RuleKind } from '@/lib/fire/rules';
 import type { FiView } from '@/lib/fire/plan';
 import { amountsHidden, formatDay, hiddenMoney, MINUS, trueMinus } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
+import type { PathAfter } from '@/lib/fire/path';
 
 /** Whole currency units: plan figures are estimates, and cents would claim
  *  a precision they don't have. */
@@ -250,6 +251,19 @@ export const REBALANCE_TEXT: Record<Rebalance, string> = {
   monthly: 'rebalanced every month',
   none: 'never rebalanced',
 };
+
+/** What Whole path counts that the FI number leaves out (lib/fire/path.ts
+ *  PathAfter.leftOut), under the chart: up to three by name, then how many
+ *  more. Null when it leaves out nothing. */
+export function leftOutText(leftOut: PathAfter['leftOut']): string | null {
+  const names = leftOut.items.map((i) => `${i.label} ${i.kind === 'income' ? 'from' : 'at'} ${i.age}`);
+  if (leftOut.events) names.push('this scenario’s life events after you stop');
+  if (names.length === 0) return null;
+  const shown = names.length > 3 ? [...names.slice(0, 3), `${names.length - 3} more`] : names;
+  const list = shown.length <= 2 ? shown.join(' and ') : `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
+  // A scenario's life events are many, whatever else there is.
+  return `Your FI number leaves out ${list}; this path counts ${names.length > 1 || leftOut.events ? 'them' : 'it'}.`;
+}
 
 /** The definition shown beside every success rate. */
 export function successDefinition(years: number): string {

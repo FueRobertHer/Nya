@@ -8,7 +8,7 @@ import { LifeEventsCard } from '@/components/PlanEvents';
 import { FiCard, InputsCard, SimulationCard } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import { INITIAL_SCENARIOS, createScenarioClient, type ScenarioEntry, type ScenariosState } from '@/components/plan-scenarios';
-import { currencyText, startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
+import { currencyText, startLineText, startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -306,6 +306,27 @@ describe('the words', () => {
     expect(startsWithText({ ...sw, from: 'assets', balance: 300_000 }, money)).toBe('$300,000, your invested assets today.');
   });
 
+  // Drawdown's start line (the tax plan's P): beside what a plan starts
+  // with, what the steady path has where Whole path starts drawing.
+  test('Drawdown’s start line, against where Whole path starts', () => {
+    const at = { age: 40, stopAge: 45, atStop: 548_653 };
+    const sw = figs(plan({ age: 40, targetAge: 45 })).startsWith!;
+    // More: the caution's words instead (startsWithText).
+    expect(startLineText(sw, money, at)).toBeNull();
+    expect(startLineText({ ...sw, more: false, balance: 500_000 }, money, at)).toBe('Starting from your FI number, $500,000, not the $548,653 you’d have at 45.');
+    expect(startLineText({ ...sw, more: false, from: 'custom', balance: 500_000 }, money, at)).toBe('Starting from the balance you typed, $500,000, not the $548,653 you’d have at 45.');
+    // Within 50 cents, the same.
+    expect(startLineText({ ...sw, more: false, balance: sw.projected! - 0.4 }, money, at)).toBeNull();
+    // Once the stop has come, what you have today.
+    expect(startLineText({ ...sw, more: false, balance: 500_000, atAge: 45 }, money, { ...at, age: 46 })).toBe('Starting from your FI number, $500,000, not the $548,653 you have today.');
+    // From today's assets, before the stop, either way; once it has come, nothing.
+    const assets = { ...sw, from: 'assets' as const, balance: 300_000, atAge: 40, projected: null };
+    expect(startLineText(assets, money, at)).toBe('Starting today, at 40, from your invested assets, $300,000, not the $548,653 you’d have at 45.');
+    expect(startLineText(assets, money, { ...at, atStop: 250_000 })).toBe('Starting today, at 40, from your invested assets, $300,000, not the $250,000 you’d have at 45.');
+    expect(startLineText(assets, money, { ...at, age: 45 })).toBeNull();
+    expect(startLineText(assets, money, { ...at, atStop: null })).toBeNull();
+  });
+
   test('a start the walk never reaches says where the shortfall is: below it, in compare mode, by default', () => {
     const house = figs(plan({ age: 40, targetAge: 60 }), [{ id: 'h', kind: 'house', label: 'Our home', atAge: 42, cost: 800_000, yearly: 0, years: null }]);
     expect(house.startsWith?.short?.kind).toBe('cost');
@@ -507,9 +528,11 @@ describe('the scenario cards', () => {
     );
     const st = text(sim);
     expect(st).toContain('Scenario: Retire at 45');
-    // The method is named, and set in the Assumptions sheet, which says there
-    // that a scenario can't change it (rollout 6d).
-    expect(st).toContain('Will it last? Historical cycles');
+    // The method is set in the Assumptions sheet, which says there that a
+    // scenario can't change it (rollout 6d); the answer's line names it, so
+    // Drawdown's hero has no meta (the tax plan's P).
+    expect(st).toContain('Scenario: Retire at 45 Will it last?');
+    expect(sim).not.toContain('class="meta"');
     expect(sim).not.toContain('<button');
     const events = renderToStaticMarkup(<LifeEventsCard scenarioName="Retire at 45" version="s1@r1" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
     const et = text(events);

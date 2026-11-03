@@ -50,6 +50,9 @@ export type PlanFigures = {
   view: FiView;
   engine: EnginePlan | { missing: Missing };
   events: CompiledEvents | null;
+  /** The life events as given, for the path after the stop, which compiles
+   *  them where it starts drawing (lib/fire/path.ts). */
+  lifeEvents: readonly LifeEvent[];
   /** Spending in retirement with lasting changes, when there are any. */
   retirement: { spending: number; lasting: number } | null;
   /** The walk stopped: a cost it couldn't pay. Then there is no FI date. */
@@ -69,7 +72,7 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
   if (events.length === 0) {
     const view = fiView(plan, measured);
     const engine = enginePlan(plan, view);
-    return { plan, view, engine, events: null, retirement: null, short: null, walked: false, walkedSavings: null, startsWith: startsWith(plan, view, engine, null) };
+    return { plan, view, engine, events: null, lifeEvents: events, retirement: null, short: null, walked: false, walkedSavings: null, startsWith: startsWith(plan, view, engine, null) };
   }
   const display = fiView(plan, measured);
   const compiled = compileEvents(events, { age: plan.age, startAge: startAge(plan), years: planYears(plan) });
@@ -123,7 +126,7 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
     const at = walkBalanceAt(from.assets, from.savings, plan.realReturn, compiled.walk, from.years);
     view = { ...view, atTargetAge: 'balance' in at ? at.balance : null };
   }
-  return { plan, view, engine, events: compiled, retirement, short, walked, walkedSavings, startsWith: startsWith(plan, core, engine, compiled) };
+  return { plan, view, engine, events: compiled, lifeEvents: events, retirement, short, walked, walkedSavings, startsWith: startsWith(plan, core, engine, compiled) };
 }
 
 function startsWith(plan: FirePlan, view: FiView, engine: EnginePlan | { missing: Missing }, compiled: CompiledEvents | null): StartsWith | null {

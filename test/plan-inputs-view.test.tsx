@@ -1087,8 +1087,9 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
     expect({ ...sent, withdrawalRate: PLAN.withdrawalRate, fee: PLAN.fee, method: PLAN.method }).toEqual(PLAN);
     await settle(400);
     expect(tab.dialog()).toBeNull();
-    // Said on the card and on its row.
-    expect(tab.panel('drawdown').textContent).toContain('Will it last?Monte Carlo');
+    // Said in the answer's line (Drawdown's hero has no meta since the tax
+    // plan's P) and on its row.
+    expect(tab.panel('drawdown').textContent).toMatch(/Will it last\?\d+(\.\d)?%of 5,000 Monte Carlo runs lasted/);
     expect(part(drawdownRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
     expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation until FI · 0% tax');
     await tab.unmount();

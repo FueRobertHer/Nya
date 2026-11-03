@@ -2,8 +2,9 @@
 //
 // The one figure on a screen (design-system.md "Hero"), on the page and never
 // in a card: Home's net worth (components/NetWorthCard.tsx), the Plan's answer
-// on Your path (components/PlanTab.tsx FiCard) and the runway's months on the
-// report page (components/RunwayReport.tsx). Each draws the same shell: a
+// on Your path (components/PlanTab.tsx FiCard), Will it last? on its Drawdown
+// (SimulationCard) and the runway's months on the report page
+// (components/RunwayReport.tsx). Each draws the same shell: a
 // label that is a real heading, the figure under it, a line under that, and
 // then what qualifies it. The `.hero` class carries what they share in
 // app/globals.css: the room under it, the figure at the hero size, and an edge
@@ -37,10 +38,11 @@ export function Hero({
   figureClass?: string;
   /** What sits right under the figure, in the same block. */
   line?: ReactNode;
-  /** What comes before the label (an open scenario's tag); nothing when
-   *  there is none. */
+  /** What comes before the label (an open scenario's tag, Drawdown's
+   *  badge); nothing when there is none. */
   top?: ReactNode;
-  /** The feature's own class: `net-worth-hero`, `plan-hero`, `runway-hero`. */
+  /** The feature's own class: `net-worth-hero`, `plan-hero`, `drawdown-hero`,
+   *  `runway-hero`. */
   className: string;
   children?: ReactNode;
 }) {
