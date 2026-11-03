@@ -65,6 +65,7 @@ const { saveManualAccount } = await import('@/lib/manual');
 const { registryKey } = await import('@/lib/containers');
 const { myConnections } = await import('@/lib/sharing');
 const { deleteAccount } = await import('@/lib/account-deletion');
+const { flagsStore } = await import('@/lib/flag-store');
 
 /** Reads of the partner's history never answer, as a stalled database call
  *  doesn't. Returns the undo. */
@@ -197,6 +198,48 @@ describe('deleting my account', () => {
     expect(keysOf(partner.container)).toEqual([]);
     // And nothing else of the owner's.
     expect(keysOf(TEST_CONTAINER).sort()).toEqual(ownerKeysBefore);
+  });
+
+  describe('the feature switches that name it', () => {
+    const audience = (on: string, containers: string[]) => async () => ({ on, containers, updatedAt: new Date().toISOString() }) as never;
+    const stored = async () => Object.fromEntries((await flagsStore.getAllReport()).entries);
+    beforeEach(async () => {
+      await flagsStore.update('lunchflow', audience('admin', [partner.container, TEST_CONTAINER]), TEST_CONTAINER);
+      await flagsStore.update('plan-tax', audience('nobody', [partner.container]), TEST_CONTAINER);
+      await flagsStore.update('restore', audience('nobody', [TEST_CONTAINER]), TEST_CONTAINER);
+    });
+
+    test('take it off, one change each recorded as the deletion’s; the record keeps the changes that named it', async () => {
+      expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+      expect(await stored()).toMatchObject({
+        lunchflow: { on: 'admin', containers: [TEST_CONTAINER] },
+        'plan-tax': { on: 'nobody', containers: [] },
+        restore: { on: 'nobody', containers: [TEST_CONTAINER] },
+      });
+      const { entries } = await flagsStore.changes();
+      expect(entries.filter((c) => c.by === 'account deletion').map((c) => c.key).sort()).toEqual(['lunchflow', 'plan-tax']);
+      expect(entries.filter((c) => c.by === TEST_CONTAINER)).toHaveLength(3);
+    });
+
+    test('a deletion stopped before them takes it off when run again, found by the marker', async () => {
+      const hgetall = fake.hgetall.bind(fake);
+      let failing = true;
+      (fake as any).hgetall = (key: string) => (failing && key === 'test:flags:values' ? Promise.reject(new Error('storage down')) : hgetall(key));
+      const errors = console.error;
+      console.error = () => {};
+      try {
+        expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(500);
+      } finally {
+        console.error = errors;
+        failing = false;
+        delete (fake as any).hgetall;
+      }
+      expect(await fake.hget<string>(ownersKey(), 'user_partner')).toBe(`deleted:${partner.container}`);
+      expect((await stored()).lunchflow).toMatchObject({ containers: [partner.container, TEST_CONTAINER] });
+      expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+      expect((await stored()).lunchflow).toMatchObject({ containers: [TEST_CONTAINER] });
+      expect((await stored())['plan-tax']).toMatchObject({ containers: [] });
+    });
   });
 
   test('needs DELETE typed out', async () => {

@@ -857,6 +857,26 @@ describe('a restore with its key archive', () => {
     expect((plan.records.find((r) => r.key === 'owners') as any).value).toEqual({ user_a: A });
     expect(Object.keys((plan.records.find((r) => r.key === 'connections') as any).value)).toEqual([other]);
   });
+
+  test('a deleted account leaves the feature switches’ audiences; their record, and anything else there, is restored exactly', async () => {
+    const AT = '2026-11-01T12:00:00.000Z';
+    // Key order as the store writes it: re-encoded, a value reads the same.
+    const lunchflow = JSON.stringify({ on: 'admin', containers: [B, A], updatedAt: AT });
+    const restore = JSON.stringify({ on: 'nobody', containers: [A], updatedAt: AT });
+    const values = { lunchflow, restore, ops: JSON.stringify({ on: true, updatedAt: AT }), 'newer-flag': 'not json' };
+    const change = JSON.stringify({ at: AT, key: 'lunchflow', from: null, to: JSON.parse(lunchflow), by: A });
+    await fake.hset(testKey('flags:values'), values);
+    await fake.hset(testKey('flags:log'), { [`${AT}.000000000001`]: change });
+    const s = memoryStore();
+    await backup(s, night(0));
+    await deleteB();
+    const plan = planRestore(await dataOf(s, 0), await keysOf(s, 0), { tombstones: await c.readTombstones(), keySeq: null });
+    expect((plan.records.find((r) => r.key === 'flags:values') as any).value).toEqual({
+      ...values,
+      lunchflow: JSON.stringify({ on: 'admin', containers: [A], updatedAt: AT }),
+    });
+    expect((plan.records.find((r) => r.key === 'flags:log') as any).value).toEqual({ [`${AT}.000000000001`]: change });
+  });
 });
 
 describe('the restore command, with --keys', () => {

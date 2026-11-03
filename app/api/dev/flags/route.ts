@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { devFlagsHere } from '@/lib/dev-flags';
-import { appUrl } from '@/lib/app-url';
+import { sameSite } from '@/lib/same-site';
 import { flagsStore } from '@/lib/flag-store';
 import { flagCache } from '@/lib/flag-cache';
 import { choiceOf, isFlagKey, valueFromChoice, flagDef, type FlagValue } from '@/lib/flags';
@@ -20,18 +20,6 @@ import { StoredDataUnreadableError, StoreRefusedError } from '@/lib/repo';
 // another process (the proxy keeps its own) sees it within 30 seconds.
 
 const json = (status: number, body: unknown) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
-
-/** Sent by this site's own page, as the demo's reset checks it
- *  (app/api/demo/seed/route.ts): no other origin named, no other site's
- *  fetch, and JSON. */
-function sameSite(req: Request): boolean {
-  const own = [new URL(req.url).origin, ...(appUrl() ? [new URL(appUrl()!).origin] : [])];
-  const origin = req.headers.get('origin');
-  if (origin !== null && !own.includes(origin)) return false;
-  const site = req.headers.get('sec-fetch-site');
-  if (site !== null && site !== 'same-origin') return false;
-  return (req.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase() === 'application/json';
-}
 
 export async function PUT(req: Request) {
   if (!devFlagsHere()) return json(404, { error: 'Not found' });

@@ -703,8 +703,9 @@ export function PlanSkeleton({ segment = null }: { segment?: PlanSegment | null 
  *  has it open (a reload there, lib/dashboard-tab.ts): its bar with the title
  *  it will have, then its list's rows, or a section's first card, still to
  *  come (components/Settings.tsx). `sharing`: whether its list has Sharing,
- *  which it has only with Clerk, so the rows are as many as it will draw. */
-export function SettingsSkeleton({ view, sharing = true }: { view: SettingsView; sharing?: boolean }) {
+ *  which it has only with Clerk; `admin`, whether it has Admin, which only the
+ *  admin's has; so the rows are as many as it will draw. */
+export function SettingsSkeleton({ view, sharing = true, admin = false }: { view: SettingsView; sharing?: boolean; admin?: boolean }) {
   useInStep();
   return (
     <section className="settings" aria-busy="true" aria-labelledby="settings-loading-title">
@@ -715,7 +716,7 @@ export function SettingsSkeleton({ view, sharing = true }: { view: SettingsView;
         <h2 id="settings-loading-title">{view === 'list' ? 'Settings' : SETTINGS_TITLES[view]}</h2>
       </div>
       {view === 'list' ? (
-        <RowsSkeleton count={Object.keys(SETTINGS_TITLES).length - (sharing ? 0 : 1)} className="card list-rows" />
+        <RowsSkeleton count={Object.keys(SETTINGS_TITLES).length - (sharing ? 0 : 1) - (admin ? 0 : 1)} className="card list-rows" />
       ) : (
         <section className="card stack" aria-hidden="true">
           <div className="card-header">
@@ -764,7 +765,10 @@ export function TabSkeleton({
  *  unavailable, and the account menu's place holds the circle the
  *  dashboard's own keeps until Clerk draws the avatar (ClerkAccount). The
  *  Settings gear of password mode does nothing until the dashboard is in.
- *  With Settings in the address, Settings' loading view in place of the tab's. */
+ *  With Settings in the address, Settings' loading view in place of the tab's:
+ *  with Admin for the app password, whose one person is the admin; without it
+ *  with Clerk, where who is signed in isn't known yet, so the admin's reload
+ *  draws one row fewer than the list it lands on. */
 export function AppLoading({ account, tab = 'home', settings = null }: { account: 'clerk' | 'password'; tab?: Tab; settings?: SettingsView | null }) {
   return (
     <main className="wrap">
@@ -786,7 +790,7 @@ export function AppLoading({ account, tab = 'home', settings = null }: { account
           )}
         </div>
       </div>
-      {settings ? <SettingsSkeleton view={settings} sharing={account === 'clerk'} /> : <TabSkeleton tab={tab} />}
+      {settings ? <SettingsSkeleton view={settings} sharing={account === 'clerk'} admin={account === 'password'} /> : <TabSkeleton tab={tab} />}
     </main>
   );
 }

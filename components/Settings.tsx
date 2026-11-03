@@ -25,6 +25,7 @@ export const SETTINGS_TITLES: Record<SettingsSectionId, string> = {
   sharing: 'Sharing',
   data: 'Your data and privacy',
   account: 'Account',
+  admin: 'Admin',
 };
 
 export type SettingsSection = {

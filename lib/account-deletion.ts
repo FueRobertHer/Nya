@@ -28,6 +28,9 @@
 //      can't get the account a new container meanwhile;
 //   8. every connection it is in is removed, and with it all sharing both
 //      ways (after 5, so nothing can reach the account meanwhile);
+//  8b. it is taken off every feature switch that names it
+//      (lib/flag-store.ts dropAccountFromFlags), each a change the record
+//      keeps as made by the account's deletion;
 //   9. the Clerk user is deleted, and then the owners marker; if the first
 //      fails the deletion reports it, and running it again retries just this;
 //  10. the container is swept once more, for anything a request already in
@@ -71,6 +74,7 @@ import { redis, containerPrefix, getItems } from './storage';
 import { getContainer, isContainerId, registryKey, type ContainerId, type ContainerRecord, type Ctx } from './containers';
 import { ownersKey, ownersOf, DELETION_MARKER } from './owners';
 import { dropConnectionsOf } from './sharing';
+import { dropAccountFromFlags } from './flag-store';
 import { isDemoUser } from './demo';
 import { decrypt, destroyContainerKeys, readContainerEntries, readContainerEntry, readTombstones, updateContainerEntry, ContainerKeyError, type ContainerKeyEntry } from './crypto';
 import { listFormat1Archives, newestHoldingKey, rewriteKeyArchivesAfterDeletion, type BackupStore } from './backup';
@@ -352,6 +356,8 @@ export async function deleteAccount(
     }
     // 8. Sharing, both ways.
     connectionsEnded = await dropConnectionsOf(userId);
+    // 8b. The feature switches that name it, on a retry too.
+    if (container) await dropAccountFromFlags(container);
   } catch (err) {
     throw new DeletionIncomplete(counts(), err);
   }

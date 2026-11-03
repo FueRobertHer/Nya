@@ -25,8 +25,9 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //   - its first key numbers past every key, and this release's next one past
 //     that;
 //   - its pass classifies every key outside the containers this release
-//     writes, but the feature switches', which this release writes only on
-//     /dev/flags in local development, and its export and restore carry them.
+//     writes, the feature switches' included (F1 onward knows them as plain
+//     text, so F2 writes them on the admin page in Preview and Production),
+//     and its export and restore carry them.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -60,15 +61,17 @@ const looksEncrypted = (v: unknown) =>
 
 /**
  * The release before's pass, classifying a key outside every container
- * (lib/reencrypt.ts classify at main eae98c9c, copied here as looksEncrypted
- * is): a key family on its lists, which the fixture's key-families.ts is byte
- * for byte, or a public store it declares. A key it classifies as null stops
- * its pass reporting complete. When the release before changes, copy its
- * classification here: F2, whose release before is F1, copies F1's, which
- * knows the feature switches' keys as plain text.
+ * (lib/reencrypt.ts classify at F1, main 5cab73f1, copied here as
+ * looksEncrypted is): a key family on its lists, which the fixture's
+ * key-families.ts is byte for byte, or either key of a public or environment
+ * store it declares (the exchange rates, the feature switches' values and
+ * their record). A key it classifies as null stops its pass reporting
+ * complete. When the release before changes, copy its classification here.
  */
 const RELEASE_BEFORE_PUBLIC_STORES = ['fx:ecb'];
-const oldClassifyOutside = (key: string) => oFamilies.listedKind(key) ?? (RELEASE_BEFORE_PUBLIC_STORES.includes(key) ? 'plain' : null);
+const RELEASE_BEFORE_ENVIRONMENT_STORES = ['flags:values', 'flags:log'];
+const oldClassifyOutside = (key: string) =>
+  oFamilies.listedKind(key) ?? (RELEASE_BEFORE_PUBLIC_STORES.includes(key) || RELEASE_BEFORE_ENVIRONMENT_STORES.includes(key) ? 'plain' : null);
 
 async function oldExportText(): Promise<string> {
   let text = '';
@@ -272,7 +275,7 @@ describe('the release before, reading what this release writes', () => {
     expect(await n.decrypt({ container: B } as any, written)).toBe('written while rolled back');
   });
 
-  test('its pass classifies every key outside the containers this release writes but the feature switches’, as this release does', () => {
+  test('its pass classifies every key outside the containers this release writes, the feature switches’ too, as this release does', () => {
     // One key under each environment-wide prefix or name, as this release
     // writes them (a prefix's with a name after it), and every environment
     // store's two keys.
@@ -287,13 +290,13 @@ describe('the release before, reading what this release writes', () => {
       'invites:abc',
     ];
     for (const key of keys) expect([key, oldClassifyOutside(key)]).toEqual([key, classify(key)]);
-    // The feature switches: plain text here, and unknown to the release
-    // before, whose pass would list them as unclassified and never report
-    // complete. So F1 writes them only on /dev/flags, in local development;
-    // F2 may write them, since its release before is this one.
+    // The feature switches: plain text to both. F1 wrote them only on
+    // /dev/flags, in local development, since the release before it didn't
+    // know them; F2 writes them on the admin page, its release before being
+    // F1.
     for (const key of flagKeys) {
       expect([key, classify(key)]).toEqual([key, 'plain']);
-      expect([key, oldClassifyOutside(key)]).toEqual([key, null]);
+      expect([key, oldClassifyOutside(key)]).toEqual([key, 'plain']);
     }
   });
 

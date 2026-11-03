@@ -17,7 +17,7 @@ export const TABS = ['home', 'accounts', 'activity', 'budgets', 'plan'] as const
 export type Tab = (typeof TABS)[number];
 
 /** Settings' sections (components/Settings.tsx), in the order it lists them. */
-export const SETTINGS_SECTIONS = ['preferences', 'transactions', 'connections', 'sharing', 'data', 'account'] as const;
+export const SETTINGS_SECTIONS = ['preferences', 'transactions', 'connections', 'sharing', 'data', 'account', 'admin'] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 /** What Settings shows: its list of sections, or one of them. */
 export type SettingsView = 'list' | SettingsSectionId;
@@ -50,12 +50,15 @@ export function tabHref(tab: Tab, href: string): string {
 /** Whether the address asks for Settings, and which part of it: `?settings=`
  *  naming a section opens that section; any other value (`list`, empty, one
  *  it doesn't know) opens the list. Absent, Settings is closed. Sharing is
- *  only offered with Clerk (`sharing: false` without it), so asking for it
- *  then opens the list. Takes the page's searchParams or a URLSearchParams. */
-export function parseSettings(query: Query | URLSearchParams, { sharing = true }: { sharing?: boolean } = {}): SettingsView | null {
+ *  only offered with Clerk (`sharing: false` without it), and Admin only to
+ *  the admin (`admin: false` for anyone else, or while who it is isn't
+ *  known), so asking for either then opens the list. Takes the page's
+ *  searchParams or a URLSearchParams. */
+export function parseSettings(query: Query | URLSearchParams, { sharing = true, admin = true }: { sharing?: boolean; admin?: boolean } = {}): SettingsView | null {
   const value = query instanceof URLSearchParams ? query.get('settings') : first(query.settings);
   if (value === null || value === undefined) return null;
   if (value === 'sharing' && !sharing) return 'list';
+  if (value === 'admin' && !admin) return 'list';
   return (SETTINGS_SECTIONS as readonly string[]).includes(value) ? (value as SettingsSectionId) : 'list';
 }
 

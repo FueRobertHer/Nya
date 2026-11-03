@@ -28,9 +28,11 @@
 //   - the tombstones of the key archive (or of a format-1 archive) and those
 //     already in the target are taken together, and every container they
 //     name (a deleted account) is left out: its registry entry, its owners'
-//     entries, every key in it, and the sharing connections its account was
-//     in. A tombstoned key is never written back, and the map says the
-//     container's key was destroyed;
+//     entries, every key in it, the sharing connections its account was in,
+//     and its id in the feature switches' audiences (flags:values; their
+//     record of changes, flags:log, is restored as it is, as an account's
+//     deletion leaves it). A tombstoned key is never written back, and the
+//     map says the container's key was destroyed;
 //   - every value's header is read, and a key the key archive neither holds
 //     nor marks destroyed refuses the restore (use a newer key archive);
 //   - a container whose map entry names a key the key archive lacks, with
@@ -271,6 +273,7 @@ export function checkRegistry(archive: Set<string> | null, target: Set<string> |
 const MAP = 'crypto:container-keys';
 const OWNERS = 'owners';
 const CONNECTIONS = 'connections';
+const FLAG_VALUES = 'flags:values';
 const DELETION_MARKER = 'deleted:';
 
 /** What a restore will write, and what it leaves out (planRestore). */
@@ -411,6 +414,22 @@ export function planRestore(
         }
       }
       fields = fields.filter(([field]) => !gone.has(field.split('|')[0]));
+    } else if (r.key === FLAG_VALUES) {
+      // An audience names the accounts it is also on for (lib/flags.ts): a
+      // deleted one leaves it, re-encoded only then; anything else, a value
+      // this release can't read included, is kept byte for byte.
+      fields = fields.map(([flag, value]): [string, string] => {
+        let v: unknown;
+        try {
+          v = JSON.parse(value);
+        } catch {
+          return [flag, value];
+        }
+        if (typeof v !== 'object' || v === null || Array.isArray(v) || !Array.isArray((v as { containers?: unknown }).containers)) return [flag, value];
+        const named = (v as { containers: unknown[] }).containers;
+        const left = named.filter((c) => typeof c !== 'string' || !deleted.has(c));
+        return left.length === named.length ? [flag, value] : [flag, JSON.stringify({ ...v, containers: left })];
+      });
     } else if (r.key === MAP) {
       const next: [string, string][] = [];
       for (const [c, entry] of fields) {

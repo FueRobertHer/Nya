@@ -1,10 +1,8 @@
 // Where Your data (app/your-data) is found from: Settings, Your data and privacy,
-// beside Download my data. For the admin, also the ways to Storage across
-// accounts (/admin/storage) and Nightly jobs (/admin/jobs); the server decides who the admin is
-// (app/page.tsx), and the page and its route refuse anyone else. Links, not
-// state: each page reads its own.
+// beside Download my data. A link, not state: the page reads its own. The
+// admin's pages are reached from Settings > Admin (components/AdminEntry.tsx).
 
-export default function InventoryEntry({ admin = false }: { admin?: boolean }) {
+export default function InventoryEntry() {
   return (
     <div className="card report-entry">
       <div className="inst-header">
@@ -17,16 +15,6 @@ export default function InventoryEntry({ admin = false }: { admin?: boolean }) {
       <a className="report-link-button" href="/your-data">
         See what Nya keeps
       </a>
-      {admin && (
-        <a className="report-link-button" href="/admin/storage">
-          Storage across accounts (admin)
-        </a>
-      )}
-      {admin && (
-        <a className="report-link-button" href="/admin/jobs">
-          Nightly jobs (admin)
-        </a>
-      )}
     </div>
   );
 }
