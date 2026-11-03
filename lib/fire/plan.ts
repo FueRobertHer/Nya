@@ -207,8 +207,9 @@ function exactKeys(v: unknown, keys: readonly string[], field: string): Record<s
 
 /** A clean copy of a plan, or why it is not one. `input` checks everything a
  *  save must meet; otherwise only the shape and types, as a stored plan is
- *  checked (see the top of this file). */
-function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string; field: string } {
+ *  checked (see the top of this file). Version 2's reader checks the fields
+ *  it shares with version 1 here (lib/fire/plan-v2.ts). */
+export function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string; field: string } {
   // Ranges and rules between fields apply to input only.
   const n = (v: unknown, field: string, min: number, max: number) => num(v, field, input ? min : -Infinity, input ? max : Infinity);
   const whole = (v: unknown, field: string, min: number, max: number) => int(v, field, input ? min : -Infinity, input ? max : Infinity);
