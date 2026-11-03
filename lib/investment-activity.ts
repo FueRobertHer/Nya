@@ -1,0 +1,131 @@
+// lib/investment-activity.ts
+//
+// One investment account's activity as the dashboard shows it, worked out
+// from its item's stored investment transactions (lib/invstore.ts): recent
+// buys, sells, dividends and fees, what the holder has put in this year, the
+// per-day flows behind the chart's money-added line, and the trailing year's
+// contributions the Plan's savings use. Two routes answer it: the Accounts
+// tab's (app/api/investment-activity) and the Plan's inputs
+// (app/api/plan-inputs), from one item's sync for every account in it.
+
+import {
+  contributedAmount,
+  countedTrades,
+  dailyFlows,
+  isContribution,
+  isIncomingRollover,
+} from './investments';
+import type { InvSync } from './invstore';
+
+const RECENT_LIMIT = 25;
+
+/** The account's activity from its item's sync. */
+export function activityFromSync(sync: InvSync, account_id: string) {
+  // Newest first, explicitly: the store has no order of its own.
+  const mine = sync.rows
+    .filter((t) => t.account_id === account_id)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+  // Decided over every row the account has, the same set the backfill hands
+  // the walk, so the two can't disagree about a paycheck (see countedTrades).
+  const counted = countedTrades(mine);
+  const yearStart = `${new Date().getUTCFullYear()}-01-01`;
+  const thisYear = mine.filter((t) => t.date >= yearStart);
+  const sum = (rows: typeof thisYear) =>
+    rows.reduce((total, t) => total + contributedAmount(t, counted), 0);
+
+  // Reported as two figures: a rollover is retirement money that already existed
+  // moving between accounts, so folding it into contributions makes a $60k 401k
+  // transfer read as a year of saving, while dropping it would leave a large
+  // arrival in the activity list that no line accounts for.
+  const ytd_contributions = sum(thisYear.filter((t) => isContribution(t, counted)));
+  const ytd_rollovers = sum(thisYear.filter((t) => isIncomingRollover(t, counted)));
+
+  // The money-added line, only across dates the store has VERIFIED for this
+  // account, ending where they end: a contribution after `through` isn't known
+  // yet (an outage, or an unverified last sync), so drawing past it would book it
+  // as growth.
+  //
+  // It starts at the later of the verified start and the account's oldest row:
+  // an institution can keep less history than was asked for, and every
+  // contribution before its oldest row would read as growth. No rows at all
+  // proves nothing about how far the feed reaches, so no line.
+  const cov = sync.coverage[account_id];
+  const oldest = mine.length ? mine[mine.length - 1].date : null;
+  const flowsKnown = !!cov && !!oldest;
+  const flows = flowsKnown
+    ? dailyFlows(
+        mine.filter((t) => t.date >= cov!.from && t.date <= cov!.through),
+        counted
+      )
+    : null;
+  const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
+  const flows_to = flowsKnown ? cov!.through : null;
+
+  // The trailing year's contributions, for the Plan tab's savings
+  // (lib/fire/inputs.ts): new money only, not rollovers, from the later of a
+  // year ago and the first day the store has verified. Whether that cut the
+  // year short is said here, in contributions_12m_partial, decided against
+  // the verified coverage (not the oldest row: a plan with no activity for a
+  // while is still covered) and on the coverage's own UTC days, so the tab
+  // never compares one of these days with its own. Each contribution is
+  // listed too, so the tab can leave out one that a transfer from a bank
+  // account paid for, which its income minus spending already counts. Null
+  // where the flows aren't known, for the same reasons as the line above.
+  const yearAgo = new Date(Date.now() - 364 * 86_400_000).toISOString().slice(0, 10);
+  const contributions_12m_from = flowsKnown ? (cov!.from > yearAgo ? cov!.from : yearAgo) : null;
+  const contributions_12m_partial = flowsKnown ? cov!.from > yearAgo : null;
+  const contributed = contributions_12m_from
+    ? mine.filter((t) => t.date >= contributions_12m_from && isContribution(t, counted))
+    : null;
+  const contributions_12m = contributed ? sum(contributed) : null;
+  const contributions_12m_rows = contributed
+    ? contributed.map((t) => ({ date: t.date, amount: contributedAmount(t, counted) })).reverse() // oldest first
+    : null;
+  // The verified record can reach back further than the institution's own
+  // history (it may keep less), so when the account's oldest row is inside
+  // the year, that day is said too: "Nya has activity for it from" is true
+  // either way. Same UTC days as the rest.
+  const contributions_12m_activity_from = flowsKnown && oldest! > yearAgo ? oldest : null;
+
+  // Said in full here so the client can print it as is. A fetch failure
+  // serves what is stored (and says so only if there is any); a storage
+  // problem serves what was just fetched. Both can happen at once.
+  const fetchNote = sync.note ? (mine.length ? `${sync.note}; showing saved activity` : sync.note) : null;
+  // Another sync is mid-way through the first download: nothing is saved yet,
+  // and "no activity" would be wrong.
+  const loadingNote = sync.busy && mine.length === 0 ? 'Investment activity is still loading' : null;
+  const note = [fetchNote, loadingNote, sync.storeNote].filter(Boolean).join('. ') || null;
+  return {
+    txns: mine.slice(0, RECENT_LIMIT),
+    ytd_contributions,
+    ytd_rollovers,
+    flows,
+    flows_from,
+    flows_to,
+    contributions_12m,
+    contributions_12m_from,
+    contributions_12m_partial,
+    contributions_12m_rows,
+    contributions_12m_activity_from,
+    note,
+  };
+}
+
+export type InvestmentActivity = ReturnType<typeof activityFromSync>;
+
+/** Whether the activity from this sync may be cached. Not after a Plaid
+ *  failure (re-check next load), nor while another sync held the store (that
+ *  answer is whatever was stored, which on a first link is nothing). A
+ *  storage-only problem IS cached: the rows were just fetched live, and
+ *  otherwise an unwritable store would re-run the full fetch every load. */
+export function cacheable(sync: InvSync): boolean {
+  return !sync.note && !sync.busy;
+}
+
+/** A cached entry the Plan can use: one cached before the Plan tab's fields
+ *  existed is a miss, so the tab never reads their absence as "nothing
+ *  contributed" or "a whole year". */
+export function hasPlanFields(cached: Record<string, unknown>): boolean {
+  return 'contributions_12m_activity_from' in cached;
+}

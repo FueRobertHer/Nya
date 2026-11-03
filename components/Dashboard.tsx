@@ -141,6 +141,7 @@ import type { PlanSegment } from './PlanBar';
 // The FI card on Home works its figures out with the Plan's code, so it is
 // loaded the same way, after Home paints.
 import FiProgressLoader from './FiProgressLoader';
+import { createPlanInputsStore } from '@/lib/plan-inputs-store';
 import InstitutionCard, { cardHeadingId, institutionMenu } from './InstitutionCard';
 import { fmt, fmtInstantDay, fmtStaleDay, kindWords, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
 
@@ -312,6 +313,13 @@ export default function Dashboard({
   const brokerageLink = flags['brokerage-link'];
   const lunchFlow = flags.lunchflow;
   const cacheKey = cacheKeyFor(viewer);
+  // The copy of the Plan's inputs that Home's FI line and the Plan tab share
+  // (lib/plan-inputs-store.ts), one for each signed-in account: a demo
+  // sign-in changes the viewer in place (components/demo-sign-in.ts).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const planInputs = useMemo(() => createPlanInputsStore(), [viewer]);
+  const planInputsRef = useRef(planInputs);
+  planInputsRef.current = planInputs;
   // Hiding amounts (components/hide-amounts.ts) changes what every formatter
   // writes, so the whole dashboard draws again when the switch changes.
   const amountsHidden = useAmountsHidden();
@@ -667,6 +675,10 @@ export default function Dashboard({
 
   const loadNetWorth = useCallback(async (force = false) => {
     setRefreshing(true);
+    // Forced after a refresh, a link, a reconnect, a disconnect or a restore
+    // (restoreChanged): what the Plan's inputs rest on may have changed, so
+    // the screens showing them ask again, whether or not this load answers.
+    if (force) planInputsRef.current.invalidate();
     try {
       const res = await fetch(`/api/net-worth${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
@@ -2482,6 +2494,7 @@ export default function Dashboard({
                         currency={accountCurrency}
                         txnFx={txnFx}
                         balanceFx={base?.fx ?? null}
+                        planInputs={planInputs}
                         onOpenPlan={() => {
                           window.scrollTo(0, 0);
                           setPlanSegment('path');
@@ -2838,6 +2851,7 @@ export default function Dashboard({
                   onSegment={setPlanSegment}
                   landing={planLanding}
                   onLanded={() => setPlanLanding(null)}
+                  planInputs={planInputs}
                 />
               )}
             </>

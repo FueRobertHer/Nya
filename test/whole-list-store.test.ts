@@ -450,3 +450,79 @@ describe('opted in: what the server said about a save (goals)', () => {
     expect(seen).toEqual(['USD', 'EUR', null]);
   });
 });
+
+// The Plan's store loads through the copy of the Plan's inputs it shares with
+// Home (lib/plan-inputs-store.ts): `read` in place of a GET, and its saves
+// told to that copy, `ended` before anything else happens, a failed save's
+// reload included, which would otherwise wait on the save that started it.
+describe('a load read from elsewhere, and saves told about', () => {
+  type Read = { ok: boolean; status: number; data: Record<string, unknown> | null } | 'throw';
+  function shared(reads: Read[]) {
+    const server = fakeServer({ Food: 300 });
+    const log: string[] = [];
+    const states: ListState<Budgets>[] = [];
+    const store = createWholeListStore<Budgets>({
+      url: '/api/budgets',
+      field: 'budgets',
+      noun: 'budgets',
+      empty: {},
+      isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+      onChange: (s) => states.push(s),
+      showRefusal: true,
+      fetch: (async (url: string, init?: RequestInit) => {
+        log.push(`fetch ${init?.method ?? 'GET'}`);
+        return server.fetch(url, init);
+      }) as unknown as typeof fetch,
+      read: async () => {
+        log.push('read');
+        const r = reads.shift() ?? { ok: true, status: 200, data: { budgets: server.stored } };
+        if (r === 'throw') throw new TypeError('network down');
+        return r;
+      },
+      saveHooks: {
+        started: () => log.push('started'),
+        ended: (answer) => log.push(`ended ${JSON.stringify(answer)}`),
+      },
+    });
+    return { server, store, log, states };
+  }
+
+  test('a load reads from it, never a GET, and takes its answer as a response’s', async () => {
+    const s = shared([{ ok: true, status: 200, data: { budgets: { Rent: 1 } } }]);
+    await s.store.load();
+    expect(s.log).toEqual(['read']);
+    expect(s.store.get()).toMatchObject({ status: 'ready', value: { Rent: 1 } });
+
+    const unreadable = shared([{ ok: false, status: 409, data: { error: 'x', unreadable: true } }]);
+    await unreadable.store.load();
+    expect(unreadable.store.get().error).toContain('could not be read');
+    for (const failed of [{ ok: false, status: 500, data: { error: 'x' } }, 'throw'] as Read[]) {
+      const f = shared([failed]);
+      await f.store.load();
+      expect(f.store.get()).toMatchObject({ status: 'error' });
+      expect(f.store.get().error).toContain('could not be loaded');
+    }
+  });
+
+  test('a save: started before its request, ended with the answer once it is in', async () => {
+    const s = shared([]);
+    await s.store.load();
+    const saving = s.store.save({ Food: 400 });
+    expect(s.log).toEqual(['read', 'started', 'fetch PUT']);
+    await s.server.release();
+    expect(await saving).toBe(true);
+    expect(s.log).toEqual(['read', 'started', 'fetch PUT', 'ended {"budgets":{"Food":400}}']);
+  });
+
+  test('a save that fails or is refused: ended with nothing, before the reload reads', async () => {
+    for (const mode of ['fail', 'network'] as const) {
+      const s = shared([]);
+      await s.store.load();
+      s.server.mode = mode;
+      const saving = s.store.save({ Food: 400 });
+      await s.server.release();
+      expect(await saving).toBe(false);
+      expect(s.log).toEqual(['read', 'started', 'fetch PUT', 'ended null', 'read']);
+    }
+  });
+});

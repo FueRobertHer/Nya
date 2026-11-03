@@ -100,18 +100,43 @@ export async function writeCache(ctx: Ctx, which: CacheKey, value: unknown): Pro
  */
 export async function readAccountCache<T>(ctx: Ctx, field: string): Promise<T | null> {
   try {
-    const blob = await redis().hget<string>(keyOf(ctx, INVESTMENT_ACTIVITY), field);
-    if (!blob) return null;
-    const { at, value } = JSON.parse(await decrypt(ctx, blob)) as { at: number; value: T };
-    // Per-field expiry is enforced here, not by Redis: a hash has one TTL for all
-    // fields and every write slides it, so under an expand/collapse loop a field
-    // written 40 minutes ago would keep being renewed by writes to other accounts.
-    // The key's own TTL stays only as cleanup for a hash nobody touches again.
-    if (typeof at !== 'number' || Date.now() - at > ttlSeconds() * 1000) return null;
-    return value;
+    return await openAccountCache<T>(ctx, await redis().hget<string>(keyOf(ctx, INVESTMENT_ACTIVITY), field));
   } catch {
     return null;
   }
+}
+
+/** Several accounts' cached activity in one command (HMGET), each by the
+ *  same rule as readAccountCache: a field past its age, or one that can't be
+ *  read, is a miss, and so is every field when the read fails. */
+export async function readAccountCaches<T>(ctx: Ctx, fields: readonly string[]): Promise<Map<string, T>> {
+  const found = new Map<string, T>();
+  // HMGET with no field is an error, not an empty answer.
+  if (fields.length === 0) return found;
+  try {
+    const blobs = (await redis().hmget<Record<string, unknown>>(keyOf(ctx, INVESTMENT_ACTIVITY), ...fields)) ?? {};
+    await Promise.all(
+      fields.map(async (field) => {
+        const value = await openAccountCache<T>(ctx, blobs[field]).catch(() => null);
+        if (value !== null) found.set(field, value);
+      })
+    );
+  } catch {
+    // A miss for every field: each is fetched as if it had never been cached.
+  }
+  return found;
+}
+
+/** One field's payload, or null when there is none or it is past its age. */
+async function openAccountCache<T>(ctx: Ctx, blob: unknown): Promise<T | null> {
+  if (typeof blob !== 'string' || !blob) return null;
+  const { at, value } = JSON.parse(await decrypt(ctx, blob)) as { at: number; value: T };
+  // Per-field expiry is enforced here, not by Redis: a hash has one TTL for all
+  // fields and every write slides it, so under an expand/collapse loop a field
+  // written 40 minutes ago would keep being renewed by writes to other accounts.
+  // The key's own TTL stays only as cleanup for a hash nobody touches again.
+  if (typeof at !== 'number' || Date.now() - at > ttlSeconds() * 1000) return null;
+  return value;
 }
 
 export async function writeAccountCache(ctx: Ctx, field: string, value: unknown): Promise<void> {

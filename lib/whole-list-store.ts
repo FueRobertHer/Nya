@@ -83,6 +83,15 @@ export function createWholeListStore<T>(opts: {
    *  answer carries more (the Plan: the currency its figures are in): given
    *  the whole body of a load that is taken and of a save that went through. */
   onAnswer?: (data: Record<string, unknown>) => void;
+  /** Where a load reads from, instead of a GET of `url`, for a store whose
+   *  answer another screen shares (the Plan: lib/plan-inputs-store.ts):
+   *  the response's ok and status and its body. A read that throws is a
+   *  load that failed. */
+  read?: () => Promise<{ ok: boolean; status: number; data: Record<string, unknown> | null }>;
+  /** Told when a save's request starts, and when it has answered, before
+   *  anything else happens (a failed save's reload included), with the body
+   *  of a save that went through, else null: for that shared copy. */
+  saveHooks?: { started: () => void; ended: (answer: Record<string, unknown> | null) => void };
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
@@ -109,11 +118,18 @@ export function createWholeListStore<T>(opts: {
   async function loadNow(): Promise<void> {
     const mine = ++loadSeq;
     set({ status: 'loading', error: null, damage: undefined });
-    let res: Response;
+    let res: { ok: boolean; status: number };
     let data: Record<string, unknown> | null = null;
     try {
-      res = await doFetch(opts.url);
-      data = await res.json().catch(() => null);
+      if (opts.read) {
+        const read = await opts.read();
+        res = read;
+        data = read.data;
+      } else {
+        const got = await doFetch(opts.url);
+        res = got;
+        data = await got.json().catch(() => null);
+      }
     } catch {
       if (mine === loadSeq) {
         set({ status: 'error', error: `${Noun} could not be loaded. Editing is paused until they are; ${reloadHint}.` });
@@ -163,6 +179,7 @@ export function createWholeListStore<T>(opts: {
     }
     const before = state.value;
     set({ saving: true, value: next, saveError: null }); // optimistic
+    opts.saveHooks?.started();
     let ok = false;
     let answer: Record<string, unknown> | null = null;
     let refusal: string | null = null;
@@ -173,12 +190,13 @@ export function createWholeListStore<T>(opts: {
         body: JSON.stringify({ ...(opts.extra?.() ?? {}), [opts.field]: next }),
       });
       ok = res.ok;
-      if (opts.adoptSaved || opts.showRefusal || opts.onAnswer) answer = await res.json().catch(() => null);
+      if (opts.adoptSaved || opts.showRefusal || opts.onAnswer || opts.saveHooks) answer = await res.json().catch(() => null);
       const refused = res.status === 400 || (res.status === 409 && !answer?.unreadable);
       if (!ok && opts.showRefusal && refused && typeof answer?.error === 'string') refusal = answer.error;
     } catch {
       ok = false;
     }
+    opts.saveHooks?.ended(ok && answer && typeof answer === 'object' ? answer : null);
     if (ok) {
       const saved = answer?.[opts.field];
       set({ saving: false, ...(opts.adoptSaved && opts.isValid(saved) ? { value: saved } : {}) });
