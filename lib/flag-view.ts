@@ -120,8 +120,9 @@ export function switchRows(report: { entries: ReadonlyMap<string, FlagValue>; un
 
 // ---- The record, in words ----
 
-/** One change as the admin page shows it: what changed, when, and who. */
-export type ChangeLine = { at: string; key: string; what: string; by: string };
+/** One change as the admin page shows it: the switch's name, what changed,
+ *  when, and who, null when it was the admin. */
+export type ChangeLine = { at: string; key: string; name: string; change: string; by: string | null };
 
 const AUDIENCE_WORDS: Record<string, string> = { nobody: 'Off', admin: 'You', 'admin-and-demo': 'You and the demo accounts', everyone: 'Everyone' };
 const MODE_WORDS: Record<string, string> = { off: 'Off', 'report-only': 'Report only', enforce: 'Enforce' };
@@ -155,20 +156,21 @@ export function opsOpen(stored: FlagValue | null | 'unreadable'): OpsOpen | null
   return stored !== 'unreadable' && stored && isSwitchValue(stored) && stored.on ? 'stored' : null;
 }
 
-/** Who made a change, in words: the admin, local development, an account's
- *  deletion, or another account by the start of its id. */
-function byWords(by: string, admin: ContainerId | null): string {
+/** Who made a change, in words: null for the admin, whose page it is, else
+ *  local development, an account's deletion, or another account by the start
+ *  of its id. */
+function byWords(by: string, admin: ContainerId | null): string | null {
   if (by === 'local development') return 'Local development';
   if (by === 'account deletion') return 'Account deletion';
-  if (by === admin) return 'You';
+  if (by === admin) return null;
   return /^[0-9a-f]{8}-/.test(by) ? `Account ${by.slice(0, 8)}` : by;
 }
 
 const added = (from: readonly string[], to: readonly string[]) => to.filter((x) => !from.includes(x));
 
-/** One recorded change in words, by the flag's name: "Detailed tax in the
- *  Plan: Off to You", "Lunch Flow: added Account 1a2b3c4d", "Who may sign in:
- *  added jane@example.com". A change to a flag this release doesn't know is
+/** One recorded change in words, under the flag's name: "Off to You" for
+ *  Detailed tax in the Plan, "Added Account 1a2b3c4d" for Lunch Flow, "Added
+ *  jane@example.com" for Who may sign in. A flag this release doesn't know is
  *  named by its key. */
 export function describeChange(change: EnvironmentChange<FlagValue>, admin: ContainerId | null): ChangeLine {
   const name = isFlagKey(change.key) ? flagDef(change.key).name : change.key;
@@ -192,5 +194,6 @@ export function describeChange(change: EnvironmentChange<FlagValue>, admin: Cont
     for (const p of added(was, now)) parts.push(`added ${p}`);
     for (const p of added(now, was)) parts.push(`removed ${p}`);
   }
-  return { at: change.at, key: change.key, what: `${name}: ${parts.length > 0 ? parts.join(', ') : 'saved again'}`, by: byWords(change.by, admin) };
+  const words = parts.length > 0 ? parts.join(', ') : 'saved again';
+  return { at: change.at, key: change.key, name, change: words.charAt(0).toUpperCase() + words.slice(1), by: byWords(change.by, admin) };
 }

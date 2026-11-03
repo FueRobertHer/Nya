@@ -1,9 +1,10 @@
 'use client';
 
 // One feature switch's sheet (lib/flags.ts), opened from its row in the
-// Feature switches card: what it does, what turning it off does, its key and
-// variable, and its value, set as its kind is set:
-//   - a mode or a switch: radio rows, saved by Save in the footer;
+// Feature switches card: what it does, then its environment, default, key and
+// variable as key and value lines, and its value, set as its kind is set:
+//   - a mode or a switch: radio rows, saved by Save in the footer beside
+//     Cancel, Off's row saying what turning it off does;
 //   - an audience: radio rows for who it is on for, saved by Save, and on
 //     the admin page the accounts it is also on for, each removed in place,
 //     added from a second level listing the accounts in use, and its last
@@ -29,8 +30,6 @@ import RadioRows, { type RadioOption } from './RadioRows';
 import { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './MonthStepper';
 import type { AdminAccount, ChangeLine, Place, SwitchRow } from '@/lib/flag-view';
-
-/** An account as the admin page names it, from the registry. */
 
 type Hint = { clerk_error: { type: string; reason: string } };
 /** What a change came back with: the flag's row (the admin's route), or the
@@ -97,29 +96,73 @@ export function valueWords(row: SwitchRow, place: Place): string {
   return choice === 'nobody' ? `On for ${accounts} by name` : `${word}, and ${accounts} by name`;
 }
 
+const WHO_SHORT: Record<Place, Record<string, string>> = {
+  admin: { nobody: 'Off', admin: 'You', 'admin-and-demo': 'You and demos', everyone: 'Everyone' },
+  dev: { nobody: 'Off', admin: 'The admin', 'admin-and-demo': 'Admin and demos', everyone: 'Everyone' },
+};
+
+/** A switch's value as its row's badge, short enough for the row's end at
+ *  320px, and its tone: accent while it is on for some but not everyone,
+ *  warn while the ops routes are open (they should be only while an
+ *  operation runs), plain otherwise. Accounts named besides a choice are said
+ *  under the row (alsoWords). */
+export function valueBadge(row: SwitchRow, place: Place): { text: string; tone: '' | 'accent' | 'warn' } {
+  if (row.kind === 'list') {
+    // The deployment's owners are always let in: the admin, on the admin page.
+    if (row.variableSet) return { text: 'From the environment', tone: '' };
+    if (place === 'admin') return { text: row.people ? `You and ${row.people} more` : 'Only you', tone: '' };
+    return { text: row.people ? `The owners and ${row.people} more` : 'Only the owners', tone: '' };
+  }
+  const choice = choiceInForce(row);
+  if (row.kind === 'switch') return { text: choiceWord(row, place, choice), tone: choice === 'on' ? 'warn' : '' };
+  if (row.kind === 'mode') return { text: choiceWord(row, place, choice), tone: '' };
+  const named = row.variableSet ? 0 : (row.accounts ?? 0);
+  if (choice === 'nobody' && named > 0) return { text: count(named, 'account', 'accounts'), tone: 'accent' };
+  const text = choice === null ? '' : (WHO_SHORT[place][choice] ?? choice);
+  return { text, tone: choice === 'admin' || choice === 'admin-and-demo' ? 'accent' : '' };
+}
+
+/** The accounts an audience is also on for, as its row says them under its
+ *  description; null when the badge says it all. */
+export function alsoWords(row: SwitchRow): string | null {
+  if (row.kind !== 'audience' || row.variableSet) return null;
+  const named = row.accounts ?? 0;
+  const choice = choiceInForce(row);
+  if (named === 0 || choice === 'nobody' || choice === 'everyone') return null;
+  return `Also on for ${count(named, 'account', 'accounts')} by name.`;
+}
+
+/** A release switch's removal day in words ("Jun 30, 2027"), the same on the
+ *  server and in the browser: a calendar day, written in UTC. */
+export function removeByWords(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
 const NOTES: Record<string, string> = {
-  nobody: 'On for nobody, but any accounts named below.',
   admin: 'The deployment’s owner.',
   'admin-and-demo': 'The owner, and the demo accounts where there are any.',
   everyone: 'Every account on this copy of Nya.',
   enforce: 'Pages refuse what the policy doesn’t allow.',
   'report-only': 'Pages report what the policy would refuse, and refuse nothing.',
-  off: '',
-  on: '',
 };
 
+/** The choices as radio rows, each with its sentence; Off's says what turning
+ *  the switch off does, where it is chosen. */
 function options(row: SwitchRow, place: Place, demos: boolean, shown: string | null): RadioOption[] {
   const order = row.kind === 'mode' ? ['enforce', 'report-only', 'off'] : row.kind === 'switch' ? ['on', 'off'] : row.choices;
   return order
     .filter((c) => row.choices.includes(c))
     .filter((c) => c !== 'admin-and-demo' || demos || shown === c)
     .map((c) => {
-      let note = NOTES[c];
-      if (row.kind === 'mode' && c === 'off') note = 'Pages carry no policy.';
+      let note = NOTES[c] ?? '';
+      if (c === 'nobody') note = place === 'admin' ? `${row.offMeans} Accounts added below still have it.` : row.offMeans;
+      if (row.kind === 'mode' && c === 'off') note = row.offMeans;
       if (row.kind === 'switch') note = c === 'on' ? 'The ops routes answer a request signed with OPS_SECRET.' : 'The ops routes answer as missing.';
       return { value: c, name: choiceWord(row, place, c), ...(note ? { note } : {}) };
     });
 }
+
+const LEGEND: Record<SwitchRow['kind'], string> = { audience: 'On for', mode: 'Policy', switch: 'Ops routes', list: '' };
 
 export default function FlagSheet({
   row,
@@ -135,6 +178,7 @@ export default function FlagSheet({
   accounts,
   changes,
   day,
+  when,
 }: {
   row: SwitchRow;
   place: Place;
@@ -152,6 +196,8 @@ export default function FlagSheet({
   accounts: AdminAccount[];
   changes: ChangeLine[];
   day: (iso: string) => string;
+  /** How to write an instant's day and time (components/browser-day.ts). */
+  when: (iso: string) => string;
 }) {
   const admin = place === 'admin';
   const unreadable = row.stored === 'unreadable';
@@ -264,31 +310,52 @@ export default function FlagSheet({
   }
 
   const choosing = row.kind !== 'list' && !unreadable;
-  const footer =
-    choosing && choice !== shown ? (
-      <div className="btn-row">
-        <button type="button" className="btn" disabled={busy || needsPassword} onClick={() => run({ op: 'choose', choice })}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-    ) : undefined;
+  // Save stays in view, quiet until a different choice is made.
+  const footer = choosing ? (
+    <div className="btn-row">
+      <button type="button" className="btn secondary" onClick={onClose}>
+        Cancel
+      </button>
+      <button type="button" className="btn" disabled={busy || needsPassword || choice === shown} onClick={() => run({ op: 'choose', choice })}>
+        {busy ? 'Saving…' : 'Save'}
+      </button>
+    </div>
+  ) : undefined;
 
   return (
     <Sheet open={open} title={row.name} onClose={onClose} level="main" footer={footer}>
       <div className="stack">
-        <p>{row.about}</p>
-        <p className="helper">Turned off: {row.offMeans}</p>
-        <p className="helper">
-          Its key is <code>{row.key}</code>
-          {row.variable ? (
-            <>
-              , and <code>{row.variable}</code> decides it while that is set.
-            </>
-          ) : (
-            '.'
+        <div className="stack tight">
+          <p>{row.about}</p>
+          {row.removeBy && <p className="helper">Temporary: to be removed by {removeByWords(row.removeBy)}.</p>}
+        </div>
+        <dl className="txn-detail">
+          <div className="txn-detail-row">
+            <dt>Environment</dt>
+            <dd>{environment}</dd>
+          </div>
+          {row.kind !== 'list' && (
+            <div className="txn-detail-row">
+              <dt>Default</dt>
+              <dd>{choiceWord(row, place, row.defaultChoice)}</dd>
+            </div>
           )}
-          {row.removeBy && ` A release switch: it is to be removed by ${row.removeBy}.`}
-        </p>
+          <div className="txn-detail-row">
+            <dt>Key</dt>
+            <dd>
+              <code>{row.key}</code>
+            </dd>
+          </div>
+          {row.variable && (
+            <div className="txn-detail-row">
+              <dt>Variable</dt>
+              <dd>
+                <code>{row.variable}</code>, {row.variableSet ? 'set' : 'not set'}
+              </dd>
+            </div>
+          )}
+        </dl>
+        {row.kind === 'list' && <p className="helper">{row.offMeans}</p>}
         {row.variableSet && (
           <Notice level="info">
             {row.variable} is set, so it decides: {valueWords(row, place)}. {row.kind === 'list' ? 'This list' : 'Your choice'} takes over when it is removed.
@@ -304,7 +371,7 @@ export default function FlagSheet({
         {choosing && (
           <>
             <RadioRows
-              legend={row.kind === 'audience' ? `Who it is on for, in ${environment}` : row.kind === 'mode' ? `The policy, in ${environment}` : `The ops routes, in ${environment}`}
+              legend={LEGEND[row.kind]}
               name={`flag-${row.key}`}
               options={options(row, place, demos, shown)}
               value={choice}
@@ -323,7 +390,7 @@ export default function FlagSheet({
               Also on for
             </h3>
             {named.length === 0 ? (
-              <p className="empty-note">No account by name.</p>
+              <p className="empty-note">No other accounts.</p>
             ) : (
               <ul className="card list-rows">
                 {named.map((id) => {
@@ -412,12 +479,13 @@ export default function FlagSheet({
             </h3>
             <ul className="list-rows">
               {changes.map((c) => (
-                <li key={`${c.at}-${c.what}`}>
+                <li key={`${c.at}-${c.change}`}>
                   <div className="list-row">
                     <span className="list-row-text">
-                      <span className="list-row-title">{c.what}</span>
+                      <span className="list-row-title">{c.change}</span>
                       <span className="list-row-sub">
-                        {day(c.at)}, by {c.by}
+                        {when(c.at)}
+                        {c.by && ` · ${c.by}`}
                       </span>
                     </span>
                   </div>

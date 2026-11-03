@@ -22,22 +22,22 @@ import { chevron, RIGHT } from './MonthStepper';
 import { AdminAttentionList, adminAttentionRows } from './NeedsAttention';
 import { PageHeader } from './PageHeader';
 import { Notice } from './TotalCaveats';
-import { useBrowserDay } from './browser-day';
+import { useBrowserDay, useBrowserWhen } from './browser-day';
 
 const DOCS = 'https://github.com/FueRobertHer/Nya/blob/main/docs';
 
 /** The operations done by hand, each by its section of the guide, with the
- *  route or command it runs. None runs from here. */
+ *  ops route (under /api/ops/) or script it runs. None runs from here. */
 export const OPERATIONS: { name: string; how: string; href: string }[] = [
-  { name: 'Taking a backup by hand', how: '/api/ops/export', href: `${DOCS}/operations.md#taking-a-backup-by-hand` },
-  { name: 'Rotating the master key', how: '/api/ops/rotate-master', href: `${DOCS}/operations.md#rotating-the-master-key` },
-  { name: 'Moving existing data to keys of its own', how: '/api/ops/reencrypt', href: `${DOCS}/operations.md#moving-existing-data-to-keys-of-its-own-the-migration-pass` },
-  { name: 'Per-container data keys', how: '/api/ops/container-keys', href: `${DOCS}/operations.md#per-container-data-keys` },
-  { name: 'Containers', how: '/api/ops/containers', href: `${DOCS}/operations.md#containers` },
-  { name: 'Repairing balance signs', how: '/api/ops/sign-repair', href: `${DOCS}/operations.md#repairing-balance-signs` },
-  { name: 'Restoring a backup', how: 'bun run restore', href: `${DOCS}/operations.md#restoring-a-backup` },
-  { name: 'Moving the data into containers', how: 'bun run move-data', href: `${DOCS}/operations.md#moving-the-data-into-containers` },
-  { name: 'Resetting the demo accounts', how: 'scripts/seed-demo.ts', href: `${DOCS}/authentication.md#resetting-the-demo-accounts` },
+  { name: 'Taking a backup by hand', how: 'Ops route: export', href: `${DOCS}/operations.md#taking-a-backup-by-hand` },
+  { name: 'Rotating the master key', how: 'Ops route: rotate-master', href: `${DOCS}/operations.md#rotating-the-master-key` },
+  { name: 'Moving existing data to keys of its own', how: 'Ops route: reencrypt', href: `${DOCS}/operations.md#moving-existing-data-to-keys-of-its-own-the-migration-pass` },
+  { name: 'Per-container data keys', how: 'Ops route: container-keys', href: `${DOCS}/operations.md#per-container-data-keys` },
+  { name: 'Containers', how: 'Ops route: containers', href: `${DOCS}/operations.md#containers` },
+  { name: 'Repairing balance signs', how: 'Ops route: sign-repair', href: `${DOCS}/operations.md#repairing-balance-signs` },
+  { name: 'Restoring a backup', how: 'Script: bun run restore', href: `${DOCS}/operations.md#restoring-a-backup` },
+  { name: 'Moving the data into containers', how: 'Script: bun run move-data', href: `${DOCS}/operations.md#moving-the-data-into-containers` },
+  { name: 'Resetting the demo accounts', how: 'Script: scripts/seed-demo.ts', href: `${DOCS}/authentication.md#resetting-the-demo-accounts` },
 ];
 
 /** How many changes the record shows before Show all. */
@@ -65,15 +65,16 @@ function Unread({ what }: { what: string }) {
   return <Notice level="caution">{what} couldn’t be read. Reload the page to try again.</Notice>;
 }
 
-/** The record: what changed, then when and by whom, latest first. */
-function Changes({ changes, environment, day }: { changes: AdminPageData['changes']; environment: string; day: (iso: string) => string }) {
+/** The record, latest first: each switch by name, then what changed, when,
+ *  and who, when it wasn't the admin. */
+function Changes({ changes, environment, when }: { changes: AdminPageData['changes']; environment: string; when: (iso: string) => string }) {
   const [all, setAll] = useState(false);
   const lines = changes?.lines ?? [];
   const shown = all ? lines : lines.slice(0, CHANGES_SHOWN);
   return (
     <section className="card" aria-labelledby="admin-changes-title">
       <Header id="admin-changes-title">Changes</Header>
-      <p className="helper">Each change to a feature switch in {environment}, latest first, with who made it. The last 500 are kept.</p>
+      <p className="helper">Each change to a feature switch in {environment}, latest first. The last 500 are kept.</p>
       {!changes ? (
         <Unread what="The record of changes" />
       ) : lines.length === 0 ? (
@@ -84,9 +85,10 @@ function Changes({ changes, environment, day }: { changes: AdminPageData['change
             <li key={`${c.at}-${i}`}>
               <div className="list-row">
                 <span className="list-row-text">
-                  <span className="list-row-title">{c.what}</span>
+                  <span className="list-row-title">{c.name}</span>
                   <span className="list-row-sub">
-                    {day(c.at)} · {c.by}
+                    {c.change} · {when(c.at)}
+                    {c.by && ` · ${c.by}`}
                   </span>
                 </span>
               </div>
@@ -112,6 +114,7 @@ function Changes({ changes, environment, day }: { changes: AdminPageData['change
 
 export default function AdminPage({ data }: { data: AdminPageData }) {
   const day = useBrowserDay();
+  const when = useBrowserWhen();
   const attention = adminAttentionRows(data.backup, data.files, data.ops, day);
   // Each switch's latest five changes, for its sheet.
   const latest: Record<string, ChangeLine[]> = {};
@@ -125,7 +128,7 @@ export default function AdminPage({ data }: { data: AdminPageData }) {
     <main className="wrap report-wrap">
       <PageHeader back="/?settings=admin" />
       <h1>Admin</h1>
-      <p className="sub">This deployment’s feature switches, nightly jobs, accounts and settings, in {data.environment}. Only its admin sees this page.</p>
+      <p className="sub">{data.environment}. Only you see this page.</p>
       <div className="stack">
         {attention.length > 0 && (
           <section className="card needs-attention" aria-labelledby="admin-needs-title">
@@ -232,7 +235,7 @@ export default function AdminPage({ data }: { data: AdminPageData }) {
 
         <section className="card" aria-labelledby="admin-operations-title">
           <Header id="admin-operations-title">Operations</Header>
-          <p className="helper">Nothing runs from this page. Each is done by hand, as its part of the guide says; a route answers only while the ops routes are on.</p>
+          <p className="helper">Run outside the app, with the ops secret or a script. Each opens its steps in the docs; an ops route answers only while the ops routes are on.</p>
           <ul className="list-rows">
             {OPERATIONS.map((o) => (
               <li key={o.name}>
@@ -248,7 +251,8 @@ export default function AdminPage({ data }: { data: AdminPageData }) {
           </ul>
         </section>
 
-        <Changes changes={data.changes} environment={data.environment} day={day} />
+        <Changes changes={data.changes} environment={data.environment} when={when} />
+        <p className="helper">Not on this page: any account’s financial data, or running an operation.</p>
       </div>
     </main>
   );

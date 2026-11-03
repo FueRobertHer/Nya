@@ -171,20 +171,21 @@ describe('the rows and the record', () => {
     expect(rows['plan-tax']).toMatchObject({ variable: null, variableSet: false, variableChoice: null });
   });
 
-  test('each change in words, by the flag’s name and who made it', () => {
+  test('each change in words, under the flag’s name, with who made it unless it was the admin', () => {
     const admin = C1 as never;
     const line = (key: string, from: FlagValue | null, to: FlagValue, by: string) => describeChange({ at: AT, key, from, to, by }, admin);
-    expect(line('plan-tax', audience('nobody'), audience('admin'), C1)).toEqual({ at: AT, key: 'plan-tax', what: 'Detailed tax in the Plan: Off to You', by: 'You' });
-    expect(line('plan-tax', null, audience('everyone'), 'local development').what).toBe('Detailed tax in the Plan: set to Everyone');
-    expect(line('plan-tax', null, audience('everyone'), 'local development').by).toBe('Local development');
-    expect(line('lunchflow', audience('nobody'), audience('nobody', [C2]), C1).what).toBe('Lunch Flow: added Account 6e2d8f3b');
-    expect(line('lunchflow', audience('nobody', [C2, C1]), audience('nobody', [C1]), 'account deletion')).toMatchObject({ what: 'Lunch Flow: removed Account 6e2d8f3b', by: 'Account deletion' });
-    expect(line('lunchflow', audience('nobody'), audience('nobody', [C1]), C2)).toMatchObject({ what: 'Lunch Flow: added You', by: 'Account 6e2d8f3b' });
-    expect(line('csp', { mode: 'report-only', updatedAt: AT }, { mode: 'enforce', updatedAt: AT }, C1).what).toBe('Content-Security-Policy: Report only to Enforce');
-    expect(line('ops', { on: false, updatedAt: AT }, { on: true, updatedAt: AT }, C1).what).toBe('Ops routes: Off to On');
-    expect(line('sign-in', list([], []), list([], ['jane@example.com']), C1).what).toBe('Who may sign in: added jane@example.com');
-    expect(line('sign-in', list(['user_a'], []), list([], []), C1).what).toBe('Who may sign in: removed user_a');
+    expect(line('plan-tax', audience('nobody'), audience('admin'), C1)).toEqual({ at: AT, key: 'plan-tax', name: 'Detailed tax in the Plan', change: 'Off to You', by: null });
+    expect(line('plan-tax', null, audience('everyone'), 'local development')).toMatchObject({ change: 'Set to Everyone', by: 'Local development' });
+    expect(line('lunchflow', audience('nobody'), audience('nobody', [C2]), C1)).toMatchObject({ name: 'Lunch Flow', change: 'Added Account 6e2d8f3b' });
+    expect(line('lunchflow', audience('nobody', [C2, C1]), audience('nobody', [C1]), 'account deletion')).toMatchObject({ change: 'Removed Account 6e2d8f3b', by: 'Account deletion' });
+    expect(line('lunchflow', audience('nobody'), audience('nobody', [C1]), C2)).toMatchObject({ change: 'Added You', by: 'Account 6e2d8f3b' });
+    expect(line('lunchflow', audience('admin', [C2]), audience('everyone', [C2]), C1).change).toBe('You to Everyone');
+    expect(line('lunchflow', audience('admin'), audience('admin'), C1).change).toBe('Saved again');
+    expect(line('csp', { mode: 'report-only', updatedAt: AT }, { mode: 'enforce', updatedAt: AT }, C1)).toMatchObject({ name: 'Content security policy', change: 'Report only to Enforce' });
+    expect(line('ops', { on: false, updatedAt: AT }, { on: true, updatedAt: AT }, C1)).toMatchObject({ name: 'Ops routes', change: 'Off to On' });
+    expect(line('sign-in', list([], []), list([], ['jane@example.com']), C1)).toMatchObject({ name: 'Who may sign in', change: 'Added jane@example.com' });
+    expect(line('sign-in', list(['user_a'], []), list([], []), C1).change).toBe('Removed user_a');
     // A flag a later release added, which this one doesn't know.
-    expect(line('newer-flag', null, audience('admin'), C1).what).toBe('newer-flag: set to You');
+    expect(line('newer-flag', null, audience('admin'), C1)).toMatchObject({ name: 'newer-flag', change: 'Set to You' });
   });
 });

@@ -84,7 +84,7 @@ describe('what it reads', () => {
     ]);
     expect(data.rows?.find((r) => r.key === 'lunchflow')).toMatchObject({ name: 'Lunch Flow', stored: 'admin', containers: [OTHER] });
     expect(data.changes).toEqual({
-      lines: [{ at: '2026-10-21T09:00:00.000Z', key: 'lunchflow', what: 'Lunch Flow: set to You, added Account 9c1d2e3f', by: 'You' }],
+      lines: [{ at: '2026-10-21T09:00:00.000Z', key: 'lunchflow', name: 'Lunch Flow', change: 'Set to You, added Account 9c1d2e3f', by: null }],
       unreadable: 0,
     });
     expect(data.accounts).toEqual([
@@ -151,9 +151,11 @@ describe('what it reads', () => {
 });
 
 describe('the page', () => {
-  test('its cards in order, Needs attention only when something does', async () => {
+  test('its environment under the title, its cards in order, Needs attention only when something does, and what it leaves out', async () => {
     const quiet = await html();
+    expect(text(quiet)).toStartWith('Nya Admin Preview. Only you see this page.');
     expect(titles(quiet)).toEqual(['Feature switches', 'Jobs and storage', 'Demo accounts', 'Environment', 'Operations', 'Changes']);
+    expect(text(quiet)).toEndWith('Not on this page: any account’s financial data, or running an operation.');
     expect(text(quiet)).not.toContain('Tax law');
     expect(quiet).toContain('href="/?settings=admin"');
     expect(quiet).toContain('href="/admin/jobs"');
@@ -194,11 +196,13 @@ describe('the page', () => {
     expect(text(environment)).toContain('Sign-in Clerk while both its keys are set');
     const operations = card(page, 'admin-operations-title');
     for (const part of [environment, operations]) expect(/<(button|form|input|select|textarea)\b/.test(part)).toBe(false);
-    expect(text(operations)).toContain('Nothing runs from this page.');
+    expect(text(operations)).toContain('Run outside the app, with the ops secret or a script.');
+    expect(text(operations)).toContain('Taking a backup by hand Ops route: export');
+    expect(text(operations)).toContain('Restoring a backup Script: bun run restore');
     expect([...operations.matchAll(/class="list-row" href="([^"]+)"/g)]).toHaveLength(9);
   });
 
-  test('the record: each change worded, its day as the server writes it, latest first, the latest 25 until Show all', async () => {
+  test('the record: each switch by name, then the change, its time as the server writes it, and who unless it was the admin; latest first, the latest 25 until Show all', async () => {
     for (let i = 0; i < CHANGES_SHOWN + 2; i++) {
       const on = i % 2 === 0;
       await flagsStore.update('ops', () => ({ on, updatedAt: '2026-10-01T00:00:00.000Z' }), i === 0 ? 'local development' : TEST_CONTAINER, at(`2026-10-${String(i + 1).padStart(2, '0')}T08:00:00.000Z`));
@@ -206,7 +210,8 @@ describe('the page', () => {
     const changes = card(await html(), 'admin-changes-title');
     const rows = [...changes.matchAll(/<div class="list-row">/g)];
     expect(rows).toHaveLength(CHANGES_SHOWN);
-    expect(text(changes)).toContain('Ops routes: Off to On 2026-10-27 · You');
+    expect(text(changes)).toContain('Ops routes Off to On · 2026-10-27 08:00 UTC Ops routes On to Off · 2026-10-26 08:00 UTC');
+    expect(text(changes)).not.toContain('· You');
     expect(text(changes)).not.toContain('Local development');
     expect(text(changes)).toContain(`Show all ${CHANGES_SHOWN + 2}`);
   });
@@ -215,7 +220,7 @@ describe('the page', () => {
     await flagsStore.update('ops', () => ({ on: true, updatedAt: '2026-10-01T00:00:00.000Z' }), TEST_CONTAINER);
     await fake.hset(testKey('flags:log'), { 'zzz-unreadable': '{not json' });
     const changes = text(card(await html(), 'admin-changes-title'));
-    expect(changes).toContain('Ops routes: set to On');
+    expect(changes).toContain('Ops routes Set to On ·');
     expect(changes).toContain('1 change this release can’t read is left out.');
   });
 });

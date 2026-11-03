@@ -43,6 +43,7 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: FeatureSwitchesCard } = await import('@/components/FeatureSwitchesCard');
+const { fmtAsOf } = await import('@/components/accounts-format');
 type SwitchRow = import('@/lib/flag-view').SwitchRow;
 type Props = Parameters<typeof FeatureSwitchesCard>[0];
 
@@ -76,7 +77,7 @@ const ROWS: SwitchRow[] = [
   row({ key: 'lunchflow', name: 'Lunch Flow', stored: 'admin', accounts: 2, containers: [C1, GONE] }),
   row({ key: 'plan-tax', name: 'Detailed tax in the Plan', removeBy: '2027-06-30', stored: 'admin', accounts: 0, containers: [] }),
   row({ key: 'brokerage-link', name: 'Brokerage and retirement accounts', stored: 'unreadable' }),
-  row({ key: 'csp', name: 'Content-Security-Policy', kind: 'mode', choices: ['off', 'report-only', 'enforce'], defaultChoice: 'report-only', variable: 'CSP_MODE' }),
+  row({ key: 'csp', name: 'Content security policy', kind: 'mode', choices: ['off', 'report-only', 'enforce'], defaultChoice: 'report-only', variable: 'CSP_MODE' }),
   row({ key: 'sign-in', name: 'Who may sign in', kind: 'list', choices: [], defaultChoice: null, stored: 'list', people: 2, ids: ['user_a'], emails: ['pat@example.com'], variable: 'CLERK_ALLOWED_USER_IDS' }),
 ];
 // /dev/flags's rows: counts, nothing named.
@@ -123,12 +124,22 @@ async function mount(over: Partial<Props> = {}) {
   const sheet = () => body.findAll((e) => e.getAttribute('role') === 'dialog')[0];
   const inSheet = (tag: string) => sheet()?.findAll((e) => e.tagName === tag) ?? [];
   const button = (text: string) => inSheet('BUTTON').find((b) => words(b) === text);
+  const rowOf = (name: string) => all('BUTTON').find((b) => b.getAttribute('class') === 'list-row' && words(b).startsWith(name));
   return {
-    row: (name: string) => all('BUTTON').find((b) => b.getAttribute('class') === 'list-row' && words(b).startsWith(name))!,
-    rowText: (name: string) => parts(all('BUTTON').find((b) => b.getAttribute('class') === 'list-row' && words(b).startsWith(name))),
+    row: (name: string) => rowOf(name)!,
+    rowText: (name: string) => parts(rowOf(name)),
+    /** A row's value badge: its words and its class. */
+    badge: (name: string) => {
+      const b = rowOf(name)!.findAll((e) => e.getAttribute('class') === 'list-row-value')[0].findAll((e) => e.tagName === 'SPAN')[0];
+      return [words(b), b.getAttribute('class')];
+    },
+    cardHelper: () => words(body.findAll((e) => e.tagName === 'P' && e.getAttribute('class') === 'helper')[0]),
     sheet,
     sheetText: () => words(sheet()),
     sheetParts: () => parts(sheet()),
+    /** The sheet's key and value lines. */
+    details: () => inSheet('DIV').filter((d) => d.getAttribute('class') === 'txn-detail-row').map((d) => d.childNodes.map((c) => words(c as FakeElement))),
+    legend: () => words(inSheet('LEGEND')[0]),
     radios: () => inSheet('LABEL').filter((l) => l.getAttribute('class') === 'radio-row').map(parts),
     radioNames: () => inSheet('SPAN').filter((l) => l.getAttribute('class') === 'radio-row-name').map(words),
     button,
@@ -179,54 +190,117 @@ async function mount(over: Partial<Props> = {}) {
 }
 
 describe('the rows', () => {
-  test('each switch by its name, its value in words, and badges for what to know', async () => {
+  test('each switch by its name, what it does under it with badges for what to know, and its value at the end', async () => {
     const page = await mount();
-    expect(page.rowText('Bring back a download')).toBe('Bring back a download Everyone Set by RESTORE_ENABLED');
-    expect(page.rowText('Lunch Flow')).toBe('Lunch Flow You, and 2 accounts by name');
-    expect(page.rowText('Detailed tax in the Plan')).toBe('Detailed tax in the Plan You Remove by 2027-06-30');
-    expect(page.rowText('Brokerage')).toBe('Brokerage and retirement accounts Off Can’t be read');
-    expect(page.rowText('Content-Security-Policy')).toBe('Content-Security-Policy Report only');
-    expect(page.rowText('Who may sign in')).toBe('Who may sign in 2 people on the stored list');
+    expect(page.rowText('Bring back a download')).toBe('Bring back a download What restore does. Set by RESTORE_ENABLED Everyone');
+    expect(page.rowText('Lunch Flow')).toBe('Lunch Flow What lunchflow does. Also on for 2 accounts by name. You');
+    expect(page.rowText('Detailed tax in the Plan')).toBe('Detailed tax in the Plan What plan-tax does. Remove by Jun 30, 2027 You');
+    expect(page.rowText('Brokerage')).toBe('Brokerage and retirement accounts What brokerage-link does. Can’t be read Off');
+    expect(page.rowText('Content security policy')).toBe('Content security policy What csp does. Report only');
+    expect(page.rowText('Who may sign in')).toBe('Who may sign in What sign-in does. You and 2 more');
     expect(page.row('Lunch Flow').getAttribute('aria-haspopup')).toBe('dialog');
+    page.unmount();
+  });
+
+  test('the value badge: accent while on for some but not everyone, warn while the ops routes are open', async () => {
+    const ops = row({ key: 'ops', name: 'Ops routes', kind: 'switch', choices: ['off', 'on'], defaultChoice: 'off', stored: 'on', variable: 'OPS_ENABLED' });
+    const named = row({ key: 'brokerage-link', name: 'Brokerage and retirement accounts', stored: 'nobody', accounts: 2, containers: [C1, C2] });
+    const page = await mount({ rows: [...ROWS.filter((r) => r.key !== 'brokerage-link'), named, ops] });
+    expect(page.badge('Lunch Flow')).toEqual(['You', 'badge accent']);
+    expect(page.badge('Bring back a download')).toEqual(['Everyone', 'badge']);
+    expect(page.badge('Content security policy')).toEqual(['Report only', 'badge']);
+    expect(page.badge('Brokerage')).toEqual(['2 accounts', 'badge accent']);
+    expect(page.rowText('Brokerage')).toBe('Brokerage and retirement accounts What brokerage-link does. 2 accounts');
+    expect(page.badge('Ops routes')).toEqual(['On', 'badge warn']);
+    page.unmount();
+  });
+
+  test('the card says a fresh sign-in comes before a change, where one is asked for', async () => {
+    let page = await mount({ freshSignIn: true, environment: 'Production' });
+    expect(page.cardHelper()).toBe(
+      'A change reaches the routes that check a switch at once, and pages within 30 seconds. These are Production’s: each environment keeps its own. You’ll confirm it’s you before a change is saved.'
+    );
+    page.unmount();
+    page = await mount();
+    expect(page.cardHelper()).toBe('A change reaches the routes that check a switch at once, and pages within 30 seconds. These are Preview’s: each environment keeps its own.');
     page.unmount();
   });
 
   test('/dev/flags words the admin as the admin', async () => {
     const page = await mount({ rows: DEV_ROWS, place: 'dev', accounts: [], environment: 'local development' });
-    expect(page.rowText('Lunch Flow')).toBe('Lunch Flow The admin, and 2 accounts by name');
+    expect(page.rowText('Lunch Flow')).toBe('Lunch Flow What lunchflow does. Also on for 2 accounts by name. The admin');
+    expect(page.cardHelper()).toBe('A change reaches the routes that check a switch at once, and pages within 30 seconds. These are this machine’s, for local development.');
     page.unmount();
   });
 });
 
 describe('a choice', () => {
-  test('a row opens its kind’s sheet: what it does, what off does, its key and variable, and its choices', async () => {
+  test('a row opens its kind’s sheet: what it does, its environment, default, key and variable, and its choices, Off’s saying what off does', async () => {
     const page = await mount();
-    await page.open('Content-Security-Policy');
+    await page.open('Content security policy');
+    expect(page.sheetText()).toStartWith('Content security policy');
     expect(page.sheetText()).toContain('What csp does.');
-    expect(page.sheetText()).toContain('Turned off: What turning csp off does.');
-    expect(page.sheetText()).toContain('Its key is csp, and CSP_MODE decides it while that is set.');
+    expect(page.details()).toEqual([
+      ['Environment', 'Preview'],
+      ['Default', 'Report only'],
+      ['Key', 'csp'],
+      ['Variable', 'CSP_MODE, not set'],
+    ]);
+    expect(page.legend()).toBe('Policy');
     expect(page.radios()).toEqual([
       'Enforce Pages refuse what the policy doesn’t allow.',
       'Report only Pages report what the policy would refuse, and refuse nothing.',
-      'Off Pages carry no policy.',
+      'Off What turning csp off does.',
     ]);
     expect(page.sheetText()).toContain('Not set: its default, Report only, applies.');
+    expect(page.sheetText()).not.toContain('Temporary');
     page.unmount();
   });
 
-  test('saved by Save alone, to the admin’s route, and the row shows the answer and the page reads again', async () => {
+  test('a release switch says when it goes, and Off says the accounts added still have it', async () => {
     const page = await mount();
     await page.open('Detailed tax in the Plan');
-    expect(page.button('Save')).toBeUndefined(); // nothing to save yet
+    expect(page.sheetParts()).toContain('Detailed tax in the Plan What plan-tax does. Temporary: to be removed by Jun 30, 2027 . Environment');
+    expect(page.sheetText()).toContain('Temporary: to be removed by Jun 30, 2027.');
+    expect(page.details()).toEqual([
+      ['Environment', 'Preview'],
+      ['Default', 'Off'],
+      ['Key', 'plan-tax'],
+    ]);
+    expect(page.legend()).toBe('On for');
+    expect(page.radios()[0]).toBe('Off What turning plan-tax off does. Accounts added below still have it.');
+    expect(page.radios()[1]).toBe('You The deployment’s owner.');
+    expect(page.sheetText()).toContain('No other accounts.');
+    page.unmount();
+  });
+
+  test('saved by Save alone, quiet until the choice changes, to the admin’s route; the row shows the answer and the page reads again', async () => {
+    const page = await mount();
+    await page.open('Detailed tax in the Plan');
+    expect(page.buttons().slice(-2)).toEqual(['Cancel', 'Save']);
+    expect(page.button('Save')!.disabled).toBe(true); // nothing to save yet
     await page.choose('You and the demo accounts');
+    expect(page.button('Save')!.disabled).toBe(false);
     await page.choose('Everyone');
     expect(puts).toEqual([]); // choosing sends nothing
     answer = (_url, b) => rowAnswer(b.key, { stored: 'everyone' });
     await page.press('Save');
     expect(puts).toEqual([{ url: '/api/admin/flags', body: { key: 'plan-tax', change: { op: 'choose', choice: 'everyone' } } }]);
     expect(refreshes).toBe(1);
-    expect(page.rowText('Detailed tax in the Plan')).toBe('Detailed tax in the Plan Everyone Remove by 2027-06-30');
-    expect(page.button('Save')).toBeUndefined();
+    expect(page.rowText('Detailed tax in the Plan')).toBe('Detailed tax in the Plan What plan-tax does. Remove by Jun 30, 2027 Everyone');
+    expect(page.button('Save')!.disabled).toBe(true);
+    page.unmount();
+  });
+
+  test('Cancel closes the sheet and sends nothing', async () => {
+    const page = await mount();
+    await page.open('Detailed tax in the Plan');
+    await page.choose('Everyone');
+    expect(page.sheet()!.getAttribute('data-open')).toBe('true');
+    await page.press('Cancel');
+    expect(page.sheet()!.getAttribute('data-open')).toBe('false'); // sliding out
+    expect(puts).toEqual([]);
+    expect(page.rowText('Detailed tax in the Plan')).toEndWith('You');
     page.unmount();
   });
 
@@ -265,7 +339,7 @@ describe('a choice', () => {
     await page.choose('Everyone');
     await page.press('Save');
     expect(page.sheetText()).toContain('Critical: The stored value of this switch can’t be read');
-    expect(page.button('Save')).toBeDefined();
+    expect(page.button('Save')!.disabled).toBe(false); // to try again
     expect(refreshes).toBe(0);
     page.unmount();
   });
@@ -301,16 +375,23 @@ describe('accounts', () => {
     await act(settle);
     expect(puts.at(-1)).toEqual({ url: '/api/admin/flags', body: { key: 'lunchflow', change: { op: 'add-account', container: C2 } } });
     // Back on the switch's own sheet.
-    expect(page.sheetText()).toContain('Who it is on for, in Preview');
+    expect(page.legend()).toBe('On for');
     page.unmount();
   });
 
-  test('the last changes to the switch, worded, with when and who', async () => {
-    const page = await mount({ changes: { lunchflow: [{ at: AT, key: 'lunchflow', what: 'Lunch Flow: added Account 6e2d8f3b', by: 'You' }] } });
+  test('the last changes to the switch: each change, then when, in the reader’s time, and who unless it was the admin', async () => {
+    const later = '2026-11-02T08:30:00.000Z';
+    const page = await mount({
+      changes: {
+        lunchflow: [
+          { at: later, key: 'lunchflow', name: 'Lunch Flow', change: 'Removed Account 6e2d8f3b', by: 'Account deletion' },
+          { at: AT, key: 'lunchflow', name: 'Lunch Flow', change: 'Added Account 6e2d8f3b', by: null },
+        ],
+      },
+    });
     await page.open('Lunch Flow');
-    expect(page.sheetText()).toContain('Last changes');
-    expect(page.sheetText()).toContain('Lunch Flow: added Account 6e2d8f3b');
-    expect(page.sheetText()).toContain(', by You');
+    expect(page.sheetParts()).toContain(`Last changes Removed Account 6e2d8f3b ${fmtAsOf(later)} · Account deletion Added Account 6e2d8f3b ${fmtAsOf(AT)} Cancel Save`);
+    expect(page.sheetText()).not.toContain('2026-11-01');
     page.unmount();
   });
 });
@@ -319,6 +400,13 @@ describe('who may sign in', () => {
   test('the owner, always let in, then each person with Remove, confirmed at a second level', async () => {
     const page = await mount();
     await page.open('Who may sign in');
+    expect(page.details()).toEqual([
+      ['Environment', 'Preview'],
+      ['Key', 'sign-in'],
+      ['Variable', 'CLERK_ALLOWED_USER_IDS, not set'],
+    ]);
+    expect(page.sheetText()).toContain('What turning sign-in off does.');
+    expect(page.buttons()).not.toContain('Save');
     expect(page.sheetParts()).toContain('You, the owner Always let in');
     expect(page.sheetText()).toContain('user_a');
     expect(page.sheetText()).toContain('pat@example.com');
@@ -453,13 +541,15 @@ describe('/dev/flags', () => {
     const page = await mount({ rows: DEV_ROWS, place: 'dev', accounts: [], environment: 'local development', clerk: false });
     await page.open('Lunch Flow');
     expect(page.radioNames()).toEqual(['Off', 'The admin', 'The admin and the demo accounts', 'Everyone']);
+    expect(page.radios()[0]).toBe('Off What turning lunchflow off does.');
+    expect(page.details()[0]).toEqual(['Environment', 'local development']);
     expect(page.sheetText()).toContain('Also on for 2 accounts by name, set on the admin page.');
     expect(page.sheetText()).not.toContain('Add an account');
     expect(page.sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Remove')).toHaveLength(0);
     await page.choose('Everyone');
     await page.press('Save');
     expect(puts).toEqual([{ url: '/api/dev/flags', body: { key: 'lunchflow', choice: 'everyone' } }]);
-    expect(page.rowText('Lunch Flow')).toBe('Lunch Flow Everyone');
+    expect(page.rowText('Lunch Flow')).toBe('Lunch Flow What lunchflow does. Everyone');
     expect(refreshes).toBe(1);
     page.unmount();
   });
@@ -479,7 +569,7 @@ describe('/dev/flags', () => {
     await page.press('Save');
     expect(page.rowText('Detailed tax in the Plan')).toContain('Everyone');
     await page.rerender(DEV_ROWS.map((r) => (r.key === 'plan-tax' ? { ...r, stored: 'nobody' } : r)));
-    expect(page.rowText('Detailed tax in the Plan')).toBe('Detailed tax in the Plan Off Remove by 2027-06-30');
+    expect(page.rowText('Detailed tax in the Plan')).toBe('Detailed tax in the Plan What plan-tax does. Remove by Jun 30, 2027 Off');
     page.unmount();
   });
 });

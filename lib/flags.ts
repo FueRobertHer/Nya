@@ -124,7 +124,7 @@ export const FLAGS = {
     offMeans: 'A detailed plan says it uses the flat rate, and a plan can’t be saved as detailed.',
   },
   csp: {
-    name: 'Content-Security-Policy',
+    name: 'Content security policy',
     about: 'How pages send their Content-Security-Policy: enforced, only reported, or off.',
     kind: 'ops',
     value: 'mode',

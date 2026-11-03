@@ -987,9 +987,10 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <p class="eyebrow">The deployment, not an account (tax plan F2)</p>
       <h2>Admin page</h2>
       <ul class="changes">
-        <li>One page at /admin for the deployment's admin, reached from Settings, Admin, and from Home's Admin card. Anyone else gets the page any missing path gets.</li>
-        <li>Needs attention when something does, then the feature switches, jobs and storage, unused connections, the demo accounts, and the environment and operations, read only. The record of changes last.</li>
-        <li>A switch's row opens its sheet: who it is on for, saved with Save; the accounts named besides; its last changes. Production asks you to confirm it's you first.</li>
+        <li>One page at /admin for the deployment's admin, reached from Settings, Admin, and from Home's Admin card. Anyone else gets the page any missing path gets. Its subtitle names the environment and says only you see it.</li>
+        <li>Needs attention when something does, then the feature switches, jobs and storage, unused connections, the demo accounts, and the environment and operations, read only. The record of changes last, then a line on what the page leaves out.</li>
+        <li>A switch's row: its name, what it does, then its value as a badge at the end, accent while it is on for some but not everyone, warn while the ops routes are open.</li>
+        <li>A switch's sheet: what it does, its environment, default, key and variable, then who it is on for, saved with Save once the choice changes; the accounts named besides; its last changes. Production asks you to confirm it's you first.</li>
       </ul>
     </div>
     <div class="phones">
@@ -998,17 +999,18 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span></div>
             <h1 class="screen-title">Admin</h1>
+            <div class="xs muted">Production. Only you see this page.</div>
             <div class="card flush">
               <div class="card-header"><h2>Needs attention</h2></div>
               <div class="row"><span class="row-ico warn"><svg><use href="#i-clock"/></svg></span><div class="main"><span class="title">The ops routes are on</span><span class="sub">Turn them off once the operation is done.</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>Feature switches</h2></div>
-              <div class="row"><div class="main"><span class="title">Lunch Flow</span><span class="sub">You and 2 accounts</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Detailed tax in the Plan</span><span class="sub">Off <span class="badge">Remove by 2027-06-30</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Content-Security-Policy</span><span class="sub">Report only <span class="badge">Set by CSP_MODE</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Ops routes</span><span class="sub">On</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><div class="main"><span class="title">Who may sign in</span><span class="sub">3 people</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Lunch Flow</span><span class="sub">Offers Connect with Lunch Flow beside Connect with SimpleFIN. Also on for 2 accounts by name.</span></div><div class="end"><span class="badge accent">You</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Detailed tax in the Plan</span><span class="sub">The Plan&rsquo;s detailed US tax model: the opt-in, and plans saved as detailed. <span class="badge">Remove by Jun 30, 2027</span></span></div><div class="end"><span class="badge">Off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Content security policy</span><span class="sub">How pages send their Content-Security-Policy: enforced, only reported, or off. <span class="badge">Set by CSP_MODE</span></span></div><div class="end"><span class="badge">Enforce</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Ops routes</span><span class="sub">Opens the operator&rsquo;s routes, only while an operation runs.</span></div><div class="end"><span class="badge warn">On</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Who may sign in</span><span class="sub">Who may sign in with a Clerk account, beside the demo accounts and the deployment&rsquo;s owners.</span></div><div class="end"><span class="badge">You and 3 more</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>Jobs and storage</h2></div>
@@ -1020,9 +1022,21 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="row"><div class="main"><span class="title">Plaid</span><span class="sub">The Plaid environment bank connections use. Set by PLAID_ENV.</span></div><span class="muted small">production</span></div>
               <div class="row"><div class="main"><span class="title">Ops secret</span><span class="sub">What the ops routes ask for while they are on. Set by OPS_SECRET.</span></div><span class="muted small">Set</span></div>
             </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Operations</h2></div>
+              <div class="row"><div class="main"><span class="title">Taking a backup by hand</span><span class="sub">Ops route: export</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Restoring a backup</span><span class="sub">Script: bun run restore</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Changes</h2></div>
+              <div class="row"><div class="main"><span class="title">Ops routes</span><span class="sub">Off to On · Nov 2, 9:12 AM</span></div></div>
+              <div class="row"><div class="main"><span class="title">Lunch Flow</span><span class="sub">Added Account 1a2b3c4d · Oct 21, 4:05 PM</span></div></div>
+              <div class="row"><div class="main"><span class="title">Lunch Flow</span><span class="sub">Removed Account 9f8e7d6c · Oct 19, 2:40 AM · Account deletion</span></div></div>
+            </div>
+            <div class="xs muted">Not on this page: any account&rsquo;s financial data, or running an operation.</div>
           </div>
         </div></div>
-        <figcaption><b>THE ADMIN PAGE</b>Each switch by its short name, its value in words, a badge where a variable still decides it or a removal date is set. The environment says whether a secret is set, never its value.</figcaption>
+        <figcaption><b>THE ADMIN PAGE</b>Each switch by its short name, what it does, and its value as a badge at the end; a badge in the line where a variable still decides it or a removal date is set. The environment says whether a secret is set, never its value. A change you made names no one; anyone else's is named.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -1035,26 +1049,34 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="sheet" style="max-height:94%">
             <div class="handle"></div>
             <div class="sheet-head"><h2>Lunch Flow</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
-            <div class="xs t3">lunchflow · LUNCHFLOW_ENABLED</div>
-            <div class="section-title">Who it is on for, in Production</div>
+            <div class="small">Offers Connect with Lunch Flow beside Connect with SimpleFIN.</div>
+            <dl class="kv">
+              <div><dt>Environment</dt><dd>Production</dd></div>
+              <div><dt>Default</dt><dd>Off</dd></div>
+              <div><dt>Key</dt><dd>lunchflow</dd></div>
+              <div><dt>Variable</dt><dd>LUNCHFLOW_ENABLED, not set</dd></div>
+            </dl>
+            <div class="section-title">On for</div>
             <div class="card flush">
-              <div class="row"><div class="main"><span class="title">&#9675; Off</span><span class="sub">Nobody can connect Lunch Flow.</span></div></div>
-              <div class="row"><div class="main"><span class="title">&#9673; You</span><span class="sub">Only the admin.</span></div></div>
-              <div class="row"><div class="main"><span class="title">&#9675; Everyone</span><span class="sub">Every account here.</span></div></div>
+              <div class="row"><div class="main"><span class="title">&#9675; Off</span><span class="sub">New Lunch Flow connections are refused; connections made already keep working. Accounts added below still have it.</span></div></div>
+              <div class="row"><div class="main"><span class="title">&#9673; You</span><span class="sub">The deployment&rsquo;s owner.</span></div></div>
+              <div class="row"><div class="main"><span class="title">&#9675; Everyone</span><span class="sub">Every account on this copy of Nya.</span></div></div>
             </div>
             <div class="section-title">Also on for</div>
             <div class="card flush">
               <div class="row"><div class="main"><span class="title">Account 1a2b3c4d</span><span class="sub">Made Oct 5</span></div><span class="btn ghost sm">Remove</span></div>
-              <div class="row"><div class="main"><span class="title">Add an account</span><span class="sub">An account in use here</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Add an account</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
             <div class="section-title">Last changes</div>
             <div class="card flush">
-              <div class="row"><div class="main"><span class="title">Lunch Flow: added Account 1a2b3c4d</span><span class="sub">Oct 21 · You</span></div></div>
+              <div class="row"><div class="main"><span class="title">Added Account 1a2b3c4d</span><span class="sub">Oct 21, 4:05 PM</span></div></div>
             </div>
-            <span class="btn primary">Save</span>
+            <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn primary" style="opacity:.5">Save</span></div>
           </div>
         </div></div>
-        <figcaption><b>A SWITCH'S SHEET</b>Choices are radio rows saved with Save, never on a choice alone; an account added or removed is saved at once. Each change is one entry in the record, by whoever made it.</figcaption>
+        <figcaption><b>A SWITCH'S SHEET</b>Choices are radio rows saved with Save, quiet until the choice changes, never on a choice alone; Off says what turning it off does. An account added or removed is saved at once. Each change is one entry in the record, by whoever made it.</figcaption>
       </figure>
     </div>
   </section>

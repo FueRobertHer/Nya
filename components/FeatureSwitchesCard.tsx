@@ -1,11 +1,12 @@
 'use client';
 
 // The feature switches (lib/flags.ts), one card of rows: each switch by its
-// short name, with its value in words and, as badges, a value that can't be
-// read, a variable that still decides it, and a release switch's removal
-// date. A row opens the switch's sheet (components/FlagSheet.tsx), where it
-// is set. On the admin page (components/AdminPage.tsx) and on /dev/flags for
-// local development (app/dev/flags), which sets the choices alone.
+// short name, with what it does under it and, as badges after that, a value
+// that can't be read, a variable that still decides it, and a release
+// switch's removal date; its value is the badge at the row's end. A row opens
+// the switch's sheet (components/FlagSheet.tsx), where it is set. On the
+// admin page (components/AdminPage.tsx) and on /dev/flags for local
+// development (app/dev/flags), which sets the choices alone.
 //
 // The rows come from the page (lib/flag-view.ts switchRows). A change answers
 // with the switch's new row on the admin page, or the choice stored on
@@ -16,9 +17,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useReverification } from '@clerk/nextjs';
-import FlagSheet, { putFlag, valueWords, type Answer, type Send } from './FlagSheet';
+import FlagSheet, { alsoWords, putFlag, removeByWords, valueBadge, type Answer, type Send } from './FlagSheet';
 import { chevron, RIGHT } from './MonthStepper';
-import { useBrowserDay } from './browser-day';
+import { useBrowserDay, useBrowserWhen } from './browser-day';
 import type { AdminAccount, ChangeLine, Place, SwitchRow } from '@/lib/flag-view';
 
 type Props = {
@@ -52,6 +53,7 @@ function WithClerk(props: Props) {
 function Switches({ rows, place, demos, environment, freshSignIn, clerk, accounts = [], changes = {}, send }: Props & { send: Send }) {
   const router = useRouter();
   const day = useBrowserDay();
+  const when = useBrowserWhen();
   // Rows answered by a change, until the page's own come back.
   const [given, setGiven] = useState(rows);
   const [answered, setAnswered] = useState<Record<string, SwitchRow>>({});
@@ -81,50 +83,59 @@ function Switches({ rows, place, demos, environment, freshSignIn, clerk, account
         <h2 id="feature-switches-title">Feature switches</h2>
       </div>
       <p className="helper">
-        A change reaches pages within 30 seconds, and the routes that check a switch at once.{' '}
+        A change reaches the routes that check a switch at once, and pages within 30 seconds.{' '}
         {place === 'admin' ? `These are ${environment}’s: each environment keeps its own.` : 'These are this machine’s, for local development.'}
+        {place === 'admin' && freshSignIn && ' You’ll confirm it’s you before a change is saved.'}
       </p>
       <ul className="list-rows">
-        {current.map((row) => (
-          <li key={row.key}>
-            <button
-              type="button"
-              className="list-row"
-              aria-haspopup="dialog"
-              onClick={() => {
-                setSheetKey(row.key);
-                setOpened((n) => n + 1);
-                setOpen(true);
-              }}
-            >
-              <span className="list-row-text">
-                <span className="list-row-title">{row.name}</span>
-                <span className="list-row-sub">
-                  {valueWords(row, place)}
-                  {row.stored === 'unreadable' && (
-                    <>
-                      {' '}
-                      <span className="badge warn">Can’t be read</span>
-                    </>
-                  )}
-                  {row.variableSet && (
-                    <>
-                      {' '}
-                      <span className="badge">Set by {row.variable}</span>
-                    </>
-                  )}
-                  {row.removeBy && (
-                    <>
-                      {' '}
-                      <span className="badge">Remove by {row.removeBy}</span>
-                    </>
-                  )}
+        {current.map((row) => {
+          const badge = valueBadge(row, place);
+          const also = alsoWords(row);
+          return (
+            <li key={row.key}>
+              <button
+                type="button"
+                className="list-row"
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setSheetKey(row.key);
+                  setOpened((n) => n + 1);
+                  setOpen(true);
+                }}
+              >
+                <span className="list-row-text">
+                  <span className="list-row-title">{row.name}</span>
+                  <span className="list-row-sub">
+                    {row.about}
+                    {also && ` ${also}`}
+                    {row.stored === 'unreadable' && (
+                      <>
+                        {' '}
+                        <span className="badge warn">Can’t be read</span>
+                      </>
+                    )}
+                    {row.variableSet && (
+                      <>
+                        {' '}
+                        <span className="badge">Set by {row.variable}</span>
+                      </>
+                    )}
+                    {row.removeBy && (
+                      <>
+                        {' '}
+                        <span className="badge">Remove by {removeByWords(row.removeBy)}</span>
+                      </>
+                    )}
+                  </span>
                 </span>
-              </span>
-              {chevron(RIGHT)}
-            </button>
-          </li>
-        ))}
+                <span className="list-row-value">
+                  <span className={badge.tone ? `badge ${badge.tone}` : 'badge'}>{badge.text}</span>
+                </span>
+                {chevron(RIGHT)}
+              </button>
+            </li>
+          );
+        })}
       </ul>
       {sheetRow && (
         <FlagSheet
@@ -142,6 +153,7 @@ function Switches({ rows, place, demos, environment, freshSignIn, clerk, account
           accounts={accounts}
           changes={changes[sheetRow.key] ?? []}
           day={day}
+          when={when}
         />
       )}
     </section>
