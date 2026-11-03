@@ -146,7 +146,7 @@ function serve({ plan = { plan: PLAN, currency: 'USD' } as unknown, scenarios = 
     const answer = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
     const given = await answers[`${method} ${url}`]?.(call);
     if (given) return answer(given[1], given[0]);
-    if (url === '/api/fire-plan' && method === 'GET') return answer(await plan);
+    if (url === '/api/plan-inputs' && method === 'GET') return answer(await plan);
     if (url === '/api/plan-scenarios') {
       if (scenarios === null) return answer({ error: 'Your saved scenarios couldn’t be loaded.' }, 500);
       if (method === 'POST') {
@@ -520,7 +520,7 @@ describe('where the Plan opens', () => {
 
   test('a load that fails shows Your path over the defaults, decides nothing, and Try again opens where the plan says', async () => {
     let gets = 0;
-    serve({ plan: { plan: STOPPED, currency: 'USD' }, answers: { 'GET /api/fire-plan': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
+    serve({ plan: { plan: STOPPED, currency: 'USD' }, answers: { 'GET /api/plan-inputs': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
     const chosen: PlanSegment[] = [];
     const tab = await mount({ onSegment: (s) => chosen.push(s) });
     expect(tab.shown()).toEqual(['Your path']);
@@ -730,7 +730,7 @@ describe('what the tab does by itself', () => {
       answers: {
         // Read again after the save below is refused: a value this version
         // can't use, so a repair waits.
-        'GET /api/fire-plan': () => (plans++ === 0 ? undefined : [200, { plan: { ...PLAN, withdrawalRate: 0.5 }, currency: 'USD' }]),
+        'GET /api/plan-inputs': () => (plans++ === 0 ? undefined : [200, { plan: { ...PLAN, withdrawalRate: 0.5 }, currency: 'USD' }]),
         'PUT /api/fire-plan': () => new Promise((r) => (refuse = () => r([409, { error: 'Your plan was changed on another device.' }]))),
       },
     });

@@ -19,7 +19,7 @@ for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: FiProgressCard } = await import('@/components/FiProgressCard');
 
-/** The FI line, with /api/fire-plan answering as given. */
+/** The FI line, with /api/plan-inputs answering as given. */
 async function line(answer: () => Promise<Response>) {
   (globalThis as { fetch: unknown }).fetch = answer;
   const container = dom.document.createElement('ul');

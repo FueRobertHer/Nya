@@ -90,7 +90,7 @@ function planServer(start: { plan: any; record?: { currency: string; amounts: un
   return {
     s,
     answers: {
-      'GET /api/fire-plan': (): [number, unknown] => [200, answer()],
+      'GET /api/plan-inputs': (): [number, unknown] => [200, answer()],
       'PUT /api/fire-plan': (c: Call): [number, unknown] => {
         if (c.body.currency) s.record = { currency: c.body.currency, amounts: typedAmounts(c.body.plan) };
         s.plan = c.body.plan;
@@ -164,7 +164,7 @@ const press = async (el: FakeElement | null | undefined) => {
 };
 const posts = (calls: Call[]) => calls.filter((c) => c.url === '/api/fire-plan' && c.method === 'POST');
 const puts = (calls: Call[]) => calls.filter((c) => c.url === '/api/fire-plan' && c.method === 'PUT');
-const gets = (calls: Call[]) => calls.filter((c) => c.url === '/api/fire-plan' && c.method === 'GET');
+const gets = (calls: Call[]) => calls.filter((c) => c.url === '/api/plan-inputs' && c.method === 'GET');
 
 /** Said in a figure's sheet above its buttons while the plan's currency
  *  isn't known (PlanTab.tsx `paused`). */
@@ -293,7 +293,7 @@ describe('a plan saved before its currency was recorded', () => {
   test('a record that can’t be read: asked, and the answer replaces it, as only the person’s may', async () => {
     const calls = serve({
       ...planServer({ plan: PLAN }).answers,
-      'GET /api/fire-plan': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
+      'GET /api/plan-inputs': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
     });
     const tab = await render();
@@ -316,7 +316,7 @@ describe('a plan saved before its currency was recorded', () => {
   test('answered on another segment: the line it becomes is on Your path, out of sight, so focus goes to the bar’s heading', async () => {
     serve({
       ...planServer({ plan: PLAN }).answers,
-      'GET /api/fire-plan': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
+      'GET /api/plan-inputs': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
     });
     const tab = await render({ segment: 'drawdown' });
@@ -457,7 +457,7 @@ describe('the first amount', () => {
 
 describe('a recorded currency', () => {
   const answers = (): Record<string, Answer | [number, unknown]> => ({
-    'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
+    'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD' }],
     'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan, currency: c.body.currency }],
     'GET /api/plan-scenarios': [200, EMPTY],
     'GET /api/allocation-settings': [200, { settings: null }],
@@ -542,7 +542,7 @@ describe('a recorded currency', () => {
     let loads = 0;
     let records = 0;
     serve({
-      'GET /api/fire-plan': () => [200, ++loads === 1 ? { plan: PLAN, currency: 'USD' } : { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
+      'GET /api/plan-inputs': () => [200, ++loads === 1 ? { plan: PLAN, currency: 'USD' } : { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => (++records === 1 ? [409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }] : [200, { plan: PLAN, currency: c.body.currency }]),
       'GET /api/plan-scenarios': [200, EMPTY],
       'GET /api/allocation-settings': [200, { settings: null }],
@@ -599,7 +599,7 @@ describe('scenarios against the Plan’s currency', () => {
 
   test('recorded in USD with the accounts all in EUR: one typed in USD is the Plan’s and is worked out; one typed in EUR is not, until the person says', async () => {
     serve({
-      'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }],
+      'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD' }],
       'GET /api/plan-scenarios': [200, { ...EMPTY, scenarios: [scenario('s1', 'In dollars', 'USD'), scenario('s2', 'In euros', 'EUR')] }],
       'GET /api/allocation-settings': [200, { settings: null }],
     });
