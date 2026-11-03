@@ -63,6 +63,8 @@ type Row = { id: string; pending?: true; failed?: true } & Partial<Pick<Investme
 function wantedOf(params: URLSearchParams): Wanted[] {
   const ids = [...new Set(params.getAll('plan'))];
   return ids.map((id) => {
+    // At the first ':': a Plaid item id holds none. A connector card's id
+    // does, but its accounts have no subtype, so none is a workplace plan.
     const at = id.indexOf(':');
     const item_id = at > 0 ? id.slice(0, at) : '';
     const account_id = at > 0 ? id.slice(at + 1) : '';

@@ -20,15 +20,19 @@
 //     device changed since.
 //   - Only the newest request's answer is taken, and if an adopt() or
 //     invalidate() came after it was sent, only its rows: its plan is older
-//     than what is there.
+//     than what is there. A request that failed is shown as failed, as
+//     before, but leaves the copy no fresher.
 //   - A plan whose row isn't cached comes back pending, and one sync=1
 //     request fills it; never two for one plan at once (they would race for
-//     its item's lock). An older row is kept, and shown, while it refreshes.
-//     A sync that fails gives the plan "failed", which the screens read as
-//     "nothing measured", as a failed request did before.
+//     its item's lock), and a row a sync filled after a request was sent
+//     stays, whatever that request said. An older row is kept, and shown,
+//     while it refreshes. A sync that fails gives the plan "failed", which
+//     the screens read as "nothing measured", as a failed request did before.
 //   - A load waits for a save under way (beginSave() to its end()), so a
 //     Plan opened meanwhile shows what was saved. A save brackets only its
-//     request and adopt(), never the reload a failed save makes.
+//     request and adopt(), never the reload a failed save makes. Two saves
+//     at once leave the copy stale, since their answers can land in either
+//     order.
 //   - load() is called on events only (a screen shown, its plans changed,
 //     invalidate()), never because of the copy's state, so a copy that stays
 //     stale (a lasting failure) costs a request or two per screen shown,
@@ -124,10 +128,16 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
   let gen = 0;
   let sent = 0;
   /** The last request sent, while it runs. */
-  let running: { key: string; seq: number; gen: number; asked: number; promise: Promise<PlanLoad> } | null = null;
+  let running: { key: string; seq: number; gen: number; asked: number; tick: number; promise: Promise<PlanLoad> } | null = null;
   /** The plans a sync=1 request is filling. */
   const syncing = new Set<string>();
+  /** Orders requests sent against syncs answered: each plan's row, by the
+   *  tick its sync answered at. */
+  let tick = 0;
+  const filled = new Map<string, number>();
   let saves = 0;
+  /** Two saves were under way at once. */
+  let overlapped = false;
   let saved: Promise<void> = Promise.resolve();
   let release = () => {};
 
@@ -157,8 +167,10 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
         // Failed, below.
       }
       const rows = { ...copy.rows };
+      const at = ++tick;
       for (const id of want) {
         syncing.delete(id);
+        filled.set(id, at);
         const row = given?.get(id);
         rows[id] = row && !row.pending ? row : { id, failed: true };
       }
@@ -167,7 +179,7 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
   }
 
   function request(ids: readonly string[], key: string): Promise<PlanLoad> {
-    const mine = { key, seq: ++sent, gen, asked: copy.asked, promise: null as unknown as Promise<PlanLoad> };
+    const mine = { key, seq: ++sent, gen, asked: copy.asked, tick: ++tick, promise: null as unknown as Promise<PlanLoad> };
     mine.promise = (async () => {
       let status = 0;
       let body: Record<string, unknown> | null = null;
@@ -189,8 +201,12 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
       const patch: Partial<PlanInputsCopy> = {};
       if (newest && mine.gen === gen) {
         patch.plan = { status, body: body ? planPart : null };
-        answeredAt = now();
-        stale = false;
+        // A failure is shown (Home hides its line, as before), but never makes
+        // the copy count as answered, then or after a save's answer.
+        if (planAnswered(patch.plan)) {
+          answeredAt = now();
+          stale = false;
+        }
       }
       if (newest) {
         patch.key = key;
@@ -198,6 +214,9 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
         const given = rowsOf(answered);
         const rows = { ...copy.rows };
         for (const id of ids) {
+          // A sync that answered after this request was sent read later than
+          // it did: its row stays, and isn't synced again.
+          if ((filled.get(id) ?? 0) > mine.tick) continue;
           const row = given?.get(id);
           if (row && !row.pending) rows[id] = row;
           else {
@@ -243,11 +262,18 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
     },
     beginSave() {
       if (saves++ === 0) saved = new Promise((resolve) => (release = resolve));
+      else overlapped = true;
       let open = true;
       return () => {
         if (!open) return;
         open = false;
-        if (--saves === 0) release();
+        if (--saves > 0) return;
+        // Two at once (a plan's PUT and its currency's POST) may answer in
+        // either order, so the last answer adopted may not be the last
+        // written: the next load asks.
+        if (overlapped) stale = true;
+        overlapped = false;
+        release();
       };
     },
     invalidate() {

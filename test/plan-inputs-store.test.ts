@@ -80,6 +80,23 @@ describe('when a copy is taken as it is', () => {
     }
   });
 
+  test('a request that failed is shown, but leaves the copy no fresher, even after a save’s answer', async () => {
+    let answer: Answer = ok();
+    let asked = 0;
+    const store = createPlanInputsStore({ fetch: (u) => (asked++, server(() => (u.includes('sync=1') ? [200, { plans: IDS.map((id) => row(id)) }] : answer)).fetch(u)), now: () => clock });
+    await store.load(IDS);
+    store.invalidate();
+    answer = [500, { error: 'no' }];
+    await store.load(IDS, { force: true });
+    await settle();
+    expect(store.get().plan?.status).toBe(500); // Home hides its line, as before
+    store.adopt({ plan: { age: 41 }, currency: 'USD' });
+    answer = ok();
+    const before = asked;
+    await store.load(IDS);
+    expect(asked).toBe(before + 1); // still stale: asked
+  });
+
   test('a row that failed is never taken as it is', async () => {
     let asked = 0;
     const store = createPlanInputsStore({ fetch: (u) => (asked++, server(() => (u.includes('sync=1') ? [500, { error: 'no' }] : ok([row('i1:k1'), pending('i2:k3')]))).fetch(u)), now: () => clock });
@@ -187,6 +204,26 @@ describe('a save', () => {
     expect(store.get().rows['i1:k1']).toEqual(row('i1:k1', 5));
   });
 
+  test('two saves at once leave the copy stale, since their answers can land in either order', async () => {
+    let asked = 0;
+    const store = createPlanInputsStore({ fetch: (u) => (asked++, server(() => ok()).fetch(u)), now: () => clock });
+    await store.load(IDS);
+    const endPut = store.beginSave();
+    const endPost = store.beginSave();
+    store.adopt({ plan: { age: 41 }, currency: 'USD' }); // the PUT's answer
+    endPut();
+    store.adopt({ plan: { age: 40 }, currency: 'EUR' }); // the POST's, read before the PUT wrote
+    endPost();
+    await store.load(IDS);
+    expect(asked).toBe(2);
+    // One at a time, the copy stays fresh.
+    const end = store.beginSave();
+    store.adopt({ plan: { age: 42 }, currency: 'USD' });
+    end();
+    await store.load(IDS);
+    expect(asked).toBe(2);
+  });
+
   test('a load waits for a save under way, and asks once it has ended', async () => {
     const s = server();
     const store = make(s);
@@ -226,6 +263,28 @@ describe('the rows', () => {
     s.sent[2].answer([200, { plans: [row('i2:k3', 2_000)] }]);
     await settle();
     expect(contributionsFrom(store.get(), plans)?.map((c) => c.amount)).toEqual([1_000, 2_000]);
+  });
+
+  test('a row a sync filled after a request was sent stays, whatever that request says, and isn’t synced again', async () => {
+    const s = server();
+    const store = make(s);
+    void store.load(IDS);
+    s.sent[0].answer(ok([pending('i1:k1'), pending('i2:k3')]));
+    await settle();
+    void store.load(IDS, { force: true }); // sent while the sync runs
+    s.sent[1].answer([200, { plans: IDS.map((id) => row(id, 7)) }]);
+    await settle();
+    s.sent[2].answer(ok([pending('i1:k1'), pending('i2:k3')])); // read before the sync wrote
+    await settle();
+    expect(s.urls()).toEqual([DEFAULT_URL, SYNC_URL, DEFAULT_URL]);
+    expect(store.get().rows['i1:k1']).toEqual(row('i1:k1', 7));
+    // A request sent after the sync is taken as before.
+    void store.load(IDS, { force: true });
+    s.sent[3].answer(ok([pending('i1:k1'), row('i2:k3', 9)]));
+    await settle();
+    expect(store.get().rows['i1:k1']).toEqual({ ...row('i1:k1', 7), refreshing: true });
+    expect(store.get().rows['i2:k3']).toEqual(row('i2:k3', 9));
+    expect(s.urls()[4]).toBe('/api/plan-inputs?sync=1&plan=i1%3Ak1');
   });
 
   test('a sync that fails gives its plans "failed"; a default answer that failed still asks for the rows', async () => {
