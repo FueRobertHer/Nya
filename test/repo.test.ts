@@ -420,8 +420,8 @@ function contract(b: Backend) {
         .catch((e) => e);
       expect(err).toBeInstanceOf(UpdateConflictError);
       expect(err.status).toBe(409);
-      expect(runs).toBe(5);
-      expect(await list.get(A)).toEqual([{ text: 'theirs', amount: 5 }]);
+      expect(runs).toBe(7);
+      expect(await list.get(A)).toEqual([{ text: 'theirs', amount: 7 }]);
     });
 
     test('its write carries a hash of what it read, never the old value itself', async () => {
@@ -901,8 +901,8 @@ function contract(b: Backend) {
       expect(err).toBeInstanceOf(StoreRefusedError);
       expect(err.status).toBe(409); // what a route answers, with the message
       expect(err.message).toBe('Your saved test notes kept changing while this change was being saved, so it was not made. Try again.');
-      expect(runs).toBe(5);
-      expect(await notes.get(A, 'n1')).toEqual({ text: 'theirs', amount: 5 });
+      expect(runs).toBe(7);
+      expect(await notes.get(A, 'n1')).toEqual({ text: 'theirs', amount: 7 });
     });
 
     test('its write carries a hash of what it read, never the old value itself', async () => {
@@ -1038,9 +1038,9 @@ function contract(b: Backend) {
         .catch((e) => e);
       expect(err).toBeInstanceOf(UpdateConflictError);
       expect(err.status).toBe(409);
-      expect(runs).toBe(5);
+      expect(runs).toBe(7);
       expect(await notes.get(A, 'from')).toEqual(NOTE); // never taken out on its own
-      expect(await notes.get(A, 'to')).toEqual({ text: 'theirs', amount: 5 });
+      expect(await notes.get(A, 'to')).toEqual({ text: 'theirs', amount: 7 });
     });
 
     test('an entry it cannot use is named, and nothing is written', async () => {
