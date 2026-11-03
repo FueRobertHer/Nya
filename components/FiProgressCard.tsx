@@ -78,6 +78,8 @@ export type FiProgressProps = {
   /** The copy of the Plan's inputs Home shares with the Plan tab
    *  (components/Dashboard.tsx); left out, the card keeps its own. */
   planInputs?: PlanInputsStore;
+  /** D15's switch (the flag 'plan-items-in-fi'), as the Plan tab has it. */
+  planInWalk?: boolean;
 };
 
 /** What /api/plan-inputs answered of the plan: the saved plan, or null for

@@ -277,6 +277,9 @@ export type PlanTabProps = {
   /** D15's switch (the flag 'plan-items-in-fi'): the plan's one-offs and
    *  income count in the walk to its FI date. */
   planInWalk?: boolean;
+  /** The last day D15's change is new (lib/flag-read.ts newUntil), as
+   *  YYYY-MM-DD: until then Your path and Progress say what it moved. */
+  newUntil?: string | null;
 };
 
 export default function PlanTab({

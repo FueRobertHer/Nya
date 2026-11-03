@@ -108,7 +108,7 @@ describe('the page', () => {
       const page = (await DevFlagsPage()) as { props: { children: { props: { rows?: unknown[] } }[] } };
       const rows = page.props.children.find((c) => c?.props?.rows)!.props.rows as { key: string; stored: unknown; variableSet: boolean; people: number | null; accounts: number | null; containers: unknown }[];
       const by = Object.fromEntries(rows.map((r) => [r.key, r]));
-      expect(rows.map((r) => r.key)).toEqual(['restore', 'restore-carry-on', 'lunchflow', 'brokerage-link', 'api-writes', 'plan-tax', 'csp', 'ops', 'sign-in']);
+      expect(rows.map((r) => r.key)).toEqual(['restore', 'restore-carry-on', 'lunchflow', 'brokerage-link', 'api-writes', 'plan-tax', 'plan-items-in-fi', 'csp', 'ops', 'sign-in']);
       expect(by['plan-tax'].stored).toBe('admin');
       expect(by.lunchflow.stored).toBe('unreadable');
       expect(by.restore.stored).toBeNull();
