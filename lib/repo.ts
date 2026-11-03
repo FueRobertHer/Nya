@@ -769,15 +769,36 @@ return out`;
 
 /** Fields read per READ_ENTRIES call, well inside Lua's limit for unpack. */
 const READ_BATCH = 1000;
-/** Tries before update() gives up on an entry that keeps changing. */
-const UPDATE_ATTEMPTS = 5;
+/** Tries before update() gives up on an entry that keeps changing. With the
+ *  pauses backoff() draws, enough for ten writers of one entry at once to all
+ *  land; five were not, even with those pauses. */
+const UPDATE_ATTEMPTS = 7;
+/** The shortest slot backoff() counts in, and the longest pause it draws. */
+const PAUSE_SLOT_MS = 10;
+const PAUSE_MAX_MS = 1000;
 /** Characters of SHA-1 hex an update sends beside its new value. */
 const SHA1_HEX = 40;
 
 const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
-/** A short, random pause before another try, longer each time, so writers that
- *  just collided do not collide again in step. */
-const pause = (attempt: number) => new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 20 * attempt));
+/**
+ * The pauses of one update between its tries: each a random wait, so writers
+ * that just collided do not collide again in step, from a span that doubles
+ * with each try. The span is counted in slots as long as the longest try so
+ * far, from the read to the compare-and-set's answer. A try loses only to a
+ * write that lands while it runs, so writers spread over less than a try's
+ * length all read before any of them writes, and only one of them lands each
+ * round. How long a try takes is the network's and the machine's doing (a
+ * round trip to Upstash, a loaded machine's crypto), so it is measured, not
+ * assumed. Call it with the try's number and when that try began.
+ */
+function backoff(): (attempt: number, began: number) => Promise<void> {
+  let longest = 0;
+  return (attempt, began) => {
+    longest = Math.max(longest, performance.now() - began);
+    const span = Math.min(PAUSE_MAX_MS, Math.max(PAUSE_SLOT_MS, longest) * 2 ** attempt);
+    return new Promise((resolve) => setTimeout(resolve, Math.random() * span));
+  };
+}
 
 // The registry of declared stores, by name. Read through lib/stores.ts, which
 // loads every declaring module first.
@@ -1000,7 +1021,9 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
   };
 
   const update = async (ctx: Ctx, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null> => {
+    const pause = backoff();
     for (let attempt = 1; ; attempt++) {
+      const began = performance.now();
       const answer = await redis().eval(READ_VALUE, [key(ctx)], []);
       if (typeof answer !== 'string') throw new Error(`repo: unexpected answer reading ${name}`);
       // Exactly the text stored, which is what the write compares against.
@@ -1027,7 +1050,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
       const seen = stored === null ? '' : sha1(stored);
       if (Number(await redis().eval(UPDATE_VALUE, [key(ctx)], [seen, written])) === 1) return next;
       if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
-      await pause(attempt);
+      await pause(attempt, began);
     }
   };
 
@@ -1155,7 +1178,9 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
 
   const update = async (ctx: Ctx, id: string, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null> => {
     checkId(what, id);
+    const pause = backoff();
     for (let attempt = 1; ; attempt++) {
+      const began = performance.now();
       const [stored] = await readFields(ctx, [id]);
       let current: T | null = null;
       if (stored !== null) {
@@ -1175,7 +1200,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       const seen = stored === null ? '' : sha1(stored);
       if (Number(await redis().eval(UPDATE_ENTRY, [key(ctx)], [id, seen, written])) === 1) return next;
       if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
-      await pause(attempt);
+      await pause(attempt, began);
     }
   };
 
@@ -1187,7 +1212,9 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     const wanted = [...new Set([...ids].map((id) => checkId(what, id)))];
     if (wanted.length > MANY_AT_ONCE) throw new TypeError(`updateMany changes at most ${MANY_AT_ONCE} ${what} at once.`);
     if (wanted.length === 0) return new Map();
+    const pause = backoff();
     for (let attempt = 1; ; attempt++) {
+      const began = performance.now();
       const stored = await readFields(ctx, wanted);
       const read = await decodeAll(ctx, wanted.flatMap((id, i) => (stored[i] === null ? [] : [[id, stored[i]] as const])));
       if (read.unreadable.length > 0 || read.unrecognised.length > 0) {
@@ -1218,7 +1245,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       checkSize(name, what, ctx, chars);
       if (Number(await redis().eval(UPDATE_ENTRIES, [key(ctx)], args)) === 1) return next;
       if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
-      await pause(attempt);
+      await pause(attempt, began);
     }
   };
 
@@ -1663,7 +1690,9 @@ export function defineEnvironmentStore<T>(name: string, opts: EnvironmentStoreOp
     async update(id, fn, by, now = Date.now()) {
       checkId(what, id);
       if (typeof by !== 'string' || by.length === 0 || by.length > 200) throw new TypeError(`Invalid change to ${what}: it must say who made it.`);
+      const pause = backoff();
       for (let attempt = 1; ; attempt++) {
+        const began = performance.now();
         const answer = await redis().eval(READ_ENTRIES, [values()], [id]);
         if (!Array.isArray(answer) || answer.length !== 1 || typeof answer[0] !== 'string') throw new Error(`repo: unexpected answer reading ${name}`);
         const stored = answer[0] === '' ? null : (answer[0] as string).slice(1);
@@ -1690,7 +1719,7 @@ export function defineEnvironmentStore<T>(name: string, opts: EnvironmentStoreOp
         const written = Number(await redis().eval(ENV_UPDATE, [values(), record()], [id, seen, text, changeId, changeText, String(logCap)]));
         if (written === 1) return JSON.parse(text) as T;
         if (attempt >= UPDATE_ATTEMPTS) throw new UpdateConflictError(what);
-        await pause(attempt);
+        await pause(attempt, began);
       }
     },
     async changes() {
