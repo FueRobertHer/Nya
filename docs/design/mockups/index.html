@@ -294,6 +294,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <li><a href="#budgets">Budgets</a></li>
       <li><a href="#plan">Plan</a></li>
       <li><a href="#settings">Settings</a></li>
+      <li><a href="#admin">Admin</a></li>
       <li><a href="#status">Status</a></li>
       <li><a href="#loading">Signing in</a></li>
     </ul>
@@ -933,7 +934,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <p class="eyebrow">Replaces Manage mode</p>
       <h2>Settings</h2>
       <ul class="changes">
-        <li>A full screen from the avatar menu (a gear in password mode), with six sections.</li>
+        <li>A full screen from the avatar menu (a gear in password mode), with six sections; the deployment's admin sees a seventh, Admin.</li>
         <li>Everything Manage appended to Accounts lives here, plus theme, sharing and the account itself.</li>
         <li>A section that needs you shows why on its row, and the avatar carries a dot.</li>
       </ul>
@@ -954,7 +955,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="xs t3" style="text-align:center">Security · Privacy</div>
           </div>
         </div></div>
-        <figcaption><b>SETTINGS</b>Six rows instead of thirteen cards under the account list.</figcaption>
+        <figcaption><b>SETTINGS</b>Six rows instead of thirteen cards under the account list. The admin sees a seventh, Admin, one row to the admin page.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -976,6 +977,84 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
         </div></div>
         <figcaption><b>A SECTION</b>Each section is its own view with a back button; Bring back a download keeps its #bring-back anchor under Your data.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ===================== ADMIN ===================== -->
+  <section class="spec" id="admin">
+    <div class="spec-head">
+      <p class="eyebrow">The deployment, not an account (tax plan F2)</p>
+      <h2>Admin page</h2>
+      <ul class="changes">
+        <li>One page at /admin for the deployment's admin, reached from Settings, Admin, and from Home's Admin card. Anyone else gets the page any missing path gets.</li>
+        <li>Needs attention when something does, then the feature switches, jobs and storage, unused connections, the demo accounts, and the environment and operations, read only. The record of changes last.</li>
+        <li>A switch's row opens its sheet: who it is on for, saved with Save; the accounts named besides; its last changes. Production asks you to confirm it's you first.</li>
+      </ul>
+    </div>
+    <div class="phones">
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span></div>
+            <h1 class="screen-title">Admin</h1>
+            <div class="card flush">
+              <div class="card-header"><h2>Needs attention</h2></div>
+              <div class="row"><span class="row-ico warn"><svg><use href="#i-clock"/></svg></span><div class="main"><span class="title">The ops routes are on</span><span class="sub">Turn them off once the operation is done.</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Feature switches</h2></div>
+              <div class="row"><div class="main"><span class="title">Lunch Flow</span><span class="sub">You and 2 accounts</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Detailed tax in the Plan</span><span class="sub">Off <span class="badge">Remove by 2027-06-30</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Content-Security-Policy</span><span class="sub">Report only <span class="badge">Set by CSP_MODE</span></span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Ops routes</span><span class="sub">On</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Who may sign in</span><span class="sub">3 people</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Jobs and storage</h2></div>
+              <div class="row"><div class="main"><span class="title">Nightly jobs</span><span class="sub">Backup worked today · Clean-up worked today</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Storage across accounts</span><span class="sub">4 accounts in use</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>Environment</h2></div>
+              <div class="row"><div class="main"><span class="title">Plaid</span><span class="sub">The Plaid environment bank connections use. Set by PLAID_ENV.</span></div><span class="muted small">production</span></div>
+              <div class="row"><div class="main"><span class="title">Ops secret</span><span class="sub">What the ops routes ask for while they are on. Set by OPS_SECRET.</span></div><span class="muted small">Set</span></div>
+            </div>
+          </div>
+        </div></div>
+        <figcaption><b>THE ADMIN PAGE</b>Each switch by its short name, its value in words, a badge where a variable still decides it or a removal date is set. The environment says whether a secret is set, never its value.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span></div>
+            <h1 class="screen-title">Admin</h1>
+          </div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>Lunch Flow</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div class="xs t3">lunchflow · LUNCHFLOW_ENABLED</div>
+            <div class="section-title">Who it is on for, in Production</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">&#9675; Off</span><span class="sub">Nobody can connect Lunch Flow.</span></div></div>
+              <div class="row"><div class="main"><span class="title">&#9673; You</span><span class="sub">Only the admin.</span></div></div>
+              <div class="row"><div class="main"><span class="title">&#9675; Everyone</span><span class="sub">Every account here.</span></div></div>
+            </div>
+            <div class="section-title">Also on for</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Account 1a2b3c4d</span><span class="sub">Made Oct 5</span></div><span class="btn ghost sm">Remove</span></div>
+              <div class="row"><div class="main"><span class="title">Add an account</span><span class="sub">An account in use here</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="section-title">Last changes</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Lunch Flow: added Account 1a2b3c4d</span><span class="sub">Oct 21 · You</span></div></div>
+            </div>
+            <span class="btn primary">Save</span>
+          </div>
+        </div></div>
+        <figcaption><b>A SWITCH'S SHEET</b>Choices are radio rows saved with Save, never on a choice alone; an account added or removed is saved at once. Each change is one entry in the record, by whoever made it.</figcaption>
       </figure>
     </div>
   </section>

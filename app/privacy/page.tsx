@@ -272,7 +272,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ['Nightly backups', backupsRow(backups)],
   [
     'A deleted account',
-    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)}${keys.key.length > 0 ? ` ${keys.key.slice(1).join(' ')}` : ''} Plaid keeps what it collected under its own policy.`,
+    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. Its random id leaves the feature switches at once, and stays in their record of changes until those changes drop out of the last 500. ${deletedInBackups(backups)}${keys.key.length > 0 ? ` ${keys.key.slice(1).join(' ')}` : ''} Plaid keeps what it collected under its own policy.`,
   ],
   ...(keys.key.length > 0
     ? ([['A record that a deleted account existed', 'Its random id and the day its key was destroyed: kept for good, so that a restored backup never brings the account back.']] as [string, string][])

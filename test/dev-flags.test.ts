@@ -101,12 +101,12 @@ describe('the page', () => {
     process.env.CSP_MODE = 'enforce';
     try {
       await fake.hset(testKey('flags:values'), {
-        'plan-tax': JSON.stringify({ on: 'admin', containers: [], updatedAt: AT }),
+        'plan-tax': JSON.stringify({ on: 'admin', containers: ['5d1c7e2a-9b3f-4c6d-8e1a-2b3c4d5e6f70'], updatedAt: AT }),
         lunchflow: 'not json',
         'sign-in': JSON.stringify({ ids: ['user_a'], emails: ['pat@example.com'], updatedAt: AT }),
       });
       const page = (await DevFlagsPage()) as { props: { children: { props: { rows?: unknown[] } }[] } };
-      const rows = page.props.children.find((c) => c?.props?.rows)!.props.rows as { key: string; stored: unknown; variableSet: boolean; people: number | null }[];
+      const rows = page.props.children.find((c) => c?.props?.rows)!.props.rows as { key: string; stored: unknown; variableSet: boolean; people: number | null; accounts: number | null; containers: unknown }[];
       const by = Object.fromEntries(rows.map((r) => [r.key, r]));
       expect(rows.map((r) => r.key)).toEqual(['restore', 'restore-carry-on', 'lunchflow', 'brokerage-link', 'api-writes', 'plan-tax', 'csp', 'ops', 'sign-in']);
       expect(by['plan-tax'].stored).toBe('admin');
@@ -114,6 +114,9 @@ describe('the page', () => {
       expect(by.restore.stored).toBeNull();
       expect(by.csp.variableSet).toBe(true);
       expect(by['sign-in'].people).toBe(2);
+      // Counted, never named: anyone signed in to a local server sees this page.
+      expect(by['plan-tax']).toMatchObject({ accounts: 1, containers: null });
+      for (const named of ['5d1c7e2a', 'user_a', 'pat@example.com']) expect(JSON.stringify(rows)).not.toContain(named);
     } finally {
       delete process.env.CSP_MODE;
     }

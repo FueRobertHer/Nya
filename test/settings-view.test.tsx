@@ -70,10 +70,13 @@ describe('the dashboard', () => {
     const homes: Record<string, string[]> = {
       preferences: ['<CurrencyCard', '<WeeklySummaryCard'],
       transactions: ['<CategoriesCard', '<TagsCard', '<RulesCard', '<VendorDefaultsCard', '<ReviewSettingsCard'],
-      connections: ['allHiddenInstitutions.map', '<AccountLinks', '{admin && <AdminUnusedItems'],
+      connections: ['allHiddenInstitutions.map', '<AccountLinks'],
       data: ['<DownloadMyData', '{filesMode?.connected && <ReceiptsCard', '<InventoryEntry', '<div id="bring-back" tabIndex={-1}>', '<ApiTokens'],
       // Its card (components/AccountSettings.tsx), with password mode's two.
       account: ['<AccountSettings', 'onSignOut={logout}', 'onSignOutEverywhere={signOutEverywhere}'],
+      // The admin's one row to the admin page, where unused connections,
+      // storage and the nightly jobs now are (components/AdminPage.tsx).
+      admin: ['content: <AdminEntry />,'],
     };
     for (const [id, cards] of Object.entries(homes)) {
       const text = section(id);
@@ -90,12 +93,18 @@ describe('the dashboard', () => {
     // Password mode's two say how they differ, and both say "Sign out".
     expect(card).toContain('Sign out everywhere also signs out every other device.');
     expect(dashboard).not.toContain('Log out');
-    // Sharing only where there is Clerk to share between people.
+    // Sharing only where there is Clerk to share between people; Admin only
+    // for the admin, last.
     expect(dashboard).toContain("...(clerk\n      ? [\n          {\n            id: 'sharing' as const,");
+    expect(dashboard).toContain("...(admin\n      ? [\n          {\n            id: 'admin' as const,");
+    expect(dashboard.indexOf("id: 'admin' as const")).toBeGreaterThan(dashboard.indexOf("id: 'account',"));
+    // The admin's items are on the admin page, not in Settings.
+    expect(dashboard).not.toContain('AdminUnusedItems');
+    expect(dashboard).toContain('<InventoryEntry />');
   });
 
   test('each Manage card is mounted once, in Settings only', () => {
-    for (const card of ['<CurrencyCard ', '<CategoriesCard', '<TagsCard ', '<RulesCard ', '<VendorDefaultsCard ', '<ReviewSettingsCard ', '<AccountLinks ', '<AdminUnusedItems ', '<DownloadMyData', '<ReceiptsCard ', '<InventoryEntry ', '<ApiTokens ', '<WeeklySummaryCard ']) {
+    for (const card of ['<CurrencyCard ', '<CategoriesCard', '<TagsCard ', '<RulesCard ', '<VendorDefaultsCard ', '<ReviewSettingsCard ', '<AccountLinks ', '<DownloadMyData', '<ReceiptsCard ', '<InventoryEntry ', '<ApiTokens ', '<WeeklySummaryCard ', '<AdminEntry ']) {
       expect([card, dashboard.split(card).length - 1]).toEqual([card, 1]);
     }
   });
@@ -117,7 +126,7 @@ describe('the dashboard', () => {
     expect(dashboard).toContain("const target = opener?.isConnected ? opener : (avatarButton() ?? document.querySelector<HTMLElement>('.top-actions [aria-label=\"Settings\"]'));");
     // Nothing else sets Settings open but enterSettings, the address, and the tab bar's close.
     const opens = [...dashboard.matchAll(/setSettings\(([^)]*)\)/g)].map((m) => m[1]);
-    expect(opens.sort()).toEqual(['null', 'null', 'parseSettings(query, { sharing: clerk }', 'view'].sort());
+    expect(opens.sort()).toEqual(['null', 'null', 'parseSettings(query, { sharing: clerk, admin }', 'view'].sort());
   });
 
   test('Sharing is in place, one place: the account menu and the empty state open Settings > Sharing', () => {
@@ -129,7 +138,7 @@ describe('the dashboard', () => {
   });
 
   test('a reload in Settings shows Settings loading, not the tab under it', () => {
-    expect(dashboard).toContain('settings ? (\n              <SettingsSkeleton view={settings} sharing={clerk} />\n            ) : (\n              <TabSkeleton');
+    expect(dashboard).toContain('settings ? (\n              <SettingsSkeleton view={settings} sharing={clerk} admin={admin} />\n            ) : (\n              <TabSkeleton');
   });
 
   // The institution's card and its rows (components/InstitutionCard.tsx).

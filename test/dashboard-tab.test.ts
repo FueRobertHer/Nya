@@ -67,6 +67,13 @@ describe('Settings in the address', () => {
     expect(parseSettings({ settings: 'sharing' })).toBe('sharing');
   });
 
+  test('Admin is offered only to the admin: for anyone else, or while who it is isn’t known, the address opens the list', () => {
+    expect(parseSettings({ settings: 'admin' }, { admin: false })).toBe('list');
+    expect(parseSettings({ settings: 'account' }, { admin: false })).toBe('account');
+    expect(parseSettings({ settings: 'admin' }, { sharing: false, admin: true })).toBe('admin');
+    expect(parseSettings({ settings: 'admin' })).toBe('admin');
+  });
+
   test('the address for it sets or drops only ?settings=, keeping the tab, the rest and the hash', () => {
     expect(settingsHref('connections', 'https://nya.test/?tab=accounts')).toBe('/?tab=accounts&settings=connections');
     expect(settingsHref('list', '/')).toBe('/?settings=list');
@@ -94,10 +101,15 @@ describe('where it is read and written', () => {
     const page = read('app/page.tsx');
     expect(page).toContain('const params = await searchParams;');
     expect(page).toContain('const tab = parseTab(params);');
-    // Sharing only where there is Clerk to share between people.
-    expect(page).toContain('const settings = parseSettings(params, { sharing: clerkEnabled() });');
+    // Sharing only where there is Clerk to share between people; Admin only
+    // for the admin: without Clerk the one person, with it read again once
+    // who is signed in is known, so the app loading has no Admin row.
+    expect(page).toContain('const settings = parseSettings(params, { sharing: clerkEnabled(), admin: !clerkEnabled() });');
     expect(page).toContain('<AppLoading account="clerk" tab={tab} settings={settings} />');
+    expect(page).toContain('const settings = parseSettings(params, { sharing: true, admin });');
     expect(page.match(/initialTab=\{tab\} initialSettings=\{settings\}/g)?.length).toBe(2);
+    // Whether the ops routes are open goes to the admin alone.
+    expect(page).toContain('adminOps={admin ? await adminOps() : null}');
   });
 
   test('the dashboard replaces the address as the tab or Settings changes, never pushing a history entry', () => {
@@ -109,7 +121,7 @@ describe('where it is read and written', () => {
     expect(dashboard).toContain('}, [tab, settings]);');
     expect(dashboard).not.toContain('pushState');
     // The address it came with is read before anything writes over it.
-    const read1 = dashboard.indexOf('setSettings(parseSettings(query, { sharing: clerk }));');
+    const read1 = dashboard.indexOf('setSettings(parseSettings(query, { sharing: clerk, admin }));');
     const write = dashboard.indexOf('const href = settingsHref(');
     expect(read1).toBeGreaterThan(-1);
     expect(read1).toBeLessThan(write);

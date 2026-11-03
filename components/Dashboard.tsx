@@ -14,11 +14,11 @@ import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import DownloadMyData from './DownloadMyData';
 import InventoryEntry from './InventoryEntry';
+import AdminEntry from './AdminEntry';
 // Settings' cards, and the sheets Home never opens itself, load when first
 // needed or once Home has its figures (components/lazy-part.tsx).
 import {
   AccountLinks,
-  AdminUnusedItems,
   ApiTokens,
   CategoriesCard,
   CurrencyCard,
@@ -62,6 +62,7 @@ import ManualTxnSheet from './ManualTxnSheet';
 import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
 import type { ClientFlags } from '@/lib/flag-read';
+import type { OpsOpen } from '@/lib/flag-view';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
@@ -290,6 +291,7 @@ export default function Dashboard({
   flags = NO_FLAGS,
   initialTab = 'home',
   initialSettings = null,
+  adminOps = null,
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -305,6 +307,10 @@ export default function Dashboard({
   /** Settings, when the address has it open (lib/dashboard-tab.ts), read by
    *  the server the same way: a reload in Settings comes back to it. */
   initialSettings?: SettingsView | null;
+  /** Set by the server (app/page.tsx), for the admin alone: whether the ops
+   *  routes are open, and by what (lib/flag-view.ts OpsOpen), for Home's
+   *  Admin card. */
+  adminOps?: OpsOpen | null;
 }) {
   // Whether to offer connecting a brokerage or retirement account
   // (lib/item-products.ts), and Lunch Flow (lib/connectors/switch.ts): a
@@ -864,7 +870,7 @@ export default function Dashboard({
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     setTab(parseTab(query));
-    setSettings(parseSettings(query, { sharing: clerk }));
+    setSettings(parseSettings(query, { sharing: clerk, admin }));
     if (query.get('view') === 'connections') setHealthFocus(true);
     // Once, as the page arrives: the address it came with.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2011,12 +2017,7 @@ export default function Dashboard({
     {
       id: 'connections',
       title: SETTINGS_TITLES.connections,
-      sub:
-        cardless.length > 0
-          ? `${cardless.length} with no card on Accounts, reconnected accounts`
-          : admin
-            ? 'Reconnected accounts, unused connections'
-            : 'Reconnected accounts',
+      sub: cardless.length > 0 ? `${cardless.length} with no card on Accounts, reconnected accounts` : 'Reconnected accounts',
       content: (
         <>
           {/* Before anything is connected there is no Accounts tab to point to. */}
@@ -2085,11 +2086,6 @@ export default function Dashboard({
               no longer does (a decline changes no figures, so nothing else is
               reloaded), and draws its title, which a jump may be waiting for. */}
           <AccountLinks onChanged={() => loadNetWorth(true)} onLoaded={linkOfferLoaded} refreshKey={reloadKey} />
-          {/* The admin's list of connections, across every account, that
-              cost money and do nothing. Only ever mounted for the admin (decided
-              on the server in app/page.tsx); the route also refuses
-              anyone else. Removal is confirmed inside it. */}
-          {admin && <AdminUnusedItems onRemoved={() => loadNetWorth(true)} />}
         </>
       ),
     },
@@ -2129,9 +2125,8 @@ export default function Dashboard({
               files, beside the download of the rest. */}
           {filesMode?.connected && <ReceiptsCard clerk={clerk} rows={txns} onChanged={txnEdits.refresh} />}
           {/* What Nya keeps about you, kind by kind (app/your-data),
-              beside the download; for the admin, also storage
-              across accounts (/admin/storage). */}
-          <InventoryEntry admin={admin} />
+              beside the download. */}
+          <InventoryEntry />
           {/* A demo account's reset to a scenario, in place of bringing a
               download back, which a demo account can't
               (components/DemoDataCard.tsx). Nothing for anyone else. */}
@@ -2156,6 +2151,19 @@ export default function Dashboard({
       // where it is, beside Manage account (components/AccountSettings.tsx).
       content: <AccountSettings clerk={clerk} clearDevice={clearDevice} onSignOut={logout} onSignOutEverywhere={signOutEverywhere} />,
     },
+    // The admin's, last: one row to the admin page (components/AdminEntry.tsx),
+    // where the deployment's switches, jobs and settings are. Only for the
+    // admin, decided on the server (app/page.tsx).
+    ...(admin
+      ? [
+          {
+            id: 'admin' as const,
+            title: SETTINGS_TITLES.admin,
+            sub: 'Feature switches, nightly jobs, storage and the environment',
+            content: <AdminEntry />,
+          },
+        ]
+      : []),
   ];
 
   // Home's Needs attention (components/attention.ts): what asks the person
@@ -2354,7 +2362,7 @@ export default function Dashboard({
             // whole page then grows from; Settings as it will be, when the
             // address has it open.
             settings ? (
-              <SettingsSkeleton view={settings} sharing={clerk} />
+              <SettingsSkeleton view={settings} sharing={clerk} admin={admin} />
             ) : (
               <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
             )
@@ -2456,7 +2464,7 @@ export default function Dashboard({
                       fixed (rollout phase 4b); the admin's instructions for
                       the nightly jobs under it. */}
                   {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
-                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} />}
+                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} ops={adminOps} />}
 
                   <Insights
                     txns={txns}

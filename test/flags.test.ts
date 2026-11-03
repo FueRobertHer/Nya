@@ -69,6 +69,13 @@ describe('the registry', () => {
     expect(flags.flagDef('plan-tax')).toMatchObject({ kind: 'release', removeBy: '2027-06-30', value: 'audience' });
   });
 
+  test('every flag has a short plain name of its own, as the admin page titles it', () => {
+    const names = flags.FLAG_KEYS.map((k) => flags.flagDef(k).name);
+    for (const [i, name] of names.entries()) expect([flags.FLAG_KEYS[i], name.length > 0 && name.length <= 40 && !/[\u2013\u2014]/.test(name)]).toEqual([flags.FLAG_KEYS[i], true]);
+    expect(new Set(names).size).toBe(names.length);
+    expect(flags.flagDef('plan-tax').name).toBe('Detailed tax in the Plan');
+  });
+
   test('defaults reproduce each variable unset, in every environment', () => {
     for (const env of [undefined, 'preview', 'production', 'development']) {
       if (env) process.env.VERCEL_ENV = env;

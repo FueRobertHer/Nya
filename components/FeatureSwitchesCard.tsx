@@ -1,149 +1,149 @@
 'use client';
 
-// The feature switches (lib/flags.ts), a card each: what it does, a release
-// flag's removal date, whether its variable still decides it, and its value,
-// changed with a choice and Save. On /dev/flags (app/dev/flags) for local
-// development, where anyone signed in may set them; F2 puts it on the admin
-// page, each card a row that opens its kind's sheet. The list of who may sign
-// in is shown, not set, here: adding and removing people comes with F2's
-// sheets.
+// The feature switches (lib/flags.ts), one card of rows: each switch by its
+// short name, with its value in words and, as badges, a value that can't be
+// read, a variable that still decides it, and a release switch's removal
+// date. A row opens the switch's sheet (components/FlagSheet.tsx), where it
+// is set. On the admin page (components/AdminPage.tsx) and on /dev/flags for
+// local development (app/dev/flags), which sets the choices alone.
 //
-// Saved by Save, never on a choice alone: a closed select's arrow keys choose
-// at every step, and the policy would pass through Off on its way to Enforce.
+// The rows come from the page (lib/flag-view.ts switchRows). A change answers
+// with the switch's new row on the admin page, or the choice stored on
+// /dev/flags, shown at once; then the page is read again (router.refresh), so
+// its other cards (the record of changes, Needs attention) follow, and its
+// rows replace the ones answered.
 
 import { useState } from 'react';
-import { ALERT, CAUTION, LevelWord } from './ConnectionStatus';
+import { useRouter } from 'next/navigation';
+import { useReverification } from '@clerk/nextjs';
+import FlagSheet, { putFlag, valueWords, type Answer, type Send } from './FlagSheet';
+import { chevron, RIGHT } from './MonthStepper';
+import { useBrowserDay } from './browser-day';
+import type { AdminAccount, ChangeLine, Place, SwitchRow } from '@/lib/flag-view';
 
-/** One switch as the page shows it. `stored` is the choice stored, null when
- *  none is (its default applies), or 'unreadable'. */
-export type SwitchRow = {
-  key: string;
-  about: string;
-  kind: 'audience' | 'mode' | 'switch' | 'list';
-  removeBy: string | null;
-  choices: string[];
-  stored: string | null | 'unreadable';
-  defaultChoice: string | null;
-  variable: string | null;
-  variableSet: boolean;
-  /** For the list: how many people are on the stored one. */
-  people: number | null;
+type Props = {
+  rows: SwitchRow[];
+  place: Place;
+  demos: boolean;
+  /** Where these values hold, in words: "Production", "Preview", "local
+   *  development". */
+  environment: string;
+  /** Whether a change asks for a fresh sign-in (lib/flag-change.ts
+   *  flagChangeNeedsFreshSignIn). */
+  freshSignIn: boolean;
+  clerk: boolean;
+  /** The admin page's: the accounts in the registry, named. */
+  accounts?: AdminAccount[];
+  /** The admin page's: each switch's latest changes, worded, latest first. */
+  changes?: Record<string, ChangeLine[]>;
 };
 
-const WORDS: Record<string, string> = {
-  nobody: 'Nobody',
-  admin: 'The admin',
-  'admin-and-demo': 'The admin and the demo accounts',
-  everyone: 'Everyone',
-  off: 'Off',
-  on: 'On',
-  'report-only': 'Report only',
-  enforce: 'Enforce',
-};
+export default function FeatureSwitchesCard(props: Props) {
+  // Clerk's hook only works inside its provider, which exists only with Clerk.
+  if (props.place === 'admin' && props.clerk && props.freshSignIn) return <WithClerk {...props} />;
+  return <Switches {...props} send={(body) => putFlag(props.place === 'admin' ? '/api/admin/flags' : '/api/dev/flags', body)} />;
+}
 
-const FIELD: Record<SwitchRow['kind'], string> = { audience: 'On for', mode: 'Policy', switch: 'Routes', list: '' };
+function WithClerk(props: Props) {
+  const verified = useReverification((body: Record<string, unknown>) => putFlag('/api/admin/flags', body));
+  return <Switches {...props} send={verified as Send} />;
+}
 
-const word = (choice: string | null) => (choice === null ? '' : (WORDS[choice] ?? choice));
+function Switches({ rows, place, demos, environment, freshSignIn, clerk, accounts = [], changes = {}, send }: Props & { send: Send }) {
+  const router = useRouter();
+  const day = useBrowserDay();
+  // Rows answered by a change, until the page's own come back.
+  const [given, setGiven] = useState(rows);
+  const [answered, setAnswered] = useState<Record<string, SwitchRow>>({});
+  if (given !== rows) {
+    setGiven(rows);
+    setAnswered({});
+  }
+  // The sheet's switch stays named while it slides out; `opened` gives each
+  // opening a fresh sheet.
+  const [sheetKey, setSheetKey] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(0);
 
-const people = (n: number) => (n === 1 ? '1 person' : `${n} people`);
+  const current = rows.map((r) => answered[r.key] ?? r);
+  const sheetRow = current.find((r) => r.key === sheetKey);
 
-export function SwitchCard({ row, demos }: { row: SwitchRow; demos: boolean }) {
-  const [stored, setStored] = useState(row.stored);
-  const shown = stored === 'unreadable' ? null : (stored ?? row.defaultChoice);
-  const [choice, setChoice] = useState(shown ?? '');
-  const [saving, setSaving] = useState(false);
-  const [failed, setFailed] = useState<string | null>(null);
-  const id = `switch-${row.key}`;
-  // The admin and the demo accounts only where there are demo accounts.
-  const choices = row.choices.filter((c) => c !== 'admin-and-demo' || demos || shown === c);
-
-  const save = async () => {
-    setSaving(true);
-    setFailed(null);
-    try {
-      const res = await fetch('/api/dev/flags', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: row.key, choice }) });
-      const body = (await res.json().catch(() => ({}))) as { choice?: unknown; error?: unknown };
-      if (res.ok && typeof body.choice === 'string') setStored(body.choice);
-      else setFailed(typeof body.error === 'string' ? body.error : 'The switch couldn’t be set just now.');
-    } catch {
-      setFailed('The switch couldn’t be set just now.');
-    } finally {
-      setSaving(false);
-    }
+  const onChanged = (answer: Extract<Answer, { ok: true }>) => {
+    if (!sheetRow) return;
+    const next = answer.row ?? (answer.choice !== null ? { ...sheetRow, stored: answer.choice } : sheetRow);
+    setAnswered((a) => ({ ...a, [sheetRow.key]: next }));
+    router.refresh();
   };
 
   return (
-    <section className="card" aria-labelledby={id}>
+    <section id="feature-switches" className="card" aria-labelledby="feature-switches-title">
       <div className="card-header">
-        <h2 id={id}>
-          <code>{row.key}</code>
-        </h2>
+        <h2 id="feature-switches-title">Feature switches</h2>
       </div>
-      <div className="stack">
-        <p className="helper">{row.about}</p>
-        {row.removeBy && <p className="helper">A release switch, to be removed by {row.removeBy}.</p>}
-        {row.variableSet && (
-          <p className="helper">
-            Set by the environment ({row.variable}); your choice takes over when it is removed.
-          </p>
-        )}
-        {stored === 'unreadable' && (
-          <div className="notice caution">
-            {CAUTION}
-            <div>
-              <LevelWord level="caution" />
-              Its stored value can’t be read, so its default applies, and it is left as it is.
-            </div>
-          </div>
-        )}
-        {row.kind === 'list' ? (
-          <p className="helper">
-            {stored === null ? 'Nobody is on the stored list.' : `${people(row.people ?? 0)} on the stored list.`} Who may sign in is set on the admin page.
-          </p>
-        ) : (
-          stored !== 'unreadable' && (
-            <>
-              <label className="field">
-                {FIELD[row.kind]}
-                <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={saving}>
-                  {choices.map((c) => (
-                    <option key={c} value={c}>
-                      {word(c)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {stored === null && <p className="helper">Not set: its default, {word(row.defaultChoice)}, applies.</p>}
-              {choice !== shown ? (
-                <div className="btn-row">
-                  <button type="button" className="btn secondary" onClick={save} disabled={saving}>
-                    {saving ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-              ) : null}
-            </>
-          )
-        )}
-        {failed && (
-          <div className="notice critical" role="alert">
-            {ALERT}
-            <p>
-              <LevelWord level="critical" />
-              {failed}
-            </p>
-          </div>
-        )}
-      </div>
+      <p className="helper">
+        A change reaches pages within 30 seconds, and the routes that check a switch at once.{' '}
+        {place === 'admin' ? `These are ${environment}’s: each environment keeps its own.` : 'These are this machine’s, for local development.'}
+      </p>
+      <ul className="list-rows">
+        {current.map((row) => (
+          <li key={row.key}>
+            <button
+              type="button"
+              className="list-row"
+              aria-haspopup="dialog"
+              onClick={() => {
+                setSheetKey(row.key);
+                setOpened((n) => n + 1);
+                setOpen(true);
+              }}
+            >
+              <span className="list-row-text">
+                <span className="list-row-title">{row.name}</span>
+                <span className="list-row-sub">
+                  {valueWords(row, place)}
+                  {row.stored === 'unreadable' && (
+                    <>
+                      {' '}
+                      <span className="badge warn">Can’t be read</span>
+                    </>
+                  )}
+                  {row.variableSet && (
+                    <>
+                      {' '}
+                      <span className="badge">Set by {row.variable}</span>
+                    </>
+                  )}
+                  {row.removeBy && (
+                    <>
+                      {' '}
+                      <span className="badge">Remove by {row.removeBy}</span>
+                    </>
+                  )}
+                </span>
+              </span>
+              {chevron(RIGHT)}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {sheetRow && (
+        <FlagSheet
+          key={`${sheetRow.key}-${opened}`}
+          row={sheetRow}
+          place={place}
+          open={open}
+          onClose={() => setOpen(false)}
+          send={send}
+          onChanged={onChanged}
+          demos={demos}
+          environment={environment}
+          clerk={clerk}
+          askPassword={place === 'admin' && !clerk && freshSignIn}
+          accounts={accounts}
+          changes={changes[sheetRow.key] ?? []}
+          day={day}
+        />
+      )}
     </section>
-  );
-}
-
-export default function FeatureSwitchesCard({ rows, demos }: { rows: SwitchRow[]; demos: boolean }) {
-  return (
-    <div className="stack">
-      {rows.map((row) => (
-        <SwitchCard key={row.key} row={row} demos={demos} />
-      ))}
-    </div>
   );
 }

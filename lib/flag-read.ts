@@ -54,6 +54,7 @@ import {
   type FlagValue,
 } from './flags';
 import type { ContainerId, Ctx } from './containers';
+import { opsOpen, type OpsOpen } from './flag-view';
 import type { CspMode } from './security-headers';
 
 /** A known flag's stored value this release can't read. */
@@ -286,6 +287,13 @@ export async function opsOnCached(): Promise<boolean> {
   const variable = opsVariable();
   if (variable !== undefined) return variable;
   return opsFrom((await cachedFlags()).flags);
+}
+
+/** Whether the ops routes are open, and by what, through this instance's
+ *  copy: for the admin's Needs attention on Home. */
+export async function opsOpenCached(): Promise<OpsOpen | null> {
+  const stored = (await cachedFlags()).flags.get('ops');
+  return opsOpen(stored === UNREADABLE ? 'unreadable' : (stored ?? null));
 }
 
 /** Whether the ops routes are open, now: once a request's secret matched. A

@@ -269,7 +269,12 @@ describe('every tab while it loads', () => {
     expect(list.match(/<li>/g)).toHaveLength(6);
     // Without Clerk there is no Sharing: one row fewer, as the list will draw.
     expect(renderToStaticMarkup(<SettingsSkeleton view="list" sharing={false} />).match(/<li>/g)).toHaveLength(5);
-    expect(renderToStaticMarkup(<AppLoading account="password" settings="list" />).match(/<li>/g)).toHaveLength(5);
+    // The admin's has Admin: one row more.
+    expect(renderToStaticMarkup(<SettingsSkeleton view="list" admin />).match(/<li>/g)).toHaveLength(7);
+    // The app password's one person is the admin, with no Sharing; with Clerk,
+    // who is signed in isn't known yet, so no Admin.
+    expect(renderToStaticMarkup(<AppLoading account="password" settings="list" />).match(/<li>/g)).toHaveLength(6);
+    expect(renderToStaticMarkup(<AppLoading account="clerk" settings="list" />).match(/<li>/g)).toHaveLength(6);
     const data = renderToStaticMarkup(<SettingsSkeleton view="data" />);
     expect(data).toContain('aria-label="Back to Settings"');
     expect(data).toContain('<h2 id="settings-loading-title">Your data and privacy</h2>');

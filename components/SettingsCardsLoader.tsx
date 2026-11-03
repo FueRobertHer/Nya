@@ -32,7 +32,7 @@ export function CardUnavailable({ reason, onRetry }: { reason: 'load' | 'crash';
 
 /** `quiet`: for a card that often draws nothing at all, so nothing while
  *  its code is on its way. `rare`: for one most people never see (a demo
- *  account's, the admin's), so nothing if its code can't be loaded either,
+ *  account's), so nothing if its code can't be loaded either,
  *  rather than a failure for a card that wouldn't have been there. `part`:
  *  where the code comes from (a test's own). */
 export function settingsCard<K extends keyof Cards>(name: K, { quiet = false, rare = false } = {}, part: LazyPart<Cards> = settingsCardsPart) {
@@ -57,7 +57,6 @@ export function settingsCard<K extends keyof Cards>(name: K, { quiet = false, ra
 }
 
 export const AccountLinks = settingsCard('AccountLinks', { quiet: true });
-export const AdminUnusedItems = settingsCard('AdminUnusedItems', { rare: true });
 export const ApiTokens = settingsCard('ApiTokens');
 export const CategoriesCard = settingsCard('CategoriesCard');
 export const CurrencyCard = settingsCard('CurrencyCard');

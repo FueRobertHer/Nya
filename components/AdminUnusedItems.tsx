@@ -1,9 +1,10 @@
 'use client';
 
-// Settings, Connections, for the admin only: connections across every
-// account that cost money and do nothing (lib/admin-items.ts). The server decides
-// who the admin is (app/page.tsx) and only mounts this for them, so nobody else
-// makes a request for it; the route refuses them as well (a 404).
+// The admin page's Unused connections (components/AdminPage.tsx): connections
+// across every account that cost money and do nothing (lib/admin-items.ts).
+// The server decides who the admin is (app/admin-view/page.tsx) and only
+// draws that page for them, so nobody else makes a request for it; the route
+// refuses them as well (a 404).
 //
 // Listing and checking remove nothing. "Review and disconnect" opens a sheet
 // where the institution's name has to be typed, and the server checks again
@@ -109,7 +110,7 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
     <>
       <div className="card account-links">
         <div className="inst-header">
-          <div className="inst-name">Unused connections (admin)</div>
+          <div className="inst-name">Unused connections</div>
         </div>
 
         {data.items.length === 0 ? (

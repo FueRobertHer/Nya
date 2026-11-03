@@ -1,0 +1,82 @@
+name: Upkeep
+
+# Lists what in the repository is past the date it was due (scripts/upkeep.ts):
+# today, the release feature switches past their removal date. When something
+# is, it opens one issue labelled upkeep, or updates the one already open; once
+# a run finds nothing due, it closes it.
+#
+# Beside the weekly tax law check (law-check.yml), not inside it: this reads
+# only the repository, so a source the law check can't reach never stops it,
+# and its issue is a standing list by date rather than a finding. Nothing it
+# finds fails the run: the issue is the signal. The run fails only when the
+# script itself does, and then the issue is left as it is.
+
+on:
+  schedule:
+    # Mondays at 14:30 UTC.
+    - cron: '30 14 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: upkeep
+  cancel-in-progress: false
+
+jobs:
+  upkeep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+
+      - run: bun install --frozen-lockfile
+
+      # Writes the report only when something is due. Its outcome is kept for
+      # the next step, which closes the issue only after a run that worked.
+      - name: List what is due
+        id: run
+        continue-on-error: true
+        run: bun run upkeep --report "$RUNNER_TEMP/upkeep.md"
+
+      - name: Open, update or close the issue
+        if: steps.run.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ runner.temp }}/upkeep.md
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number=$(gh issue list --label upkeep --state open --json number --jq '.[0].number // empty')
+          if [ ! -f "$REPORT" ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "Nothing is due as of $(date -u +%F), in $RUN."
+            else
+              echo "Nothing is due, and no issue is open."
+            fi
+            exit 0
+          fi
+          if [ -z "$number" ]; then
+            gh label create upkeep --color C5DEF5 --description "Something in the repository is past the date it was due" --force
+            gh issue create --title "Upkeep" --label upkeep --body-file "$REPORT"
+            exit 0
+          fi
+          # Edited only when the report changed, with a comment so the change
+          # notifies; the same report week after week stays quiet.
+          current=$(gh issue view "$number" --json body --jq .body | tr -d '\r')
+          if [ "$current" = "$(tr -d '\r' < "$REPORT")" ]; then
+            echo "Issue #$number already says this."
+          else
+            gh issue edit "$number" --body-file "$REPORT"
+            gh issue comment "$number" --body "The list changed in $RUN."
+          fi
+
+      - name: Fail when the script did
+        if: steps.run.outcome == 'failure'
+        run: |
+          echo "::error::The upkeep script failed: see the List step's output. The issue was left as it is."
+          exit 1

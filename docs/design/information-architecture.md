@@ -60,7 +60,7 @@ Principles behind the choices: one job per screen; settings live in Settings; on
 | Order | Block | Contents |
 |---|---|---|
 | 1 | **Net worth** (one card) | Total and change; under it, each critical caveat in full and the lesser ones gathered in one line that opens in place (see [design-system.md](design-system.md#status-and-honesty)); the chart with its readout and what qualifies it under it, and its range as a compact underline switch; the nightly jobs' facts (what to do about them only for the admin, in the Admin card under Needs attention); a foot row with when it was updated, a **History paused** badge while history is paused, and a **Chart notes (N)** button that opens the timeline notes sheet (a foot row, as the mockup draws it: the chart's header has no room at 320px). |
-| 2 | **Needs attention** | Shown only when something does: a row per item, worst first, each with its level as an icon and a word, saying what and going where it is fixed (list [below](#needs-attention)). For the admin only, an **Admin** card under it says what to do about a nightly job that failed. |
+| 2 | **Needs attention** | Shown only when something does: a row per item, worst first, each with its level as an icon and a word, saying what and going where it is fixed (list [below](#needs-attention)). For the admin only, an **Admin** card under it says what to do about a nightly job that failed, or the ops routes left on. |
 | 3 | **This month** | The passive insights as plain rows, the month's own figures first (spending pace, biggest purchase, upcoming bills), then a low balance (one row, "and 3 more accounts"), then idle cash, with what the month may be missing after the pace and the biggest purchase, and one FI line ("FI in about 11.4 years · 62% there", the FI number, what is invested and the savings rate under it) that opens the Plan tab, with every note the FI card had under it, gathered into one line in the worst one's color when there are two or more (built in 4c). |
 
 Moves off Home: the timeline notes card (into a sheet from the chart), the backup instruction (into the Admin card under Needs attention, for the admin only; everyone keeps the amber "backup failed" line), the CurrencyOffer card (into Needs attention, a row that opens the offer in a sheet), the FI card (into one line in This month, every note gathered under it; the Plan tab says each beside its figure).
@@ -140,16 +140,34 @@ A full screen with a list of sections; each opens its own view with a back butto
 |---|---|---|
 | **Preferences** | Theme (System, Dark, Light); home currency and rates; weekly summary email | ThemeCard (new in phase 7), CurrencyCard, WeeklySummaryCard (Manage) |
 | **Transactions** | Categories and groups (with starter sets); tags; rules; merchant defaults; review queue | CategoriesCard, CategoryManager, TagsCard, RulesCard, VendorDefaultsCard, ReviewSettingsCard (Manage) |
-| **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget; for the admin, unused connections and "Check all accounts now" | AccountLinks, AdminUnusedItems, the all-hidden filter (Manage) |
+| **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget | AccountLinks, the all-hidden filter (Manage) |
 | **Sharing** | In place: invite, people and blocked, as cards; each person in a sheet of their own (what they see and for how long, both records, Remove and Block) with What they see as its second level (since the screen review) | SharingDrawer (avatar menu, Accounts button), now SharingSettings |
 | **Your data and privacy** | Download my data; Your data (what Nya keeps); Bring back a download (a demo account: reset to a scenario instead); Receipts and documents; API tokens and their changes | DownloadMyData, InventoryEntry, RestoreCard (DemoDataCard on a demo account), ReceiptsCard, ApiTokens (Manage) |
-| **Account** | Profile (Clerk), Forget this device, Delete my account, the admin's Storage across accounts; with Clerk, who is signed in (Clerk's picture, name and email, read from Clerk and drawn in place since the screen review: Clerk's own profile stays in its window, which it lays out by the window's width), then **Manage account**, opening Clerk's account window with its Data & privacy page as the avatar menu's does (look and feel step 2c), while Sign out is the avatar menu's alone and this section points to it; Sign out and Sign out everywhere in password mode | AccountSettings (ProfileWindow), ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
+| **Account** | Profile (Clerk), Forget this device, Delete my account; with Clerk, who is signed in (Clerk's picture, name and email, read from Clerk and drawn in place since the screen review: Clerk's own profile stays in its window, which it lays out by the window's width), then **Manage account**, opening Clerk's account window with its Data & privacy page as the avatar menu's does (look and feel step 2c), while Sign out is the avatar menu's alone and this section points to it; Sign out and Sign out everywhere in password mode | AccountSettings (ProfileWindow), ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
+| **Admin** | The deployment's admin only (decided on the server), last (tax plan F2): one row, **Admin page**, to `/admin` | Unused connections (Connections), Storage across accounts and Nightly jobs (links in Your data), now on the admin page; AdminEntry |
+
+Everyone but the admin sees six sections (five without Clerk, which has no Sharing); the admin sees Admin too, and `?settings=admin` opens the list for anyone else.
 
 Settings is a screen inside the app, not a sheet: thirteen-plus cards in a bottom sheet would mean long scrolling sheets and sheets opened from sheets. Whether it is an in-app view or a `/settings` route is an implementation choice for the rollout (a route gives real URLs; it also remounts the dashboard).
 
 ## Before anything is connected
 
 The tab bar is hidden, so this state keeps its own entry points, as today: the Add account options, Add a manual account, Bring back a download, Sharing, Shared with me, and the importer for switching from another app.
+
+## The admin page
+
+`/admin` (`components/AdminPage.tsx`, since the tax plan's F2), for the deployment's admin only: anyone else gets the 404 any missing path gets. Everything about the deployment rather than an account, one card each, in this order:
+
+1. **Needs attention**, only when something does: the rows of Home's Admin card (a nightly job that failed, the ops routes left on), each going where it is done.
+2. **Feature switches**: a row per switch, by its short name, opening its sheet (FlagSheet), where it is set: who it is on for, the accounts named besides, who may sign in, and its last changes.
+3. **Jobs and storage**: Nightly jobs (`/admin/jobs`) and Storage across accounts (`/admin/storage`), each a row with its state in one line.
+4. **Unused connections** (AdminUnusedItems), as Settings > Connections had it.
+5. **Demo accounts**, never in Production: whether each is set up, and how it is reset.
+6. **Environment**, read only: the deployment's settings as the app reads them (Plaid, sign-in, the limits), whether a secret is set but never its value, and how to change them.
+7. **Operations**, read only: what is done by hand, each a link to its part of the operations guide. Nothing runs from the page.
+8. **Changes**: the record of changes to the switches, latest first, the latest 25 until **Show all**.
+
+The Tax law card (the tax plan's T2) goes between Demo accounts and Environment. A setting of the deployment, not of an account, goes here as a card of its own; an account's own settings stay in Settings.
 
 ## Needs attention
 
@@ -170,7 +188,8 @@ The only list on Home that asks the person to act (`components/NeedsAttention.ts
 | Your accounts use several currencies: choose a home currency ("Show your totals in one currency") | Caution while the total adds them unconverted (as its caveat); Information when only transactions are in several | The offer, in a sheet, with its choices and Not now |
 | A bank a restore brought back isn't connected; what a restore brought back can't be read | Critical; Caution | Settings > Your data |
 | Plaid's warnings (Caution), or your own sync's connections (Critical), couldn't be read on this load: one that needs you may be missing from the list | As the Accounts tab's notice | The Accounts tab, focus on its notice |
-| The nightly backup or receipt clean-up failed (admin only): "Nightly backup failed" over "Last saved Oct 20 · timeout · Check the backup cron in Vercel." | Caution | The Admin card under Needs attention; each row goes to the Nightly jobs page (`/admin/jobs`) |
+| The nightly backup or receipt clean-up failed (admin only): "Nightly backup failed" over "Last saved Oct 20 · timeout · Check the backup cron in Vercel." | Caution | The Admin card under Needs attention, and the admin page's Needs attention; each row goes to the Nightly jobs page (`/admin/jobs`) |
+| The ops routes are on (admin only): "The ops routes are on" over "Turn them off once the operation is done." ("OPS_ENABLED is set: remove it once the operation is done." while its variable opened them) | Caution | The Admin card under Needs attention, and the admin page's Needs attention; goes to the Feature switches card on the admin page (`/admin#feature-switches`) |
 
 When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber. An unfinished restore keeps its banner on every tab, Home's too, rather than a row. What a budget row's month may be missing follows the budget rows, in the words Activity and Budgets use. A low balance is a row in This month (decided in 4c): it has no fix to go to and no way to set it aside.
 
@@ -193,11 +212,11 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Dashboard (shell) | Header, five tabs, all sheets | Header, five tabs, Settings screen, sheets |
 | Brand, HideAmounts | Header | Header |
 | ClerkAccount | Avatar menu (Sharing, Manage account, Sign out) | Avatar menu: Settings, Sharing (opening Settings > Sharing), Sign out |
-| Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections, each a view with a back button; kept in the address beside the tab (`?settings=`, lib/dashboard-tab.ts) since the screen review |
+| Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections (Admin a seventh, for the admin, since F2), each a view with a back button; kept in the address beside the tab (`?settings=`, lib/dashboard-tab.ts) since the screen review |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings, at the bottom of the screen when the tab is shorter than it (`.app-page`) |
 | NetWorthCard | New in phase 4a | Home: the one Net worth card, replacing the hero, Over time and notes cards; since the look and feel's step 5 the hero itself, on the page, not in a card (`.net-worth-hero`), with `components/hero-scrub.ts` carrying the day a finger is on from its chart to its figure |
-| NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page |
+| NeedsAttention (AdminAttention) | New in phase 4b | Home, under the Net worth card: a row per thing to do, worst first, each going where it is fixed; the admin's card under it, each row going to the Nightly jobs page or to the ops routes' switch on the admin page; the same rows (`adminAttentionRows`) open the admin page |
 | TotalCaveats | New in phase 4a | Under the Home total: each critical caveat in full, the lesser ones gathered in one line that opens in place; also the FI line (4c), Budgets > Month's notice and the notes under Spent, and the notice at the top of Goals (6a2); Budgets > Upcoming's notice and the forecast's notes on where it starts (6a3). Its `Notice` draws one notice with its level word, for the errors on the Month card and in the budgets' sheets, and the forecast's answer, Upcoming's load states and its sheets' errors (6a3) |
 | NetWorthChart, ImportedHistoryNote, CurrencyNotes (chart and hero) | Home hero and Over time cards | Home > the hero (the hero's currency lines as caveats on the total); its chart drawn as the hero's (`hero`: edge to edge, `.hero-chart`) since the look and feel's step 5; since the screen review every net worth chart (an account's sheet, a shared net worth) is drawn at its width with no money ticks and has Show as a table |
 | AccruedInterestNote | Under the Home total | Caveat line under the total |
@@ -225,13 +244,13 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Disconnect sheet, DisconnectSplitsNote | Manage-only header button; ConnectionHealth | ⋯ > Disconnect...; Settings > Connections |
 | ConnectRedirect ("already connected") | After Connect | Unchanged |
 | AccountLinks | Manage | Settings > Connections; a notice on Accounts when a match is waiting |
-| AdminUnusedItems | Manage (admin) | Settings > Connections (admin) |
+| AdminUnusedItems | Manage (admin) | The admin page's Unused connections (Settings > Connections until F2) |
 | DebtPayoff | Accounts top card button | Budgets > Goals (6a1): a Debt payoff card holding a Payoff plan row, shown when a card or loan that isn't hidden is on screen; the sheet stays mounted once, outside the tabs |
 | Sharing (SharingSettings with SharingListView and ConnectionView, SharedViews, ShareKinds, SharingDates) | Avatar menu, Accounts button | Settings > Sharing, in place, each person in a sheet; the avatar menu's Sharing opens it |
 | Sharing (SharedWithMe) | Bottom of Accounts; empty state | Bottom of Accounts; empty state |
 | AcceptInvite | Invite link page | Unchanged |
 | DownloadMyData, DownloadOptions | Manage | Settings > Your data |
-| InventoryEntry, DataInventory | Manage, `/your-data` | Settings > Your data, `/your-data` |
+| InventoryEntry, DataInventory | Manage, `/your-data` | Settings > Your data, `/your-data`; the admin's links to Storage across accounts and Nightly jobs moved to the admin page in F2 |
 | RestoreCard, RestoreAnswers | Manage; empty state | Settings > Your data; empty state |
 | DemoDataCard | New | Settings > Your data, for a demo account only, where Bring back a download would be: reset it to a scenario |
 | ReceiptsCard | Manage (when files are on) | Settings > Your data |
@@ -248,9 +267,11 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | VendorDefaultsCard | Manage | Settings > Transactions |
 | ReviewSettingsCard | Manage | Settings > Transactions |
 | DeleteAccount, DeletionReceipt, ForgetDevice | Clerk profile window; header (password mode) | Settings > Account |
-| AdminStorage | `/admin-view` | Settings > Account (admin link) and `/admin-view` |
-| AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from Settings > Your data and privacy (admin link) and from the Admin card's rows on Home |
-| FeatureSwitchesCard | New (tax plan F1) | `/dev/flags`, local development only (`bun run dev`, on this machine; missing on Vercel and on any prefix but `dev:`), for anyone signed in, demo accounts included: a card per feature switch (`lib/flags.ts`) with what it does, a release switch's removal date, a note while its variable still decides it, and a select with **Save**; the sign-in list shown, not set. Linked from nowhere. F2 puts it on `/admin` as Feature switches, each card a row that opens its kind's sheet |
+| AdminStorage | `/admin-view` | `/admin-view/storage` (asked for as `/admin/storage`, the admin only), linked from the admin page's Jobs and storage card; its header goes back to the admin page |
+| AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from the admin page's Jobs and storage card and from the Admin card's rows on Home; its header goes back to the admin page |
+| FeatureSwitchesCard, FlagSheet | New (tax plan F1, F2) | The admin page's Feature switches (`/admin`, F2): a row per switch (`lib/flags.ts`) by its short name, its value in words, and badges for a value that can't be read, a variable that still decides it and a release switch's removal date, opening its sheet (FlagSheet): who it is on for (RadioRows, saved with **Save**), the accounts named besides (each with Remove, and **Add an account** at a second level), who may sign in (each with a confirmed Remove, and an add field), its last changes, and a fresh sign-in in Production. Also `/dev/flags`, local development only (`bun run dev`, on this machine; missing on Vercel and on any prefix but `dev:`), for anyone signed in, demo accounts included: the same rows and sheets with the choices alone, the accounts and people counted, never named, and set on the admin page. Linked from nowhere |
+| AdminPage | New (tax plan F2) | `/admin-view` (asked for as `/admin`, the admin only): the admin page ([above](#the-admin-page)); opened from Settings > Admin and from Home's Admin card |
+| AdminEntry | New (tax plan F2) | Settings > Admin, for the admin only: one row to the admin page |
 | ActivityBar | New (phase 5a) | Activity's pinned bar: **‹ October 2026 ›** with This month's line under it, held (on Shared and with no transactions, its row held as tall, empty), and the segments Transactions · Spending · Shared. Add a transaction and Import a file are in the Transactions card's ⋯ while there are transactions (since the month row fix), buttons in the empty card while there are none |
 | BudgetsBar | New (phase 6a1) | Budgets' pinned bar: on Month the month as its heading (**‹ October 2026 ›**, a tap on the name picks any month), on the others the same row, empty, with the segment's name as a heading read alone (shown until the screen review); under it the segments Month · Upcoming · Goals. Each segment's panel stays mounted, the others hidden |
 | PlanBar | New (phase 6b) | The Plan's pinned scenario bar: "Your plan" with **Scenarios (3)**, or a back arrow and "Scenario: Sabbatical 2029"; under it the segments Your path · Drawdown · Portfolio (Stress test until T1), none selected until the Plan has decided where it opens. Its heading is where Home's FI line lands. Each segment's panel stays mounted, the others hidden |
@@ -308,6 +329,7 @@ Components that only serve other components (a picker, a chart, a row, a notice)
 - MonthStepper: the one month control (step 2b1): Activity's bar, Budgets' bar on Month and the calendar, each with its own months; Activity and Budgets share the month (step 2b2), the calendar keeps its own. This month has a line of its own under the name, held, 32px, so the row never changes size, on the bars and the calendar alike (since the month row fix).
 - Segmented: the underline switch for a value (a radio group: the net worth chart's range, Runway's window, the Plan's choices, the kind of report) or a few views (tabs over one panel: Allocation's two views, which report). Activity's, Budgets' and the Plan's bars, Budgets > Upcoming's List or Calendar, the forecast, Planned and Theme draw `.segmented` themselves.
 - Why: the "Why?" disclosure, wherever an explanation goes behind one line.
+- RadioRows: choosing one of a few options, each with a note, a native radio in a 44px row (since the tax plan's F2): a feature switch's sheet (FlagSheet). It replaces `.lifecycle-choice` and `.download-format`, screen by screen.
 - FieldError: what is wrong with a field and what to do ("Enter an amount, like 120.50"), in `--neg` with the alert icon under it, named by the field's `aria-describedby`, so a field's red edge is never alone: the amounts in IouSheet, SplitSheet, ShareCostSheet and ConfirmPaymentSheet, Planned's sheet (amount, currency, date), the forecast's Warn below and What if I buy, the runway's Spending lower by and Debt payoff's Extra each month.
 - Collapsible (CollapsibleHeader): the title of a card that opens and closes (Hidden, Accounts that ended, Shared with me).
 - online (useOfflineCaveats): whether the device is online, and the caution on Home's total while it isn't ("Offline. Showing balances from 9:41 AM."), through TotalCaveats.
