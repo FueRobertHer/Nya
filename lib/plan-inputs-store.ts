@@ -18,8 +18,9 @@
 //     without `force` (Home) takes a fresh copy as it is; the Plan's loads
 //     always ask, since nothing refuses a save made from a plan another
 //     device changed since.
-//   - A request that answered after an adopt() or invalidate() it was sent
-//     before gives its rows only: its plan is older than what is there.
+//   - Only the newest request's answer is taken, and if an adopt() or
+//     invalidate() came after it was sent, only its rows: its plan is older
+//     than what is there.
 //   - A plan whose row isn't cached comes back pending, and one sync=1
 //     request fills it; never two for one plan at once (they would race for
 //     its item's lock). An older row is kept, and shown, while it refreshes.
@@ -180,17 +181,19 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
       }
       if (running === mine) running = null;
       const { plans: answered, ...planPart } = body ?? {};
-      // Only the newest request's plan, and only if nothing was adopted or
-      // invalidated since it was sent: anything else is older than the copy.
-      const latest = mine.seq === sent && mine.gen === gen;
+      // Only the newest request is taken (a newer one was sent after it), and
+      // its plan only if nothing was adopted or invalidated since it was sent:
+      // that plan is older than the copy's. Its rows are the newest asked for
+      // either way.
+      const newest = mine.seq === sent;
       const patch: Partial<PlanInputsCopy> = {};
-      if (latest) {
-        patch.key = key;
+      if (newest && mine.gen === gen) {
         patch.plan = { status, body: body ? planPart : null };
         answeredAt = now();
         stale = false;
       }
-      if (latest || copy.key === key) {
+      if (newest) {
+        patch.key = key;
         // A request that gave no rows (it failed) leaves every plan to sync.
         const given = rowsOf(answered);
         const rows = { ...copy.rows };
