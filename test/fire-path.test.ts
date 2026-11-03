@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, projectFrom, type FirePlan, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
-import { planPath, type PlanPath } from '@/lib/fire/path';
+import { planPath, steadyRun, type PlanPath } from '@/lib/fire/path';
+import { makeMarket } from '@/lib/fire/market';
+import { historicalCycles, type SimPlan } from '@/lib/fire/simulate';
 import { hasWalk, savingsIn, walkBalanceAt, walkPath, type LifeEvent, type WalkChanges } from '@/lib/fire/events';
 import { projectBalance, projectionShort } from '@/lib/fire/fi';
 import { seededRandom } from '@/lib/fire/random';
@@ -518,5 +520,222 @@ describe('projectionShort', () => {
     expect(projectionShort(100_000, 10_000, 0.05, Infinity)).toBeNull();
     expect(projectionShort(100_000, -10_000, 0.05, 1e9)).toEqual({ year: 14, have: projectBalance(100_000, -10_000, 0.05, 14), need: 10_000, kind: 'savings' });
     expect(projectionShort(100_000, 10_000, 0.05, 1e9)).toBeNull();
+  });
+});
+
+// The steady path after the stop (the tax plan's P): steadyRun is the
+// engine's year (lib/fire/simulate.ts runPaths) on one steady market, so on a
+// market history that IS steady it gives what historicalCycles does for its
+// one start: a month's return (1 + g)^(1/12) - 1 for stocks and bonds, and
+// 3% a year of inflation, over exactly the plan's months.
+describe('steadyRun', () => {
+  const sim = (over: Partial<SimPlan> = {}): SimPlan => ({
+    startBalance: 1_000_000,
+    years: 30,
+    allocation: { stocks: 1, bonds: 0, cash: 0 },
+    rebalance: 'annual',
+    fee: 0,
+    taxRate: 0.1,
+    rule: { kind: 'constant', rate: 0.04 },
+    income: [],
+    oneOffs: [],
+    cashRealReturn: 0,
+    ...over,
+  });
+  const steadyMarket = (g: number, years: number) => {
+    const n = 12 * years;
+    const month = (1 + g) ** (1 / 12) - 1;
+    const prices = 1.03 ** (1 / 12) - 1;
+    return makeMarket('1900-01', new Array(n).fill(month), new Array(n).fill(month), new Array(n).fill(prices));
+  };
+  const close = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1e-7 * Math.max(1, Math.abs(b)));
+  const same = (p: SimPlan, g: number) => {
+    const h = historicalCycles(p, steadyMarket(g, p.years));
+    expect(h.paths).toBe(1);
+    const run = steadyRun(p, g);
+    const failed = h.worst[0].failedYear;
+    expect(run.failedYear).toBe(failed);
+    expect(run.balances).toHaveLength(failed === null ? p.years + 1 : failed + 1);
+    run.balances.forEach((b, k) => close(b, h.balance.p50[k]));
+    return run;
+  };
+  const income = [
+    { amount: 20_000, fromYear: 10, inflationAdjusted: true },
+    { amount: 12_000, fromYear: 5, inflationAdjusted: false },
+    { amount: 30_000, fromYear: 2, toYear: 4, inflationAdjusted: true },
+  ];
+  const oneOffs = [{ amount: 80_000, year: 7 }, { amount: 25_000, year: 29 }, { amount: 50_000, year: 40 }];
+  const lowerSpending = [{ amount: 10_000, fromYear: 3, toYear: 9 }, { amount: 5_000, fromYear: 20 }];
+
+  // Guardrails at 4% growing 4%: the withdrawal stays well inside its 80%
+  // and 120% of the rate's share, so no year sits on a threshold.
+  for (const rule of [
+    { kind: 'constant', rate: 0.04 },
+    { kind: 'percent', rate: 0.04 },
+    { kind: 'guardrails', rate: 0.04 },
+    { kind: 'vpw', expectedReturn: 0.05 },
+    { kind: 'floor-ceiling', rate: 0.04, floor: 0.9, ceiling: 1.25 },
+  ] as const) {
+    test(`the engine's year on a steady market: ${rule.kind}, with income kept up with inflation and not, one-offs and lower costs`, () => {
+      same(sim({ rule }), 0.04);
+      same(sim({ rule, income, oneOffs, lowerSpending }), 0.04);
+      same(sim({ rule, income, oneOffs, lowerSpending, taxRate: 0 }), 0.05);
+    });
+  }
+
+  test('one that runs out: the same year, and the balances up to the start of it', () => {
+    const run = same(sim({ rule: { kind: 'constant', rate: 0.1 } }), 0.02);
+    expect(run.failedYear).not.toBeNull();
+    expect(run.failedYear!).toBeLessThan(29);
+    const late = same(sim({ rule: { kind: 'constant', rate: 0.03 }, oneOffs: [{ amount: 5_000_000, year: 12 }] }), 0.04);
+    expect(late.failedYear).toBe(12);
+  });
+
+  test('refuses what the engine refuses', () => {
+    expect(() => steadyRun(sim({ fee: 0.6 }), 0.05)).toThrow(RangeError);
+    expect(() => steadyRun(sim({ years: 0 }), 0.05)).toThrow(RangeError);
+  });
+});
+
+describe('the path after the stop (the tax plan’s P)', () => {
+  const after = (p: FirePlan, m: Measured = none, events: LifeEvent[] = []) => path(figures(p, m, events)).after;
+  // $60,000 a year, no tax: a constant rule draws exactly that.
+  const base = plan({ age: 41, targetAge: 50, spending: 60_000, savings: 50_000, assets: 595_000 });
+
+  test('from the stop age’s balance to the plan’s end, the plan’s own rule drawing its spending at the steady return', () => {
+    const f = figures(base, none);
+    const a = path(f).after!;
+    expect(a.points[0]).toEqual({ age: 50, balance: f.view.atTargetAge as number });
+    expect(a.endAge).toBe(95);
+    expect(a.points).toHaveLength(46);
+    expect(a.points.at(-1)!.age).toBe(95);
+    expect(a.runsOutAt).toBeNull();
+    const b0 = a.points[0].balance;
+    close(a.points[1].balance, (b0 - 60_000) * 1.05);
+    expect(a.leftOut).toEqual({ items: [], events: false });
+    expect(a.withEvents).toBe(false);
+  });
+
+  test('a typed length ends it there; one that ends by the stop leaves it out', () => {
+    expect(after({ ...base, horizon: 20 })!.endAge).toBe(70);
+    // From today's assets, 5 years from 41 ends before the stop at 50.
+    expect(after({ ...base, start: 'assets', horizon: 5 })).toBeNull();
+    expect(after({ ...base, start: 'assets', horizon: 20 })!.endAge).toBe(61);
+  });
+
+  test('plan income counts from the later of its age and the stop; one-offs before the stop don’t, and neither does what starts at or after the end', () => {
+    const p = {
+      ...base,
+      income: [
+        { id: 'p', label: 'Pension', amount: 20_000, fromAge: 45, inflationAdjusted: true },
+        { id: 's', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true },
+        { id: 'l', label: 'Late', amount: 9_000, fromAge: 96, inflationAdjusted: true },
+      ],
+      expenses: [
+        { id: 'c', label: 'Car', amount: 30_000, atAge: 48 },
+        { id: 'r', label: 'Roof', amount: 40_000, atAge: 60 },
+        { id: 'e', label: 'At the end', amount: 10_000, atAge: 95 },
+      ],
+    };
+    const a = after(p)!;
+    const b0 = a.points[0].balance;
+    // The pension pays from 50: $40,000 out in the first year, not $60,000.
+    close(a.points[1].balance, (b0 - 40_000) * 1.05);
+    expect(a.leftOut.items).toEqual([
+      { label: 'Pension', age: 50, kind: 'income' },
+      { label: 'Roof', age: 60, kind: 'expense' },
+      { label: 'Social Security', age: 67, kind: 'income' },
+    ]);
+    // The car at 48 is in neither the walk (no events) nor the years after.
+    const noCar = after({ ...p, expenses: p.expenses.filter((x) => x.id !== 'c') })!;
+    expect(noCar.points).toEqual(a.points);
+  });
+
+  test('a scenario’s lasting change in effect at the stop is in its spending, from the FI number or from today’s assets', () => {
+    const more: LifeEvent = { id: 'm', kind: 'spending', label: 'More', fromAge: 45, yearly: 10_000, years: null };
+    const fi = figures(base, none, [more]);
+    const a = path(fi).after!;
+    close(a.points[1].balance, (a.points[0].balance - 70_000) * 1.05);
+    expect(a.withEvents).toBe(true);
+    // The FI number counts it too (it starts by the stop), so it leaves out nothing.
+    expect(a.leftOut.events).toBe(false);
+    const assets = path(figures({ ...base, start: 'assets' }, none, [more])).after!;
+    close(assets.points[1].balance, (assets.points[0].balance - 70_000) * 1.05);
+    // From today's assets the FI number starts at 41, without it.
+    expect(assets.leftOut.events).toBe(true);
+    // A change after the stop is in the years it covers, and the FI number leaves it out.
+    const later = path(figures(base, none, [{ ...more, fromAge: 60 }])).after!;
+    close(later.points[1].balance, (later.points[0].balance - 60_000) * 1.05);
+    expect(later.leftOut.events).toBe(true);
+  });
+
+  // The walk's stop point says what is in hand once a windfall that year is
+  // in (8d); this path starts from the balance before it and counts it in
+  // its first year, as the engine counts a one-off in its year.
+  test('a windfall at the stop: the walk’s balance there, and the windfall in the first year after', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 50, amount: 500_000 };
+    const withGift = path(figures(base, none, [gift]));
+    const stop = withGift.points[withGift.points.length - 1];
+    expect(stop.inHand).toBeDefined();
+    const a = withGift.after!;
+    expect(a.points[0]).toEqual({ age: 50, balance: stop.balance });
+    const plain = path(figures(base, none)).after!;
+    close(a.points[0].balance, plain.points[0].balance);
+    close(a.points[1].balance - plain.points[1].balance, 500_000 * 1.05);
+    expect(a.withEvents).toBe(true);
+  });
+
+  test('once the stop has come, from today’s assets, today', () => {
+    const f = figures({ ...base, age: 60 }, none);
+    const p = path(f);
+    expect(p.points).toEqual([{ age: 60, balance: 595_000 }]);
+    expect(p.after!.points[0]).toEqual({ age: 60, balance: 595_000 });
+    expect(p.after!.endAge).toBe(95);
+  });
+
+  test('one that can’t pay says the age it runs out at, and ends there', () => {
+    const a = after({ ...base, spending: 150_000 })!;
+    expect(a.runsOutAt).not.toBeNull();
+    expect(a.points.at(-1)!.age).toBe(a.runsOutAt!);
+  });
+
+  test('none where there is nothing to draw, or the engine wouldn’t run it, and none for a path of a length asked for', () => {
+    expect(after({ ...base, spending: null })).toBeNull();
+    expect(after({ ...base, assets: 0, savings: 0 })).toBeNull();
+    expect(after({ ...base, fee: 0.6 })).toBeNull();
+    expect(path(figures({ ...base, fee: 0.6 }, none)).points).toHaveLength(10);
+    expect(path(figures(base, none), 60).after).toBeNull();
+    // A walk that can't get to the stop has nothing to start from there.
+    expect(after(base, none, [home(5_000_000, 45)])).toBeNull();
+  });
+});
+
+const close = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1e-6 * Math.max(1, Math.abs(b)));
+
+describe('the path after the stop, over generated plans', () => {
+  const cases = Array.from({ length: 600 }, (_, i) => generate(1000 + i))
+    .map((c) => ({ ...c, f: planFigures(c.p, c.m, c.events) }))
+    .filter((c): c is typeof c & { f: PlanFigures } => !('refused' in c.f));
+
+  test('starting where the walk ends, a year a point to the plan’s end or the year it runs out, never below zero; none for a length asked for', () => {
+    let drawn = 0;
+    for (const { f } of cases) {
+      const p = planPath(f);
+      if (!p) continue;
+      expect(planPath(f, 30)?.after ?? null).toBeNull();
+      const a = p.after;
+      if (!a) continue;
+      drawn++;
+      expect(p.short).toBeNull();
+      expect(a.points[0]).toEqual({ age: p.points[p.points.length - 1].age, balance: p.points[p.points.length - 1].balance });
+      a.points.forEach((q, k) => {
+        expect(q.age).toBe(a.points[0].age + k);
+        expect(Number.isFinite(q.balance)).toBe(true);
+        expect(q.balance).toBeGreaterThanOrEqual(0);
+      });
+      expect(a.points.at(-1)!.age).toBe(a.runsOutAt ?? a.endAge);
+      for (const i of a.leftOut.items) expect(i.age).toBeLessThan(a.endAge);
+    }
+    expect(drawn).toBeGreaterThan(50);
   });
 });

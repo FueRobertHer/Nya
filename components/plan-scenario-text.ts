@@ -196,6 +196,26 @@ export function startsWithText(sw: StartsWith, money: Money, shortWhere: string 
   return `${head}: you’d have about ${money(sw.projected)} then, ${money(sw.balance - sw.projected)} less.`;
 }
 
+/** Drawdown's start line (the tax plan's P), under Will it last?'s answer:
+ *  what it starts from, against what the steady path has where Whole path
+ *  starts drawing. Said for a start with less than that (a start with more
+ *  keeps its caution, in startsWithText's words), and for a start from
+ *  today's assets before the stop, either way. Null when they match (within
+ *  50 cents, as `more` is), or with nothing to set it against. */
+export function startLineText(sw: StartsWith, money: Money, at: { age: number | null; stopAge: number | null; atStop: number | null }): string | null {
+  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+  if (sw.from === 'assets') {
+    const { age, stopAge, atStop } = at;
+    // Once the stop has come, today's assets are where Whole path starts.
+    if (age === null || stopAge === null || stopAge <= age || atStop === null || near(sw.balance, atStop)) return null;
+    return `Starting today, at ${age}, from your invested assets, ${money(sw.balance)}, not the ${money(atStop)} you’d have at ${stopAge}.`;
+  }
+  if (sw.more || sw.projected === null || near(sw.balance, sw.projected)) return null;
+  const from = sw.from === 'fi-number' ? 'your FI number' : 'the balance you typed';
+  const then = at.age !== null && sw.atAge !== null && sw.atAge <= at.age ? 'you have today' : `you’d have at ${sw.atAge}`;
+  return `Starting from ${from}, ${money(sw.balance)}, not the ${money(sw.projected)} ${then}.`;
+}
+
 /** Why the walk stops: with no FI date, or (`what`) with nothing else it
  *  would have reached. */
 export function shortText(short: Shortfall, age: number | null, money: Money, what = 'there is no FI date'): string {

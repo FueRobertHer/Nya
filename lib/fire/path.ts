@@ -14,13 +14,23 @@
 // the balance, or a year taking out more than there is). A point is the
 // balance at the start of its year, before that year's money in and costs.
 //
+// After the stop (the tax plan's P, D13), the same steady return on to the
+// plan's end, where Will it last? ends: the plan's own rule drawing its
+// spending, with its income and one-offs and a scenario's life events in the
+// years they cover (steadyRun, below). It starts where the walk ends, at the
+// stop age's balance (today's once the stop has come). Not the simulation:
+// no fee, no cash and no mix, one return a year on the whole balance.
+//
 // Arithmetic only, and nothing that touches storage: the Plan tab runs this
 // in the browser.
 
 import { projectBalance, projectionShort } from './fi';
-import { hasWalk, walkPath, type Shortfall } from './events';
-import { projectFrom } from './plan';
+import { compileEvents, hasWalk, walkPath, type Shortfall } from './events';
+import { enginePlan, planYears, projectFrom, startAge, type FirePlan, type FiView } from './plan';
 import type { PlanFigures } from './plan-figures';
+import { plannedWithdrawal, type YearState } from './rules';
+import { DEFAULT_INFLATION } from './saved-plan';
+import { checkPlan, type SimPlan } from './simulate';
 
 /** `inHand`, only in a year with money in (a windfall): the balance once it
  *  has come in and that year's costs are paid, which the chart steps up to
@@ -46,7 +56,92 @@ export type PlanPath = {
    *  figures' `walked`, which says the FI date is (that needs an FI number;
    *  these points don't). */
   fromWalk: boolean;
+  /** The years after the stop, to the plan's end: only for the path to the
+   *  stop (no length asked for), and null where there is nothing to draw. */
+  after: PathAfter | null;
 };
+
+/** What the path counts after the stop that the FI number leaves out: plan
+ *  income from the age it counts from, and one-off costs at their age. */
+export type LeftOutItem = { label: string; age: number; kind: 'income' | 'expense' };
+
+export type PathAfter = {
+  /** From the age it starts drawing (the stop, or today once the stop has
+   *  come), one a year, to `endAge`, or through the start of the year it
+   *  can't pay. The first has the walk's last balance; a windfall that year
+   *  is in that point's `inHand` on the walk, and in this path's first year. */
+  points: PathPoint[];
+  /** The plan's end: where Will it last? ends (startAge plus planYears). */
+  endAge: number;
+  /** The age of the year it can't pay, or null when it lasts. */
+  runsOutAt: number | null;
+  /** Within its own years only: nothing it never reaches. `events` says a
+   *  scenario's life events count here in a way the FI number doesn't. */
+  leftOut: { items: LeftOutItem[]; events: boolean };
+  /** A scenario's life events count in these years. */
+  withEvents: boolean;
+};
+
+/** Which part of the path Your path's chart shows: to the stop, or to the
+ *  plan's end. Here so the dashboard can keep it without the Plan's
+ *  components (test/plan-landing-source.test.ts). */
+export type PathRange = 'stop' | 'whole';
+
+const EPS = 1e-9;
+
+/**
+ * One run of a simulation plan on a steady market: `realReturn` a year on
+ * the whole balance, prices rising DEFAULT_INFLATION a year (for income that
+ * doesn't keep up with it, and the nominal return guardrails read). Each
+ * year as the engine's (lib/fire/simulate.ts runPaths): the rule's
+ * withdrawal, income and one-offs, lower costs, the need grossed up for tax,
+ * run out in the year it can't be paid; then the rest grows. Balances are at
+ * the start of each year: `years + 1` when it lasts, through the start of
+ * the year it ran out in when it doesn't. Throws as checkPlan does.
+ */
+export function steadyRun(sim: SimPlan, realReturn: number): { balances: number[]; failedYear: number | null } {
+  checkPlan(sim);
+  const years = sim.years;
+  const tax = sim.taxRate;
+  const inflation = DEFAULT_INFLATION;
+  const oneOffs = new Array<number>(years).fill(0);
+  for (const o of sim.oneOffs) if (o.year < years) oneOffs[o.year] += o.amount;
+  const lower = new Array<number>(years).fill(0);
+  for (const l of sim.lowerSpending ?? []) {
+    for (let y = l.fromYear; y < Math.min(years, l.toYear ?? years); y++) lower[y] += l.amount;
+  }
+  const state: YearState = { year: 0, years, balance: 0, startBalance: sim.startBalance, previous: 0, initial: 0, lastNominalReturn: 0, lastInflation: 0 };
+  const balances: number[] = [];
+  let bal = sim.startBalance;
+  for (let y = 0; y < years; y++) {
+    balances.push(bal);
+    state.year = y;
+    state.balance = bal;
+    const raw = plannedWithdrawal(sim.rule, state);
+    const planned = Number.isFinite(raw) && raw > 0 ? raw : 0;
+    if (y === 0) state.initial = planned;
+    state.previous = planned;
+    let income = 0;
+    for (const s of sim.income) {
+      if (y < s.fromYear || (s.toYear !== undefined && y >= s.toYear)) continue;
+      income += s.inflationAdjusted ? s.amount : s.amount / (1 + inflation) ** (y - Math.max(0, s.fromYear));
+    }
+    const cost = planned * (1 - tax) + oneOffs[y];
+    const need = (lower[y] > 0 ? Math.max(0, cost - lower[y]) : cost) - income;
+    if (need > 0) {
+      const gross = need / (1 - tax);
+      if (gross > bal * (1 + EPS) + EPS) return { balances, failedYear: y };
+      bal = Math.max(0, bal - gross);
+    } else if (need < 0) {
+      bal -= need;
+    }
+    state.lastNominalReturn = bal > 0 ? (1 + realReturn) * (1 + inflation) - 1 : 0;
+    state.lastInflation = inflation;
+    bal *= 1 + realReturn;
+  }
+  balances.push(bal);
+  return { balances, failedYear: null };
+}
 
 /** The path from today, `years` whole years long (to the target age by
  *  default); null when there is nothing to project from (projectFrom).
@@ -77,12 +172,75 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
     const inHand = balance + moneyIn;
     return cost > 0 && cost > inHand + 1e-9 ? { age: age + k, balance } : { age: age + k, balance, inHand: inHand - cost };
   };
+  const points = balances.map(point);
   return {
-    points: balances.map(point),
+    points,
     stopAge: f.plan.targetAge as number,
     fiNumber: f.view.fiNumber,
     fiAge: f.view.fiAge,
     short,
     fromWalk: walk !== null,
+    after: years === undefined && short === null ? afterStop(f, points[points.length - 1]) : null,
+  };
+}
+
+/** The years after the stop, from `from` (the walk's last point: the stop
+ *  age's balance, or today's once the stop has come). The plan's own rule
+ *  draws its spending, with a scenario's lasting changes in effect then, as
+ *  a start from that balance (enginePlan's 'custom' start, so the first year
+ *  withdraws the spending, grossed up for tax); its income and one-offs and
+ *  the events' parts count from that age. Null where there is nothing to
+ *  draw, or the engine wouldn't run it. */
+function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
+  const plan = f.plan;
+  const d = from.age;
+  const first = startAge(plan);
+  const spendingNow = f.view.spending.value;
+  if (first === null || spendingNow === null || !(from.balance > 0)) return null;
+  const endAge = first + planYears(plan);
+  const years = endAge - d;
+  if (years < 1) return null;
+  const events = f.lifeEvents.length > 0 ? compileEvents(f.lifeEvents, { age: plan.age, startAge: d, years }) : null;
+  const lasting = events ? events.lasting.reduce((s, x) => s + x.amount, 0) : 0;
+  const spending = spendingNow + lasting;
+  if (spending < 0) return null;
+  const run: FirePlan = { ...plan, start: 'custom', startBalance: from.balance, targetAge: d, horizon: years, spending };
+  const view: FiView = { ...f.view, spending: { ...f.view.spending, value: spending } };
+  const built = enginePlan(run, view);
+  if (!('sim' in built)) return null;
+  let sim = built.sim;
+  let counted = false;
+  if (events) {
+    const { oneOffs, income, lowerSpending } = events.sim;
+    sim = {
+      ...sim,
+      oneOffs: [...sim.oneOffs, ...oneOffs],
+      income: [...sim.income, ...income],
+      ...(lowerSpending.length > 0 ? { lowerSpending } : {}),
+    };
+    counted = oneOffs.some((o) => o.year < years) || income.some((s) => s.fromYear < years) || lowerSpending.some((l) => l.fromYear < years);
+  }
+  let steady: ReturnType<typeof steadyRun>;
+  try {
+    steady = steadyRun(sim, plan.realReturn);
+  } catch (e) {
+    // The figures are worked out in the Plan's render: a plan the engine
+    // refuses leaves the years after the stop out, never the tab.
+    if (e instanceof RangeError) return null;
+    throw e;
+  }
+  const items: LeftOutItem[] = [];
+  for (const s of plan.income) {
+    const age = Math.max(s.fromAge, d);
+    if (age < endAge) items.push({ label: s.label, age, kind: 'income' });
+  }
+  for (const x of plan.expenses) if (x.atAge >= d && x.atAge < endAge) items.push({ label: x.label, age: x.atAge, kind: 'expense' });
+  items.sort((a, b) => a.age - b.age);
+  return {
+    points: steady.balances.map((balance, k) => ({ age: d + k, balance })),
+    endAge,
+    runsOutAt: steady.failedYear === null ? null : d + steady.failedYear,
+    leftOut: { items, events: counted || lasting !== (f.retirement?.lasting ?? 0) },
+    withEvents: counted || lasting !== 0,
   };
 }
