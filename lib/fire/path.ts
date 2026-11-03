@@ -25,7 +25,8 @@
 // in the browser.
 
 import { projectBalance, projectionShort } from './fi';
-import { compileEvents, hasWalk, walkPath, type Shortfall } from './events';
+import { compileEvents } from './compile';
+import { hasWalk, walkPath, type Shortfall } from './events';
 import { enginePlan, planYears, projectFrom, startAge, type FirePlan, type FiView } from './plan';
 import type { PlanFigures } from './plan-figures';
 import { plannedWithdrawal, type YearState } from './rules';

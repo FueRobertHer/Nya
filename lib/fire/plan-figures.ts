@@ -22,7 +22,8 @@
 // Arithmetic only: no engine run, no market history.
 
 import { projectBalance, projectionShort } from './fi';
-import { compileEvents, hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
+import { compileEvents } from './compile';
+import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
 
 export type StartsWith = {

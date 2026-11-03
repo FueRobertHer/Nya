@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, enginePlan, fiView, repairPlan, type FirePlan, type Measured, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
-import { compileEvents, lastChange, walkToFi, type LifeEvent } from '@/lib/fire/events';
+import { lastChange, walkToFi, type LifeEvent } from '@/lib/fire/events';
+import { compileEvents } from '@/lib/fire/compile';
 import {
   NO_CHANGES,
   applyScenario,
