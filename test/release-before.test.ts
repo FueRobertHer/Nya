@@ -27,7 +27,11 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //   - its pass classifies every key outside the containers this release
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
-//     and its export and restore carry them.
+//     and its export and restore carry them;
+//   - its Plan (test/fixtures/release-before/fire) reads every plan, saved
+//     plan, scenario and currency record this release writes: E1 reads
+//     version 2 and edits through version 2's views, and writes version 1
+//     only, which a download keeps.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -352,5 +356,72 @@ describe('the release before, reading what this release writes', () => {
     // commits to its key.
     const p = await n.prepareContainerKey(B as any, { born: false });
     expect(ids).not.toContain(p!.id);
+  });
+});
+
+// The Plan's modules, the release before's and this one's.
+const oPlan = await import('./fixtures/release-before/fire/plan');
+const oSaved = await import('./fixtures/release-before/fire/saved-plan');
+const oScenarios = await import('./fixtures/release-before/fire/scenarios');
+const oCurrency = await import('./fixtures/release-before/fire/plan-currency');
+const { planOf, toStored, upgradeStoredPlan } = await import('@/lib/fire/plan-v2');
+const { expensesOf, incomeOf, withExpenses, withIncome } = await import('@/lib/fire/items');
+const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
+const { NO_CHANGES, recordSave } = await import('@/lib/fire/scenarios');
+const { genPlan, rand } = await import('./plan-gen');
+
+describe('the Plan, as E1 writes it', () => {
+  /** A version 1 plan, edited as the cards edit it (an income dropped and
+   *  one added, every one-off's amount changed, a figure typed), sent as a
+   *  save sends it. Null where the edit makes more than version 1 takes. */
+  const edited = (seed: number) => {
+    const g = rand(seed);
+    const p = genPlan(g, seed % 3 === 0);
+    let v2 = planOf(p);
+    const income = incomeOf(v2);
+    v2 = withIncome(v2, [...income.slice(1), { id: `new${seed}`, label: 'Pension', amount: g.int(1, 40) * 1000, fromAge: g.int(50, 70), inflationAdjusted: g.chance(0.5) }]);
+    v2 = withExpenses(v2, expensesOf(v2).map((x) => ({ ...x, amount: x.amount + 1000 })));
+    v2 = { ...v2, spending: g.int(20, 90) * 1000 };
+    const sent = toStored(v2, 1);
+    return { before: p, sent: 'error' in sent ? null : sent.plan };
+  };
+  const plans = Array.from({ length: 300 }, (_, i) => edited(9100 + i));
+
+  test('its reader takes every plan E1 saves, as it is', () => {
+    let saved = 0;
+    for (const { sent } of plans) {
+      if (!sent) continue;
+      saved++;
+      expect(sent.version).toBe(1);
+      expect(oPlan.isFirePlan(sent)).toBe(true);
+      expect(oPlan.upgradePlan(sent)).toEqual(sent);
+    }
+    expect(saved).toBeGreaterThan(250);
+  });
+
+  test('its saved plan, scenario and currency record readers take what E1 writes beside it', () => {
+    for (const [i, { before, sent }] of plans.entries()) {
+      if (!sent) continue;
+      const saved = { version: 1, plan: sent, savings: 10_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: `r${i}` };
+      expect(oSaved.isSavedPlan(saved)).toBe(true);
+      // A scenario saved from an edit made on top of the plan (lib/fire/
+      // scenarios.ts, unchanged in E1, its base the plan as version 1).
+      const changes = recordSave(before, NO_CHANGES, sent);
+      if ('ok' in changes) {
+        const scenario = { ...changes.ok, name: 'Edited', currency: 'USD', version: 1, createdAt: '2026-11-01T12:00:00.000Z', savedAt: '2026-11-01T12:00:00.000Z', rev: `s${i}` };
+        expect(oScenarios.isPlanScenario(scenario)).toBe(true);
+      }
+      const record = currencyRecord(sent, 'USD');
+      expect(oCurrency.isPlanCurrencyRecord(record)).toBe(true);
+      expect(typedAmounts(sent)).toEqual(oCurrency.typedAmounts(sent));
+      if (oCurrency.hasTypedAmounts(sent)) expect(oCurrency.recordedCurrency(sent, record)).toBe('USD');
+    }
+  });
+
+  test('a version 1 plan downloads as version 1, as the release before downloads it', () => {
+    for (const { before } of plans) {
+      expect(upgradeStoredPlan(before)).toEqual(oPlan.upgradePlan(before));
+      expect((upgradeStoredPlan(before) as { version: number }).version).toBe(1);
+    }
   });
 });
