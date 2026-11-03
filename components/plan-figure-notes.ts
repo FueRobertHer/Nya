@@ -35,7 +35,7 @@ import {
   type ShareRates,
 } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
-import type { EnginePlan, FirePlan, FiView, Missing } from '@/lib/fire/plan';
+import type { EnginePlan, FiView, Missing, PlanCore } from '@/lib/fire/plan';
 import type { StartsWith } from '@/lib/fire/plan-figures';
 
 /** One note under a figure: its level, its kind in a few words for the
@@ -54,7 +54,7 @@ export type FigureNotes = { spending: FigureText; savings: FigureText; assets: F
 /** What the figures' words are worked out from: what the FI card took for
  *  its notes before 6c. */
 export type FigureArgs = {
-  plan: FirePlan;
+  plan: PlanCore;
   view: FiView;
   flows: TrailingFlows | null;
   /** Institutions whose transactions couldn't all be read. */
@@ -286,7 +286,7 @@ export function figureNotes(a: FigureArgs): FigureNotes {
     savings: savingsText(a, coverage, flowsGap),
     assets: assetsText(a),
     ages: said(
-      a.plan.age !== null || a.plan.targetAge !== null ? `${a.plan.age ?? '?'} now, stop at ${a.plan.targetAge ?? '?'}` : 'Add them for Coast FI and to place income by age',
+      a.plan.age !== null || a.view.stopAge !== null || a.plan.stopAtFi ? `${a.plan.age ?? '?'} now, stop at ${a.view.stopAge ?? (a.plan.stopAtFi ? 'FI' : '?')}` : 'Add them for Coast FI and to place income by age',
       []
     ),
     assumptions: said(

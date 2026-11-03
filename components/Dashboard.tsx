@@ -284,7 +284,7 @@ const TAB_LABELS: Record<Tab, string> = {
 };
 
 /** Every feature switch off: what a page sent without them (a test) shows. */
-const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false };
+const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false, 'plan-items-in-fi': false };
 
 export default function Dashboard({
   clerk = false,
@@ -294,6 +294,7 @@ export default function Dashboard({
   initialTab = 'home',
   initialSettings = null,
   adminOps = null,
+  newUntil = null,
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -313,6 +314,10 @@ export default function Dashboard({
    *  routes are open, and by what (lib/flag-view.ts OpsOpen), for Home's
    *  Admin card. */
   adminOps?: OpsOpen | null;
+  /** Set by the server (app/page.tsx): the last day D15's change is new
+   *  (lib/flag-read.ts newUntil), until which Your path and Progress say
+   *  what it moved; null says nothing. */
+  newUntil?: string | null;
 }) {
   // Whether to offer connecting a brokerage or retirement account
   // (lib/item-products.ts), and Lunch Flow (lib/connectors/switch.ts): a
@@ -342,6 +347,9 @@ export default function Dashboard({
   // And Your path's chart's range, so it comes back on it too (opening on
   // Whole path, the tax plan's D13).
   const [planRange, setPlanRange] = useState<PathRange>('whole');
+  // Got it on D15's line (components/plan-moved.ts), on Your path or
+  // Progress: hidden for the session, whichever tab is open.
+  const [planMovedSeen, setPlanMovedSeen] = useState(false);
   // The month Activity and Budgets show, shared between them and kept the
   // same way (components/view-month-state.ts); Home's links reset it.
   const viewMonth = useViewMonth();
@@ -2507,6 +2515,7 @@ export default function Dashboard({
                         txnFx={txnFx}
                         balanceFx={base?.fx ?? null}
                         planInputs={planInputs}
+                        planInWalk={flags['plan-items-in-fi']}
                         onOpenPlan={() => {
                           window.scrollTo(0, 0);
                           setPlanSegment('path');
@@ -2866,6 +2875,10 @@ export default function Dashboard({
                   landing={planLanding}
                   onLanded={() => setPlanLanding(null)}
                   planInputs={planInputs}
+                  planInWalk={flags['plan-items-in-fi']}
+                  newUntil={newUntil}
+                  movedSeen={planMovedSeen}
+                  onMovedSeen={() => setPlanMovedSeen(true)}
                 />
               )}
             </>

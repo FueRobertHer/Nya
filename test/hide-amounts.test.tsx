@@ -37,7 +37,7 @@ import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanP
 import { LifeEventsCard } from '@/components/PlanEvents';
 import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
-import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { NO_CHANGES } from '@/lib/fire/scenarios';
 import { wholeMoney } from '@/components/plan-text';
 import { InputsCard } from '@/components/PlanTab';
@@ -91,6 +91,8 @@ import PersonSheet from '@/components/PersonSheet';
 import HandoffSheet from '@/components/HandoffSheet';
 import IouSheet from '@/components/IouSheet';
 import { cardOf as sharedCard, daysAgo as sharedDaysAgo, shared as sharedState, txn as sharedTxn } from './shared-expenses-fixture';
+import { planOf } from '@/lib/fire/plan-v2';
+import { figuresOf, OFF } from './plan-gen';
 
 // Hide amounts (components/hide-amounts.ts): the switch that shows the app's
 // structure while hiding its figures. Every money amount the main screens
@@ -1230,7 +1232,8 @@ const SCREENS: Record<string, () => React.ReactElement> = {
         state={{ ...INITIAL_SCENARIOS, status: 'ready', list: [scenario] }}
         client={createScenarioClient(() => {})}
         base={plan}
-        baseFigures={planFigures(plan, measured) as PlanFigures}
+        baseFigures={figuresOf(plan, measured) as PlanFigures}
+        count={OFF}
         measured={measured}
         planCurrency="USD"
         canOpen
@@ -1284,7 +1287,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     const args = planFigureArgs();
     return (
       <FigureForm
-        plan={args.plan}
+        plan={planOf({ ...DEFAULT_PLAN, ...args.plan })}
         onSave={async () => true}
         onDone={() => {}}
         editable

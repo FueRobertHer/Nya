@@ -2,23 +2,23 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { planSavers } from '@/components/plan-savers';
-import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
+import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 
 // Every way the Plan tab saves (components/plan-savers.ts): with a scenario
 // open nothing reaches the Plan, with the Plan open nothing reaches a
 // scenario, and the tab saves through nothing else.
 
 const ROOT = join(import.meta.dir, '..');
-const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
+const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...DEFAULT_PLAN_V2, ...over });
 
 function recorders() {
-  const toPlan: FirePlan[] = [];
-  const toScenario: FirePlan[] = [];
+  const toPlan: FirePlanV2[] = [];
+  const toScenario: FirePlanV2[] = [];
   return {
     toPlan,
     toScenario,
-    savePlan: async (p: FirePlan) => (toPlan.push(p), true),
-    saveScenario: async (p: FirePlan) => (toScenario.push(p), true as const),
+    savePlan: async (p: FirePlanV2) => (toPlan.push(p), true),
+    saveScenario: async (p: FirePlanV2) => (toScenario.push(p), true as const),
   };
 }
 
@@ -77,9 +77,10 @@ describe('the Plan tab saves through nothing else', () => {
   test('the Plan’s store is handed to the savers, and saved through nowhere else', () => {
     expect(code.match(/store\.save\b/g)).toEqual(['store.save']);
     expect(code).toMatch(/planSavers\(\{ scenario: saveToScenario, savePlan: savePlanIn, repaired: repairing \? repair\.plan : null \}\)/);
-    // savePlanIn: the store's save, but never a first typed amount without
-    // the currency its figures are in (lib/fire/plan-currency.ts).
-    expect(code).toMatch(/const savePlanIn = async \(next: FirePlan\): Promise<boolean \| string> => \{[\s\S]*?return store\.save\(next\);\n  \};/);
+    // savePlanIn: the store's save, sent as version 1 (lib/fire/plan-v2.ts),
+    // but never a first typed amount without the currency its figures are in
+    // (lib/fire/plan-currency.ts).
+    expect(code).toMatch(/const savePlanIn = async \(next: FirePlanV2\): Promise<boolean \| string> => \{\n[\s\S]*?const sent = toStored\(next, 1\);[\s\S]*?return store\.save\(sent\.plan\);\n  \};/);
     // Every save the cards and forms are given comes from the savers.
     // The drawer's forms save through the savers of the plan they were
     // opened for (test/plan-tab-scenarios.test.tsx renders that lifecycle).

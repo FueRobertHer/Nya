@@ -775,6 +775,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <li>Words: "financial independence" and the FI terms stay as labels, plain words carry the meaning ("growth after inflation", "how much you'd draw each year", "you could stop saving now"), and nothing says "retire early".</li>
         <li>Each input is one row; how it was worked out is in its sheet behind Why?. Caveats stay on the figure: critical ones in full, lesser ones as one line that says how many and what kind.</li>
         <li>Every result keeps a short "Hypothetical, from US history" label; the full text and data sources are said once, in About these numbers.</li>
+        <li>Since E1 of the tax plan, the plan's one-offs and income count in the FI date (D15, behind a release flag), and the answer's line says so; while that is new, an information line under it says what it moved, with Got it, which hides it for the session.</li>
       </ul>
     </div>
     <div class="phones">
@@ -789,7 +790,8 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="hero-label">Financial independence</div>
               <div class="hero">Around age 39</div>
               <div class="small muted">16 years before you stop at 55</div>
-              <div class="small muted">Saving <span class="money">$64,000</span> a year, growing a steady 5% a year after inflation.</div>
+              <div class="small muted">Growing a steady 5% a year after inflation, with one-offs and income in their years.</div>
+              <div class="notice info"><svg><use href="#i-info"/></svg><span style="flex:1">Your FI date moved from 38 to 39: Roof at 36 now counts in it.</span><span class="btn ghost sm">Got it</span></div>
               <div class="meter pos"><i style="width:62%"></i></div>
               <div class="xs muted"><span class="money">$1,209,400</span> of <span class="money">$1,950,000</span> invested</div>
               <svg class="chart" style="width:100%;margin-inline:0" viewBox="0 0 300 110" role="img" aria-label="Invested assets grow from $1.2M at 34, reach the $1.95M FI number around 39, and are about $5.7M at 55, then, drawing your spending, about $30M at 95, at a steady 5% a year after inflation">

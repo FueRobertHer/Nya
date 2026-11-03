@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_PLAN, enginePlan, fiView, repairPlan, type FirePlan, type Measured, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
-import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
-import { compileEvents, lastChange, walkToFi, type LifeEvent } from '@/lib/fire/events';
+import { DEFAULT_PLAN, fiView, repairPlan, type FirePlan, type FiView, type Measured, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
+import * as old from './fixtures/release-before/fire/plan';
+import type { PlanFigures } from '@/lib/fire/plan-figures';
+import { lastChange, walkToFi, type LifeEvent } from '@/lib/fire/events';
+import { compileEvents } from '@/lib/fire/compile';
 import {
   NO_CHANGES,
   applyScenario,
@@ -25,6 +27,17 @@ import { makeMarket } from '@/lib/fire/market';
 import { historicalCycles, simulate, successGrid, MAX_YEARS } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import { projectBalance, yearsToTarget } from '@/lib/fire/fi';
+import { figuresOf } from './plan-gen';
+
+/** The release before's engine plan, which placed the plan's income and
+ *  one-offs itself (now planFigures adds them as items), without the lists
+ *  it couldn't place (now the items' notes). */
+function enginePlan(p: FirePlan, view: FiView) {
+  const e = old.enginePlan(p, view);
+  if ('missing' in e) return e;
+  const { left: _left, beyond: _beyond, ...rest } = e;
+  return rest;
+}
 
 // Plan scenarios (lib/fire/scenarios.ts), their life events
 // (lib/fire/events.ts) and one plan's figures (lib/fire/plan-figures.ts).
@@ -36,7 +49,7 @@ const income = (over: Partial<PlanIncome> = {}): PlanIncome => ({ id: 'ss', labe
 const expense = (over: Partial<PlanExpense> = {}): PlanExpense => ({ id: 'roof', label: 'Roof', amount: 25_000, atAge: 70, ...over });
 const changes = (over: Partial<ScenarioChanges> = {}): ScenarioChanges => ({ ...NO_CHANGES, ...over });
 const figures = (p: FirePlan, m: Measured, events: LifeEvent[] = []): PlanFigures => {
-  const f = planFigures(p, m, events);
+  const f = figuresOf(p, m, events);
   if ('refused' in f) throw new Error('refused');
   return f;
 };
@@ -321,7 +334,7 @@ describe('lasting changes are retirement spending (review: a change in spending 
   });
 
   test('taking retirement spending below zero is refused, never run', () => {
-    const r = planFigures(plan({ age: 40, targetAge: 55 }), measured, [{ id: 'x', kind: 'spending', label: 'Less', fromAge: 41, yearly: -45_000, years: null }]);
+    const r = figuresOf(plan({ age: 40, targetAge: 55 }), measured, [{ id: 'x', kind: 'spending', label: 'Less', fromAge: 41, yearly: -45_000, years: null }]);
     expect(r).toEqual({ refused: 'below-zero', spending: 40_000, lasting: -45_000 });
   });
 });

@@ -26,6 +26,7 @@ import type { SeriesDay } from '@/lib/allocation/series';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import { wholeMoney } from '@/components/plan-text';
 import { initialListState } from '@/lib/whole-list-store';
+import { planOf } from '@/lib/fire/plan-v2';
 
 // Days are said as the design system says them (lib/format.ts formatDay):
 // without their year in this one, on a today held still.
@@ -394,7 +395,7 @@ describe('the plan’s mix', () => {
     const offered = planMix(alloc());
     if (!offered.ok) throw new Error('a mix was expected');
     const sheet = (at: 'mix' | null) =>
-      renderToStaticMarkup(<AssumptionsForm plan={plan()} onSave={async () => true} onDone={noop} editable fiSpending={1} assets={1} spending={1} currency="USD" allocationMix={offered} at={at} />);
+      renderToStaticMarkup(<AssumptionsForm plan={planOf(plan())} onSave={async () => true} onDone={noop} editable fiSpending={1} assets={1} spending={1} currency="USD" allocationMix={offered} at={at} />);
     const html = sheet(null);
     const t = text(html);
     expect(t).not.toContain('Your accounts hold');
@@ -413,7 +414,7 @@ describe('the plan’s mix', () => {
     expect(filled).toContain('value="20"');
     expect(text(filled)).toContain("Your plan's simulation uses 75% stocks, 25% bonds, 0% cash until you save.");
     expect(text(filled)).not.toContain('Fill in my allocation');
-    const without = text(renderToStaticMarkup(<AssumptionsForm plan={plan()} onSave={async () => true} onDone={noop} editable fiSpending={1} assets={1} spending={1} currency="USD" />));
+    const without = text(renderToStaticMarkup(<AssumptionsForm plan={planOf(plan())} onSave={async () => true} onDone={noop} editable fiSpending={1} assets={1} spending={1} currency="USD" />));
     expect(without).not.toContain('Fill in my allocation');
     expect(without).toContain('classify them under Allocation');
   });

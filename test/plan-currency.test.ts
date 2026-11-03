@@ -23,6 +23,8 @@ import {
   type LoadState,
 } from '@/lib/fire/plan-currency';
 import type { PageFx } from '@/lib/fx/view';
+import { planOf } from '@/lib/fire/plan-v2';
+import { figuresOf } from './plan-gen';
 
 // The currency the Plan's typed figures are in (lib/fire/plan-currency.ts):
 // what counts as typed, when a record holds for a plan, when the currency
@@ -287,7 +289,7 @@ describe('the assets sheet', () => {
     const institutions = [inst([acct({ name: 'Brokerage', balance: 100_000 }), acct({ name: 'Depot', balance: 800, currency: 'EUR' })])];
     const assetsFor = (includeCash: boolean) => investedAssets(institutions, includeCash, PAGE, Date.parse('2026-09-14T18:00:00Z'), 'USD');
     const html = renderToStaticMarkup(
-      React.createElement(FigureForm, { plan: plan(), onSave: async () => true, onDone: () => {}, editable: true, kind: 'assets', measured: assetsFor(false).total, measuredText: '', currency: 'USD', assetsFor })
+      React.createElement(FigureForm, { plan: planOf(plan()), onSave: async () => true, onDone: () => {}, editable: true, kind: 'assets', measured: assetsFor(false).total, measuredText: '', currency: 'USD', assetsFor })
     );
     expect(html).toContain('$100,000');
     expect(html).toContain('€800');
@@ -482,7 +484,7 @@ describe('a figure not measured is never counted as zero (review round 2, B10)',
     const flows = trailingFlows(year, '2026-09-14', { into: assets.currency })!;
     const measured = (await import('@/lib/fire/progress')).measuredInputs({ flows, assets, workplace: null });
     expect(measured.unmeasured).toEqual(['assets']);
-    const f = planFigures(aged, measured, [{ id: 'k', kind: 'child', label: 'A child', fromAge: 42, yearly: 10_000, years: 18 }]) as import('@/lib/fire/plan-figures').PlanFigures;
+    const f = figuresOf(aged, measured, [{ id: 'k', kind: 'child', label: 'A child', fromAge: 42, yearly: 10_000, years: 18 }]) as import('@/lib/fire/plan-figures').PlanFigures;
     expect(f.walked).toBe(false);
     expect(f.view.yearsToFi).toBeNull();
     expect(f.startsWith).toMatchObject({ projected: null, more: false });

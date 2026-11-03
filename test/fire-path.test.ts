@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, projectFrom, type FirePlan, type Measured } from '@/lib/fire/plan';
-import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import type { PlanFigures } from '@/lib/fire/plan-figures';
+import { figuresOf } from './plan-gen';
 import { planPath, steadyRun, type PlanPath } from '@/lib/fire/path';
 import { makeMarket } from '@/lib/fire/market';
 import { historicalCycles, type SimPlan } from '@/lib/fire/simulate';
@@ -15,7 +16,7 @@ import { seededRandom } from '@/lib/fire/random';
 
 const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
 const figures = (p: FirePlan, m: Measured, events: LifeEvent[] = []): PlanFigures => {
-  const f = planFigures(p, m, events);
+  const f = figuresOf(p, m, events);
   if ('refused' in f) throw new Error('refused');
   return f;
 };
@@ -262,7 +263,7 @@ function generate(seed: number) {
 describe('generated plans', () => {
   const CASES = 600;
   const cases = Array.from({ length: CASES }, (_, i) => generate(1000 + i))
-    .map((c) => ({ ...c, f: planFigures(c.p, c.m, c.events) }))
+    .map((c) => ({ ...c, f: figuresOf(c.p, c.m, c.events) }))
     .filter((c): c is typeof c & { f: PlanFigures } => !('refused' in c.f));
 
   test('enough of each kind of case to mean something', () => {
@@ -451,10 +452,10 @@ describe('generated plans', () => {
     let compared = 0;
     for (let i = 0; i < 400; i++) {
       const c = generate(5000 + i);
-      const base = planFigures(c.p, c.m, c.events);
+      const base = figuresOf(c.p, c.m, c.events);
       if ('refused' in base || !base.walked) continue;
       for (const kind of ['car', 'raise', 'windfall', 'loan-end'] as const) {
-        const more = planFigures(c.p, c.m, [...c.events, c.extra(kind, 'x')]);
+        const more = figuresOf(c.p, c.m, [...c.events, c.extra(kind, 'x')]);
         if ('refused' in more) continue;
         expect(more.walked).toBe(true);
         compared++;
@@ -714,7 +715,7 @@ const close = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEq
 
 describe('the path after the stop, over generated plans', () => {
   const cases = Array.from({ length: 600 }, (_, i) => generate(1000 + i))
-    .map((c) => ({ ...c, f: planFigures(c.p, c.m, c.events) }))
+    .map((c) => ({ ...c, f: figuresOf(c.p, c.m, c.events) }))
     .filter((c): c is typeof c & { f: PlanFigures } => !('refused' in c.f));
 
   test('starting where the walk ends, a year a point to the plan’s end or the year it runs out, never below zero; none for a length asked for', () => {

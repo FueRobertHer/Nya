@@ -12,7 +12,7 @@
 
 import { useRef, type KeyboardEvent, type Ref } from 'react';
 import { chevron, LEFT, segmentKey } from './ActivityBar';
-import type { FirePlan } from '@/lib/fire/plan';
+import { stopOf, type PlanCore } from '@/lib/fire/plan';
 
 export type PlanSegment = 'path' | 'drawdown' | 'portfolio';
 
@@ -26,8 +26,9 @@ export const PLAN_SEGMENTS: readonly { key: PlanSegment; label: string }[] = [
  *  or earlier, when "will it last?" is the live question, else Your path,
  *  as every tab opens on its first. A stop before the age is refused on
  *  save and cleared by the repair, so in practice it is the two being equal. */
-export function openingSegment(plan: Pick<FirePlan, 'age' | 'targetAge'>): PlanSegment {
-  return plan.age !== null && plan.targetAge !== null && plan.targetAge <= plan.age ? 'drawdown' : 'path';
+export function openingSegment(plan: Pick<PlanCore, 'age' | 'targetAge' | 'stopAtFi'>): PlanSegment {
+  const stop = stopOf(plan);
+  return plan.age !== null && stop !== null && stop <= plan.age ? 'drawdown' : 'path';
 }
 
 /** The id of a segment's tab, which its panel is labelled by. */

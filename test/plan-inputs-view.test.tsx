@@ -1,6 +1,7 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type, fakeClock, FakeElement, FakeNode } from './mini-dom';
 import { simulateOnPage } from './plan-on-page';
+import { planOf } from '@/lib/fire/plan-v2';
 
 // The figures the Plan rests on (rollout phase 6c, docs/design/rollout.md),
 // used as a person would (react-dom/client over test/mini-dom.ts): Your
@@ -737,7 +738,7 @@ describe('Why? in a figure’s sheet', () => {
     await act(async () =>
       root.render(
         <FigureForm
-          plan={PLAN}
+          plan={planOf(PLAN)}
           onSave={async () => true}
           onDone={() => {}}
           editable

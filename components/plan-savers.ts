@@ -21,11 +21,11 @@
 // is the Plan's own, so those have no saver (their controls are disabled,
 // with the reason). No React here.
 
-import type { FirePlan } from '@/lib/fire/plan';
+import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 
 /** A save: true once the server has it, false when it wasn't saved, or the
  *  reason in words when it was refused before it was sent. */
-export type Save = (next: FirePlan) => Promise<boolean | string>;
+export type Save = (next: FirePlanV2) => Promise<boolean | string>;
 
 export type PlanSavers = {
   form: Save;
@@ -41,7 +41,7 @@ export function planSavers(o: {
   /** The Plan's own store: true once saved, or why it wasn't sent. */
   savePlan: Save;
   /** The repaired Plan, while a saved one this release can't take waits. */
-  repaired: FirePlan | null;
+  repaired: FirePlanV2 | null;
 }): PlanSavers {
   if (o.scenario) {
     const save = o.scenario;

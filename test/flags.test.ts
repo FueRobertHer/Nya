@@ -45,7 +45,7 @@ const who = (container: string | null, opts: { demo?: boolean; admin?: boolean }
 });
 
 describe('the registry', () => {
-  test('names the eight moved switches by their variables, and plan-tax with none', () => {
+  test('names the eight moved switches by their variables, and the Plan’s two with none', () => {
     const named = Object.fromEntries(flags.FLAG_KEYS.map((k) => [k, 'variable' in flags.FLAGS[k] ? (flags.FLAGS[k] as { variable: string }).variable : null]));
     expect(named).toEqual({
       restore: 'RESTORE_ENABLED',
@@ -54,6 +54,7 @@ describe('the registry', () => {
       'brokerage-link': 'PLAID_BROKERAGE_LINK',
       'api-writes': 'API_WRITES_ENABLED',
       'plan-tax': null,
+      'plan-items-in-fi': null,
       csp: 'CSP_MODE',
       ops: 'OPS_ENABLED',
       'sign-in': 'CLERK_ALLOWED_USER_IDS',
@@ -67,6 +68,7 @@ describe('the registry', () => {
       if (def.kind === 'release') expect([key, /^\d{4}-\d{2}-\d{2}$/.test(def.removeBy) && Number.isFinite(Date.parse(def.removeBy))]).toEqual([key, true]);
     }
     expect(flags.flagDef('plan-tax')).toMatchObject({ kind: 'release', removeBy: '2027-06-30', value: 'audience' });
+    expect(flags.flagDef('plan-items-in-fi')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
   });
 
   test('every flag has a short plain name of its own, as the admin page titles it', () => {
@@ -163,7 +165,7 @@ describe('reading them', () => {
     process.env.CSP_MODE = 'enforce';
     await store('restore', audience('nobody'));
     const before = fake.ops;
-    for (const key of flags.AUDIENCE_KEYS.filter((k) => k !== 'plan-tax')) {
+    for (const key of flags.AUDIENCE_KEYS.filter((k) => 'variable' in flags.FLAGS[k])) {
       expect([key, await read.flagOnFresh(key, who(null))]).toEqual([key, true]);
       expect([key, await read.flagOnCached(key, who(null))]).toEqual([key, true]);
     }
@@ -346,7 +348,53 @@ describe('the cache', () => {
     await store('plan-tax', audience('nobody', [C1]));
     await store('sign-in', { ids: ['user_a'], emails: [], updatedAt: AT });
     const sent = await read.clientFlags(who(C1));
-    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': true });
+    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': true, 'plan-items-in-fi': false });
+  });
+});
+
+describe('how long a change stays new', () => {
+  // Each test's values carry an updatedAt of their own, since newUntil keeps
+  // its answer per stored value.
+  const turn = (on: (typeof flags.AUDIENCES)[number], at: string, containers: string[] = []) =>
+    flagsStore.update('plan-items-in-fi', () => ({ on, containers: containers as never[], updatedAt: at }), 'local development', Date.parse(at));
+
+  test('not on for everyone: a far-off day, so the line shows wherever it is on', async () => {
+    expect(await read.newUntil('plan-items-in-fi')).toBe('9999-12-31');
+    await turn('admin', '2026-11-02T09:00:00.000Z');
+    expect(await read.newUntil('plan-items-in-fi')).toBe('9999-12-31');
+  });
+
+  test('on for everyone: sixty days from the latest change that turned it on, kept per value', async () => {
+    await turn('admin', '2026-10-01T09:00:00.000Z');
+    await turn('everyone', '2026-10-02T09:00:00.000Z');
+    await turn('nobody', '2026-10-03T09:00:00.000Z');
+    await turn('everyone', '2026-11-01T12:00:00.000Z');
+    // A change that keeps it on for everyone doesn't start it again.
+    await turn('everyone', '2026-11-05T12:00:00.000Z', [C1]);
+    flagCache.forget();
+    expect(read.NEW_DAYS).toBe(60);
+    expect(await read.newUntil('plan-items-in-fi')).toBe('2026-12-31');
+    const before = fake.ops;
+    expect(await read.newUntil('plan-items-in-fi')).toBe('2026-12-31');
+    expect(fake.ops).toBe(before);
+  });
+
+  test('that change gone from the record: a past day, so it never reads as new, kept per value', async () => {
+    await store('plan-items-in-fi', { on: 'everyone', containers: [], updatedAt: '2026-11-06T12:00:00.000Z' });
+    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
+    const before = fake.ops;
+    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
+    expect(fake.ops).toBe(before);
+  });
+
+  test('a record that can’t be read: a past day, not kept, so the next page asks again', async () => {
+    await turn('everyone', '2026-11-07T12:00:00.000Z');
+    flagCache.forget();
+    await read.cachedFlags();
+    fake.failNext('hgetall');
+    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
+    expect(errors).toEqual([]);
+    expect(await read.newUntil('plan-items-in-fi')).toBe('2027-01-06');
   });
 });
 

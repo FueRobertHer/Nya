@@ -190,12 +190,12 @@ describe('the FI card on Home', () => {
         }
         // The years are said once, in the answer, when it isn't an age (since
         // the screen review there is no Years to FI row to repeat them).
-        if (fiHeadline(f.view, p).kind === 'years') expect(t).toContain(`In ${years}`);
+        if (fiHeadline(f.view, { age: p.age, stopAge: f.view.stopAge }).kind === 'years') expect(t).toContain(`In ${years}`);
         expect(t).not.toContain('Years to FI');
         // Home's one line (rollout phase 8b): the Plan's answer in the Plan's
         // words, then what is invested of the FI number, how far, and the
         // savings rate under it.
-        const head = fiHeadline(f.view, p);
+        const head = fiHeadline(f.view, { age: p.age, stopAge: f.view.stopAge });
         expect(t).toContain(`Financial independence ${head.headline}`);
         const answer = head.kind === 'age' ? `FI around age ${head.age}` : `FI in ${years}`;
         expect(h).toContain(`${answer} ${wholeMoney(f.view.assets.value!, 'USD')} of ${fi} invested (${progress}) · ${rate} savings rate, last 12 months`);

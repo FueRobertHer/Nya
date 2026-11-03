@@ -15,7 +15,9 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, stopOf, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { expensesOf, incomeOf, withExpenses, withIncome } from '@/lib/fire/items';
+import { planOf, toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
@@ -29,10 +31,10 @@ import { Notice } from './TotalCaveats';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
-  plan: FirePlan;
+  plan: FirePlanV2;
   /** Resolves true once the server has the plan, false when it didn't take
    *  it, or with why it was refused before it was sent. */
-  onSave: (next: FirePlan) => Promise<boolean | string>;
+  onSave: (next: FirePlanV2) => Promise<boolean | string>;
   onDone: () => void;
   /** False while the saved plan is loading or unreadable: nothing is saved. */
   editable: boolean;
@@ -42,6 +44,9 @@ type SaveProps = {
    *  be read, a repair waits, its currency isn't known), said above the
    *  buttons; null while it isn't, or only for a moment (a save under way). */
   paused?: string | null;
+  /** D15's switch (the flag 'plan-items-in-fi'): one-offs and income count
+   *  in the FI date, which the income and one-off forms say. */
+  planInWalk?: boolean;
 };
 
 /** Said beside an input a scenario can't change. */
@@ -84,8 +89,8 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
   const [wrong, setWrong] = useState<FieldProblem | null>(null);
   const [saving, setSaving] = useState(false);
   const errorId = useId();
-  async function save(build: () => FirePlan) {
-    let next: FirePlan;
+  async function save(build: () => FirePlanV2) {
+    let next: FirePlanV2;
     try {
       next = build();
     } catch (err) {
@@ -97,15 +102,21 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
       throw err;
     }
     setWrong(null);
-    // The server checks again; this catches anything the fields above missed.
-    const parsed = parsePlan(next);
+    // The server checks again; this catches anything the fields above missed,
+    // in version 1's words: what this release saves (lib/fire/plan-v2.ts).
+    const sent = toStored(next, 1);
+    if ('error' in sent) {
+      setError(sent.error);
+      return;
+    }
+    const parsed = parsePlan(sent.plan);
     if ('error' in parsed) {
       setError(`That plan can't be saved: ${parsed.error}.`);
       return;
     }
     setError('');
     setSaving(true);
-    const ok = await onSave(parsed.plan);
+    const ok = await onSave(planOf(parsed.plan));
     setSaving(false);
     if (ok === true) onDone();
     else setError(typeof ok === 'string' ? ok : 'It was not saved. Try again in a moment.');
@@ -468,7 +479,7 @@ function startRate(start: FirePlan['start'], props: { assets: number | null; spe
  *  (lib/fire/plan.ts). `rate` and `tax` are the ones typed. */
 function startConsequence(
   start: FirePlan['start'],
-  plan: FirePlan,
+  plan: PlanCore,
   props: { assets: number | null; spending: number | null; currency: string | null },
   typed: number,
   rate: number,
@@ -477,7 +488,8 @@ function startConsequence(
   const money = (n: number) => wholeMoney(n, props.currency);
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
   if (start === 'fi-number') {
-    return `Stops working at your stop age${plan.targetAge !== null ? ` (${plan.targetAge})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
+    const stop = stopOf(plan);
+    return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
   }
   const actual = startRate(start, props, typed, tax);
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your stop age with the balance you type`;
@@ -560,7 +572,7 @@ export function AssumptionsForm(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function build(): FirePlan {
+  function build(): FirePlanV2 {
     const stocksPct = readNumber(stocks, 'Stocks', 0, 100, { integer: true }) as number;
     const bondsPct = readNumber(bonds, 'Bonds', 0, 100, { integer: true }) as number;
     if (stocksPct + bondsPct > 100) throw new FieldProblem('Stocks and bonds add up to more than 100%.', ['Stocks', 'Bonds']);
@@ -713,7 +725,10 @@ export function AssumptionsForm(
           Start with
           <select value={start} onChange={(e) => setStart(e.target.value as FirePlan['start'])} disabled={s.saving}>
             {[
-              ['fi-number', `FI number${fiNumber !== null ? ` (${wholeMoney(fiNumber, props.currency)})` : ''}`],
+              // Your own FI number, where one is set, is the one it starts with.
+              plan.fiNumber != null
+                ? ['fi-number', `Your own FI number (${wholeMoney(plan.fiNumber, props.currency)})`]
+                : ['fi-number', `FI number${fiNumber !== null ? ` (${wholeMoney(fiNumber, props.currency)})` : ''}`],
               ['assets', `Invested assets${props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}`],
             ].map(([value, text]) => (
               <option key={value} value={value} aria-label={spokenLabel(text)}>
@@ -836,7 +851,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
   const [fromAge, setFromAge] = useState(asText(item?.fromAge ?? 67));
   const [adjusted, setAdjusted] = useState(item?.inflationAdjusted ?? true);
   const s = useSave(props);
-  const build = (): FirePlan => {
+  const build = (): FirePlanV2 => {
     if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanIncome = {
       id: item?.id ?? crypto.randomUUID(),
@@ -845,7 +860,8 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       fromAge: readNumber(fromAge, 'The starting age', ...LIMITS.eventAge, { integer: true }) as number,
       inflationAdjusted: adjusted,
     };
-    return { ...plan, income: item ? plan.income.map((x) => (x.id === item.id ? entry : x)) : [...plan.income, entry] };
+    const income = incomeOf(plan);
+    return withIncome(plan, item ? income.map((x) => (x.id === item.id ? entry : x)) : [...income, entry]);
   };
   return (
     <>
@@ -854,7 +870,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         today&apos;s dollars. It pays part of each year&apos;s spending, so the portfolio withdraws less.
       </p>
       <p className="helper">
-        Counts in Will it last?, never in your FI date or FI number. Part-time work is{' '}
+        {props.planInWalk ? 'Counts in your FI date until you reach it, and in Will it last? from where it starts, never in your FI number.' : 'Counts in Will it last?, never in your FI date or FI number.'} Part-time work is{' '}
         {props.scenario ? 'a life event in this scenario' : 'a life choice in What if…'}, and Barista FI&apos;s
         part-time income is in Assumptions.
       </p>
@@ -914,7 +930,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         onSave={() => s.save(build)}
         extra={
           item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, income: plan.income.filter((x) => x.id !== item.id) }))}>
+            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withIncome(plan, incomeOf(plan).filter((x) => x.id !== item.id)))}>
               Remove
             </button>
           )
@@ -933,7 +949,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
   // Where Will it last? starts (lib/fire/plan.ts enginePlan): a one-off
   // before it is in neither that nor the FI date.
   const start = startAge(plan);
-  const build = (): FirePlan => {
+  const build = (): FirePlanV2 => {
     if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanExpense = {
       id: item?.id ?? crypto.randomUUID(),
@@ -941,7 +957,8 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
       amount: readNumber(amount, 'The amount', 0, LIMITS.money * 10) as number,
       atAge: readNumber(atAge, 'The age', ...LIMITS.eventAge, { integer: true }) as number,
     };
-    return { ...plan, expenses: item ? plan.expenses.map((x) => (x.id === item.id ? entry : x)) : [...plan.expenses, entry] };
+    const expenses = expensesOf(plan);
+    return withExpenses(plan, item ? expenses.map((x) => (x.id === item.id ? entry : x)) : [...expenses, entry]);
   };
   return (
     <>
@@ -950,9 +967,19 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         after tax.
       </p>
       <p className="helper">
-        {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
-        {props.scenario ? "To move this scenario's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
-        {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
+        {props.planInWalk ? (
+          start !== null ? (
+            `Counts in your FI date until you reach it, and in Will it last? at ${start} or later, where that starts.`
+          ) : (
+            'Counts in your FI date until you reach it, and in Will it last? once your age places it.'
+          )
+        ) : (
+          <>
+            {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
+            {props.scenario ? "To move this scenario's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
+            {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
+          </>
+        )}
       </p>
       <div className="sheet-form">
         <label className="field">
@@ -1000,7 +1027,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         onSave={() => s.save(build)}
         extra={
           item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, expenses: plan.expenses.filter((x) => x.id !== item.id) }))}>
+            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withExpenses(plan, expensesOf(plan).filter((x) => x.id !== item.id)))}>
               Remove
             </button>
           )

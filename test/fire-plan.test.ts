@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { FirePlan } from '@/lib/fire/plan';
+import { figuresOf } from './plan-gen';
 import type { AssetAccount, AssetInstitution, PlanContributions } from '@/lib/fire/inputs';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -381,8 +382,10 @@ describe('the engine plan', () => {
         { id: 'late', label: 'After the plan', amount: 1, atAge: 95 },
       ],
     });
-    const e = enginePlan(p, fiView(p, measured));
-    if ('missing' in e) throw new Error('expected a plan');
+    // Placed as items (lib/fire/compile.ts), where planFigures adds them.
+    const f = figuresOf(p, measured);
+    if ('refused' in f || 'missing' in f.engine) throw new Error('expected a plan');
+    const e = f.engine;
     expect(e.sim.income).toEqual([
       { amount: 24_000, fromYear: 17, inflationAdjusted: true },
       { amount: 10_000, fromYear: 0, inflationAdjusted: false }, // already being paid
@@ -393,13 +396,17 @@ describe('the engine plan', () => {
       { amount: 30_000, year: 10 },
       { amount: 1, year: 45 },
     ]);
-    expect(e.left.expenses.map((x) => x.id)).toEqual(['old']);
-    expect(e.beyond.map((x) => x.id)).toEqual(['late']);
-    const ageless = plan({ income: p.income });
-    const a = enginePlan(ageless, fiView(ageless, measured));
-    if ('missing' in a) throw new Error('expected a plan');
-    expect(a.sim.income).toEqual([]);
-    expect(a.left.income).toHaveLength(2);
+    const noted = (n: { itemNotes: { id: string; part: string }[] }, ...parts: string[]) => n.itemNotes.filter((x) => parts.includes(x.part)).map((x) => x.id);
+    expect(noted(f, 'no-age', 'before-start')).toEqual(['old']);
+    expect(noted(f, 'after-end')).toEqual(['late']);
+    // enginePlan itself places none.
+    const bare = enginePlan(p, fiView(p, measured));
+    if ('missing' in bare) throw new Error('expected a plan');
+    expect([bare.sim.income, bare.sim.oneOffs]).toEqual([[], []]);
+    const ageless = figuresOf(plan({ income: p.income }), measured);
+    if ('refused' in ageless || 'missing' in ageless.engine) throw new Error('expected a plan');
+    expect(ageless.engine.sim.income).toEqual([]);
+    expect(noted(ageless, 'no-age')).toHaveLength(2);
   });
 
   test('VPW expects the allocation’s return; floor and ceiling carry their bounds', () => {

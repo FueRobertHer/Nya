@@ -38,6 +38,9 @@ import {
 } from '@/lib/fire/scenarios';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { FirePlan, Measured } from '@/lib/fire/plan';
+import type { Count } from '@/lib/fire/compile';
+import { eventItems } from '@/lib/fire/items';
+import { planOf } from '@/lib/fire/plan-v2';
 import type { Method, SimPlan, SimResult } from '@/lib/fire/simulate';
 import type { PlanJob, PlanJobResult } from '@/lib/fire/jobs';
 import { ScenarioRowsSkeleton } from './LoadingSkeletons';
@@ -116,36 +119,43 @@ function useAnswers(wanted: { key: string; job: PlanJob }[], run: Run, cache: Ma
 /** What compare mode has for a scenario before its simulation: why it isn't
  *  worked out, or its figures. */
 export function scenarioOutcome(
-  base: FirePlan,
+  /** The Plan in version 1, which scenarios are kept against; null for a
+   *  plan only a newer version of Nya saves, which runs none. */
+  base: FirePlan | null,
   s: ScenarioEntry,
   measured: Measured,
+  count: Count,
   planCurrency: string | null,
   /** Whether the Plan's currency is known (lib/fire/plan-currency.ts). */
   known = true
 ): { kind: 'not-run'; reason: string } | { kind: 'figures'; figures: PlanFigures } {
   const other = otherCurrency(s, planCurrency);
   if (other && planCurrency) return { kind: 'not-run', reason: currencyText(other, planCurrency, known) };
+  if (base === null) return { kind: 'not-run', reason: NEWER_TEXT };
   const r = resolveScenario(base, s);
   if (!r.ok) return { kind: 'not-run', reason: resolveErrorText(r.field, r.error, base, s) };
-  const f = planFigures(r.plan, measured, s.events);
+  const f = planFigures(planOf(r.plan), measured, { events: eventItems(s.events), count });
   if ('refused' in f) return { kind: 'not-run', reason: REFUSED_TEXT };
   return { kind: 'figures', figures: f };
 }
+
+/** Said for a scenario on a plan only a newer version of Nya saves. */
+export const NEWER_TEXT = 'A newer version of Nya runs scenarios on this plan.';
 
 export const REFUSED_TEXT = 'Its lasting changes in spending take your spending in retirement below zero, so it isn’t worked out: change them, or remove one.';
 
 /** What a plan is, in compare mode: its changes, its life events and where
  *  they count, and what its figures leave out. */
-export function PlanDetails({ entry, base, outcome, money }: { entry: ScenarioEntry | null; base: FirePlan; outcome: ColumnOutcome; money: (n: number) => string }) {
+export function PlanDetails({ entry, base, outcome, money }: { entry: ScenarioEntry | null; base: FirePlan | null; outcome: ColumnOutcome; money: (n: number) => string }) {
   const lines: ReactNode[] = [];
   if (!entry) lines.push(<li key="plan">Your plan as it is.</li>);
   else {
-    const changes = scenarioChanges(base, entry);
+    const changes = base ? scenarioChanges(base, entry).map((c) => changeText(c, base, entry, money)) : [];
     if (changes.length === 0 && entry.events.length === 0) lines.push(<li key="none">No changes yet: it is your plan as it is.</li>);
     for (const [i, c] of changes.entries()) {
       lines.push(
         <li key={`c${i}`}>
-          <Masked>{changeText(c, base, entry, money)}</Masked>
+          <Masked>{c}</Masked>
         </li>
       );
     }
@@ -217,6 +227,7 @@ export function ScenariosSheet({
   base,
   baseFigures,
   measured,
+  count,
   planCurrency,
   planCurrencyKnown = true,
   canOpen,
@@ -235,10 +246,12 @@ export function ScenariosSheet({
   onClose: () => void;
   state: ScenariosState;
   client: ScenarioClient;
-  /** The Plan as the tab shows it. */
-  base: FirePlan;
+  /** The Plan as the tab shows it, in version 1 (null: a plan only a newer
+   *  version of Nya saves, which runs no scenarios). */
+  base: FirePlan | null;
   baseFigures: PlanFigures;
   measured: Measured;
+  count: Count;
   planCurrency: string | null;
   /** Whether the Plan's currency is known (lib/fire/plan-currency.ts). */
   planCurrencyKnown?: boolean;
@@ -337,11 +350,11 @@ export function ScenariosSheet({
       .map((id): { column: Omit<CompareColumn, 'outcome'>; entry: ScenarioEntry | null; before: ReturnType<typeof scenarioOutcome> } => {
         if (id === 'plan') return { column: { id, name: 'Your plan', isPlan: true }, entry: null, before: { kind: 'figures', figures: baseFigures } };
         const entry = list.find((s) => s.id === id) as ScenarioEntry;
-        return { column: { id, name: entry.name, isPlan: false }, entry, before: scenarioOutcome(base, entry, measured, planCurrency, planCurrencyKnown) };
+        return { column: { id, name: entry.name, isPlan: false }, entry, before: scenarioOutcome(base, entry, measured, count, planCurrency, planCurrencyKnown) };
       });
     // ids and selected are derived from list and chosen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, chosen, base, baseFigures, measured, planCurrency, planCurrencyKnown]);
+  }, [list, chosen, base, baseFigures, measured, count, planCurrency, planCurrencyKnown]);
   const wanted = compareJobs(
     columns.map((c) => c.before),
     method
@@ -401,8 +414,8 @@ export function ScenariosSheet({
         {ready && list.length > 0 && (
           <div className="plan-rows">
             {list.map((s) => {
-              const changes = scenarioChanges(base, s);
-              const first = changes[0] ? changeText(changes[0], base, s, money) : null;
+              const changes = base ? scenarioChanges(base, s) : [];
+              const first = base && changes[0] ? changeText(changes[0], base, s, money) : null;
               const more = changes.length - 1 + s.events.length;
               const summary = first
                 ? `${first}${more > 0 ? `, and ${more} more` : ''}`

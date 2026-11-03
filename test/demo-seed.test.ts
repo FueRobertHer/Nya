@@ -366,9 +366,11 @@ describe('seeding', () => {
     expect(budgets.categories[categoryForKey(ix, PLAID, 'FOOD_AND_DRINK')!.id]).toEqual({ amount: profile.budgets.FOOD_AND_DRINK });
     expect(Object.keys(budgets.categories)).toHaveLength(Object.keys(profile.budgets).length);
 
+    // Seeded as version 1, what this release saves.
     const plan = await firePlanStore.get(ctx);
-    expect([plan?.age, plan?.targetAge]).toEqual([38, 52]);
-    expect(plan?.income.map((i) => i.fromAge)).toEqual([67]);
+    if (plan?.version !== 1) throw new Error('expected a version 1 plan');
+    expect([plan.age, plan.targetAge]).toEqual([38, 52]);
+    expect(plan.income.map((i) => i.fromAge)).toEqual([67]);
   });
 
   test('refuses before changing anything when emptying would be refused', async () => {
