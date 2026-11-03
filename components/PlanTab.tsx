@@ -41,7 +41,10 @@
 //
 // Only the plan's assumptions go to the server (/api/fire-plan), saved whole
 // on each change through lib/whole-list-store.ts, which never lets an
-// unloaded plan be saved over the real one.
+// unloaded plan be saved over the real one. They load, with the workplace
+// plans' contributions, through the copy of the Plan's inputs the tab
+// shares with Home's FI line (lib/plan-inputs-store.ts): always asked for
+// here, and every save's answer goes into the copy, so Home shows it.
 //
 // SCENARIOS (lib/fire/scenarios.ts, components/PlanScenarios.tsx): named
 // what-ifs beside the Plan, each only what it changes, listed, made and
@@ -90,7 +93,8 @@ import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
-import { usePlanInputs, workplacePlansOf } from './plan-inputs';
+import { planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf } from './plan-inputs';
+import { createPlanInputsStore, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding, PlanMix } from '@/lib/allocation/allocation';
 import {
@@ -261,6 +265,9 @@ export type PlanTabProps = {
   landing?: number | null;
   /** Said once the heading has it, so the dashboard forgets the landing. */
   onLanded?: () => void;
+  /** The copy of the Plan's inputs the tab shares with Home's FI line
+   *  (components/Dashboard.tsx); left out, the tab keeps its own. */
+  planInputs?: PlanInputsStore;
 };
 
 export default function PlanTab({
@@ -280,6 +287,7 @@ export default function PlanTab({
   onSegment,
   landing = null,
   onLanded,
+  planInputs: sharedInputs,
 }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   // The plan as the server last confirmed it, and the currency its typed
@@ -288,6 +296,13 @@ export default function PlanTab({
   // And the currency each save sends (set below, once the tab knows it).
   const [confirmed, setConfirmed] = useState<{ plan: FirePlan | null; answer: CurrencyAnswer }>({ plan: null, answer: NO_ANSWER });
   const sendCurrency = useRef<string | null>(null);
+  // The plan loads through the shared copy, for the workplace plans shown
+  // now; the store below is made once, so both are read through refs.
+  const planInputs = useMemo(() => sharedInputs ?? createPlanInputsStore(), [sharedInputs]);
+  const inputsRef = useRef(planInputs);
+  inputsRef.current = planInputs;
+  const plansRef = useRef<string[]>([]);
+  plansRef.current = workplacePlansOf(institutions).map(planId);
   const store = useMemo(
     () =>
       createWholeListStore<FirePlan | null>({
@@ -303,6 +318,26 @@ export default function PlanTab({
         showRefusal: true,
         extra: () => ({ currency: sendCurrency.current }),
         onAnswer: (data) => setConfirmed({ plan: isFirePlan(data.plan) ? data.plan : null, answer: readCurrencyAnswer(data) }),
+        // Always asked for: nothing refuses a save made from a plan another
+        // device changed since, so the tab never edits from a kept copy.
+        read: () => inputsRef.current.load(plansRef.current, { force: true }),
+        // A save's request holds the copy's loads until it has answered, and
+        // its answer goes into the copy (Home's line shows it).
+        saveHooks: (() => {
+          let end: (() => void) | null = null;
+          let copy: PlanInputsStore | null = null;
+          return {
+            started: () => {
+              copy = inputsRef.current;
+              end = copy.beginSave();
+            },
+            ended: (answer: Record<string, unknown> | null) => {
+              if (answer) copy?.adopt(answer);
+              end?.();
+              end = copy = null;
+            },
+          };
+        })(),
       }),
     []
   );
@@ -371,7 +406,9 @@ export default function PlanTab({
   // lib/fire/progress.ts), so the two always agree. The hook also reads which
   // manual accounts are cash on hand, whose spending entered by hand is what
   // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
-  // them for the label.
+  // them for the label. The workplace plans' contributions come from the
+  // shared copy.
+  const shared = useSharedPlanInputs(planInputs, institutions);
   const inputs = usePlanInputs({
     txns,
     txnNotes,
@@ -382,6 +419,7 @@ export default function PlanTab({
     fx: txnFx,
     balanceFx,
     currency: ownCurrency,
+    contributions: shared.contributions,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
@@ -432,7 +470,12 @@ export default function PlanTab({
     if (currencyBusy) return 'Still saving the last change. Try again in a moment.';
     const before = currencyState.kind === 'recorded' ? currencyState.currency : null;
     setRecordingNow(true);
+    // As a save: the copy's loads wait for it, and take its answer.
+    const copy = planInputs;
+    const end = copy.beginSave();
     const r = await recordPlanCurrency(c, typedAmounts(stored), byPerson);
+    if (r.ok && r.body) copy.adopt(r.body);
+    end();
     setRecordingNow(false);
     if (r.ok) {
       setConfirmed({ plan: r.plan ?? stored, answer: r.answer });

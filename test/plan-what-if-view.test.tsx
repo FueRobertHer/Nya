@@ -74,7 +74,7 @@ const settle = (ms = 30) => pass(ms);
 const classOf = (e: FakeElement) => (e.getAttribute('class') ?? '').split(' ');
 
 async function render(answers: Record<string, Answer | [number, unknown]>, over: Partial<PlanTabProps> = {}) {
-  const calls = serve({ 'GET /api/fire-plan': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/allocation-settings': [200, { settings: null }], ...answers });
+  const calls = serve({ 'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/allocation-settings': [200, { settings: null }], ...answers });
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
@@ -292,7 +292,7 @@ describe('the What if… card', () => {
   });
 
   test('without your age the templates are off, and why comes first: the same ask as the answer’s, before the choices; with a saved plan that can’t be read, there is no card', async () => {
-    const tab = await render({ 'GET /api/fire-plan': [200, { plan: { ...PLAN, age: null }, currency: 'USD' }], 'GET /api/plan-scenarios': listing() });
+    const tab = await render({ 'GET /api/plan-inputs': [200, { plan: { ...PLAN, age: null }, currency: 'USD' }], 'GET /api/plan-scenarios': listing() });
     expect(tab.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
     const card = tab.card()!;
     expect(card.textContent).toContain('A life choice is placed by age.Add your age');
@@ -303,7 +303,7 @@ describe('the What if… card', () => {
     expect(classOf(ask)).toEqual(['btn', 'ghost', 'hero-ask']);
     expect(order.indexOf(ask)).toBeLessThan(order.indexOf(tab.chip('Buy a home')!));
     await tab.unmount();
-    const broken = await render({ 'GET /api/fire-plan': [500, { error: 'no' }], 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
+    const broken = await render({ 'GET /api/plan-inputs': [500, { error: 'no' }], 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
     expect(broken.card()).toBeNull();
     await broken.unmount();
   });
@@ -312,7 +312,7 @@ describe('the What if… card', () => {
   const ageless = (over: Record<string, unknown> = {}, plan: Record<string, unknown> = PLAN) => {
     let current: unknown = { ...plan, age: null };
     return {
-      'GET /api/fire-plan': () => [200, { plan: current, currency: 'USD', ...over }] as [number, unknown],
+      'GET /api/plan-inputs': () => [200, { plan: current, currency: 'USD', ...over }] as [number, unknown],
       'PUT /api/fire-plan': (c: Call) => {
         current = c.body.plan;
         return [200, { plan: current, currency: 'USD', ...over }] as [number, unknown];

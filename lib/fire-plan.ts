@@ -19,8 +19,10 @@
 // checked when a plan is saved (parsePlan, in the route).
 
 import { defineValueStore } from './repo';
+import { eager } from './eager';
+import type { Ctx } from './containers';
 import { isFirePlan, upgradePlan, type FirePlan } from './fire/plan';
-import { isPlanCurrencyRecord, type PlanCurrencyRecord } from './fire/plan-currency';
+import { hasTypedAmounts, isPlanCurrencyRecord, recordedCurrency, type PlanCurrencyRecord } from './fire/plan-currency';
 
 export const firePlanStore = defineValueStore<FirePlan>('fire-plan', {
   what: 'plan assumptions',
@@ -42,3 +44,40 @@ export const planCurrencyStore = defineValueStore<PlanCurrencyRecord>('fire-plan
   isValid: isPlanCurrencyRecord,
   exportable: true, // what the person typed their figures in
 });
+
+/** Why a currency record there doesn't hold: it can't be read, or a newer
+ *  release wrote it. */
+export type CurrencyProblem = 'unreadable' | 'newer' | null;
+
+/** The record as it reads: strict about deployment problems, but a record
+ *  that can't be used is said, never thrown, so the plan still loads (the
+ *  page then asks which currency the figures are in). */
+export async function readCurrencyRecord(ctx: Ctx): Promise<{ record: PlanCurrencyRecord | null; problem: CurrencyProblem }> {
+  const r = await planCurrencyStore.getReport(ctx);
+  return { record: r.value, problem: r.unrecognised ? 'newer' : r.unreadable ? 'unreadable' : null };
+}
+
+/** A record there, for typed amounts it isn't of. */
+const isStale = (plan: FirePlan | null, record: PlanCurrencyRecord | null) => !!plan && !!record && hasTypedAmounts(plan) && recordedCurrency(plan, record) === null;
+
+/** What the Plan is told of its plan: { plan, currency } (null and null when
+ *  nothing was ever saved); `currency` is the recorded one when the record
+ *  holds for the plan, else null, and `currency_problem` says why a record
+ *  there doesn't: "stale" (a record of other amounts, its currency in
+ *  `currency_was`), "unreadable" or "newer". */
+export function planAnswer(plan: FirePlan | null, record: PlanCurrencyRecord | null, problem: CurrencyProblem) {
+  if (problem) return { plan, currency: null, currency_problem: problem };
+  if (isStale(plan, record)) return { plan, currency: null, currency_problem: 'stale', currency_was: record!.currency };
+  return { plan, currency: recordedCurrency(plan, record) };
+}
+
+/** The saved plan and its currency, as planAnswer says them: the two reads
+ *  begun together, so they share a round trip. A plan that can't be read
+ *  throws (StoredDataUnreadableError), as the plan store does. */
+export async function readPlanAnswer(ctx: Ctx) {
+  const plan = eager(firePlanStore.get(ctx));
+  const record = eager(readCurrencyRecord(ctx));
+  const stored = await plan;
+  const { record: there, problem } = await record;
+  return planAnswer(stored, there, problem);
+}

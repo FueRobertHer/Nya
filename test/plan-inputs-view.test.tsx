@@ -160,7 +160,7 @@ function serve({ plan = { plan: PLAN, currency: null } as unknown, answers = {} 
     const answer = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
     const given = await answers[`${method} ${url}`]?.(call);
     if (given) return answer(given[1], given[0]);
-    if (url === '/api/fire-plan' && method === 'GET') return answer(plan);
+    if (url === '/api/plan-inputs' && method === 'GET') return answer(plan);
     if (url === '/api/plan-scenarios') return answer({ scenarios: [], unreadable_ids: [], unrecognised_ids: [] });
     if (url === '/api/allocation-settings') return answer({ settings: null });
     return answer({ error: 'not here' }, 404);
@@ -427,7 +427,7 @@ describe('focus back on the row', () => {
 
   test('the row drawn again while its sheet was open (the plan read after a first load failed): focus goes from the sheet to the row drawn now', async () => {
     let gets = 0;
-    serve({ answers: { 'GET /api/fire-plan': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
+    serve({ answers: { 'GET /api/plan-inputs': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
     const tab = await mount();
     const pressed = tab.row('Assumptions')!;
     await press(pressed);
@@ -494,7 +494,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
   });
 
   test('the saved plan couldn’t be read: the sheets show the defaults, and say so', async () => {
-    serve({ answers: { 'GET /api/fire-plan': () => [500, { error: 'no' }] } });
+    serve({ answers: { 'GET /api/plan-inputs': () => [500, { error: 'no' }] } });
     const tab = await mount();
     expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place income by age');
     expect(await everySheet(tab)).toEqual(
@@ -510,7 +510,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
       answers: {
         // The first load, then the one after the refused save below (which
         // fails), then Try again's (held open).
-        'GET /api/fire-plan': () => (++gets === 1 ? undefined : gets === 2 ? [500, { error: 'no' }] : new Promise((r) => (release = () => r(undefined)))),
+        'GET /api/plan-inputs': () => (++gets === 1 ? undefined : gets === 2 ? [500, { error: 'no' }] : new Promise((r) => (release = () => r(undefined)))),
         'PUT /api/fire-plan': () => [409, { error: 'Your plan was changed on another device.' }],
       },
     });
@@ -560,7 +560,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
     serve({
       plan: { plan: { ...PLAN, withdrawalRate: 0.5 }, currency: null },
       answers: {
-        'GET /api/fire-plan': () => (++gets === 1 ? undefined : [500, { error: 'no' }]),
+        'GET /api/plan-inputs': () => (++gets === 1 ? undefined : [500, { error: 'no' }]),
         'PUT /api/fire-plan': () => [409, { error: 'Your plan was changed on another device.' }],
       },
     });
@@ -583,7 +583,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
     serve({
       plan: { plan: { ...TYPED, withdrawalRate: 0.5 }, currency: null },
       answers: {
-        'GET /api/fire-plan': () => (++gets === 1 ? undefined : new Promise((r) => (reread = () => r(undefined)))),
+        'GET /api/plan-inputs': () => (++gets === 1 ? undefined : new Promise((r) => (reread = () => r(undefined)))),
         'POST /api/fire-plan': () => new Promise((r) => (refuse = () => r([409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }]))),
       },
     });
@@ -775,7 +775,7 @@ describe('a sheet holds the saved plan it opened on', () => {
   test('opened on the defaults after a first load failed, and the saved plan read while it is open: Save stays off, says why, and sends nothing', async () => {
     for (const title of ['Assumptions', 'Annual spending']) {
       let gets = 0;
-      const calls = serve({ answers: { 'GET /api/fire-plan': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
+      const calls = serve({ answers: { 'GET /api/plan-inputs': () => (++gets === 1 ? [500, { error: 'no' }] : undefined) } });
       const tab = await mount();
       await press(tab.row(title));
       const sheet = tab.dialog()!;
@@ -807,7 +807,7 @@ describe('a sheet holds the saved plan it opened on', () => {
       let posts = 0;
       const calls = serve({
         answers: {
-          'GET /api/fire-plan': () => [200, { plan: stored, currency: null }],
+          'GET /api/plan-inputs': () => [200, { plan: stored, currency: null }],
           'POST /api/fire-plan': (c) =>
             ++posts === 1
               ? new Promise((r) => (refuse = () => r([409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }])))
@@ -826,7 +826,7 @@ describe('a sheet holds the saved plan it opened on', () => {
       stored = NEWER;
       await act(async () => refuse());
       await settle(100);
-      expect([calls.filter((c) => c.method === 'GET' && c.url === '/api/fire-plan').length, posts]).toEqual([2, 2]);
+      expect([calls.filter((c) => c.method === 'GET' && c.url === '/api/plan-inputs').length, posts]).toEqual([2, 2]);
       expect(valueOf(tab.row('Annual spending')!)).toBe('$45,000');
       expect(tab.dialog()).toBe(sheet);
       expect([title, button(sheet, 'Save')?.disabled, pausedLine(sheet)]).toEqual([title, true, READ_AGAIN]);
@@ -888,7 +888,7 @@ describe('a sheet holds the saved plan it opened on', () => {
     let gets = 0;
     const calls = serve({
       answers: {
-        'GET /api/fire-plan': () => void gets++,
+        'GET /api/plan-inputs': () => void gets++,
         'PUT /api/fire-plan': (c) => (++n === 1 ? [500, { error: 'no' }] : [200, { plan: c.body.plan, currency: c.body.currency }]),
       },
     });
@@ -1155,7 +1155,7 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
     let current: unknown = { ...DEFAULT_PLAN };
     serve({
       answers: {
-        'GET /api/fire-plan': () => [200, { plan: current, currency: null }],
+        'GET /api/plan-inputs': () => [200, { plan: current, currency: null }],
         'PUT /api/fire-plan': (c) => {
           current = c.body.plan;
           return [200, { plan: current, currency: null }];
