@@ -1,13 +1,13 @@
 // lib/flags.ts
 //
 // The feature switches: every flag this release knows, in code. A flag not
-// here doesn't exist. Each has a sentence of what it does (shown where flags
-// are set: /dev/flags, and from F2 the admin page), its kind (a release flag
-// is temporary and carries the date it should be gone by; an ops flag is a
-// lasting on or off for an operation), the kind of value it holds, its default
-// in each environment, what turning it off does to what was made while it was
-// on, and, for a switch moved here from the environment, the variable that
-// still decides it while set. Pure: nothing here reads storage. Values live in
+// here doesn't exist. Each has a short plain name and a sentence of what it
+// does (shown where flags are set: /dev/flags and the admin page), its kind
+// (a release flag is temporary and carries the date it should be gone by; an
+// ops flag is a lasting on or off for an operation), the kind of value it
+// holds, its default in each environment, what turning it off does to what was
+// made while it was on, and, for a switch moved here from the environment, the
+// variable that still decides it while set. Pure: nothing here reads storage. Values live in
 // lib/flag-store.ts; lib/flag-read.ts reads and evaluates them.
 //
 // PRECEDENCE, for a switch moved from the environment: its variable while set,
@@ -50,6 +50,8 @@ export type ListValue = { ids: string[]; emails: string[]; updatedAt: string };
 export type FlagValue = AudienceValue | ModeValue | SwitchValue | ListValue;
 
 type Common = {
+  /** A short plain name: the title of its row where flags are set. */
+  name: string;
   /** One sentence: what it does, where flags are set. */
   about: string;
   /** What a value written while it was on does once it is off. */
@@ -68,6 +70,7 @@ const NOBODY: Record<Environment, AudienceOn> = { development: 'nobody', preview
 
 export const FLAGS = {
   restore: {
+    name: 'Bring back a download',
     about: 'Offers Bring back a download, which brings a person’s JSON download into an empty account.',
     kind: 'ops',
     value: 'audience',
@@ -76,6 +79,7 @@ export const FLAGS = {
     offMeans: 'Starting a restore, sending a restore’s remaining batches and emptying an account for one are refused; a restore under way keeps its banner and can still be undone.',
   },
   'restore-carry-on': {
+    name: 'Carry on a restored account',
     about: 'Lets an account a restore brought back from SimpleFIN or Lunch Flow be carried on by the account tracked in its place.',
     kind: 'ops',
     value: 'audience',
@@ -84,6 +88,7 @@ export const FLAGS = {
     offMeans: 'Carrying on a restored account is refused; an account carried on already is still read and can still be undone.',
   },
   lunchflow: {
+    name: 'Lunch Flow',
     about: 'Offers Connect with Lunch Flow beside Connect with SimpleFIN.',
     kind: 'ops',
     value: 'audience',
@@ -92,6 +97,7 @@ export const FLAGS = {
     offMeans: 'New Lunch Flow connections are refused; connections made already keep working.',
   },
   'brokerage-link': {
+    name: 'Brokerage and retirement accounts',
     about: 'Offers Connect a brokerage or retirement account beside the bank option.',
     kind: 'ops',
     value: 'audience',
@@ -100,6 +106,7 @@ export const FLAGS = {
     offMeans: 'New link tokens leave the option out; brokerage connections made already keep working.',
   },
   'api-writes': {
+    name: 'Tokens that make changes',
     about: 'Lets people make API tokens that update manual accounts’ balances or make changes.',
     kind: 'ops',
     value: 'audience',
@@ -108,6 +115,7 @@ export const FLAGS = {
     offMeans: 'Every token reads only: a token made to write is refused each write, and new ones can only read.',
   },
   'plan-tax': {
+    name: 'Detailed tax in the Plan',
     about: 'The Plan’s detailed US tax model: the opt-in, and plans saved as detailed.',
     kind: 'release',
     removeBy: '2027-06-30',
@@ -116,6 +124,7 @@ export const FLAGS = {
     offMeans: 'A detailed plan says it uses the flat rate, and a plan can’t be saved as detailed.',
   },
   csp: {
+    name: 'Content security policy',
     about: 'How pages send their Content-Security-Policy: enforced, only reported, or off.',
     kind: 'ops',
     value: 'mode',
@@ -124,6 +133,7 @@ export const FLAGS = {
     offMeans: 'Pages carry no policy.',
   },
   ops: {
+    name: 'Ops routes',
     about: 'Opens the operator’s routes (a backup by hand, key rotation, the re-encryption pass and the rest), only while an operation runs.',
     kind: 'ops',
     value: 'switch',
@@ -132,6 +142,7 @@ export const FLAGS = {
     offMeans: 'The ops routes answer as missing; OPS_SECRET is still required while they are on.',
   },
   'sign-in': {
+    name: 'Who may sign in',
     about: 'Who may sign in with a Clerk account, beside the demo accounts and the deployment’s owners.',
     kind: 'ops',
     value: 'list',
@@ -221,8 +232,10 @@ export function signInVariable(): { ids: string[]; emails: string[] } | undefine
 
 // ---- Values ----
 
-const MAX_LIST = 1000;
-const MAX_ENTRY = 320;
+/** The most entries a list holds (an audience's accounts, the sign-in list's
+ *  ids, its emails), and the longest entry. */
+export const MAX_LIST = 1000;
+export const MAX_ENTRY = 320;
 
 const isTime = (v: unknown): v is string => typeof v === 'string' && v.length <= 40 && Number.isFinite(Date.parse(v));
 const hasExactly = (v: Record<string, unknown>, keys: string[]) => {
@@ -278,8 +291,9 @@ export function isFlagValue(key: string, v: unknown): v is FlagValue {
 }
 
 /** The values a flag of each kind can be set to where flags are set
- *  (/dev/flags): an audience's `on`, a mode, a switch's on or off. The list
- *  is set through F2's sheets, not by a choice. */
+ *  (/dev/flags, the admin page): an audience's `on`, a mode, a switch's on or
+ *  off. The list is set by adding and removing people (lib/flag-change.ts),
+ *  not by a choice. */
 export function choicesFor(key: FlagKey): readonly string[] {
   const def: FlagDef = FLAGS[key];
   switch (def.value) {

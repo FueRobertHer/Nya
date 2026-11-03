@@ -1223,7 +1223,7 @@ const OUTSIDE: Readonly<Record<string, Outside>> = {
   'flags:log': {
     group: 'access',
     name: 'Changes to feature switches',
-    about: 'The last 500: when, which switch, what it was and became, and who changed it, by account id, which can name your account or your sign-in as the switches do.',
+    about: 'The last 500: when, which switch, what it was and became, and who changed it, by account id, or that an account’s deletion did, which can name your account or your sign-in as the switches do.',
     unit: ['change', 'changes'],
     kept: 'Feature switches and their changes',
     plain: 'All of it, as plain text.',

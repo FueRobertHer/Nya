@@ -22,7 +22,7 @@ The target design is in [design-system.md](design-system.md) and [information-ar
 
 Decide this first. Most clutter in Nya came from good features placed in the first spot that was free.
 
-1. **A setting** (it changes how Nya behaves, and nobody looks at it daily) goes in a Settings section: Preferences, Transactions, Connections, Sharing, Your data and privacy, or Account. Build it as one self-contained card component and add it to its section in `settingsSections` in `components/Dashboard.tsx`, so it can move as a unit. Never put a setting on a working screen.
+1. **A setting** (it changes how Nya behaves, and nobody looks at it daily) goes in a Settings section: Preferences, Transactions, Connections, Sharing, Your data and privacy, or Account. Build it as one self-contained card component and add it to its section in `settingsSections` in `components/Dashboard.tsx`, so it can move as a unit. Never put a setting on a working screen. A setting of the deployment rather than of an account (a feature switch, a job, a limit) is the admin's: it goes on the admin page (`components/AdminPage.tsx`, [information-architecture.md](information-architecture.md#the-admin-page)) as a card of its own, reached from Settings > Admin.
 2. **About one object** (an account, a transaction, a goal, a connection, a person) goes in that object's sheet or its ⋯ menu, not as a new card or a new row button on the tab.
 3. **Asks the person to act** is shown on the object it concerns and is also an item in Home's Needs attention.
 4. **Analysis of transactions** goes with Activity's analysis (Spending, after phase 5), never above the transaction list.
@@ -98,6 +98,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Key and value details | `.txn-detail` with `.txn-detail-row` | |
 | Labelled figures in a row (In, Out, Net; totals by kind) | `.stat-strip` of `.stat`, each a `.stat-label` over a `.stat-value` | `.summary-row` with `.summary-value` |
 | A form field | `.field` around a plain `<input>` or `<select>` | |
+| Choosing one of a few options, each with a note | `RadioRows` (`.radio-rows`, `.radio-row`) | `.lifecycle-choice`, `.download-format` |
 | A form in a sheet | `.sheet-form` | |
 | A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`) | a `.button-pair` at the end of the body |
 | An object's rare actions (⋯) | `Menu` (`.menu` of `.menu-item`) | an Options button that opens an action sheet |

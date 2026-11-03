@@ -166,7 +166,7 @@ export default function AdminJobs() {
 
   return (
     <main className="wrap report-wrap">
-      <PageHeader />
+      <PageHeader back="/admin" />
       <h1>Nightly jobs</h1>
       <p className="sub">The jobs that keep a copy of everything and tidy the file store. When one fails, see its reason here, then run it again now rather than waiting a night.</p>
       <div className="stack">

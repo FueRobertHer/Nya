@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import NeedsAttention, { AdminAttention } from '@/components/NeedsAttention';
+import NeedsAttention, { AdminAttention, adminAttentionRows } from '@/components/NeedsAttention';
 import { attentionItems, type AttentionItem } from '@/components/attention';
 import { paymentAlerts } from '@/components/Insights';
 import { NOTHING } from './home-attention';
@@ -72,7 +72,7 @@ describe('the card', () => {
   });
 });
 
-describe('the admin’s card: what to do about the nightly jobs', () => {
+describe('the admin’s card: what to do about the nightly jobs and the ops routes', () => {
   test('the fact, then where to look; nothing while the clean-up only waits for a backup', () => {
     const backup = text(renderToStaticMarkup(<AdminAttention backup={{ last_ok: '2026-10-20T03:00:00Z', reason: 'timeout' }} files={null} />));
     expect(backup).toContain('Admin');
@@ -95,6 +95,21 @@ describe('the admin’s card: what to do about the nightly jobs', () => {
     const html = renderToStaticMarkup(<AdminAttention backup={{ last_ok: null, reason: null, none: true }} files={{ last_ok: null, reason: 'listing', held: false }} />);
     expect(html.match(/<a class="list-row" href="\/admin\/jobs">/g)).toHaveLength(2);
     expect(html).not.toContain('<button');
+  });
+
+  test('ops routes left on: a caution going to their switch on the admin page, worded by what opened them', () => {
+    const stored = renderToStaticMarkup(<AdminAttention backup={null} files={null} ops="stored" />);
+    expect(text(stored)).toContain('Caution: The ops routes are on Turn them off once the operation is done.');
+    expect(stored).toContain('<a class="list-row" href="/admin#feature-switches">');
+    expect(text(renderToStaticMarkup(<AdminAttention backup={null} files={null} ops="variable" />))).toContain(
+      'The ops routes are on OPS_ENABLED is set: remove it once the operation is done.'
+    );
+    expect(renderToStaticMarkup(<AdminAttention backup={null} files={null} ops={null} />)).toBe('');
+  });
+
+  test('the admin page passes how to write a day; Home writes it in the reader’s time', () => {
+    const rows = adminAttentionRows({ last_ok: '2026-10-20T03:00:00Z', reason: null }, { last_ok: '2026-10-19T03:00:00Z', reason: 'quota', held: false }, null, (iso) => `[${iso.slice(0, 10)}]`);
+    expect(rows.map((r) => r.sub)).toEqual(['Last saved [2026-10-20] · Check the backup cron in Vercel.', 'Last finished [2026-10-19] · quota · Check the clean-up cron in Vercel.']);
   });
 });
 

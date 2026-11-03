@@ -3975,6 +3975,48 @@ button.danger-outline {
 
 /* A held payment's reason, then each figure offered for it on its own line. */
 
+/* --- radio rows (components/RadioRows.tsx): one of a few options, each with
+   a note, saved by a button (docs/design/design-system.md, "Radio rows").
+   Each row's label is its radio's target, at least 44px. --- */
+
+.radio-rows {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.radio-row + .radio-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.radio-row input {
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.radio-row-name {
+  display: block;
+  font-size: var(--fs-3);
+  font-weight: 600;
+}
+
+.radio-row-note {
+  display: block;
+  color: var(--text-2);
+  font-size: var(--fs-2);
+}
+
 /* --- download my data (components/DownloadMyData.tsx) --- */
 
 .download-formats {

@@ -318,6 +318,8 @@ describe('the route', () => {
     expect(await where('/admin/storage?x=1')).toBe('https://nya.test/admin-view/storage?x=1');
     expect(await where('/admin-view/storage')).toBeNull();
     expect(await where('/admin/jobs')).toBe('https://nya.test/admin-view/jobs');
+    expect(await where('/admin')).toBe('https://nya.test/admin-view');
+    expect(await where('/admin?x=1')).toBe('https://nya.test/admin-view?x=1');
   });
 
   test('the proxy’s gate decides as the admin’s routes do, reading only', async () => {

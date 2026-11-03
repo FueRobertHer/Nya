@@ -165,6 +165,16 @@ The workhorse. Leading logo or icon (optional), title, one subtitle line, traili
 
 Replaces `.acct-row` and `.txn-main` (both gone since phase 6a3, with Recurring's and Planned's tables), `.txn-text`, `.peer-row`, `.peer-item`, `.cat-manage-row`, `.timeline-note-row`, `.budget-summary` (Budgets > Month since phase 6a2; Goals' rows keep it until they are redrawn), and the table-based account and transaction lists.
 
+### Radio rows
+
+One of a few options, two to five, each needing a sentence to choose between them: a feature switch's audience or mode on the admin page. A fieldset whose legend (`.section-label`) says what is chosen, then one row per option: a native radio in `--accent`, the option's name (`--fs-3`, 600) and its sentence under it (`--fs-2`, `--text-2`), hairlines (`--border-subtle`) between rows. Each row's whole label is the radio's target, at least `--tap` (44px) tall.
+
+- Saved by a button beside it (a sheet's footer Save), never on a choice alone: the arrow keys choose at every step, and a switch would pass through Off on its way to Everyone.
+- Native radios: one tab stop for the group, the arrows move between them, and a screen reader reads the legend with each.
+- Two options with nothing to explain are a `Segmented`; a choice of many is a `<select>` in a `.field`.
+
+Built as `RadioRows` (`.radio-rows`, `.radio-row`, `.radio-row-name`, `.radio-row-note`) for the admin page's feature switches (tax plan F2). Replaces `.lifecycle-choice`, `.download-format`, `.review-start-choice` and `.api-access-choice`, screen by screen, as each is next changed.
+
 ### Stat strip
 
 Two to four labelled figures (In, Out, Net). Label `--fs-1` in `--text-2`, figure `--fs-6`. Replaces `.summary-row` and `.summary-value`.
