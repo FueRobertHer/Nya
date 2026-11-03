@@ -203,6 +203,18 @@ describe('the income and one-off card follows the switch', () => {
     expect(card(false)).toContain("at age 45. Before 55, where Will it last? starts, so it isn't counted anywhere.");
   });
 
+  test('with Will it last? not run, no row says where it has them, as before', () => {
+    const p = { ...PLAN, spending: null, expenses: [ROOF, { id: 'late', label: 'Late', amount: 1_000, atAge: 99 }] };
+    for (const on of [true, false]) {
+      expect(figures(p, on).engine).toEqual({ missing: 'spending' });
+      const text = card(on, p);
+      expect(text).toContain('Roof $100,000 at age 45 Edit');
+      expect(text).toContain('Late $1,000 at age 99 Edit');
+      expect(text).not.toContain('Not in the simulation');
+      expect(text).not.toContain('After the plan ends');
+    }
+  });
+
   test('a version 2 plan’s items it can’t show are said to be there', () => {
     const f = figures(PLAN, true);
     const life = { ...f.plan.items[0], id: 'kid', kind: 'child' as const, label: 'A child' };
@@ -273,8 +285,12 @@ describe('the answer’s words', () => {
     const f = v2({ stopAtFi: true, targetAge: null });
     expect(f.view.fiAge).not.toBeNull();
     expect(answer(f)).toContain(`Financial independence FI and your stop: around ${Math.round(f.view.fiAge as number)}`);
-    const never = v2({ stopAtFi: true, targetAge: null, savings: 0, assets: 1_000, spending: 90_000 });
+    const never = v2({ stopAtFi: true, targetAge: null, savings: 0, assets: 1_000, spending: 90_000, items: [] });
     expect(answer(never)).toContain('Financial independence Not by 95');
+    // With the roof it can't pay, no date, and why (fiShort), as without the search.
+    const short = v2({ stopAtFi: true, targetAge: null, savings: 0, assets: 1_000, spending: 90_000 });
+    expect(short.short).not.toBeNull();
+    expect([short.view.fiAge, short.view.yearsToFi]).toEqual([null, null]);
   });
 
   test('your own FI number is the one it reads, the worked-out one beside it, and Barista FI is said not shown', () => {

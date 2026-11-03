@@ -13,7 +13,8 @@
 //     one changes nothing before its year, so firing the earliest crossing,
 //     then building the path again, is exact.
 //   - FI and "stop when I reach FI" are searched for: whole ages k from
-//     today's to PLAN_TO_AGE, the edges on them placed at k (one that would
+//     today's to PLAN_TO_AGE (today's alone past it), the edges on them
+//     placed at k (one that would
 //     come before today, today), and k passes when the walk reaches its
 //     target at an age that rounds to k or earlier, as the answer is said
 //     (components/plan-text.ts fiHeadline). The first k that passes is the
@@ -197,7 +198,7 @@ export function resolveItems(plan: Plan, world: SteadyWorld): Resolution {
   const today = plan.age;
   const searched = plan.stopAtFi ? 'stop' : 'fi';
   if (today !== null) {
-    for (let k = Math.ceil(today); k <= PLAN_TO_AGE; k++) {
+    for (let k = Math.ceil(today); k <= Math.max(PLAN_TO_AGE, Math.ceil(today)); k++) {
       const stop = plan.stopAtFi ? k : fixedStop;
       const r = settle(plan, world, stop, k);
       // What starts on FI after k comes after FI: left out of the walk that

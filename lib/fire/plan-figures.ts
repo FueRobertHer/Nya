@@ -122,13 +122,15 @@ function upTo(w: WalkChanges, last: number): WalkChanges {
 }
 
 /** The figures with the items at `ages` and the stop at `stop`; `opts`, for
- *  a search's candidate, leaves items out of the walk and stops counting its
- *  changes after an age. */
+ *  a search's candidate, leaves items out of the walk (only: what they change
+ *  in retirement still sets the FI number it is tested against) and stops
+ *  counting its changes after an age. */
 function build(plan: FirePlanV2, measured: Measured, items: readonly PlanItem[], ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }): Built | FiguresRefused {
   const display = fiView(plan, measured, stop);
-  const placed = opts && opts.skip.size > 0 ? ages.map((x, i) => (opts.skip.has(i) ? null : x)) : ages;
-  const compiled = compileItems(items, placed, { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: plan.taxRate }, count);
-  const walk = opts && opts.through !== null && plan.age !== null ? upTo(compiled.walk, opts.through - plan.age) : compiled.walk;
+  const at = { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: plan.taxRate };
+  const compiled = compileItems(items, ages, at, count);
+  const changes = opts && opts.skip.size > 0 ? compileItems(items, ages.map((x, i) => (opts.skip.has(i) ? null : x)), at, count).walk : compiled.walk;
+  const walk = opts && opts.through !== null && plan.age !== null ? upTo(changes, opts.through - plan.age) : changes;
   const lasting = compiled.lasting.reduce((s, x) => s + x.amount, 0);
   let core = display;
   let retirement: PlanFigures['retirement'] = null;
@@ -228,8 +230,11 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { events = [],
   if ('refused' in b) return b;
   const f = assemble(plan, items, n, b, resolution);
   if (resolution.searched === 'none' || plan.age === null) return f;
-  // The search's answer is the date: the age found, or none by the end.
+  // The search's answer is the date: the age found, or none by the end. With
+  // none and no date without it either (a figure not measured, or a cost the
+  // walk can't pay), what that one says stands: not worked out isn't never.
   const found = resolution.fi;
+  if (found === null && f.view.yearsToFi === null) return f;
   return {
     ...f,
     view: { ...f.view, fiAge: found, yearsToFi: found === null ? Infinity : found - plan.age },

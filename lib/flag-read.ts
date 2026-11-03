@@ -270,8 +270,8 @@ const newKept = new Map<AudienceKey, { updatedAt: string; until: string }>();
  *     for everyone, from its record of changes (lib/flag-store.ts);
  *   - not on for everyone: a far-off day, so the line shows wherever it is on;
  *   - that change no longer in the record, or the record not read within
- *     WAIT_MS: a past day, so it never reads as new. That isn't kept, so the
- *     next page asks again.
+ *     WAIT_MS: a past day, so it never reads as new. A read that failed isn't
+ *     kept, so the next page asks again.
  * Kept per stored value, by its updatedAt.
  */
 export async function newUntil(key: AudienceKey, now: number = Date.now()): Promise<string> {
@@ -284,8 +284,9 @@ export async function newUntil(key: AudienceKey, now: number = Date.now()): Prom
     const { entries } = await withLimit(flagsStore.changes(), WAIT_MS);
     const everyone = (v: unknown) => isAudienceValue(v) && v.on === 'everyone';
     const turned = entries.find((c) => c.key === key && everyone(c.to) && !everyone(c.from));
-    if (!turned) return PAST_DAY;
-    const until = new Date(Date.parse(turned.at) + NEW_DAYS * 86_400_000).toISOString().slice(0, 10);
+    // Gone from the record stays gone for this value (a value and its change
+    // are written together), so that answer is kept too.
+    const until = turned ? new Date(Date.parse(turned.at) + NEW_DAYS * 86_400_000).toISOString().slice(0, 10) : PAST_DAY;
     newKept.set(key, { updatedAt: stored.updatedAt, until });
     return until;
   } catch {

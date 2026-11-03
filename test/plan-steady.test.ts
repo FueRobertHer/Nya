@@ -5,6 +5,7 @@ import { walkToFi } from '@/lib/fire/events';
 import { projectBalance } from '@/lib/fire/fi';
 import { itemFromExpense, type Anchor, type PlanItem } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
+import { fiHeadline } from '@/components/plan-text';
 import { OFF } from './plan-gen';
 
 // Where each item falls on the steady path (lib/fire/steady.ts), through the
@@ -112,6 +113,22 @@ describe('finding FI', () => {
     expect(f.resolution.why).toEqual(['waits-on-fi']);
     expect([f.view.fiAge, f.view.yearsToFi]).toEqual([null, Infinity]);
   });
+
+  test('what an item on FI changes in retirement sets the FI number each age is tested against, though it starts after FI', () => {
+    const f = figures({ items: [spend('travel', when({ at: 'fi' }, 2), 10_000)] });
+    expect(f.view.fiNumber).toBe(1_250_000);
+    const r = walkToFi(A, C, G, 1_250_000, { moneyIn: [], costs: [], spans: [] });
+    const k = Math.round(40 + (r as { years: number }).years);
+    expect(k).toBeGreaterThan(Math.round(plain));
+    expect(f.resolution.fi).toBe(k);
+    expect(f.resolution.ages).toEqual([{ start: k + 2, end: null }]);
+  });
+
+  test('not worked out isn’t never: with spending unknown, nothing is said', () => {
+    const f = figures({ items: [cost('x', when({ at: 'fi' }), 1)], spending: null });
+    expect(f.resolution).toMatchObject({ searched: 'fi', fi: null });
+    expect([f.view.fiAge, f.view.yearsToFi]).toEqual([null, null]);
+  });
 });
 
 describe('stop when I reach FI', () => {
@@ -136,6 +153,22 @@ describe('stop when I reach FI', () => {
     expect(f.resolution.why).toEqual(['waits-on-stop']);
     expect(f.view.fiAge).toBeNull();
     expect(planPath(f)).toBeNull();
+  });
+
+  test('not worked out isn’t never: with spending unknown, nothing is said', () => {
+    const f = figures({ stopAtFi: true, targetAge: null, spending: null });
+    expect(f.resolution).toMatchObject({ searched: 'stop', stop: null });
+    expect([f.view.fiAge, f.view.yearsToFi]).toEqual([null, null]);
+  });
+
+  test('past 95, today’s age is tried: at FI there, the answer is now; not, it says not by today’s age', () => {
+    const at = figures({ age: 97, stopAtFi: true, targetAge: null, assets: 2_000_000 });
+    expect(at.resolution).toMatchObject({ searched: 'stop', stop: 97 });
+    expect(at.view.yearsToFi).toBe(0);
+    const not = figures({ age: 97, stopAtFi: true, targetAge: null, savings: 0, assets: 1_000 });
+    expect(not.view.yearsToFi).toBe(Infinity);
+    expect(fiHeadline(not.view, { age: 97, stopAge: null, stopAtFi: true }).headline).toBe('Not by 97');
+    expect(fiHeadline(not.view, { age: 40, stopAge: null, stopAtFi: true }).headline).toBe('Not by 95');
   });
 });
 

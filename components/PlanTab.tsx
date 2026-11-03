@@ -2622,7 +2622,8 @@ export function EventsCard({
 }) {
   const [restoreError, setRestoreError] = useState('');
   const mark = (id: string) => (scenario?.replaced.has(id) ? ' Changed in this scenario.' : scenario?.added.has(id) ? ' Added in this scenario.' : '');
-  const ids = (...parts: string[]) => new Set(notes.filter((n) => parts.includes(n.part)).map((n) => n.id));
+  // Where the simulation has them, so only when it runs.
+  const ids = (...parts: string[]) => new Set('sim' in engine ? notes.filter((n) => parts.includes(n.part)).map((n) => n.id) : []);
   const leftOut = ids('no-age', 'before-start');
   const beyond = ids('after-end');
   const income = incomeOf(plan);

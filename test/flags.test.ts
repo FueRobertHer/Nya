@@ -379,9 +379,12 @@ describe('how long a change stays new', () => {
     expect(fake.ops).toBe(before);
   });
 
-  test('that change gone from the record: a past day, so it never reads as new', async () => {
+  test('that change gone from the record: a past day, so it never reads as new, kept per value', async () => {
     await store('plan-items-in-fi', { on: 'everyone', containers: [], updatedAt: '2026-11-06T12:00:00.000Z' });
     expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
+    const before = fake.ops;
+    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
+    expect(fake.ops).toBe(before);
   });
 
   test('a record that can’t be read: a past day, not kept, so the next page asks again', async () => {

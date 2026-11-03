@@ -146,7 +146,7 @@ export function fiHeadline(
   if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
   if (y === null) return { ...base, kind: 'unknown', headline: o.need ?? '--' };
   if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
-  if (y === Infinity) return { ...base, kind: 'never', headline: ages.stopAtFi ? `Not by ${PLAN_TO_AGE}` : 'Not reached at this savings rate' };
+  if (y === Infinity) return { ...base, kind: 'never', headline: ages.stopAtFi ? `Not by ${Math.max(PLAN_TO_AGE, ages.age ?? 0)}` : 'Not reached at this savings rate' };
   const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
   if (view.fiAge === null) {
     if (y >= OLDEST) return { ...base, kind: 'later', headline: `Not within ${OLDEST} years at this savings rate` };
