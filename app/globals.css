@@ -2244,6 +2244,12 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   paint-order: stroke;
 }
 
+/* Your path's chart is on the page (the Plan's hero), not in a card: its
+   rule label's halo is the page's color. */
+.plan-path .chart-rule-label {
+  stroke: var(--canvas);
+}
+
 /* A chart drawn at its own width (components/drawn-width.ts) has a viewBox
    unit to a CSS pixel, so its text is the size it says. The charts still on
    a fixed viewBox keep the size above until they are drawn at theirs. */
@@ -4549,6 +4555,20 @@ button.plan-edit:disabled {
   top: 0;
   left: 0;
   right: 0;
+}
+
+/* Will it last? as Drawdown's hero (the tax plan's P): while a new answer
+   is worked out, its last rate and the line under it are held hidden too,
+   the label kept, and the result's one status says so. */
+.drawdown-hero.drawdown-pending .total-value,
+.drawdown-hero.drawdown-pending .drawdown-line {
+  visibility: hidden;
+}
+
+/* The rate's place while the first answer is worked out: about as wide as
+   "95.1%" at the hero size. */
+.drawdown-skeleton-figure {
+  width: 3em;
 }
 
 .plan-working {

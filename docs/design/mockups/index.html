@@ -792,17 +792,20 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="small muted">Saving <span class="money">$64,000</span> a year, growing a steady 5% a year after inflation.</div>
               <div class="meter pos"><i style="width:62%"></i></div>
               <div class="xs muted"><span class="money">$1,209,400</span> of <span class="money">$1,950,000</span> invested</div>
-              <svg class="chart" style="width:100%;margin-inline:0" viewBox="0 0 300 110" role="img" aria-label="Invested assets rise from $1.2M at 34 to the $1.95M FI number around 39 and keep growing to about $5.7M at 55">
-                <path class="area" d="M0,77 L71,66 L150,51 L225,32 L300,8 L300,96 L0,96Z"/>
+              <svg class="chart" style="width:100%;margin-inline:0" viewBox="0 0 300 110" role="img" aria-label="Invested assets grow from $1.2M at 34, reach the $1.95M FI number around 39, and are about $5.7M at 55, then, drawing your spending, about $30M at 95, at a steady 5% a year after inflation">
+                <path class="area" d="M0,92.5 L24.6,90.3 L54.1,86.7 L78.7,83.2 L103.3,79.4 L103.3,96 L0,96Z"/>
                 <line class="grid" x1="0" y1="96" x2="300" y2="96"/>
-                <line x1="0" y1="66" x2="300" y2="66" stroke="var(--text-3)" stroke-width="1" stroke-dasharray="4 4"/>
-                <polyline class="line" points="0,77 71,66 150,51 225,32 300,8"/>
-                <text class="tick lg" x="104" y="86">FI number</text>
-                <circle cx="71" cy="66" r="4" fill="var(--pos)"/>
-                <line x1="299" y1="8" x2="299" y2="96" stroke="var(--text-3)" stroke-width="1"/>
-                <text class="tick lg" x="0" y="110">34</text><text class="tick lg" x="62" y="110">39</text><text class="tick lg" x="246" y="110">stop 55</text>
+                <line x1="0" y1="90.3" x2="103.3" y2="90.3" stroke="var(--text-3)" stroke-width="1" stroke-dasharray="4 4"/>
+                <line x1="103.3" y1="8" x2="103.3" y2="96" stroke="var(--text-3)" stroke-width="1"/>
+                <polyline class="line" points="0,92.5 24.6,90.3 54.1,86.7 78.7,83.2 103.3,79.4 152.5,72 201.6,59.8 250.8,40 300,8"/>
+                <text class="tick lg" x="103.3" y="85" text-anchor="end">FI number</text>
+                <circle cx="24.6" cy="90.3" r="4" fill="var(--pos)"/>
+                <text class="tick lg" x="0" y="110">34</text><text class="tick lg" x="107.3" y="110">stop 55</text><text class="tick lg" x="298" y="110" text-anchor="end">95</text>
               </svg>
-              <div class="btn-row" style="justify-content:space-between"><span class="xs t3">At a steady 5% after inflation</span><span class="why">Show as a table</span></div>
+              <div class="seg" role="radiogroup" aria-label="Range"><span>To 55</span><span class="on">Whole path</span></div>
+              <div class="xs t3">At a steady 5% a year after inflation. Real markets don’t move steadily; Drawdown shows how much that matters.</div>
+              <div class="xs t3">Your FI number leaves out Social Security from 67; this path counts it.</div>
+              <span class="why">Show as a table</span>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>Your figures</h2></div>
@@ -816,7 +819,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Home's FI line says the same words. The answer is on the page, not in a card, with how it is worked out in one line under it, said once (no Years to FI row); with no age typed, a ghost "Add your age" line under it asks for it, and What if… asks the same way before its choices. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
+        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Since P of the tax plan it opens on Whole path: the line runs on past the stop to the plan's end, drawing your spending, with the wash and the FI number over the saving years only, and "To 55" (your own stop age) shows the saving years alone; under it, what the FI number leaves out that the path counts. Once the stop has come, the chart is the drawdown from today, with no switch. Home's FI line says the same words. The answer is on the page, not in a card, with how it is worked out in one line under it, said once (no Years to FI row); with no age typed, a ghost "Add your age" line under it asks for it, and What if… asks the same way before its choices. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
       </figure>
 
       <figure class="shot">
@@ -904,12 +907,13 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="seg"><span>Your path</span><span class="on">Drawdown</span><span>Portfolio</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Your annual spending may be low: it is missing transactions that couldn't be read, and the simulation withdraws it (Your path says which).</span></div>
-            <div class="card">
-              <div class="card-header"><h2>Will it last?</h2><span class="meta">Historical cycles</span></div>
+            <div class="hero-page">
               <div><span class="badge warn">An input may be low</span></div>
-              <div class="hero money" style="font-size:30px">94%</div>
-              <div class="small muted">of 1871 to 1983 starts lasted 40 years from 55</div>
+              <div class="hero-label">Will it last?</div>
+              <div class="hero money">94%</div>
+              <div class="small muted">of 1,350 historical starts (Jan 1871 to Jun 1983) lasted 40 years, from 55</div>
               <div class="xs t3">Hypothetical, from US history: not a prediction, and not advice.</div>
+              <div class="notice info"><svg><use href="#i-info"/></svg><span>Starting from your FI number, <span class="money">$1,950,000</span>, not the <span class="money">$5,700,000</span> you’d have at 55.</span></div>
               <svg class="chart" viewBox="0 0 300 100" aria-hidden="true"><path d="M0,70 C80,60 160,40 300,10 L300,80 C160,90 80,88 0,78Z" fill="var(--data-tint)"/><path d="M0,74 C80,66 160,56 300,40" fill="none" stroke="var(--data)" stroke-width="2"/><line class="grid" x1="0" y1="96" x2="300" y2="96"/></svg>
               <span class="why">Worst starting years</span>
             </div>
@@ -920,7 +924,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>DRAWDOWN, IN A SCENARIO</b>The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. The grid by withdrawal rate and length is a card under it (scrolled past here). Assumptions is one row that opens the sheet holding every setting the plan uses, at Drawdown's part; About these numbers opens the full statement and the data, said once (built in 6d). Each card the notice is about has its badge. The back arrow returns to your plan; the scenario's card, with what it changes and Scenarios (3), sits under the bar above every segment (scrolled past here). When the spending or the invested assets the test uses may be low, the segment opens with one notice saying so (6c): Your path says it on the FI number and under the rows, and Portfolio's allocation reads holdings and says what it is short of itself.</figcaption>
+        <figcaption><b>DRAWDOWN, IN A SCENARIO</b>Will it last? is the segment's hero, on the page (since P of the tax plan): the rate at the hero size, one line naming the starts, their length and the start age, and no method meta. Under it, a note when it starts from other than what the steady path has at the stop (a caution, as before, when it starts with more). The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. The grid by withdrawal rate and length is a card under it (scrolled past here). Assumptions is one row that opens the sheet holding every setting the plan uses, at Drawdown's part; About these numbers opens the full statement and the data, said once (built in 6d). Each card the notice is about has its badge. The back arrow returns to your plan; the scenario's card, with what it changes and Scenarios (3), sits under the bar above every segment (scrolled past here). When the spending or the invested assets the test uses may be low, the segment opens with one notice saying so (6c): Your path says it on the FI number and under the rows, and Portfolio's allocation reads holdings and says what it is short of itself.</figcaption>
       </figure>
       <div class="note-box">
         <p><b>Left out of the first version, on purpose.</b> Actual history on the path chart (snapshots keep no daily invested total, and they are in nominal dollars while the plan is in today's), the stress band on the path, event pins, a year-by-year sheet, and an FI line that steps with lasting events. Each is in the ProjectionLab track in the master plan.</p>

@@ -9,6 +9,7 @@ import PlanGrid from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
 import { dayName, monthName, pct, progressText, successText, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
+import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { simulate, successGrid } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
@@ -471,14 +472,20 @@ describe('the simulation card', () => {
   });
 
   // Since rollout 6d its settings are the Assumptions sheet's (below), the
-  // full statement and the data are About these numbers', and the card
-  // keeps the short label and what it takes from Your path.
-  test('the success rate with its definition, the short label, the worst years, and its method named', () => {
+  // full statement and the data are About these numbers', and the answer
+  // keeps the short label and what it takes from Your path. Since the tax
+  // plan's P it is Drawdown's hero: the rate at the hero size, on the page,
+  // and the line under it names the method, which has no meta of its own.
+  test('the success rate as the hero, with what it counts from its start age, its definition, the short label and the worst years', () => {
     const html = render(plan({ targetAge: 65, horizon: 30 }), measured, {});
     const t = text(html);
-    expect(html).toContain('<h3>Will it last?</h3><span class="meta">Historical cycles</span>');
+    const r = simulate('historical', (enginePlan(plan({ targetAge: 65, horizon: 30 }), fiView(plan({ targetAge: 65, horizon: 30 }), measured)) as { sim: Parameters<typeof simulate>[1] }).sim, us);
+    expect(html.startsWith('<section class="stack hero drawdown-hero" aria-labelledby="plan-last-title"><div><h3 id="plan-last-title" class="total-label">Will it last?</h3>')).toBe(true);
+    expect(html).toContain(`<div class="total-value">${successText(r.successRate, 1)}</div>`);
+    expect(html).not.toContain('class="card');
+    expect(html).not.toContain('class="meta"');
     expect(t).toContain('Stop working at 65 with $1,000,000 (your FI number), withdrawing 4% of it, $40,000 a year after tax, your spending now, for 30 years (to age 95)');
-    expect(t).toMatch(/9\d\.\d% of 1,470 historical starts \(Jan 1871 to Jun 1993\) lasted 30 years/);
+    expect(t).toContain(`${successText(r.successRate, 1)} of ${r.paths.toLocaleString('en-US')} historical starts (${monthName(r.firstStart!)} to ${monthName(r.lastStart!)}) lasted 30 years, from 65`);
     expect(t).toContain("Success: the portfolio never ran out. Every year's withdrawal was paid in full for all 30 years.");
     expect(html).toContain('<p class="plan-definition">Hypothetical, from US history: not a prediction, and not advice.</p>');
     // Behind its disclosure.
@@ -518,17 +525,25 @@ describe('the simulation card', () => {
     expect(t).not.toMatch(/\b9\d(\.\d)?% of 1,470/);
   });
 
-  test('Monte Carlo says how it was made', () => {
+  test('Monte Carlo says how it was made, in the line under the rate', () => {
     const t = read(plan({ method: 'monte-carlo', horizon: 30 }));
-    expect(t).toContain('Will it last? Monte Carlo');
+    expect(t).not.toContain('Will it last? Monte Carlo');
     expect(t).toContain('of 5,000 Monte Carlo runs lasted 30 years');
     expect(t).not.toContain('Worst starting years');
   });
 
-  test('a flexible rule shows how far spending fell beside the success rate', () => {
-    const t = read(plan({ rule: 'guardrails', horizon: 30 }));
-    expect(t).toMatch(/\d+% of the first year's spending in the lowest year, in the worst start that lasted \(\w{3} \d{4}\): \$[\d,]+ against \$40,000/);
-    expect(t).toContain('This rule lasts by cutting spending when markets fall; the second figure is how far.');
+  // One figure at the hero size: how far a flexible rule cut spending is a
+  // row at the hero's foot, in words where no start lasted.
+  test('a flexible rule shows how far spending fell in a row under the answer', () => {
+    const html = render(plan({ rule: 'guardrails', horizon: 30 }));
+    const t = text(html);
+    expect(t).toMatch(/Lowest year \d+% of the first year's spending in the lowest year, in the worst start that lasted \(\w{3} \d{4}\): \$[\d,]+ against \$40,000/);
+    expect(html).toContain('<span class="plan-row-label">Lowest year</span>');
+    expect(html.match(/class="total-value/g)).toHaveLength(1);
+    expect(t).toContain('This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.');
+    const none = read(plan({ rule: 'floor-ceiling', withdrawalRate: 0.3, floor: 0.9, ceiling: 1.25, horizon: 30 }));
+    expect(none).toContain('Lowest year None lasted No start lasted, so there is no spending to compare.');
+    expect(none).not.toContain('--');
     expect(read(plan({ rule: 'percent', horizon: 30 }))).toContain('it cannot run out');
     expect(read(plan({ horizon: 30 }))).not.toContain("of the first year's spending in the lowest year");
   });
@@ -548,10 +563,18 @@ describe('the simulation card', () => {
     expect(html).toContain('plan-result plan-result-pending');
     expect(html).toContain('role="status">Working out the new answer');
     const start = html.indexOf('plan-result plan-result-pending');
-    expect(html.indexOf('plan-stat-value')).toBeGreaterThan(start);
+    expect(html.indexOf('Ending balance')).toBeGreaterThan(start);
     expect(html.indexOf('plan-assumptions')).toBeGreaterThan(start);
+    // The rate and its line, over the result, held hidden with it; one status.
+    expect(html).toContain('<section class="stack hero drawdown-hero drawdown-pending"');
+    expect(html.indexOf('drawdown-line')).toBeLessThan(start);
+    expect(html.match(/role="status"/g)).toHaveLength(1);
     expect(render(plan({ horizon: 30 }))).not.toContain('plan-result-pending');
-    expect(read(plan({ horizon: 30 }), measured, { noOutcome: true })).toContain('Working it out');
+    expect(render(plan({ horizon: 30 }))).not.toContain('drawdown-pending');
+    // The first: the rate's place at the hero size, and the status under it.
+    const first = render(plan({ horizon: 30 }), measured, { noOutcome: true });
+    expect(first).toContain('<div class="total-value"><span class="skeleton drawdown-skeleton-figure"></span></div><p class="helper" role="status">Working it out…</p>');
+    expect(first).not.toContain('drawdown-pending');
   });
 
   test('a simulation that could not be run says so and offers to try again; a refused plan says why', () => {
@@ -559,6 +582,7 @@ describe('the simulation card', () => {
     expect(t).toContain("The simulation couldn't be loaded. It needs a connection the first time it runs after an update.");
     // The figures that don't depend on it are on the other segments.
     expect(t).toContain("The figures on Your path and Portfolio don't depend on it.");
+    expect(t).toContain('Will it last? Not worked out');
     expect(t).toContain('Try again');
     expect(t).not.toContain("This plan can't be simulated");
     const refused = read(plan({ horizon: 30 }), measured, { outcome: { error: 'a plan runs 1 to 60 years' } });
@@ -587,7 +611,43 @@ describe('the simulation card', () => {
     expect(t).toContain('It starts with $1,000,000, your FI number at 45: it would never get that far (on Your path): it starts with money it wouldn’t have then, so it reads safer than it is.');
   });
 
-  test('explains what is missing instead of simulating nothing', () => {
+  // Drawdown's start line (the tax plan's P): what it starts from, against
+  // what the steady path has where Whole path starts drawing. A start with
+  // more keeps the caution it always had; the rest are notes.
+  test('the start line: a start with more keeps its caution; with less, once the stop has come, or from today’s assets either way, a note', () => {
+    const card = (p: FirePlan, m: Measured = measured) => {
+      const f = planFigures(p, m) as PlanFigures;
+      return { f, html: renderToStaticMarkup(<SimulationCard startsWith={f.startsWith} plan={f.plan} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={noop} />) };
+    };
+    // The FI number is $1,000,000: $40,000 at 4%.
+    const more = card(plan({ age: 40, targetAge: 45 }));
+    expect(more.html).toContain('<div class="notice caution">');
+    expect(text(more.html)).toContain(`It starts with $1,000,000, your FI number at 45: you’d have about ${money(more.f.startsWith!.projected!)} then`);
+    expect(text(more.html)).toContain('so it reads safer than it is.');
+    const less = card(plan({ age: 40, targetAge: 70 }));
+    expect(less.html).toContain('<div class="notice info">');
+    expect(text(less.html)).toContain(`Starting from your FI number, $1,000,000, not the ${money(less.f.startsWith!.projected!)} you’d have at 70.`);
+    const typed = card(plan({ age: 40, targetAge: 70, start: 'custom', startBalance: 900_000 }));
+    expect(text(typed.html)).toContain(`Starting from the balance you typed, $900,000, not the ${money(typed.f.startsWith!.projected!)} you’d have at 70.`);
+    // The stop has come: what you have today.
+    const past = card(plan({ age: 60, targetAge: 55 }), { ...measured, assets: 2_000_000 });
+    expect(text(past.html)).toContain('Starting from your FI number, $1,000,000, not the $2,000,000 you have today.');
+    // From today's assets before the stop, whichever way they differ.
+    const below = card(plan({ age: 40, targetAge: 50, start: 'assets' }));
+    expect(text(below.html)).toContain(`Starting today, at 40, from your invested assets, $250,000, not the ${money(below.f.view.atTargetAge!)} you’d have at 50.`);
+    const above = card(plan({ age: 40, targetAge: 50, start: 'assets' }), { ...measured, savings: -20_000 });
+    expect(above.f.view.atTargetAge!).toBeLessThan(250_000);
+    expect(text(above.html)).toContain(`Starting today, at 40, from your invested assets, $250,000, not the ${money(above.f.view.atTargetAge!)} you’d have at 50.`);
+    expect(above.html).not.toContain('notice caution');
+    // None where they are the same: today's assets once the stop has come,
+    // or a typed balance within 50 cents of the path's.
+    expect(card(plan({ age: 60, targetAge: 55, start: 'assets' })).html).not.toContain('class="notice');
+    expect(card(plan({ age: 40, targetAge: 70, start: 'custom', startBalance: Math.round(less.f.startsWith!.projected!) })).html).not.toContain('class="notice');
+  });
+
+  test('explains what is missing instead of simulating nothing, the answer in words', () => {
+    expect(render(plan(), { spending: null, savings: null, assets: null })).toContain('<div class="total-value plan-answer">Needs your annual spending</div><p class="helper">');
+    expect(render(plan({ start: 'custom' }))).toContain('<div class="total-value plan-answer">Needs a starting balance</div>');
     expect(read(plan(), { spending: null, savings: null, assets: null })).toContain('withdraws your annual spending, so it needs it');
     expect(read(plan({ start: 'assets' }), { spending: 40_000, savings: null, assets: null })).toContain('none to count yet');
   });

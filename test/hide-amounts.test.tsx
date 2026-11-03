@@ -1174,6 +1174,36 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       }}
     />
   ),
+  // Whole path (the tax plan's P): the years after the stop in its summary and
+  // table, the line under it, and the runs-out line.
+  'Plan: Your path’s chart, the whole path': () => (
+    <PlanPathChart
+      points={[
+        { age: 40, balance: 250_000 },
+        { age: 41, balance: 292_500 },
+        { age: 42, balance: 1_100_000 },
+      ]}
+      today={40}
+      stopAge={42}
+      fiNumber={1_000_000}
+      fiAge={41.8}
+      realReturn={0.05}
+      currency="USD"
+      after={{
+        points: [
+          { age: 42, balance: 1_100_000 },
+          { age: 43, balance: 640_000 },
+          { age: 44, balance: 160_000 },
+        ],
+        endAge: 46,
+        runsOutAt: 44,
+        leftOut: { items: [{ label: 'Social Security', age: 45, kind: 'income' }], events: true },
+        withEvents: true,
+      }}
+      range="whole"
+      onRange={() => {}}
+    />
+  ),
   // Since rollout phase 6b the scenarios are listed and compared in a sheet
   // (the Plan's bar, which opens it, has no amounts, and is left to the
   // source scans): a scenario's change, and Compare's figures beside your

@@ -637,19 +637,22 @@ export function BudgetsSkeleton({ segment = 'month' }: { segment?: BudgetsSegmen
  *  Your path, its shape since the screen review: the answer on the page (the
  *  hero, its label already there), its line and its chart, then Your
  *  figures' card, 16px apart as the loaded panel's are, so nothing moves as
- *  the plan arrives. With no segment, before the Plan has decided where it
- *  opens (on Drawdown once the stop age has come): the same shape, the
- *  common case, with no label, which would be one segment's words. */
+ *  the plan arrives. On Drawdown, the same since the tax plan's P: Will it
+ *  last? on the page, its rate at the hero size, then the grid's card. With
+ *  no segment, before the Plan has decided where it opens (on Drawdown once
+ *  the stop age has come): Your path's shape, the common case, with no
+ *  label, which would be one segment's words. */
 export function PlanPanelSkeleton({ segment = null }: { segment?: PlanSegment | null }) {
   useInStep();
-  if (segment === 'path' || segment === null) {
+  if (segment === 'path' || segment === 'drawdown' || segment === null) {
+    const drawdown = segment === 'drawdown';
     return (
       <div className="stack loose" aria-busy="true">
-        <section className="stack hero plan-hero" aria-hidden="true">
+        <section className={drawdown ? 'stack hero drawdown-hero' : 'stack hero plan-hero'} aria-hidden="true">
           <div>
-            <h3 className="total-label">{segment === 'path' ? 'Financial independence' : <span className="skeleton plan-skeleton-label" />}</h3>
-            <div className="total-value plan-answer">
-              <span className="skeleton plan-skeleton-answer" />
+            <h3 className="total-label">{segment === 'path' ? 'Financial independence' : drawdown ? 'Will it last?' : <span className="skeleton plan-skeleton-label" />}</h3>
+            <div className={drawdown ? 'total-value' : 'total-value plan-answer'}>
+              <span className={drawdown ? 'skeleton drawdown-skeleton-figure' : 'skeleton plan-skeleton-answer'} />
             </div>
             <div className="stack tight plan-answer-lines">
               <span className="skeleton home-skeleton-delta" />

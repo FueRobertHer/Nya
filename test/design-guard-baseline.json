@@ -99,7 +99,7 @@
     "inlineLayoutStyles": 6
   },
   "components/PlanTab.tsx": {
-    "inlineLayoutStyles": 4
+    "inlineLayoutStyles": 3
   },
   "components/ReviewSettingsCard.tsx": {
     "inlineLayoutStyles": 2

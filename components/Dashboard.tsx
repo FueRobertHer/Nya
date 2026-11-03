@@ -55,6 +55,7 @@ import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { unreadNotesOf } from '@/lib/fire/inputs';
+import type { PathRange } from '@/lib/fire/path';
 import { historyPausedSince } from '@/lib/history-status';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
 import DisconnectSplitsNote from './DisconnectSplitsNote';
@@ -338,6 +339,9 @@ export default function Dashboard({
   // And the Plan's, null until it has decided where it opens (Drawdown once
   // the stop age has come, components/PlanBar.tsx openingSegment).
   const [planSegment, setPlanSegment] = useState<PlanSegment | null>(null);
+  // And Your path's chart's range, so it comes back on it too (opening on
+  // Whole path, the tax plan's D13).
+  const [planRange, setPlanRange] = useState<PathRange>('whole');
   // The month Activity and Budgets show, shared between them and kept the
   // same way (components/view-month-state.ts); Home's links reset it.
   const viewMonth = useViewMonth();
@@ -2857,6 +2861,8 @@ export default function Dashboard({
                   balanceFx={base?.fx ?? null}
                   segment={planSegment}
                   onSegment={setPlanSegment}
+                  range={planRange}
+                  onRange={setPlanRange}
                   landing={planLanding}
                   onLanded={() => setPlanLanding(null)}
                   planInputs={planInputs}

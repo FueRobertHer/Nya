@@ -137,16 +137,20 @@ describe('Clerk’s form while it loads', () => {
 // Since the screen review the Plan's answer is on the page, not in a card:
 // Your path's skeleton is that shape too, so nothing moves as the plan comes.
 describe('Your path while the plan loads', () => {
-  test('the answer on the page, its label already there, then Your figures’ card, 16px apart; the other segments keep their card', () => {
+  test('the answer on the page, its label already there, then Your figures’ card, 16px apart; Drawdown’s answer on the page too, and Portfolio keeps its card', () => {
     const html = renderToStaticMarkup(<PlanPanelSkeleton segment="path" />);
     expect(html.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero plan-hero" aria-hidden="true"><div><h3 class="total-label">Financial independence</h3><div class="total-value plan-answer">')).toBe(true);
     expect(html.indexOf('plan-skeleton-chart')).toBeLessThan(html.indexOf('<section class="card stack"'));
     expect(renderToStaticMarkup(<PlanSkeleton segment="path" />)).toContain(html);
-    for (const segment of ['drawdown', 'portfolio'] as const) {
-      const other = renderToStaticMarkup(<PlanPanelSkeleton segment={segment} />);
-      expect(other.startsWith('<div aria-busy="true"><section class="card stack" aria-hidden="true">')).toBe(true);
-      expect(other).not.toContain('plan-hero');
-    }
+    // Drawdown's answer is on the page too since the tax plan's P: Will it
+    // last?, its rate at the hero size, then the grid's card.
+    const drawdown = renderToStaticMarkup(<PlanPanelSkeleton segment="drawdown" />);
+    expect(drawdown.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero drawdown-hero" aria-hidden="true"><div><h3 class="total-label">Will it last?</h3><div class="total-value"><span class="skeleton drawdown-skeleton-figure"></span></div>')).toBe(true);
+    expect(drawdown.indexOf('drawdown-hero')).toBeLessThan(drawdown.indexOf('<section class="card stack"'));
+    const other = renderToStaticMarkup(<PlanPanelSkeleton segment="portfolio" />);
+    expect(other.startsWith('<div aria-busy="true"><section class="card stack" aria-hidden="true">')).toBe(true);
+    expect(other).not.toContain('plan-hero');
+    expect(other).not.toContain('drawdown-hero');
   });
 
   test('before the Plan has decided where it opens: no segment selected, the first the tab stop, and the answer’s shape with no label, which would be one segment’s words', () => {

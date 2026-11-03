@@ -124,10 +124,10 @@ import type { LifeEvent } from '@/lib/fire/events';
 import { DraftPreview, WhatIfCard } from './PlanWhatIf';
 import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
 import { planSavers, type Save } from './plan-savers';
-import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
+import { currencyText, laterText, resolveErrorText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
 import { planFigures, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
-import { planPath, type PlanPath } from '@/lib/fire/path';
-import PlanPathChart from './PlanPathChart';
+import { planPath, type PathRange, type PlanPath } from '@/lib/fire/path';
+import PlanPathChart, { wholeShown } from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
 import {
   NO_ANSWER,
@@ -260,6 +260,10 @@ export type PlanTabProps = {
    *  null until one is shown, and left out, the tab keeps its own. */
   segment?: PlanSegment | null;
   onSegment?: (s: PlanSegment) => void;
+  /** Your path's chart's range, kept by the dashboard so it comes back on
+   *  it; left out, the tab keeps its own. Both open on Whole path. */
+  range?: PathRange;
+  onRange?: (r: PathRange) => void;
   /** When Home's FI line opened the tab (Date.now()): the bar's heading takes
    *  focus once, if that was under ten seconds ago. */
   landing?: number | null;
@@ -285,6 +289,8 @@ export default function PlanTab({
   balancesFailed = false,
   segment: segmentShown,
   onSegment,
+  range: rangeShown,
+  onRange,
   landing = null,
   onLanded,
   planInputs: sharedInputs,
@@ -374,6 +380,10 @@ export default function PlanTab({
   useEffect(() => {
     if (chosen === null && firstSegment !== null) chooseSegment(firstSegment);
   }, [chosen, firstSegment, chooseSegment]);
+  // Your path's range: to the stop, or the whole path (opening on it, D13).
+  const [ownRange, setOwnRange] = useState<PathRange>('whole');
+  const range = rangeShown ?? ownRange;
+  const chooseRange = onRange ?? setOwnRange;
 
   // The Plan's scenarios, and the one open, if any. None opens before the
   // Plan has loaded, or while a repair of it waits (one open closes): a
@@ -1309,6 +1319,8 @@ export default function PlanTab({
               }
               stopWalked={stopWalked}
               path={path}
+              range={range}
+              onRange={chooseRange}
               recorded={overlay}
               currency={displayCurrency}
               onAskAges={() => open({ kind: 'about' }, 'ask-about')}
@@ -1594,6 +1606,8 @@ export function FiCard({
   stopShort = null,
   stopWalked = false,
   path = null,
+  range,
+  onRange,
   recorded = null,
   currency = null,
   onAskAges,
@@ -1628,6 +1642,10 @@ export function FiCard({
   stopWalked?: boolean;
   /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
   path?: PlanPath | null;
+  /** The chart's range, and the switch between them (PlanPathChart); left
+   *  out, the chart runs to the stop with no switch. */
+  range?: PathRange;
+  onRange?: (r: PathRange) => void;
   /** What was recorded since the plan saved as your plan, and where it had
    *  you, drawn before today on the chart (rollout 8e). */
   recorded?: ProgressOverlay | null;
@@ -1799,7 +1817,7 @@ export function FiCard({
           <Masked>{n}</Masked>
         </div>
       ))}
-      {path && path.points.length >= 2 && plan.age !== null && plan.targetAge !== null && (
+      {path && (path.points.length >= 2 || wholeShown(path.points, path.after, range)) && plan.age !== null && plan.targetAge !== null && (
         <PlanPathChart
           points={path.points}
           today={plan.age}
@@ -1810,6 +1828,9 @@ export function FiCard({
           currency={currency}
           withEvents={path.fromWalk}
           recorded={recorded}
+          after={path.after}
+          range={range}
+          onRange={onRange}
         />
       )}
 
@@ -2086,6 +2107,19 @@ function missingText(missing: Missing, view: FiView): string {
   return MISSING_TEXT[missing];
 }
 
+// Will it last?'s answer in words, where it can't be worked out.
+const MISSING_FIGURE: Record<Missing, string> = {
+  spending: SPENDING_NEED,
+  assets: 'Needs your invested assets',
+  balance: 'Needs a starting balance',
+};
+
+/** Drawdown's hero (the tax plan's P, Fue's call 2026-11-01): Will it last?,
+ *  the success rate at the hero size, over what it counts and what it means;
+ *  then what it starts from, the setup it tests, and the result's chart, its
+ *  worst starts and its ending balances. Its settings are the Assumptions
+ *  row's, under the cards (rollout 6d): the line's "historical starts" or
+ *  "Monte Carlo runs" names the method, which is set there. */
 export function SimulationCard({
   scenarioName = null,
   startsWith = null,
@@ -2104,7 +2138,7 @@ export function SimulationCard({
   /** The open scenario's name, said at the top; null with the Plan open. */
   scenarioName?: string | null;
   /** What the plan starts with, and what it would have then
-   *  (lib/fire/plan-figures.ts): said when it starts with more. */
+   *  (lib/fire/plan-figures.ts): the start line under the answer. */
   startsWith?: StartsWith | null;
   /** The open scenario has life events, which are in the simulation too. */
   hasEvents?: boolean;
@@ -2116,50 +2150,53 @@ export function SimulationCard({
   engine: EnginePlan | { missing: Missing };
   /** The last answer, null before the first. */
   outcome: Outcome | null;
-  /** A new answer is being worked out: the last one is shown dimmed. */
+  /** A new answer is being worked out: the last one is held hidden. */
   pending: boolean;
   money: (n: number) => string;
   currency: string | null;
-  /** Drawdown's notice is about this card's inputs: its badge. */
+  /** Drawdown's notice is about this answer's inputs: its badge. */
   badge?: string | null;
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
 }) {
-  // Its settings are the Assumptions row's, under the cards (rollout 6d):
-  // the method is said here, and set there.
-  const header = (
-    <>
-      <ScenarioTag name={scenarioName} />
-      <div className="card-header">
-        <h3>Will it last?</h3>
-        <span className="meta">{METHOD_NAMES[plan.method]}</span>
-      </div>
-      {badge && (
-        <div className="plan-card-badge">
-          <span className="badge warn">{badge}</span>
-        </div>
-      )}
-    </>
+  // Over the label: an open scenario's tag, and the badge.
+  const top =
+    scenarioName || badge ? (
+      <>
+        <ScenarioTag name={scenarioName} />
+        {badge && (
+          <div className="plan-card-badge">
+            <span className="badge warn">{badge}</span>
+          </div>
+        )}
+      </>
+    ) : undefined;
+  const hero = (figure: React.ReactNode, figureClass: string | undefined, line: React.ReactNode, body: React.ReactNode) => (
+    <Hero id="plan-last-title" level={3} label="Will it last?" className={pending && outcome && 'result' in outcome ? 'drawdown-hero drawdown-pending' : 'drawdown-hero'} top={top} figure={figure} figureClass={figureClass} line={line}>
+      {body}
+    </Hero>
   );
   const retirementNote = retirementLine ? (
     <p className="panel-note">
       <Masked>{retirementLine}</Masked>
     </p>
   ) : null;
-  const startNote =
-    startsWith && startsWith.more ? (
-      <p className="panel-note plan-warning">
-        <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
-      </p>
-    ) : null;
+  // What it starts from, against what the steady path has where Whole path
+  // starts drawing: with more, the caution it always had (it reads safer
+  // than it is); with less, or from today's assets, a note.
+  const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: plan.targetAge, atStop: view.atTargetAge }) : null;
+  const startNote = startsWith?.more ? (
+    <Notice level="caution">
+      <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
+    </Notice>
+  ) : startLine ? (
+    <Notice level="info">
+      <Masked>{startLine}</Masked>
+    </Notice>
+  ) : null;
 
   if ('missing' in engine) {
-    return (
-      <div className="card">
-        {header}
-        <p className="empty-note">{missingText(engine.missing, view)}</p>
-      </div>
-    );
+    return hero(MISSING_FIGURE[engine.missing], 'plan-answer', <p className="helper">{missingText(engine.missing, view)}</p>, null);
   }
   const { sim, startAge, left, rate, rateFrom } = engine;
   const placedIncome = plan.income.filter((x) => !left.income.includes(x));
@@ -2184,41 +2221,46 @@ export function SimulationCard({
   } else {
     setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
   }
+  const setupNote = <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>;
 
   if (!outcome) {
-    return (
-      <div className="card">
-        {header}
-        <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>
-        {retirementNote}
+    return hero(
+      <span className="skeleton drawdown-skeleton-figure" />,
+      undefined,
+      <p className="helper" role="status">
+        Working it out…
+      </p>,
+      <>
         {startNote}
-        <div className="plan-working" role="status">
-          Working it out…
-        </div>
-      </div>
+        {setupNote}
+        {retirementNote}
+      </>
     );
   }
   if ('error' in outcome) {
-    return (
-      <div className="card">
-        {header}
-        <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>
-        {retirementNote}
+    return hero(
+      'Not worked out',
+      'plan-answer',
+      outcome.unavailable ? (
+        <p className="helper">
+          The simulation couldn&apos;t be loaded. It needs a connection the first time it runs after an update. The figures on Your path and Portfolio don&apos;t
+          depend on it.
+        </p>
+      ) : (
+        <p className="helper">This plan can&apos;t be simulated: {outcome.error}.</p>
+      ),
+      <>
         {startNote}
-        {outcome.unavailable ? (
-          <>
-            <p className="empty-note">
-              The simulation couldn&apos;t be loaded. It needs a connection the first time it runs after an update. The figures
-              on Your path and Portfolio don&apos;t depend on it.
-            </p>
-            <button className="secondary" style={{ marginTop: 12 }} onClick={onRetry}>
+        {setupNote}
+        {retirementNote}
+        {outcome.unavailable && (
+          <div>
+            <button type="button" className="btn secondary" onClick={onRetry}>
               Try again
             </button>
-          </>
-        ) : (
-          <p className="empty-note">This plan can&apos;t be simulated: {outcome.error}.</p>
+          </div>
         )}
-      </div>
+      </>
     );
   }
   const r = outcome.result;
@@ -2226,12 +2268,24 @@ export function SimulationCard({
   const nouns = r.method === 'historical' ? 'historical starts' : 'Monte Carlo runs';
   const lowShare = r.lowestSpending && r.firstYearSpending > 0 ? r.lowestSpending.amount / r.firstYearSpending : null;
 
-  return (
-    <div className="card">
-      {header}
-      <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>
-        {retirementNote}
-        {startNote}
+  return hero(
+    successText(r.successRate, 1),
+    undefined,
+    // While a new answer is worked out, held hidden with the result under
+    // it (.drawdown-pending): it read the last result's starts with the new
+    // length.
+    <div className="stack tight plan-answer-lines drawdown-line">
+      <p className="helper">{`of ${plainNumber(r.paths)} ${nouns}${r.firstStart && r.lastStart ? ` (${monthName(r.firstStart)} to ${monthName(r.lastStart)})` : ''} lasted ${sim.years} years${startAge !== null ? `, from ${startAge}` : ''}`}</p>
+      <p className="plan-definition">
+        {successDefinition(sim.years)}
+        {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
+      </p>
+      <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
+    </div>,
+    <>
+      {startNote}
+      {setupNote}
+      {retirementNote}
 
       {/* While a new answer is worked out, the last one keeps its place but
           is hidden: it answered other assumptions than the ones above. */}
@@ -2246,41 +2300,8 @@ export function SimulationCard({
             Its first year spends <Masked>{money(r.firstYearSpending)}</Masked> after tax, against the <Masked>{money(spendingNow)}</Masked> you spend now.
           </p>
         )}
-        <div className="plan-stats">
-          <div className="plan-stat">
-            <span className="plan-stat-value">{successText(r.successRate, 1)}</span>
-            <span className="plan-stat-label">
-              of {plainNumber(r.paths)} {nouns}
-              {r.firstStart && r.lastStart ? ` (${monthName(r.firstStart)} to ${monthName(r.lastStart)})` : ''} lasted {sim.years} years
-            </span>
-          </div>
-          {flexible && (
-            <div className="plan-stat">
-              <span className="plan-stat-value">{lowShare === null ? '--' : successText(lowShare)}</span>
-              <span className="plan-stat-label">
-                <Masked>
-                  {lowShare === null
-                    ? 'no start lasted, so there is no spending to compare'
-                    : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}`}
-                </Masked>
-              </span>
-            </div>
-          )}
-        </div>
-        <p className="plan-definition">
-          {successDefinition(sim.years)}
-          {flexible ? ' This rule lasts by cutting spending when markets fall; the second figure is how far.' : ''}
-        </p>
-        <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
 
         <PlanFanChart bands={r.balance} startAge={startAge} currency={currency} />
-        <div className="as-of">
-          Ending balance: <Masked>{money(r.ending.p10)}</Masked> (10th percentile), <Masked>{money(r.ending.p50)}</Masked> (median), <Masked>{money(r.ending.p90)}</Masked> (90th).
-        </div>
-
-        {canRunOut(plan.rule) === false && r.successRate === 1 && (
-          <p className="panel-note">This rule only ever withdraws a share of what is there, so it cannot run out; how far spending falls is the risk to watch.</p>
-        )}
 
         {r.method === 'historical' && r.worst.length > 0 && (
           <Why label="Worst starting years">
@@ -2301,28 +2322,52 @@ export function SimulationCard({
           </Why>
         )}
 
+        <div className="as-of">
+          Ending balance: <Masked>{money(r.ending.p10)}</Masked> (10th percentile), <Masked>{money(r.ending.p50)}</Masked> (median), <Masked>{money(r.ending.p90)}</Masked> (90th).
+        </div>
+
+        {canRunOut(plan.rule) === false && r.successRate === 1 && (
+          <p className="panel-note">This rule only ever withdraws a share of what is there, so it cannot run out; how far spending falls is the risk to watch.</p>
+        )}
+
+        {/* How far a flexible rule cut spending: a row at the hero's foot,
+            in words where no start lasted (one figure at the hero size). */}
+        {flexible && (
+          <div className="plan-rows">
+            <Row
+              label="Lowest year"
+              value={lowShare === null ? 'None lasted' : successText(lowShare)}
+              note={
+                lowShare === null
+                  ? `No ${r.method === 'historical' ? 'start' : 'run'} lasted, so there is no spending to compare.`
+                  : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}`
+              }
+            />
+          </div>
+        )}
+
         {/* Its settings are in the Assumptions sheet (rollout 6d); what it
             takes from Your path is said here. */}
         {(placedIncome.length > 0 || placedExpenses.length > 0 || hasEvents) && (
           <>
             <h4 className="plan-heading">From Your path</h4>
             <ul className="plan-assumptions">
-          {placedIncome.map((x) => (
-            <li key={x.id}>
-              {x.label}: <Masked>{money(x.amount)}</Masked> a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
-            </li>
-          ))}
-          {placedExpenses.map((x) => (
-            <li key={x.id}>
-              {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
-            </li>
-          ))}
-          {hasEvents && <li>This scenario’s life events, from the stop age on, as the Life events card on Your path says.</li>}
+              {placedIncome.map((x) => (
+                <li key={x.id}>
+                  {x.label}: <Masked>{money(x.amount)}</Masked> a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
+                </li>
+              ))}
+              {placedExpenses.map((x) => (
+                <li key={x.id}>
+                  {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
+                </li>
+              ))}
+              {hasEvents && <li>This scenario’s life events, from the stop age on, as the Life events card on Your path says.</li>}
             </ul>
           </>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
