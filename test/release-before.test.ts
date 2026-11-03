@@ -137,6 +137,23 @@ describe('the release before’s own code', () => {
       'export.ts': '5906750754885798848a4dff583f00219bacb519',
       'restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
       'key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
+      // The plan's readers and arithmetic as at 5d366bd0, where E1 began
+      // (test/release-before-plan.test.ts; fire/inputs.ts is a type stub).
+      'fire/plan.ts': '77d77ae84e01d143a866b7a8831bc0304c9bf220',
+      'fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
+      'fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
+      'fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
+      'fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
+      'fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
+      'fire/events.ts': '9e334a6c3967f4a3e5390b2315b39d6a5bf8daff',
+      'fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
+      'fire/saved-plan.ts': 'd920ab9d4e4b8a266a600a3575945ba9e391a0e9',
+      'fire/plan-currency.ts': 'e9829d2c641a036f1a04a6dd146e3628aff814db',
+      'fire/plan-figures.ts': 'd3f8fb004fcd0c6af9ba720e283c844c4e179121',
+      'fire/path.ts': '3bfa79634c981f2e3dda76a77d8bc4a230a05ace',
+      'manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
+      'format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
+      'local-date.ts': '23883717b80397910e368084e865ca84f367f988',
     };
     for (const [file, blob] of Object.entries(blobs)) {
       const bytes = readFileSync(join(import.meta.dir, 'fixtures', 'release-before', file));
