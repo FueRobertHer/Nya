@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type, outline, fakeClock, FakeElement, FakeEvent } from './mini-dom';
+import { figuresOf, OFF } from './plan-gen';
 
 // The Scenarios sheet (components/PlanScenarios.tsx ScenariosSheet, rollout
 // phase 6b), used as a person would (react-dom/client over test/mini-dom.ts),
@@ -39,7 +40,7 @@ type SimResult = import('@/lib/fire/simulate').SimResult;
 
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
 const MEASURED = { spending: 40_000, savings: 30_000, assets: 300_000 };
-const FIGURES = planFigures(PLAN, MEASURED, []) as PlanFigures;
+const FIGURES = figuresOf(PLAN, MEASURED) as PlanFigures;
 const money = (n: number) => wholeMoney(n, 'USD');
 const entry = (id: string, name: string, over: Partial<Entry> = {}): Entry => ({
   id,
@@ -134,6 +135,7 @@ async function mount(fetcher: ReturnType<typeof store>['fetcher'], { openId = nu
           Scenarios
         </button>
         <ScenariosSheet
+        count={OFF}
         open={open}
         onClose={() => {
           said.push('close');

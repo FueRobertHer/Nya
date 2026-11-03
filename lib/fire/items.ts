@@ -103,6 +103,9 @@ export const ITEM_LIMITS = {
 export const INCOME_KINDS: readonly ItemKind[] = ['social-security', 'pension', 'part-time', 'other-income'];
 /** Kinds that happen at `from` (a repeat aside): they have no end to anchor on. */
 export const ONCE_KINDS: readonly ItemKind[] = ['car', 'windfall', 'one-off'];
+/** A plan's one-offs and income: what D15 adds to the walk (the flag
+ *  'plan-items-in-fi'); no life event upgrades to one of them. */
+export const MONEY_KINDS: readonly ItemKind[] = ['one-off', 'other-income', 'social-security', 'pension'];
 
 type Field = 'until' | 'once' | 'yearly' | 'replaces' | 'every' | 'times' | 'inflationAdjusted' | 'owner' | 'beforeTax';
 

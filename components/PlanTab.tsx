@@ -100,21 +100,23 @@ import type { AllocHolding, PlanMix } from '@/lib/allocation/allocation';
 import {
   DEFAULT_PLAN,
   formulasTake,
-  isFirePlan,
-  repairPlan,
   type EnginePlan,
   type FirePlan,
   type FiView,
   type Missing,
+  type PlanCore,
   type Repair,
   type PlanExpense,
   type PlanIncome,
 } from '@/lib/fire/plan';
+import { basePlanOf, isStoredPlan, planOf, toStored, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
+import { eventItems, expensesOf, incomeOf } from '@/lib/fire/items';
+import type { Count, ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
 import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
-import { ScenarioCard, ScenariosSheet, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
+import { ScenarioCard, ScenariosSheet, NEWER_TEXT, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
 import PlanBar, { openingSegment, planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
@@ -272,6 +274,9 @@ export type PlanTabProps = {
   /** The copy of the Plan's inputs the tab shares with Home's FI line
    *  (components/Dashboard.tsx); left out, the tab keeps its own. */
   planInputs?: PlanInputsStore;
+  /** D15's switch (the flag 'plan-items-in-fi'): the plan's one-offs and
+   *  income count in the walk to its FI date. */
+  planInWalk?: boolean;
 };
 
 export default function PlanTab({
@@ -294,13 +299,15 @@ export default function PlanTab({
   landing = null,
   onLanded,
   planInputs: sharedInputs,
+  planInWalk = false,
 }: PlanTabProps) {
-  const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
+  const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
+  const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
   // The plan as the server last confirmed it, and the currency its typed
   // figures are in as the route answered with it (lib/fire/plan-currency.ts):
   // never the plan a save has yet to write, which the store shows at once.
   // And the currency each save sends (set below, once the tab knows it).
-  const [confirmed, setConfirmed] = useState<{ plan: FirePlan | null; answer: CurrencyAnswer }>({ plan: null, answer: NO_ANSWER });
+  const [confirmed, setConfirmed] = useState<{ plan: StoredPlan | null; answer: CurrencyAnswer }>({ plan: null, answer: NO_ANSWER });
   const sendCurrency = useRef<string | null>(null);
   // The plan loads through the shared copy, for the workplace plans shown
   // now; the store below is made once, so both are read through refs.
@@ -311,19 +318,19 @@ export default function PlanTab({
   plansRef.current = workplacePlansOf(institutions).map(planId);
   const store = useMemo(
     () =>
-      createWholeListStore<FirePlan | null>({
+      createWholeListStore<StoredPlan | null>({
         url: '/api/fire-plan',
         field: 'plan',
         noun: 'plan assumptions',
         empty: null,
-        isValid: (v): v is FirePlan | null => v === null || isFirePlan(v),
+        isValid: (v): v is StoredPlan | null => v === null || isStoredPlan(v),
         onChange: setState,
         reloadHint: 'use Try again below',
         // A save refused for what is stored now (its currency changed on
         // another device, say) says why.
         showRefusal: true,
         extra: () => ({ currency: sendCurrency.current }),
-        onAnswer: (data) => setConfirmed({ plan: isFirePlan(data.plan) ? data.plan : null, answer: readCurrencyAnswer(data) }),
+        onAnswer: (data) => setConfirmed({ plan: isStoredPlan(data.plan) ? data.plan : null, answer: readCurrencyAnswer(data) }),
         // Always asked for: nothing refuses a save made from a plan another
         // device changed since, so the tab never edits from a kept copy.
         read: () => inputsRef.current.load(plansRef.current, { force: true }),
@@ -355,10 +362,19 @@ export default function PlanTab({
   // was saved, say): the tab works from a repaired copy, says what changed,
   // and offers to save it; saving any change saves it too. Nothing here ever
   // computes with a value outside what the formulas take.
-  const stored = state.value ?? DEFAULT_PLAN;
-  const repair = useMemo(() => repairPlan(stored), [stored]);
+  // A version 1 plan is repaired by today's repair and held as version 2 in
+  // memory (lib/fire/plan-v2.ts basePlanOf); each save sends version 1.
+  const stored: StoredPlan = state.value ?? DEFAULT_PLAN;
+  const repair = useMemo(() => basePlanOf(stored), [stored]);
   /** The Plan as the tab shows it: the repaired one while a repair waits. */
   const basePlan = repair.plan;
+  /** The Plan in version 1, which scenarios are kept against
+   *  (lib/fire/scenarios.ts); null for a plan only a newer version of Nya
+   *  saves, which runs none. */
+  const scenarioBase = useMemo(() => {
+    const r = toStored(basePlan, 1);
+    return 'plan' in r ? r.plan : null;
+  }, [basePlan]);
   // While a repair waits, nothing but "Save it this way" saves: a save from
   // anywhere else would commit it unseen, dropping what it leaves out.
   const repairing = repair.fixed.length > 0;
@@ -395,7 +411,7 @@ export default function PlanTab({
   }, [scenarios]);
   const [openId, setOpenId] = useState<string | null>(null);
   const planLoaded = state.status === 'ready';
-  const canOpen = planLoaded && !repairing;
+  const canOpen = planLoaded && !repairing && scenarioBase !== null;
   const entry = openId !== null && canOpen ? (scenState.list.find((s) => s.id === openId) ?? null) : null;
   useEffect(() => {
     if (openId === null) return;
@@ -578,19 +594,23 @@ export default function PlanTab({
   }, [currencyMode.kind]);
   // Every save of the Plan itself, through its store, with the currency its
   // figures are in: never a first typed amount without one.
-  const savePlanIn = async (next: FirePlan): Promise<boolean | string> => {
-    if (sendCurrency.current === null && currencyState.kind === 'follows' && hasTypedAmounts(next)) {
+  const savePlanIn = async (next: FirePlanV2): Promise<boolean | string> => {
+    // Sent as version 1, what this release saves; what only version 2
+    // holds is refused here, with why.
+    const sent = toStored(next, 1);
+    if ('error' in sent) return sent.error;
+    if (sendCurrency.current === null && currencyState.kind === 'follows' && hasTypedAmounts(sent.plan)) {
       return waitingOnAccounts
         ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
         : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.';
     }
-    return store.save(next);
+    return store.save(sent.plan);
   };
 
   const measured = measuredInputs(inputs);
-  // The Plan's figures by the same function a scenario's come from: with no
-  // life events, fiView and enginePlan exactly (lib/fire/plan-figures.ts).
-  const baseFigures = planFigures(basePlan, measured) as PlanFigures;
+  // The Plan's figures by the same function a scenario's come from
+  // (lib/fire/plan-figures.ts).
+  const baseFigures = planFigures(basePlan, measured, { count }) as PlanFigures;
   // Plan amounts are in the Plan's own currency, the one its figures were
   // typed in, once recorded; otherwise the accounts' own, or the
   // transactions' (lib/fire/plan-currency.ts).
@@ -611,12 +631,12 @@ export default function PlanTab({
   // one of the Plan's rules now (then only why is shown, nothing worked out).
   const planCurrency = figures.currency;
   const other = entry ? otherCurrency(entry, planCurrency) : null;
-  const resolved = entry ? resolveScenario(basePlan, entry) : null;
-  const openFigures = entry && resolved?.ok && !other ? planFigures(resolved.plan, measured, entry.events) : null;
+  const resolved = entry && scenarioBase ? resolveScenario(scenarioBase, entry) : null;
+  const openFigures = entry && resolved?.ok && !other ? planFigures(planOf(resolved.plan), measured, { events: eventItems(entry.events), count }) : null;
   const shown: PlanFigures | null = entry ? (openFigures && !('refused' in openFigures) ? openFigures : null) : baseFigures;
   const problem =
     entry && resolved && !resolved.ok
-      ? { text: resolveErrorText(resolved.field, resolved.error, basePlan, entry), field: resolved.field }
+      ? { text: resolveErrorText(resolved.field, resolved.error, scenarioBase as FirePlan, entry), field: resolved.field }
       : openFigures && 'refused' in openFigures
         ? { text: REFUSED_TEXT, field: null }
         : null;
@@ -838,7 +858,8 @@ export default function PlanTab({
   // currency its amounts are in (the Plan's when this is its first).
   const persistIn = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<true | { error: string; stale: boolean }> => {
     if (!entry) return { error: 'It wasn’t saved. Try again in a moment.', stale: false };
-    const kept = pruneMoot(basePlan, changes);
+    if (!scenarioBase) return { error: NEWER_TEXT, stale: false };
+    const kept = pruneMoot(scenarioBase, changes);
     const draft: ScenarioDraft = { name: entry.name, currency: currencyNow !== undefined ? currencyNow : currencyFor(entry, kept, planCurrency), ...kept };
     if (hasAmounts(draft) && draft.currency === null) return { error: 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.', stale: false };
     const r = await scenarios.save(entry.id, draft, entry.rev);
@@ -863,14 +884,17 @@ export default function PlanTab({
   const saveToScenario: Save | null = entry
     ? async (next) => {
         if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
-        const r = recordSave(basePlan, entry, next);
+        if (!scenarioBase) return NEWER_TEXT;
+        const sent = toStored(next, 1);
+        if ('error' in sent) return sent.error;
+        const r = recordSave(scenarioBase, entry, sent.plan);
         if ('error' in r) return r.error;
         return persist(r.ok);
       }
     : null;
   // Every save the tab makes, from one place (components/plan-savers.ts).
   const savers = planSavers({ scenario: saveToScenario, savePlan: savePlanIn, repaired: repairing ? repair.plan : null });
-  const formPlan = entry ? applyScenario(basePlan, entry).plan : basePlan;
+  const formPlan = entry && scenarioBase ? planOf(applyScenario(scenarioBase, entry).plan) : basePlan;
   const saversRef = useRef(savers);
   saversRef.current = savers;
   // Bound when the drawer opened: refused once the plan shown isn't the one
@@ -941,7 +965,8 @@ export default function PlanTab({
   // its event moves the scenario's FI age as it is now. On a refused one
   // there is nothing to move from, so its fix says what the event makes of
   // it: still not worked out, or the FI age it comes to.
-  const lifeEvents = entry
+  const lifeEvents =
+    entry && scenarioBase
     ? {
         scenarioName: entry.name,
         version: shownFor ?? '',
@@ -949,7 +974,7 @@ export default function PlanTab({
         editable: editable && !other,
         onSave: (events: LifeEvent[]) => persist({ ...changesOf(entry), events }),
         preview: (checked: Checked, kind: LifeEvent['kind']) => (
-          <DraftPreview checked={checked} kind={kind} base={basePlan} measured={measured} changes={changesOf(entry)} against={shown} where="scenario" money={money} />
+          <DraftPreview checked={checked} kind={kind} base={scenarioBase} measured={measured} count={count} changes={changesOf(entry)} against={shown} where="scenario" money={money} />
         ),
       }
     : null;
@@ -1115,7 +1140,7 @@ export default function PlanTab({
           : reliably.why === 'loading' || reliably.why === 'failed' || reliably.why === 'problem' || reliably.why === 'empty-balance'
             ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
             : 'Your plan’s currency can’t be told from your accounts: say which you’ll type your plan’s figures in first (above), and this is offered then.';
-  const changes = entry ? scenarioChanges(basePlan, entry) : [];
+  const changes = entry && scenarioBase ? scenarioChanges(scenarioBase, entry) : [];
   const scenarioMarks = entry
     ? {
         name: entry.name,
@@ -1123,7 +1148,8 @@ export default function PlanTab({
         added: new Set(changes.flatMap((c) => (c.kind === 'added' ? [c.item.id] : []))),
         leftOut: changes.flatMap((c) => (c.kind === 'left-out' ? [{ list: c.list, item: c.item }] : [])),
         onRestore: async (list: 'income' | 'expenses', id: string) => {
-          const r = restoreItem(basePlan, entry, list, id);
+          if (!scenarioBase) return NEWER_TEXT;
+          const r = restoreItem(scenarioBase, entry, list, id);
           return 'error' in r ? r.error : persistHere(r.ok);
         },
       }
@@ -1149,9 +1175,10 @@ export default function PlanTab({
       onLeave={leave}
       state={scenState}
       client={scenarios}
-      base={basePlan}
+      base={scenarioBase}
       baseFigures={baseFigures}
       measured={measured}
+      count={count}
       planCurrency={planCurrency}
       planCurrencyKnown={currencyKnown}
       canOpen={canOpen}
@@ -1163,7 +1190,9 @@ export default function PlanTab({
             ? 'Your plan is still loading: scenarios open, and are compared, once it has.'
             : repairing
               ? 'Your saved plan has values to fix first (at the top of the Plan tab): scenarios open once it is saved.'
-              : null
+              : scenarioBase === null
+                ? NEWER_TEXT
+                : null
       }
       openId={entry ? entry.id : null}
       onOpen={openScenario}
@@ -1179,10 +1208,10 @@ export default function PlanTab({
   // Lasting changes below zero: nothing is worked out, and the life events
   // are what to change, so they stay with the card, on every segment.
   const refused = !!openFigures && 'refused' in openFigures;
-  const scenarioCard = entry && (
+  const scenarioCard = entry && scenarioBase && (
     <ScenarioCard
       entry={entry}
-      base={basePlan}
+      base={scenarioBase}
       problem={problem}
       other={other}
       planCurrency={planCurrency}
@@ -1354,12 +1383,13 @@ export default function PlanTab({
 
             {/* Only over your saved plan, never the defaults; the card is
                 drawn with your plan shown, and its sheet stays mounted. */}
-            {planLoaded && (
+            {planLoaded && scenarioBase && (
               <WhatIfCard
                 shown={!entry}
-                base={basePlan}
+                base={scenarioBase}
                 baseFigures={baseFigures}
                 measured={measured}
+                count={count}
                 state={scenState}
                 client={scenarios}
                 planCurrency={planCurrency}
@@ -1375,7 +1405,7 @@ export default function PlanTab({
               />
             )}
 
-            <EventsCard plan={plan} engine={engine} money={money} editable={editable} open={open} scenario={scenarioMarks} />
+            <EventsCard plan={plan} engine={engine} notes={shown?.itemNotes ?? []} money={money} editable={editable} open={open} scenario={scenarioMarks} />
           </>
         )}
         {/* Progress against the plan saved as your plan (rollout 8e): the
@@ -1400,6 +1430,7 @@ export default function PlanTab({
               hasEvents={!!entry && entry.events.length > 0}
               retirementLine={shown?.retirement && view.spending.value !== null ? `Spending in retirement: ${retirementText(shown.retirement.spending, shown.retirement.lasting, view.spending.value, money)}.` : null}
               plan={plan}
+              notes={shown?.itemNotes ?? []}
               view={shown?.retirement ? { ...view, spending: { ...view.spending, value: shown.retirement.spending } } : view}
               engine={engine}
               outcome={outcome}
@@ -1657,7 +1688,7 @@ export function FiCard({
   askRef?: (el: HTMLElement | null) => void;
   /** The plan is being read again: the ask does nothing meanwhile. */
   held?: boolean;
-  plan: FirePlan;
+  plan: PlanCore;
   view: FiView;
   /** Institutions whose transactions couldn't all be read. */
   unread: UnreadTransactions[];
@@ -1907,7 +1938,7 @@ export function StressRows({
   onOpen,
   rowRef,
 }: {
-  plan: FirePlan;
+  plan: PlanCore;
   held?: boolean;
   onOpen: (kind: 'stress-assumptions' | 'numbers') => void;
   rowRef?: (kind: RowKind, el: HTMLElement | null) => void;
@@ -2126,6 +2157,7 @@ export function SimulationCard({
   hasEvents = false,
   retirementLine = null,
   plan,
+  notes,
   view,
   engine,
   outcome,
@@ -2145,7 +2177,9 @@ export function SimulationCard({
   /** Spending in retirement with a scenario's lasting changes, in words:
    *  what the simulation withdraws in place of what is spent now. */
   retirementLine?: string | null;
-  plan: FirePlan;
+  plan: FirePlanV2;
+  /** The plan's items' notes (lib/fire/plan-figures.ts itemNotes). */
+  notes: readonly ItemNote[];
   view: FiView;
   engine: EnginePlan | { missing: Missing };
   /** The last answer, null before the first. */
@@ -2198,9 +2232,12 @@ export function SimulationCard({
   if ('missing' in engine) {
     return hero(MISSING_FIGURE[engine.missing], 'plan-answer', <p className="helper">{missingText(engine.missing, view)}</p>, null);
   }
-  const { sim, startAge, left, rate, rateFrom } = engine;
-  const placedIncome = plan.income.filter((x) => !left.income.includes(x));
-  const placedExpenses = plan.expenses.filter((x) => !left.expenses.includes(x) && !engine.beyond.includes(x));
+  const { sim, startAge, rate, rateFrom } = engine;
+  // Placed by the compile (lib/fire/compile.ts): not one left out for want
+  // of an age or before the start, nor a one-off after the plan's end.
+  const unplaced = new Set(notes.filter((n) => n.part === 'no-age' || n.part === 'before-start' || n.part === 'after-end').map((n) => n.id));
+  const placedIncome = incomeOf(plan).filter((x) => !unplaced.has(x.id));
+  const placedExpenses = expensesOf(plan).filter((x) => !unplaced.has(x.id));
   const startLabel = plan.start === 'fi-number' ? 'your FI number' : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;
@@ -2397,7 +2434,7 @@ export function GridCard({
    *  last?" above it says so (simulationAnswered), so one view says it once. */
   sayHypothetical?: boolean;
   scenarioName?: string | null;
-  plan: FirePlan;
+  plan: PlanCore;
   cells: GridCell[] | null;
   /** Cells that couldn't be worked out, and whether that was because the
    *  simulation couldn't be loaded. */
@@ -2490,13 +2527,16 @@ export type ScenarioMarks = {
 export function EventsCard({
   plan,
   engine,
+  notes,
   money,
   editable,
   open,
   scenario = null,
 }: {
-  plan: FirePlan;
+  plan: FirePlanV2;
   engine: EnginePlan | { missing: Missing };
+  /** The plan's items' notes (lib/fire/plan-figures.ts itemNotes). */
+  notes: readonly ItemNote[];
   money: (n: number) => string;
   editable: boolean;
   open: (s: SheetState) => void;
@@ -2504,15 +2544,17 @@ export function EventsCard({
 }) {
   const [restoreError, setRestoreError] = useState('');
   const mark = (id: string) => (scenario?.replaced.has(id) ? ' Changed in this scenario.' : scenario?.added.has(id) ? ' Added in this scenario.' : '');
-  const left = 'left' in engine ? engine.left : { income: [], expenses: [] };
-  const leftOut = new Set([...left.income.map((x) => x.id), ...left.expenses.map((x) => x.id)]);
-  const beyond = new Set(('beyond' in engine ? engine.beyond : []).map((x) => x.id));
+  const ids = (...parts: string[]) => new Set(notes.filter((n) => parts.includes(n.part)).map((n) => n.id));
+  const leftOut = ids('no-age', 'before-start');
+  const beyond = ids('after-end');
+  const income = incomeOf(plan);
+  const expenses = expensesOf(plan);
   const end = 'sim' in engine && engine.startAge !== null ? engine.startAge + engine.sim.years : null;
   // Where these count: in the simulation, from the age it starts at (your
   // stop age, or today's when it starts from what you have now), never in
   // the FI walk (lib/fire/plan.ts enginePlan), unlike a life event.
   const start = 'sim' in engine ? engine.startAge : null;
-  const any = plan.income.length > 0 || plan.expenses.length > 0;
+  const any = income.length > 0 || expenses.length > 0;
   return (
     <div className="card">
       <ScenarioTag name={scenario?.name} />
@@ -2522,7 +2564,7 @@ export function EventsCard({
       {!any && <p className="empty-note">Add Social Security, a pension, or a big one-off cost such as a roof, to see how it changes the plan.</p>}
       {any && start !== null && <p className="helper">They count in Will it last? from age {start}, where it starts, never in your FI date or FI number.</p>}
       <div className="plan-rows">
-        {plan.income.map((x) => (
+        {income.map((x) => (
           <Row
             key={x.id}
             label={x.label}
@@ -2531,7 +2573,7 @@ export function EventsCard({
             action={<EditButton onClick={() => open({ kind: 'income', item: x })} disabled={!editable} label={`Edit ${x.label}`} />}
           />
         ))}
-        {plan.expenses.map((x) => (
+        {expenses.map((x) => (
           <Row
             key={x.id}
             label={x.label}
@@ -2578,10 +2620,10 @@ export function EventsCard({
         </Notice>
       )}
       <div className="card-actions">
-        <button className="secondary" onClick={() => open({ kind: 'income', item: null })} disabled={!editable || plan.income.length >= 5}>
+        <button className="secondary" onClick={() => open({ kind: 'income', item: null })} disabled={!editable || income.length >= 5}>
           Add income
         </button>
-        <button className="secondary" onClick={() => open({ kind: 'expense', item: null })} disabled={!editable || plan.expenses.length >= 10}>
+        <button className="secondary" onClick={() => open({ kind: 'expense', item: null })} disabled={!editable || expenses.length >= 10}>
           Add a one-off
         </button>
       </div>

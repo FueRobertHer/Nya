@@ -67,6 +67,9 @@ const SHARED = V2_KEYS.filter((k) => k !== 'version' && k !== 'items' && k !== '
  *  version 1 only when every item is one of its incomes or one-offs, within
  *  its counts, with no partner, the stop at an age and the FI number worked
  *  out. Each list keeps its items' order. */
+export function toStored(plan: FirePlanV2, version: 1): { plan: FirePlan } | { error: string };
+export function toStored(plan: FirePlanV2, version: 2): { plan: FirePlanV2 };
+export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan } | { error: string };
 export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan } | { error: string } {
   if (version === 2) return { plan };
   if (plan.items.some((x) => asIncome(x) === null && asExpense(x) === null)) return { error: 'This plan holds items only a newer version of Nya can save.' };

@@ -16,8 +16,8 @@
 //
 // After the stop (the tax plan's P, D13), the same steady return on to the
 // plan's end, where Will it last? ends: the plan's own rule drawing its
-// spending, with its income and one-offs and a scenario's life events in the
-// years they cover (steadyRun, below). It starts where the walk ends, at the
+// spending, with its items and a scenario's life events in the years they
+// cover, at the ages the figures resolved them to (steadyRun, below). It starts where the walk ends, at the
 // stop age's balance (today's once the stop has come). Not the simulation:
 // no fee, no cash and no mix, one return a year on the whole balance.
 //
@@ -25,9 +25,10 @@
 // in the browser.
 
 import { projectBalance, projectionShort } from './fi';
-import { compileEvents } from './compile';
+import { compileItems } from './compile';
 import { hasWalk, walkPath, type Shortfall } from './events';
-import { enginePlan, planYears, projectFrom, startAge, type FirePlan, type FiView } from './plan';
+import { INCOME_KINDS, MONEY_KINDS } from './items';
+import { enginePlan, planYears, projectFrom, startAge, type FiView, type PlanCore } from './plan';
 import type { PlanFigures } from './plan-figures';
 import { plannedWithdrawal, type YearState } from './rules';
 import { DEFAULT_INFLATION } from './saved-plan';
@@ -43,7 +44,7 @@ export type PlanPath = {
   /** From today's age, one a year, to the end asked for (the target age by
    *  default), or through the start of the year the walk can't go on. */
   points: PathPoint[];
-  /** The age the plan stops working at (its target age). */
+  /** The age the plan stops working at (the view's stopAge). */
   stopAge: number;
   /** The view's: the FI number, and the age it is reached at (null when it
    *  never is, or isn't worked out). */
@@ -176,7 +177,7 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
   const points = balances.map(point);
   return {
     points,
-    stopAge: f.plan.targetAge as number,
+    stopAge: f.view.stopAge as number,
     fiNumber: f.view.fiNumber,
     fiAge: f.view.fiAge,
     short,
@@ -187,40 +188,43 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
 
 /** The years after the stop, from `from` (the walk's last point: the stop
  *  age's balance, or today's once the stop has come). The plan's own rule
- *  draws its spending, with a scenario's lasting changes in effect then, as
- *  a start from that balance (enginePlan's 'custom' start, so the first year
- *  withdraws the spending, grossed up for tax); its income and one-offs and
- *  the events' parts count from that age. Null where there is nothing to
- *  draw, or the engine wouldn't run it. */
+ *  draws its spending, with lasting changes in effect then, as a start from
+ *  that balance (enginePlan's 'custom' start, so the first year withdraws
+ *  the spending, grossed up for tax); the items' parts count from that age,
+ *  each at the age the figures resolved it to. Null where there is nothing
+ *  to draw, or the engine wouldn't run it. */
 function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   const plan = f.plan;
   const d = from.age;
-  const first = startAge(plan);
+  const stop = f.view.stopAge;
+  const first = startAge(plan, stop);
   const spendingNow = f.view.spending.value;
   if (first === null || spendingNow === null || !(from.balance > 0)) return null;
-  const endAge = first + planYears(plan);
+  const endAge = first + planYears(plan, stop);
   const years = endAge - d;
   if (years < 1) return null;
-  const events = f.lifeEvents.length > 0 ? compileEvents(f.lifeEvents, { age: plan.age, startAge: d, years }) : null;
-  const lasting = events ? events.lasting.reduce((s, x) => s + x.amount, 0) : 0;
+  // Only the simulation's parts are read here, so the walk's switch is off.
+  const at = { age: plan.age, startAge: d, stop: d, years, taxRate: plan.taxRate };
+  const ages = f.resolution.ages;
+  const all = compileItems(f.items, ages, at, { planInWalk: false });
+  const lasting = all.lasting.reduce((s, x) => s + x.amount, 0);
   const spending = spendingNow + lasting;
   if (spending < 0) return null;
-  const run: FirePlan = { ...plan, start: 'custom', startBalance: from.balance, targetAge: d, horizon: years, spending };
-  const view: FiView = { ...f.view, spending: { ...f.view.spending, value: spending } };
+  const run: PlanCore = { ...plan, start: 'custom', startBalance: from.balance, targetAge: d, stopAtFi: false, horizon: years, spending };
+  const view: FiView = { ...f.view, stopAge: d, spending: { ...f.view.spending, value: spending } };
   const built = enginePlan(run, view);
   if (!('sim' in built)) return null;
-  let sim = built.sim;
-  let counted = false;
-  if (events) {
-    const { oneOffs, income, lowerSpending } = events.sim;
-    sim = {
-      ...sim,
-      oneOffs: [...sim.oneOffs, ...oneOffs],
-      income: [...sim.income, ...income],
-      ...(lowerSpending.length > 0 ? { lowerSpending } : {}),
-    };
-    counted = oneOffs.some((o) => o.year < years) || income.some((s) => s.fromYear < years) || lowerSpending.some((l) => l.fromYear < years);
-  }
+  const { oneOffs, income, lowerSpending } = all.sim;
+  const sim = {
+    ...built.sim,
+    oneOffs: [...built.sim.oneOffs, ...oneOffs],
+    income: [...built.sim.income, ...income],
+    ...(lowerSpending.length > 0 ? { lowerSpending } : {}),
+  };
+  // What the FI number leaves out beyond income and one-offs (listed below):
+  // the life events' parts in these years.
+  const life = compileItems(f.items, ages.map((x, i) => (MONEY_KINDS.includes(f.items[i].kind) ? null : x)), at, { planInWalk: false }).sim;
+  const counted = life.oneOffs.some((o) => o.year < years) || life.income.some((s) => s.fromYear < years) || life.lowerSpending.some((l) => l.fromYear < years);
   let steady: ReturnType<typeof steadyRun>;
   try {
     steady = steadyRun(sim, plan.realReturn);
@@ -231,11 +235,17 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
     throw e;
   }
   const items: LeftOutItem[] = [];
-  for (const s of plan.income) {
-    const age = Math.max(s.fromAge, d);
-    if (age < endAge) items.push({ label: s.label, age, kind: 'income' });
+  for (let i = 0; i < f.planItems; i++) {
+    const x = f.items[i];
+    const placed = ages[i];
+    if (placed === null) continue;
+    if (x.kind === 'one-off') {
+      if (placed.start >= d && placed.start < endAge) items.push({ label: x.label, age: placed.start, kind: 'expense' });
+    } else if (MONEY_KINDS.includes(x.kind) && INCOME_KINDS.includes(x.kind) && (placed.end === null || placed.end > d)) {
+      const age = Math.max(placed.start, d);
+      if (age < endAge) items.push({ label: x.label, age, kind: 'income' });
+    }
   }
-  for (const x of plan.expenses) if (x.atAge >= d && x.atAge < endAge) items.push({ label: x.label, age: x.atAge, kind: 'expense' });
   items.sort((a, b) => a.age - b.age);
   return {
     points: steady.balances.map((balance, k) => ({ age: d + k, balance })),

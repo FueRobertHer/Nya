@@ -25,7 +25,8 @@ import { dayLabel, dayName, pct, wholeMoney } from './plan-text';
 import { onDay } from '@/lib/format';
 
 const firstUp = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-import type { FirePlan, Input } from '@/lib/fire/plan';
+import type { Input, PlanCore } from '@/lib/fire/plan';
+import { toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, yearsBetween, YEAR_DAYS, type SavedPlan } from '@/lib/fire/saved-plan';
 import { isComplete, progressAccountsOf, type InvestedDay } from '@/lib/fire/invested-series';
@@ -124,7 +125,7 @@ export type ProgressViewProps = {
   savedState: SavedState;
   series: SeriesState | null;
   /** The Plan as the tab shows it, for what changed since. */
-  plan: FirePlan;
+  plan: PlanCore;
   /** Why a save can't happen now, or null. */
   blocked: string | null;
   /** A scenario is open: the save is not offered. */
@@ -418,7 +419,7 @@ export function useProgress(institutions: AssetInstitution[]): Progress {
 
 export type PlanProgressProps = {
   progress: Progress;
-  plan: FirePlan;
+  plan: FirePlanV2;
   savings: Input;
   /** The Plan's currency, which a save keeps. */
   currency: string | null;
@@ -476,13 +477,16 @@ export default function PlanProgress({ progress, plan, savings, currency, instit
     if (typeof rate === 'string') return setSheetError(rate);
     const why = blocked ?? savingsBlock(savings);
     if (why) return setSheetError(why);
+    // Kept as version 1, what this release saves (lib/fire/plan-v2.ts).
+    const sent = toStored(plan, 1);
+    if ('error' in sent) return setSheetError(sent.error);
     setBusy(true);
     setError(null);
     try {
       const res = await fetch('/api/saved-plan', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ saved: { plan, savings: savings.value, currency, inflation: rate }, based_on: saved?.rev ?? null }),
+        body: JSON.stringify({ saved: { plan: sent.plan, savings: savings.value, currency, inflation: rate }, based_on: saved?.rev ?? null }),
       });
       const body = await json(res);
       if (res.ok && body?.saved) {

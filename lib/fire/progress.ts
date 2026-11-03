@@ -17,7 +17,7 @@
 //
 // Arithmetic only: no engine, no market history.
 
-import { fiView, unmeasuredOf, type FirePlan, type FiView, type Measured, type Missing } from './plan';
+import { fiView, unmeasuredOf, type FiView, type Measured, type Missing, type PlanCore } from './plan';
 import type { FlowSide, InvestedAssets, SideVolume, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
 import { missingWhat, noSpending, withoutNote, type NoSpending, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText, type LeftOut } from '@/lib/spending';
@@ -361,7 +361,7 @@ export type FiFigures = {
 };
 
 /** Every figure the Plan tab and Home show from a plan and its inputs. */
-export function fiFigures(plan: FirePlan, inputs: FiInputs, fallbackCurrency: string | null): FiFigures {
+export function fiFigures(plan: PlanCore, inputs: FiInputs, fallbackCurrency: string | null): FiFigures {
   return {
     view: fiView(plan, measuredInputs(inputs)),
     savingsRate: savingsRate(inputs),

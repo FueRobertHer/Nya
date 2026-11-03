@@ -31,7 +31,7 @@
 // next. Imports no data and no storage.
 
 import { projectBalance } from './fi';
-import { isFirePlan, parsePlan, upgradePlan, type FirePlan } from './plan';
+import { isFirePlan, parsePlan, upgradePlan, type FirePlan, type PlanCore } from './plan';
 
 export type SavedPlan = {
   version: 1;
@@ -148,7 +148,7 @@ export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation
  *  saved, in a few words each: its growth after inflation, include cash,
  *  and typed savings. Nothing else moves the comparison, so nothing else is
  *  said (a birthday's age, a new withdrawal rate). */
-export function changedSince(saved: Pick<SavedPlan, 'plan'>, now: FirePlan): string[] {
+export function changedSince(saved: Pick<SavedPlan, 'plan'>, now: PlanCore): string[] {
   const out: string[] = [];
   if (saved.plan.realReturn !== now.realReturn) out.push('growth after inflation');
   if (saved.plan.includeCash !== now.includeCash) out.push('include cash');

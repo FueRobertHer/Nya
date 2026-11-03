@@ -5,11 +5,11 @@ import { NOTE_KINDS, figureNotes, inputFlags, stressNotice, windowText, type Fig
 import { FiCard } from '@/components/PlanTab';
 import { PAYROLL_NOTE, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
-import { planFigures } from '@/lib/fire/plan-figures';
 import { fiFigures, gapText, measuredInputs, spendingGap, assetsGap } from '@/lib/fire/progress';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import type { LifeEvent } from '@/lib/fire/events';
+import { figuresOf } from './plan-gen';
 
 // Days are said as the design system says them (lib/format.ts formatDay):
 // without their year in this one, on a today held still.
@@ -449,7 +449,7 @@ describe('the notes’ kinds and keys', () => {
 /** The simulation's engine and start for a plan, with its life events, as
  *  the Plan tab works them out. */
 function sim(a: FigureArgs, events: LifeEvent[] = []) {
-  const f = planFigures(a.plan, measuredInputs({ flows: a.flows, workplace: a.workplace, assets: a.assets }), events);
+  const f = figuresOf({ ...DEFAULT_PLAN, ...a.plan }, measuredInputs({ flows: a.flows, workplace: a.workplace, assets: a.assets }), events);
   if ('refused' in f) throw new Error('refused');
   return { engine: f.engine, startsWith: f.startsWith, view: f.view };
 }

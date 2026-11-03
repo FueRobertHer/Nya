@@ -87,7 +87,7 @@ import {
   type AllocationSettings,
 } from '@/lib/allocation/settings';
 import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
-import type { FirePlan } from '@/lib/fire/plan';
+import type { PlanCore } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
@@ -193,7 +193,7 @@ function useLast<T>(value: T | null): T | null {
 
 export type AllocationCardProps = {
   allocation: AllocationState;
-  plan: FirePlan;
+  plan: PlanCore;
   /** "Use my allocation in the plan": opens the Plan's Assumptions sheet at
    *  its mix, filled in with this one (rollout 6d: the mix is set in one
    *  place). `returnTo` takes focus when the sheet closes and the button has
@@ -811,7 +811,7 @@ export function MixSection({
   onUse,
 }: {
   mix: PlanMix;
-  plan: FirePlan;
+  plan: PlanCore;
   ready: boolean;
   currency: string | null;
   /** Opens the Plan's Assumptions sheet at its mix, filled in with this one;

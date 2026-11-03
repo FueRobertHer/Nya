@@ -15,7 +15,9 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { expensesOf, incomeOf, withExpenses, withIncome } from '@/lib/fire/items';
+import { planOf, toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
@@ -29,10 +31,10 @@ import { Notice } from './TotalCaveats';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
-  plan: FirePlan;
+  plan: FirePlanV2;
   /** Resolves true once the server has the plan, false when it didn't take
    *  it, or with why it was refused before it was sent. */
-  onSave: (next: FirePlan) => Promise<boolean | string>;
+  onSave: (next: FirePlanV2) => Promise<boolean | string>;
   onDone: () => void;
   /** False while the saved plan is loading or unreadable: nothing is saved. */
   editable: boolean;
@@ -84,8 +86,8 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
   const [wrong, setWrong] = useState<FieldProblem | null>(null);
   const [saving, setSaving] = useState(false);
   const errorId = useId();
-  async function save(build: () => FirePlan) {
-    let next: FirePlan;
+  async function save(build: () => FirePlanV2) {
+    let next: FirePlanV2;
     try {
       next = build();
     } catch (err) {
@@ -97,15 +99,21 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
       throw err;
     }
     setWrong(null);
-    // The server checks again; this catches anything the fields above missed.
-    const parsed = parsePlan(next);
+    // The server checks again; this catches anything the fields above missed,
+    // in version 1's words: what this release saves (lib/fire/plan-v2.ts).
+    const sent = toStored(next, 1);
+    if ('error' in sent) {
+      setError(sent.error);
+      return;
+    }
+    const parsed = parsePlan(sent.plan);
     if ('error' in parsed) {
       setError(`That plan can't be saved: ${parsed.error}.`);
       return;
     }
     setError('');
     setSaving(true);
-    const ok = await onSave(parsed.plan);
+    const ok = await onSave(planOf(parsed.plan));
     setSaving(false);
     if (ok === true) onDone();
     else setError(typeof ok === 'string' ? ok : 'It was not saved. Try again in a moment.');
@@ -468,7 +476,7 @@ function startRate(start: FirePlan['start'], props: { assets: number | null; spe
  *  (lib/fire/plan.ts). `rate` and `tax` are the ones typed. */
 function startConsequence(
   start: FirePlan['start'],
-  plan: FirePlan,
+  plan: PlanCore,
   props: { assets: number | null; spending: number | null; currency: string | null },
   typed: number,
   rate: number,
@@ -560,7 +568,7 @@ export function AssumptionsForm(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function build(): FirePlan {
+  function build(): FirePlanV2 {
     const stocksPct = readNumber(stocks, 'Stocks', 0, 100, { integer: true }) as number;
     const bondsPct = readNumber(bonds, 'Bonds', 0, 100, { integer: true }) as number;
     if (stocksPct + bondsPct > 100) throw new FieldProblem('Stocks and bonds add up to more than 100%.', ['Stocks', 'Bonds']);
@@ -836,7 +844,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
   const [fromAge, setFromAge] = useState(asText(item?.fromAge ?? 67));
   const [adjusted, setAdjusted] = useState(item?.inflationAdjusted ?? true);
   const s = useSave(props);
-  const build = (): FirePlan => {
+  const build = (): FirePlanV2 => {
     if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanIncome = {
       id: item?.id ?? crypto.randomUUID(),
@@ -845,7 +853,8 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       fromAge: readNumber(fromAge, 'The starting age', ...LIMITS.eventAge, { integer: true }) as number,
       inflationAdjusted: adjusted,
     };
-    return { ...plan, income: item ? plan.income.map((x) => (x.id === item.id ? entry : x)) : [...plan.income, entry] };
+    const income = incomeOf(plan);
+    return withIncome(plan, item ? income.map((x) => (x.id === item.id ? entry : x)) : [...income, entry]);
   };
   return (
     <>
@@ -914,7 +923,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         onSave={() => s.save(build)}
         extra={
           item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, income: plan.income.filter((x) => x.id !== item.id) }))}>
+            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withIncome(plan, incomeOf(plan).filter((x) => x.id !== item.id)))}>
               Remove
             </button>
           )
@@ -933,7 +942,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
   // Where Will it last? starts (lib/fire/plan.ts enginePlan): a one-off
   // before it is in neither that nor the FI date.
   const start = startAge(plan);
-  const build = (): FirePlan => {
+  const build = (): FirePlanV2 => {
     if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
     const entry: PlanExpense = {
       id: item?.id ?? crypto.randomUUID(),
@@ -941,7 +950,8 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
       amount: readNumber(amount, 'The amount', 0, LIMITS.money * 10) as number,
       atAge: readNumber(atAge, 'The age', ...LIMITS.eventAge, { integer: true }) as number,
     };
-    return { ...plan, expenses: item ? plan.expenses.map((x) => (x.id === item.id ? entry : x)) : [...plan.expenses, entry] };
+    const expenses = expensesOf(plan);
+    return withExpenses(plan, item ? expenses.map((x) => (x.id === item.id ? entry : x)) : [...expenses, entry]);
   };
   return (
     <>
@@ -1000,7 +1010,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         onSave={() => s.save(build)}
         extra={
           item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, expenses: plan.expenses.filter((x) => x.id !== item.id) }))}>
+            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withExpenses(plan, expensesOf(plan).filter((x) => x.id !== item.id)))}>
               Remove
             </button>
           )
