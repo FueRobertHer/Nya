@@ -70,6 +70,9 @@ export type PathChartProps = {
   currency: string | null;
   /** The points are the walk's, with a scenario's life events. */
   withEvents?: boolean;
+  /** What moved the walk, in its words (components/plan-text.ts walkWords),
+   *  when it isn't a scenario's life events alone. */
+  walkWords?: string | null;
   /** What was recorded since the plan saved as your plan, and where it had
    *  you, before today (rollout 8e). */
   recorded?: ProgressOverlay | null;
@@ -214,7 +217,7 @@ function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): 
   const { points, stopAge, fiNumber, fiAge, currency } = p;
   const start = points[0];
   const end = points[points.length - 1];
-  const events = p.withEvents || after?.withEvents ? ' with this scenario’s life events' : '';
+  const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this scenario’s life events' : '';
   const wrap = (path: string) => (p.recorded ? `${recordedWords(p.recorded, currency)} ${path}` : path);
   const last = after ? after.points[after.points.length - 1] : null;
   const tail = after ? (after.runsOutAt !== null ? `run out at ${after.runsOutAt}` : `about ${wholeMoney((last as PathPoint).balance, currency)} at ${after.endAge}`) : '';
@@ -241,7 +244,7 @@ function recordedWords(r: ProgressOverlay, currency: string | null): string {
 }
 
 export default function PlanPathChart(props: PathChartProps) {
-  const { points, today, stopAge, fiNumber, fiAge, realReturn, currency, withEvents = false, recorded = null, range, onRange } = props;
+  const { points, today, stopAge, fiNumber, fiAge, realReturn, currency, withEvents = false, walkWords = null, recorded = null, range, onRange } = props;
   const whole = wholeShown(points, props.after, range);
   const after = whole ? (props.after as PathAfter) : null;
   const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
@@ -304,7 +307,7 @@ export default function PlanPathChart(props: PathChartProps) {
         />
       )}
       <div className="as-of">
-        {`At a steady ${pct(realReturn)} a year after inflation${withEvents || after?.withEvents ? ', with this scenario’s life events' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
+        {`At a steady ${pct(realReturn)} a year after inflation${walkWords ? `, with ${walkWords}` : withEvents || after?.withEvents ? ', with this scenario’s life events' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
       </div>
       {leftOut && <div className="as-of">{leftOut}</div>}
       {after && after.runsOutAt !== null && <div className="as-of">{`On this steady path your invested assets run out at ${after.runsOutAt}.`}</div>}

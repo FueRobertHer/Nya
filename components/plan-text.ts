@@ -163,6 +163,20 @@ export function fiHeadline(
   return { ...base, kind: 'age', headline: `Around age ${age}`, against, age, before, runsOut };
 }
 
+/** What moved the walk, in the words the answer, the At age row and the
+ *  chart say it with (lib/fire/plan-figures.ts walkFrom): one-offs and
+ *  income (a plan's, with D15's switch, or a scenario's added ones) apart
+ *  from a scenario's life events, both joined when both. Null when nothing
+ *  did. */
+export function walkWords(from: { items: boolean; events: boolean }): string | null {
+  if (from.items && from.events) return 'one-offs, income and this scenario’s life events';
+  if (from.items) return 'one-offs and income';
+  return from.events ? EVENTS_WORDS : null;
+}
+
+/** A scenario's life events, as the walk's words have always named them. */
+export const EVENTS_WORDS = 'this scenario’s life events';
+
 /** What a headline's missing ages ask for, on a button that opens the Ages
  *  sheet. */
 export function askAgesText(ask: NonNullable<FiHeadline['ask']>): string {

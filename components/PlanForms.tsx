@@ -44,6 +44,9 @@ type SaveProps = {
    *  be read, a repair waits, its currency isn't known), said above the
    *  buttons; null while it isn't, or only for a moment (a save under way). */
   paused?: string | null;
+  /** D15's switch (the flag 'plan-items-in-fi'): one-offs and income count
+   *  in the FI date, which the income and one-off forms say. */
+  planInWalk?: boolean;
 };
 
 /** Said beside an input a scenario can't change. */
@@ -722,7 +725,10 @@ export function AssumptionsForm(
           Start with
           <select value={start} onChange={(e) => setStart(e.target.value as FirePlan['start'])} disabled={s.saving}>
             {[
-              ['fi-number', `FI number${fiNumber !== null ? ` (${wholeMoney(fiNumber, props.currency)})` : ''}`],
+              // Your own FI number, where one is set, is the one it starts with.
+              plan.fiNumber != null
+                ? ['fi-number', `Your own FI number (${wholeMoney(plan.fiNumber, props.currency)})`]
+                : ['fi-number', `FI number${fiNumber !== null ? ` (${wholeMoney(fiNumber, props.currency)})` : ''}`],
               ['assets', `Invested assets${props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}`],
             ].map(([value, text]) => (
               <option key={value} value={value} aria-label={spokenLabel(text)}>
@@ -864,7 +870,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         today&apos;s dollars. It pays part of each year&apos;s spending, so the portfolio withdraws less.
       </p>
       <p className="helper">
-        Counts in Will it last?, never in your FI date or FI number. Part-time work is{' '}
+        {props.planInWalk ? 'Counts in your FI date until you reach it, and in Will it last? from where it starts, never in your FI number.' : 'Counts in Will it last?, never in your FI date or FI number.'} Part-time work is{' '}
         {props.scenario ? 'a life event in this scenario' : 'a life choice in What if…'}, and Barista FI&apos;s
         part-time income is in Assumptions.
       </p>
@@ -961,9 +967,19 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         after tax.
       </p>
       <p className="helper">
-        {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
-        {props.scenario ? "To move this scenario's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
-        {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
+        {props.planInWalk ? (
+          start !== null ? (
+            `Counts in your FI date until you reach it, and in Will it last? at ${start} or later, where that starts.`
+          ) : (
+            'Counts in your FI date until you reach it, and in Will it last? once your age places it.'
+          )
+        ) : (
+          <>
+            {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
+            {props.scenario ? "To move this scenario's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
+            {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
+          </>
+        )}
       </p>
       <div className="sheet-form">
         <label className="field">

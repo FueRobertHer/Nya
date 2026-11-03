@@ -347,6 +347,9 @@ export default function Dashboard({
   // And Your path's chart's range, so it comes back on it too (opening on
   // Whole path, the tax plan's D13).
   const [planRange, setPlanRange] = useState<PathRange>('whole');
+  // Got it on D15's line (components/plan-moved.ts), on Your path or
+  // Progress: hidden for the session, whichever tab is open.
+  const [planMovedSeen, setPlanMovedSeen] = useState(false);
   // The month Activity and Budgets show, shared between them and kept the
   // same way (components/view-month-state.ts); Home's links reset it.
   const viewMonth = useViewMonth();
@@ -2874,6 +2877,8 @@ export default function Dashboard({
                   planInputs={planInputs}
                   planInWalk={flags['plan-items-in-fi']}
                   newUntil={newUntil}
+                  movedSeen={planMovedSeen}
+                  onMovedSeen={() => setPlanMovedSeen(true)}
                 />
               )}
             </>

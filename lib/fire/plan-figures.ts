@@ -30,7 +30,8 @@ import { compileItems, type CompiledItems, type Count, type ItemAges, type ItemN
 import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
 import { MONEY_KINDS, type PlanItem } from './items';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice } from './plan';
-import type { FirePlanV2 } from './plan-v2';
+import { planOf, type FirePlanV2 } from './plan-v2';
+import type { SavedItems, SavedPlan } from './saved-plan';
 import { planPath } from './path';
 import { resolveItems, type Resolution, type SteadyWorld } from './steady';
 
@@ -72,6 +73,8 @@ export type PlanFigures = {
   /** What moved the walk: one-offs and income (a plan's, or a scenario's
    *  added ones), life events (a scenario's, or a plan's of those kinds). */
   walkFrom: { items: boolean; events: boolean };
+  /** Per item, by position: whether it put anything in the walk. */
+  inWalk: boolean[];
   /** Where each item is on the steady path, the stop, and the search. */
   resolution: Resolution;
   /** Spending in retirement with lasting changes, when there are any. */
@@ -194,6 +197,7 @@ function assemble(plan: FirePlanV2, items: readonly PlanItem[], n: number, b: Bu
     planItems: n,
     itemNotes: compiled.notes.filter((x) => x.at < n),
     walkFrom: { items: compiled.inWalk.some((x, i) => x && money(i)), events: compiled.inWalk.some((x, i) => x && !money(i)) },
+    inWalk: compiled.inWalk,
     resolution,
     retirement: b.retirement,
     short: b.short,
@@ -231,6 +235,34 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { events = [],
     view: { ...f.view, fiAge: found, yearsToFi: found === null ? Infinity : found - plan.age },
     short: found === null ? f.short : null,
   };
+}
+
+const savedKept = new Map<string, SavedItems | null>();
+
+/**
+ * A saved plan's items where its own steady path has them, for Progress
+ * (lib/fire/saved-plan.ts plannedAt): its figures worked out once, from the
+ * start's balance, the savings it kept and its typed spending, or `spending`
+ * (today's measured) where none was typed. Null with no age or nothing in
+ * the walk, so the line is a steady one, as before items. Kept per saved
+ * copy, start, spending and switch, so the month points only evaluate.
+ */
+export function resolveSaved(saved: Pick<SavedPlan, 'plan' | 'savings' | 'day' | 'rev'>, start: { day: string; total: number }, spending: number | null, count: Count): SavedItems | null {
+  const key = JSON.stringify([saved.rev, saved.day, start.day, start.total, spending, count.planInWalk]);
+  const kept = savedKept.get(key);
+  if (kept !== undefined) return kept;
+  const plan = planOf(saved.plan);
+  let out: SavedItems | null = null;
+  if (plan.age !== null && plan.items.length > 0) {
+    const f = planFigures({ ...plan, savings: saved.savings, assets: start.total }, { spending, savings: saved.savings, assets: start.total }, { count });
+    if (!('refused' in f) && f.events !== null && hasWalk(f.events.walk)) {
+      const counted = plan.items.flatMap((item, i) => (f.inWalk[i] && MONEY_KINDS.includes(item.kind) ? [{ item, ages: f.resolution.ages[i] }] : []));
+      out = { from: saved.day, age: plan.age, walk: f.events.walk, counted };
+    }
+  }
+  if (savedKept.size >= 16) savedKept.clear();
+  savedKept.set(key, out);
+  return out;
 }
 
 function startsWith(plan: FirePlanV2, view: FiView, engine: EnginePlan | { missing: Missing }, walk: WalkChanges): StartsWith | null {

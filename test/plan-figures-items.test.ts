@@ -5,6 +5,9 @@ import { expensesOf, incomeOf } from '@/lib/fire/items';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import * as oldFigures from './fixtures/release-before/fire/plan-figures';
 import * as oldPath from './fixtures/release-before/fire/path';
+import * as oldSaved from './fixtures/release-before/fire/saved-plan';
+import { plannedAt } from '@/lib/fire/saved-plan';
+import { resolveSaved } from '@/lib/fire/plan-figures';
 import { figuresOf, genEvents, genMeasured, genPlan, ON, rand } from './plan-gen';
 
 // The Plan's arithmetic on version 2 (lib/fire/plan-figures.ts, path.ts),
@@ -77,6 +80,16 @@ describe('with the switch off, the release before’s figures exactly', () => {
       expect(expensesOf(now.plan).filter((x) => !unplaced.has(x.id))).toEqual(p.expenses.filter((x) => !left.expenses.includes(x) && !beyond.includes(x)));
       expect([...ids('no-age', 'before-start')].sort()).toEqual([...left.income, ...left.expenses].map((x) => x.id).sort());
       expect([...ids('after-end')]).toEqual(beyond.map((x) => x.id));
+    }
+  });
+
+  test('Progress’s line: a saved copy of each plan, placed and evaluated, is where the release before had it', () => {
+    const days = ['2024-03-01', '2024-09-15', '2025-03-01', '2027-06-30', '2031-01-01'];
+    for (const [i, { p, m }] of cases.entries()) {
+      const saved = { version: 1 as const, plan: p, savings: m.savings ?? 0, currency: 'USD', inflation: 0.03, day: '2024-03-01', savedAt: '2024-03-01T12:00:00.000Z', rev: `r${i}` };
+      const start = { day: '2024-03-01', total: m.assets ?? 0 };
+      const items = resolveSaved(saved, start, m.spending, { planInWalk: false });
+      for (const d of days) expect(plannedAt(saved, start, d, items)).toBe(oldSaved.plannedAt(saved, start, d));
     }
   });
 });

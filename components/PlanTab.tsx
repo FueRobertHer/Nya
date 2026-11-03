@@ -83,7 +83,10 @@ import {
   projectionNeed,
   SPENDING_NEED,
   fiHeadline,
+  walkWords,
+  EVENTS_WORDS,
 } from './plan-text';
+import { fiMovedText, stillNew } from './plan-moved';
 import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -127,7 +130,7 @@ import { DraftPreview, WhatIfCard } from './PlanWhatIf';
 import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
 import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
-import { planFigures, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { planFigures, resolveSaved, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { planPath, type PathRange, type PlanPath } from '@/lib/fire/path';
 import PlanPathChart, { wholeShown } from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
@@ -280,6 +283,10 @@ export type PlanTabProps = {
   /** The last day D15's change is new (lib/flag-read.ts newUntil), as
    *  YYYY-MM-DD: until then Your path and Progress say what it moved. */
   newUntil?: string | null;
+  /** Got it was tapped on that line this session (kept by the dashboard, so
+   *  it stays hidden across tabs), and tapping it. */
+  movedSeen?: boolean;
+  onMovedSeen?: () => void;
 };
 
 export default function PlanTab({
@@ -303,6 +310,9 @@ export default function PlanTab({
   onLanded,
   planInputs: sharedInputs,
   planInWalk = false,
+  newUntil = null,
+  movedSeen = false,
+  onMovedSeen,
 }: PlanTabProps) {
   const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
   const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
@@ -937,6 +947,19 @@ export default function PlanTab({
   // cash are the path's (the Progress card says when they changed).
   const progressSeries = progress.series;
   const todayUtc = new Date().toISOString().slice(0, 10);
+  // The saved plan's items on its own steady path (lib/fire/plan-figures.ts
+  // resolveSaved), for the card's line and the chart's: with the switch as
+  // it is, and off, for the line that says what it moved.
+  const anchor = progressSeries?.kind === 'ready' ? progressSeries.answer.anchor : null;
+  const savedStart = anchor && anchor.total !== null ? { day: anchor.date, total: anchor.total } : null;
+  const savedOn = progressSaved && savedStart ? resolveSaved(progressSaved, savedStart, measured.spending, count) : null;
+  const savedItems = { on: savedOn, off: progressSaved && savedStart && planInWalk ? resolveSaved(progressSaved, savedStart, measured.spending, { planInWalk: false }) : savedOn };
+  // D15's line while new (components/plan-moved.ts): what counting the
+  // plan's one-offs and income moved, on the Plan's answer and Progress's
+  // line, until Got it (one for both).
+  const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
+  const offFigures = movedNew && entry === null && !('refused' in baseFigures) ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
+  const movedText = offFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
       entry === null &&
@@ -945,9 +968,9 @@ export default function PlanTab({
       basePlan.age !== null &&
       progressSeries.answer.currency === displayCurrency &&
       progressSaved.plan.includeCash === basePlan.includeCash
-        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc)
+        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc, savedItems.on)
         : null,
-    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc]
+    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc, savedItems.on]
   );
   // Why "This is my plan" can't save now: as the Plan's own saves wait.
   const progressBlocked =
@@ -962,7 +985,7 @@ export default function PlanTab({
             : baseFigures.view.savings.source === 'measured' && (txnsLoading || txnsFailed || unread.length > 0)
               ? "Some of your transactions haven't loaded or couldn't be read, so Nya's savings figure may be off: save once they have, or type your savings in Your figures."
               : null;
-  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, scenario: entry?.name ?? null, paused };
+  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, scenario: entry?.name ?? null, paused, planInWalk };
   const scenarioName = entry?.name ?? null;
   // The open scenario's life events: saved as its own, and each form says how
   // its event moves the scenario's FI age as it is now. On a refused one
@@ -1341,6 +1364,9 @@ export default function PlanTab({
               retirementSpending={shown?.retirement?.spending ?? null}
               walked={shown?.walked ?? false}
               walkedSavings={shown?.walkedSavings ?? null}
+              walkFrom={shown?.walkFrom}
+              moved={movedText}
+              onMovedSeen={onMovedSeen}
               fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
               stopShort={
                 stopShort && view.stopAge !== null
@@ -1408,13 +1434,24 @@ export default function PlanTab({
               />
             )}
 
-            <EventsCard plan={plan} engine={engine} notes={shown?.itemNotes ?? []} money={money} editable={editable} open={open} scenario={scenarioMarks} />
+            <EventsCard plan={plan} engine={engine} notes={shown?.itemNotes ?? []} money={money} editable={editable} open={open} scenario={scenarioMarks} planInWalk={planInWalk} />
           </>
         )}
         {/* Progress against the plan saved as your plan (rollout 8e): the
             Plan's, whatever is open, so outside what a scenario can refuse. */}
         {planLoaded && (
-          <PlanProgress progress={progress} plan={basePlan} savings={baseFigures.view.savings} currency={figures.currency} institutions={institutions} blocked={progressBlocked} scenarioOpen={entry !== null} />
+          <PlanProgress
+            progress={progress}
+            plan={basePlan}
+            savings={baseFigures.view.savings}
+            currency={figures.currency}
+            institutions={institutions}
+            blocked={progressBlocked}
+            scenarioOpen={entry !== null}
+            items={savedItems}
+            moved={movedNew}
+            onMovedSeen={onMovedSeen}
+          />
         )}
         </>
       )}
@@ -1636,6 +1673,9 @@ export function FiCard({
   retirementSpending = null,
   walked = false,
   walkedSavings = null,
+  walkFrom = { items: false, events: true },
+  moved = null,
+  onMovedSeen,
   fiShort = null,
   stopShort = null,
   stopWalked = false,
@@ -1668,6 +1708,13 @@ export function FiCard({
   walked?: boolean;
   /** What that walk saves a year after the scenario's last change. */
   walkedSavings?: number | null;
+  /** What moved the walk (lib/fire/plan-figures.ts walkFrom), for its words;
+   *  left out, a scenario's life events, as before items. */
+  walkFrom?: { items: boolean; events: boolean };
+  /** D15's line while new (components/plan-moved.ts fiMovedText), under the
+   *  answer's lines with Got it, which hides it for the session. */
+  moved?: string | null;
+  onMovedSeen?: () => void;
   /** Why there is no FI date: a cost the walk can't pay. */
   fiShort?: string | null;
   /** Why there is no balance at the stop age: the walk can't get there. */
@@ -1721,13 +1768,21 @@ export function FiCard({
   // FI number the line on the FI number says why, so nothing here.
   const takes = formulasTake(plan);
   const need = view.yearsToFi === null && !fiShort ? figuresNeed(view, takes) : null;
+  // What moved the walk, in its words (never none where the walk counts).
+  const words = walkWords(walkFrom) ?? EVENTS_WORDS;
   let howLine = '';
   if (fiShort) {
     howLine = fiShort;
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
-    howLine = `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this scenario’s life events changing what is saved in their years.`;
+    howLine =
+      words === EVENTS_WORDS
+        ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this scenario’s life events changing what is saved in their years.`
+        : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words} in their years.`;
   } else if (walked && view.yearsToFi === Infinity) {
-    howLine = `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
+    howLine =
+      words === EVENTS_WORDS
+        ? `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
+        : `With ${words} in their years you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
     howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
@@ -1772,7 +1827,7 @@ export function FiCard({
       figure={<Masked>{head.headline}</Masked>}
       figureClass="plan-answer"
       line={
-        (head.against || howLine || asks) && (
+        (head.against || howLine || asks || moved) && (
           <div className="stack tight plan-answer-lines">
             {head.against && (
               <p className="helper">
@@ -1783,6 +1838,17 @@ export function FiCard({
               <p className="helper">
                 <Masked>{howLine}</Masked>
               </p>
+            )}
+            {/* Ages and names only, never an amount. */}
+            {moved && (
+              <Notice level="info">
+                {moved}
+                <div className="btn-row">
+                  <button type="button" className="btn ghost" onClick={onMovedSeen}>
+                    Got it
+                  </button>
+                </div>
+              </Notice>
             )}
             {/* What the answer still needs from you: a line under it that
                 opens the Ages sheet, never a full-width button. */}
@@ -1833,7 +1899,9 @@ export function FiCard({
       )}
       <div className="as-of">
         <Masked>
-          {view.fiNumber !== null && fiSpending !== null
+          {view.fiNumber !== null && plan.fiNumber != null
+            ? `Your own FI number ${money(view.fiNumber)}${view.workedOut !== null ? ` · worked out ${money(view.workedOut)}` : ''}`
+            : view.fiNumber !== null && fiSpending !== null
             ? `FI number ${money(view.fiNumber)}: ${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
             : !takes
               ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
@@ -1861,6 +1929,7 @@ export function FiCard({
           realReturn={plan.realReturn}
           currency={currency}
           withEvents={path.fromWalk}
+          walkWords={path.fromWalk ? words : null}
           recorded={recorded}
           after={path.after}
           range={range}
@@ -1880,6 +1949,9 @@ export function FiCard({
               : undefined
           }
         />
+        {!view.barista && plan.fiNumber != null && plan.partTimeIncome > 0 && (
+          <Row label="Barista FI" value="Not shown" note="Worked out from your spending, it could sit above your own FI number, so it isn’t shown while you have one." />
+        )}
         {view.barista && (
           <Row
             label="Barista FI"
@@ -1888,7 +1960,7 @@ export function FiCard({
           />
         )}
         {view.atTargetAge !== null && view.stopAge !== null && (
-          <Row label={`At age ${view.stopAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? ', with this scenario’s life events in the years they cover' : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
+          <Row label={`At age ${view.stopAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? `, with ${words} in the years they cover` : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
         )}
         {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && view.stopAge !== null && (
           <Row
@@ -2241,7 +2313,7 @@ export function SimulationCard({
   const unplaced = new Set(notes.filter((n) => n.part === 'no-age' || n.part === 'before-start' || n.part === 'after-end').map((n) => n.id));
   const placedIncome = incomeOf(plan).filter((x) => !unplaced.has(x.id));
   const placedExpenses = expensesOf(plan).filter((x) => !unplaced.has(x.id));
-  const startLabel = plan.start === 'fi-number' ? 'your FI number' : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
+  const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;
   const vpw = plan.rule === 'vpw';
@@ -2535,6 +2607,7 @@ export function EventsCard({
   editable,
   open,
   scenario = null,
+  planInWalk = false,
 }: {
   plan: FirePlanV2;
   engine: EnginePlan | { missing: Missing };
@@ -2544,6 +2617,8 @@ export function EventsCard({
   editable: boolean;
   open: (s: SheetState) => void;
   scenario?: ScenarioMarks | null;
+  /** D15's switch: one-offs and income count in the FI date too. */
+  planInWalk?: boolean;
 }) {
   const [restoreError, setRestoreError] = useState('');
   const mark = (id: string) => (scenario?.replaced.has(id) ? ' Changed in this scenario.' : scenario?.added.has(id) ? ' Added in this scenario.' : '');
@@ -2554,10 +2629,13 @@ export function EventsCard({
   const expenses = expensesOf(plan);
   const end = 'sim' in engine && engine.startAge !== null ? engine.startAge + engine.sim.years : null;
   // Where these count: in the simulation, from the age it starts at (your
-  // stop age, or today's when it starts from what you have now), never in
-  // the FI walk (lib/fire/plan.ts enginePlan), unlike a life event.
+  // stop age, or today's when it starts from what you have now), and with
+  // D15's switch in the FI walk until FI (lib/fire/compile.ts).
   const start = 'sim' in engine ? engine.startAge : null;
   const any = income.length > 0 || expenses.length > 0;
+  // A version 2 plan's items with no place on this card (lib/fire/items.ts
+  // asIncome, asExpense): counted, and said to be there.
+  const unshown = plan.items.length - income.length - expenses.length;
   return (
     <div className="card">
       <ScenarioTag name={scenario?.name} />
@@ -2565,7 +2643,19 @@ export function EventsCard({
         <div className="inst-name">Income and one-off expenses</div>
       </div>
       {!any && <p className="empty-note">Add Social Security, a pension, or a big one-off cost such as a roof, to see how it changes the plan.</p>}
-      {any && start !== null && <p className="helper">They count in Will it last? from age {start}, where it starts, never in your FI date or FI number.</p>}
+      {any && planInWalk && (
+        <p className="helper">
+          {start !== null
+            ? `They count in your FI date until you reach it, and in Will it last? from age ${start}, where it starts, never in your FI number.`
+            : 'They count in your FI date until you reach it, and in Will it last? from where it starts, never in your FI number.'}
+        </p>
+      )}
+      {any && !planInWalk && start !== null && <p className="helper">They count in Will it last? from age {start}, where it starts, never in your FI date or FI number.</p>}
+      {unshown > 0 && (
+        <p className="helper">
+          {unshown === 1 ? '1 more item counts in your plan: a newer version of Nya shows it.' : `${unshown} more items count in your plan: a newer version of Nya shows them.`}
+        </p>
+      )}
       <div className="plan-rows">
         {income.map((x) => (
           <Row
@@ -2586,7 +2676,9 @@ export function EventsCard({
                 ? start !== null
                   ? plan.age !== null && x.atAge < plan.age
                     ? ". Before today, so it isn't counted: your measured figures may already count it."
-                    : `. Before ${start}, where Will it last? starts, so it isn't counted anywhere.`
+                    : planInWalk
+                      ? `. Before ${start}, where Will it last? starts, so it counts in your FI date, not in Will it last?`
+                      : `. Before ${start}, where Will it last? starts, so it isn't counted anywhere.`
                   : '. Not in the simulation: add your age.'
                 : beyond.has(x.id)
                   ? `. After the plan ends${end !== null ? ` at ${end}` : ''}: only the grid's longer columns reach it.`

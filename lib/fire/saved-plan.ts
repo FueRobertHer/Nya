@@ -24,6 +24,14 @@
 // Both are hypothetical: a steady return and a steady inflation rate, not a
 // prediction.
 //
+// A SAVED PLAN'S ITEMS (its one-offs and income, counted in the walk with
+// D15's switch) are placed once on its own steady path (lib/fire/
+// plan-figures.ts resolveSaved), in years from the day it was saved: year k
+// is age plan.age + k. Each year's money in and costs land at its start, and
+// a change to savings is added through the years it covers, as the savings
+// are. A year that starts before the start day is left out: the measured
+// start already holds it.
+//
 // Two checks, as the Plan's (lib/fire/plan.ts): parseSavedDraft is what a
 // save must meet (the route runs every PUT through it); isSavedPlan is what a
 // stored one must be to read back: the shape and types, none of today's
@@ -31,6 +39,9 @@
 // next. Imports no data and no storage.
 
 import { projectBalance } from './fi';
+import type { ItemAges } from './compile';
+import type { WalkChanges } from './events';
+import type { PlanItem } from './items';
 import { parsePlan, type PlanCore } from './plan';
 import { isStoredPlan, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 
@@ -133,17 +144,37 @@ export function yearsBetween(from: string, to: string): number {
   return (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS / YEAR_DAYS;
 }
 
+/** A saved plan's items on its own steady path: the walk's changes, in
+ *  years from `from`, the day it was saved, when it was `age` (lib/fire/
+ *  plan-figures.ts resolveSaved); and its one-offs and income among them,
+ *  in item order, where they are, for the words. */
+export type SavedItems = { from: string; age: number; walk: WalkChanges; counted: { item: PlanItem; ages: ItemAges }[] };
+
 /** Where the saved plan has invested assets on `day`, in that day's own
  *  money, growing from `start`, the measured balance on the `from` day (see
- *  the top of this file). The one function for the card's words and any
- *  line drawn from it. Null for a day before `from`, or a growth rate the
- *  formula doesn't take. */
-export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation'>, start: { day: string; total: number }, day: string): number | null {
+ *  the top of this file), with its items where `items` places them (none
+ *  when left out). The one function for the card's words and any line drawn
+ *  from it. Null for a day before `from`, or a growth rate the formula
+ *  doesn't take. */
+export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation'>, start: { day: string; total: number }, day: string, items: SavedItems | null = null): number | null {
   const years = yearsBetween(start.day, day);
   if (!(years >= 0)) return null;
   const g = saved.plan.realReturn;
   if (!(g > -0.99 && g <= 1)) return null;
-  return projectBalance(start.total, saved.savings, g, years) * (1 + saved.inflation) ** years;
+  let total = projectBalance(start.total, saved.savings, g, years);
+  if (items) {
+    // Years from the start day: the walk's year k is k - shift of them.
+    const shift = yearsBetween(items.from, start.day);
+    const grown = (at: number) => (1 + g) ** (years - at);
+    for (const m of items.walk.moneyIn) if (m.year - shift >= 0 && m.year - shift <= years) total += m.amount * grown(m.year - shift);
+    for (const c of items.walk.costs) if (c.year - shift >= 0 && c.year - shift <= years) total -= c.amount * grown(c.year - shift);
+    for (const s of items.walk.spans) {
+      const a = Math.max(s.from - shift, 0);
+      const b = Math.min(s.to === null ? Infinity : s.to - shift, years);
+      if (b > a) total += projectBalance(0, s.delta, g, b - a) * grown(b);
+    }
+  }
+  return total * (1 + saved.inflation) ** years;
 }
 
 /** What the comparison rests on that the Plan has changed since it was
