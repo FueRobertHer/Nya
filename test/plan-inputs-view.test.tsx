@@ -1141,7 +1141,7 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
 });
 
 describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
-  test('a button under the answer opens the Ages sheet; closed, focus is back on it, and once the ages are saved (the button gone) on the Ages row', async () => {
+  test('a button under the answer opens the Household sheet; closed, focus is back on it, and once the ages are saved (the button gone) on the Household row', async () => {
     let current: unknown = { ...DEFAULT_PLAN };
     serve({
       answers: {
@@ -1198,7 +1198,7 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
     ] as const) {
       serve({ plan: { plan: { ...DEFAULT_PLAN, ...over }, currency: null } });
       const tab = await mount();
-      // The answer's own ask, not What if…'s.
+      // The answer's own ask, not the Timeline's.
       const hero = part(tab.panel('path'), 'plan-hero')!;
       expect(button(hero, words)).not.toBeNull();
       expect(hero.textContent).toContain(`Coast FI${coast}`);

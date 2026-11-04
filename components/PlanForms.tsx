@@ -16,7 +16,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, pctText, startAge, stopOf, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, pctText, stopOf, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
 import type { PathAfter } from '@/lib/fire/path';
 import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';

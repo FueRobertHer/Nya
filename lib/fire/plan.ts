@@ -126,7 +126,7 @@ export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { sto
 
 /** The age the plan stops working at: the one typed, or under "stop when I
  *  reach FI" the search's answer (lib/fire/steady.ts), null when there is
- *  none or it hasn't run. Every read of the stop outside the Ages sheet and
+ *  none or it hasn't run. Every read of the stop outside the Household sheet and
  *  the readers goes through this or a view's stopAge
  *  (test/plan-stop-source.test.ts). */
 export function stopOf(plan: Pick<PlanCore, 'targetAge' | 'stopAtFi'>, found: number | null = null): number | null {

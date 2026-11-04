@@ -1930,7 +1930,7 @@ export function FiCard({
   recorded?: ProgressOverlay | null;
   /** The currency the figures are in, for the chart. */
   currency?: string | null;
-  /** Opens the Ages sheet, from the ask under the answer while an age it
+  /** Opens the Household sheet, from the ask under the answer while an age it
    *  needs isn't typed; and the ask's ref, for focus to come back to. */
   onAskAges?: () => void;
   askRef?: (el: HTMLElement | null) => void;
@@ -2049,7 +2049,7 @@ export function FiCard({
               </Notice>
             )}
             {/* What the answer still needs from you: a line under it that
-                opens the Ages sheet, never a full-width button. */}
+                opens the Household sheet, never a full-width button. */}
             {asks && (
               <div>
                 <button

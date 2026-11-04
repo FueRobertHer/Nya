@@ -7,9 +7,10 @@
 // nothing else (test/plan-savers.test.ts reads it to hold that).
 //
 // The paths:
-//   - form: every form in the drawer (ages, figures, the Assumptions sheet,
-//     which holds the method and the mix since rollout 6d, income and
-//     one-offs; the allocation card's "Use my allocation" opens that sheet),
+//   - form: every form in the drawer (Household, figures, the Assumptions
+//     sheet, which holds the method and the mix since rollout 6d; the
+//     allocation card's "Use my allocation" opens that sheet) and the
+//     Timeline's items,
 //     with the plans checked in Also change it in;
 //   - repair: "Save it this way" on the card for a saved plan this release
 //     can't take as it is; it always saves the repaired plan, never the plan
