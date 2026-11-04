@@ -286,6 +286,20 @@ describe('two first writes at once', () => {
   });
 });
 
+describe('the facts after a first entry', () => {
+  test('never written over a save another device made from that entry meanwhile', async () => {
+    // Between this first save's entry and its facts, another device loads
+    // your plan and saves a new age.
+    before(planFactsStore, 'update', async () => {
+      const loaded = (await get()).body;
+      expect((await save({ ...loaded.plan, age: 41 }, loaded.updated_at, { facts_were: factsOf(loaded.plan) })).status).toBe(200);
+    });
+    expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(200);
+    expect((await planFactsStore.get(ctx))!.age).toBe(41);
+    expect((await get()).body.plan.age).toBe(41);
+  });
+});
+
 describe('a fresh account’s first age, then a second save', () => {
   test('the age saved first is every plan’s, and the next save, made from its answer, is taken and keeps it', async () => {
     const first = await save({ ...DEFAULT_PLAN_V2, age: 34 }, null, { currency: null, facts_were: DEFAULTS });
@@ -368,6 +382,20 @@ describe('stamps', () => {
     expect(made.status).toBe(200);
     expect([held, loaded.body.updated_at, theirs.body.updated_at, x.updated_at]).not.toContain(made.body.updated_at);
     expect(await save({ ...TYPED, spending: 99_000 }, loaded.body.updated_at)).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
+    expect((await stored(x.id)).plan.spending).toBe(40_000);
+  });
+
+  test('your plan saved on one device as a copy is made your plan on another, in one millisecond: they never share a stamp, so that device’s next save is refused', async () => {
+    setSystemTime(new Date('2026-11-04T12:00:00.000Z'));
+    const main = await yours();
+    const x = await copy('Stop at 52', { ...TYPED, targetAge: 52 }, 'USD');
+    // This device has read the plans for its save when the other makes the
+    // copy your plan.
+    before(firePlansStore, 'updateMany', async () => expect((await plans('PATCH', { main: x.id, based_on: x.updated_at })).status).toBe(200));
+    const mine = await save({ ...TYPED, spending: 41_000 }, main);
+    expect(mine.status).toBe(200);
+    expect((await stored(MAIN_ID)).updatedAt).not.toBe((await stored(x.id)).updatedAt);
+    expect(await save({ ...TYPED, spending: 99_000 }, mine.body.updated_at)).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
     expect((await stored(x.id)).plan.spending).toBe(40_000);
   });
 
@@ -525,7 +553,7 @@ describe('a copy’s changes, each at the stamp the page loaded', () => {
     expect(await plans('PATCH', { main: MAIN_ID, based_on: main })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
     expect(await plans('PATCH', { main: 'gone', based_on: main })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
     const order: string[] = [];
-    before(firePlansStore, 'update', async () => void order.push('entry'));
+    before(firePlansStore, 'updateMany', async () => void order.push('entry'));
     before(planFactsStore, 'update', async () => void order.push('facts'));
     const r = await plans('PATCH', { main: x.id, based_on: x.updated_at });
     expect(r.status).toBe(200);
@@ -540,6 +568,19 @@ describe('a copy’s changes, each at the stamp the page loaded', () => {
     expect((await plans('DELETE', { id: MAIN_ID, based_on: main })).status).toBe(200);
     expect(await firePlansStore.ids(ctx)).toEqual([x.id]);
     expect((await get()).body.id).toBe(x.id);
+  });
+
+  test('make this your plan stopped after the restamp: said as stale, so the page reads the plans again and can try again', async () => {
+    await yours();
+    const x = await copy('Stop at 52', { ...TYPED, targetAge: 52 }, 'USD');
+    before(planFactsStore, 'update', async () => {
+      throw new Error('down');
+    });
+    const r = await quiet(() => plans('PATCH', { main: x.id, based_on: x.updated_at }));
+    expect(r).toEqual({ status: 409, body: { error: '“Stop at 52” wasn’t made your plan: try again', stale: true } });
+    const now = (await list()).body.plans.find((p: { id: string }) => p.id === x.id).updated_at;
+    expect(now > x.updated_at).toBe(true);
+    expect((await plans('PATCH', { main: x.id, based_on: now })).status).toBe(200);
   });
 
   test('a body other than the route takes is refused, nothing written', async () => {
@@ -578,6 +619,17 @@ describe('the limit and the names', () => {
     expect(await raw()).toEqual(was);
     await quiet(() => plans('DELETE', { id: 'broken', unreadable: true }));
     expect((await plans('POST', { from: MAIN_ID, name: 'One more', plan: TYPED, currency: 'USD' })).status).toBe(200);
+  });
+
+  test('a name on more than one line, or holding a control character, is refused', async () => {
+    await yours();
+    const x = await copy('Stop at 52', TYPED, 'USD');
+    const was = await raw();
+    for (const name of ['Stop\nat 52', 'Tab\there', 'Bell\u0007', 'Nul\u0000']) {
+      expect((await plans('POST', { from: MAIN_ID, name, plan: TYPED, currency: 'USD' })).status).toBe(400);
+      expect((await plans('PATCH', { id: x.id, name, based_on: x.updated_at })).status).toBe(400);
+    }
+    expect(await raw()).toEqual(was);
   });
 
   test('copies made at the same moment past the limit: the one counted over is taken back', async () => {

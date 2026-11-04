@@ -299,16 +299,20 @@ export function PlansSheet({
     returnTo.current = focus;
     setLevel(null);
   };
+  // The rows are placeholders while your plan is read again (after Make
+  // this your plan): focus waits for them.
+  const rowsLoading = planState === 'loading' || (state.status === 'loading' && plans.length === 0);
   useEffect(() => {
     if (!returnTo.current || (open && level)) return;
     // Only into an open sheet: a write that ends as it slides out leaves
     // focus where the sheet gave it back.
     if (open) {
       const to = returnTo.current.map((key) => listButtons.current.get(key)).find((b) => b && !b.disabled);
+      if (!to && rowsLoading) return;
       to?.focus({ preventScroll: true });
     }
     returnTo.current = null;
-  }, [level, open]);
+  }, [level, open, rowsLoading]);
   const back = () => {
     if (!level) return;
     if (level.kind === 'rename' || level.kind === 'duplicate' || level.kind === 'delete') go({ kind: 'plan', id: level.id });
@@ -368,7 +372,7 @@ export function PlansSheet({
   const failed = compared.some((c) => c.outcome.kind === 'figures' && typeof c.outcome.result === 'object' && 'error' in c.outcome.result);
 
   const listBody =
-    planState === 'loading' || (state.status === 'loading' && plans.length === 0) ? (
+    rowsLoading ? (
       // Until your plan and the list have loaded, no row and no FI age over
       // the defaults: the rows as placeholders.
       <>

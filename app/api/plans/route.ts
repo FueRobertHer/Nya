@@ -54,11 +54,12 @@ const extraKey = (b: Record<string, unknown>, keys: readonly string[]) => Object
 const isId = (v: unknown): v is string => typeof v === 'string' && ID.test(v) && v !== '__proto__';
 const isCurrency = (v: unknown): v is string | null => v === null || (typeof v === 'string' && CURRENCY_CODE.test(v));
 
-/** A plan's name, trimmed: 1 to SCENARIO_NAME_MAX characters. */
+/** A plan's name, trimmed: 1 to SCENARIO_NAME_MAX characters, on one line
+ *  (no control character, as scenarios had it). */
 function nameOf(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const name = v.trim();
-  return name.length > 0 && name.length <= SCENARIO_NAME_MAX ? name : null;
+  return name.length > 0 && name.length <= SCENARIO_NAME_MAX && !/[\u0000-\u001f\u007f]/.test(name) ? name : null;
 }
 
 export async function GET() {
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
   if (extra) return bad(`${extra.slice(0, 40)} isn’t taken here`);
   if (!isId(b.from)) return bad('from is the id of the plan it is made from');
   const name = nameOf(b.name);
-  if (name === null) return bad(`Name the plan, in at most ${SCENARIO_NAME_MAX} characters`);
+  if (name === null) return bad(`Name the plan on one line, in at most ${SCENARIO_NAME_MAX} characters`);
   const currency = b.currency ?? null;
   if (!isCurrency(currency)) return bad('currency must be a three-letter code, like USD');
   const parsed = parsePlanV2(b.plan);
@@ -134,7 +135,7 @@ export async function PATCH(req: Request) {
       const extra = extraKey(b, ['id', 'name', 'based_on']);
       if (extra) return bad(`${extra.slice(0, 40)} isn’t taken here`);
       const name = nameOf(b.name);
-      if (name === null) return bad(`Name the plan, in at most ${SCENARIO_NAME_MAX} characters`);
+      if (name === null) return bad(`Name the plan on one line, in at most ${SCENARIO_NAME_MAX} characters`);
       return NextResponse.json({ plan: await renamePlan(await dataCtx(), b.id, name, b.based_on) });
     }
     const extra = extraKey(b, ['id', 'currency', 'based_on']);

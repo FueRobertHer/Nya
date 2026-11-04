@@ -90,7 +90,7 @@ import {
 } from './plan-text';
 import { fiMovedText, stillNew } from './plan-moved';
 import { Hero } from './Hero';
-import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
+import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
@@ -444,7 +444,15 @@ export default function PlanTab({
   // a repair of it waits (one open closes): a copy is shown with your plan's
   // facts in it. One deleted, or made your plan, closes.
   const [openId, setOpenId] = useState<string | null>(null);
-  const planLoaded = state.status === 'ready';
+  // Your plan read again after a write changed it (a rename, an Also save
+  // with it checked): what it held stays loaded until the answer is in, so
+  // the copy open, its card, a drawer and the sheet's plans stay as they
+  // are (editing still waits, editableNow). Not after a failed load, nor
+  // once the list names another plan yours (Make this your plan): what is
+  // held is then no longer your plan.
+  const [settled, setSettled] = useState<ListStatus | null>(null);
+  if (state.status !== 'loading' && state.status !== settled) setSettled(state.status);
+  const planLoaded = state.status === 'ready' || (state.status === 'loading' && settled === 'ready' && confirmed.id === plansState.main);
   const canOpen = planLoaded && !repairing;
   const entry = openId !== null && canOpen ? (plansState.list.find((r) => r.id === openId && r.id !== plansState.main && r.plan !== null) ?? null) : null;
   useEffect(() => {
@@ -1357,7 +1365,7 @@ export default function PlanTab({
       state={plansState}
       plans={sheetPlans}
       measuring={txnsLoading}
-      planState={state.status}
+      planState={planLoaded ? 'ready' : state.status}
       whyNot={
         state.status === 'error'
           ? 'Your saved plan couldn’t be read, so your plans can’t be worked out against it: try again at the top of the Plan tab.'

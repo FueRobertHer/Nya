@@ -413,11 +413,11 @@ describe('recording the currency (POST)', () => {
   test('for amounts other than the entry’s, refused as stale, including a save landing between its read and its write', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ currency: null }));
     expect((await post({ currency: 'USD', amounts: typedAmounts({ ...TYPED, spending: 1 }) })).body.stale).toBe(true);
-    const store = firePlansStore as unknown as { update: (...a: unknown[]) => Promise<unknown> };
-    const real = store.update;
-    store.update = async (...args: unknown[]) => {
-      store.update = real;
-      await real.apply(firePlansStore, [ctx, MAIN_ID, (cur: PlanEntry) => ({ ...cur, plan: { ...TYPED, spending: 99_000 } })]);
+    const store = firePlansStore as unknown as { updateMany: (...a: unknown[]) => Promise<unknown> };
+    const real = store.updateMany;
+    store.updateMany = async (...args: unknown[]) => {
+      store.updateMany = real;
+      await firePlansStore.update(ctx, MAIN_ID, (cur) => ({ ...cur!, plan: { ...TYPED, spending: 99_000 } }));
       return real.apply(firePlansStore, args);
     };
     const r = await post({ currency: 'USD', amounts });

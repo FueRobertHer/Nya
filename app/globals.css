@@ -8216,8 +8216,9 @@ button.review-keys-toggle {
 
 /* Plans as copies (components/PlansSheet.tsx, CopyTag.tsx, PlanCompare.tsx,
    PlanEvents.tsx): the tag every card and editing sheet carries while a copy
-   is open, the copy's card at its top, and compare mode, laid out by metric
-   so it reads top to bottom on a phone. */
+   is open, and compare mode, laid out by metric so it reads top to bottom on
+   a phone. The copy's card (.plan-copy-card) is a plain card, as the
+   CopyOpen board draws it. */
 .plan-copy-tag {
   display: inline-block;
   margin-bottom: 8px;
@@ -8227,10 +8228,6 @@ button.review-keys-toggle {
   color: var(--accent);
   font-size: var(--fs-1);
   font-weight: 600;
-}
-
-.plan-copy-card {
-  border-left: 3px solid var(--accent);
 }
 
 .plan-copy-saves {

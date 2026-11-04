@@ -6,13 +6,15 @@
 //
 // Each reads the plans first (every entry's report, so one damaged plan, or
 // one a newer version saved, never stops a save of another), then writes by
-// a compare-and-set over only the entries it writes, every check run again
-// on them at the write. An entry's stamp (`updatedAt`, lib/edit-stamp.ts) is
-// what a page names as the version it saved from (`based_on`); every entry
-// written gets a new one, after every stamp the plans hold, so never one
-// another entry holds or held before, since `PUT /api/fire-plan`
-// names no id and a shared stamp could let a stale save of your plan land in
-// a copy made your plan since.
+// a compare-and-set over every entry it can read, written or not, every
+// check run again on them at the write. An entry's stamp (`updatedAt`,
+// lib/edit-stamp.ts) is what a page names as the version it saved from
+// (`based_on`); every entry written gets a new one, after every stamp the
+// plans hold at the write, so never one another entry holds or held before,
+// since `PUT /api/fire-plan` names no id and a shared stamp could let a stale
+// save of your plan land in a copy made your plan since. Names are checked
+// there too; only two copies made in the same instant (neither in the
+// other's compare) can share one, which a rename mends.
 //
 // While `fire-plans` holds no entry, your plan is the defaults, never saved
 // (`based_on: null`): the first write of anything makes its entry, then
@@ -35,7 +37,7 @@ import { MAIN_ID, MAX_FIRE_PLANS, factsOf, holdsAmounts, isPlanFacts, mainOf, sa
 import { DEFAULT_PLAN_V2, type StoredPlan } from './fire/plan-v2';
 import { sameAmounts, typedAmounts, type TypedAmounts } from './fire/plan-currency';
 import { nameTaken } from './fire/scenarios';
-import { UnreadableValueError } from './repo';
+import { MANY_AT_ONCE, UnreadableValueError } from './repo';
 
 /** A write refused for what is stored now, with the words the page shows. */
 export class Refused extends Error {
@@ -81,6 +83,9 @@ type State = {
   entries: ReadonlyMap<string, PlanEntry>;
   unreadable: readonly string[];
   unrecognised: readonly string[];
+  /** While `empty`, the `plan-facts` there (a leftover nothing reads), as
+   *  read: the first entry's facts replace only that. */
+  leftover: PlanFacts | null | 'unreadable';
 };
 
 /** Your plan before its entry is made: the defaults, never saved. Its stamp
@@ -91,13 +96,17 @@ async function readState(ctx: Ctx, at: string): Promise<State> {
   const factsRead = eager(planFactsStore.get(ctx));
   const reportRead = eager(firePlansStore.getAllReport(ctx));
   if ((await firePlansStore.count(ctx)) === 0) {
-    return { empty: true, main: MAIN_ID, mainEntry: unsaved(at), facts: null, entries: new Map(), unreadable: [], unrecognised: [] };
+    const leftover = await factsRead.catch((err: unknown) => {
+      if (err instanceof UnreadableValueError && !err.unrecognised) return 'unreadable' as const;
+      throw err;
+    });
+    return { empty: true, main: MAIN_ID, mainEntry: unsaved(at), facts: null, entries: new Map(), unreadable: [], unrecognised: [], leftover };
   }
   const facts = await factsRead;
   const report = await reportRead;
   const pick = mainOf(facts, report);
   if (!pick) return readState(ctx, at);
-  return { empty: false, main: pick.id, mainEntry: entryOf(report, pick.id), facts, ...report };
+  return { empty: false, main: pick.id, mainEntry: entryOf(report, pick.id), facts, ...report, leftover: null };
 }
 
 /** The facts every plan shares, as stored now. */
@@ -105,11 +114,11 @@ const storedFacts = (s: State): Facts => (s.facts ? pick(s.facts) : factsOf(s.ma
 const pick = ({ age, partnerAge, includeCash, planFunding, method }: Facts): Facts => ({ age, partnerAge, includeCash, planFunding, method });
 
 /** A stamp after `was` and after every stamp in `taken` (those the plans
- *  held when read, and those this write gave out already). Not only one no
- *  other entry holds now: each entry's stamps only move on, so this one is
- *  none an entry there has ever held, and a page still holding one your plan
- *  has moved past never finds it on a copy made your plan since, even within
- *  one millisecond or behind a clock that stepped back. */
+ *  hold at the write, and those this write gave out already). Not only one
+ *  no other entry holds now: each entry's stamps only move on, so this one
+ *  is none an entry there has ever held, and a page still holding one your
+ *  plan has moved past never finds it on a copy made your plan since, even
+ *  within one millisecond or behind a clock that stepped back. */
 function stampFor(was: string, now: Date, taken: Set<string>): string {
   const latest = Math.max(...[was, ...taken].map(Date.parse).filter(Number.isFinite));
   const at = stampAfter(Number.isFinite(latest) ? new Date(latest).toISOString() : undefined, now);
@@ -117,14 +126,18 @@ function stampFor(was: string, now: Date, taken: Set<string>): string {
   return at;
 }
 
-/** Every stamp the plans held when read. */
-const stampsOf = (s: State) => new Set([...s.entries.values()].map((e) => e.updatedAt));
+/** Every stamp the plans hold at the write. */
+const stampsIn = (current: ReadonlyMap<string, PlanEntry | null>) => new Set([...current.values()].flatMap((e) => (e ? [e.updatedAt] : [])));
+/** Every plan's name at the write, for nameTaken. */
+const namesIn = (current: ReadonlyMap<string, PlanEntry | null>) => [...current].flatMap(([id, e]) => (e ? [{ id, name: e.name }] : []));
 
 /**
- * Writes the entries `ids` by one compare-and-set: `fn` gets each as stored
- * now (your plan, before its entry is made, as the defaults with stamp ''),
- * and answers what to write. When it makes your plan's first entry, the
- * facts follow it (`facts`), then the plan before copies is removed.
+ * Writes the entries `ids` by one compare-and-set over every entry read
+ * (so stamps and names are checked against the plans as they are then):
+ * `fn` gets each as stored now (your plan, before its entry is made, as the
+ * defaults with stamp ''), and answers what to write. When it makes your
+ * plan's first entry, the facts follow it (`facts`), then the plan before
+ * copies is removed.
  */
 async function writeEntries(
   ctx: Ctx,
@@ -135,29 +148,33 @@ async function writeEntries(
   facts: (written: Map<string, PlanEntry | null>) => Facts
 ): Promise<Map<string, PlanEntry | null>> {
   const making = s.empty && ids.includes(MAIN_ID);
-  const written = await firePlansStore.updateMany(ctx, ids, (stored) => {
+  const all = [...new Set([...s.entries.keys(), ...ids])];
+  const written = await firePlansStore.updateMany(ctx, all.length <= MANY_AT_ONCE ? all : ids, (stored) => {
     const current = new Map(stored);
     // Made meanwhile by another write: then it is checked as stored.
     if (making && current.get(MAIN_ID) === null) current.set(MAIN_ID, unsaved(at));
     return fn(current);
   });
-  if (making) await afterFirst(ctx, { version: 1, main: MAIN_ID, ...facts(written) });
+  if (making) await afterFirst(ctx, { version: 1, main: MAIN_ID, ...facts(written) }, s.leftover);
   return written;
 }
 
 /** After your plan's first entry: the facts, then the plan before copies
  *  removed. A `plan-facts` there is a leftover (nothing reads it while no
- *  entry is there), replaced; damaged bytes removed first. A failure here
- *  is logged, never the write's: the entries hold the facts in their own
- *  fields, and the old stores are read by nothing. */
-async function afterFirst(ctx: Ctx, facts: PlanFacts): Promise<void> {
+ *  entry is there), replaced while it is still the one read: one changed
+ *  since is a save made from the new entry meanwhile, and stands. Damaged
+ *  bytes are removed first. A failure here is logged, never the write's:
+ *  the entries hold the facts in their own fields, and the old stores are
+ *  read by nothing. */
+async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover']): Promise<void> {
+  const replace = (cur: PlanFacts | null) => (leftover !== 'unreadable' && JSON.stringify(cur) === JSON.stringify(leftover) ? facts : cur);
   try {
     try {
-      await planFactsStore.update(ctx, () => facts);
+      await planFactsStore.update(ctx, replace);
     } catch (err) {
-      if (!(err instanceof UnreadableValueError) || err.unrecognised) throw err;
+      if (!(err instanceof UnreadableValueError) || err.unrecognised || leftover !== 'unreadable') throw err;
       await planFactsStore.remove(ctx);
-      await planFactsStore.update(ctx, () => facts);
+      await planFactsStore.update(ctx, (cur) => cur ?? facts);
     }
   } catch (err) {
     console.error('Plan facts not written after the first plan:', err);
@@ -224,7 +241,6 @@ export async function saveEntries(ctx: Ctx, saves: Save[], factsWere: Facts): Pr
       factsLanded = true;
     }
     const facts1 = change ?? stored;
-    const taken = stampsOf(s);
     const written = await writeEntries(
       ctx,
       s,
@@ -232,7 +248,7 @@ export async function saveEntries(ctx: Ctx, saves: Save[], factsWere: Facts): Pr
       at,
       (current) => {
         const next = new Map<string, PlanEntry | null>();
-        const stamps = new Set(taken);
+        const stamps = stampsIn(current);
         for (const x of saves) {
           const cur = current.get(x.id);
           if (!cur) throw new Refused(CHANGED);
@@ -298,22 +314,22 @@ export async function createCopy(ctx: Ctx, input: { from: string; name: string; 
   }
   const facts = storedFacts(s);
   const id = crypto.randomUUID();
-  const taken = stampsOf(s);
-  const entry: PlanEntry = { name: input.name, plan: withFacts(input.plan, facts), tax: null, currency, createdAt: at, updatedAt: stampFor('', now, taken) };
   const ids = s.empty ? [MAIN_ID, id] : [id];
-  await writeEntries(
+  const written = await writeEntries(
     ctx,
     s,
     ids,
     at,
     (current) => {
       if (current.get(id) !== null) throw new Refused(CHANGED);
-      const next = new Map<string, PlanEntry | null>([[id, entry]]);
+      if (nameTaken(namesIn(current), input.name)) throw new Refused(NAME_TAKEN, 409, false);
+      const stamps = stampsIn(current);
+      const next = new Map<string, PlanEntry | null>([[id, { name: input.name, plan: withFacts(input.plan, facts), tax: null, currency, createdAt: at, updatedAt: stampFor('', now, stamps) }]]);
       if (s.empty) {
         const main = current.get(MAIN_ID)!;
         // Another write made your plan's entry meanwhile: its facts may differ.
         if (main.updatedAt !== '') throw new Refused(CHANGED);
-        next.set(MAIN_ID, { ...main, updatedAt: stampFor('', now, taken) });
+        next.set(MAIN_ID, { ...main, updatedAt: stampFor('', now, stamps) });
       }
       return next;
     },
@@ -323,19 +339,18 @@ export async function createCopy(ctx: Ctx, input: { from: string; name: string; 
     await firePlansStore.remove(ctx, id);
     throw new Refused('Other plans were being made at the same moment, so this one wasn’t: try again.', 409, false);
   }
-  return rowOf(id, entry, s.facts, s.mainEntry);
+  return rowOf(id, written.get(id)!, s.facts, s.mainEntry);
 }
 
 /** One entry changed alone, at the stamp the page loaded: a rename, or a
  *  copy's currency ("They’re in USD"). Your plan before its entry is made
  *  takes it too, as the defaults. */
-async function changeOne(ctx: Ctx, id: string, basedOn: string | null, change: (cur: PlanEntry, s: State) => Partial<PlanEntry>): Promise<PlanRow> {
+async function changeOne(ctx: Ctx, id: string, basedOn: string | null, change: (cur: PlanEntry, current: ReadonlyMap<string, PlanEntry | null>) => Partial<PlanEntry>): Promise<PlanRow> {
   const now = new Date();
   const at = now.toISOString();
   const s = await readState(ctx, at);
   if (s.unreadable.includes(id) || s.unrecognised.includes(id)) entryOf(s, id);
   if (id !== s.main && !s.entries.has(id)) throw new Refused(CHANGED);
-  const taken = stampsOf(s);
   const facts = storedFacts(s);
   const written = await writeEntries(
     ctx,
@@ -345,7 +360,7 @@ async function changeOne(ctx: Ctx, id: string, basedOn: string | null, change: (
     (current) => {
       const cur = current.get(id);
       if (!cur || (basedOn ?? '') !== cur.updatedAt) throw new Refused(CHANGED);
-      return new Map([[id, { ...cur, ...change(cur, s), plan: withFacts(cur.plan, facts), updatedAt: stampFor(cur.updatedAt, now, new Set(taken)) }]]);
+      return new Map([[id, { ...cur, ...change(cur, current), plan: withFacts(cur.plan, facts), updatedAt: stampFor(cur.updatedAt, now, stampsIn(current)) }]]);
     },
     () => facts
   );
@@ -354,10 +369,8 @@ async function changeOne(ctx: Ctx, id: string, basedOn: string | null, change: (
 }
 
 export function renamePlan(ctx: Ctx, id: string, name: string, basedOn: string | null): Promise<PlanRow> {
-  return changeOne(ctx, id, basedOn, (_cur, s) => {
-    const names = [...s.entries].map(([k, e]) => ({ id: k, name: e.name }));
-    if (s.empty) names.push({ id: MAIN_ID, name: FIRST_PLAN });
-    if (nameTaken(names, name, id)) throw new Refused(NAME_TAKEN, 409, false);
+  return changeOne(ctx, id, basedOn, (_cur, current) => {
+    if (nameTaken(namesIn(current), name, id)) throw new Refused(NAME_TAKEN, 409, false);
     return { name };
   });
 }
@@ -393,27 +406,36 @@ export async function removePlan(ctx: Ctx, id: string, basedOn: string | null, u
  *  restamped first, so a save, rename or delete made against its old stamp
  *  (on another device) is refused rather than landing in your new plan;
  *  then `plan-facts` names it (made from your plan's own fields when it is
- *  missing, never the copy's, which may hold an older age). */
+ *  missing, never the copy's, which may hold an older age). Stopped between
+ *  the two, it is said as stale: the page reads the new stamp to try again. */
 export async function makeMain(ctx: Ctx, id: string, basedOn: string): Promise<MainPlan> {
   const now = new Date();
-  const s = await readState(ctx, now.toISOString());
+  const at = now.toISOString();
+  const s = await readState(ctx, at);
   if (s.empty || id === s.main) throw new Refused(CHANGED);
   if (s.unreadable.includes(id) || s.unrecognised.includes(id)) entryOf(s, id);
   if (!s.entries.has(id)) throw new Refused(CHANGED);
-  const taken = stampsOf(s);
-  const entry = await firePlansStore.update(ctx, id, (cur) => {
-    if (!cur || basedOn !== cur.updatedAt) throw new Refused(CHANGED);
-    return { ...cur, updatedAt: stampFor(cur.updatedAt, now, new Set(taken)) };
-  });
+  const written = await writeEntries(
+    ctx,
+    s,
+    [id],
+    at,
+    (current) => {
+      const cur = current.get(id);
+      if (!cur || basedOn !== cur.updatedAt) throw new Refused(CHANGED);
+      return new Map([[id, { ...cur, updatedAt: stampFor(cur.updatedAt, now, stampsIn(current)) }]]);
+    },
+    () => storedFacts(s)
+  );
   try {
     const facts = await planFactsStore.update(ctx, (cur) => {
       const base: PlanFacts = cur ?? { version: 1, main: s.main, ...factsOf(s.mainEntry.plan) };
       return { ...base, main: id };
     });
-    return { id, entry: entry!, facts, missing: false };
+    return { id, entry: written.get(id)!, facts, missing: false };
   } catch (err) {
     console.error('A plan not made yours:', err);
-    throw new Refused(`“${s.entries.get(id)!.name}” wasn’t made your plan: try again`, 409, false);
+    throw new Refused(`“${s.entries.get(id)!.name}” wasn’t made your plan: try again`);
   }
 }
 
@@ -423,16 +445,27 @@ export async function makeMain(ctx: Ctx, id: string, basedOn: string): Promise<M
  *  answer: only that replaces a currency there. */
 export async function recordMain(ctx: Ctx, currency: string, amounts: TypedAmounts, answered: boolean) {
   const now = new Date();
-  const s = await readState(ctx, now.toISOString());
+  const at = now.toISOString();
+  const s = await readState(ctx, at);
   if (s.empty) throw new Refused(NOTHING_TYPED, 409, false);
-  const taken = stampsOf(s);
-  const entry = await firePlansStore.update(ctx, s.main, (cur) => {
-    if (cur === null) throw new Refused(CHANGED);
-    if (!holdsAmounts(cur.plan)) throw new Refused(NOTHING_TYPED, 409, false);
-    if (!sameAmounts(typedAmounts(cur.plan), amounts)) throw new Refused(CHANGED_SINCE);
-    if (cur.currency === currency) return cur;
-    if (cur.currency !== null && !answered) throw new Refused(ALREADY);
-    return { ...cur, currency, updatedAt: stampFor(cur.updatedAt, now, new Set(taken)) };
-  });
-  return mainAnswer({ id: s.main, entry: entry!, facts: s.facts, missing: false });
+  let entry = s.mainEntry;
+  await writeEntries(
+    ctx,
+    s,
+    [s.main],
+    at,
+    (current) => {
+      const cur = current.get(s.main);
+      if (!cur) throw new Refused(CHANGED);
+      if (!holdsAmounts(cur.plan)) throw new Refused(NOTHING_TYPED, 409, false);
+      if (!sameAmounts(typedAmounts(cur.plan), amounts)) throw new Refused(CHANGED_SINCE);
+      entry = cur;
+      if (cur.currency === currency) return new Map();
+      if (cur.currency !== null && !answered) throw new Refused(ALREADY);
+      entry = { ...cur, currency, updatedAt: stampFor(cur.updatedAt, now, stampsIn(current)) };
+      return new Map([[s.main, entry]]);
+    },
+    () => storedFacts(s)
+  );
+  return mainAnswer({ id: s.main, entry, facts: s.facts, missing: false });
 }

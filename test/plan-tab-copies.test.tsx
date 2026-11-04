@@ -541,6 +541,108 @@ describe('a save refused for what is stored now', () => {
   });
 });
 
+describe('your plan read again after a write', () => {
+  /** Holds your plan's next read until `release()`, as a slow network. */
+  const holdRead = () => {
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    before = async (call) => {
+      if (call.method !== 'GET' || call.path !== '/api/plan-inputs') return;
+      before = null;
+      await held;
+    };
+    return async () => {
+      release();
+      await settle(200);
+    };
+  };
+
+  test('an Also save with your plan checked that fails keeps the copy open, and its sheet open with why', async () => {
+    await seedPlan();
+    await seedCopy('Retire at 50', { targetAge: 50 });
+    const tab = await render();
+    await openCopy(tab, 'Retire at 50');
+    await press(tab.row('Annual spending'));
+    const sheet = tab.dialog()!;
+    await fill(sheet, 'Spending a year', '45000');
+    await checkAlso(sheet, 'First plan (your plan)');
+    before = async (call) => {
+      if (call.method !== 'PUT' || call.path !== '/api/plans') return;
+      before = null;
+      throw new Error('offline');
+    };
+    await press(button(sheet, 'Save'));
+    await settle(400);
+    expect(tab.dialog()).toBe(sheet);
+    expect(sheet.textContent).toContain('It wasn’t saved: check your connection, and try again.');
+    expect(tab.title()).toBe('Copy: Retire at 50');
+    const { byName } = await stored();
+    expect([byName['First plan'].plan.spending, byName['Retire at 50'].plan.spending]).toEqual([40_000, 40_000]);
+    await tab.unmount();
+  });
+
+  test('a rename of your plan refused keeps the name typed, with why', async () => {
+    const stamp = await seedPlan();
+    await seedCopy('Retire at 50', { targetAge: 50 });
+    const tab = await render();
+    await press(tab.plans());
+    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Rename'));
+    const level = tab.dialog()!;
+    await fill(level, 'Name', 'Base plan');
+    // Your plan saved on another device just before.
+    before = async (call) => {
+      if (call.method !== 'PATCH' || call.path !== '/api/plans') return;
+      before = null;
+      const r = await json(await firePlan.PUT(req('/api/fire-plan', 'PUT', { plan: { ...PLAN, savings: 20_000 }, currency: 'USD', facts_were: factsOf(PLAN), based_on: stamp })));
+      expect(r.status).toBe(200);
+    };
+    await press(button(level, 'Save'));
+    await settle(400);
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Rename');
+    expect(tab.dialog()!.textContent).toContain(CHANGED);
+    expect(field(tab.dialog()!, 'Name')!.value).toBe('Base plan');
+    expect(Object.keys((await stored()).byName)).toEqual(['First plan', 'Retire at 50']);
+    await tab.unmount();
+  });
+
+  test('a rename of your plan with a copy open: the copy stays open, and said once, while your plan is read again', async () => {
+    await seedPlan();
+    await seedCopy('Retire at 50', { targetAge: 50 });
+    const tab = await render();
+    await openCopy(tab, 'Retire at 50');
+    const said = tab.said().join(' ');
+    await press(tab.plans());
+    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Rename'));
+    await fill(tab.dialog()!, 'Name', 'Base plan');
+    const release = holdRead();
+    await press(button(tab.dialog(), 'Save'));
+    await settle(200);
+    expect(tab.title()).toBe('Copy: Retire at 50');
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Base plan');
+    expect(tab.sheetRow('Open it')).not.toBeNull();
+    await release();
+    expect(tab.title()).toBe('Copy: Retire at 50');
+    expect(tab.said().join(' ')).toBe(said);
+    expect(Object.keys((await stored()).byName)).toEqual(['Base plan', 'Retire at 50']);
+    await tab.unmount();
+  });
+
+  test('Make this your plan from the sheet: once your plan is read again, focus is on the plan made yours', async () => {
+    await seedPlan();
+    await seedCopy('Retire at 50', { targetAge: 50 });
+    const tab = await render();
+    await press(tab.plans());
+    await press(tab.sheetRow('Retire at 50'));
+    const release = holdRead();
+    await press(tab.sheetRow('Make this your plan'));
+    await release();
+    expect(dom.document.activeElement).toBe(tab.sheetRow('Retire at 50')!);
+    await tab.unmount();
+  });
+});
+
 describe('Make this your plan', () => {
   test('from the copy’s card: it is your plan at once on Home too, the copy closes, and it is said', async () => {
     await seedPlan();
