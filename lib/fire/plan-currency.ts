@@ -19,10 +19,7 @@
 // whatever it had become.
 //
 // RECORDED WITH THE PLAN. A plan's entry holds its currency beside the plan,
-// written in the same write as its amounts, so the two never part. (Before
-// plans were copies, the record was a store of its own beside the one plan,
-// `fire-plan-currency`, which could part from it; that store is gone, and
-// the route no longer answers `stale`, `unreadable` or `newer`.)
+// written in the same write as its amounts, so the two never part.
 //
 // WHICH CURRENCY THE PLAN IS IN (planCurrencyState):
 //   - recorded: the entry has one; its currency, whatever the accounts are in.
@@ -111,24 +108,16 @@ export function isTypedAmounts(v: unknown): v is TypedAmounts {
   return amountOrNull(v.spending) && amountOrNull(v.savings) && amountOrNull(v.assets) && amountOrNull(v.startBalance) && amount(v.partTimeIncome) && list(v.income) && list(v.expenses);
 }
 
-/** What the route answers beside the plan: the recorded currency when the
- *  record holds, and why a record there doesn't (`stale`: a record of other
- *  amounts, whose currency is `was`, which only the person's answer
- *  replaces; `unreadable`: damaged bytes, likewise; `newer`: a later
- *  release's, which is never written over). No currency and no problem: no
- *  record at all, or a plan with nothing typed. A problem and `was` came
- *  only from the record before copies, which is gone: no answer sends them
- *  now. */
-export type CurrencyAnswer = { currency: string | null; problem: 'stale' | 'unreadable' | 'newer' | null; was: string | null };
+/** What the route answers beside the plan: the recorded currency, or null
+ *  with no record at all or a plan with nothing typed. */
+export type CurrencyAnswer = { currency: string | null };
 
-export const NO_ANSWER: CurrencyAnswer = { currency: null, problem: null, was: null };
+export const NO_ANSWER: CurrencyAnswer = { currency: null };
 
 /** The answer as the page reads it from /api/fire-plan's body. */
 export function readCurrencyAnswer(data: Record<string, unknown> | null | undefined): CurrencyAnswer {
-  const code = (v: unknown) => (typeof v === 'string' && CURRENCY_CODE.test(v) ? v : null);
-  const p = data?.currency_problem;
-  const problem = p === 'stale' || p === 'unreadable' || p === 'newer' ? p : null;
-  return { currency: code(data?.currency), problem, was: problem === 'stale' ? code(data?.currency_was) : null };
+  const c = data?.currency;
+  return { currency: typeof c === 'string' && CURRENCY_CODE.test(c) ? c : null };
 }
 
 /** How far the accounts and transactions have loaded, as the page has it. */
@@ -192,34 +181,33 @@ export function shownReliably(
 export type PlanCurrencyState =
   | { kind: 'recorded'; currency: string }
   | { kind: 'follows'; currency: string | null }
-  | { kind: 'unknown'; shown: string | null; problem: CurrencyAnswer['problem']; was: string | null };
+  | { kind: 'unknown'; shown: string | null };
 
 /** From the plan the server last confirmed (never one a save has yet to
  *  write) and its answer. */
 export function planCurrencyState(stored: StoredPlan | null, answer: CurrencyAnswer, shown: string | null): PlanCurrencyState {
   if (answer.currency) return { kind: 'recorded', currency: answer.currency };
   if (!stored || !hasTypedAmounts(stored)) return { kind: 'follows', currency: shown };
-  return { kind: 'unknown', shown, problem: answer.problem, was: answer.was };
+  return { kind: 'unknown', shown };
 }
 
 /** The currency the Plan is worked out and shown in, in any state. */
 export const currencyOfState = (s: PlanCurrencyState): string | null => (s.kind === 'unknown' ? s.shown : s.currency);
 
 /** The currencies to offer when asking which one the figures are in: the
- *  one a record that no longer fits said, first; the one shown; then the
- *  others in sight (the accounts', most first, the transactions', and the
- *  home currency), each once. Any other is in the list of every code. */
-export function candidates(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }, more: { was?: string | null; home?: string | null } = {}): string[] {
+ *  one shown; then the others in sight (the accounts', most first, the
+ *  transactions', and the home currency), each once. Any other is in the list
+ *  of every code. */
+export function candidates(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }, home: string | null = null): string[] {
   const out: string[] = [];
   const add = (c: string | null | undefined) => {
     if (c && CURRENCY_CODE.test(c) && !out.includes(c)) out.push(c);
   };
-  add(more.was);
   add(shown);
   for (const c of inputs.assets.byCurrency ?? []) add(c.currency);
   add(inputs.flows?.mostIn);
   add(inputs.flows?.currency);
-  add(more.home);
+  add(home);
   return out;
 }
 
@@ -253,16 +241,7 @@ const shownText = (shown: string | null, from: ReturnType<typeof shownFrom>, why
 
 /** The question, when the Plan's currency isn't known: true to why. */
 export function askText(state: Extract<PlanCurrencyState, { kind: 'unknown' }>, why: NotReliable | null, from: ReturnType<typeof shownFrom>): string {
-  if (state.problem === 'newer') {
-    return `The currency your plan’s figures are in was recorded by a newer version of Nya, so it can’t be read here.${state.shown ? ` They’re shown in ${state.shown} for now.` : ''} Nothing on the Plan can be saved until that version is back.`;
-  }
-  const start =
-    state.problem === 'stale'
-      ? `Nya recorded your plan’s figures as ${state.was ?? 'another currency'}, but they were changed since in a way that didn’t record a currency (an older version of Nya, a page open since before the update, or a save that didn’t finish), so whether they’re still in ${state.was ?? 'it'} can’t be told.`
-      : state.problem === 'unreadable'
-        ? 'The record of the currency your plan’s figures are in couldn’t be read.'
-        : 'Your plan’s figures were saved before Nya kept the currency they were typed in.';
-  return `${start}${shownText(state.shown, from, why)} Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
+  return `Your plan’s figures were saved before Nya kept the currency they were typed in.${shownText(state.shown, from, why)} Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
 }
 
 /** Before a plan's first typed amount, when the currency can't be told from

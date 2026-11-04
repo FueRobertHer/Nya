@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { copyDiffParts, diffText, figureChoices, itemChoices, rowText, sameChange } from '@/components/plan-diff';
 import { asEvent, eventsOf, itemFromEvent, itemFromExpense, itemFromIncome, withEvents, type PlanItem } from '@/lib/fire/items';
-import { parseLifeEvent, type LifeEvent } from '@/lib/fire/events';
+import type { LifeEvent } from '@/lib/fire/events';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { genEvents, rand } from './plan-gen';
 
@@ -22,9 +22,7 @@ describe('life events as items, and back', () => {
   test('every life event read back from its item is the same event', () => {
     for (let seed = 1; seed <= 300; seed++) {
       for (const e of genEvents(rand(seed))) {
-        const checked = parseLifeEvent(e, 'event');
-        if ('error' in checked) continue;
-        expect([seed, asEvent(itemFromEvent(checked.ok))]).toEqual([seed, checked.ok]);
+        expect([seed, asEvent(itemFromEvent(e))]).toEqual([seed, e]);
       }
     }
   });

@@ -4,10 +4,9 @@
 //
 // What the Plan tab says about the currency its typed figures are in
 // (lib/fire/plan-currency.ts), in one card:
-//   - ask: the currency isn't known (a plan saved before it was recorded, a
-//     record that no longer fits, one that can't be read). A button for each
-//     currency in sight, the one a record said first ("They're still in
-//     USD"), and any other code from the list, so there is always an answer.
+//   - ask: the currency isn't known (a plan saved before it was recorded). A
+//     button for each currency in sight, and any other code from the list, so
+//     there is always an answer.
 //   - first: a plan with nothing typed yet, whose currency can't be told from
 //     the accounts: which one the person will type in, before they do.
 //   - recorded: the currency, always said, with what it means when the
@@ -29,7 +28,7 @@ import { recordedText, relabelText } from '@/lib/fire/plan-currency';
 import { Notice } from './TotalCaveats';
 
 export type CurrencyCardMode =
-  | { kind: 'ask'; text: string; offer: string[]; was: string | null; canAnswer: boolean }
+  | { kind: 'ask'; text: string; offer: string[] }
   | { kind: 'first'; text: string; offer: string[]; picked: string | null }
   | { kind: 'waiting'; text: string }
   | { kind: 'recorded'; currency: string; kept: string | null; relabelTo: string | null; previous: string | null; copiesIn: number; offer: string[] }
@@ -142,20 +141,16 @@ export function PlanCurrencyCard({
           <Alert text={failure ?? ''} />
           <Alert text={error} />
         </div>
-        {mode.canAnswer && (
-          <>
-            {mode.offer.length > 0 && (
-              <div className="action-row" style={{ marginTop: 12 }}>
-                {mode.offer.map((c) => (
-                  <button key={c} className="secondary" disabled={off} onClick={() => void answer(c)}>
-                    {c === mode.was ? `They’re still in ${c}` : `They’re in ${c}`}
-                  </button>
-                ))}
-              </div>
-            )}
-            <AnotherCurrency except={mode.offer} disabled={off} label={mode.offer.length > 0 ? 'Or another currency' : 'The currency they’re in'} verb="They’re in" onChoose={(c) => void answer(c)} />
-          </>
+        {mode.offer.length > 0 && (
+          <div className="action-row" style={{ marginTop: 12 }}>
+            {mode.offer.map((c) => (
+              <button key={c} className="secondary" disabled={off} onClick={() => void answer(c)}>
+                They’re in {c}
+              </button>
+            ))}
+          </div>
         )}
+        <AnotherCurrency except={mode.offer} disabled={off} label={mode.offer.length > 0 ? 'Or another currency' : 'The currency they’re in'} verb="They’re in" onChoose={(c) => void answer(c)} />
       </>
     );
   }

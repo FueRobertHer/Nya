@@ -1,8 +1,8 @@
 // components/plan-scenario-text.ts
 //
-// The words the Plan's scenarios are said in: each change from the Plan,
-// each life event and where it counts, what a plan starts with, why one isn't
-// worked out. Kept apart from the components so the exact sentences can be
+// The words a plan's settings and items are said in: each setting and item,
+// each life event and where it counts, what a plan starts with, why the walk
+// stops. Kept apart from the components so the exact sentences can be
 // tested (test/plan-compare.test.tsx). Every amount goes through the `money`
 // a caller gives (components/plan-text.ts wholeMoney), so hidden amounts
 // stay hidden. No engine, no data.
@@ -10,7 +10,7 @@
 import { allocationOf, type FirePlan, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
 import { carAges, type EventPart, type LifeEvent, type Shortfall } from '@/lib/fire/events';
 import type { StartsWith } from '@/lib/fire/plan-figures';
-import { settingOf, type ScenarioChange, type ScenarioChanges, type SetField } from '@/lib/fire/scenarios';
+import type { SetField } from '@/lib/fire/plan-list';
 import { RULE_NAMES, REBALANCE_TEXT, pct } from './plan-text';
 
 type Money = (n: number) => string;
@@ -34,7 +34,7 @@ export const SETTING_NAMES: Record<SetField, string> = {
   fee: 'Fund fees',
 };
 
-export const START_NAMES: Record<FirePlan['start'], string> = {
+const START_NAMES: Record<FirePlan['start'], string> = {
   'fi-number': 'your FI number, at the stop age',
   assets: 'your invested assets, today',
   custom: 'a balance you typed, at the stop age',
@@ -75,10 +75,6 @@ export function settingText(field: SetField, value: unknown, money: Money): stri
   }
 }
 
-function same(a: unknown, b: unknown) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 export function itemText(list: 'income' | 'expenses', item: PlanIncome | PlanExpense, money: Money): string {
   if (list === 'income') {
     const x = item as PlanIncome;
@@ -86,28 +82,6 @@ export function itemText(list: 'income' | 'expenses', item: PlanIncome | PlanExp
   }
   const x = item as PlanExpense;
   return `${money(x.amount)} at age ${x.atAge}`;
-}
-
-/** One change of a scenario, in a sentence. */
-export function changeText(c: ScenarioChange, base: FirePlan, s: ScenarioChanges, money: Money): string {
-  switch (c.kind) {
-    case 'set': {
-      const value = c.field === 'mix' ? s.set.mix : s.set[c.field];
-      const planValue = settingOf(base, c.field);
-      const tail = same(value, planValue) ? 'the same as your plan now' : `your plan: ${settingText(c.field, planValue, money)}`;
-      return `${SETTING_NAMES[c.field]}: ${settingText(c.field, value, money)} (${tail})`;
-    }
-    case 'left-out':
-      return `Leaves out “${c.item.label}” (${itemText(c.list, c.item, money)})`;
-    case 'replaced':
-      return `“${c.item.label}”: ${itemText(c.list, c.item, money)}, instead of ${itemText(c.list, c.was, money)}`;
-    case 'added':
-      return `Adds “${c.item.label}”: ${itemText(c.list, c.item, money)}`;
-    case 'orphan':
-      return `“${c.item.label}” replaced an item your plan no longer has, so it is left out`;
-    case 'moot':
-      return 'Leaves out an item your plan no longer has, so nothing';
-  }
 }
 
 const span = (years: number | null) => (years === null ? 'for good' : `for ${years} year${years === 1 ? '' : 's'}`);
@@ -200,17 +174,6 @@ export function shortText(short: Shortfall, age: number | null, money: Money, wh
   return short.kind === 'cost'
     ? `You’d have about ${money(short.have)} ${when}, less than the ${money(short.need)} it takes from your investments, so ${what}: change the cost, or when it comes.`
     : `You’d have about ${money(short.have)} ${when}, and that year takes ${money(short.need)} out, more than there is, so ${what}.`;
-}
-
-/** Why a scenario isn't worked out with the Plan as it is now, from the
- *  rule parsePlan says it breaks. */
-export function resolveErrorText(field: string, error: string, base: FirePlan, s: ScenarioChanges): string {
-  if (field === 'targetAge' && base.age !== null) {
-    return `It stops working at ${s.set.targetAge ?? base.targetAge}, before your age now (${base.age}). Change its stop age, or use your plan’s.`;
-  }
-  if (field === 'income' || field.startsWith('income[')) return 'With your plan’s other income, it has more than a plan takes (5). Leave one out, or remove one it adds.';
-  if (field === 'expenses' || field.startsWith('expenses[')) return 'With your plan’s one-off expenses, it has more than a plan takes (10). Leave one out, or remove one it adds.';
-  return `It can’t be worked out with your plan as it is now: ${error}. Change it, or use your plan’s.`;
 }
 
 /** Retirement spending with lasting changes, beside the FI number. */

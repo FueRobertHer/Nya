@@ -17,7 +17,7 @@
 
 import { DEFAULT_PLAN, isFirePlan, type FirePlan, type PlanFunding } from './plan';
 import { isStoredPlan, planOf, upgradeStoredPlan, type StoredPlan } from './plan-v2';
-import { MAX_PLAN_SCENARIOS } from './scenarios';
+import { MAX_PLAN_SCENARIOS } from './plan-list';
 import { hasTypedAmounts } from './plan-currency';
 
 /** One plan, as `fire-plans` stores it. */
@@ -106,7 +106,7 @@ const byAccount = (f: readonly PlanFunding[]) => [...f].sort((a, b) => (a.accoun
 
 /** Whether two sets of facts are the same: by value, how each workplace plan
  *  is paid into as a set by account (the savings form writes it in the order
- *  it lists the plans, as recordSave allows for). */
+ *  it lists the plans). */
 export function sameFacts(a: Facts, b: Facts): boolean {
   if (a.age !== b.age || a.partnerAge !== b.partnerAge || a.includeCash !== b.includeCash || a.method !== b.method) return false;
   const x = byAccount(a.planFunding);

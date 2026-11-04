@@ -38,7 +38,7 @@ import { EVENT_PART_TEXT, laterText, retirementText, shortText } from './plan-sc
 import { PlanRowsSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
 import { MAX_FIRE_PLANS } from '@/lib/fire/copies';
-import { SCENARIO_NAME_MAX, nameTaken } from '@/lib/fire/scenarios';
+import { SCENARIO_NAME_MAX, nameTaken } from '@/lib/fire/plan-list';
 import { asEvent } from '@/lib/fire/items';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
