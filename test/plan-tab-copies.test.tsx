@@ -146,13 +146,18 @@ async function stored(): Promise<{ main: string; byName: Record<string, Row> }> 
 
 const pass = fakeClock();
 simulateOnPage();
-/** Lets `ms` pass on the fake clock, then more until no route is still
- *  answering (a write's many Redis commands outlast the turns a step lets
- *  settle), and what the answers start. */
+/** Lets `ms` pass on the fake clock, then more until no route has been
+ *  answering for three steps (a write's many Redis commands outlast the
+ *  turns a step lets settle, and an answer can start another request: a
+ *  write refused reads the list again, so one look finding none answering
+ *  may fall between the two), and what the answers start. */
 async function settle(ms = 30) {
   await pass(ms);
-  for (let i = 0; inflight > 0 && i < 1000; i++) await pass(10);
-  await pass(30);
+  for (let i = 0, quiet = 0; i < 1000; i++) {
+    if (inflight > 0) quiet = 0;
+    else if (++quiet > 3) return;
+    await pass(10);
+  }
 }
 const classOf = (e: FakeElement) => (e.getAttribute('class') ?? '').split(' ');
 const inDialog = (e: FakeElement) => {
