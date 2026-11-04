@@ -95,7 +95,7 @@ function YourPath({ a, currencyNote }: { a: FigureArgs; currencyNote: string | n
   return (
     <>
       <FiCard {...a} currencyNote={currencyNote} />
-      <InputsCard figures={figureNotes(a)} view={a.view} money={a.money} onOpen={noop} />
+      <InputsCard figures={figureNotes(a)} view={a.view} plan={a.plan} money={a.money} onOpen={noop} />
     </>
   );
 }

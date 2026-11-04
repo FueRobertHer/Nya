@@ -336,6 +336,46 @@ export const incomeOf = (plan: Items): PlanIncome[] => plan.items.map(asIncome).
 /** The plan's items that are version 1's one-offs, in item order. */
 export const expensesOf = (plan: Items): PlanExpense[] => plan.items.map(asExpense).filter((x): x is PlanExpense => x !== null);
 
+const yearsOf = (until: PlanItem['until']): number | null | undefined => (until === null ? null : 'years' in until ? until.years : undefined);
+
+/** The item as a life event, or null unless it is exactly what itemFromEvent
+ *  makes of one: what the Life events card shows and edits (until E2 shows
+ *  every item kind in its own forms). */
+export function asEvent(x: PlanItem): LifeEvent | null {
+  const age = plainAge(x.from);
+  if (age === null || x.owner !== null || x.beforeTax || x.replaces !== null || !x.inflationAdjusted) return null;
+  const years = yearsOf(x.until);
+  const once = x.every === null && x.times === null;
+  const { id, label } = x;
+  switch (x.kind) {
+    case 'home':
+      return once && years !== undefined && x.once !== null && x.yearly !== null ? { id, kind: 'house', label, atAge: age, cost: x.once, yearly: x.yearly, years } : null;
+    case 'child':
+      return once && typeof years === 'number' && x.once === null && x.yearly !== null ? { id, kind: 'child', label, fromAge: age, yearly: x.yearly, years } : null;
+    case 'pay':
+      if (!once || x.once !== null || x.yearly === null) return null;
+      if (typeof years === 'number' && x.yearly <= 0) return { id, kind: 'sabbatical', label, fromAge: age, years, savingsLost: 0 - x.yearly };
+      return years === null ? { id, kind: 'raise', label, fromAge: age, yearly: x.yearly } : null;
+    case 'part-time': {
+      const toAge = x.until !== null && 'anchor' in x.until ? plainAge(x.until) : null;
+      return once && toAge !== null && x.once === null && x.yearly !== null ? { id, kind: 'part-time', label, fromAge: age, toAge, yearly: x.yearly } : null;
+    }
+    case 'spending':
+      return once && years !== undefined && x.once === null && x.yearly !== null ? { id, kind: 'spending', label, fromAge: age, yearly: x.yearly, years } : null;
+    case 'car':
+      return x.until === null && x.once !== null && x.yearly === null && x.times !== null ? { id, kind: 'car', label, atAge: age, cost: x.once, every: x.every, times: x.times } : null;
+    case 'windfall':
+      return once && x.until === null && x.once !== null && x.yearly === null ? { id, kind: 'windfall', label, atAge: age, amount: x.once } : null;
+    case 'loan-end':
+      return once && x.until === null && x.once === null && x.yearly !== null ? { id, kind: 'loan-end', label, atAge: age, yearly: x.yearly } : null;
+    default:
+      return null;
+  }
+}
+
+/** The plan's items that are life events, in item order. */
+export const eventsOf = (plan: Pick<FirePlanV2, 'items'>): LifeEvent[] => plan.items.map(asEvent).filter((e): e is LifeEvent => e !== null);
+
 /** The plan with `list` as its version 1 lists' one: an item whose id is in
  *  the list (of any kind) replaced where it is, so no id is ever doubled; one
  *  of that view the list leaves out removed; a new one at the end. Every
@@ -358,6 +398,8 @@ function withList<T extends { id: string }, P extends Items>(plan: P, list: read
 
 export const withIncome = <P extends Items>(plan: P, list: readonly PlanIncome[]): P => withList(plan, list, asIncome, itemFromIncome);
 export const withExpenses = <P extends Items>(plan: P, list: readonly PlanExpense[]): P => withList(plan, list, asExpense, itemFromExpense);
+/** The plan with `list` as its life events, as withIncome does it. */
+export const withEvents = <P extends Items>(plan: P, list: readonly LifeEvent[]): P => withList(plan, list, asEvent, itemFromEvent);
 
 /** The ages of the items' edges known before anything runs (an age, yours or
  *  the partner's as yours; the stop while it is an age; an edge anchored on

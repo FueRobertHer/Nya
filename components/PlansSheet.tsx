@@ -32,7 +32,7 @@ import { chevron, RIGHT } from './ActivityBar';
 import type { CompareColumn, ColumnOutcome } from './plan-compare';
 import { plansCount as countOf, type PlansState } from './plan-list';
 import { copyDiffParts, diffText, rowText } from './plan-diff';
-import { fiWhen } from './plan-what-if';
+import { fiWhen } from './plan-fi-when';
 import { plansText } from './PlanBar';
 import { EVENT_PART_TEXT, laterText, retirementText, shortText } from './plan-scenario-text';
 import { PlanRowsSkeleton } from './LoadingSkeletons';

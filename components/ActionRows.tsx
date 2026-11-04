@@ -11,6 +11,7 @@
 // reader hears that, but has no chevron (docs/design/design-system.md,
 // Destructive action row).
 
+import type { Ref } from 'react';
 import { chevron, RIGHT } from './MonthStepper';
 
 export type SheetAction = {
@@ -25,6 +26,8 @@ export type SheetAction = {
   opens?: boolean;
   /** It destroys something (after a confirm level): last, in --neg. */
   neg?: boolean;
+  /** For focus to come back to it after its level. */
+  ref?: Ref<HTMLButtonElement>;
   onSelect: () => void;
 };
 
@@ -34,7 +37,7 @@ export default function ActionRows({ rows }: { rows: readonly SheetAction[] }) {
     <ul className="card list-rows">
       {rows.map((r) => (
         <li key={r.key}>
-          <button type="button" className={r.neg ? 'list-row neg' : 'list-row'} aria-haspopup={r.opens ? 'dialog' : undefined} onClick={r.onSelect}>
+          <button type="button" ref={r.ref} className={r.neg ? 'list-row neg' : 'list-row'} aria-haspopup={r.opens ? 'dialog' : undefined} onClick={r.onSelect}>
             <span className="list-row-text">
               <span className="list-row-title">{r.title}</span>
               {r.sub && <span className="list-row-sub">{r.sub}</span>}

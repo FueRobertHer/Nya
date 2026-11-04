@@ -223,7 +223,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     },
     {
       key: 'spending',
-      label: 'Spending in retirement, the first year, by the withdrawal rule (before one-offs and life events)',
+      label: 'Spending in retirement, the first year, by the withdrawal rule (before one-offs and other items)',
       cells: columns.map((c) =>
         cell(c, (fig, r) => {
           const res = r as SimResult;

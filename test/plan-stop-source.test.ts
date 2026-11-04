@@ -5,7 +5,7 @@ import { join, relative } from 'node:path';
 // The stop is read through stopOf (lib/fire/plan.ts) or a view's stopAge, so
 // "stop when I reach FI" reaches every figure and word. A read of targetAge
 // itself is allowed only where it is the stored field: the readers and the
-// Ages sheet that types it, and version 1's scenarios, which keep a stop age
+// Household sheet that types it, and version 1's scenarios, which keep a stop age
 // of their own; and where it names the setting, never its value (how a copy
 // differs, components/plan-diff.ts). A file not listed here, or a count that
 // rises, fails.
@@ -22,7 +22,7 @@ const ALLOWED: Record<string, { reads: number; why: string }> = {
   'lib/fire/plan-v2.ts': { reads: 4, why: 'version 2’s reader, which keeps a stop under stop at FI' },
   'lib/fire/scenarios.ts': { reads: 4, why: 'version 1’s scenarios and their own stop age' },
   'components/plan-scenario-text.ts': { reads: 2, why: 'a version 1 scenario’s stop age, in its words' },
-  'components/PlanForms.tsx': { reads: 1, why: 'the Ages sheet, where the stop age is typed' },
+  'components/PlanForms.tsx': { reads: 3, why: 'the Household sheet, where the stop age is typed, and the one kept under stop when I reach FI comes back while it is still ahead' },
   'components/plan-diff.ts': { reads: 1, why: 'the stop setting’s name; its value is said through stopOf' },
 };
 

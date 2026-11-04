@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import PlanCompare from '@/components/PlanCompare';
 import { compareRows, fiDateText, pointsText, startsLine, type CompareColumn } from '@/components/plan-compare';
 import { CopyCard, PlanDetails, PlansSheet, REFUSED_TEXT, compareJobs, rememberResult, type PlanOutcome, type SheetPlan } from '@/components/PlansSheet';
-import { LifeEventsCard } from '@/components/PlanEvents';
+import { TimelineCard } from '@/components/PlanTimeline';
 import { FiCard, InputsCard, SimulationCard } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import { INITIAL_PLANS, createPlansClient, type PlanRow, type PlansState } from '@/components/plan-list';
@@ -14,6 +14,7 @@ import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf } from '@/lib/fire/plan-v2';
+import { withEvents } from '@/lib/fire/items';
 import type { LifeEvent } from '@/lib/fire/events';
 import { runPlanJob } from '@/lib/fire/jobs';
 import { usMarket } from '@/lib/fire/us-market';
@@ -21,7 +22,7 @@ import { HISTORY_COUNT, HISTORY_FIRST, historySpan } from '@/lib/fire/history-sp
 import { simulate, type SimResult } from '@/lib/fire/simulate';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
-import { figuresOf, OFF } from './plan-gen';
+import { figuresOf, OFF, timelineProps } from './plan-gen';
 
 // Compare mode (components/plan-compare.ts, PlanCompare.tsx), the open
 // copy's card and the Plans sheet (components/PlansSheet.tsx), and the list
@@ -173,7 +174,7 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(row('worst').cells[1].diff).toBe('not compared: one starts with money it wouldn’t have');
     expect(row('spending').cells[1].diff).toBe('not compared: one starts with money it wouldn’t have');
     expect(row('median').label).toBe('Ending balance at 95, median');
-    expect(row('spending').label).toBe('Spending in retirement, the first year, by the withdrawal rule (before one-offs and life events)');
+    expect(row('spending').label).toBe('Spending in retirement, the first year, by the withdrawal rule (before one-offs and other items)');
   });
 
   test('ending balances at different ages are said with their age, and never set against each other', () => {
@@ -520,7 +521,7 @@ describe('the copy’s card and the Plans sheet', () => {
     expect(text(fi)).toContain('Copy: Retire at 45');
     // The figures the FI card rests on, under it on Your path (rollout phase
     // 6c), what they say worked out in the render as PlanTab does.
-    const Inputs = () => <InputsCard copyName="Retire at 45" figures={figureNotes(a)} view={f.view} money={money} onOpen={() => {}} />;
+    const Inputs = () => <InputsCard copyName="Retire at 45" figures={figureNotes(a)} view={f.view} plan={a.plan} money={money} onOpen={() => {}} />;
     const inputs = renderToStaticMarkup(<Inputs />);
     expect(text(inputs)).toContain('Copy: Retire at 45');
     const sim = renderToStaticMarkup(
@@ -534,10 +535,13 @@ describe('the copy’s card and the Plans sheet', () => {
     expect(st).toContain('Copy: Retire at 45 Will it last?');
     expect(sim).not.toContain('class="meta"');
     expect(sim).not.toContain('<button');
-    const events = renderToStaticMarkup(<LifeEventsCard copyName="Retire at 45" version="c1@u1" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
+    const events = renderToStaticMarkup(
+      <TimelineCard {...timelineProps(withEvents(planOf(p), [{ id: 'c', kind: 'child', label: 'A child', fromAge: 38, yearly: 15_000, years: 18 }]), measured, OFF)} copyName="Retire at 45" version="c1@u1" />
+    );
     const et = text(events);
     expect(et).toContain('Copy: Retire at 45');
-    expect(et).toContain('From 42: spending $15,000 a year more, for 18 years.');
+    expect(et).toContain('A child');
+    expect(et).toContain('$15,000');
     expect(et).toContain('Some of it is before today');
   });
 

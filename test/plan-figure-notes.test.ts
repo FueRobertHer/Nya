@@ -373,7 +373,7 @@ describe('ages and assumptions', () => {
   test('the ages are their sub; not set, what they are for', () => {
     expect(figureNotes(at()).ages).toEqual({ sub: '40 now, stop at 55', line: null, why: null, notes: [] });
     expect(figureNotes(at({ plan: { age: null } })).ages.sub).toBe('? now, stop at 55');
-    expect(figureNotes(at({ plan: { age: null, targetAge: null } })).ages.sub).toBe('Add them for Coast FI and to place income by age');
+    expect(figureNotes(at({ plan: { age: null, targetAge: null } })).ages.sub).toBe('Add them for Coast FI and to place what’s on your Timeline');
   });
 
   test('the assumptions are their sub, with the part-time income when there is one', () => {

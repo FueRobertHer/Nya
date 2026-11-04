@@ -55,7 +55,7 @@ function serve(answers: Record<string, Answer | [number, unknown]>) {
   return calls;
 }
 
-/** The plan as saved, saved back as the Ages sheet sends it. */
+/** The plan as saved, saved back as the Household sheet sends it. */
 const saved = (plan: Record<string, unknown> = PLAN): Record<string, Answer> => {
   let current: unknown = plan;
   return {
@@ -114,11 +114,11 @@ const press = async (el: FakeElement | null) => {
 };
 const button = (within: FakeElement, words: string) => within.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null;
 
-/** Types the stop age in the Ages sheet and saves it. */
+/** Types the stop age in the Household sheet and saves it. */
 const saveStop = async (tab: Tab, stop: number) => {
-  await press(tab.row('Ages'));
+  await press(tab.row('Household'));
   const form = tab.dialog()!;
-  expect(form.getAttribute('aria-label')).toBe('Your ages');
+  expect(form.getAttribute('aria-label')).toBe('Household');
   const [, target] = form.findAll((e) => e.tagName === 'INPUT');
   await act(async () => type(target, String(stop)));
   await press(button(form, 'Save'));

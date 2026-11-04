@@ -104,10 +104,10 @@ describe('the path chart', () => {
     expect(label(html)).toContain('and the projection stops at 54, before 55');
   });
 
-  test('with a plan’s life events, it says so beside the steady growth', () => {
+  test('with a plan’s items, it says so beside the steady growth', () => {
     const html = draw(props({ withEvents: true }));
-    expect(label(html)).toContain('growing a steady 5% a year after inflation with this plan’s life events.');
-    expect(html).toContain('At a steady 5% a year after inflation, with this plan’s life events.');
+    expect(label(html)).toContain('growing a steady 5% a year after inflation with this plan’s items.');
+    expect(html).toContain('At a steady 5% a year after inflation, with this plan’s items.');
   });
 
   test('the FI number’s name over its line when there is no room under it above the axis (review of 8b)', () => {
@@ -450,13 +450,13 @@ describe('Whole path', () => {
 
 describe('what Whole path counts that the FI number leaves out', () => {
   const item = (label: string, age: number, kind: 'income' | 'expense' = 'income') => ({ label, age, kind });
-  test('up to three by name, then how many more; a plan’s life events', () => {
+  test('up to three by name, then how many more; a plan’s items', () => {
     expect(leftOutText({ items: [], events: false })).toBeNull();
     expect(leftOutText({ items: [item('Social Security', 67)], events: false })).toBe('Your FI number leaves out Social Security from 67; this path counts it.');
     expect(leftOutText({ items: [item('Pension', 50), item('Roof', 60, 'expense'), item('Social Security', 67)], events: false })).toBe(
       'Your FI number leaves out Pension from 50, Roof at 60 and Social Security from 67; this path counts them.'
     );
     expect(leftOutText({ items: [item('A', 50), item('B', 51), item('C', 52), item('D', 53)], events: true })).toBe('Your FI number leaves out A from 50, B from 51, C from 52 and 2 more; this path counts them.');
-    expect(leftOutText({ items: [], events: true })).toBe('Your FI number leaves out this plan’s life events after you stop; this path counts them.');
+    expect(leftOutText({ items: [], events: true })).toBe('Your FI number leaves out this plan’s items after you stop; this path counts them.');
   });
 });

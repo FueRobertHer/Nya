@@ -16,8 +16,8 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, pctText, startAge, stopOf, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
-import { expensesOf, incomeOf, withExpenses, withIncome } from '@/lib/fire/items';
+import { allocationOf, asText, LIMITS, pctText, stopOf, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
+import type { PathAfter } from '@/lib/fire/path';
 import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
@@ -30,6 +30,7 @@ import { Segmented } from './Segmented';
 import FieldError from './FieldError';
 import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
+import { itemRuleText } from './plan-items';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -113,7 +114,7 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
     // The server checks again; this catches anything the fields above missed.
     const parsed = parsePlanV2(next);
     if ('error' in parsed) {
-      setError(`That plan can't be saved: ${parsed.error}.`);
+      setError(`That plan can't be saved: ${itemRuleText(parsed.error, next)}`);
       return;
     }
     setError('');
@@ -203,18 +204,26 @@ function ages(age: number | null, targetAge: number | null): { age: number | nul
   return { age, targetAge };
 }
 
+/** A stop age kept under Stop when I reach FI, shown again only while it is
+ *  still ahead of `age`. */
+const stopAhead = (target: string, age: string) => (target.trim() !== '' && age.trim() !== '' && Number(target) < Number(age) ? '' : target);
+
+/** The Household sheet (the tax plan's E2; T3 adds filing and state): your
+ *  age and your partner's, the same in every plan, and when you stop: at an
+ *  age, or when you reach FI, which keeps the age hidden for going back. */
 export function AboutForm(props: SaveProps) {
   const { plan } = props;
   const [age, setAge] = useState(asText(plan.age));
-  const [target, setTarget] = useState(asText(plan.targetAge));
+  const [partner, setPartner] = useState(asText(plan.partnerAge));
+  const [atFi, setAtFi] = useState(plan.stopAtFi);
+  const [target, setTarget] = useState(plan.stopAtFi ? stopAhead(asText(plan.targetAge), asText(plan.age)) : asText(plan.targetAge));
   const s = useSave(props);
   const [min, max] = LIMITS.age;
+  const passed = !atFi && plan.stopAtFi && plan.targetAge !== null && target === '';
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        Your age places Social Security, pensions and one-off expenses in the plan. Your stop age is when you would like to
-        stop working: Drawdown starts there (unless it starts with what you have today), and Coast FI counts the years
-        to it.
+        Your age places what&apos;s on your Timeline. When you stop is when you would like to stop working: Drawdown starts there (unless it starts with what you have today), and Coast FI counts the years to it.
       </p>
       <div className="sheet-form">
         <label className="field">
@@ -230,20 +239,57 @@ export function AboutForm(props: SaveProps) {
           />
         </label>
         {s.under('Your age')}
-        {props.copy && <p className="panel-note">Your age is {SAME_IN_EVERY_PLAN}</p>}
+        <div className="field">
+          <span aria-hidden="true">You stop</span>
+          <Choice
+            label="You stop"
+            value={atFi ? 'fi' : 'age'}
+            options={[
+              ['age', 'At an age'],
+              ['fi', 'When I reach FI'],
+            ]}
+            onChange={(v) => {
+              setAtFi(v === 'fi');
+              if (v === 'age') setTarget((t) => stopAhead(t, age));
+            }}
+            disabled={s.saving}
+          />
+        </div>
+        {atFi ? (
+          <p className="helper">When I reach FI: the first age your invested assets cover the life you&apos;d live from then on, counting that year&apos;s own costs; the age field goes. Items that start when you stop move with it.</p>
+        ) : (
+          <>
+            <label className="field">
+              Stop age
+              <input
+                type="number"
+                inputMode="numeric"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                placeholder="Not set"
+                {...s.field('Stop age')}
+                disabled={s.saving}
+              />
+            </label>
+            {s.under('Stop age')}
+            {passed && <p className="helper">The age you had here has passed: type when you&apos;d like to stop.</p>}
+          </>
+        )}
         <label className="field">
-          Stop age
+          Your partner&apos;s age
           <input
             type="number"
             inputMode="numeric"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
+            value={partner}
+            onChange={(e) => setPartner(e.target.value)}
             placeholder="Not set"
-            {...s.field('Stop age')}
-            disabled={s.saving}
+            {...s.field('Your partner’s age')}
+            disabled={s.saving || !!props.copy}
           />
         </label>
-        {s.under('Stop age')}
+        {s.under('Your partner’s age')}
+        <p className="helper">For the items that are your partner&apos;s, timed by their age.</p>
+        {props.copy && <p className="panel-note">Both ages are {SAME_IN_EVERY_PLAN}</p>}
       </div>
       {s.error && (
         <Notice level="critical" role="alert">
@@ -257,11 +303,111 @@ export function AboutForm(props: SaveProps) {
         disabled={s.disabled}
         saving={s.saving}
         onSave={() =>
-          s.save(() => ({
-            ...plan,
-            ...ages(readNumber(age, 'Your age', min, max, { integer: true, optional: true }), readNumber(target, 'Stop age', min, max, { integer: true, optional: true })),
-          }))
+          s.save(() => {
+            const a = readNumber(age, 'Your age', min, max, { integer: true, optional: true });
+            const p = readNumber(partner, 'Your partner’s age', min, max, { integer: true, optional: true });
+            // Under FI the stop age is hidden, and may be behind you: kept.
+            if (atFi) return { ...plan, age: a, partnerAge: p, stopAtFi: true };
+            return { ...plan, ...ages(a, readNumber(target, 'Stop age', min, max, { integer: true, optional: true })), partnerAge: p, stopAtFi: false };
+          })
         }
+      />
+    </>
+  );
+}
+
+/** Your own FI number, as typed: above 0, up to a plan's largest balance. */
+function ownFiNumber(text: string): number {
+  const n = readNumber(text, 'Your own number', 0, LIMITS.balance) as number;
+  if (n <= 0) throw new FieldProblem('Your own number must be above 0.', ['Your own number']);
+  return n;
+}
+
+/** The FI number's sheet (the tax plan's E2): the number, how it is worked
+ *  out, what it leaves out, and your own number in place of it. Its lines
+ *  are read-only: each figure is one row away on Your figures, and opening a
+ *  sheet from a sheet would drop what was typed. */
+export function FiNumberForm(props: SaveProps & { view: FiView; retirementSpending: number | null; leftOut: PathAfter['leftOut'] | null; money: (n: number) => string }) {
+  const { plan, view, retirementSpending, leftOut, money } = props;
+  const [own, setOwn] = useState(asText(plan.fiNumber));
+  const s = useSave(props);
+  const spending = retirementSpending ?? view.spending.value;
+  const worked = view.workedOut ?? (plan.fiNumber === null ? view.fiNumber : null);
+  const names = (leftOut?.items ?? []).map((i) => `${i.label} ${i.kind === 'income' ? 'from' : 'at'} ${i.age}`);
+  if (leftOut?.events) names.push('this plan’s items after you stop');
+  // No path to read it from (a shortfall): the plan's own money in, by name.
+  if (leftOut === null) for (const x of plan.items) if (x.kind === 'social-security' || x.kind === 'pension' || x.kind === 'other-income') names.push(x.label);
+  return (
+    <>
+      <p className="total-value">
+        <Masked>{view.fiNumber !== null ? money(view.fiNumber) : '--'}</Masked>
+      </p>
+      <p className="helper">What you&apos;d need invested on the day you stop, so that what you draw each year covers your life after work.</p>
+      {spending !== null && worked !== null && (
+        <section className="stack tight" aria-labelledby="fi-number-how">
+          <h3 className="section-label" id="fi-number-how">
+            How it&apos;s worked out
+          </h3>
+          <dl className="txn-detail">
+            <div className="txn-detail-row">
+              <dt>{retirementSpending !== null ? 'Spending in retirement' : 'Spending'}</dt>
+              <dd>
+                <Masked>{`${money(spending)} a year`}</Masked>
+              </dd>
+            </div>
+            {plan.taxRate > 0 && (
+              <div className="txn-detail-row">
+                <dt>÷ (1 − tax)</dt>
+                <dd>{pct(plan.taxRate)} tax</dd>
+              </div>
+            )}
+            <div className="txn-detail-row">
+              <dt>÷ withdrawal rate</dt>
+              <dd>{pct(plan.withdrawalRate)}</dd>
+            </div>
+            <div className="txn-detail-row">
+              <dt>{plan.fiNumber !== null ? 'Worked out' : 'FI number'}</dt>
+              <dd>
+                <Masked>{money(worked)}</Masked>
+              </dd>
+            </div>
+          </dl>
+          <p className="helper">Each is a row on Your figures, or under Assumptions.</p>
+        </section>
+      )}
+      {names.length > 0 && (
+        <Why label="What it leaves out">
+          <p>
+            {names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}: your path and Will it last? count {names.length === 1 ? 'it' : 'them'}.
+          </p>
+        </Why>
+      )}
+      {plan.start === 'fi-number' && <p className="helper">Will it last? starts from this number.</p>}
+      <div className="sheet-form">
+        <label className="field">
+          Use your own number
+          <input type="number" inputMode="decimal" value={own} onChange={(e) => setOwn(e.target.value)} placeholder={NO_EXAMPLE} {...s.field('Your own number')} disabled={s.saving} />
+        </label>
+        {s.under('Your own number')}
+        <p className="helper">Set, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.</p>
+      </div>
+      {plan.fiNumber !== null && (
+        <button type="button" className="btn ghost" disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, fiNumber: null }))}>
+          Use the worked-out number
+        </button>
+      )}
+      {s.error && (
+        <Notice level="critical" role="alert">
+          {s.error}
+        </Notice>
+      )}
+      <Buttons
+        copy={props.copy}
+        paused={props.paused}
+        onDone={props.onDone}
+        disabled={s.disabled}
+        saving={s.saving}
+        onSave={() => s.save(() => ({ ...plan, fiNumber: own.trim() === '' ? null : ownFiNumber(own) }))}
       />
     </>
   );
@@ -671,7 +817,7 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('Part-time income')}
-        {props.copy && <p className="helper">This copy’s own. Part-time work from an age is a life event in its Life events card.</p>}
+        <p className="helper">{props.copy ? 'This copy’s own. ' : ''}Barista FI assumes full-time saving until FI, so a part-time item before you stop doesn’t move it. Part-time work you expect goes on your Timeline.</p>
       </div>
 
       <h3 className="plan-heading" ref={stressRef}>
@@ -857,201 +1003,3 @@ export function AssumptionsForm(
   );
 }
 
-export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
-  const { plan, item } = props;
-  const [label, setLabel] = useState(item?.label ?? 'Social Security');
-  const [amount, setAmount] = useState(asText(item?.amount ?? null));
-  const [fromAge, setFromAge] = useState(asText(item?.fromAge ?? 67));
-  const [adjusted, setAdjusted] = useState(item?.inflationAdjusted ?? true);
-  const s = useSave(props);
-  const build = (): FirePlanV2 => {
-    if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
-    const entry: PlanIncome = {
-      id: item?.id ?? crypto.randomUUID(),
-      label: label.trim().slice(0, LIMITS.label),
-      amount: readNumber(amount, 'The amount', 0, LIMITS.money) as number,
-      fromAge: readNumber(fromAge, 'The starting age', ...LIMITS.eventAge, { integer: true }) as number,
-      inflationAdjusted: adjusted,
-    };
-    const income = incomeOf(plan);
-    return withIncome(plan, item ? income.map((x) => (x.id === item.id ? entry : x)) : [...income, entry]);
-  };
-  return (
-    <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        Income the plan can count on from an age, such as Social Security or a pension, a year and after tax, in
-        today&apos;s dollars. It pays part of each year&apos;s spending, so the portfolio withdraws less.
-      </p>
-      <p className="helper">
-        {props.planInWalk ? 'Counts in your FI date until you reach it, and in Will it last? from where it starts, never in your FI number.' : 'Counts in Will it last?, never in your FI date or FI number.'} Part-time work is{' '}
-        {props.copy ? 'a life event in this copy' : 'a life choice in What if…'}, and Barista FI&apos;s
-        part-time income is in Assumptions.
-      </p>
-      <div className="sheet-form">
-        <label className="field">
-          Name
-          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={LIMITS.label} {...s.field('Name')} disabled={s.saving} />
-        </label>
-        {s.under('Name')}
-        <label className="field">
-          A year, after tax
-          <input
-            type="number"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder={NO_EXAMPLE}
-            {...s.field('The amount')}
-            disabled={s.saving}
-          />
-        </label>
-        {s.under('The amount')}
-        <label className="field">
-          From age
-          <input
-            type="number"
-            inputMode="numeric"
-            value={fromAge}
-            onChange={(e) => setFromAge(e.target.value)}
-            {...s.field('The starting age')}
-            disabled={s.saving}
-          />
-        </label>
-        {s.under('The starting age')}
-      </div>
-      <label className="plan-check">
-        <input type="checkbox" checked={adjusted} onChange={(e) => setAdjusted(e.target.checked)} disabled={s.saving} />
-        Rises with inflation (Social Security does; many pensions don&apos;t)
-      </label>
-      {!adjusted && (
-        <p className="panel-note">
-          Enter what it will pay in today&apos;s dollars. A pension quoted as a future amount is worth less by all the
-          inflation until it starts, so scale it down first; from then on the plan takes inflation off it every year.
-        </p>
-      )}
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
-      <Buttons
-        copy={props.copy}
-        also={props.also}
-        alsoIn={s.alsoIn}
-        onAlso={s.setAlsoIn}
-        paused={props.paused}
-        onDone={props.onDone}
-        disabled={s.disabled}
-        saving={s.saving}
-        onSave={() => s.save(build)}
-        extra={
-          item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withIncome(plan, incomeOf(plan).filter((x) => x.id !== item.id)), false)}>
-              Remove
-            </button>
-          )
-        }
-      />
-    </>
-  );
-}
-
-export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
-  const { plan, item } = props;
-  const [label, setLabel] = useState(item?.label ?? '');
-  const [amount, setAmount] = useState(asText(item?.amount ?? null));
-  const [atAge, setAtAge] = useState(asText(item?.atAge ?? null));
-  const s = useSave(props);
-  // Where Will it last? starts (lib/fire/plan.ts enginePlan): a one-off
-  // before it is in neither that nor the FI date.
-  const start = startAge(plan);
-  const build = (): FirePlanV2 => {
-    if (!label.trim()) throw new FieldProblem('Give it a name.', ['Name']);
-    const entry: PlanExpense = {
-      id: item?.id ?? crypto.randomUUID(),
-      label: label.trim().slice(0, LIMITS.label),
-      amount: readNumber(amount, 'The amount', 0, LIMITS.money * 10) as number,
-      atAge: readNumber(atAge, 'The age', ...LIMITS.eventAge, { integer: true }) as number,
-    };
-    const expenses = expensesOf(plan);
-    return withExpenses(plan, item ? expenses.map((x) => (x.id === item.id ? entry : x)) : [...expenses, entry]);
-  };
-  return (
-    <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
-        A cost on top of normal spending in one year, such as a roof, a car or a wedding, in today&apos;s dollars and
-        after tax.
-      </p>
-      <p className="helper">
-        {props.planInWalk ? (
-          start !== null ? (
-            `Counts in your FI date until you reach it, and in Will it last? at ${start} or later, where that starts.`
-          ) : (
-            'Counts in your FI date until you reach it, and in Will it last? once your age places it.'
-          )
-        ) : (
-          <>
-            {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
-            {props.copy ? "To move this copy's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
-            {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
-          </>
-        )}
-      </p>
-      <div className="sheet-form">
-        <label className="field">
-          Name
-          <input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            maxLength={LIMITS.label}
-            placeholder="e.g. New roof"
-            {...s.field('Name')}
-            disabled={s.saving}
-          />
-        </label>
-        {s.under('Name')}
-        <label className="field">
-          Amount
-          <input
-            type="number"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder={NO_EXAMPLE}
-            {...s.field('The amount')}
-            disabled={s.saving}
-          />
-        </label>
-        {s.under('The amount')}
-        <label className="field">
-          At age
-          <input type="number" inputMode="numeric" value={atAge} onChange={(e) => setAtAge(e.target.value)} {...s.field('The age')} disabled={s.saving} />
-        </label>
-        {s.under('The age')}
-      </div>
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
-      <Buttons
-        copy={props.copy}
-        also={props.also}
-        alsoIn={s.alsoIn}
-        onAlso={s.setAlsoIn}
-        paused={props.paused}
-        onDone={props.onDone}
-        disabled={s.disabled}
-        saving={s.saving}
-        onSave={() => s.save(build)}
-        extra={
-          item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withExpenses(plan, expensesOf(plan).filter((x) => x.id !== item.id)), false)}>
-              Remove
-            </button>
-          )
-        }
-      />
-    </>
-  );
-}

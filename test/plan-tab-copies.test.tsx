@@ -6,7 +6,7 @@ import { simulateOnPage } from './plan-on-page';
 // The Plan tab with copies (the tax plan's C2), rendered and used as a
 // person would (react-dom/client over test/mini-dom.ts), with every plan
 // route real on test/fake-redis.ts, so what is checked is what the server
-// stored: What if…'s Try it making a copy of your plan and opening it; the
+// stored: the Timeline's Try it making a copy of your plan and opening it; the
 // forms with a copy open saving to it and never to your plan, and a form
 // opened on one plan never saving to another; Also change it in, all or
 // none; Make this your plan moving Home; a save refused as stale, read again
@@ -248,17 +248,20 @@ async function openCopy(tab: Tab, name: string) {
 /** The plans' writes and your plan's, in order. */
 const writes = () => calls.filter((c) => c.method !== 'GET' && (c.path === '/api/plans' || c.path === '/api/fire-plan')).map((c) => `${c.method} ${c.path}`);
 
-describe('What if…’s Try it', () => {
-  test('makes a copy of your plan with the life event, named after it, and opens it; your plan stays as it was', async () => {
+describe('the Timeline’s Try it in a copy', () => {
+  test('makes a copy of your plan with the item, named after it, and opens it; your plan stays as it was', async () => {
     const stamp = await seedPlan();
     const tab = await render();
     expect(tab.title()).toBe('Your plan');
-    await press(tab.container.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('chip') && e.textContent.trim() === 'A career break')[0]);
+    await press(button(tab.container, 'Add'));
+    await press(tab.sheetRow('A career break'));
     const sheet = tab.dialog()!;
-    await fill(sheet, 'From age', '45');
-    await fill(sheet, 'For how many years', '2');
+    await fill(sheet, 'Starts at age', '45');
     await fill(sheet, 'Saved less a year', '30000');
-    await press(button(sheet, 'Try it'));
+    await press(tab.sheetRow('Ends'));
+    await fill(tab.dialog()!, 'For how many years', '2');
+    await press(button(tab.dialog(), 'Done'));
+    await press(button(tab.dialog(), 'Try it in a copy'));
     await settle(400);
     expect(writes()).toEqual(['POST /api/plans']);
     expect(tab.title()).toBe('Copy: A career break at 45');
@@ -308,10 +311,10 @@ describe('a form saves only to the plan it was opened for', () => {
     const tab = await render();
     await openCopy(tab, 'Retire at 50');
     expect(tab.title()).toBe('Copy: Retire at 50');
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     expect(sheet.textContent).toContain('Saved to this copy, not your plan.');
-    expect(sheet.textContent).toContain('Your age is the same in every plan: change it on your plan.');
+    expect(sheet.textContent).toContain('Both ages are the same in every plan: change it on your plan.');
     const [age, stop] = sheet.findAll((e) => e.tagName === 'INPUT');
     expect(age.disabled).toBe(true);
     await act(async () => type(stop, '48'));
@@ -331,9 +334,9 @@ describe('a form saves only to the plan it was opened for', () => {
     await seedPlan();
     await seedCopy('Retire at 50', { targetAge: 50 });
     const tab = await render();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
-    expect(sheet.getAttribute('aria-label')).toBe('Your ages');
+    expect(sheet.getAttribute('aria-label')).toBe('Household');
     expect(sheet.textContent).not.toContain('Saved to this copy');
     const [, stop] = sheet.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(stop, '58'));
@@ -354,7 +357,7 @@ describe('a form saves only to the plan it was opened for', () => {
     await seedCopy('Retire at 50', { targetAge: 50 });
     const tab = await render();
     await openCopy(tab, 'Retire at 50');
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     const [, stop] = sheet.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(stop, '48'));
@@ -442,13 +445,13 @@ describe('Also change it in', () => {
     await seedCopy('Retire at 50', { targetAge: 50 }, mine);
     const tab = await render();
     await openCopy(tab, 'Retire at 50');
-    await press(tab.byLabel('Edit Social Security'));
+    await press(tab.row('Social Security'));
     const sheet = tab.dialog()!;
     expect(sheet.textContent).toContain('Saved to this copy, not your plan.');
     const offered = alsoRows(sheet);
     expect(offered.map(([name]) => name)).toEqual(['First plan (your plan)']);
     expect(offered[0][1]).toContain('$24,000');
-    await fill(sheet, 'A year, after tax', '30000');
+    await fill(sheet, 'A year', '30000');
     await checkAlso(sheet, 'First plan (your plan)');
     await press(button(sheet, 'Save'));
     await settle(400);
@@ -525,7 +528,7 @@ describe('a save refused for what is stored now', () => {
       const r = await json(await firePlan.PUT(req('/api/fire-plan', 'PUT', { plan: { ...PLAN, savings: 20_000 }, currency: 'USD', facts_were: factsOf(PLAN), based_on: stamp })));
       expect(r.status).toBe(200);
     };
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     const [, stop] = sheet.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(stop, '58'));
@@ -724,7 +727,7 @@ describe('Make this your plan', () => {
       ['Retire at 50', 'Your plan'],
       ['First plan', ''],
     ]);
-    expect(tab.row('Ages')?.textContent).toContain('stop at 50');
+    expect(tab.row('Household')?.textContent).toContain('stop at 50');
     await tab.unmount();
   });
 });
@@ -743,7 +746,7 @@ describe('your plan renamed', () => {
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Base plan');
     await press(tab.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Close')[0]);
     await settle(400);
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     const [, stop] = sheet.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(stop, '58'));
@@ -769,10 +772,10 @@ describe('the copy’s tag', () => {
     await openCopy(tab, 'Retire at 50');
     const path = tab.container.findAll((e) => e.getAttribute('role') === 'tabpanel')[0];
     const onPath = path.findAll((e) => classOf(e).includes('plan-copy-tag'));
-    // The FI card, the income and one-offs card and the life events card, at least.
+    // The FI card, Your figures and the Timeline, at least.
     expect(onPath.length).toBeGreaterThanOrEqual(3);
     expect(new Set(tags().map((t) => t.textContent))).toEqual(new Set(['Copy: Retire at 50']));
-    await press(tab.byLabel('Edit Social Security'));
+    await press(tab.row('Social Security'));
     expect(tab.dialog()!.findAll((e) => classOf(e).includes('plan-copy-tag')).map((t) => t.textContent)).toEqual(['Copy: Retire at 50']);
     await press(button(tab.dialog(), 'Cancel'));
     await settle(400);
@@ -794,7 +797,7 @@ describe('a copy whose values don’t fit your plan now', () => {
     const card = tab.card()!;
     expect(card.textContent).toContain('This copy has a value that doesn’t fit your plan as it is now: your stop age. It shows the defaults instead');
     expect(card.textContent).toContain('nothing is saved to it until you choose Save it this way.');
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     expect(button(tab.dialog(), 'Save')?.disabled).toBe(true);
     await press(button(tab.dialog(), 'Cancel'));
     await settle(400);
@@ -810,29 +813,36 @@ describe('a copy whose values don’t fit your plan now', () => {
   });
 });
 
-describe('life events in a copy', () => {
-  test('a life choice added is previewed against the copy as it is typed, saved to it, and its notes said on its row', async () => {
+describe('the Timeline in a copy', () => {
+  test('an item added is previewed against the copy as it is typed, saved to it, said, and its notes said on its row', async () => {
     await seedPlan();
     await seedCopy('Retire at 50', { targetAge: 50 });
     const tab = await render();
     await openCopy(tab, 'Retire at 50');
-    const group = tab.byLabel('Add a life choice')!;
-    await press(group.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'A career break')[0]);
+    await press(button(tab.container, 'Add'));
+    expect(tab.dialog()!.textContent).toContain('Everything here goes in Copy: Retire at 50.');
+    await press(tab.sheetRow('A career break'));
     const sheet = tab.dialog()!;
-    await fill(sheet, 'From age', '45');
-    await fill(sheet, 'For how many years', '2');
+    // A copy of a copy is the Plans sheet's Duplicate.
+    expect(button(sheet, 'Try it in a copy')).toBeNull();
+    await fill(sheet, 'Starts at age', '45');
     await fill(sheet, 'Saved less a year', '30000');
-    const preview = () => sheet.findAll((e) => classOf(e).includes('notice') && classOf(e).includes('info'))[0]?.findAll((e) => e.tagName === 'P').map((p) => p.textContent) ?? [];
-    expect(preview()[0]).toMatch(/^In this copy, FI moves from around \d+ to around \d+ \(\d+ years? later\)\.$/);
+    await press(tab.sheetRow('Ends'));
+    await fill(tab.dialog()!, 'For how many years', '2');
+    await press(button(tab.dialog(), 'Done'));
+    await settle(300);
+    expect(sheet.textContent).toMatch(/This copy’s FI dateFrom around \d+ to around \d+/);
     // Starting after the copy's stop age, it changes nothing, and says why.
-    await fill(sheet, 'From age', '52');
-    expect(preview()[0]).toMatch(/^In this copy, FI stays around \d+\.$/);
+    await fill(sheet, 'Starts at age', '52');
+    await settle(300);
+    expect(sheet.textContent).toMatch(/This copy’s FI dateStays around \d+/);
     await press(button(sheet, 'Add to this copy'));
     await settle(400);
     expect(writes()).toEqual(['PUT /api/plans']);
     const { byName } = await stored();
     expect(eventsOf(byName['Retire at 50'].plan).map((e) => [e.kind, e.label])).toEqual([['sabbatical', 'A career break']]);
     expect(eventsOf(byName['First plan'].plan)).toEqual([]);
+    expect(tab.said()).toContain('Added to Copy: Retire at 50');
     expect(tab.text()).toContain(EVENT_PART_TEXT.retired);
     await tab.unmount();
   });
