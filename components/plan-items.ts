@@ -189,6 +189,22 @@ export function countsInFiDate(f: PlanFigures, i: number): boolean {
   return fi.kind === 'age' ? start <= fi.age : fi.kind !== 'now';
 }
 
+/** A kind's help, by D15's switch: with it off, a cost and income don't count
+ *  in the FI date. */
+export function templateHelp(id: string, planInWalk: boolean): string | undefined {
+  const help = TEMPLATE_HELP[id];
+  return planInWalk ? help : help?.replace(', and in your FI date before then.', '.');
+}
+
+/** Whether any of an item reaches Will it last?, which starts at startAge: it
+ *  starts there or later, a repeat lands there, or its years run on past it.
+ *  A change in pay never does: the job ends when you stop. */
+export function reachesStart(x: PlanItem, ages: { start: number; end: number | null }, startAge: number): boolean {
+  if (x.kind === 'pay') return false;
+  if (ages.start + (x.every ?? 0) * ((x.times ?? 1) - 1) >= startAge) return true;
+  return !!x.yearly && (ages.end === null || ages.end > startAge);
+}
+
 /** A Timeline row's sub: how it starts when its point doesn't say it (an
  *  offset, or a start before today), how it ends or repeats, "before tax",
  *  and "counts in your FI date" exactly when the walk counts it. */
@@ -403,7 +419,7 @@ export function notePartText(x: PlanItem, part: keyof typeof EVENT_PART_TEXT, pl
 export function rowNoteText(
   x: PlanItem,
   part: keyof typeof EVENT_PART_TEXT,
-  o: { plan: Pick<FirePlanV2, 'start' | 'age'>; at: number | null; startAge: number | null; end: number | null; planInWalk: boolean; runs: boolean }
+  o: { plan: Pick<FirePlanV2, 'start' | 'age'>; at: number | null; startAge: number | null; end: number | null; inFi: boolean; runs: boolean }
 ): string | null {
   const money = x.kind === 'one-off' || (INCOME_KINDS.includes(x.kind) && x.kind !== 'part-time');
   // Where the simulation has a cost or income, so only when it runs: waiting
@@ -414,11 +430,22 @@ export function rowNoteText(
     if (part === 'before-start') {
       if (o.startAge === null) return 'Not in the simulation: add your age.';
       if (o.plan.age !== null && o.at !== null && o.at < o.plan.age) return 'Before today, so it isn’t counted: your measured figures may already count it.';
-      return o.planInWalk ? `Before ${o.startAge}, where Will it last? starts, so it counts in your FI date, not in Will it last?` : `Before ${o.startAge}, where Will it last? starts, so it isn’t counted anywhere.`;
+      return o.inFi ? `Before ${o.startAge}, where Will it last? starts, so it counts in your FI date, not in Will it last?` : `Before ${o.startAge}, where Will it last? starts, so it isn’t counted anywhere.`;
     }
     if (part === 'after-end') return `After the plan ends${o.end !== null ? ` at ${o.end}` : ''}: only the grid’s longer columns reach it.`;
   }
   return notePartText(x, part, o.plan, o.startAge);
+}
+
+/** What the compile says of an item, the same in its row and its sheet. */
+export function itemWarnings(x: PlanItem, f: PlanFigures, i: number): string[] {
+  const sim = 'sim' in f.engine ? f.engine : null;
+  const startAge = sim ? sim.startAge : null;
+  const end = sim && sim.startAge !== null ? sim.startAge + sim.sim.years : null;
+  const at = f.resolution.ages[i]?.start ?? null;
+  const inFi = countsInFiDate(f, i);
+  const said = f.itemNotes.filter((n) => n.id === x.id).flatMap((n) => rowNoteText(x, n.part, { plan: f.plan, at, startAge, end, inFi, runs: sim !== null }) ?? []);
+  return [...new Set(said)];
 }
 
 /** Whether an item is placed by the steady path in every run of Will it
@@ -452,11 +479,10 @@ export function everyRunText(start: number | null, plan: Pick<FirePlanV2, 'start
 /** The Honesty table's cautions on an item (screens.md): part-time work
  *  before you stop that doesn't say what it replaces, and income before FI
  *  given before tax. */
-export function itemCautions(x: PlanItem, at: { start: number | null; stop: number | null; fi: number | null; taxRate: number }): string[] {
+export function itemCautions(x: PlanItem, at: { start: number | null; stop: number | null; inFi: boolean; taxRate: number }): string[] {
   const out: string[] = [];
   if (x.kind === 'part-time' && x.replaces === null && at.start !== null && at.stop !== null && at.start < at.stop) out.push('Say what take-home it replaces, so it counts in your FI date.');
-  const beforeFi = at.start !== null && (at.fi === null || at.start < at.fi);
-  if (INCOME_KINDS.includes(x.kind) && x.beforeTax && beforeFi && (x.kind !== 'part-time' || x.replaces !== null)) {
+  if (INCOME_KINDS.includes(x.kind) && x.beforeTax && at.inFi) {
     out.push(`In your FI date after ${Math.round(at.taxRate * 1000) / 10}% tax, your plan’s rate on withdrawals. It may keep less: give its take-home for a closer date.`);
   }
   return out;
@@ -567,6 +593,8 @@ export type PreviewLines = {
   lines: string[];
   /** The Honesty table's cautions. */
   cautions: string[];
+  /** What the compile says of it, in its row's words. */
+  warnings: string[];
 };
 
 /** FI in the sheet's words: "around 53", "now", or the answer's own. */
@@ -580,10 +608,10 @@ function fiWords(when: FiWhen): string {
 export function previewLines(p: PreviewInput): PreviewLines {
   const whose = p.where === 'copy' ? 'this copy’s' : 'your';
   if ('error' in p.draft) {
-    return { rows: [], lines: [p.draft.missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`], cautions: [] };
+    return { rows: [], lines: [p.draft.missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`], cautions: [], warnings: [] };
   }
-  if (p.after === 'refused') return { rows: [], lines: ['With this item, the figures can’t be worked out: its lasting change takes your spending in retirement below zero.'], cautions: [] };
-  if (!p.after) return { rows: [], lines: [], cautions: [] };
+  if (p.after === 'refused') return { rows: [], lines: ['With this item, the figures can’t be worked out: its lasting change takes your spending in retirement below zero.'], cautions: [], warnings: [] };
+  if (!p.after) return { rows: [], lines: [], cautions: [], warnings: [] };
   const x = p.draft.ok;
   const f = p.after;
   const i = f.plan.items.findIndex((y) => y.id === x.id);
@@ -605,7 +633,8 @@ export function previewLines(p: PreviewInput): PreviewLines {
   // On the steady path: where it starts and ends.
   if (ages) {
     let start: string;
-    if (today !== null && ages.start <= today) start = 'Already true today: it starts now';
+    if (today !== null && ages.start <= today && a.at !== 'age') start = 'Already true today: it starts now';
+    else if (today !== null && ages.start < today) start = `${ONCE_KINDS.includes(x.kind) ? 'At' : 'From'} ${ages.start}, before today`;
     else if (a.at === 'balance' && x.from.offset === 0) start = `From ${ages.start}, when invested assets reach ${p.money(a.amount)}`;
     else start = `From ${ages.start}`;
     const end = ONCE_KINDS.includes(x.kind) ? '' : ages.end === null ? (x.until === null || x.kind === 'loan-end' ? '' : ', to the plan’s end: its end isn’t reached') : `, until ${ages.end}`;
@@ -658,12 +687,15 @@ export function previewLines(p: PreviewInput): PreviewLines {
     } else if (inWalk) {
       lines.push(`${starts}, ${fiAge === ages.start ? 'the year you reach FI' : `before ${fiAge !== null ? 'your FI date' : 'you reach FI'}`}, so it counts in ${whose} FI date${x.kind === 'pay' ? ' every year until you reach it' : ''}.`);
     } else if (fiAge !== null && ages.start >= fiAge && !INCOME_KINDS.includes(x.kind)) {
-      lines.push(`It starts after you reach FI, so it counts in Will it last?, not in your FI date or your FI number.`);
+      const there = x.kind !== 'pay' && (p.startAge === null || reachesStart(x, ages, p.startAge));
+      if (x.kind === 'pay') lines.push('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor Will it last?');
+      else if (there) lines.push(`It starts after you reach FI, so it counts in Will it last?, not in your FI date or your FI number.`);
+      else lines.push(`It comes after you reach FI and before ${p.startAge}, where Will it last? starts, so it counts in neither your FI date nor Will it last?`);
       // Still saving, a cost can undo what reaching FI meant.
       const next = p.points?.find((q) => q.age === ages.start + 1);
       const fiNumber = f.view.fiNumber;
       if (ONCE_KINDS.includes(x.kind) && (x.once ?? 0) > 0 && (stop === null || ages.start < stop) && next && fiNumber !== null && next.balance < fiNumber) {
-        lines.push(`At ${ages.start} it takes you back under your FI number: Will it last? counts it.`);
+        lines.push(`At ${ages.start} it takes you back under your FI number${there ? ': Will it last? counts it' : ''}.`);
       }
     } else if (x.kind === 'part-time' && stop !== null && ages.start >= stop) {
       lines.push(`Starts ${ages.start === stop ? 'when you stop' : `at ${ages.start}, after you stop`}: income in Will it last?. Your FI date, which assumes full-time work until then, ${after.kind === 'age' ? `stays around ${after.age}` : 'doesn’t move'}.`);
@@ -690,6 +722,6 @@ export function previewLines(p: PreviewInput): PreviewLines {
   }
   if (why === 'no-years') lines.push('Ends before it starts, so it runs no years.');
 
-  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, fi: fiAge, taxRate: f.plan.taxRate });
-  return { rows, lines, cautions };
+  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.plan.taxRate });
+  return { rows, lines, cautions, warnings: i >= 0 ? itemWarnings(x, f, i) : [] };
 }

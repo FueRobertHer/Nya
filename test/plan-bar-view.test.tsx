@@ -113,7 +113,7 @@ const TOO_SOON = copyRow(PLAN, 'c', 'Retire at 30', { targetAge: 30 }, 'USD', 3)
 const IN_EUROS = copyRow(PLAN, 'f', 'In euros', { spending: 45_000, items: [itemFromEvent({ id: 'w', kind: 'spending', label: 'Wedding', fromAge: 42, yearly: 20_000, years: 1 })] }, 'EUR', 4);
 // Lasting changes that take spending in retirement below zero: refused.
 const BELOW_ZERO = copyRow(PLAN, 'd', 'Mortgage gone', { items: [itemFromEvent({ id: 'x', kind: 'spending', label: 'Mortgage paid off', fromAge: 41, yearly: -45_000, years: null })] }, 'USD', 5);
-const GYM = copyRow(PLAN, 'e', 'Gym', { items: [itemFromEvent({ id: 'g', kind: 'spending', label: 'Gym', fromAge: 41, yearly: 1_000, years: 5 })] }, 'USD', 6);
+const GYM = copyRow(PLAN, 'e', 'Gym', { items: [itemFromEvent({ id: 'g', kind: 'spending', label: 'Gym', fromAge: 41, yearly: 1_000, years: 20 })] }, 'USD', 6);
 
 type Call = { method: string; url: string; body: any };
 

@@ -126,7 +126,7 @@ import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { CopyTag } from './CopyTag';
 import { TimelineCard } from './PlanTimeline';
-import { itemRuleText, itemSentence } from './plan-items';
+import { itemRuleText, itemSentence, reachesStart } from './plan-items';
 import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, type PlanSave, type PlansState } from './plan-list';
 import { planSavers, type Save } from './plan-savers';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
@@ -2519,10 +2519,14 @@ export function SimulationCard({
   }
   const { sim, startAge, rate, rateFrom } = engine;
   // Placed by the compile (lib/fire/compile.ts): not one left out for want
-  // of an age or before the start, nor a one-off after the plan's end.
-  const unplaced = new Set(notes.filter((n) => n.part === 'no-age' || n.part === 'before-start' || n.part === 'after-end').map((n) => n.id));
-  // A change in pay ends when you stop, so it never reaches the simulation.
-  const placed = plan.items.filter((x, i) => !unplaced.has(x.id) && ages[i] !== null && ages[i] !== undefined && x.kind !== 'pay');
+  // of an age or already in today's figures, nor one with none of it between
+  // the start and the plan's end. One begun before the start counts from it.
+  const unplaced = new Set(notes.filter((n) => n.part === 'no-age' || n.part === 'already').map((n) => n.id));
+  const placed = plan.items.filter((x, i) => {
+    const at = ages[i];
+    if (!at || unplaced.has(x.id)) return false;
+    return startAge === null ? x.kind !== 'pay' : reachesStart(x, at, startAge) && at.start < startAge + sim.years;
+  });
   const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;

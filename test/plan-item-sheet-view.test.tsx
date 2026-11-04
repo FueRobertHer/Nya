@@ -8,7 +8,7 @@ import { planPage } from './plan-page';
 
 const page = await planPage();
 const { dom, PLAN, settle, rest, seedPlan, seedCopy, stored, writes, classOf, render, press, button, fill, field, pick, choice, addTemplate, openCopy } = page;
-const { ITEM_TEMPLATES, TEMPLATE_HELP } = await import('@/components/plan-items');
+const { ITEM_TEMPLATES, templateHelp } = await import('@/components/plan-items');
 const { itemFromExpense, itemFromIncome } = await import('@/lib/fire/items');
 type PlanItem = import('@/lib/fire/items').PlanItem;
 type FirePlanV2 = import('@/lib/fire/plan-v2').FirePlanV2;
@@ -60,7 +60,7 @@ describe('each template', () => {
     for (const t of ITEM_TEMPLATES) {
       const sheet = await addTemplate(tab, t.label);
       expect([t.id, sheet.getAttribute('aria-label')]).toEqual([t.id, t.label]);
-      expect(sheet.textContent).toContain(TEMPLATE_HELP[t.id]);
+      expect(sheet.textContent).toContain(templateHelp(t.id, false)!);
       expect(sheet.textContent).toContain('Your own figures: Nya suggests none.');
       // The age field under Starts follows them.
       expect([t.id, labelsIn(sheet)]).toEqual([t.id, [...FIELDS[t.id], 'Starts at age']]);
@@ -448,15 +448,55 @@ describe('an item there', () => {
     expect(button(level, 'Remove')).toBeNull();
     await press(button(level, 'Back'));
     expect(tab.dialog()!.getAttribute('aria-label')).toBe('Roof');
+    expect(page.dom.document.activeElement).toBe(removeRow(tab.dialog()!));
     expect(writes()).toEqual([]);
     await tab.unmount();
   }, 20_000);
+
+  test('a row’s warning is in its sheet too', async () => {
+    await seedPlan({ ...PLAN, items: [mk('old', 'one-off', at(30), { label: 'Old roof', once: 9_000 })] });
+    const tab = await render();
+    await press(tab.row('Old roof'));
+    await rest();
+    const warned = tab.dialog()!.findAll((e) => classOf(e).includes('plan-warning')).map((e) => e.textContent);
+    expect(warned).toEqual(['Before today, so it isn’t counted: your measured figures may already count it.']);
+    await tab.unmount();
+  }, 20_000);
+});
+
+describe('a save that fails', () => {
+  test('keeps the sheet, what was typed and why; the plan on screen goes back, and it can be tried again', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF] });
+    const tab = await render();
+    const sheet = await addTemplate(tab, 'A cost');
+    await fill(sheet, 'Name', 'New roof');
+    await fill(sheet, 'The amount', '5000');
+    await fill(sheet, 'Starts at age', '45');
+    page.answers['PUT /api/fire-plan'] = () => Response.json({ error: 'Nope' }, { status: 500 });
+    await press(button(sheet, 'Add to your plan'));
+    await settle(400);
+    const open = tab.dialog();
+    expect(open?.getAttribute('aria-label')).toBe('A cost');
+    expect(field(open!, 'The amount')?.value).toBe('5000');
+    expect(open!.textContent).toContain('It was not saved. Try again in a moment.');
+    expect(tab.row('New roof')).toBeNull();
+    delete page.answers['PUT /api/fire-plan'];
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    expect(tab.dialog()).toBeNull();
+    expect(tab.row('New roof')).not.toBeNull();
+    expect((await stored()).byName['First plan'].plan.items.map((x: PlanItem) => x.label)).toEqual(['Roof', 'New roof']);
+    await tab.unmount();
+  }, 30_000);
 });
 
 describe('the Honesty cautions', () => {
   test('before tax, income before FI says the rate it counts at, in the sheet at caution level', async () => {
     await seedPlan({ ...PLAN, items: [mk('rent', 'other-income', at(45), { label: 'Rent', yearly: 12_000, beforeTax: true })] });
-    const tab = await render();
+    const off = await render();
+    expect(off.timeline()!.textContent).not.toContain('In your FI date after 0% tax');
+    await off.unmount();
+    const tab = await render({ planInWalk: true });
     expect(tab.timeline()!.textContent).toContain('In your FI date after 0% tax');
     await press(tab.row('Rent'));
     await rest();

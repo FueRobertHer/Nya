@@ -29,11 +29,11 @@ import {
   everyRunText,
   itemAmount,
   itemCautions,
+  itemWarnings,
   itemTitle,
   itemsFull,
   onSteadyPath,
   previewLines,
-  rowNoteText,
   rowSub,
   templateOf,
   timelinePoints,
@@ -146,7 +146,9 @@ export function TimelineCard({
   const endsRef = useRef<HTMLButtonElement | null>(null);
   const templateRows = useRef(new Map<string, HTMLButtonElement>());
   const rows = useRef(new Map<string, HTMLButtonElement>());
-  const removeRow = useRef<HTMLElement | null>(null);
+  const removeRow = useRef<HTMLButtonElement | null>(null);
+  /** A save of this sheet's is out, its plan on screen before the answer. */
+  const savingNow = useRef(false);
   /** Where focus goes on going back a level, after the sheet's own. */
   const backTo = useRef<(() => HTMLElement | null) | null>(null);
   /** Where focus goes once the sheet has closed and the plan has the save. */
@@ -168,6 +170,7 @@ export function TimelineCard({
     setEditing(x);
     setFromAdd(viaAdd);
     setError('');
+    setSaid('');
     setAlsoIn([]);
     setWorked(null);
     setOpen(true);
@@ -187,11 +190,18 @@ export function TimelineCard({
     begin({ at: 'item' }, draftOf(x, t), t, x, false);
   };
 
-  // The plan shown changed (saved, or on another device, or another plan
-  // opened): what is open was for the one before.
+  // The plan shown changed (on another device, or another plan opened): what
+  // is open was for the one before. Not this sheet's own save, whose plan is
+  // on screen before the answer: refused, it goes back, and the sheet stays
+  // with what was typed and why.
   useEffect(() => {
-    setOpen(false);
+    if (!savingNow.current && version !== openedOn.current) setOpen(false);
   }, [version]);
+
+  // "Added to Copy: …" goes with the copy.
+  useEffect(() => {
+    setSaid('');
+  }, [copyName]);
 
   // Going back a level: Sheet puts focus on its panel as its own effect, so
   // this one, the parent's, runs after it and wins.
@@ -250,7 +260,9 @@ export function TimelineCard({
     }
     setError('');
     setSaving(true);
+    savingNow.current = true;
     const r = await run();
+    savingNow.current = false;
     setSaving(false);
     if (r !== true) {
       setError(typeof r === 'string' ? r : 'It was not saved. Try again in a moment.');
@@ -303,18 +315,13 @@ export function TimelineCard({
   const engine = figures?.engine;
   const sim = engine && 'sim' in engine ? engine : null;
   const startAge = sim ? sim.startAge : null;
-  const end = sim && sim.startAge !== null ? sim.startAge + sim.sim.years : null;
   const whose = copyName ? 'this copy' : 'your plan';
   const empty = plan.items.length === 0;
   const canAdd = !refused && !noAge && !full && !reloading;
 
   const notesOf = (x: PlanItem, i: number): { warn: string[]; caution: string[]; plain: string[] } => {
     const at = figures?.resolution.ages[i]?.start ?? null;
-    const notes = figures ? figures.itemNotes.filter((n) => n.id === x.id) : [];
-    const warn = notes.flatMap((n) => {
-      const t = rowNoteText(x, n.part, { plan, at, startAge, end, planInWalk, runs: sim !== null });
-      return t ? [t] : [];
-    });
+    const warn = figures ? itemWarnings(x, figures, i) : [];
     const plain: string[] = [];
     if (at !== null && onSteadyPath(x, plan)) {
       const every = everyRunText(at, plan);
@@ -322,8 +329,7 @@ export function TimelineCard({
     }
     const why = figures?.resolution.why[i] ?? null;
     if (why === 'no-years') plain.push('Ends before it starts, so it runs no years.');
-    const fi = fiWhen(figures);
-    const caution = figures ? itemCautions(x, { start: at, stop, fi: fi.kind === 'age' ? fi.age : null, taxRate: plan.taxRate }) : [];
+    const caution = figures ? itemCautions(x, { start: at, stop, inFi: countsInFiDate(figures, i), taxRate: plan.taxRate }) : [];
     return { warn, caution, plain };
   };
 
@@ -611,7 +617,10 @@ export function TimelineCard({
             type="button"
             className="btn ghost"
             aria-haspopup="dialog"
-            ref={addRef}
+            ref={(el) => {
+              addRef.current = el;
+              firstRef?.(el);
+            }}
             aria-disabled={!canAdd || undefined}
             onClick={(e) => {
               if (canAdd) openAdd(e.currentTarget);
@@ -661,6 +670,7 @@ export function TimelineCard({
               plan={plan}
               money={money}
               stop={stop}
+              planInWalk={planInWalk}
               saving={saving}
               where={copyName ? 'Saved to this copy, not your plan.' : `Saved to ${whose}.`}
               onStarts={() => setLevel({ at: 'starts' })}
@@ -692,8 +702,8 @@ export function TimelineCard({
                     sub: 'Asks first.',
                     opens: true,
                     neg: true,
+                    ref: removeRow,
                     onSelect: () => {
-                      removeRow.current = document.activeElement as HTMLElement;
                       setError('');
                       setLevel({ at: 'remove' });
                     },

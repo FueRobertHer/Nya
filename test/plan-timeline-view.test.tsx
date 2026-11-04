@@ -15,6 +15,7 @@ const { planOf } = await import('@/lib/fire/plan-v2');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { itemFromExpense, itemFromIncome, withItem, withoutItem } = await import('@/lib/fire/items');
 const { EVENT_PART_TEXT } = await import('@/components/plan-scenario-text');
+const { askAgesText } = await import('@/components/plan-text');
 const { MASK, setAmountsHidden } = await import('@/lib/format');
 type PlanItem = import('@/lib/fire/items').PlanItem;
 type FirePlanV2 = import('@/lib/fire/plan-v2').FirePlanV2;
@@ -245,6 +246,24 @@ describe('a copy open', () => {
     await tab.unmount();
   }, 20_000);
 
+  test('Added to the copy, said on the copy’s card and gone with it', async () => {
+    await seedPlan();
+    await seedCopy('Stop at 52', { targetAge: 52 });
+    const tab = await render();
+    await page.openCopy(tab, 'Stop at 52');
+    await press(tab.chip('A cost'));
+    await fill(tab.dialog()!, 'The amount', '5000');
+    await fill(tab.dialog()!, 'Starts at age', '45');
+    await press(button(tab.dialog(), 'Add to this copy'));
+    await settle(400);
+    expect(tab.timeline()!.textContent).toContain('Added to Copy: Stop at 52');
+    const back = tab.container.findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0];
+    await press(back);
+    await settle(400);
+    expect(tab.timeline()!.textContent).not.toContain('Added to Copy');
+    await tab.unmount();
+  }, 30_000);
+
   test('refused for lasting changes: its rows in one list, each opening to fix it, and nothing to add', () => {
     const below = mk('Mortgage', 'spending', at(41), { yearly: -45_000 });
     const html = card({ ...PLAN, items: [below] }, { refused: true, figures: null, copyName: 'Gone' });
@@ -298,6 +317,21 @@ describe('the answer’s notes for a plan whose only item is on the stop', () =>
 });
 
 describe('where focus goes', () => {
+  test('an ask gone from a Timeline with items: to the card’s Add', async () => {
+    await seedPlan({ ...PLAN, targetAge: null, items: [mk('Roof', 'one-off', at(45), { once: 5_000 })] });
+    const tab = await render();
+    const ask = button(tab.timeline(), askAgesText('stop'));
+    expect(ask).not.toBeNull();
+    await page.act(async () => ask!.focus());
+    await press(ask);
+    await fill(tab.dialog()!, 'Stop age', '55');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(400);
+    expect(button(tab.timeline(), askAgesText('stop'))).toBeNull();
+    expect(dom.document.activeElement).toBe(button(tab.timeline(), 'Add')!);
+    await tab.unmount();
+  }, 20_000);
+
   test('after the first Add, to the card’s Add; after another, to its row; after Remove, to the card', async () => {
     await seedPlan();
     const tab = await render();

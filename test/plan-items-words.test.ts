@@ -17,7 +17,9 @@ import {
   itemSentence,
   itemTitle,
   previewLines,
+  reachesStart,
   rowSub,
+  templateHelp,
   templateOf,
   timelinePoints,
   unplacedText,
@@ -203,11 +205,11 @@ describe('where it counts', () => {
 
   test('the Honesty cautions', () => {
     const pt = mk('pt', 'part-time', at(45), { until: at(55), yearly: 20_000 });
-    expect(itemCautions(pt, { start: 45, stop: 50, fi: 46, taxRate: 0 })).toEqual(['Say what take-home it replaces, so it counts in your FI date.']);
-    expect(itemCautions({ ...pt, replaces: 0, beforeTax: true }, { start: 45, stop: 50, fi: 46, taxRate: 0.15 })).toEqual([
+    expect(itemCautions(pt, { start: 45, stop: 50, inFi: false, taxRate: 0 })).toEqual(['Say what take-home it replaces, so it counts in your FI date.']);
+    expect(itemCautions({ ...pt, replaces: 0, beforeTax: true }, { start: 45, stop: 50, inFi: true, taxRate: 0.15 })).toEqual([
       'In your FI date after 15% tax, your plan’s rate on withdrawals. It may keep less: give its take-home for a closer date.',
     ]);
-    expect(itemCautions({ ...pt, replaces: 0 }, { start: 45, stop: 50, fi: 46, taxRate: 0 })).toEqual([]);
+    expect(itemCautions({ ...pt, replaces: 0 }, { start: 45, stop: 50, inFi: true, taxRate: 0 })).toEqual([]);
   });
 });
 
@@ -273,6 +275,67 @@ describe('what is possible', () => {
     expect(q.rows[0]).toEqual({ key: 'On your steady path', value: 'It never starts' });
     expect(q.lines).toContain('On your steady path invested assets start a year with at most $3,547,000, at 95, so it never starts.');
     expect(q.lines).toContain('Checked on the balance at the start of each year, and started once, so the spending it adds can’t switch it off again.');
+  });
+
+  const preview = (x: PlanItem, count = OFF) =>
+    previewLines({ draft: { ok: x }, before: figures({}, count), after: figures({ items: [x] }, count), without: null, where: 'plan', money, startAge: 50, most: null, savings: 50_000, runsOutAt: null });
+  // FI around 46, Will it last? from 50.
+  const NEITHER = 'It comes after you reach FI and before 50, where Will it last? starts, so it counts in neither your FI date nor Will it last?';
+
+  test('after FI, it says where it counts by where Will it last? starts, as its row does', () => {
+    const cost = mk('c', 'one-off', at(48), { once: 1_000 });
+    for (const count of [OFF, ON]) {
+      const p = preview(cost, count);
+      expect(p.lines).toContain(NEITHER);
+      expect(p.warnings).toEqual(['Before 50, where Will it last? starts, so it isn’t counted anywhere.']);
+    }
+    expect(preview(mk('c', 'one-off', at(52), { once: 1_000 })).lines).toContain('It starts after you reach FI, so it counts in Will it last?, not in your FI date or your FI number.');
+    // Its years past the start count there; one over by then doesn't.
+    expect(preview(mk('s', 'spending', at(48), { yearly: 1_000, until: { years: 5 } })).lines).not.toContain(NEITHER);
+    expect(preview(mk('s', 'spending', at(47), { yearly: 1_000, until: { years: 2 } })).lines).toContain(NEITHER);
+    expect(preview(mk('p', 'pay', at(48), { yearly: 1_000 })).lines).toContain('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor Will it last?');
+  });
+
+  test('before FI with the switch on, the row and the sheet both say the FI date', () => {
+    const p = preview(mk('c', 'one-off', at(44), { once: 1_000 }), ON);
+    expect(p.warnings).toEqual(['Before 50, where Will it last? starts, so it counts in your FI date, not in Will it last?']);
+    expect(preview(mk('c', 'one-off', at(44), { once: 1_000 }), OFF).warnings).toEqual(['Before 50, where Will it last? starts, so it isn’t counted anywhere.']);
+  });
+
+  test('before today, it says so; only a milestone is already true', () => {
+    const past = preview(mk('c', 'one-off', at(35), { once: 1_000 }));
+    expect(past.rows[0]).toEqual({ key: 'On your steady path', value: 'At 35, before today' });
+    expect(past.warnings).toEqual(['Before today, so it isn’t counted: your measured figures may already count it.']);
+    expect(preview(mk('s', 'spending', at(35), { yearly: 1_000 })).rows[0].value).toBe('From 35, before today');
+    const met = preview(mk('s', 'spending', { anchor: { at: 'balance', amount: 1_000 }, offset: 0 }, { yearly: 1_000 }));
+    expect(met.rows[0].value).toBe('Already true today: it starts now');
+  });
+
+  test('income before tax is cautioned only where the FI date has it', () => {
+    const rent = mk('r', 'other-income', at(45), { yearly: 12_000, beforeTax: true });
+    expect(preview(rent, OFF).cautions).toEqual([]);
+    expect(preview(rent, ON).cautions[0]).toContain('In your FI date after');
+  });
+
+  test('a kind’s help says the FI date only with the switch on', () => {
+    for (const id of ['cost', 'social-security', 'pension', 'other-income']) {
+      expect(templateHelp(id, true)).toContain('and in your FI date before then.');
+      expect(templateHelp(id, false)).toEndWith('Counted in Will it last? from where it starts.');
+    }
+    expect(templateHelp('nothing', false)).toBeUndefined();
+  });
+
+  test('what reaches Will it last?: its start, a repeat, or years that run on past it', () => {
+    const on = (x: PlanItem, end: number | null) => reachesStart(x, { start: 50, end }, 55);
+    expect(on(mk('p', 'part-time', at(50), { yearly: 1_000 }), 60)).toBe(true);
+    expect(on(mk('p', 'part-time', at(50), { yearly: 1_000 }), 55)).toBe(false);
+    expect(on(mk('c', 'one-off', at(50), { once: 1_000 }), null)).toBe(false);
+    expect(on(mk('c', 'one-off', at(50), { once: 1_000, every: 5, times: 2 }), null)).toBe(true);
+    expect(on(mk('c', 'one-off', at(50), { once: 1_000, every: 4, times: 2 }), null)).toBe(false);
+    expect(on(mk('h', 'home', at(50), { once: 1_000, yearly: 0 }), null)).toBe(false);
+    expect(on(mk('h', 'home', at(50), { once: 1_000, yearly: 500 }), null)).toBe(true);
+    expect(on(mk('n', 'pay', at(50), { yearly: 500 }), null)).toBe(false);
+    expect(reachesStart(mk('c', 'one-off', at(60), { once: 1_000 }), { start: 60, end: null }, 55)).toBe(true);
   });
 
   test('a change in pay says what you’d save', () => {
