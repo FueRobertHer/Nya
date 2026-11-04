@@ -14,7 +14,7 @@ import {
   type PlanItem,
 } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
-import { parseLifeEvent, type LifeEvent } from '@/lib/fire/events';
+import type { LifeEvent } from '@/lib/fire/events';
 import { genEvents, genPlan, rand } from './plan-gen';
 
 // A plan's items (lib/fire/items.ts): the one shape, its checks, the upgrades
@@ -100,7 +100,6 @@ describe('the upgrades', () => {
       [{ id: 'l', kind: 'loan-end', label: 'Car loan', atAge: 44, yearly: 6_000 }, { kind: 'loan-end', yearly: 6_000, until: null }],
     ];
     for (const [e, expected] of cases) {
-      expect(parseLifeEvent(e, 'e')).toEqual({ ok: e });
       expect(itemFromEvent(e)).toMatchObject({ id: e.id, label: e.label, ...expected });
     }
   });

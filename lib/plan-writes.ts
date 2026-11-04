@@ -34,7 +34,7 @@ import { FIRST_PLAN, entryOf, firePlansStore, mainAnswer, planFactsStore, rowOf,
 import { MAIN_ID, MAX_FIRE_PLANS, factsOf, holdsAmounts, isPlanFacts, mainOf, sameFacts, withFacts, type Facts, type PlanEntry, type PlanFacts } from './fire/copies';
 import { DEFAULT_PLAN_V2, type StoredPlan } from './fire/plan-v2';
 import { sameAmounts, typedAmounts, type TypedAmounts } from './fire/plan-currency';
-import { nameTaken } from './fire/scenarios';
+import { nameTaken } from './fire/plan-list';
 import { MANY_AT_ONCE, UnreadableValueError } from './repo';
 
 /** A write refused for what is stored now, with the words the page shows. */

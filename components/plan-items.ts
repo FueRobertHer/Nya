@@ -15,7 +15,7 @@ import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, type Anchor, type ItemKind, type
 import { PLAN_TO_AGE } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
-import { nameTaken, SCENARIO_NAME_MAX } from '@/lib/fire/scenarios';
+import { nameTaken, SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 import type { Unplaced } from '@/lib/fire/steady';
 import { fiWhen, lifeChoiceText, type FiWhen } from './plan-fi-when';
 import { EVENT_PART_TEXT, shortText } from './plan-scenario-text';

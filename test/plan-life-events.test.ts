@@ -1,33 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_PLAN, fiView, repairPlan, type FirePlan, type FiView, type Measured, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
+import { DEFAULT_PLAN, fiView, type FirePlan, type FiView, type Measured, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
 import * as old from './fixtures/before-d15/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { lastChange, walkToFi, type LifeEvent } from '@/lib/fire/events';
-import { compileEvents } from '@/lib/fire/compile';
-import {
-  NO_CHANGES,
-  applyScenario,
-  currencyFor,
-  hasAmounts,
-  isPlanScenario,
-  nameTaken,
-  otherCurrency,
-  parseScenarioDraft,
-  recordSave,
-  removeAdded,
-  resolveScenario,
-  restoreItem,
-  scenarioChanges,
-  unsetChange,
-  type PlanScenario,
-  type ScenarioChanges,
-  type ScenarioDraft,
-} from '@/lib/fire/scenarios';
 import { makeMarket } from '@/lib/fire/market';
 import { historicalCycles, simulate, successGrid, MAX_YEARS } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import { projectBalance, yearsToTarget } from '@/lib/fire/fi';
-import { figuresOf } from './plan-gen';
+import { compileEvents, figuresOf } from './plan-gen';
 
 /** The release before's engine plan, which placed the plan's income and
  *  one-offs itself (now planFigures adds them as items), without the lists
@@ -39,15 +19,14 @@ function enginePlan(p: FirePlan, view: FiView) {
   return rest;
 }
 
-// Plan scenarios (lib/fire/scenarios.ts), their life events
-// (lib/fire/events.ts) and one plan's figures (lib/fire/plan-figures.ts).
+// Life events (lib/fire/events.ts), compiled as items (lib/fire/compile.ts),
+// and one plan's figures (lib/fire/plan-figures.ts).
 // Pure: no clock is read anywhere here; every case gives its own ages.
 
 const us = usMarket();
 const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
 const income = (over: Partial<PlanIncome> = {}): PlanIncome => ({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true, ...over });
 const expense = (over: Partial<PlanExpense> = {}): PlanExpense => ({ id: 'roof', label: 'Roof', amount: 25_000, atAge: 70, ...over });
-const changes = (over: Partial<ScenarioChanges> = {}): ScenarioChanges => ({ ...NO_CHANGES, ...over });
 const figures = (p: FirePlan, m: Measured, events: LifeEvent[] = []): PlanFigures => {
   const f = figuresOf(p, m, events);
   if ('refused' in f) throw new Error('refused');
@@ -61,94 +40,52 @@ const sim = (f: PlanFigures) => {
 const measured: Measured = { spending: 40_000, savings: 50_000, assets: 500_000 };
 const thePlan = plan({ age: 40, targetAge: 55, income: [income()], expenses: [expense()] });
 
-describe('the base Plan', () => {
-  const starts: FirePlan['start'][] = ['fi-number', 'assets', 'custom'];
-  const rules: FirePlan['rule'][] = ['constant', 'percent', 'guardrails', 'vpw', 'floor-ceiling'];
-
-  test('a scenario with no changes resolves to the Plan, deep-equal, for every rule and start', () => {
-    for (const start of starts) {
-      for (const rule of rules) {
-        const p = { ...thePlan, start, rule, startBalance: start === 'custom' ? 900_000 : null };
-        const r = resolveScenario(p, NO_CHANGES);
-        if (!r.ok) throw new Error(r.error);
-        expect(r.plan).toEqual(p);
-        expect(r.orphans).toEqual({ income: [], expenses: [] });
-        expect(r.moot).toEqual({ income: [], expenses: [] });
-      }
-    }
-  });
-
-  test('its figures are fiView and enginePlan exactly, and its engine plan the same JSON (the same job)', () => {
-    for (const start of starts) {
+describe('a plan with nothing run beside it', () => {
+  test('its figures are fiView and enginePlan exactly, for every start', () => {
+    for (const start of ['fi-number', 'assets', 'custom'] as const) {
       const p = { ...thePlan, start, startBalance: start === 'custom' ? 900_000 : null };
       const view = fiView(p, measured);
       const f = figures(p, measured);
       expect(f.view).toEqual(view);
       expect(f.engine).toEqual(enginePlan(p, view));
-      const r = resolveScenario(p, NO_CHANGES);
-      if (!r.ok) throw new Error(r.error);
-      expect(JSON.stringify(sim(figures(r.plan, measured)))).toBe(JSON.stringify(sim(f)));
     }
-  });
-
-  test('and the same SimResult, by either method', () => {
-    const r = resolveScenario(thePlan, NO_CHANGES);
-    if (!r.ok) throw new Error(r.error);
-    for (const method of ['historical', 'monte-carlo'] as const) {
-      expect(simulate(method, sim(figures(r.plan, measured)), us)).toEqual(simulate(method, sim(figures(thePlan, measured)), us));
-    }
-  });
-
-  test('a repaired Plan is the base the same way', () => {
-    const stored = { ...thePlan, withdrawalRate: 0.4 }; // past today's range
-    const { plan: repaired, fixed } = repairPlan(stored);
-    expect(fixed.length).toBe(1);
-    const r = resolveScenario(repaired, NO_CHANGES);
-    if (!r.ok) throw new Error(r.error);
-    expect(r.plan).toEqual(repaired);
   });
 });
 
-describe('one change', () => {
-  const cases: [keyof ScenarioChanges['set'], unknown, Partial<FirePlan>][] = [
-    ['targetAge', 50, { targetAge: 50 }],
-    ['spending', 48_000, { spending: 48_000 }],
-    ['savings', 20_000, { savings: 20_000 }],
-    ['assets', 650_000, { assets: 650_000 }],
-    ['withdrawalRate', 0.035, { withdrawalRate: 0.035 }],
-    ['realReturn', 0.04, { realReturn: 0.04 }],
-    ['taxRate', 0.12, { taxRate: 0.12 }],
-    ['rule', 'guardrails', { rule: 'guardrails' }],
-    ['floor', 0.8, { floor: 0.8 }],
-    ['ceiling', 1.5, { ceiling: 1.5 }],
-    ['start', 'assets', { start: 'assets' }],
-    ['horizon', 35, { horizon: 35 }],
-    ['mix', { stocksPct: 60, bondsPct: 30 }, { stocksPct: 60, bondsPct: 30 }],
-    ['rebalance', 'none', { rebalance: 'none' }],
-    ['fee', 0.002, { fee: 0.002 }],
+describe('one setting changed', () => {
+  const cases: [string, Partial<FirePlan>][] = [
+    ['targetAge', { targetAge: 50 }],
+    ['spending', { spending: 48_000 }],
+    ['savings', { savings: 20_000 }],
+    ['assets', { assets: 650_000 }],
+    ['withdrawalRate', { withdrawalRate: 0.035 }],
+    ['realReturn', { realReturn: 0.04 }],
+    ['taxRate', { taxRate: 0.12 }],
+    ['rule', { rule: 'guardrails' }],
+    ['floor', { floor: 0.8 }],
+    ['ceiling', { ceiling: 1.5 }],
+    ['start', { start: 'assets' }],
+    ['horizon', { horizon: 35 }],
+    ['mix', { stocksPct: 60, bondsPct: 30 }],
+    ['rebalance', { rebalance: 'none' }],
+    ['fee', { fee: 0.002 }],
   ];
 
-  test('each setting alone gives exactly the Plan with that value, by the same functions', () => {
-    for (const [field, value, over] of cases) {
-      const s = changes({ set: { [field]: value } });
-      const r = resolveScenario(thePlan, s);
-      if (!r.ok) throw new Error(`${field}: ${r.error}`);
-      expect(r.plan).toEqual({ ...thePlan, ...over });
+  test('its figures are fiView and enginePlan exactly', () => {
+    for (const [, over] of cases) {
       const direct = { ...thePlan, ...over };
-      expect(figures(r.plan, measured).view).toEqual(fiView(direct, measured));
-      expect(figures(r.plan, measured).engine).toEqual(enginePlan(direct, fiView(direct, measured)));
+      expect(figures(direct, measured).view).toEqual(fiView(direct, measured));
+      expect(figures(direct, measured).engine).toEqual(enginePlan(direct, fiView(direct, measured)));
     }
   });
 
   test('moves the result as the engine alone would, with the same seed', () => {
-    for (const [field, value, over] of cases.filter(([f]) => ['targetAge', 'withdrawalRate', 'mix', 'rule'].includes(f))) {
-      const r = resolveScenario(thePlan, changes({ set: { [field]: value } }));
-      if (!r.ok) throw new Error(r.error);
+    for (const [, over] of cases.filter(([f]) => ['targetAge', 'withdrawalRate', 'mix', 'rule'].includes(f))) {
       const direct = { ...thePlan, ...over };
       const alone = enginePlan(direct, fiView(direct, measured));
       if (!('sim' in alone)) throw new Error('missing');
       for (const method of ['historical', 'monte-carlo'] as const) {
-        const got = simulate(method, sim(figures(r.plan, measured)), us);
+        const got = simulate(method, sim(figures(direct, measured)), us);
         expect(got).toEqual(simulate(method, alone.sim, us));
         if (method === 'monte-carlo') expect(got.seed).toBe(1);
       }
@@ -559,267 +496,5 @@ describe('life events, kind by kind', () => {
       const [cell] = successGrid(method, s, us, [0.04], [50]);
       expect(cell.successRate).toBe(simulate(method, { ...s, years: 50, rule: { kind: 'constant', rate: 0.04 } }, us).successRate);
     }
-  });
-});
-
-describe('when the Plan changes later', () => {
-  test('a Plan item it leaves out that is gone: nothing to leave out, said', () => {
-    const s = changes({ income: { leaveOut: ['gone'], add: [] } });
-    const r = resolveScenario(thePlan, s);
-    if (!r.ok) throw new Error(r.error);
-    expect(r.moot.income).toEqual(['gone']);
-    expect(r.plan.income).toEqual(thePlan.income);
-  });
-
-  test('a replacement whose Plan item is gone is left out, never read as an addition', () => {
-    const at62 = income({ id: 'ss', amount: 18_000, fromAge: 62, label: 'Social Security at 62' });
-    const s = changes({ income: { leaveOut: ['ss'], add: [at62] } });
-    const r = resolveScenario({ ...thePlan, income: [] }, s);
-    if (!r.ok) throw new Error(r.error);
-    expect(r.plan.income).toEqual([]);
-    expect(r.orphans.income).toEqual([at62]);
-    // While the Plan has it, it takes its place.
-    const there = resolveScenario(thePlan, s);
-    expect(there.ok && there.plan.income).toEqual([at62]);
-  });
-
-  test('a rule it breaks now: not run, with the reason', () => {
-    const r = resolveScenario({ ...thePlan, age: 52 }, changes({ set: { targetAge: 50 } }));
-    expect(r).toEqual({ ok: false, error: 'targetAge must not be before age', field: 'targetAge' });
-    const full = { ...thePlan, income: [1, 2, 3, 4, 5].map((n) => income({ id: `i${n}` })) };
-    const six = resolveScenario(full, changes({ income: { leaveOut: [], add: [income({ id: 'new' })] } }));
-    expect(six.ok).toBe(false);
-  });
-});
-
-describe('recording a form’s save', () => {
-  const s0 = changes({ set: { targetAge: 50 } });
-  const shown = () => applyScenario(thePlan, s0).plan;
-  const roundTrip = (s: ScenarioChanges, next: FirePlan) => {
-    const r = recordSave(thePlan, s, next);
-    if ('error' in r) throw new Error(r.error);
-    expect(applyScenario(thePlan, r.ok).plan).toEqual(next);
-    return r.ok;
-  };
-
-  test('resolving what it records gives back exactly the plan the form saved', () => {
-    roundTrip(s0, { ...shown(), withdrawalRate: 0.035 });
-    roundTrip(s0, { ...shown(), spending: null, savings: 45_000 });
-    roundTrip(s0, { ...shown(), income: [income({ amount: 20_000 })] });
-    roundTrip(s0, { ...shown(), income: [] });
-    roundTrip(s0, { ...shown(), expenses: [expense(), expense({ id: 'car', label: 'Car', amount: 30_000, atAge: 60 })] });
-    roundTrip(s0, { ...shown(), targetAge: 52 });
-  });
-
-  test('either share changing records the mix with both; a typed balance records the balance with the start', () => {
-    const mix = roundTrip(s0, { ...shown(), stocksPct: 60 });
-    expect(mix.set.mix).toEqual({ stocksPct: 60, bondsPct: 25 });
-    // The Plan's typed balance, kept as the form shows it: still recorded.
-    const base = { ...thePlan, startBalance: 900_000 };
-    const r = recordSave(base, s0, { ...applyScenario(base, s0).plan, start: 'custom' });
-    expect('ok' in r && r.ok.set).toEqual({ targetAge: 50, start: 'custom', startBalance: 900_000 });
-  });
-
-  test('workplace plans written back in another order are the same setting', () => {
-    const funded = { ...thePlan, planFunding: [{ account_id: 'a', paidFrom: 'bank' as const }, { account_id: 'b', paidFrom: 'payroll' as const }] };
-    const next = { ...applyScenario(funded, s0).plan, savings: 40_000, planFunding: [{ account_id: 'b', paidFrom: 'payroll' as const }, { account_id: 'a', paidFrom: 'bank' as const }] };
-    const r = recordSave(funded, s0, next);
-    expect('ok' in r && r.ok.set).toEqual({ targetAge: 50, savings: 40_000 });
-  });
-
-  test('a value the form only wrote back, rounded to its grid, is not a change', () => {
-    const offGrid = { ...thePlan, fee: 0.00123456 };
-    const next = { ...applyScenario(offGrid, s0).plan, fee: 0.001235 }; // what the form's text gives back
-    const r = recordSave(offGrid, s0, next);
-    expect('ok' in r && r.ok.set).toEqual({ targetAge: 50 });
-  });
-
-  test('a change to what a scenario can’t hold is refused, in words, never dropped', () => {
-    expect(recordSave(thePlan, s0, { ...shown(), age: 41 })).toEqual({ error: 'Your age is the same in every plan: change it with your plan open.' });
-    expect('error' in recordSave(thePlan, s0, { ...shown(), method: 'monte-carlo' })).toBe(true);
-    expect('error' in recordSave(thePlan, s0, { ...shown(), includeCash: true })).toBe(true);
-    expect('error' in recordSave(thePlan, s0, { ...shown(), partTimeIncome: 10_000 })).toBe(true);
-    expect('error' in recordSave(thePlan, s0, { ...shown(), planFunding: [{ account_id: 'a', paidFrom: 'bank' }] })).toBe(true);
-    expect('error' in recordSave(thePlan, s0, { ...shown(), targetAge: null })).toBe(true);
-  });
-
-  test('keeps a replacement whose Plan item is gone, and drops a leave-out of one that is gone', () => {
-    const orphan = income({ id: 'old', label: 'Pension', amount: 9_000 });
-    const s = changes({ income: { leaveOut: ['old', 'gone'], add: [orphan] } });
-    const r = recordSave(thePlan, s, { ...applyScenario(thePlan, s).plan, targetAge: 58 });
-    expect('ok' in r && r.ok.income).toEqual({ leaveOut: ['old'], add: [orphan] });
-  });
-
-  test('removing a replaced item keeps the Plan’s out; Use your plan’s brings it back', () => {
-    const at62 = income({ amount: 18_000, fromAge: 62 });
-    const s = changes({ income: { leaveOut: ['ss'], add: [at62] } });
-    const removed = roundTrip(s, { ...applyScenario(thePlan, s).plan, income: [] });
-    expect(removed.income).toEqual({ leaveOut: ['ss'], add: [] });
-    const back = restoreItem(thePlan, removed, 'income', 'ss');
-    expect('ok' in back && applyScenario(thePlan, back.ok).plan.income).toEqual(thePlan.income);
-  });
-});
-
-describe('Use your plan’s, and removing', () => {
-  test('unsets one setting', () => {
-    expect(unsetChange(changes({ set: { targetAge: 50, fee: 0.002 } }), 'fee').set).toEqual({ targetAge: 50 });
-  });
-
-  test('refuses, in words, to take a list past its limit', () => {
-    const full = { ...thePlan, income: [1, 2, 3, 4, 5].map((n) => income({ id: `i${n}` })) };
-    const s = changes({ income: { leaveOut: ['i1'], add: [income({ id: 'new' })] } });
-    const r = restoreItem(full, s, 'income', 'i1');
-    expect('error' in r && r.error).toContain('6 incomes');
-  });
-
-  test('removes an addition, and an orphan with its leave-out', () => {
-    const s = changes({ income: { leaveOut: ['old'], add: [income({ id: 'old' }), income({ id: 'rent', label: 'Rent' })] } });
-    expect(removeAdded(thePlan, s, 'income', 'old').income).toEqual({ leaveOut: [], add: [income({ id: 'rent', label: 'Rent' })] });
-    expect(removeAdded(thePlan, s, 'income', 'rent').income.add.map((x) => x.id)).toEqual(['old']);
-  });
-
-  test('lists every change, in order', () => {
-    const at62 = income({ amount: 18_000, fromAge: 62 });
-    const s = changes({ set: { fee: 0.002, targetAge: 50 }, income: { leaveOut: ['ss', 'gone'], add: [at62] }, expenses: { leaveOut: ['roof'], add: [expense({ id: 'car' })] } });
-    expect(scenarioChanges(thePlan, s).map((c) => c.kind + ('field' in c ? `:${c.field}` : ''))).toEqual(['set:targetAge', 'set:fee', 'moot', 'replaced', 'left-out', 'added']);
-  });
-});
-
-describe('the stored shape', () => {
-  const draft: ScenarioDraft = {
-    name: 'Retire at 50',
-    currency: 'USD',
-    set: { targetAge: 50, spending: null, mix: { stocksPct: 80, bondsPct: 20 }, start: 'custom', startBalance: 800_000 },
-    income: { leaveOut: ['ss'], add: [income({ amount: 18_000, fromAge: 62 })] },
-    expenses: { leaveOut: [], add: [expense({ id: 'car' })] },
-    events: [
-      { id: 'h', kind: 'house', label: 'Home', atAge: 44, cost: 100_000, yearly: 6_000, years: null },
-      { id: 'c', kind: 'child', label: 'Child', fromAge: 42, yearly: 15_000, years: 18 },
-      { id: 's', kind: 'sabbatical', label: 'Off', fromAge: 45, years: 1, savingsLost: 80_000 },
-      { id: 'p', kind: 'part-time', label: 'Part time', fromAge: 50, toAge: 60, yearly: 20_000 },
-      { id: 'x', kind: 'spending', label: 'Less', fromAge: 65, yearly: -8_000, years: 10 },
-      { id: 'v', kind: 'car', label: 'Cars', atAge: 46, cost: 30_000, every: 8, times: 4 },
-      { id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 },
-      { id: 'w', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 },
-      { id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 },
-    ],
-  };
-  const stored = (d: ScenarioDraft): PlanScenario => ({ version: 1, ...d, createdAt: '2026-10-20T10:00:00.000Z', savedAt: '2026-10-21T10:00:00.000Z', rev: 'r1' });
-
-  test('a save takes what it should, and the stored shape reads back', () => {
-    const r = parseScenarioDraft(draft);
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok).toEqual(draft);
-    expect(isPlanScenario(stored(r.ok))).toBe(true);
-    expect(isPlanScenario(stored({ ...draft, set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [], currency: null }))).toBe(true);
-  });
-
-  test('refuses an unknown field anywhere, and an unknown choice', () => {
-    const s = stored(draft);
-    expect(isPlanScenario({ ...s, extra: 1 })).toBe(false);
-    expect(isPlanScenario({ ...s, set: { ...s.set, method: 'historical' } })).toBe(false);
-    expect(isPlanScenario({ ...s, set: { ...s.set, rule: 'bengen-2' } })).toBe(false);
-    expect(isPlanScenario({ ...s, set: { ...s.set, mix: { stocksPct: 80, bondsPct: 20, gold: 0 } } })).toBe(false);
-    expect(isPlanScenario({ ...s, income: { ...s.income, note: '' } })).toBe(false);
-    expect(isPlanScenario({ ...s, events: [{ ...s.events[0], extra: 1 }] })).toBe(false);
-    // A kind this code doesn't know (a later release's): not understood.
-    expect(isPlanScenario({ ...s, events: [{ ...s.events[0], kind: 'lottery' }] })).toBe(false);
-    // A kind with another kind's fields isn't it.
-    expect(isPlanScenario({ ...s, events: [{ ...s.events[0], kind: 'windfall' }] })).toBe(false);
-    expect(isPlanScenario({ ...s, events: [{ ...s.events[5], every: 'often' }] })).toBe(false);
-    expect(isPlanScenario({ ...s, events: [{ ...s.events[8], yearly: null }] })).toBe(false);
-    expect(isPlanScenario({ ...s, version: 2 })).toBe(false);
-  });
-
-  test('a car bought once reads with every null; one bought every few years with a number', () => {
-    const once: LifeEvent = { id: 'v', kind: 'car', label: 'Car', atAge: 46, cost: 30_000, every: null, times: 1 };
-    const r = parseScenarioDraft({ ...draft, events: [once] });
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok.events).toEqual([once]);
-    expect(isPlanScenario(stored(r.ok))).toBe(true);
-  });
-
-  test('a range narrowed after a save still reads, though a save refuses it', () => {
-    const wide = stored({ ...draft, set: { withdrawalRate: 0.5 } });
-    expect(isPlanScenario(wide)).toBe(true);
-    expect('error' in parseScenarioDraft({ ...draft, set: { withdrawalRate: 0.5 } })).toBe(true);
-  });
-
-  const refused: [string, unknown][] = [
-    ['no name', { ...draft, name: '  ' }],
-    ['a long name', { ...draft, name: 'x'.repeat(41) }],
-    ['a name on two lines', { ...draft, name: 'a\nb' }],
-    ['amounts with no currency', { ...draft, currency: null }],
-    ['an unknown currency', { ...draft, currency: 'XQZ' }],
-    ['a setting it can’t change', { ...draft, set: { age: 50 } }],
-    ['a retirement age of null', { ...draft, set: { targetAge: null } }],
-    ['a typed balance with no balance', { ...draft, set: { start: 'custom' } }],
-    ['a mix over 100', { ...draft, set: { mix: { stocksPct: 80, bondsPct: 30 } } }],
-    ['six added incomes', { ...draft, income: { leaveOut: [], add: [1, 2, 3, 4, 5, 6].map((n) => income({ id: `i${n}` })) } }],
-    ['twenty-one leave-outs', { ...draft, income: { leaveOut: Array.from({ length: 21 }, (_, i) => `x${i}`), add: [] } }],
-    ['eleven events', { ...draft, events: Array.from({ length: 11 }, (_, i) => ({ ...draft.events[1], id: `c${i}` })) }],
-    ['an event id twice', { ...draft, events: [draft.events[1], draft.events[1]] }],
-    ['a child costing nothing', { ...draft, events: [{ ...draft.events[1], yearly: 0 }] }],
-    ['part-time work ending before it starts', { ...draft, events: [{ ...draft.events[3], toAge: 50 }] }],
-    ['a home with no cost and no change', { ...draft, events: [{ ...draft.events[0], cost: 0, yearly: 0 }] }],
-    ['a car costing nothing', { ...draft, events: [{ ...draft.events[5], cost: 0 }] }],
-    ['a car once that is two', { ...draft, events: [{ ...draft.events[5], every: null, times: 2 }] }],
-    ['cars every few years that are one', { ...draft, events: [{ ...draft.events[5], times: 1 }] }],
-    ['cars every year', { ...draft, events: [{ ...draft.events[5], every: 1 }] }],
-    ['twenty-one cars', { ...draft, events: [{ ...draft.events[5], every: 2, times: 21 }] }],
-    ['cars every few years in part-years', { ...draft, events: [{ ...draft.events[5], every: 2.5 }] }],
-    ['a last car after the last age', { ...draft, events: [{ ...draft.events[5], atAge: 90, every: 10, times: 4 }] }],
-    ['a raise of nothing', { ...draft, events: [{ ...draft.events[6], yearly: 0 }] }],
-    ['a raise below zero', { ...draft, events: [{ ...draft.events[6], yearly: -5_000 }] }],
-    ['a windfall of nothing', { ...draft, events: [{ ...draft.events[7], amount: 0 }] }],
-    ['a windfall below zero', { ...draft, events: [{ ...draft.events[7], amount: -1 }] }],
-    ['a windfall at no age a plan takes', { ...draft, events: [{ ...draft.events[7], atAge: 120 }] }],
-    ['a loan paid off saving nothing', { ...draft, events: [{ ...draft.events[8], yearly: 0 }] }],
-    ['a loan paid off spending more', { ...draft, events: [{ ...draft.events[8], yearly: -18_000 }] }],
-    ['an unknown kind', { ...draft, events: [{ ...draft.events[7], kind: 'lottery' }] }],
-    ['an extra field', { ...draft, note: 'x' }],
-    ['a missing field', { name: 'x', currency: null, set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] } }],
-  ];
-  for (const [name, raw] of refused) {
-    test(`refuses ${name}`, () => {
-      expect('error' in parseScenarioDraft(raw)).toBe(true);
-    });
-  }
-});
-
-describe('names and currency', () => {
-  test('two scenarios can’t share a name, in any case', () => {
-    const list = [{ id: 'a', name: 'Retire at 50' }];
-    expect(nameTaken(list, ' retire AT 50 ')).toBe(true);
-    expect(nameTaken(list, 'Retire at 50', 'a')).toBe(false);
-    expect(nameTaken(list, 'Retire at 52')).toBe(false);
-  });
-
-  test('the first amount records the Plan’s currency then; later saves keep the one typed in', () => {
-    const none = { ...changes({ set: { targetAge: 50 } }), currency: 'USD' };
-    const withAmount = changes({ set: { targetAge: 50, spending: 45_000 } });
-    expect(hasAmounts(none)).toBe(false);
-    expect(currencyFor(none, withAmount, 'EUR')).toBe('EUR');
-    expect(currencyFor({ ...withAmount, currency: 'USD' }, withAmount, 'EUR')).toBe('USD');
-    expect(currencyFor(null, withAmount, 'EUR')).toBe('EUR');
-  });
-
-  test('amounts typed in another currency than the Plan’s now are named; null on either side is the Plan’s', () => {
-    const s = { ...changes({ set: { spending: 45_000 } }), currency: 'USD' };
-    expect(otherCurrency(s, 'EUR')).toBe('USD');
-    expect(otherCurrency(s, 'USD')).toBeNull();
-    expect(otherCurrency(s, null)).toBeNull();
-    expect(otherCurrency({ ...changes({ set: { targetAge: 50 } }), currency: 'USD' }, 'EUR')).toBeNull();
-  });
-});
-
-describe('saving drops what can’t apply', () => {
-  test('leave-outs of Plan items that are gone, unless a replacement still names one', async () => {
-    const { pruneMoot } = await import('@/lib/fire/scenarios');
-    const orphan = income({ id: 'old' });
-    const s = changes({ income: { leaveOut: ['ss', 'gone', 'old'], add: [orphan] }, expenses: { leaveOut: ['roof', 'x'], add: [] } });
-    const p = pruneMoot(thePlan, s);
-    expect(p.income).toEqual({ leaveOut: ['ss', 'old'], add: [orphan] });
-    expect(p.expenses).toEqual({ leaveOut: ['roof'], add: [] });
   });
 });

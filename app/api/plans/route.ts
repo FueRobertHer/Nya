@@ -5,7 +5,7 @@ import { mainAnswer, readPlans } from '@/lib/plan-copies';
 import { Refused, createCopy, factsWere, isBasedOn, makeMain, relabelPlan, removePlan, renamePlan, saveEntries, type Save } from '@/lib/plan-writes';
 import { parsePlanV2 } from '@/lib/fire/plan-v2';
 import { CURRENCY_CODE } from '@/lib/fire/plan-currency';
-import { SCENARIO_NAME_MAX } from '@/lib/fire/scenarios';
+import { SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 
 // Every plan (lib/plan-copies.ts): yours and its copies, each a whole plan
 // in `fire-plans`, sharing the facts in `plan-facts`. Every write is

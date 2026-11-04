@@ -4,19 +4,19 @@
 // scenario's life events were, as one kind of thing, each timed by an anchor
 // (an age, the stop, another item's start or end, a balance invested assets
 // reach, or FI) and an offset in whole years. FirePlan version 2 holds them
-// (lib/fire/plan-v2.ts); version 1's income and one-offs and a scenario's
-// life events upgrade to them in memory, keeping their ids and figures.
+// (lib/fire/plan-v2.ts); version 1's income and one-offs upgrade to them in
+// memory, keeping their ids and figures.
 //
 // ONE SHAPE: every item has every field. A field that doesn't apply to its
 // kind is null, `owner` null, `beforeTax` false and `inflationAdjusted` true
-// (FIELDS, below), so a stored item is checked by one closed shape, as a life
-// event is by its kind's keys (lib/fire/events.ts).
+// (FIELDS, below), so a stored item is checked by one closed shape.
 //
 // Two checks, as for a plan: isPlanItem is what a stored item must be to read
 // back (the shape and types), parseItem what a save must meet (ranges per
 // kind). One-offs and the three kinds of income take version 1's ranges (an
 // amount from 0), so every version 1 plan's items parse; the life event kinds
-// take parseLifeEvent's. itemRules holds the rules between items.
+// take EVENT_LIMITS (lib/fire/events.ts). itemRules holds the rules between
+// items.
 //
 // What still reads version 1's lists (the simulation's From Your path, a
 // copy's diff, the release before's readers) goes through the views here
@@ -280,7 +280,7 @@ export function itemFromExpense(x: PlanExpense): PlanItem {
   return item(x.id, x.label, 'one-off', ageWhen(x.atAge), { once: x.amount });
 }
 
-/** A scenario's life event, as an item with the same figures and id, its ages
+/** A life event, as an item with the same figures and id, its ages
  *  as age anchors: a raise is pay up for good, a career break pay down by
  *  what it costs in saving for its years, part-time work with what it
  *  replaces not said (so it stays out of the walk, as it was). */

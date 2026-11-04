@@ -134,9 +134,7 @@ export function stopOf(plan: Pick<PlanCore, 'targetAge' | 'stopAtFi'>, found: nu
 }
 
 /** How the Plan's forms (components/PlanForms.tsx) hold a value as text: a
- *  number as it is, a share as a percent to four places. Exported so that a
- *  scenario recording a form's save (lib/fire/scenarios.ts) tells a change
- *  from a value the form only wrote back, at the form's own precision. */
+ *  number as it is, a share as a percent to four places. */
 export const asText = (v: number | null) => (v === null ? '' : String(v));
 export const pctText = (v: number) => String(Number((v * 100).toFixed(4)));
 

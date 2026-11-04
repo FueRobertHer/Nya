@@ -84,9 +84,8 @@ function planServer(start: { plan: any; record?: { currency: string; amounts: un
   const fits = () => !!s.record && JSON.stringify(s.record.amounts) === JSON.stringify(typedAmounts(s.plan));
   const typed = () => s.plan && JSON.stringify(typedAmounts(s.plan)) !== JSON.stringify(typedAmounts(DEFAULT_PLAN));
   const answer = () => {
-    if (!s.plan || !typed()) return { plan: s.plan, currency: null };
-    if (fits()) return { plan: s.plan, currency: s.record!.currency };
-    return s.record ? { plan: s.plan, currency: null, currency_problem: 'stale', currency_was: s.record.currency } : { plan: s.plan, currency: null };
+    if (!s.plan || !typed() || !fits()) return { plan: s.plan, currency: null };
+    return { plan: s.plan, currency: s.record!.currency };
   };
   return {
     s,
@@ -290,16 +289,12 @@ describe('a plan saved before its currency was recorded', () => {
     await tab.unmount();
   });
 
-  test('a record that can’t be read: asked, and the answer replaces it, as only the person’s may', async () => {
-    const calls = serve({
-      ...planServer({ plan: PLAN }).answers,
-      'GET /api/plan-inputs': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
-      'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
-    });
-    const tab = await render();
-    // Not recorded on its own, even though USD can be told: the bytes there aren't the tab's to replace.
+  test('asked, then answered: one line at the foot of Your figures, and focus follows it there', async () => {
+    const calls = serve(planServer({ plan: PLAN }).answers);
+    // The balances' load failed, so USD can't be told yet: asked.
+    const tab = await render({ balancesSaved: true, balancesFailed: true });
     expect(posts(calls).length).toBe(0);
-    expect(tab.said()).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
+    expect(tab.said()).toContain('Which currency are they in?');
     expect(tab.region()!.getAttribute('class')).toBe('card');
     expect(tab.figures()!.contains(tab.region())).toBe(false);
     await press(tab.buttons('They’re in USD')[0]);
@@ -314,12 +309,8 @@ describe('a plan saved before its currency was recorded', () => {
   });
 
   test('answered on another segment: the line it becomes is on Your path, out of sight, so focus goes to the bar’s heading', async () => {
-    serve({
-      ...planServer({ plan: PLAN }).answers,
-      'GET /api/plan-inputs': [200, { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
-      'POST /api/fire-plan': (c) => [200, { plan: PLAN, currency: c.body.currency }],
-    });
-    const tab = await render({ segment: 'drawdown' });
+    serve(planServer({ plan: PLAN }).answers);
+    const tab = await render({ segment: 'drawdown', balancesSaved: true, balancesFailed: true });
     await press(tab.buttons('They’re in USD')[0]);
     expect(tab.region()!.getAttribute('class')).toBe('plan-currency-quiet');
     expect(dom.document.activeElement).toBe(tab.heading());
@@ -335,24 +326,6 @@ describe('a plan saved before its currency was recorded', () => {
     await another(tab, 'JPY');
     expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([['JPY', true]]);
     expect(await saving(tab, 'Household')).toEqual({ disabled: false, paused: null });
-    await tab.unmount();
-  });
-});
-
-describe('a record that no longer fits', () => {
-  test('never replaced on the tab’s own, even when the accounts tell another currency reliably: asked, its own currency first', async () => {
-    // Recorded USD for other amounts (a save that didn't finish, say); every account in EUR now.
-    const server = planServer({ plan: { ...PLAN, spending: 60_000 }, record: { currency: 'USD', amounts: typedAmounts(PLAN) } });
-    const calls = serve(server.answers);
-    const tab = await render({ institutions: broker([EUR()]), currency: 'EUR' });
-    expect(posts(calls).length).toBe(0);
-    expect(tab.said()).toContain('Nya recorded your plan’s figures as USD, but they were changed since in a way that didn’t record a currency');
-    const offered = tab.region()!.findAll((e) => e.tagName === 'BUTTON').map((b) => b.textContent.trim());
-    expect(offered.slice(0, 2)).toEqual(['They’re still in USD', 'They’re in EUR']);
-    expect(await saving(tab, 'Household')).toEqual({ disabled: true, paused: NOT_KNOWN });
-    await press(tab.buttons('They’re still in USD')[0]);
-    expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts({ ...PLAN, spending: 60_000 }), answered: true }]);
-    expect(tab.text()).toContain('$1,500,000');
     await tab.unmount();
   });
 });
@@ -538,22 +511,23 @@ describe('a recorded currency', () => {
     await tab.unmount();
   });
 
-  test('a change refused as stale, and the reload finds the record unreadable: the drawer shuts, and answering never opens it again', async () => {
+  test('a change refused as stale, and the reload finds no currency: the drawer shuts, and answering never opens it again', async () => {
     let loads = 0;
     let records = 0;
     serve({
-      'GET /api/plan-inputs': () => [200, ++loads === 1 ? { plan: PLAN, currency: 'USD' } : { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
+      'GET /api/plan-inputs': () => [200, ++loads === 1 ? { plan: PLAN, currency: 'USD' } : { plan: PLAN, currency: null }],
       'POST /api/fire-plan': (c) => (++records === 1 ? [409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }] : [200, { plan: PLAN, currency: c.body.currency }]),
       'GET /api/plans': plansListing(PLAN),
       'GET /api/allocation-settings': [200, { settings: null }],
     });
-    const tab = await render();
+    // The balances' load failed, so the tab can't record USD on its own: asked.
+    const tab = await render({ balancesSaved: true, balancesFailed: true });
     await press(tab.byLabel('Change the currency your plan’s figures are in'));
     await act(async () => type(tab.openDialog()!.findAll((e) => e.tagName === 'SELECT')[0], 'JPY'));
     await press(tab.openDialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'They’re in JPY')[0]);
     await press(tab.openDialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Read them as JPY')[0]);
     await settle(400);
-    expect(tab.said()).toContain('The record of the currency your plan’s figures are in couldn’t be read.');
+    expect(tab.said()).toContain('Which currency are they in?');
     expect(tab.openDialog()).toBeNull();
     await press(tab.buttons('They’re in USD')[0]);
     await settle(400);
