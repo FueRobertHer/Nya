@@ -157,8 +157,8 @@ export type ProgressViewProps = {
   plan: PlanCore;
   /** Why a save can't happen now, or null. */
   blocked: string | null;
-  /** A scenario is open: the save is not offered. */
-  scenarioOpen: boolean;
+  /** A copy is open: the save is not offered. */
+  copyOpen: boolean;
   /** The savings a save would keep, as the Plan has them. */
   savings: Input;
   money: (n: number) => string;
@@ -176,7 +176,7 @@ export function savingsBlock(savings: Input): string | null {
   return null;
 }
 
-export function ProgressView({ savedState, items = null, moved = false, onMovedSeen, series, plan, blocked, scenarioOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
+export function ProgressView({ savedState, items = null, moved = false, onMovedSeen, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
   const saved = savedState.kind === 'ready' ? savedState.saved : null;
   const why = blocked ?? savingsBlock(savings);
   const menu = saved ? [{ label: 'Stop comparing', danger: true, onSelect: () => onSheet('forget'), disabled: busy }] : [];
@@ -215,8 +215,8 @@ export function ProgressView({ savedState, items = null, moved = false, onMovedS
         {savedState.kind === 'ready' && savedState.problem === null && saved === null && (
           <>
             <p className="helper">Say this is your plan, and Nya keeps its assumptions and sets your invested assets against them as they are recorded.</p>
-            {scenarioOpen ? (
-              <p className="helper">A scenario is open: go back to your plan to save it as your plan.</p>
+            {copyOpen ? (
+              <p className="helper">A copy is open: go back to your plan to save it as your plan.</p>
             ) : (
               <>
                 <div className="btn-row">
@@ -235,7 +235,7 @@ export function ProgressView({ savedState, items = null, moved = false, onMovedS
             <Notice level="info">
               Your Plan’s {names(changedSince(saved, plan))} changed since you saved it. This compares with the plan as you saved it.
             </Notice>
-            {!scenarioOpen && (
+            {!copyOpen && (
               <>
                 <div className="btn-row">
                   <button type="button" className="btn secondary" disabled={busy || why !== null} onClick={() => onSheet('resave')}>
@@ -483,13 +483,13 @@ export type PlanProgressProps = {
   currency: string | null;
   institutions: AssetInstitution[];
   blocked: string | null;
-  scenarioOpen: boolean;
+  copyOpen: boolean;
   items?: SavedItemsBoth | null;
   moved?: boolean;
   onMovedSeen?: () => void;
 };
 
-export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, scenarioOpen, items = null, moved = false, onMovedSeen }: PlanProgressProps) {
+export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, copyOpen, items = null, moved = false, onMovedSeen }: PlanProgressProps) {
   const { savedState, series, setSaved, setSeries, retry } = progress;
   const [sheet, setSheet] = useState<ProgressSheet>(null);
   const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
@@ -538,9 +538,8 @@ export default function PlanProgress({ progress, plan, savings, currency, instit
     if (typeof rate === 'string') return setSheetError(rate);
     const why = blocked ?? savingsBlock(savings);
     if (why) return setSheetError(why);
-    // Kept as version 1, what this release saves (lib/fire/plan-v2.ts).
-    const sent = toStored(plan, 1);
-    if ('error' in sent) return setSheetError(sent.error);
+    // Kept whole, as version 2, as every plan is saved since the tax plan's C2.
+    const sent = toStored(plan, 2);
     setBusy(true);
     setError(null);
     try {
@@ -598,7 +597,7 @@ export default function PlanProgress({ progress, plan, savings, currency, instit
         series={series}
         plan={plan}
         blocked={blocked}
-        scenarioOpen={scenarioOpen}
+        copyOpen={copyOpen}
         savings={savings}
         money={money}
         nameOf={nameOf}

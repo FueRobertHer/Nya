@@ -1,13 +1,13 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime, spyOn } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import './clerk-mock';
-import type { FirePlan } from '@/lib/fire/plan';
+import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 
-// The Plan's inputs in one request (app/api/plan-inputs, D16): the saved
-// plan and its currency exactly as GET /api/fire-plan answers them, and each
+// The Plan's inputs in one request (app/api/plan-inputs, D16): your plan
+// and its currency exactly as GET /api/fire-plan answers them, and each
 // workplace plan's contributions exactly as GET /api/investment-activity
 // answers them for the account; the cached rows in one HMGET beside the
-// plan's two reads; a row not cached pending, until a sync=1 request fills
+// plan's three reads; a row not cached pending, until a sync=1 request fills
 // it, syncing each item once; a Plaid outage's stored rows and note; and a
 // plan that can't be had failing on its own, never the whole answer.
 
@@ -68,8 +68,9 @@ mock.module('@/lib/plaid', () => ({
 
 const { encrypt } = await import('@/lib/crypto');
 const { saveItem } = await import('@/lib/storage');
-const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { typedAmounts } = await import('@/lib/fire/plan-currency');
+const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
+const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
+const plansRoute = await import('@/app/api/plans/route');
 const invstore = await import('@/lib/invstore');
 const firePlan = await import('@/app/api/fire-plan/route');
 const activity = await import('@/app/api/investment-activity/route');
@@ -122,9 +123,12 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
 const ask = (plans: string[], sync = false) =>
   route.GET(new Request(`http://x/api/plan-inputs?${[...(sync ? ['sync=1'] : []), ...plans.map((p) => `plan=${encodeURIComponent(p)}`)].join('&')}`));
 const json = async (res: Response) => ({ status: res.status, body: await res.json() });
-const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
+const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...DEFAULT_PLAN_V2, ...over });
 const TYPED = plan({ age: 40, targetAge: 55, spending: 40_000 });
 const put = (body: unknown) => firePlan.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }));
+const plans = async (method: 'POST' | 'PATCH', body: unknown) => (await plansRoute[method](new Request('http://x', { method, body: JSON.stringify(body) }))).json();
+/** Your plan's first save, in USD. */
+const saveFirst = () => put({ plan: TYPED, currency: 'USD', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null });
 /** What GET /api/investment-activity answers for the account, its Plan fields. */
 const activityRow = async (id: string) => {
   const [item_id, account_id] = id.split(':');
@@ -134,12 +138,19 @@ const activityRow = async (id: string) => {
 
 describe('the plan', () => {
   test('is GET /api/fire-plan’s answer, whatever is stored, with the rows beside it', async () => {
+    let copy = '';
     const states: (() => Promise<unknown>)[] = [
-      async () => {}, // nothing saved
-      () => put({ plan: TYPED, currency: 'USD' }), // recorded
-      () => put({ plan: { ...TYPED, spending: 50_000 } }), // a record of other amounts: stale
-      () => fake.set(ctxKey('fire-plan-currency'), 'damaged-but-long-enough-to-be-tried'), // unreadable record
-      async () => fake.set(ctxKey('fire-plan-currency'), await encrypt(TEST_CTX, JSON.stringify({ v: 2, currency: 'USD', amounts: typedAmounts(TYPED) }))), // newer record
+      async () => {}, // nothing saved: the defaults
+      saveFirst, // your plan, in USD
+      () => fake.del(ctxKey('plan-facts')), // the facts missing (a first write stopped before them): its own fields
+      async () => {
+        // A copy, its amounts said to be in EUR, made your plan (which makes the facts).
+        const made = (await plans('POST', { from: MAIN_ID, name: 'In euros', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' })).plan;
+        const relabelled = (await plans('PATCH', { id: made.id, currency: 'EUR', based_on: made.updated_at })).plan;
+        await plans('PATCH', { main: made.id, based_on: relabelled.updated_at });
+        copy = made.id;
+      },
+      () => fake.set(ctxKey('fire-plan-currency'), 'damaged-but-long-enough-to-be-tried'), // a record from before copies: never read
     ];
     const seen: unknown[] = [];
     for (const state of states) {
@@ -148,13 +159,19 @@ describe('the plan', () => {
       const { status, body } = await json(await quiet(() => ask([])));
       expect(status).toBe(200);
       expect(body).toEqual({ ...expected, plans: [] });
-      seen.push(body.currency_problem ?? body.currency);
+      seen.push([body.id === MAIN_ID ? 'main' : body.id === copy ? 'copy' : body.id, body.currency, body.updated_at === null]);
     }
-    expect(seen).toEqual([null, 'USD', 'stale', 'unreadable', 'newer']);
+    expect(seen).toEqual([
+      ['main', null, true],
+      ['main', 'USD', false],
+      ['main', 'USD', false],
+      ['copy', 'EUR', false],
+      ['copy', 'EUR', false],
+    ]);
   });
 
-  test('a saved plan that can’t be read is a flagged 409, as GET /api/fire-plan answers it, with every row', async () => {
-    await fake.set(ctxKey('fire-plan'), 'not-ciphertext-but-long-enough-to-be-tried');
+  test('your plan’s entry that can’t be read is a flagged 409, as GET /api/fire-plan answers it, with every row', async () => {
+    await fake.hset(ctxKey('fire-plans'), { [MAIN_ID]: 'not-ciphertext-but-long-enough-to-be-tried' });
     const expected = await (await quiet(() => firePlan.GET())).json();
     const { status, body } = await json(await quiet(() => ask(['i1:k1', 'bad'])));
     expect(status).toBe(409);
@@ -163,12 +180,16 @@ describe('the plan', () => {
   });
 
   test('a database failure on the plan is a 500 without the flag; no container to reach, a 503', async () => {
-    // The facts' read comes first, and isn't needed while the plan is
-    // fire-plan's (lib/plan-copies.ts readPlanAnswer): the plan's is second.
-    fake.failNext('get', 2);
+    // How many plans there are, read before anything is saved.
+    fake.failNext('hlen');
     const failed = await json(await quiet(() => ask(PLANS)));
     expect(failed.status).toBe(500);
     expect(failed.body.unreadable).toBeUndefined();
+    // The facts, read beside your plan's entry once there is one.
+    await saveFirst();
+    fake.failNext('get');
+    const facts = await json(await quiet(() => ask(PLANS)));
+    expect([facts.status, facts.body.unreadable]).toEqual([500, undefined]);
     fake.reset();
     forgetEpochs();
     expect((await quiet(() => ask(PLANS))).status).toBe(503);
@@ -177,7 +198,7 @@ describe('the plan', () => {
 
 describe('the rows', () => {
   test('a row not cached is pending; sync=1 fills it, each item synced once, and caches it; the next answer has every row from one HMGET', async () => {
-    await put({ plan: TYPED, currency: 'USD' });
+    expect((await saveFirst()).status).toBe(200);
     expect((await json(await ask(PLANS))).body.plans).toEqual(PLANS.map((id) => ({ id, pending: true })));
 
     const synced = await json(await ask(PLANS, true));
@@ -196,19 +217,22 @@ describe('the rows', () => {
     sent = [];
     const answer = await json(await ask(PLANS));
     expect(answer.body.plans).toEqual(expected);
-    // The plan's five reads (the facts, your plan's entry and how many plans
-    // there are, then the plan and its currency) and every row, the rows one
-    // HMGET.
-    expect(sent.sort()).toEqual(['eval', 'get', 'get', 'get', 'hlen', 'hmget']);
+    // The plan's three reads (the facts, your plan's entry and how many plans
+    // there are) and every row, the rows one HMGET.
+    expect(sent.sort()).toEqual(['eval', 'get', 'hlen', 'hmget']);
   });
 
-  test('with no workplace plan, the plan alone: its five reads, no HMGET', async () => {
+  test('with no workplace plan, the plan alone: its three reads, no HMGET', async () => {
     await ask([]); // the deployment's container read once, then reused
     sent = [];
     expect((await json(await ask([]))).body.plans).toEqual([]);
     // The facts, your plan's entry (a script) and how many plans there are,
-    // then the plan and its currency.
-    expect(sent).toEqual(['get', 'eval', 'hlen', 'get', 'get']);
+    // all begun at once: with none, the defaults, nothing more read.
+    expect(sent).toEqual(['get', 'eval', 'hlen']);
+    await saveFirst();
+    sent = [];
+    expect((await json(await ask([]))).body.plan).toEqual(TYPED);
+    expect(sent).toEqual(['get', 'eval', 'hlen']);
   });
 
   test('a row past the cache’s age, or cached before the Plan’s fields, is pending', async () => {

@@ -6,8 +6,9 @@ import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 // Plans as copies in a download and a restore (lib/user-restore): the facts
 // are a setting, the plans data but for your plan alone; a file that brings
 // plans replaces every plan the account holds, never merges with them, and
-// pairs the facts; a file with a plan from before copies clears the copies,
-// so none hides it; a file with no plan leaves the account's.
+// pairs the facts; a file with a plan from before copies clears the plans,
+// and brings no plan back, since nothing reads that plan now (the Plan is
+// the defaults until it is saved); a file with no plan leaves the account's.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.APP_PASSWORD = 'hunter2';
@@ -152,7 +153,7 @@ describe('a download and a restore', () => {
     expect(await planFactsStore.getReport(ctx)).toEqual({ value: null, unreadable: false, unrecognised: false });
   });
 
-  test('a file with the plan from before copies clears the account’s copies and facts, so the plan it brings is the one read', async () => {
+  test('a file with the plan from before copies clears the account’s plans and facts: the Plan is the defaults, and its first save removes that plan', async () => {
     const legacy = { ...DEFAULT_PLAN, spending: 30_000 };
     await firePlanStore.set(OTHER, legacy);
     await planCurrencyStore.set(OTHER, currencyRecord(legacy, 'EUR'));
@@ -161,8 +162,12 @@ describe('a download and a restore', () => {
     await planFactsStore.set(ctx, facts());
     expect((await restoreAll(text)).status).toBe('finished');
     expect([await firePlansStore.count(ctx), await planFactsStore.get(ctx)]).toEqual([0, null]);
-    const read = await planRoute.GET();
-    expect(await read.json()).toEqual({ plan: legacy, currency: 'EUR' });
+    // Brought back as it was, and never read.
+    expect(await firePlanStore.get(ctx)).toEqual(legacy);
+    expect(await (await planRoute.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null });
+    const body = { plan: planOf(PLAN), currency: 'USD', facts_were: factsOf(planOf(DEFAULT_PLAN)), based_on: null };
+    expect((await planRoute.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }))).status).toBe(200);
+    expect([await firePlanStore.get(ctx), await planCurrencyStore.get(ctx)]).toEqual([null, null]);
   });
 
   test('a file with no plan leaves the account’s plans and facts', async () => {

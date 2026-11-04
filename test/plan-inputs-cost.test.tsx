@@ -96,6 +96,9 @@ const { createRoot } = trackRoots(require('react-dom/client') as typeof import('
 const { default: FiProgressCard } = await import('@/components/FiProgressCard');
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
+const { planOf } = await import('@/lib/fire/plan-v2');
+const { factsOf } = await import('@/lib/fire/copies');
+const { plansListing } = await import('./plans-listing');
 const { encrypt } = await import('@/lib/crypto');
 const { saveItem } = await import('@/lib/storage');
 const { syncInvestments } = await import('@/lib/invstore');
@@ -131,7 +134,7 @@ const INSTITUTIONS: AssetInstitution[] = [
 ];
 
 // The requests, each with the commands it sent. Routes not about the plan's
-// inputs (the Plan's scenarios, allocation settings, saved plan and
+// inputs (the Plan's list of plans, allocation settings, saved plan and
 // allocation history) are answered here (404 where nothing is given),
 // counted apart, and cost nothing.
 type Sent = { path: string; commands: string[] };
@@ -143,7 +146,7 @@ const ROUTES: Record<string, (req: Request) => Promise<Response>> = {
   'GET /api/plan-inputs': (req) => planInputs.GET(req),
 };
 const STUBS: Record<string, unknown> = {
-  'GET /api/plan-scenarios': { scenarios: [], unreadable_ids: [], unrecognised_ids: [] },
+  'GET /api/plans': plansListing(null)[1],
   'GET /api/allocation-settings': { settings: null },
 };
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -225,20 +228,19 @@ beforeAll(async () => {
     await saveItem(TEST_CTX, item as any);
     await syncInvestments(TEST_CTX, item as any);
   }
-  const saved = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000 }, currency: 'USD' }) }));
+  const saved = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: planOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000 }), currency: 'USD', facts_were: factsOf(DEFAULT_PLAN), based_on: null }) }));
   expect(saved.status).toBe(200);
   // Nothing in the account cache yet: the first rows asked for aren't cached.
   expect(await fake.hgetall(ctxKey('cache:inv-activity:v4'))).toBeNull();
 });
 
 // What the Plan asks for besides its inputs: the same before and after.
-const PLAN_OTHERS = { 'GET /api/allocation-settings': 1, 'GET /api/saved-plan': 1, 'GET /api/plan-scenarios': 1, 'POST /api/allocation-history': 1 };
+const PLAN_OTHERS = { 'GET /api/allocation-settings': 1, 'GET /api/saved-plan': 1, 'GET /api/plans': 1, 'POST /api/allocation-history': 1 };
 const NOTHING = { requests: {}, commands: {}, byCommand: {}, others: {} };
-// One request with every row cached: whose container it is, then the plan,
-// its currency, whether your plans are copies (the facts they share, your
-// plan's entry, how many there are: lib/plan-copies.ts) and every row, read
-// together.
-const ONE = { requests: { 'GET /api/plan-inputs': 1 }, commands: { 'GET /api/plan-inputs': 7 }, byCommand: { evalRo: 1, get: 3, eval: 1, hlen: 1, hmget: 1 } };
+// One request with every row cached: whose container it is, then your plan
+// (the facts every plan shares, your plan's entry and how many plans there
+// are: lib/plan-copies.ts readMain) and every row, read together.
+const ONE = { requests: { 'GET /api/plan-inputs': 1 }, commands: { 'GET /api/plan-inputs': 5 }, byCommand: { evalRo: 1, get: 1, eval: 1, hlen: 1, hmget: 1 } };
 
 describe('what the plan’s inputs cost', () => {
   test('one request between Home and the Plan, none on a return to Home within five minutes, and the same figures throughout', async () => {
@@ -246,14 +248,14 @@ describe('what the plan’s inputs cost', () => {
     const store = createPlanInputsStore({ now: () => clock });
 
     // Home's first load, no row cached: the plan and the rows asked for
-    // together (5 commands for the plan, one HMGET for the rows), then one
+    // together (3 commands for the plan, one HMGET for the rows), then one
     // sync=1 request for the rows not cached, which syncs each item once
     // (its lock, its store, the lock let go) and caches each row.
     let home!: Awaited<ReturnType<typeof mountHome>>;
     expect(await measure(async () => (home = await mountHome(store)))).toEqual({
       requests: { 'GET /api/plan-inputs': 2 },
-      commands: { 'GET /api/plan-inputs': 24 },
-      byCommand: { evalRo: 2, get: 7, eval: 1, hlen: 1, hmget: 2, hgetall: 1, set: 2, del: 2, hset: 3, expire: 3 },
+      commands: { 'GET /api/plan-inputs': 22 },
+      byCommand: { evalRo: 2, get: 5, eval: 1, hlen: 1, hmget: 2, hgetall: 1, set: 2, del: 2, hset: 3, expire: 3 },
       others: {},
     });
     const shown = home.text();

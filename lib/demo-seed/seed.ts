@@ -48,7 +48,9 @@ import { loadBudgets, saveBudgets } from '../budget-store';
 import { readBudgets } from '../budget-set';
 import { setGoals } from '../goals';
 import { DEFAULT_PLAN, parsePlan } from '../fire/plan';
-import { firePlanStore } from '../fire-plan';
+import { planOf, type FirePlanV2 } from '../fire/plan-v2';
+import { factsOf, holdsAmounts } from '../fire/copies';
+import { saveMain } from '../plan-writes';
 import type { Ctx } from '../containers';
 import { customUserConfig, txnCount, type DemoProfile, type SeedInstitution } from './profiles';
 
@@ -121,7 +123,7 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
 
   const plan = parsePlan({ ...DEFAULT_PLAN, ...profile.plan });
   if ('error' in plan) throw new Error(`The profile's plan is refused: ${plan.error}`);
-  await firePlanStore.set(ctx, plan.plan);
+  await seedPlan(ctx, planOf(plan.plan));
 
   // 4. Wait. Then the balance history, the caches and the estimated history
   //    are cleared, so nothing a visitor's page load built from part of the
@@ -137,6 +139,13 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
   await clearCaches(ctx);
   await clearBackfillDone(ctx);
   return { removed: before.map((i) => i.institution_name), linked, waiting };
+}
+
+/** The profile's plan as your plan (lib/plan-writes.ts), in the emptied
+ *  account: its entry, then the facts. The sandbox accounts are in USD, so
+ *  that is the currency of any amount it types (Sam's income). */
+async function seedPlan(ctx: Ctx, plan: FirePlanV2): Promise<void> {
+  await saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null);
 }
 
 /** Refuses, changing nothing, what emptyAccount would refuse once the banks

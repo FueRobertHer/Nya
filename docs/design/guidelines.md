@@ -99,10 +99,12 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Labelled figures in a row (In, Out, Net; totals by kind) | `.stat-strip` of `.stat`, each a `.stat-label` over a `.stat-value` | `.summary-row` with `.summary-value` |
 | A form field | `.field` around a plain `<input>` or `<select>` | |
 | Choosing one of a few options, each with a note | `RadioRows` (`.radio-rows`, `.radio-row`) | `.lifecycle-choice`, `.download-format` |
+| Choosing any of a few things a save also does | `CheckRows` (`.check-rows`, `.check-row`) | a list of bare checkboxes in labels |
 | A form in a sheet | `.sheet-form` | |
 | A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`) | a `.button-pair` at the end of the body |
 | An object's rare actions (⋯) | `Menu` (`.menu` of `.menu-item`) | an Options button that opens an action sheet |
 | An object's actions in its sheet | `ActionRows` (`.card.list-rows` of `.list-row` buttons) | a `.btn-row` of secondaries in the body |
+| Deleting an object, from its actions | `ActionRows`' last row with `neg` (`.list-row.neg`), opening a level that asks, whose `.btn.danger` acts | a `.btn.danger` among its actions |
 | An explanation behind "Why?" | `Why` (`.why`) | a second paragraph on screen |
 | A card that opens and closes on its title | `CollapsibleHeader` (`.section-toggle` in an `<h2>`) | `.holdings-toggle` with `.holdings-title` |
 <!-- /design-guard:classes -->

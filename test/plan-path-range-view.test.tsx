@@ -6,13 +6,13 @@ import { simulateOnPage } from './plan-on-page';
 // as a person would (react-dom/client over test/mini-dom.ts): the chart opens
 // on Whole path, its switch names the person's own stop age and follows it as
 // it changes, the range shown is kept while the tab is drawn again and, handed
-// in by the dashboard, across a remount; a scenario's stop age names it in
-// the scenario; once the stop has come there is no switch; and with amounts
+// in by the dashboard, across a remount; a copy's stop age names it in the
+// copy; once the stop has come there is no switch; and with amounts
 // hidden, the chart's summary and Drawdown's start line are masked. Every
 // request is answered here, by path; nothing reaches a network.
 //
 // A rendered element never goes into toEqual or another matcher that diffs
-// (test/plan-tab-scenarios.test.tsx says why).
+// (test/plan-tab-copies.test.tsx says why).
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -30,26 +30,14 @@ const { createRoot } = trackRoots(require('react-dom/client') as typeof import('
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { planPanelId } = await import('@/components/PlanBar');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { NO_CHANGES } = await import('@/lib/fire/scenarios');
 const { setAmountsHidden, MASK } = await import('@/lib/format');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type PathRange = import('@/lib/fire/path').PathRange;
-type Entry = import('@/components/plan-scenarios').ScenarioEntry;
+const { plansListing, copyRow } = await import('./plans-listing');
 
 // FI around 52, a stop at 62 (the person's own, not the mock's 50), and the
 // plan to 95.
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 62, spending: 40_000, savings: 30_000, assets: 300_000 };
-const entry = (over: Partial<Entry> = {}): Entry => ({
-  id: 's1',
-  version: 1,
-  name: 'Stop at 58',
-  currency: 'USD',
-  createdAt: '2026-10-01T00:00:00.000Z',
-  savedAt: '2026-10-01T00:00:00.000Z',
-  rev: 'r1',
-  ...NO_CHANGES,
-  ...over,
-});
 
 type Call = { method: string; url: string; body: any };
 type Answer = (call: Call) => [number, unknown];
@@ -78,14 +66,13 @@ const saved = (plan: Record<string, unknown> = PLAN): Record<string, Answer> => 
     },
   };
 };
-const listing = (...scenarios: Entry[]): [number, unknown] => [200, { scenarios, unreadable_ids: [], unrecognised_ids: [] }];
 const pass = fakeClock();
 simulateOnPage();
 const settle = (ms = 30) => pass(ms);
 const classOf = (e: FakeElement) => (e.getAttribute('class') ?? '').split(' ');
 
 async function render(answers: Record<string, Answer | [number, unknown]>, over: Partial<PlanTabProps> = {}) {
-  const calls = serve({ ...saved(), 'GET /api/allocation-settings': [200, { settings: null }], 'GET /api/plan-scenarios': listing(), ...answers });
+  const calls = serve({ ...saved(), 'GET /api/allocation-settings': [200, { settings: null }], 'GET /api/plans': plansListing(PLAN), ...answers });
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
@@ -111,7 +98,7 @@ async function render(answers: Record<string, Answer | [number, unknown]>, over:
     summary: () => svg()?.getAttribute('aria-label') ?? null,
     /** The lines under the chart. */
     under: () => panel('path').findAll((e) => classOf(e).includes('as-of')).map((e) => e.textContent),
-    /** A list row by its title: one of Your figures, or a scenario's. */
+    /** A list row by its title: one of Your figures, or the Plans sheet's. */
     row: (name: string) => find((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row') && e.findAll((t) => classOf(t).includes('list-row-title'))[0]?.textContent === name),
     dialog: () => find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true'),
     bar: () => find((e) => e.getAttribute('class') === 'plan-bar'),
@@ -205,11 +192,13 @@ describe('Your path’s range', () => {
     await again.unmount();
   });
 
-  test('in a scenario with its own stop age, the option names that one, and the range shown stays', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ set: { targetAge: 58 } })) });
+  test('in a copy with its own stop age, the option names that one, and the range shown stays', async () => {
+    const tab = await render({ 'GET /api/plans': plansListing(PLAN, [copyRow(PLAN, 'c1', 'Stop at 58', { targetAge: 58 })]) });
     await press(tab.option('To 62'));
+    await press(button(tab.container, 'Plans (2)'));
     await press(tab.row('Stop at 58'));
-    expect(tab.bar()?.textContent).toContain('Scenario: Stop at 58');
+    await press(tab.row('Open it'));
+    expect(tab.bar()?.textContent).toContain('Copy: Stop at 58');
     expect(tab.options()).toEqual([
       ['To 58', 'true'],
       ['Whole path', 'false'],

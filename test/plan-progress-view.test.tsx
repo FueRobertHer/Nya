@@ -52,7 +52,7 @@ const props = (over: Partial<ProgressViewProps> = {}): ProgressViewProps => ({
   series: { kind: 'ready', answer: answer(190_000) },
   plan: PLAN,
   blocked: null,
-  scenarioOpen: false,
+  copyOpen: false,
   savings: { value: 10_000, source: 'measured' },
   money: (n) => wholeMoney(n, 'USD'),
   nameOf: (id) => NAMES[id] ?? 'an account no longer linked',
@@ -73,13 +73,13 @@ describe('nothing saved yet', () => {
     expect(html).not.toContain('Progress options');
   });
 
-  test('not while the Plan can’t be saved, saying why; not with a scenario open; not without savings', () => {
+  test('not while the Plan can’t be saved, saying why; not with a copy open; not without savings', () => {
     const blocked = view({ ...none, blocked: 'Your saved plan has values to fix first (at the top of the Plan tab), so this can’t be saved yet.' });
     expect(blocked).toMatch(/class="btn secondary" disabled="">This is my plan/);
     expect(text(blocked)).toContain('values to fix first');
-    const scenario = view({ ...none, scenarioOpen: true });
-    expect(scenario).not.toContain('This is my plan');
-    expect(text(scenario)).toContain('A scenario is open: go back to your plan to save it as your plan.');
+    const copy = view({ ...none, copyOpen: true });
+    expect(copy).not.toContain('This is my plan');
+    expect(text(copy)).toContain('A copy is open: go back to your plan to save it as your plan.');
     const unmeasured = view({ ...none, savings: { value: null, source: 'unmeasured' } });
     expect(unmeasured).toMatch(/disabled="">This is my plan/);
     expect(text(unmeasured)).toContain('Your annual savings aren’t measured');
@@ -195,7 +195,7 @@ describe('saved, set against what was recorded', () => {
     const changed = view({ plan: { ...PLAN, realReturn: 0.04, includeCash: true } });
     expect(text(changed)).toContain('Your Plan’s growth after inflation and include cash changed since you saved it. This compares with the plan as you saved it.');
     expect(changed).toContain('Save the Plan as it is now');
-    expect(view({ plan: { ...PLAN, realReturn: 0.04 }, scenarioOpen: true })).not.toContain('Save the Plan as it is now');
+    expect(view({ plan: { ...PLAN, realReturn: 0.04 }, copyOpen: true })).not.toContain('Save the Plan as it is now');
     expect(view({ plan: { ...PLAN, realReturn: 0.04 }, blocked: 'Still loading or saving your plan.' })).toMatch(/disabled="">Save the Plan as it is now/);
   });
 });
