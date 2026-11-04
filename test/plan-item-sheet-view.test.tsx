@@ -249,6 +249,10 @@ describe('what is possible', () => {
     await rest();
     expect(caution()).not.toContain('Say what take-home it replaces');
     expect(tab.dialog()!.textContent).toContain('You’d save$25,000 a year, not $30,000');
+    // Begun before today, it is in the $30,000 already.
+    await fill(sheet, 'Starts at age', '38');
+    await rest();
+    expect(tab.dialog()!.textContent).not.toContain('You’d save');
     await tab.unmount();
   }, 20_000);
 
@@ -264,7 +268,8 @@ describe('what is possible', () => {
     await fill(tab.dialog()!, 'Age', '60');
     await press(button(tab.dialog(), 'Done'));
     await rest();
-    expect(tab.dialog()!.textContent).toContain('It overlaps “Consulting” on your steady path, for one person. Both count in those years');
+    const warned = tab.dialog()!.findAll((e) => classOf(e).includes('plan-warning')).map((e) => e.textContent);
+    expect(warned).toContain('It overlaps “Consulting” on your steady path. Both count in those years. If one takes over from the other, start it when the other ends.');
     await tab.unmount();
   }, 20_000);
 
