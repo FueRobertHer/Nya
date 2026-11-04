@@ -74,6 +74,7 @@ class Refused extends Error {
 
 const CHANGED = 'Your plan changed: load the page again';
 const OTHER_DEVICE = 'Changed on another device: load it again';
+const FIRST_CURRENCY = 'Say which currency your plan’s figures are in, then save again: nothing was saved.';
 const refused = (r: Refused) => NextResponse.json({ error: r.words, ...(r.stale ? { stale: true } : {}) }, { status: 409 });
 
 /** The facts a page loaded, as it sends them: the shape the facts store
@@ -162,11 +163,14 @@ export async function PUT(req: Request) {
 /** The checks a save into your plan's entry makes, on the entry as read and
  *  again on the entry at the write: the stamp a newer page sent, a version
  *  1 plan over a version 2 one (an old page would drop items it couldn't
- *  show), and a currency other than the one the entry's amounts are in. */
+ *  show), a currency other than the one the entry's amounts are in, and
+ *  first amounts with none (the currency an entry kept once its amounts
+ *  went is no one's: never a label for new ones). */
 function checkEntry(entry: PlanEntry, plan: StoredPlan, currency: string | null, basedOn: string | undefined): void {
   if (basedOn !== undefined && basedOn !== entry.updatedAt) throw new Refused(CHANGED);
   if (plan.version === 1 && entry.plan.version === 2) throw new Refused(CHANGED);
   if (currency !== null && holdsAmounts(entry.plan) && entry.currency !== null && entry.currency !== currency) throw new Refused(STALE_CURRENCY);
+  if (currency === null && holdsAmounts(plan) && !holdsAmounts(entry.plan)) throw new Refused(FIRST_CURRENCY, false);
 }
 
 /** PUT once the plans are copies: into your plan's entry (see the top). */

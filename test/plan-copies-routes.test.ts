@@ -41,6 +41,7 @@ const CHANGED = 'Your plan changed: load the page again';
 const OTHER_DEVICE = 'Changed on another device: load it again';
 const PARTIAL = 'Your age was saved; the rest wasn’t: try again';
 const STALE_CURRENCY = 'The currency your plan’s figures are in was changed since this page loaded it, so nothing was saved: load it again.';
+const FIRST_CURRENCY = 'Say which currency your plan’s figures are in, then save again: nothing was saved.';
 
 const income = (over: Partial<PlanIncome> = {}): PlanIncome => ({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true, ...over });
 const TYPED: FirePlan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, income: [income()] };
@@ -368,6 +369,17 @@ describe('saving your plan (PUT)', () => {
     const r = await put({ plan: TYPED, currency: 'EUR', facts_were: factsOf(DEFAULT_PLAN) });
     expect([r.status, r.body.currency]).toEqual([200, 'EUR']);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.currency).toBe('EUR');
+  });
+
+  test('first amounts with no currency over an entry holding none: refused, the currency it kept never theirs', async () => {
+    await firePlansStore.set(ctx, MAIN_ID, entry({ plan: DEFAULT_PLAN, currency: 'EUR' }));
+    const before = await raw();
+    expect(await put({ plan: TYPED, currency: null, facts_were: factsOf(DEFAULT_PLAN) })).toEqual({ status: 409, body: { error: FIRST_CURRENCY } });
+    expect(await raw()).toEqual(before);
+    // Over amounts, a save with no currency keeps the entry's: theirs.
+    await firePlansStore.set(ctx, MAIN_ID, entry());
+    const kept = await put({ plan: { ...TYPED, spending: 41_000 }, currency: null });
+    expect([kept.status, kept.body.currency]).toEqual([200, 'USD']);
   });
 
   test('a save in another currency over a version 2 entry whose only amount is a pension is refused', async () => {

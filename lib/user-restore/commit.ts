@@ -35,6 +35,7 @@ import { historyImportStore, historyImportSummaryStore, importedTxnStore, summar
 import { manualTxnStore } from '../manual-txns';
 import { firePlanStore, planCurrencyStore } from '../fire-plan';
 import { firePlansStore, planFactsStore } from '../plan-copies';
+import type { PlanEntry } from '../fire/copies';
 import { planScenariosStore } from '../plan-scenarios';
 import { clearCaches } from '../cache';
 import { SEAM, MAX_RESTORED_MANUAL_ACCOUNTS } from './parts';
@@ -62,8 +63,10 @@ async function checkBound(ctx: Ctx, name: string, store: MapStore<unknown>, ids:
   if (max === undefined) return;
   const [count, present] = await Promise.all([store.count(ctx), store.getMany(ctx, ids)]);
   const adds = ids.filter((id) => !present.has(id)).length;
-  if (count + adds > max) throw new BatchNotWritten(`This restore would keep more ${store.what} than Nya keeps (${max}), so this part wasn’t written.`, 413);
+  if (count + adds > max) throw overBound(store.what, max);
 }
+
+const overBound = (what: string, max: number) => new BatchNotWritten(`This restore would keep more ${what} than Nya keeps (${max}), so this part wasn’t written.`, 413);
 
 /** An entry that grows across batches: this batch's piece of its list
  *  (parts.ts SEAM `split`), from `from`, onto what is stored. Items already
@@ -95,22 +98,23 @@ function merged<T extends Rec>(current: T | null, value: T, field: string): T {
  *  lib/plan-scenarios.ts). */
 const LEGACY_PLAN_PARTS = [firePlanStore, planCurrencyStore, planScenariosStore].map((s) => `store:${s.name}`);
 
+const PLANS_PART = `store:${firePlansStore.name}`;
+
 /** The account's plans as copies (lib/plan-copies.ts) are one setting with
  *  the plan: a file that brings plans replaces them all, never merges them
  *  (setMany would keep a plan the file doesn't name, and one of them, the
- *  oldest, can stand as yours). So on the batch that writes the first of the
+ *  oldest, can stand as yours). So the batch that writes the first of the
  *  file's plans, or, for a file from before copies, the first of its plan's
- *  parts, every plan the account holds goes, damaged ones too (the scan lets
- *  one through, lib/user-restore/empty.ts). A batch written twice clears and
- *  writes its own plans again: no later one has run. The facts they share
- *  are paired at the finish (factsPair). */
-async function clearPlans(ctx: Ctx, part: string, record: UserRestoreRecord): Promise<void> {
-  const plans = `store:${firePlansStore.name}`;
+ *  parts, takes every other plan the account holds away, damaged ones too
+ *  (the scan lets one through, lib/user-restore/empty.ts): after its own
+ *  write, so a batch refused (a damaged legacy plan, which a value's set
+ *  won't write over, or one too large) leaves the plans Home reads. A batch
+ *  written twice writes and clears again: no later one has run. The facts
+ *  they share are paired at the finish (factsPair). */
+function clearsPlans(part: string, record: UserRestoreRecord): boolean {
   const batches = record.plan.batches;
-  const first = batches.some((b) => b.part === plans) ? batches.findIndex((b) => b.part === plans) : batches.findIndex((b) => LEGACY_PLAN_PARTS.includes(b.part));
-  if (first === -1 || first !== record.done || batches[first].part !== part) return;
-  const ids = await firePlansStore.ids(ctx);
-  if (ids.length > 0) await firePlansStore.remove(ctx, ...ids);
+  const first = batches.some((b) => b.part === PLANS_PART) ? batches.findIndex((b) => b.part === PLANS_PART) : batches.findIndex((b) => LEGACY_PLAN_PARTS.includes(b.part));
+  return first !== -1 && first === record.done && batches[first].part === part;
 }
 
 /**
@@ -120,7 +124,23 @@ async function clearPlans(ctx: Ctx, part: string, record: UserRestoreRecord): Pr
  * that can't be written as it is, and what the seam throws.
  */
 export async function writeBatch(ctx: Ctx, part: string, records: readonly Rec[], record: UserRestoreRecord): Promise<void> {
-  await clearPlans(ctx, part, record);
+  if (!clearsPlans(part, record)) return writeRecords(ctx, part, records, record);
+  const kept = part === PLANS_PART ? [...new Set(records.map((r) => r.id as string))] : [];
+  if (part === PLANS_PART) {
+    // Every other plan goes, so the bound is the file's alone, and its
+    // plans are written over any the account holds under their ids, damaged
+    // or not (setMany reads none).
+    const max = SEAM[firePlansStore.name].max!;
+    if (kept.length > max) throw overBound(firePlansStore.what, max);
+    await firePlansStore.setMany(ctx, pairs<PlanEntry>(records));
+  } else {
+    await writeRecords(ctx, part, records, record);
+  }
+  const gone = (await firePlansStore.ids(ctx)).filter((id) => !kept.includes(id));
+  if (gone.length > 0) await firePlansStore.remove(ctx, ...gone);
+}
+
+async function writeRecords(ctx: Ctx, part: string, records: readonly Rec[], record: UserRestoreRecord): Promise<void> {
   const target = storeOfPart(part);
   if (target) {
     const { name, store } = target;

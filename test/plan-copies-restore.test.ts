@@ -191,6 +191,34 @@ describe('a download and a restore', () => {
   });
 });
 
+describe('a batch that clears the account’s plans, refused', () => {
+  const at = (part: string, count: number) => restoreRecord({ plan: { digest: 'a'.repeat(64), batches: [{ part, count, digest: 'c'.repeat(64) }] }, done: 0 }) as never;
+
+  test('a plan from before copies that can’t be written over a damaged one leaves the plans Home reads', async () => {
+    await firePlansStore.set(ctx, MAIN_ID, entry());
+    await planFactsStore.set(ctx, facts());
+    await fake.set(ctxKey('fire-plan'), DAMAGED);
+    await expect(writeBatch(ctx, 'store:fire-plan', [{ value: { ...DEFAULT_PLAN, spending: 30_000 } }], at('store:fire-plan', 1))).rejects.toThrow();
+    expect(await plansOf()).toEqual({ [MAIN_ID]: entry() });
+    const read = await planRoute.GET();
+    expect([read.status, (await read.json()).plan.spending]).toEqual([200, 40_000]);
+  });
+
+  test('plans over the bound leave the account’s as they were', async () => {
+    await firePlansStore.set(ctx, MAIN_ID, entry({ name: 'Here' }));
+    const records = Array.from({ length: 23 }, (_, i) => ({ id: `p${i}`, value: entry() }));
+    const refusal = await writeBatch(ctx, 'store:fire-plans', records, at('store:fire-plans', 23)).catch((err) => err);
+    expect([refusal instanceof BatchNotWritten, refusal.status]).toEqual([true, 413]);
+    expect(await plansOf()).toEqual({ [MAIN_ID]: entry({ name: 'Here' }) });
+  });
+
+  test('written, a damaged plan under an id the file brings is written over, and one under another goes', async () => {
+    await fake.hset(ctxKey('fire-plans'), { [MAIN_ID]: DAMAGED, y: DAMAGED });
+    await writeBatch(ctx, 'store:fire-plans', [{ id: MAIN_ID, value: entry() }], at('store:fire-plans', 1));
+    expect(await plansOf()).toEqual({ [MAIN_ID]: entry() });
+  });
+});
+
 describe('a batch of plans written twice', () => {
   test('clears and writes its own plans again: the same plans, nothing merged', async () => {
     const batches = [
