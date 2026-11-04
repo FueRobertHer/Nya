@@ -401,6 +401,16 @@ export const withExpenses = <P extends Items>(plan: P, list: readonly PlanExpens
 /** The plan with `list` as its life events, as withIncome does it. */
 export const withEvents = <P extends Items>(plan: P, list: readonly LifeEvent[]): P => withList(plan, list, asEvent, itemFromEvent);
 
+/** The plan with `x` in place of the item with its id, or added at the end
+ *  (the Timeline's item sheet). */
+export const withItem = <P extends Items>(plan: P, x: PlanItem): P => ({
+  ...plan,
+  items: plan.items.some((y) => y.id === x.id) ? plan.items.map((y) => (y.id === x.id ? x : y)) : [...plan.items, x],
+});
+
+/** The plan without the item with this id. */
+export const withoutItem = <P extends Items>(plan: P, id: string): P => ({ ...plan, items: plan.items.filter((y) => y.id !== id) });
+
 /** The ages of the items' edges known before anything runs (an age, yours or
  *  the partner's as yours; the stop while it is an age; an edge anchored on
  *  one of those), by `${index}:start` and `${index}:end`. An end for good, or

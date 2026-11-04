@@ -344,7 +344,7 @@ h2 {
    keeps Text. */
 h1,
 .card-header > :is(h2, h3),
-.empty-state > :is(h2, h3),
+.empty-state > :is(h2, h3, h4),
 .sheet-header h2,
 .month-stepper-title,
 .plan-title,
@@ -2036,7 +2036,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   gap: var(--sp-2);
 }
 
-.empty-state > :is(h2, h3) {
+.empty-state > :is(h2, h3, h4) {
   margin: 0;
   font-size: var(--fs-3);
   font-weight: var(--fw-semibold);
@@ -4013,8 +4013,29 @@ button.danger-outline {
   cursor: pointer;
 }
 
-.radio-row + .radio-row {
+.radio-row + .radio-row,
+.radio-row-detail + .radio-row {
   border-top: 1px solid var(--border-subtle);
+}
+
+/* An option that is off (its reason is the group's helper): 60%, as a
+   button that is off. */
+.radio-row:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The picked option's own fields, under its row and in line with its name
+   (the radio's width and the row's gap). */
+.radio-row-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 0 var(--sp-3) calc(13px + 10px);
+}
+
+.radio-rows > .helper {
+  margin: 0 0 var(--sp-1);
 }
 
 .radio-row input {
