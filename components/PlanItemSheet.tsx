@@ -559,7 +559,9 @@ export function ItemPreview({ lines, id }: { lines: PreviewLines; id: string }) 
         <dl className="txn-detail">
           {lines.rows.map((r) => (
             <div className="txn-detail-row" key={r.key}>
-              <dt>{r.key}</dt>
+              <dt>
+                <Masked>{r.key}</Masked>
+              </dt>
               <dd>
                 <Masked>{r.value}</Masked>
               </dd>
@@ -578,7 +580,7 @@ export function ItemPreview({ lines, id }: { lines: PreviewLines; id: string }) 
       ))}
       {lines.cautions.map((c) => (
         <Notice key={c} level="caution">
-          {c}
+          <Masked>{c}</Masked>
         </Notice>
       ))}
     </section>

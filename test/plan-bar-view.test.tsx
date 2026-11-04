@@ -400,7 +400,7 @@ describe('the segments', () => {
     serve();
     const tab = await mount();
     expect(tab.shown()).toEqual(['Your path']);
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'What if…', 'Income and one-off expenses', 'Progress']);
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Timeline', 'Progress']);
     const drawdown = tab.titles(tab.panelOf('Drawdown'));
     expect(drawdown).toEqual(['Will it last?', 'By withdrawal rate and length']);
     // Then its settings and About these numbers, as rows (rollout 6d).
@@ -517,8 +517,8 @@ describe('where the Plan opens', () => {
     const chosen: PlanSegment[] = [];
     const tab = await mount({ onSegment: (s) => chosen.push(s) });
     expect(tab.shown()).toEqual(['Your path']);
-    await press(tab.row('Ages'));
-    const form = tab.sheet('Your ages')!;
+    await press(tab.row('Household'));
+    const form = tab.sheet('Household')!;
     await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '40'));
     await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
     await settle(100);
@@ -555,7 +555,7 @@ describe('where the Plan opens', () => {
   test('nothing on screen says "stress test" any more: the three segments, and the sheets that point there', async () => {
     /** What a person reads or hears of an element: its text and every label. */
     const said = (el: FakeElement) => [el.textContent, ...el.findAll((e) => e.hasAttribute('aria-label')).map((e) => e.getAttribute('aria-label'))].join(' ');
-    for (const row of ['Assumptions', 'Ages']) {
+    for (const row of ['Assumptions', 'Household']) {
       serve({ copies: [RETIRE] });
       const tab = await mount();
       expect(said(tab.container)).not.toMatch(/stress/i);
@@ -782,8 +782,8 @@ describe('what the tab does by itself', () => {
     });
     const tab = await mount();
     // A save of your plan under way, and a copy opened meanwhile.
-    await press(tab.row('Ages'));
-    const form = tab.sheet('Your ages')!;
+    await press(tab.row('Household'));
+    const form = tab.sheet('Household')!;
     await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '58'));
     await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
     await press(tab.plans());
@@ -822,8 +822,8 @@ describe('the copy’s card, on every segment', () => {
     expect(tab.titles(tab.panelOf('Drawdown'))).toEqual([]);
     expect(drawdownRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))).toEqual([]);
-    // No life events card to point to.
-    expect(tab.text()).not.toContain('Life events');
+    // No Timeline to point to.
+    expect(tab.titles(tab.panelOf('Your path'))).not.toContain('Timeline');
     await tab.unmount();
   });
 
@@ -845,30 +845,30 @@ describe('the copy’s card, on every segment', () => {
     await tab.unmount();
   });
 
-  test('one refused for lasting changes below zero has its life events with it, above the panels, to change', async () => {
+  test('one refused for lasting changes below zero has its Timeline with it, above the panels, to change', async () => {
     serve({ copies: [BELOW_ZERO] });
     const tab = await mount();
     await openFromBar(tab, 'Mortgage gone');
     const slot = tab.card()!.parentNode as FakeElement;
     expect(tab.card()!.textContent).toContain('Its lasting changes in spending take your spending in retirement below zero');
-    const edit = slot.findAll((e) => e.getAttribute('aria-label') === 'Edit Mortgage paid off');
+    const edit = slot.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Mortgage paid off'));
     expect(edit.length).toBe(1);
-    for (const p of tab.panels()) expect(p.textContent).not.toContain('Life events');
+    for (const p of tab.panels()) expect(p.textContent).not.toContain('Mortgage paid off');
     expect(tab.text()).not.toContain('Will it last?');
     await tab.unmount();
   });
 
   // Worked out in lib/fire/plan.worker.ts, on its own thread, as in a
   // browser: the one test in these suites whose answers come from there.
-  test('one worked out with life events: they are on Your path, and the card says what it adds', async () => {
+  test('one worked out with items: they are on Your path, and the card says what it adds', async () => {
     const posted = realWorkers();
     jest.useRealTimers();
     serve({ copies: [GYM] });
     const tab = await mount();
     await openFromBar(tab, 'Gym');
     expect(tab.card()!.textContent).toContain('Adds “Gym”');
-    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Life events', 'Income and one-off expenses', 'Progress']);
-    expect(tab.panelOf('Drawdown').textContent).toContain('as the Life events card on Your path says');
+    expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Timeline', 'Progress']);
+    expect(tab.panelOf('Drawdown').textContent).toContain('From Your pathGym: ');
     expect(posted()).toBeGreaterThan(0);
     await tab.unmount();
   });
@@ -936,14 +936,14 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    await press(tab.row('Ages'));
-    const form = tab.sheet('Your ages')!;
+    await press(tab.row('Household'));
+    const form = tab.sheet('Household')!;
     await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '52'));
     await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
     await settle(400);
     // The drawer closed with the version it was opened on; its notice is on
     // the card, the copy worked out still.
-    expect(tab.sheet('Your ages')).toBeNull();
+    expect(tab.sheet('Household')).toBeNull();
     expect(tab.card()!.textContent).toContain(stale);
     expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Will it last?');
     layout({ card: -500, panel: -900 });

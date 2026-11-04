@@ -115,7 +115,7 @@ describe('the Plan tab saves through nothing else', () => {
   });
 
   test('the cards it renders save only through what they are given', () => {
-    for (const file of ['components/PlansSheet.tsx', 'components/PlanEvents.tsx', 'components/PlanCompare.tsx', 'components/PlanBar.tsx', 'components/PlanWhatIf.tsx', 'components/AlsoChange.tsx']) {
+    for (const file of ['components/PlansSheet.tsx', 'components/PlanTimeline.tsx', 'components/PlanItemSheet.tsx', 'components/PlanCompare.tsx', 'components/PlanBar.tsx', 'components/AlsoChange.tsx']) {
       const text = readFileSync(join(ROOT, file), 'utf8');
       expect([file, /fire-plan|\/api\/plans|fetch\(/.test(text.replace(/\/\/.*$/gm, ''))]).toEqual([file, false]);
     }

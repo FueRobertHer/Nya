@@ -25,8 +25,8 @@
 //     balances that are old or short (components/plan-figure-notes.ts). How
 //     a measured figure was worked out is behind Why? in its sheet. A figure
 //     that may be short says so; none is presented as complete when it may
-//     not be. Then the What if… card on your plan, or an open copy's life
-//     events in its place, and other income and one-off expenses.
+//     not be. Then the Timeline (components/PlanTimeline.tsx): everything
+//     the plan holds, on the points in time that place it.
 //   - Drawdown (Stress test until T1 of the tax plan): one notice when the
 //     spending or invested assets the simulation uses may be low, then "Will it last?": the plan run through
 //     history or Monte Carlo (lib/fire/simulate.ts), with the success rate
@@ -1137,7 +1137,7 @@ export default function PlanTab({
   const stressBadge = stressNotes.length === 0 ? null : stressNotes.length === 1 ? 'An input may be low' : 'Inputs may be low';
 
   // The bar, its heading and its Plans button, the copy's card (with
-  // the life events that fix it, when it is refused) and the panel shown:
+  // the Timeline that fixes it, when it is refused) and the panel shown:
   // what a switch scrolls to, and what focus moves to.
   const barRef = useRef<HTMLDivElement | null>(null);
   const titleRef = useRef<HTMLHeadingElement | null>(null);
@@ -1180,7 +1180,7 @@ export default function PlanTab({
   };
   const closePlans = () => setPlansOpen(false);
   // What takes focus once the bar has drawn the plan now shown: its heading
-  // when a copy opens (from the Plans sheet, What if…, on your plan or inside
+  // when a copy opens (from the Plans sheet, the Timeline, on your plan or inside
   // another copy), with the copy's card scrolled into view, since focus in
   // the pinned bar scrolls nothing; its Plans button when one is left, as
   // the arrow, the card and the sheet's row that left it are gone, or when
@@ -1399,8 +1399,8 @@ export default function PlanTab({
       today={inputs.today}
     />
   );
-  // Lasting changes below zero: nothing is worked out, and the life events
-  // are what to change, so they stay with the card, on every segment.
+  // Lasting changes below zero: nothing is worked out, and the Timeline's
+  // items are what to change, so they stay with the card, on every segment.
   const refused = !!openFigures && 'refused' in openFigures;
   const copyCard = entry && openView && (
     <CopyCard
@@ -1894,20 +1894,20 @@ export function FiCard({
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
-  /** What the plan's life events do to these figures, a line each. */
+  /** What the plan's items do to these figures, a line each. */
   lifeNotes?: string[];
-  /** Spending in retirement with the life events' lasting changes, which
+  /** Spending in retirement with the items' lasting changes, which
    *  the FI number is worked out from, when it differs from today's. */
   retirementSpending?: number | null;
   /** Opens the FI number's sheet, from How it's worked out. */
   onFiNumber?: () => void;
   fiNumberRef?: (el: HTMLButtonElement | null) => void;
-  /** The answer came from the walk with the plan's life events. */
+  /** The answer came from the walk with the plan's items. */
   walked?: boolean;
   /** What that walk saves a year after the last change. */
   walkedSavings?: number | null;
   /** What moved the walk (lib/fire/plan-figures.ts walkFrom), for its words;
-   *  left out, the plan's life events, as before items. */
+   *  left out, the plan's items. */
   walkFrom?: { items: boolean; events: boolean };
   /** D15's line while new (components/plan-moved.ts fiMovedText), under the
    *  answer's lines with Got it, which hides it for the session. */
@@ -1917,7 +1917,7 @@ export function FiCard({
   fiShort?: string | null;
   /** Why there is no balance at the stop age: the walk can't get there. */
   stopShort?: string | null;
-  /** The balance at the stop age is the walk's, with the plan's life events. */
+  /** The balance at the stop age is the walk's, with the plan's items. */
   stopWalked?: boolean;
   /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
   path?: PlanPath | null;
@@ -1974,12 +1974,12 @@ export function FiCard({
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
     howLine =
       words === EVENTS_WORDS
-        ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this plan’s life events changing what is saved in their years.`
+        ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this plan’s items changing what is saved in their years.`
         : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words} in their years.`;
   } else if (walked && view.yearsToFi === Infinity) {
     howLine =
       words === EVENTS_WORDS
-        ? `With this plan’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
+        ? `With this plan’s items you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
         : `With ${words} in their years you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
     howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
@@ -2300,7 +2300,7 @@ export function InputsCard({
   /** The figures themselves, as the plan shown has them. */
   view: FiView;
   /** The plan shown, for its FI number's row. */
-  plan: Pick<FirePlanV2, 'fiNumber' | 'withdrawalRate'>;
+  plan: Pick<PlanCore, 'fiNumber' | 'withdrawalRate'>;
   money: (n: number) => string;
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -2459,7 +2459,7 @@ export function SimulationCard({
   /** Where each of the plan's items falls on the steady path (null: not
    *  placed), for what this says it takes from Your path. */
   ages?: readonly ItemAges[];
-  /** Spending in retirement with its life events' lasting changes, in words:
+  /** Spending in retirement with its items' lasting changes, in words:
    *  what the simulation withdraws in place of what is spent now. */
   retirementLine?: string | null;
   plan: FirePlanV2;

@@ -311,7 +311,7 @@ export function TimelineCard({
     const at = figures?.resolution.ages[i]?.start ?? null;
     const notes = figures ? figures.itemNotes.filter((n) => n.id === x.id) : [];
     const warn = notes.flatMap((n) => {
-      const t = rowNoteText(x, n.part, { plan, at, startAge, end, planInWalk });
+      const t = rowNoteText(x, n.part, { plan, at, startAge, end, planInWalk, runs: sim !== null });
       return t ? [t] : [];
     });
     const plain: string[] = [];
@@ -326,12 +326,13 @@ export function TimelineCard({
     return { warn, caution, plain };
   };
 
-  const row = (i: number, unplaced: string | null = null) => {
+  const row = (i: number, unplaced: string | null = null, notReached = false) => {
     const x = plan.items[i];
     const v = itemAmount(x);
     const start = figures?.resolution.ages[i]?.start ?? null;
     const n = refused ? { warn: [], caution: [], plain: [] } : notesOf(x, i);
-    const said = [...n.plain, ...(unplaced ? [unplaced] : [])];
+    const atMost = notReached ? nearest(figures, money) : null;
+    const said = [...n.plain, ...(unplaced ? [unplaced] : []), ...(atMost ? [atMost] : [])];
     const noted = n.warn.length + n.caution.length + said.length > 0;
     return (
       <li key={x.id}>
@@ -366,7 +367,7 @@ export function TimelineCard({
           <div className="row-notes">
             {said.map((t) => (
               <p key={t} className="helper">
-                {t}
+                <Masked>{t}</Masked>
               </p>
             ))}
             {n.warn.map((t) => (
@@ -475,7 +476,7 @@ export function TimelineCard({
             <h4 className="section-label">
               <Masked>{p.label}</Masked>
             </h4>
-            <ul className="list-rows">{p.items.map((i) => row(i, nearest(figures, money)))}</ul>
+            <ul className="list-rows">{p.items.map((i) => row(i, null, true))}</ul>
           </div>
         )
       )}

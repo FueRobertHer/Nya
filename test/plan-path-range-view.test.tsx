@@ -116,9 +116,9 @@ const button = (within: FakeElement, words: string) => within.findAll((e) => e.t
 
 /** Types the stop age in the Ages sheet and saves it. */
 const saveStop = async (tab: Tab, stop: number) => {
-  await press(tab.row('Ages'));
+  await press(tab.row('Household'));
   const form = tab.dialog()!;
-  expect(form.getAttribute('aria-label')).toBe('Your ages');
+  expect(form.getAttribute('aria-label')).toBe('Household');
   const [, target] = form.findAll((e) => e.tagName === 'INPUT');
   await act(async () => type(target, String(stop)));
   await press(button(form, 'Save'));

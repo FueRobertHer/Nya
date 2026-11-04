@@ -393,9 +393,12 @@ export function notePartText(x: PlanItem, part: keyof typeof EVENT_PART_TEXT, pl
 export function rowNoteText(
   x: PlanItem,
   part: keyof typeof EVENT_PART_TEXT,
-  o: { plan: Pick<FirePlanV2, 'start' | 'age'>; at: number | null; startAge: number | null; end: number | null; planInWalk: boolean }
+  o: { plan: Pick<FirePlanV2, 'start' | 'age'>; at: number | null; startAge: number | null; end: number | null; planInWalk: boolean; runs: boolean }
 ): string | null {
   const money = x.kind === 'one-off' || (INCOME_KINDS.includes(x.kind) && x.kind !== 'part-time');
+  // Where the simulation has a cost or income, so only when it runs: waiting
+  // on spending or a balance, "add your age" would be the wrong ask.
+  if (money && !o.runs) return null;
   if (money && part === 'no-age') return 'Not in the simulation: add your age.';
   if (x.kind === 'one-off') {
     if (part === 'before-start') {
