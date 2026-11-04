@@ -248,7 +248,7 @@ Replaces `.error`, `.stale-note`, `.as-of.stale`, `.status-note`, `.info-notice`
 
 ### Helper text and disclosure
 
-- **Helper text**: one line, `--fs-2`, `--text-2`, under the thing it explains. Replaces seven muted-note styles that differ only in size (11 to 14px) and margin: `.panel-note`, `.empty-note`, `.as-of`, `.chart-note`, `.lifecycle-note`, `.rename-hint`, `.review-note`.
+- **Helper text**: one line, `--fs-2`, `--text-2`, under the thing it explains. Replaces seven muted-note styles that differ only in size (11 to 14px) and margin: `.panel-note`, `.empty-note`, `.as-of`, `.chart-note`, `.lifecycle-note`, `.rename-hint`, `.review-note`. A word too long for its line breaks rather than running past the card or sheet (`overflow-wrap: break-word`, on `.helper` and on `.panel-note` while it lasts): a scenario's or plan's name is up to 40 letters, and one with no space is wider than a 320px screen. A word that fits is never broken, and nothing sized by its text (a flex row, a table column) changes, since `break-word`, unlike `anywhere`, leaves the text's narrowest width as it was.
 - **"Why?" / "How this works" disclosure**: a ghost button that expands an explanation in place. Every paragraph of prose that is on screen by default today (connect options, the download formats, the plan's derivations, About these numbers) moves behind one. Built as `components/Why.tsx`: a `<details class="why">` whose `<summary>` looks like a ghost button (44px, `--accent`), the explanation below it in `--fs-2`, `--text-2`. A `<details>` needs no script and is native to the keyboard and screen readers.
 
 ### Sheet

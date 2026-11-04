@@ -1382,12 +1382,15 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   margin-top: var(--sp-2);
 }
 
-/* Helper text: one line under the thing it explains. */
+/* Helper text: one line under the thing it explains. A word too long for
+   the line (a scenario's name, up to 40 letters with no space) breaks
+   rather than running past the card; a word that fits is never broken. */
 .helper {
   margin: 0;
   color: var(--text-2);
   font-size: var(--fs-2);
   line-height: var(--lh-body);
+  overflow-wrap: break-word;
 }
 
 /* A placeholder for what is still loading (components/LoadingSkeletons.tsx):
@@ -3232,11 +3235,13 @@ span.meter-fill {
   color: var(--text);
 }
 
+/* A word too long for the line breaks, as in .helper. */
 .panel-note {
   color: var(--text-2);
   font-size: var(--fs-2);
   line-height: 1.45;
   margin: 8px 0 0;
+  overflow-wrap: break-word;
 }
 
 .field {
