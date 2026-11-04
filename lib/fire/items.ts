@@ -20,7 +20,7 @@
 //
 // What still reads version 1's lists (the simulation's From Your path, a
 // copy's diff, the release before's readers) goes through the views here
-// (incomeOf, withIncome, ...), so a plan read as version 1 saves back as
+// (incomeOf, expensesOf, ...), so a plan read as version 1 saves back as
 // version 1 (lib/fire/plan-v2.ts toStored) and its currency record, which
 // compares the lists position by position, still holds.
 //
@@ -307,9 +307,6 @@ export function itemFromEvent(e: LifeEvent): PlanItem {
   }
 }
 
-/** A scenario's life events as items, for running; never parsed into a plan. */
-export const eventItems = (events: readonly LifeEvent[]): PlanItem[] => events.map(itemFromEvent);
-
 const plainAge = (w: When): number | null => (w.anchor.at === 'age' && w.offset === 0 ? w.anchor.age : null);
 const plain = (x: PlanItem) => x.owner === null && !x.beforeTax && x.replaces === null && x.every === null && x.times === null;
 
@@ -372,34 +369,6 @@ export function asEvent(x: PlanItem): LifeEvent | null {
       return null;
   }
 }
-
-/** The plan's items that are life events, in item order. */
-export const eventsOf = (plan: Pick<FirePlanV2, 'items'>): LifeEvent[] => plan.items.map(asEvent).filter((e): e is LifeEvent => e !== null);
-
-/** The plan with `list` as its version 1 lists' one: an item whose id is in
- *  the list (of any kind) replaced where it is, so no id is ever doubled; one
- *  of that view the list leaves out removed; a new one at the end. Every
- *  other item stays where it is. */
-function withList<T extends { id: string }, P extends Items>(plan: P, list: readonly T[], view: (x: PlanItem) => unknown, make: (x: T) => PlanItem): P {
-  const byId = new Map(list.map((x) => [x.id, x]));
-  const items: PlanItem[] = [];
-  for (const x of plan.items) {
-    const next = byId.get(x.id);
-    if (next) {
-      items.push(make(next));
-      byId.delete(x.id);
-    } else if (view(x) === null) {
-      items.push(x);
-    }
-  }
-  for (const x of byId.values()) items.push(make(x));
-  return { ...plan, items };
-}
-
-export const withIncome = <P extends Items>(plan: P, list: readonly PlanIncome[]): P => withList(plan, list, asIncome, itemFromIncome);
-export const withExpenses = <P extends Items>(plan: P, list: readonly PlanExpense[]): P => withList(plan, list, asExpense, itemFromExpense);
-/** The plan with `list` as its life events, as withIncome does it. */
-export const withEvents = <P extends Items>(plan: P, list: readonly LifeEvent[]): P => withList(plan, list, asEvent, itemFromEvent);
 
 /** The plan with `x` in place of the item with its id, or added at the end
  *  (the Timeline's item sheet). */

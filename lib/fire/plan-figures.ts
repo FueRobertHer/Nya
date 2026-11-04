@@ -93,7 +93,7 @@ export type PlanFigures = {
 export type FiguresRefused = { refused: 'below-zero'; spending: number; lasting: number };
 
 export type FiguresOptions = {
-  /** An open scenario's life events, as items (lib/fire/items.ts eventItems). */
+  /** An open scenario's life events, as items (lib/fire/items.ts itemFromEvent). */
   events?: readonly PlanItem[];
   /** What counts where, by the release flags (lib/fire/compile.ts Count). */
   count: Count;

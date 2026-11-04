@@ -391,23 +391,24 @@ const oPlan = await import('./fixtures/release-before/fire/plan');
 const oSaved = await import('./fixtures/release-before/fire/saved-plan');
 const oCurrency = await import('./fixtures/release-before/fire/plan-currency');
 const { planOf, toStored, upgradeStoredPlan } = await import('@/lib/fire/plan-v2');
-const { expensesOf, incomeOf, withExpenses, withIncome } = await import('@/lib/fire/items');
+const { expensesOf, incomeOf, itemFromExpense, itemFromIncome } = await import('@/lib/fire/items');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { genPlan, rand } = await import('./plan-gen');
 
 describe('the Plan, as this release writes it where C2 reads', () => {
-  /** A version 1 plan, edited as the cards edit it (an income dropped and
-   *  one added, every one-off's amount changed, a figure typed), sent as a
-   *  save sends it. Null where the edit makes more than version 1 takes. */
+  /** A version 1 plan, edited (an income dropped and one added, every
+   *  one-off's amount changed, a figure typed), sent as a save sends it. Null
+   *  where the edit makes more than version 1 takes. */
   const edited = (seed: number) => {
     const g = rand(seed);
     const p = genPlan(g, seed % 3 === 0);
-    let v2 = planOf(p);
-    const income = incomeOf(v2);
-    v2 = withIncome(v2, [...income.slice(1), { id: `new${seed}`, label: 'Pension', amount: g.int(1, 40) * 1000, fromAge: g.int(50, 70), inflationAdjusted: g.chance(0.5) }]);
-    v2 = withExpenses(v2, expensesOf(v2).map((x) => ({ ...x, amount: x.amount + 1000 })));
-    v2 = { ...v2, spending: g.int(20, 90) * 1000 };
-    const sent = toStored(v2, 1);
+    const v2 = planOf(p);
+    const items = [
+      ...incomeOf(v2).slice(1).map(itemFromIncome),
+      ...expensesOf(v2).map((x) => itemFromExpense({ ...x, amount: x.amount + 1000 })),
+      itemFromIncome({ id: `new${seed}`, label: 'Pension', amount: g.int(1, 40) * 1000, fromAge: g.int(50, 70), inflationAdjusted: g.chance(0.5) }),
+    ];
+    const sent = toStored({ ...v2, items, spending: g.int(20, 90) * 1000 }, 1);
     return { before: p, sent: 'error' in sent ? null : sent.plan };
   };
   const plans = Array.from({ length: 300 }, (_, i) => edited(9100 + i));

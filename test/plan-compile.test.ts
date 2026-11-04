@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { compileEvents, compileItems, fixedAges, type CompileAt } from '@/lib/fire/compile';
-import { eventItems, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
+import { itemFromEvent, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
 import * as oldEvents from './fixtures/before-d15/fire/events';
 import * as oldPlan from './fixtures/before-d15/fire/plan';
 import { genEvents, genMeasured, genPlan, rand } from './plan-gen';
@@ -42,7 +42,7 @@ describe('the same arithmetic as the release before', () => {
   });
 
   test('life events still move the walk with the switch off', () => {
-    const items = eventItems([{ id: 'w', kind: 'windfall', label: 'Gift', atAge: 45, amount: 100_000 }]);
+    const items = [itemFromEvent({ id: 'w', kind: 'windfall', label: 'Gift', atAge: 45, amount: 100_000 })];
     const c = compileItems(items, fixedAges(items), { age: 40, startAge: 55, stop: 55, years: 40, taxRate: 0 }, off);
     expect(c.walk.moneyIn).toEqual([{ year: 5, amount: 100_000 }]);
     expect(c.inWalk).toEqual([true]);

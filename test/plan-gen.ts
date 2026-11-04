@@ -7,7 +7,7 @@ import { seededRandom } from '@/lib/fire/random';
 import { DEFAULT_PLAN, type FirePlan, type PlanExpense, type PlanIncome, type StartChoice } from '@/lib/fire/plan';
 import type { LifeEvent } from '@/lib/fire/events';
 import type { Count } from '@/lib/fire/compile';
-import { eventItems } from '@/lib/fire/items';
+import { itemFromEvent } from '@/lib/fire/items';
 import { planFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { Measured } from '@/lib/fire/plan';
@@ -20,7 +20,7 @@ export const ON: Count = { planInWalk: true };
 /** A version 1 plan's figures, with a scenario's life events, as the Plan
  *  tab works them out (in memory as version 2). */
 export function figuresOf(p: FirePlan, m: Measured, events: readonly LifeEvent[] = [], count: Count = OFF) {
-  return planFigures(planOf(p), m, { events: eventItems(events), count });
+  return planFigures(planOf(p), m, { events: events.map(itemFromEvent), count });
 }
 
 /** What the Plan tab gives its Timeline card for a plan, in dollars and

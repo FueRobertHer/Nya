@@ -39,7 +39,7 @@ const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { savedPlanStore } = await import('@/lib/saved-plan');
 const { emptyAccount } = await import('@/lib/user-restore/undo');
 const { DEFAULT_PLAN_V2, planOf } = await import('@/lib/fire/plan-v2');
-const { eventItems, itemFromEvent, itemFromIncome } = await import('@/lib/fire/items');
+const { itemFromEvent, itemFromIncome } = await import('@/lib/fire/items');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { genEvents, genPlan, rand } = await import('./plan-gen');
@@ -180,7 +180,7 @@ describe('the release before reads every plan this release writes', () => {
       const v2 = planOf(genPlan(g, seed % 3 === 0));
       const plan: FirePlanV2 = {
         ...v2,
-        items: [...v2.items, ...eventItems(genEvents(g, `e${seed}-`).slice(0, 3))],
+        items: [...v2.items, ...genEvents(g, `e${seed}-`).slice(0, 3).map(itemFromEvent)],
         partnerAge: g.chance(0.3) ? g.int(22, 70) : null,
         stopAtFi: g.chance(0.3),
         fiNumber: g.chance(0.2) ? g.int(500, 3000) * 1000 : null,
