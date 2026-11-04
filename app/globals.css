@@ -843,16 +843,21 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   padding: 0 var(--inset) var(--sp-3);
 }
 
-/* The Plan's What if… card: its scenarios' rows, under the chips, run to
-   the card's foot, as Your figures' do. */
-.plan-what-if:has(> .list-rows) {
-  padding-bottom: 0;
-  overflow: hidden;
+/* The Plan's Timeline (components/PlanTimeline.tsx): each point's rows run to
+   the card's edges, and to its foot when the card ends in rows; a last point
+   with nothing under it keeps the card's padding. */
+.plan-timeline-point > .section-label {
+  margin-bottom: var(--sp-2);
 }
 
-.plan-what-if > .list-rows {
-  margin-top: var(--sp-3);
+.plan-timeline-point > .list-rows {
+  margin-inline: calc(-1 * var(--inset));
   margin-bottom: 0;
+}
+
+.plan-timeline:has(> .stack > .plan-timeline-point:last-child) {
+  padding-bottom: 0;
+  overflow: hidden;
 }
 
 /* This month's FI line arrives after Home paints, or not at all: until a

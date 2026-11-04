@@ -286,7 +286,9 @@ export function figureNotes(a: FigureArgs): FigureNotes {
     savings: savingsText(a, coverage, flowsGap),
     assets: assetsText(a),
     ages: said(
-      a.plan.age !== null || a.view.stopAge !== null || a.plan.stopAtFi ? `${a.plan.age ?? '?'} now, stop at ${a.view.stopAge ?? (a.plan.stopAtFi ? 'FI' : '?')}` : 'Add them for Coast FI and to place income by age',
+      a.plan.age !== null || a.view.stopAge !== null || a.plan.stopAtFi
+        ? `${a.plan.age ?? '?'}${a.plan.partnerAge != null ? ` and ${a.plan.partnerAge}` : ''} now, ${a.plan.stopAtFi ? 'stop when you reach FI' : `stop at ${a.view.stopAge ?? '?'}`}`
+        : 'Add them for Coast FI and to place what’s on your Timeline',
       []
     ),
     assumptions: said(

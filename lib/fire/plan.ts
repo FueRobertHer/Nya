@@ -122,7 +122,7 @@ export const DEFAULT_PLAN: FirePlan = {
  *  everything but its version and its lists (lib/fire/compile.ts places a
  *  plan's items), with version 2's stop at FI and own FI number when it has
  *  them. */
-export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null };
+export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null; partnerAge?: number | null };
 
 /** The age the plan stops working at: the one typed, or under "stop when I
  *  reach FI" the search's answer (lib/fire/steady.ts), null when there is

@@ -63,7 +63,7 @@ import type { Txn } from './MonthBreakdown';
 import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
 import PlanGrid, { type FailedCell } from './PlanGrid';
-import { AboutForm, AssumptionsForm, FigureForm, type AssumptionsAt, type FigureKind } from './PlanForms';
+import { AboutForm, AssumptionsForm, FiNumberForm, FigureForm, type AssumptionsAt, type FigureKind } from './PlanForms';
 import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
 import {
@@ -198,13 +198,15 @@ export type SheetState =
   // test's part or its mix; `mix` is the allocation's, filled in, as it was
   // when "Use my allocation in the plan" was pressed.
   | { kind: 'assumptions'; at?: AssumptionsAt; mix?: PlanMix & { ok: true } }
-  | { kind: 'numbers' };
+  | { kind: 'numbers' }
+  | { kind: 'fi-number' };
 
 const SHEET_TITLES: Record<SheetState['kind'], string> = {
-  about: 'Your ages',
+  about: 'Household',
   figure: '',
   assumptions: 'Assumptions',
   numbers: 'About these numbers',
+  'fi-number': 'FI number',
 };
 
 const FIGURE_TITLES: Record<FigureKind, string> = {
@@ -1590,6 +1592,8 @@ export default function PlanTab({
               currency={displayCurrency}
               onAskAges={() => open({ kind: 'about' }, 'ask-about')}
               askRef={(el) => inputRowRef('ask-about', el)}
+              onFiNumber={() => open({ kind: 'fi-number' }, 'fi-how')}
+              fiNumberRef={(el) => inputRowRef('fi-how', el)}
               held={reloading}
               plan={plan}
               view={view}
@@ -1605,10 +1609,11 @@ export default function PlanTab({
             <InputsCard
               figures={figureTexts}
               view={view}
+              plan={plan}
               money={money}
               copyName={copyName}
               held={reloading}
-              onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' ? { kind } : { kind: 'figure', figure: kind }, kind)}
+              onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' || kind === 'fi-number' ? { kind } : { kind: 'figure', figure: kind }, kind)}
               rowRef={inputRowRef}
               currency={currencyInFigures ? currencyCard : null}
             />
@@ -1717,6 +1722,7 @@ export default function PlanTab({
             your plan. */}
         {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
         {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
+        {shownSheet?.kind === 'fi-number' && <FiNumberForm key={opened} {...formProps} view={view} retirementSpending={shown?.retirement?.spending ?? null} leftOut={path?.after?.leftOut ?? null} money={money} />}
         {shownSheet?.kind === 'assumptions' && (
           <AssumptionsForm
             key={opened}
@@ -1849,14 +1855,6 @@ function Row({ label, value, note, action }: { label: string; value: React.React
   );
 }
 
-function EditButton({ onClick, disabled, label }: { onClick: () => void; disabled: boolean; label: string }) {
-  return (
-    <button className="plan-edit" onClick={onClick} disabled={disabled} aria-label={label}>
-      Edit
-    </button>
-  );
-}
-
 /** The FI card: the FI number and how it is worked out, with what may leave
  *  it short said on it, and what follows from it (years to FI, Coast and
  *  Barista FI, the balance at the target age). The figures it rests on are
@@ -1866,6 +1864,8 @@ export function FiCard({
   copyName = null,
   lifeNotes = [],
   retirementSpending = null,
+  onFiNumber,
+  fiNumberRef,
   walked = false,
   walkedSavings = null,
   walkFrom = { items: false, events: true },
@@ -1899,6 +1899,9 @@ export function FiCard({
   /** Spending in retirement with the life events' lasting changes, which
    *  the FI number is worked out from, when it differs from today's. */
   retirementSpending?: number | null;
+  /** Opens the FI number's sheet, from How it's worked out. */
+  onFiNumber?: () => void;
+  fiNumberRef?: (el: HTMLButtonElement | null) => void;
   /** The answer came from the walk with the plan's life events. */
   walked?: boolean;
   /** What that walk saves a year after the last change. */
@@ -2092,23 +2095,30 @@ export function FiCard({
           </div>
         </div>
       )}
-      <div className="as-of">
-        <Masked>
-          {view.fiNumber !== null && plan.fiNumber != null
-            ? `Your own FI number ${money(view.fiNumber)}${view.workedOut !== null ? ` · worked out ${money(view.workedOut)}` : ''}`
-            : view.fiNumber !== null && fiSpending !== null
-            ? `FI number ${money(view.fiNumber)}: ${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
-            : !takes
-              ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
-              : // With the answer just over it saying "Needs your annual
-                // spending", this says only why, or how, not that again.
-                head.headline === SPENDING_NEED
-                ? view.spending.source === 'unmeasured'
-                  ? 'Your annual spending isn’t measured (below).'
-                  : 'Connect accounts with transactions, or type it below.'
-                : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
-        </Masked>
-      </div>
+      {view.fiNumber !== null && onFiNumber && (
+        <button type="button" className="btn ghost" aria-haspopup="dialog" ref={fiNumberRef} onClick={onFiNumber}>
+          How it&apos;s worked out
+        </button>
+      )}
+      {/* A worked-out number's arithmetic is in its sheet; your own number
+          against it, and why there is none, stay here. */}
+      {!(view.fiNumber !== null && plan.fiNumber == null && fiSpending !== null) && (
+        <div className="as-of">
+          <Masked>
+            {view.fiNumber !== null && plan.fiNumber != null
+              ? `Your own FI number ${money(view.fiNumber)}${view.workedOut !== null ? ` · worked out ${money(view.workedOut)}` : ''}`
+              : !takes
+                ? "Can't be worked out from the saved withdrawal rate, tax or growth after inflation: change them under Assumptions."
+                : // With the answer just over it saying "Needs your annual
+                  // spending", this says only why, or how, not that again.
+                  head.headline === SPENDING_NEED
+                  ? view.spending.source === 'unmeasured'
+                    ? 'Your annual spending isn’t measured (below).'
+                    : 'Connect accounts with transactions, or type it below.'
+                  : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
+          </Masked>
+        </div>
+      )}
       {lifeNotes.map((n) => (
         <div key={n} className="as-of">
           <Masked>{n}</Masked>
@@ -2179,11 +2189,11 @@ function FigureCaveats({ notes }: { notes: readonly FigureNote[] }) {
 }
 
 /** Which sheet a figure's row opens. */
-export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptions';
+export type InputKind = 'fi-number' | 'spending' | 'savings' | 'assets' | 'about' | 'assumptions';
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Drawdown's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first';
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how';
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {
@@ -2277,6 +2287,7 @@ export function AboutNumbers() {
 export function InputsCard({
   figures,
   view,
+  plan,
   money,
   copyName = null,
   held = false,
@@ -2288,6 +2299,8 @@ export function InputsCard({
   figures: FigureNotes;
   /** The figures themselves, as the plan shown has them. */
   view: FiView;
+  /** The plan shown, for its FI number's row. */
+  plan: Pick<FirePlanV2, 'fiNumber' | 'withdrawalRate'>;
   money: (n: number) => string;
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -2316,10 +2329,11 @@ export function InputsCard({
         <h3 id="plan-inputs-title">Your figures</h3>
       </div>
       <ul className="list-rows">
+        <InputRow title="FI number" said={{ sub: plan.fiNumber != null ? 'Set by you' : `Worked out from spending and tax, at ${pct(plan.withdrawalRate)}`, line: null, why: null, notes: [] }} value={figure(view.fiNumber)} {...row('fi-number')} />
         <InputRow title="Annual spending" said={figures.spending} value={figure(view.spending.value)} {...row('spending')} />
         <InputRow title="Invested assets" said={figures.assets} value={figure(view.assets.value)} {...row('assets')} />
         <InputRow title="Annual savings" said={figures.savings} value={figure(view.savings.value)} {...row('savings')} />
-        <InputRow title="Ages" said={figures.ages} {...row('about')} />
+        <InputRow title="Household" said={figures.ages} {...row('about')} />
         <InputRow title="Assumptions" said={figures.assumptions} {...row('assumptions')} />
       </ul>
       {currency}

@@ -217,7 +217,7 @@ function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): 
   const { points, stopAge, fiNumber, fiAge, currency } = p;
   const start = points[0];
   const end = points[points.length - 1];
-  const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this plan’s life events' : '';
+  const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this plan’s items' : '';
   const wrap = (path: string) => (p.recorded ? `${recordedWords(p.recorded, currency)} ${path}` : path);
   const last = after ? after.points[after.points.length - 1] : null;
   const tail = after ? (after.runsOutAt !== null ? `run out at ${after.runsOutAt}` : `about ${wholeMoney((last as PathPoint).balance, currency)} at ${after.endAge}`) : '';
@@ -307,7 +307,7 @@ export default function PlanPathChart(props: PathChartProps) {
         />
       )}
       <div className="as-of">
-        {`At a steady ${pct(realReturn)} a year after inflation${walkWords ? `, with ${walkWords}` : withEvents || after?.withEvents ? ', with this plan’s life events' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
+        {`At a steady ${pct(realReturn)} a year after inflation${walkWords ? `, with ${walkWords}` : withEvents || after?.withEvents ? ', with this plan’s items' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
       </div>
       {leftOut && <div className="as-of">{leftOut}</div>}
       {after && after.runsOutAt !== null && <div className="as-of">{`On this steady path your invested assets run out at ${after.runsOutAt}.`}</div>}
