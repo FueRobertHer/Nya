@@ -33,10 +33,8 @@ import { restoreHoldingsIndex } from '../holdings-history';
 import { importStore, importSummaryStore, summaryOf, type ImportEntry } from '../import/store';
 import { historyImportStore, historyImportSummaryStore, importedTxnStore, summaryOfEntry, type HistoryImportEntry } from '../history-import/store';
 import { manualTxnStore } from '../manual-txns';
-import { firePlanStore, planCurrencyStore } from '../fire-plan';
 import { firePlansStore, planFactsStore } from '../plan-copies';
 import type { PlanEntry } from '../fire/copies';
-import { planScenariosStore } from '../plan-scenarios';
 import { clearCaches } from '../cache';
 import { SEAM, MAX_RESTORED_MANUAL_ACCOUNTS } from './parts';
 import { storeOfPart } from './check';
@@ -94,27 +92,22 @@ function merged<T extends Rec>(current: T | null, value: T, field: string): T {
   return { ...current, [field]: { ...(current[field] as Rec), ...(value[field] as Rec) } } as T;
 }
 
-/** The parts that bring the plan before it was copies (lib/fire-plan.ts,
- *  lib/plan-scenarios.ts). */
-const LEGACY_PLAN_PARTS = [firePlanStore, planCurrencyStore, planScenariosStore].map((s) => `store:${s.name}`);
-
 const PLANS_PART = `store:${firePlansStore.name}`;
 
-/** The account's plans as copies (lib/plan-copies.ts) are one setting with
- *  the plan: a file that brings plans replaces them all, never merges them
- *  (setMany would keep a plan the file doesn't name, and one of them, the
- *  oldest, can stand as yours). So the batch that writes the first of the
- *  file's plans, or, for a file from before copies, the first of its plan's
- *  parts, takes every other plan the account holds away, damaged ones too
- *  (the scan lets one through, lib/user-restore/empty.ts): after its own
- *  write, so a batch refused (a damaged legacy plan, which a value's set
- *  won't write over, or one too large) leaves the plans Home reads. A batch
- *  written twice writes and clears again: no later one has run. The facts
- *  they share are paired at the finish (factsPair). */
+/** The account's plans as copies (lib/plan-copies.ts) are one setting: a
+ *  file that brings plans replaces them all, never merges them (setMany
+ *  would keep a plan the file doesn't name, and one of them, the oldest, can
+ *  stand as yours). So the batch that writes the first of the file's plans
+ *  takes every other plan the account holds away, damaged ones too (the scan
+ *  lets one through, lib/user-restore/empty.ts): after its own write, so a
+ *  batch refused (one too large) leaves the plans Home reads. A batch
+ *  written twice writes and clears again: no later one has run. A file with
+ *  no plans (one from before copies among them, whose plan is read past,
+ *  parts.ts RETIRED_PARTS) leaves the account's. The facts they share are
+ *  paired at the finish (factsPair). */
 function clearsPlans(part: string, record: UserRestoreRecord): boolean {
-  const batches = record.plan.batches;
-  const first = batches.some((b) => b.part === PLANS_PART) ? batches.findIndex((b) => b.part === PLANS_PART) : batches.findIndex((b) => LEGACY_PLAN_PARTS.includes(b.part));
-  return first !== -1 && first === record.done && batches[first].part === part;
+  const first = record.plan.batches.findIndex((b) => b.part === PLANS_PART);
+  return first !== -1 && first === record.done && part === PLANS_PART;
 }
 
 /**
@@ -125,17 +118,13 @@ function clearsPlans(part: string, record: UserRestoreRecord): boolean {
  */
 export async function writeBatch(ctx: Ctx, part: string, records: readonly Rec[], record: UserRestoreRecord): Promise<void> {
   if (!clearsPlans(part, record)) return writeRecords(ctx, part, records, record);
-  const kept = part === PLANS_PART ? [...new Set(records.map((r) => r.id as string))] : [];
-  if (part === PLANS_PART) {
-    // Every other plan goes, so the bound is the file's alone, and its
-    // plans are written over any the account holds under their ids, damaged
-    // or not (setMany reads none).
-    const max = SEAM[firePlansStore.name].max!;
-    if (kept.length > max) throw overBound(firePlansStore.what, max);
-    await firePlansStore.setMany(ctx, pairs<PlanEntry>(records));
-  } else {
-    await writeRecords(ctx, part, records, record);
-  }
+  // Every other plan goes, so the bound is the file's alone, and its plans
+  // are written over any the account holds under their ids, damaged or not
+  // (setMany reads none).
+  const kept = [...new Set(records.map((r) => r.id as string))];
+  const max = SEAM[firePlansStore.name].max!;
+  if (kept.length > max) throw overBound(firePlansStore.what, max);
+  await firePlansStore.setMany(ctx, pairs<PlanEntry>(records));
   const gone = (await firePlansStore.ids(ctx)).filter((id) => !kept.includes(id));
   if (gone.length > 0) await firePlansStore.remove(ctx, ...gone);
 }
@@ -289,33 +278,14 @@ async function restoredSpans(ctx: Ctx, before: () => Promise<void>): Promise<voi
   }
 }
 
-/** The Plan and the record of the currency its figures were typed in
- *  (lib/fire-plan.ts) are one setting: the record holds only while its
- *  amounts are the Plan's, so one kept beside another Plan is right only by
- *  coincidence. A file with either replaced both, so the one it lacked goes:
- *  a Plan from before the record was kept then asks its currency, as the
- *  Plan tab does for any. A file with neither leaves the account's pair. */
-async function planPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Promise<void>): Promise<void> {
-  const plan = parts.has(`store:${firePlanStore.name}`);
-  const currency = parts.has(`store:${planCurrencyStore.name}`);
-  if (plan === currency) return;
-  const absent: { getReport: (c: Ctx) => Promise<{ value: unknown; unreadable: boolean }>; remove: (c: Ctx) => Promise<unknown> } = plan ? planCurrencyStore : firePlanStore;
-  // One in a form this version doesn't know is left as it is: its own
-  // release reads it against the Plan, and asks.
-  const now = await absent.getReport(ctx);
-  if (now.value === null && !now.unreadable) return;
-  await before();
-  await absent.remove(ctx);
-}
-
 /** What every plan shares names one of the plans (lib/plan-copies.ts): a
- *  file that brought plans (copies, or the plan before them) without it
- *  leaves the account none, so the account's own never names a plan the file
- *  replaced, or makes a plan it didn't bring yours. One this version doesn't
- *  know is left, as planPair leaves the record. */
+ *  file that brought plans without it leaves the account none, so the
+ *  account's own never names a plan the file replaced, or makes a plan it
+ *  didn't bring yours. One this version doesn't know is left as it is: its
+ *  own release reads it against the plans. */
 async function factsPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Promise<void>): Promise<void> {
   if (parts.has(`store:${planFactsStore.name}`)) return;
-  if (!parts.has(`store:${firePlansStore.name}`) && !LEGACY_PLAN_PARTS.some((p) => parts.has(p))) return;
+  if (!parts.has(PLANS_PART)) return;
   const now = await planFactsStore.getReport(ctx);
   if (now.value === null && !now.unreadable) return;
   await before();
@@ -325,7 +295,7 @@ async function factsPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Pro
 /**
  * What the finish works out from what was written (see the header): each
  * restored account's rows, the imports' summaries, and the holdings index;
- * and, given the restore's record, the Plan's pairs (planPair, factsPair). Then the
+ * and, given the restore's record, the plans' facts (factsPair). Then the
  * caches go, since net worth and transactions changed. Run again, it writes
  * the same. `before` runs before each write, and may refuse it by throwing
  * (the finish route: its time, and the record looked at again).
@@ -334,7 +304,6 @@ export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void
   const before = opts.before ?? (async () => {});
   if (opts.record) {
     const parts = new Set(opts.record.plan.batches.map((b) => b.part));
-    await planPair(ctx, parts, before);
     await factsPair(ctx, parts, before);
   }
   await restoredSpans(ctx, before);

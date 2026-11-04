@@ -129,11 +129,6 @@ const SPECS: Readonly<Record<string, Spec>> = {
   'budget-months': { maps: ['categories', 'groups'] },
   categories: { maps: ['merged'] },
   'import-settings': { maps: ['csv.columns'] },
-  // A plan this release reads but doesn't save (lib/fire/plan-v2.ts): a
-  // restore writes what a save would. The saved plan, and each plan once they
-  // are copies (fire-plans), take either version: only a newer release's
-  // file holds a version 2 one, which it saved, and this one reads.
-  'fire-plan': { extra: (v) => (isRecord(v) && v.version === 2 ? 'version: is a plan only a newer version of Nya can save' : null) },
 };
 
 const POISONS: readonly unknown[] = ['\u0000nya-restore-probe', { '\u0000nya-restore-probe': true }];

@@ -3,18 +3,22 @@ import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscop
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 
-// The release before (C1, whose readers of the plans as copies are in
+// The release before (C2, whose readers of the plans as copies are in
 // test/fixtures/release-before/fire/copies.ts byte for byte, pinned by
 // test/release-before.test.ts) reading what this release writes, so a
 // rollback to it loses no plan. Every write this release makes (your plan's
 // first save, a New copy, a Try it, an Also save over two plans, a rename, a
 // copy's currency, a delete, Make this your plan, your plan's currency alone)
-// is read back from the stored bytes with C1's own checks: each entry is an
+// is read back from the stored bytes with C2's own checks: each entry is an
 // entry to it (isPlanEntry, after its upgrade), the facts are facts to it
 // (isPlanFacts), your plan is the one it picks (mainOf, never said to be
 // missing), every entry that holds an amount holds its currency, and what its
 // GET answers from them is the plan this release answers. A saved plan of
-// version 2 is a saved plan to it (isSavedPlan).
+// version 2 is a saved plan to it (isSavedPlan). And its restore
+// (test/fixtures/release-before/user-restore/parts.ts, C2's) takes a download
+// this release makes, plans and all: it refuses a file with a part it doesn't
+// know, or without one of its header parts, and reads each store part as the
+// kind its own list says.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -34,6 +38,9 @@ const { eventItems, itemFromEvent, itemFromIncome } = await import('@/lib/fire/i
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { genEvents, genPlan, rand } = await import('./plan-gen');
+const oParts = await import('./fixtures/release-before/user-restore/parts');
+const { SEAM } = await import('@/lib/user-restore/parts');
+const { buildUserExport, collectUserData } = await import('@/lib/user-export');
 const planRoute = await import('@/app/api/fire-plan/route');
 const plansRoute = await import('@/app/api/plans/route');
 const savedRoute = await import('@/app/api/saved-plan/route');
@@ -62,9 +69,9 @@ const ok = <T extends { status: number; body: unknown }>(r: T): T['body'] => {
 const save = (plan: FirePlanV2, based_on: string | null, facts_were: unknown, currency: string | null = 'USD') => call(planRoute.PUT, 'fire-plan', 'PUT', { plan, currency, facts_were, based_on });
 const plans = (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: unknown) => call(plansRoute[method], 'plans', method, body);
 
-/** Every entry and the facts as C1's stores read their bytes: opened, then
+/** Every entry and the facts as C2's stores read their bytes: opened, then
  *  its upgrade and its checks. */
-async function readAsC1() {
+async function readAsC2() {
   const fields = (await fake.hgetall<Record<string, string>>(ctxKey('fire-plans'))) ?? {};
   const entries = new Map<string, PlanEntry>();
   const refused: string[] = [];
@@ -85,10 +92,10 @@ async function readAsC1() {
   return { entries, refused, facts };
 }
 
-/** C1 reads every plan there, with `main` as your plan; and what its GET
+/** C2 reads every plan there, with `main` as your plan; and what its GET
  *  /api/fire-plan answers from them is this release's answer. */
 async function readsAll(main: string, what: string) {
-  const { entries, refused, facts } = await readAsC1();
+  const { entries, refused, facts } = await readAsC2();
   expect([what, refused]).toEqual([what, []]);
   expect([what, oCopies.isPlanFacts(facts)]).toEqual([what, true]);
   const f = facts as PlanFacts;
@@ -193,6 +200,20 @@ describe('the release before reads every plan this release writes', () => {
       expect((await call(savedRoute.PUT, 'saved-plan', 'PUT', body)).status).toBe(200);
       expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
     }
+  });
+});
+
+describe('a download this release makes, as the release before’s restore reads it', () => {
+  test('every part is one it knows, every header part it needs is there, and each store part is of the kind it reads', async () => {
+    ok(await save(TYPED, null, DEFAULTS));
+    ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
+    const keys = Object.keys(buildUserExport(await collectUserData({ ctx, userId: null }), new Date('2026-11-04T12:00:00.000Z')));
+    expect(keys).toContain('fire-plans');
+    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual([]);
+    expect(oParts.HEADER_PARTS.filter((p) => !keys.includes(p))).toEqual([]);
+    const shared = Object.keys(SEAM).filter((name) => Object.hasOwn(oParts.SEAM, name));
+    expect(shared.length).toBeGreaterThan(30);
+    for (const name of shared) expect([name, SEAM[name].kind]).toEqual([name, oParts.SEAM[name].kind]);
   });
 });
 

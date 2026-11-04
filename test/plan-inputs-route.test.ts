@@ -150,7 +150,6 @@ describe('the plan', () => {
         await plans('PATCH', { main: made.id, based_on: relabelled.updated_at });
         copy = made.id;
       },
-      () => fake.set(ctxKey('fire-plan-currency'), 'damaged-but-long-enough-to-be-tried'), // a record from before copies: never read
     ];
     const seen: unknown[] = [];
     for (const state of states) {
@@ -165,7 +164,6 @@ describe('the plan', () => {
       ['main', null, true],
       ['main', 'USD', false],
       ['main', 'USD', false],
-      ['copy', 'EUR', false],
       ['copy', 'EUR', false],
     ]);
   });

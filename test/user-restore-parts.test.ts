@@ -4,13 +4,16 @@ import { FakeRedis, storageMock } from './fake-redis';
 // The parts of a download as a restore knows them (lib/user-restore/parts.ts),
 // for the page, which can't load the stores: kept equal to the stores declared
 // (lib/stores.ts), so a store added later takes a side before a download that
-// has it can be brought back.
+// has it can be brought back; a store retired since stays known, so an older
+// download is still taken, and is read past.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { SEAM, CORE_PARTS, HEADER_PARTS, MAX_RESTORED_MANUAL_ACCOUNTS } = await import('@/lib/user-restore/parts');
+const { SEAM, CORE_PARTS, HEADER_PARTS, MAX_RESTORED_MANUAL_ACCOUNTS, RETIRED_PARTS, isKnownPart } = await import('@/lib/user-restore/parts');
+const { isPartName } = await import('@/lib/user-restore/check');
+const { MAX_FIRE_PLANS } = await import('@/lib/fire/copies');
 const { declaredSections, SECTIONS } = await import('@/lib/user-export');
 const { declaredStore } = await import('@/lib/stores');
 const { MAX_CONNECTOR_ACCOUNTS, MAX_CONNECTIONS } = await import('@/lib/connectors/manage');
@@ -28,6 +31,13 @@ describe('the parts', () => {
     for (const [name, part] of Object.entries(SEAM)) expect([name, declaredStore(name)?.kind]).toEqual([name, part.kind]);
   });
 
+  test('those of stores retired since are known, and no store’s: never one a restore writes', () => {
+    expect(Object.keys(RETIRED_PARTS).sort()).toEqual(['fire-plan', 'fire-plan-currency', 'plan-scenarios']);
+    for (const name of Object.keys(RETIRED_PARTS)) {
+      expect([name, isKnownPart(name), Object.hasOwn(SEAM, name), declaredStore(name), isPartName(`store:${name}`)]).toEqual([name, true, false, null, false]);
+    }
+  });
+
   test('the core parts are the download’s own, in its order', () => {
     expect([...CORE_PARTS].filter((p) => SECTIONS.some((s) => s.key === p)) as string[]).toEqual(SECTIONS.map((s) => s.key));
     expect(HEADER_PARTS).toEqual(['format', 'version', 'exported_at', 'documentation', 'not_included', 'notes', 'problems']);
@@ -42,6 +52,7 @@ describe('the parts', () => {
     expect(SEAM['transaction-approvals'].max).toBe(MAX_APPROVALS);
     expect(SEAM['transaction-groups'].max).toBe(MAX_GROUPS);
     expect(SEAM['transaction-splits'].max).toBe(MAX_SPLITS);
+    expect(SEAM['fire-plans'].max).toBe(2 * MAX_FIRE_PLANS);
     expect(MAX_RESTORED_MANUAL_ACCOUNTS).toBe(MAX_MANUAL_ACCOUNTS + MAX_CONNECTOR_ACCOUNTS);
   });
 });

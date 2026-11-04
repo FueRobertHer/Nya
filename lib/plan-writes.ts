@@ -19,9 +19,8 @@
 //
 // While `fire-plans` holds no entry, your plan is the defaults, never saved
 // (`based_on: null`): the first write of anything makes its entry, then
-// `plan-facts`, then removes the plan before copies (`fire-plan`, its
-// currency record and the scenarios), which nothing reads any more. Nobody's
-// plan needed carrying over (the tax plan's C2), so nothing is migrated.
+// `plan-facts`. Nobody's plan needed carrying over from before copies (the
+// tax plan's C2), so nothing is migrated.
 //
 // Facts are written first, then the entries: a failure between says the age
 // was saved and the rest wasn't. `plan-facts` missing beside entries (a write
@@ -31,8 +30,6 @@
 import type { Ctx } from './containers';
 import { eager } from './eager';
 import { stampAfter } from './edit-stamp';
-import { firePlanStore, planCurrencyStore } from './fire-plan';
-import { planScenariosStore } from './plan-scenarios';
 import { FIRST_PLAN, entryOf, firePlansStore, mainAnswer, planFactsStore, rowOf, type MainPlan, type PlanRow } from './plan-copies';
 import { MAIN_ID, MAX_FIRE_PLANS, factsOf, holdsAmounts, isPlanFacts, mainOf, sameFacts, withFacts, type Facts, type PlanEntry, type PlanFacts } from './fire/copies';
 import { DEFAULT_PLAN_V2, type StoredPlan } from './fire/plan-v2';
@@ -137,8 +134,7 @@ const namesIn = (current: ReadonlyMap<string, PlanEntry | null>) => [...current]
  * (so stamps and names are checked against the plans as they are then):
  * `fn` gets each as stored now (your plan, before its entry is made, as the
  * defaults with stamp ''), and answers what to write. When it makes your
- * plan's first entry, the facts follow it (`facts`), then the plan before
- * copies is removed.
+ * plan's first entry, the facts follow it (`facts`).
  */
 async function writeEntries(
   ctx: Ctx,
@@ -160,13 +156,12 @@ async function writeEntries(
   return written;
 }
 
-/** After your plan's first entry: the facts, then the plan before copies
- *  removed. A `plan-facts` there is a leftover (nothing reads it while no
- *  entry is there), replaced while it is still the one read: one changed
- *  since is a save made from the new entry meanwhile, and stands. Damaged
- *  bytes are removed first. A failure here is logged, never the write's:
- *  the entries hold the facts in their own fields, and the old stores are
- *  read by nothing. */
+/** After your plan's first entry: the facts. A `plan-facts` there is a
+ *  leftover (nothing reads it while no entry is there), replaced while it is
+ *  still the one read: one changed since is a save made from the new entry
+ *  meanwhile, and stands. Damaged bytes are removed first. A failure here is
+ *  logged, never the write's: the entries hold the facts in their own
+ *  fields. */
 async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover']): Promise<void> {
   const replace = (cur: PlanFacts | null) => (leftover !== 'unreadable' && JSON.stringify(cur) === JSON.stringify(leftover) ? facts : cur);
   try {
@@ -179,12 +174,6 @@ async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover'
     }
   } catch (err) {
     console.error('Plan facts not written after the first plan:', err);
-  }
-  try {
-    const scenarios = await planScenariosStore.ids(ctx);
-    await Promise.all([firePlanStore.remove(ctx), planCurrencyStore.remove(ctx), scenarios.length > 0 ? planScenariosStore.remove(ctx, ...scenarios) : null]);
-  } catch (err) {
-    console.error('The plan before copies not removed:', err);
   }
 }
 

@@ -7,12 +7,8 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 // (`fire-plans`, lib/plan-copies.ts) beside the amounts it is the currency
 // of, written in the same write as they are, and answered with the plan
 // (app/api/fire-plan). What each save records, what recording it alone
-// takes, and the download and a restore. The record the plan before copies
-// kept beside it (lib/fire-plan.ts planCurrencyStore) stays declared, so a
-// download and a restore still carry its bytes, but nothing reads it any
-// more, damaged, a newer version's or whole: the first write removes it. The
-// release before reads the currency in each entry
-// (test/release-before-plans.test.ts).
+// takes, and the download and a restore. The release before reads the
+// currency in each entry (test/release-before-plans.test.ts).
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.APP_PASSWORD = 'hunter2';
@@ -22,16 +18,10 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { encrypt, decrypt } = await import('@/lib/crypto');
-const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { firePlansStore } = await import('@/lib/plan-copies');
-const { declaredStore } = await import('@/lib/stores');
-const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
-const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
-const { classify } = await import('@/lib/reencrypt');
-const { SEAM } = await import('@/lib/user-restore/parts');
+const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const route = await import('@/app/api/fire-plan/route');
 const { downloadText, restoreAll, EXPORTED } = await import('./restore-run');
 
@@ -61,7 +51,6 @@ const first = async (p: FirePlanV2, currency: string | null) => {
   return r.body;
 };
 const mine = async () => (await firePlansStore.get(TEST_CTX, MAIN_ID))!;
-const recordKey = ctxKey('fire-plan-currency');
 const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   const orig = console.error;
   console.error = () => {};
@@ -72,51 +61,12 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   }
 };
 
-describe('the record before copies', () => {
-  test('is still declared on the seam beside the plan, in the download, and on the key inventory', () => {
-    expect(planCurrencyStore.name).toBe('fire-plan-currency');
-    expect(planCurrencyStore.kind).toBe('value');
-    expect(declaredStore('fire-plan-currency')).toBe(planCurrencyStore);
-    expect(planCurrencyStore.exportable).toBe(true);
-    expect(SEAM['fire-plan-currency']).toEqual({ kind: 'value', restore: 'write' });
-    expect(classify(recordKey.replace(/^[^:]+:(?=c:)/, ''))).toBe('string');
-  });
-
-  test('encrypted: neither the currency nor an amount is readable in the database', async () => {
-    await planCurrencyStore.set(TEST_CTX, currencyRecord(DEFAULT_PLAN, 'EUR'));
-    const raw = String(await fake.get(recordKey));
-    expect(raw).not.toContain('"EUR"');
-    expect(JSON.parse(await decrypt(TEST_CTX, raw))).toEqual({ version: 1, currency: 'EUR', amounts: typedAmounts(DEFAULT_PLAN) });
-  });
-
-  test('is never read, whole, damaged or a newer version’s: the plan is the defaults, and the first save removes it', async () => {
-    const legacy = { ...DEFAULT_PLAN, age: 40, spending: 40_000 };
-    for (const record of [
-      async () => planCurrencyStore.set(TEST_CTX, currencyRecord(legacy, 'EUR')),
-      async () => fake.set(recordKey, 'damaged-bytes-not-ciphertext-at-all'),
-      async () => fake.set(recordKey, await encrypt(TEST_CTX, JSON.stringify({ version: 2, currency: 'EUR', amounts: typedAmounts(legacy), by: 'item' }))),
-    ]) {
-      fake.reset();
-      await registerTestContainer(fake);
-      await firePlanStore.set(TEST_CTX, legacy);
-      await record();
-      expect(await get()).toEqual(NO_PLAN);
-      // Nothing to record a currency for: no plan is saved.
-      expect((await post({ currency: 'EUR', amounts: typedAmounts(legacy), answered: true })).status).toBe(409);
-      const saved = await first(TYPED, 'USD');
-      expect(saved.currency).toBe('USD');
-      expect([await fake.get(recordKey), await fake.get(ctxKey('fire-plan'))]).toEqual([null, null]);
-    }
-  });
-});
-
 describe('each save', () => {
   test('records the currency in your plan’s entry, in the same write as its amounts, and answers it', async () => {
     const saved = await first(TYPED, 'EUR');
     expect(saved).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'EUR', updated_at: saved.updated_at });
     expect(await mine()).toMatchObject({ plan: TYPED, currency: 'EUR', updatedAt: saved.updated_at });
     expect(await get()).toEqual(saved);
-    expect(await fake.get(recordKey)).toBeNull();
   });
 
   test('a save naming none keeps the currency over the amounts; first amounts with none are refused, and nothing written', async () => {
@@ -225,26 +175,12 @@ describe('the download and a restore', () => {
     const text = await downloadText(EXPORTED);
     const doc = JSON.parse(text);
     expect(doc['fire-plans']).toEqual([{ id: MAIN_ID, value: { name: 'First plan', plan: TYPED, tax: null, currency: 'EUR', createdAt: expect.any(String), updatedAt: saved.updated_at } }]);
-    expect(doc['fire-plan-currency']).toBeNull();
+    expect(doc).not.toHaveProperty('fire-plan-currency');
     fake.reset();
     await registerTestContainer(fake);
     expect(await get()).toEqual(NO_PLAN);
     const record = await restoreAll(text);
     expect(record.status).toBe('finished');
     expect(await get()).toEqual(saved);
-  });
-
-  test('a download from before copies brings no plan back: the Plan is the defaults until it is saved', async () => {
-    const legacy = { ...DEFAULT_PLAN, age: 40, spending: 40_000 };
-    await firePlanStore.set(TEST_CTX, legacy);
-    await planCurrencyStore.set(TEST_CTX, currencyRecord(legacy, 'EUR'));
-    const doc = JSON.parse(await downloadText(EXPORTED));
-    expect(doc['fire-plan-currency']).toEqual(currencyRecord(legacy, 'EUR'));
-    fake.reset();
-    await registerTestContainer(fake);
-    expect((await restoreAll(JSON.stringify(doc))).status).toBe('finished');
-    expect(await get()).toEqual(NO_PLAN);
-    await first(TYPED, 'USD');
-    expect([await fake.get(recordKey), await fake.get(ctxKey('fire-plan'))]).toEqual([null, null]);
   });
 });

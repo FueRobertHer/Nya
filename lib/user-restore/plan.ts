@@ -29,7 +29,7 @@ import { indexTaxonomy, isTaxonomy } from '../categories';
 import { legacyCopy } from '../budget-set';
 import { bankFieldsOf, isRecord } from './records';
 import { BATCH_BYTES, BOOK_ROWS, investmentCoverageId, investmentPartId, restoredBookId, restoredId } from './ids';
-import { SEAM } from './parts';
+import { RETIRED_PARTS, SEAM } from './parts';
 import { turningOverIds } from '../sign-turning';
 
 // ---- What the page read ----
@@ -74,6 +74,9 @@ export type Collected = {
   /** Not brought back, counted: API tokens, sharing connections, and
    *  receipts and documents (absent from what was collected before them). */
   never: { api_tokens: number; sharing: number; attachments?: number };
+  /** A retired part the preview names (parts.ts RETIRED_PARTS, `said`)
+   *  holds something: read past, never written. */
+  retiredHeld?: boolean;
 };
 
 // ---- Whether it can be brought back ----
@@ -103,10 +106,7 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
   goals: 'your goals: the restored copy has none',
   'budget-months': 'your budgets by month: each budget’s past months and rollover start again',
   'income-carryover': 'your income carryover setting',
-  'fire-plan': 'your Plan’s assumptions',
-  'fire-plan-currency': 'the currency your Plan’s figures are in',
   'fire-plan-saved': 'the plan you saved as your plan',
-  'plan-scenarios': (n) => `${n} saved plan ${n === 1 ? 'scenario' : 'scenarios'}`,
   'fire-plans': (n) => `${n} ${n === 1 ? 'plan' : 'plans'}`,
   'plan-facts': 'the facts your plans share',
   'expense-shares': (n) => `${n} shared ${n === 1 ? 'transaction' : 'transactions'}: ${n === 1 ? 'it counts' : 'they count'} whole, and ${n === 1 ? 'isn’t' : 'aren’t'} in anyone’s balance`,
@@ -139,7 +139,9 @@ export type Without = { part: string; count: number; words: string; affects: Fac
 export function restoreProblems(c: Collected): { refuse: string | null; without: Without[] } {
   const without: Without[] = [];
   for (const p of c.problems) {
-    if (LISTED_ONLY.has(p.section)) continue;
+    // A retired part is never brought back, read or not (smallParts says so
+    // when it held a plan).
+    if (LISTED_ONLY.has(p.section) || Object.hasOwn(RETIRED_PARTS, p.section)) continue;
     if (p.problem === 'unrecognised') {
       return {
         refuse: `This file is missing some of your ${p.section.replace(/[_-]/g, ' ')}: the copy it came from couldn’t read them in this version of Nya, but a newer one may. Download again from that copy once it is updated; the file itself stays yours to keep.`,
@@ -639,10 +641,7 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...value('planned-items'),
     ...history,
     ...entries('timeline-notes'),
-    ...value('fire-plan'),
-    ...value('fire-plan-currency'),
     ...value('fire-plan-saved'),
-    ...entries('plan-scenarios'),
     // The plans as copies, entries before the facts that name one of them.
     ...entries('fire-plans'),
     ...value('plan-facts'),
@@ -672,6 +671,11 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
   // preview says it.
   const changes = c.entries.get('api-changes')?.length ?? 0;
   if (changes > 0) left_out.api_changes = changes;
+  // The plan before plans were copies (parts.ts RETIRED_PARTS): said when
+  // the file holds it, or names it damaged, and brings no plans of its own
+  // (beside which it is a leftover the other copy never read).
+  const oldPlan = c.retiredHeld === true || c.problems.some((p) => Object.hasOwn(RETIRED_PARTS, p.section) && RETIRED_PARTS[p.section].said);
+  if (oldPlan && (c.entries.get('fire-plans')?.length ?? 0) === 0) left_out.plan_before_copies = 1;
   return { before, after, left_out };
 }
 

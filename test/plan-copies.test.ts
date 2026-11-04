@@ -1,35 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_PLAN, type FirePlan, type PlanIncome } from '@/lib/fire/plan';
-import { basePlanOf, isStoredPlan, planOf, toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
-import { eventItems, itemFromIncome } from '@/lib/fire/items';
-import { resolveScenario, type PlanScenario, type ScenarioSet } from '@/lib/fire/scenarios';
-import { currencyRecord, hasTypedAmounts } from '@/lib/fire/plan-currency';
-import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
-import type { LifeEvent } from '@/lib/fire/events';
-import { MAIN_ID, factsOf, holdsAmounts, isPlanEntry, isPlanFacts, mainOf, migratePlans, sameFacts, upgradePlanEntry, withFacts, type PlanEntry } from '@/lib/fire/copies';
-import { genEvents, genMeasured, genPlan, OFF, ON, rand, type Rand } from './plan-gen';
+import { DEFAULT_PLAN, type PlanIncome } from '@/lib/fire/plan';
+import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
+import { itemFromIncome } from '@/lib/fire/items';
+import { hasTypedAmounts } from '@/lib/fire/plan-currency';
+import { MAIN_ID, factsOf, holdsAmounts, isPlanEntry, isPlanFacts, mainOf, sameFacts, upgradePlanEntry, withFacts, type PlanEntry } from '@/lib/fire/copies';
 
-// Plans as copies, the shapes and the migration in memory (lib/fire/copies.ts):
-// what reads, which entry is yours, and each scenario as a copy whose
-// figures are the ones the Plan shows for the scenario today.
+// Plans as copies, the shapes in memory (lib/fire/copies.ts): what reads,
+// and which entry is yours.
 
 const AT = '2026-11-03T10:00:00.000Z';
-const STAMPS = { main: 'stamp-main', copies: new Map<string, string>() };
 const income = (over: Partial<PlanIncome> = {}): PlanIncome => ({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true, ...over });
 const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: AT, updatedAt: AT, ...over });
-const scenario = (over: Partial<PlanScenario> = {}): PlanScenario => ({
-  version: 1,
-  name: 'Retire at 50',
-  currency: 'USD',
-  createdAt: '2026-10-01T10:00:00.000Z',
-  savedAt: '2026-10-01T10:00:00.000Z',
-  rev: 'r1',
-  set: {},
-  income: { leaveOut: [], add: [] },
-  expenses: { leaveOut: [], add: [] },
-  events: [],
-  ...over,
-});
 const v2 = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...planOf(DEFAULT_PLAN), ...over });
 const report = (entries: [string, PlanEntry][], unreadable: string[] = [], unrecognised: string[] = []) => ({ entries: new Map(entries), unreadable, unrecognised });
 
@@ -143,164 +124,5 @@ describe('which entry is yours', () => {
     expect(mainOf(null, report([], ['q', 'p']))).toEqual({ id: 'p', missing: true });
     expect(mainOf(null, report([]))).toBeNull();
     expect(mainOf({ main: 'x' }, report([]))).toBeNull();
-  });
-});
-
-describe('the plan and its scenarios as copies', () => {
-  const typed = { ...DEFAULT_PLAN, age: 40, spending: 40_000, income: [income()] };
-
-  test('your plan as main, as stored, with the facts from its fields; each scenario keeps its id, name and when it was made', () => {
-    const s = scenario({ set: { targetAge: 50 } });
-    const r = migratePlans(typed, currencyRecord(typed, 'USD'), [['sc1', s]], AT, { main: 'm1', copies: new Map([['sc1', 'c1']]) });
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok.main).toEqual({ name: 'First plan', plan: typed, tax: null, currency: 'USD', createdAt: AT, updatedAt: 'm1' });
-    expect(r.ok.facts).toEqual({ version: 1, main: MAIN_ID, ...factsOf(typed) });
-    expect(r.ok.copies.map((c) => [c.id, c.entry.name, c.entry.createdAt, c.entry.updatedAt, c.notRun])).toEqual([['sc1', 'Retire at 50', s.createdAt, 'c1', null]]);
-    expect(r.ok.copies[0].entry.plan).toEqual(planOf({ ...typed, targetAge: 50 }));
-    expect(isPlanEntry(r.ok.main) && isPlanEntry(r.ok.copies[0].entry)).toBe(true);
-    expect(isPlanFacts(r.ok.facts)).toBe(true);
-  });
-
-  test('a copy’s first stamp is the time when none is given', () => {
-    const r = migratePlans(null, null, [['sc1', scenario()]], AT, STAMPS);
-    expect('ok' in r && r.ok.copies[0].entry.updatedAt).toBe(AT);
-  });
-
-  test('never with a currency unknown beside typed amounts: a record of other amounts, or none', () => {
-    const other = { ...typed, spending: 50_000 };
-    expect(migratePlans(typed, currencyRecord(other, 'USD'), [], AT, STAMPS)).toEqual({ error: 'Say which currency your plan’s figures are in first, so each plan keeps it.' });
-    expect('error' in migratePlans(typed, null, [], AT, STAMPS)).toBe(true);
-  });
-
-  test('a plan with nothing typed has no currency, and neither has a copy holding nothing', () => {
-    const r = migratePlans(DEFAULT_PLAN, null, [['sc1', scenario({ set: { targetAge: 50 } })]], AT, STAMPS);
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok.main.currency).toBeNull();
-    expect(r.ok.copies[0].entry.currency).toBeNull();
-  });
-
-  test('a scenario without amounts of its own takes your plan’s currency, whatever it was saved under; one with its own keeps it', () => {
-    const r = migratePlans(
-      typed,
-      currencyRecord(typed, 'USD'),
-      [
-        ['shown-eur', scenario({ currency: 'EUR', set: { targetAge: 50 } })],
-        ['none', scenario({ currency: null, set: { targetAge: 52 } })],
-        ['own', scenario({ currency: 'EUR', set: { spending: 30_000 } })],
-      ],
-      AT,
-      STAMPS
-    );
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok.copies.map((c) => [c.id, c.entry.currency])).toEqual([
-      ['shown-eur', 'USD'],
-      ['none', 'USD'],
-      ['own', 'EUR'],
-    ]);
-  });
-
-  test('a scenario’s amounts over a plan with none: its own currency, or none for the newer page to ask', () => {
-    const r = migratePlans(DEFAULT_PLAN, null, [['eur', scenario({ currency: 'EUR', set: { spending: 30_000 } })], ['unsaid', scenario({ currency: null, set: { spending: 30_000 } })]], AT, STAMPS);
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok.copies.map((c) => c.entry.currency)).toEqual(['EUR', null]);
-  });
-
-  test('refused for a version 2 plan, and for a scenario with your plan’s id', () => {
-    expect('error' in migratePlans(v2(), null, [], AT, STAMPS)).toBe(true);
-    expect(migratePlans(DEFAULT_PLAN, null, [[MAIN_ID, scenario()]], AT, STAMPS)).toEqual({ error: 'A scenario has the id "main", which your plan takes.' });
-  });
-
-  test('life events become items after its incomes and one-offs', () => {
-    const events: LifeEvent[] = [{ id: 'kid', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }];
-    const s = scenario({ income: { leaveOut: [], add: [income({ id: 'rent', label: 'Rent', amount: 12_000, fromAge: 50 })] }, expenses: { leaveOut: [], add: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 60 }] }, events });
-    const r = migratePlans(typed, currencyRecord(typed, 'USD'), [['sc1', s]], AT, STAMPS);
-    if (!('ok' in r)) throw new Error(r.error);
-    const items = r.ok.copies[0].entry.plan.version === 2 ? r.ok.copies[0].entry.plan.items : [];
-    expect(items.map((x) => x.id)).toEqual(['ss', 'rent', 'roof', ...eventItems(events).map((x) => x.id)]);
-    expect(items.slice(3)).toEqual(eventItems(events));
-  });
-
-  test('a scenario the plan’s rules refuse now is kept, not run, with why, even over the items a plan takes', () => {
-    const full = { ...DEFAULT_PLAN, age: 40, income: Array.from({ length: 5 }, (_, i) => income({ id: `i${i}` })), expenses: Array.from({ length: 10 }, (_, i) => ({ id: `e${i}`, label: 'Roof', amount: 1_000, atAge: 60 })) };
-    const s = scenario({
-      currency: 'USD',
-      income: { leaveOut: [], add: Array.from({ length: 6 }, (_, i) => income({ id: `a${i}` })) },
-      expenses: { leaveOut: [], add: Array.from({ length: 6 }, (_, i) => ({ id: `b${i}`, label: 'Car', amount: 2_000, atAge: 61 })) },
-      events: genEvents(rand(7), 'ev').slice(0, 6),
-    });
-    const r = migratePlans(full, currencyRecord(full, 'USD'), [['big', s], ['early', scenario({ set: { targetAge: 30 } })]], AT, STAMPS);
-    if (!('ok' in r)) throw new Error(r.error);
-    const [big, early] = r.ok.copies;
-    expect(big.notRun).toEqual(expect.any(String));
-    expect(big.entry.plan.version === 2 && big.entry.plan.items.length).toBeGreaterThan(25);
-    expect(isPlanEntry(big.entry)).toBe(true);
-    expect(early.notRun).toEqual(expect.any(String));
-    expect(early.entry.plan.targetAge).toBe(30);
-  });
-
-  test('a replacement of an item the plan no longer has rides along, said', () => {
-    const r = migratePlans(typed, currencyRecord(typed, 'USD'), [['sc1', scenario({ income: { leaveOut: ['gone'], add: [income({ id: 'gone', fromAge: 62 })] } })]], AT, STAMPS);
-    if (!('ok' in r)) throw new Error(r.error);
-    expect(r.ok.copies[0].orphans.income.map((x) => x.id)).toEqual(['gone']);
-  });
-});
-
-/** A scenario on a plan, as the Plan's page saves one. */
-function genScenario(g: Rand, p: FirePlan, i: number): PlanScenario {
-  const set: ScenarioSet = {};
-  if (g.chance(0.5)) set.targetAge = g.int(30, 75);
-  if (g.chance(0.3)) set.spending = g.chance(0.2) ? null : g.int(20, 120) * 1000;
-  if (g.chance(0.2)) set.withdrawalRate = g.pick([0.03, 0.035, 0.04]);
-  if (g.chance(0.2)) set.realReturn = g.pick([0.02, 0.05]);
-  const leaveOut = p.income.filter(() => g.chance(0.3)).map((x) => x.id);
-  const add = g.chance(0.3) ? [income({ id: `s${i}inc`, label: 'Rental income', amount: g.int(1, 30) * 1000, fromAge: g.int(30, 80) })] : [];
-  const expenses = g.chance(0.3) ? [{ id: `s${i}exp`, label: 'Boat', amount: g.int(1, 100) * 1000, atAge: g.int(30, 90) }] : [];
-  return scenario({ name: `Scenario ${i}`, rev: `r${i}`, createdAt: `2026-10-0${i + 1}T10:00:00.000Z`, set, income: { leaveOut, add }, expenses: { leaveOut: p.expenses.filter(() => g.chance(0.2)).map((x) => x.id), add: expenses }, events: g.chance(0.6) ? genEvents(g, `s${i}e`) : [] });
-}
-
-/** What the Plan's figures show and walk. A walk with nothing in it is no
- *  walk: the page's scenario has items past the plan's (its life events),
- *  which always give it one, empty or not. */
-const walkOf = (f: PlanFigures) => {
-  const w = f.events?.walk ?? null;
-  return w && Object.values(w).every((x) => Array.isArray(x) && x.length === 0) ? null : w;
-};
-const shown = (f: PlanFigures | { refused: unknown }) =>
-  'refused' in f ? f : { view: f.view, resolution: f.resolution, engine: f.engine, retirement: f.retirement, short: f.short, items: f.items, inWalk: f.inWalk, walk: walkOf(f) };
-
-describe('each copy’s figures are its scenario’s, as the Plan shows them today', () => {
-  test.each([
-    ['D15 off', OFF],
-    ['D15 on', ON],
-  ])('%s', (_name, count) => {
-    let run = 0;
-    let repaired = 0;
-    for (let seed = 1; seed <= 120; seed++) {
-      const g = rand(seed);
-      const generated = genPlan(g, seed % 3 === 0);
-      // Some plans need repair today (a rate a later rule narrowed): the
-      // copies run on the plan the page runs scenarios on, repaired.
-      const legacy: FirePlan = seed % 5 === 0 ? { ...generated, withdrawalRate: 0.5 } : generated;
-      if (basePlanOf(legacy).fixed.length > 0) repaired++;
-      const scenarios = Array.from({ length: g.int(1, 4) }, (_, i) => [`sc${i}`, genScenario(g, legacy, i)] as const);
-      const measured = genMeasured(g);
-      const r = migratePlans(legacy, currencyRecord(legacy, 'USD'), scenarios, AT, STAMPS);
-      if (!('ok' in r)) throw new Error(r.error);
-      const base = toStored(basePlanOf(legacy).plan, 1);
-      if ('error' in base) throw new Error(base.error);
-      for (const [i, copy] of r.ok.copies.entries()) {
-        const s = scenarios[i][1];
-        const page = resolveScenario(base.plan, s);
-        expect([seed, copy.id, copy.notRun === null]).toEqual([seed, scenarios[i][0], page.ok]);
-        if (!page.ok) continue;
-        expect(isStoredPlan(copy.entry.plan)).toBe(true);
-        const theirs = planFigures(planOf(page.plan), measured, { events: eventItems(s.events), count });
-        const ours = planFigures(planOf(copy.entry.plan), measured, { count });
-        expect([seed, copy.id, shown(ours)]).toEqual([seed, copy.id, shown(theirs)]);
-        run++;
-      }
-    }
-    expect(run).toBeGreaterThan(150);
-    expect(repaired).toBeGreaterThan(10);
   });
 });

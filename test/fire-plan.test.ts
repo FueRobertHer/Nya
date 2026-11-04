@@ -12,16 +12,10 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { encrypt, decrypt } = await import('@/lib/crypto');
-const { StoredDataUnreadableError, readEncryptedJson, writeEncryptedJson } = await import('@/lib/stored-json');
-const { UnreadableValueError } = await import('@/lib/repo');
-const { firePlanStore } = await import('@/lib/fire-plan');
 const { firePlansStore } = await import('@/lib/plan-copies');
 const { DEFAULT_PLAN_V2, planOf } = await import('@/lib/fire/plan-v2');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
-const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
-const { classify } = await import('@/lib/reencrypt');
 const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, repairPlan, startAge, upgradePlan } = await import('@/lib/fire/plan');
 const { trailingFlows, investedAssets, planFlow, unreadTransactions, unreadNotesOf, isWorkplacePlan, workplaceSavings, transfersOut, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import(
   '@/lib/fire/inputs'
@@ -1003,106 +997,6 @@ describe('workplace plan contributions', () => {
       '2026-10-06'
     );
     expect(out).toEqual([{ date: '2026-03-01', amount: 10_000 }]);
-  });
-});
-
-describe('the store', () => {
-  const saved = plan({ age: 40, spending: 50_000 });
-  const stored = async () => JSON.parse(await decrypt(TEST_CTX, String(await fake.get(ctxKey('fire-plan')))));
-
-  test('is declared on the storage seam, under the name it always had, and in the data download', () => {
-    expect(firePlanStore.name).toBe('fire-plan');
-    expect(firePlanStore.kind).toBe('value');
-    expect(declaredStore('fire-plan')).toBe(firePlanStore);
-    expect(firePlanStore.exportable).toBe(true);
-  });
-
-  test('never saved reads as null, and a plan round-trips, encrypted', async () => {
-    expect(await firePlanStore.get(TEST_CTX)).toBeNull();
-    await firePlanStore.set(TEST_CTX, saved);
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
-    // Encrypted: nothing of the plan is readable in the database.
-    expect(String(await fake.get(ctxKey('fire-plan')))).not.toContain('50000');
-  });
-
-  test('a plan saved before the store moved onto the seam reads back unchanged, and the old reader reads the new; the Plan reads neither', async () => {
-    // Exactly as the store saved it before: lib/stored-json.ts, under the same key.
-    await writeEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', saved, isFirePlan);
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
-    // The plan is your plan's entry (lib/plan-copies.ts): this store is kept
-    // for a download and a restore, and never read as the plan.
-    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null });
-    // And what the seam saves, the release before it reads: a rollback loses nothing.
-    await firePlanStore.set(TEST_CTX, plan({ age: 41 }));
-    expect(await readEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(plan({ age: 41 }));
-  });
-
-  test('a plan saved without a field added since reads with its default, and the next save stores every field', async () => {
-    const { ceiling: _, ...old } = saved;
-    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(old)));
-    const read = await firePlanStore.get(TEST_CTX);
-    expect(read).toEqual({ ...saved, ceiling: DEFAULT_PLAN.ceiling });
-    await firePlanStore.set(TEST_CTX, read!);
-    expect(Object.keys(await stored()).sort()).toEqual(Object.keys(DEFAULT_PLAN).sort());
-  });
-
-  // Through the store's upgrade hook: before any switch every plan was
-  // matched, which is "not set" now; the two-way switch's list of plans paid
-  // from a bank is "bank" for each.
-  test('plans saved before the three-way switch read with what they meant', async () => {
-    const { planFunding: _, ...older } = saved;
-    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(older)));
-    expect(await firePlanStore.get(TEST_CTX)).toEqual({ ...saved, planFunding: [] });
-    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify({ ...older, bankFunded: ['acc_solo', 'acc_sep'] })));
-    const read = await firePlanStore.get(TEST_CTX);
-    expect(read).toEqual({
-      ...saved,
-      planFunding: [
-        { account_id: 'acc_solo', paidFrom: 'bank' },
-        { account_id: 'acc_sep', paidFrom: 'bank' },
-      ],
-    });
-    // The next save stores the new field, and not the old one.
-    await firePlanStore.set(TEST_CTX, read!);
-    expect(await stored()).not.toHaveProperty('bankFunded');
-    // A list that isn't one of ids is left for the reader to refuse, not guessed at.
-    expect(upgradePlan({ ...older, bankFunded: [5] })).toEqual({ ...older, bankFunded: [5] });
-  });
-
-  test('a plan outside today’s ranges or rules still reads; a save is held to them', async () => {
-    const old = { ...saved, withdrawalRate: 0.2, horizon: 61, targetAge: 30 };
-    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(old)));
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(old);
-    const res = await route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify({ plan: planOf(old), currency: 'USD', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null }) }));
-    expect(res.status).toBe(400);
-    expect(await stored()).toEqual(old);
-    expect(await fake.type(ctxKey('fire-plans'))).toBe('none');
-  });
-
-  test('damaged bytes are unreadable, a later release’s plan is not understood, and neither reads as none', async () => {
-    await fake.set(ctxKey('fire-plan'), 'not-ciphertext-at-all-but-long-enough');
-    const damaged = await firePlanStore.get(TEST_CTX).catch((e: unknown) => e);
-    expect(damaged).toBeInstanceOf(UnreadableValueError);
-    expect((damaged as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(false);
-    // Intact, but not understood: never offered for removal.
-    for (const later of [{ ...saved, version: 9 }, { ...saved, goal: 'travel' }]) {
-      await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(later)));
-      const e = await firePlanStore.get(TEST_CTX).catch((err: unknown) => err);
-      expect(e).toBeInstanceOf(StoredDataUnreadableError);
-      expect((e as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);
-    }
-  });
-
-  test('saving over an unreadable value is refused, and it is left as it was', async () => {
-    await fake.set(ctxKey('fire-plan'), 'unreadable-but-recoverable');
-    await expect(firePlanStore.set(TEST_CTX, saved)).rejects.toBeInstanceOf(StoredDataUnreadableError);
-    expect(await fake.get<string>(ctxKey('fire-plan'))).toBe('unreadable-but-recoverable');
-  });
-
-  test('is on the key inventory as a string of ciphertext, inside a container only', () => {
-    expect(classify(ctxKey('fire-plan').replace(/^[^:]+:(?=c:)/, ''))).toBe('string');
-    // Outside a container the name was built wrongly, so it is reported.
-    expect(classify('fire-plan')).toBeNull();
   });
 });
 

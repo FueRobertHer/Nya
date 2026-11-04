@@ -93,9 +93,7 @@ const { getManualAccounts, saveManualAccount, newManualId } = await import('@/li
 const { getGoals } = await import('@/lib/goals');
 const { loadBudgets } = await import('@/lib/budget-store');
 const { readTaxonomy } = await import('@/lib/category-store');
-const { firePlanStore } = await import('@/lib/fire-plan');
 const { firePlansStore, planFactsStore, readPlanAnswer } = await import('@/lib/plan-copies');
-const { planScenariosStore } = await import('@/lib/plan-scenarios');
 const { parsePlanV2, planOf } = await import('@/lib/fire/plan-v2');
 const { incomeOf } = await import('@/lib/fire/items');
 const { MAIN_ID, factsOf, holdsAmounts } = await import('@/lib/fire/copies');
@@ -383,7 +381,6 @@ describe('seeding', () => {
     expect([plan.age, plan.targetAge]).toEqual([38, 52]);
     expect(incomeOf(plan).map((i) => i.fromAge)).toEqual([67]);
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...factsOf(plan) });
-    expect(await firePlanStore.get(ctx)).toBeNull();
   });
 
   test('every profile’s plan is your plan alone, and holds a currency wherever it holds an amount', async () => {
@@ -410,17 +407,14 @@ describe('seeding', () => {
     expect((await getItems(ctx)).map((i) => i.institution_name)).toEqual(['Chime']);
   });
 
-  test('seeds your plan over what was there: the plans, their facts and the plan before copies go with the rest, so the plan seeded is the one read', async () => {
+  test('seeds your plan over what was there: the plans and their facts go with the rest, so the plan seeded is the one read', async () => {
     const at = '2026-10-01T00:00:00.000Z';
     await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: at, updatedAt: at });
     await firePlansStore.set(TEST_CTX, 'x', { name: 'A visitor’s copy', plan: { ...DEFAULT_PLAN, age: 60 }, tax: null, currency: null, createdAt: at, updatedAt: at });
     await planFactsStore.set(TEST_CTX, { version: 1, main: 'x', ...factsOf({ ...DEFAULT_PLAN, age: 60 }) });
-    await firePlanStore.set(TEST_CTX, { ...DEFAULT_PLAN, age: 70 });
-    await planScenariosStore.set(TEST_CTX, 'sc1', { version: 1, name: 'Old', currency: null, createdAt: at, savedAt: at, rev: 'r1', set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] });
     await seedDemoAccount(TEST_CTX, 'user_alex', demoProfile('Alex', TODAY), TODAY, quick);
     expect(await firePlansStore.ids(TEST_CTX)).toEqual([MAIN_ID]);
     expect((await planFactsStore.get(TEST_CTX))!.main).toBe(MAIN_ID);
-    expect([await firePlanStore.get(TEST_CTX), await planScenariosStore.ids(TEST_CTX)]).toEqual([null, []]);
     expect((await readPlanAnswer(TEST_CTX)).plan).toMatchObject({ age: 31, targetAge: 45 });
   });
 

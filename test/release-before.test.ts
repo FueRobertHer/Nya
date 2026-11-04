@@ -28,11 +28,14 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
 //     and its export and restore carry them;
-//   - its Plan (test/fixtures/release-before/fire, C1's readers, its plans
+//   - its Plan (test/fixtures/release-before/fire, C2's readers, its plans
 //     as copies in fire/copies.ts) reads every plan this release writes:
 //     each entry of `fire-plans` and `plan-facts`, your plan the one it
 //     picks, each with its currency where it holds an amount, and every saved
-//     plan (test/release-before-plans.test.ts, through the routes).
+//     plan (test/release-before-plans.test.ts, through the routes);
+//   - its restore (test/fixtures/release-before/user-restore/parts.ts, C2's)
+//     knows every part of a download this release makes
+//     (test/release-before-plans.test.ts).
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -142,23 +145,23 @@ describe('the release before’s own code', () => {
       'release-before/export.ts': '5906750754885798848a4dff583f00219bacb519',
       'release-before/restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
       'release-before/key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
-      // The Plan's readers as at 8b430d55, E1 merged (fire/inputs.ts and
+      // The Plan's readers as at b681a09f, C2 merged (fire/inputs.ts and
       // fire/compile.ts are type stubs).
       'release-before/fire/plan.ts': '96c25e73aef95782831f612c8a029216c9638620',
       'release-before/fire/plan-v2.ts': '2b7b4875b972d81f01532d18139fc46350890cbe',
-      'release-before/fire/items.ts': '38d544424f9e917e7224937d3330dac717305e28',
+      'release-before/fire/items.ts': '3bd4b9de14e54974d169fb797fc86f9c526d1734',
       'release-before/fire/events.ts': 'ead1b143150729a4406d6204d2b34003089c0e16',
       'release-before/fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
       'release-before/fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
       'release-before/fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
       'release-before/fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
       'release-before/fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
-      'release-before/fire/saved-plan.ts': '89518d6f732c6c45ff6227c74f3be19fb3ca2c7c',
-      'release-before/fire/plan-currency.ts': 'a29d181ea65cf6963f2192c9e36b9705924fd8fc',
+      'release-before/fire/saved-plan.ts': '517a6e34e3c9592a7d47deddc9b9c2bc45668f3b',
+      'release-before/fire/plan-currency.ts': '905e7a56feaed793b4d1b1ad0a4bba79ec3b1200',
       'release-before/fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
-      // The plans as copies' reader as at baa20327, C1 merged (the files
-      // above it imports are the same blobs there).
       'release-before/fire/copies.ts': '399126acb55179193e830a759db2d8b9a053cf79',
+      // The parts of a download its restore knows, as at b681a09f.
+      'release-before/user-restore/parts.ts': '4ee9199874325d3a19232c23c3ce0be07ddafe6f',
       'release-before/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
       'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
       'release-before/local-date.ts': '23883717b80397910e368084e865ca84f367f988',
@@ -384,15 +387,13 @@ describe('the release before, reading what this release writes', () => {
 // The Plan's modules, the release before's and this one's.
 const oPlan = await import('./fixtures/release-before/fire/plan');
 const oSaved = await import('./fixtures/release-before/fire/saved-plan');
-const oScenarios = await import('./fixtures/release-before/fire/scenarios');
 const oCurrency = await import('./fixtures/release-before/fire/plan-currency');
 const { planOf, toStored, upgradeStoredPlan } = await import('@/lib/fire/plan-v2');
 const { expensesOf, incomeOf, withExpenses, withIncome } = await import('@/lib/fire/items');
-const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
-const { NO_CHANGES, recordSave } = await import('@/lib/fire/scenarios');
+const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { genPlan, rand } = await import('./plan-gen');
 
-describe('the Plan, as this release writes it where E1 reads', () => {
+describe('the Plan, as this release writes it where C2 reads', () => {
   /** A version 1 plan, edited as the cards edit it (an income dropped and
    *  one added, every one-off's amount changed, a figure typed), sent as a
    *  save sends it. Null where the edit makes more than version 1 takes. */
@@ -421,22 +422,12 @@ describe('the Plan, as this release writes it where E1 reads', () => {
     expect(saved).toBeGreaterThan(250);
   });
 
-  test('its saved plan, scenario and currency record readers take what this release writes beside it', () => {
-    for (const [i, { before, sent }] of plans.entries()) {
+  test('its saved plan reader takes what this release saves beside it, and its amounts are the ones this release compares', () => {
+    for (const [i, { sent }] of plans.entries()) {
       if (!sent) continue;
       const saved = { version: 1, plan: sent, savings: 10_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: `r${i}` };
       expect(oSaved.isSavedPlan(saved)).toBe(true);
-      // A scenario saved from an edit made on top of the plan (lib/fire/
-      // scenarios.ts, unchanged in E1, its base the plan as version 1).
-      const changes = recordSave(before, NO_CHANGES, sent);
-      if ('ok' in changes) {
-        const scenario = { ...changes.ok, name: 'Edited', currency: 'USD', version: 1, createdAt: '2026-11-01T12:00:00.000Z', savedAt: '2026-11-01T12:00:00.000Z', rev: `s${i}` };
-        expect(oScenarios.isPlanScenario(scenario)).toBe(true);
-      }
-      const record = currencyRecord(sent, 'USD');
-      expect(oCurrency.isPlanCurrencyRecord(record)).toBe(true);
       expect(typedAmounts(sent)).toEqual(oCurrency.typedAmounts(sent));
-      if (oCurrency.hasTypedAmounts(sent)) expect(oCurrency.recordedCurrency(sent, record)).toBe('USD');
     }
   });
 

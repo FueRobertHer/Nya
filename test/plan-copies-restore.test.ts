@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld, restoreRecord } from './restore-fixture';
 import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
@@ -6,9 +7,11 @@ import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 // Plans as copies in a download and a restore (lib/user-restore): the facts
 // are a setting, the plans data but for your plan alone; a file that brings
 // plans replaces every plan the account holds, never merges with them, and
-// pairs the facts; a file with a plan from before copies clears the plans,
-// and brings no plan back, since nothing reads that plan now (the Plan is
-// the defaults until it is saved); a file with no plan leaves the account's.
+// pairs the facts; a file with no plans leaves the account's. A file from
+// before copies holds the Plan's old parts (lib/user-restore/parts.ts
+// RETIRED_PARTS): read past, never written, and its plan said not to come
+// back when it held one and the file brings no plans. A restore another
+// release planned with one of those parts can only be undone.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.APP_PASSWORD = 'hunter2';
@@ -20,20 +23,19 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const { forgetEpochs } = await import('@/lib/sessions');
 const { encrypt } = await import('@/lib/crypto');
-const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { savedPlanStore } = await import('@/lib/saved-plan');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { planOf } = await import('@/lib/fire/plan-v2');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
-const { currencyRecord } = await import('@/lib/fire/plan-currency');
 const { scanAccount } = await import('@/lib/user-restore/empty');
 const { classOfKey } = await import('@/lib/user-restore/classes');
 const { checkBatch, BatchRefused } = await import('@/lib/user-restore/check');
 const { writeBatch, BatchNotWritten } = await import('@/lib/user-restore/commit');
-const { broughtLines } = await import('@/components/restore-state');
-const planRoute = await import('@/app/api/fire-plan/route');
-const { downloadText, restoreAll, call } = await import('./restore-run');
+const { collect } = await import('@/lib/user-restore/file');
+const { userRestoreStore } = await import('@/lib/user-restore/store');
+const { broughtLines, leftOutLines } = await import('@/components/restore-state');
+const { downloadText, restoreAll, planned, sourceOf, call } = await import('./restore-run');
 
 const ctx = TEST_CTX;
 /** The copy the download comes from. */
@@ -52,6 +54,22 @@ const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'First plan
 const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(PLAN), ...over });
 const DAMAGED = 'damaged-bytes-not-ciphertext-at-all';
 const plansOf = async (c = ctx) => Object.fromEntries((await firePlansStore.getAll(c)).entries());
+
+/** OTHER's download, with parts as a version of Nya from before copies wrote
+ *  them (or put over its own, `problems` among them). */
+const withParts = async (parts: Record<string, unknown>) => JSON.stringify({ ...JSON.parse(await downloadText(new Date(), OTHER)), ...parts });
+const LEGACY = { ...DEFAULT_PLAN, spending: 30_000 };
+const SCENARIO = { id: 'sc1', value: { version: 1, name: 'Old', currency: null, createdAt: AT, savedAt: AT, rev: 'r1', set: { targetAge: 50 }, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] } };
+const CURRENCY = { version: 1, currency: 'EUR', amounts: { spending: 30_000 } };
+const OLD_PLAN = 'your Plan and its scenarios as an older version of Nya kept them: make them again on the Plan tab if you need them';
+/** How often the preview lists the old plan as not coming back. */
+const saysOldPlan = async (text: string) => {
+  const { p } = await planned(text);
+  return leftOutLines(p.left_out, p.collected.never).filter((l) => l === OLD_PLAN).length;
+};
+/** The keys the old parts were stored under: never written now. */
+const legacyKeys = async (): Promise<string[]> => [await fake.type(ctxKey('fire-plan')), await fake.type(ctxKey('fire-plan-currency')), await fake.type(ctxKey('plan-scenarios'))];
+const NONE: string[] = ['none', 'none', 'none'];
 
 describe('what the scan makes of them', () => {
   test('the facts are a setting; the plans data', () => {
@@ -153,21 +171,62 @@ describe('a download and a restore', () => {
     expect(await planFactsStore.getReport(ctx)).toEqual({ value: null, unreadable: false, unrecognised: false });
   });
 
-  test('a file with the plan from before copies clears the account’s plans and facts: the Plan is the defaults, and its first save removes that plan', async () => {
-    const legacy = { ...DEFAULT_PLAN, spending: 30_000 };
-    await firePlanStore.set(OTHER, legacy);
-    await planCurrencyStore.set(OTHER, currencyRecord(legacy, 'EUR'));
-    const text = await downloadText(new Date(), OTHER);
-    await fake.hset(ctxKey('fire-plans'), { [MAIN_ID]: DAMAGED });
-    await planFactsStore.set(ctx, facts());
-    expect((await restoreAll(text)).status).toBe('finished');
-    expect([await firePlansStore.count(ctx), await planFactsStore.get(ctx)]).toEqual([0, null]);
-    // Brought back as it was, and never read.
-    expect(await firePlanStore.get(ctx)).toEqual(legacy);
-    expect(await (await planRoute.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null });
-    const body = { plan: planOf(PLAN), currency: 'USD', facts_were: factsOf(planOf(DEFAULT_PLAN)), based_on: null };
-    expect((await planRoute.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }))).status).toBe(200);
-    expect([await firePlanStore.get(ctx), await planCurrencyStore.get(ctx)]).toEqual([null, null]);
+  test('a file from before copies: the rest comes back, the account’s plans and facts stay, none of its old plan is written, and the preview says so once', async () => {
+    const saved = { version: 1 as const, plan: planOf(PLAN), savings: 18_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: AT, rev: 'rev-1' };
+    await savedPlanStore.set(OTHER, saved);
+    const text = await withParts({ 'fire-plan': LEGACY, 'fire-plan-currency': CURRENCY, 'plan-scenarios': [SCENARIO] });
+    expect(JSON.parse(text)['fire-plans']).toEqual([]);
+    await firePlansStore.set(ctx, MAIN_ID, entry());
+    await planFactsStore.set(ctx, facts({ age: 60 }));
+    expect(await saysOldPlan(text)).toBe(1);
+    const record = await restoreAll(text);
+    expect(record.status).toBe('finished');
+    expect(record.left_out).toMatchObject({ plan_before_copies: 1 });
+    expect(await savedPlanStore.get(ctx)).toEqual(saved);
+    expect(await plansOf()).toEqual({ [MAIN_ID]: entry() });
+    expect(await planFactsStore.get(ctx)).toEqual(facts({ age: 60 }));
+    expect(await legacyKeys()).toEqual(NONE);
+    expect(Object.keys(record.brought).filter((k) => ['store:fire-plan', 'store:fire-plan-currency', 'store:plan-scenarios'].includes(k))).toEqual([]);
+  });
+
+  test('the same file with plans: they replace the account’s, as any file’s, and the old plan isn’t named', async () => {
+    await firePlansStore.set(OTHER, MAIN_ID, entry({ name: 'There' }));
+    await planFactsStore.set(OTHER, facts());
+    const text = await withParts({ 'fire-plan': LEGACY, 'fire-plan-currency': CURRENCY, 'plan-scenarios': [SCENARIO] });
+    await firePlansStore.set(ctx, MAIN_ID, entry({ name: 'Here' }));
+    expect(await saysOldPlan(text)).toBe(0);
+    const record = await restoreAll(text);
+    expect(record.status).toBe('finished');
+    expect(record.left_out).not.toHaveProperty('plan_before_copies');
+    expect(await plansOf()).toEqual({ [MAIN_ID]: entry({ name: 'There' }) });
+    expect(await legacyKeys()).toEqual(NONE);
+  });
+
+  test('a download whose old parts are empty, as every one made since copies, says nothing of them; nor does a currency alone', async () => {
+    for (const parts of [{ 'fire-plan': null, 'fire-plan-currency': null, 'plan-scenarios': [] }, { 'fire-plan': null, 'fire-plan-currency': CURRENCY, 'plan-scenarios': [] }]) {
+      fake.reset();
+      forgetEpochs();
+      await registerTestContainer(fake);
+      await seedOld(fake, OTHER);
+      const text = await withParts(parts);
+      expect(await saysOldPlan(text)).toBe(0);
+      expect((await restoreAll(text)).status).toBe('finished');
+      expect(await legacyKeys()).toEqual(NONE);
+    }
+  });
+
+  test('a file saying its old plan couldn’t be read, or was a newer version’s, is still taken, and says the plan doesn’t come back', async () => {
+    for (const problems of [[{ section: 'fire-plan', problem: 'unreadable' }], [{ section: 'fire-plan', problem: 'unrecognised' }], [{ section: 'plan-scenarios', problem: 'unreadable', ids: ['sc1'] }]]) {
+      const text = await withParts({ 'fire-plan': null, 'plan-scenarios': [], problems });
+      expect([problems, await saysOldPlan(text)]).toEqual([problems, 1]);
+    }
+    // The currency alone isn't the plan: taken, and nothing said.
+    expect(await saysOldPlan(await withParts({ problems: [{ section: 'fire-plan-currency', problem: 'unreadable' }] }))).toBe(0);
+  });
+
+  test('old scenarios that aren’t a list are refused, as any list part; an old plan, an object, is read past', async () => {
+    await expect(collect(sourceOf(await withParts({ 'plan-scenarios': { sc1: SCENARIO.value } })))).rejects.toThrow('plan-scenarios: must be a list');
+    expect(await saysOldPlan(await withParts({ 'fire-plan': { ...LEGACY, deeper: { rows: [[1, 2], { a: null }] } } }))).toBe(1);
   });
 
   test('a file with no plan leaves the account’s plans and facts', async () => {
@@ -188,8 +247,7 @@ describe('a download and a restore', () => {
   });
 
   test('of an account without copies, never make them', async () => {
-    await firePlanStore.set(OTHER, PLAN);
-    const text = await downloadText(new Date(), OTHER);
+    const text = await withParts({ 'fire-plan': PLAN });
     expect(JSON.parse(text)['fire-plans']).toEqual([]);
     expect((await restoreAll(text)).status).toBe('finished');
     expect([await fake.type(ctxKey('fire-plans')), await fake.type(ctxKey('plan-facts'))]).toEqual(['none', 'none']);
@@ -198,16 +256,6 @@ describe('a download and a restore', () => {
 
 describe('a batch that clears the account’s plans, refused', () => {
   const at = (part: string, count: number) => restoreRecord({ plan: { digest: 'a'.repeat(64), batches: [{ part, count, digest: 'c'.repeat(64) }] }, done: 0 }) as never;
-
-  test('a plan from before copies that can’t be written over a damaged one leaves the plans Home reads', async () => {
-    await firePlansStore.set(ctx, MAIN_ID, entry());
-    await planFactsStore.set(ctx, facts());
-    await fake.set(ctxKey('fire-plan'), DAMAGED);
-    await expect(writeBatch(ctx, 'store:fire-plan', [{ value: { ...DEFAULT_PLAN, spending: 30_000 } }], at('store:fire-plan', 1))).rejects.toThrow();
-    expect(await plansOf()).toEqual({ [MAIN_ID]: entry() });
-    const read = await planRoute.GET();
-    expect([read.status, (await read.json()).plan.spending]).toEqual([200, 40_000]);
-  });
 
   test('plans over the bound leave the account’s as they were', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ name: 'Here' }));
@@ -251,5 +299,29 @@ describe('a batch of plans written twice', () => {
     await writeBatch(ctx, 'store:fire-plans', [{ id: MAIN_ID, value: entry() }], restoreRecord({ plan: { digest: 'a'.repeat(64), batches }, done: 0 }) as never);
     await writeBatch(ctx, 'store:fire-plans', [{ id: 'x', value: entry() }], restoreRecord({ plan: { digest: 'a'.repeat(64), batches }, done: 1 }) as never);
     expect(Object.keys(await plansOf()).sort()).toEqual([MAIN_ID, 'x']);
+  });
+});
+
+describe('a restore another release planned with an old part', () => {
+  const body = JSON.stringify({ part: 'store:fire-plan', records: [{ value: LEGACY }] });
+  const digest = createHash('sha256').update(body).digest('hex');
+  const batches = [
+    { part: 'store:tags', count: 1, digest: 'b'.repeat(64) },
+    { part: 'store:fire-plan', count: 1, digest },
+  ];
+  const record = (over: Record<string, unknown>) => restoreRecord({ plan: { digest: 'a'.repeat(64), batches }, brought: { 'store:tags': 1, 'store:fire-plan': 1 }, ...over });
+  const ID = restoreRecord().id;
+  const UNDO = 'Undo this restore, then bring the file back again: another version of Nya planned it, so it can’t go on here.';
+
+  test('is refused at its next batch and at its finish, saying what to do; one finished is not', async () => {
+    await userRestoreStore.set(ctx, record({ done: 1 }) as never);
+    expect(await call('POST', `/api/user-restore/batch?restore_id=${ID}&index=1`, body)).toEqual({ status: 409, body: { error: UNDO } });
+    expect(await legacyKeys()).toEqual(NONE);
+    await userRestoreStore.set(ctx, record({ done: 2 }) as never);
+    expect(await call('POST', `/api/user-restore/batch?restore_id=${ID}&finish=1`)).toEqual({ status: 409, body: { error: UNDO } });
+    expect((await userRestoreStore.get(ctx))!.status).toBe('writing');
+    await userRestoreStore.set(ctx, record({ done: 2, status: 'finished', finished_at: AT, undo_until: '2026-11-08T10:00:00.000Z' }) as never);
+    const finished = await call('POST', `/api/user-restore/batch?restore_id=${ID}&finish=1`);
+    expect([finished.status, finished.body.record.status]).toEqual([200, 'finished']);
   });
 });
