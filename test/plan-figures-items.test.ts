@@ -3,17 +3,17 @@ import { planPath } from '@/lib/fire/path';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { expensesOf, incomeOf } from '@/lib/fire/items';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
-import * as oldFigures from './fixtures/release-before/fire/plan-figures';
-import * as oldPath from './fixtures/release-before/fire/path';
-import * as oldSaved from './fixtures/release-before/fire/saved-plan';
+import * as oldFigures from './fixtures/before-d15/fire/plan-figures';
+import * as oldPath from './fixtures/before-d15/fire/path';
+import * as oldSaved from './fixtures/before-d15/fire/saved-plan';
 import { plannedAt } from '@/lib/fire/saved-plan';
 import { resolveSaved } from '@/lib/fire/plan-figures';
 import { figuresOf, genEvents, genMeasured, genPlan, ON, rand } from './plan-gen';
 
 // The Plan's arithmetic on version 2 (lib/fire/plan-figures.ts, path.ts),
-// held to the release before's own files (test/fixtures/release-before) for
-// every version 1 plan and scenario: with D15's switch off nothing moves.
-// Then what the switch moves.
+// held to the files from before D15 (test/fixtures/before-d15, the release
+// before E1's own) for every version 1 plan and scenario: with D15's switch
+// off nothing moves. Then what the switch moves.
 
 const cases = Array.from({ length: 400 }, (_, i) => {
   const g = rand(7000 + i);

@@ -163,7 +163,9 @@ describe('the plan', () => {
   });
 
   test('a database failure on the plan is a 500 without the flag; no container to reach, a 503', async () => {
-    fake.failNext('get');
+    // The facts' read comes first, and isn't needed while the plan is
+    // fire-plan's (lib/plan-copies.ts readPlanAnswer): the plan's is second.
+    fake.failNext('get', 2);
     const failed = await json(await quiet(() => ask(PLANS)));
     expect(failed.status).toBe(500);
     expect(failed.body.unreadable).toBeUndefined();
@@ -194,15 +196,19 @@ describe('the rows', () => {
     sent = [];
     const answer = await json(await ask(PLANS));
     expect(answer.body.plans).toEqual(expected);
-    // The plan, its currency and every row: three reads, the rows one HMGET.
-    expect(sent.sort()).toEqual(['get', 'get', 'hmget']);
+    // The plan's five reads (the facts, your plan's entry and how many plans
+    // there are, then the plan and its currency) and every row, the rows one
+    // HMGET.
+    expect(sent.sort()).toEqual(['eval', 'get', 'get', 'get', 'hlen', 'hmget']);
   });
 
-  test('with no workplace plan, the plan alone: two reads, no HMGET', async () => {
+  test('with no workplace plan, the plan alone: its five reads, no HMGET', async () => {
     await ask([]); // the deployment's container read once, then reused
     sent = [];
     expect((await json(await ask([]))).body.plans).toEqual([]);
-    expect(sent).toEqual(['get', 'get']);
+    // The facts, your plan's entry (a script) and how many plans there are,
+    // then the plan and its currency.
+    expect(sent).toEqual(['get', 'eval', 'hlen', 'get', 'get']);
   });
 
   test('a row past the cache’s age, or cached before the Plan’s fields, is pending', async () => {

@@ -120,6 +120,12 @@ export async function seedEveryKind(
   const { currencyRecord } = await import('@/lib/fire/plan-currency');
   await firePlanStore.set(ctx, DEFAULT_PLAN);
   await planCurrencyStore.set(ctx, currencyRecord(DEFAULT_PLAN, 'USD'));
+  // The plans as copies, as the release after this one first writes them
+  // (lib/plan-copies.ts): after the scenario's save, which they refuse.
+  const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
+  const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
+  await firePlansStore.set(ctx, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: 'USD', createdAt: at, updatedAt: at });
+  await planFactsStore.set(ctx, { version: 1, main: MAIN_ID, ...factsOf(DEFAULT_PLAN) });
   const { plannedStore } = await import('@/lib/planned-store');
   const { EMPTY_PLANNED } = await import('@/lib/planned');
   await plannedStore.set(ctx, EMPTY_PLANNED);

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, describeUnreadable } from '@/lib/repo';
-import { readPlanAnswer } from '@/lib/fire-plan';
+import { readPlanAnswer } from '@/lib/plan-copies';
 import { getItems, type StoredItem } from '@/lib/storage';
 import { syncInvestments } from '@/lib/invstore';
 import { readAccountCaches, writeAccountCache } from '@/lib/cache';
@@ -21,7 +21,8 @@ import { loggable } from '@/lib/log-safe';
 // the rest, and the note), or `pending: true` when its activity isn't
 // cached, or `failed: true` when it can't be had (an id that isn't one, an
 // item that isn't linked, a sync that threw). Nothing waits on Plaid: the
-// plan and every cached row are three reads begun together. A saved plan
+// plan's reads (lib/plan-copies.ts readPlanAnswer) and every cached row are
+// begun together, one round trip. A saved plan
 // that can't be read is a 409 flagged `unreadable`, with the rows, so the
 // Plan's error state keeps its contributions.
 //
@@ -97,7 +98,7 @@ export async function GET(req: Request) {
     const fields = wanted.flatMap((w) => (w.item_id ? [w.id] : []));
     if (params.get('sync') === '1') return NextResponse.json({ plans: await syncedRows(ctx, wanted, fields) });
 
-    // Begun together, so Redis sends the three reads at once.
+    // Begun together, so Redis sends the reads at once.
     const answer = begin(() => readPlanAnswer(ctx));
     const cached = await readAccountCaches<Record<string, unknown>>(ctx, fields);
     const plans: Row[] = wanted.map((w) => {

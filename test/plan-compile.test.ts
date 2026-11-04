@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { compileEvents, compileItems, fixedAges, type CompileAt } from '@/lib/fire/compile';
 import { eventItems, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
-import * as oldEvents from './fixtures/release-before/fire/events';
-import * as oldPlan from './fixtures/release-before/fire/plan';
+import * as oldEvents from './fixtures/before-d15/fire/events';
+import * as oldPlan from './fixtures/before-d15/fire/plan';
 import { genEvents, genMeasured, genPlan, rand } from './plan-gen';
 
-// Where each item counts (lib/fire/compile.ts), held to the release before's
-// own arithmetic for what it had (test/fixtures/release-before), and what D15
-// adds behind its switch.
+// Where each item counts (lib/fire/compile.ts), held to the arithmetic from
+// before D15 for what it had (test/fixtures/before-d15, the release before
+// E1's own files), and what D15 adds behind its switch.
 
 const off = { planInWalk: false };
 const on = { planInWalk: true };

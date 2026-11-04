@@ -78,9 +78,13 @@ describe('the Plan tab saves through nothing else', () => {
     expect(code.match(/store\.save\b/g)).toEqual(['store.save']);
     expect(code).toMatch(/planSavers\(\{ scenario: saveToScenario, savePlan: savePlanIn, repaired: repairing \? repair\.plan : null \}\)/);
     // savePlanIn: the store's save, sent as version 1 (lib/fire/plan-v2.ts),
-    // but never a first typed amount without the currency its figures are in
-    // (lib/fire/plan-currency.ts).
-    expect(code).toMatch(/const savePlanIn = async \(next: FirePlanV2\): Promise<boolean \| string> => \{\n[\s\S]*?const sent = toStored\(next, 1\);[\s\S]*?return store\.save\(sent\.plan\);\n  \};/);
+    // or as version 2 only into a copy's entry read as version 2
+    // (lib/fire/copies.ts), but never a first typed amount without the
+    // currency its figures are in (lib/fire/plan-currency.ts). The facts it
+    // sent are the page's once saved (test/plan-inputs-view.test.tsx).
+    expect(code).toMatch(
+      /const savePlanIn = async \(next: FirePlanV2\): Promise<boolean \| string> => \{\n[\s\S]*?const sent = toStored\(next, isCopy\.current && confirmed\.plan\?\.version === 2 \? 2 : 1\);[\s\S]*?const saved = await store\.save\(sent\.plan\);\n    if \(saved\) factsWere\.current = factsOf\(sent\.plan\);\n    return saved;\n  \};/,
+    );
     // Every save the cards and forms are given comes from the savers.
     // The drawer's forms save through the savers of the plan they were
     // opened for (test/plan-tab-scenarios.test.tsx renders that lifecycle).

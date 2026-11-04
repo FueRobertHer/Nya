@@ -458,3 +458,39 @@ describe('what it waits for', () => {
     await s.unmount();
   });
 });
+
+describe('once a newer version of Nya has made your plans copies', () => {
+  /** The route's answer then (app/api/plan-scenarios GET). */
+  const copiesAnswer = (copies: { names: string[]; count: number; main: { name: string; missing: boolean } }) => async () =>
+    new Response(JSON.stringify({ scenarios: [], unreadable_ids: [], unrecognised_ids: Array.from({ length: copies.count }, (_, i) => `c${i}`), copies }), { status: 200 });
+  const notes = (s: Awaited<ReturnType<typeof mount>>) =>
+    s.dialog()!.findAll((e) => e.tagName === 'P' && e.getAttribute('class') === 'panel-note').map((e) => e.textContent.trim());
+
+  test('with only your plan there: the copies line, and nothing to make', async () => {
+    const s = await mount(copiesAnswer({ names: [], count: 0, main: { name: 'First plan', missing: false } }));
+    expect(notes(s)).toEqual(['Your plans are copies now: make one in the newer version of Nya.']);
+    expect(s.button('New scenario')).toBeNull();
+    for (const absent of ['No scenarios yet', 'What-ifs beside your plan', 'saved by a newer version of Nya', 'the most Nya keeps', 'Choose two to four plans.']) expect(s.dialog()!.textContent).not.toContain(absent);
+    await s.unmount();
+  });
+
+  test('with copies, named in one line in place of the newer-version line, and one that wasn’t found said first', async () => {
+    const s = await mount(copiesAnswer({ names: ['Stop at 52', 'No conversions'], count: 3, main: { name: 'Stop at 50', missing: true } }));
+    expect(notes(s)).toEqual([
+      'Your plans are copies now: make one in the newer version of Nya.',
+      'Your plan wasn’t found, so “Stop at 50” is shown as yours.',
+      '3 plans made by a newer version of Nya are kept there: Stop at 52, No conversions and 1 more.',
+    ]);
+    expect(s.dialog()!.textContent).not.toContain('saved by a newer version of Nya: kept');
+    await s.unmount();
+  });
+
+  test('without copies, as before', async () => {
+    const { fetcher } = store([]);
+    const s = await mount(fetcher);
+    expect(s.button('New scenario')).not.toBeNull();
+    expect(s.dialog()!.textContent).toContain('No scenarios yet');
+    expect(s.dialog()!.textContent).not.toContain('Your plans are copies now');
+    await s.unmount();
+  });
+});

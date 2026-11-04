@@ -13,22 +13,58 @@
 //   - A failed save reloads what is really stored.
 //   - Entries that can't be read are named (unreadable may be deleted once
 //     the person confirms; unrecognised never), never dropped from view.
+//   - Once a newer version of Nya has made your plans copies
+//     (lib/plan-copies.ts), the route answers them instead (`copies`), and
+//     refuses every save: the page names them and offers nothing to save.
 
 import type { PlanScenario, ScenarioDraft } from '@/lib/fire/scenarios';
 
 export type ScenarioEntry = PlanScenario & { id: string };
+
+/** Your plans once a newer version of Nya has made them copies: the names
+ *  of the copies that read, in the order they were made, how many copies
+ *  there are (every one but yours), and your plan's name, `missing` when it
+ *  stands in for the one that wasn't found. */
+export type Copies = { names: string[]; count: number; main: { name: string; missing: boolean } };
 
 export type ScenariosState = {
   status: 'loading' | 'ready' | 'error';
   list: ScenarioEntry[];
   unreadable: string[];
   unrecognised: string[];
+  /** Null until a newer version of Nya has made your plans copies. */
+  copies: Copies | null;
   /** Why the list couldn't be loaded. */
   error: string | null;
   saving: boolean;
 };
 
-export const INITIAL_SCENARIOS: ScenariosState = { status: 'loading', list: [], unreadable: [], unrecognised: [], error: null, saving: false };
+export const INITIAL_SCENARIOS: ScenariosState = { status: 'loading', list: [], unreadable: [], unrecognised: [], copies: null, error: null, saving: false };
+
+/** What the Plan says of your plans once they are copies, in order: that a
+ *  copy is made in the newer version (which shows them), your plan standing
+ *  in for the one that wasn't found, and the copies kept there, by name. */
+export function copiesLines(c: Copies): string[] {
+  const lines = ['Your plans are copies now: make one in the newer version of Nya.'];
+  if (c.main.missing) lines.push(`Your plan wasn’t found, so “${c.main.name}” is shown as yours.`);
+  if (c.count > 0) {
+    const more = c.count - c.names.length;
+    const names = c.names.length === 0 ? '' : `: ${c.names.join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+    lines.push(`${c.count} ${c.count === 1 ? 'plan' : 'plans'} made by a newer version of Nya ${c.count === 1 ? 'is' : 'are'} kept there${names}.`);
+  }
+  return lines;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** The route's `copies`, or null when it isn't one. */
+function copiesOf(v: unknown): Copies | null {
+  if (!isObject(v) || !isObject(v.main)) return null;
+  const { names, count, main } = v;
+  if (!Array.isArray(names) || !names.every((n) => typeof n === 'string') || typeof count !== 'number') return null;
+  if (typeof main.name !== 'string' || typeof main.missing !== 'boolean') return null;
+  return { names: names as string[], count, main: { name: main.name, missing: main.missing } };
+}
 
 /** Done, or why not; `stale` when another device changed it since, and the
  *  list now holds it as it is now. */
@@ -83,6 +119,7 @@ export function createScenarioClient(onChange: (s: ScenariosState) => void, fetc
         list: Array.isArray(body.scenarios) ? (body.scenarios as ScenarioEntry[]) : [],
         unreadable: Array.isArray(body.unreadable_ids) ? (body.unreadable_ids as string[]) : [],
         unrecognised: Array.isArray(body.unrecognised_ids) ? (body.unrecognised_ids as string[]) : [],
+        copies: copiesOf(body.copies),
       });
     } catch {
       set({ status: 'error', error: 'Your saved scenarios couldn’t be loaded: check your connection.' });

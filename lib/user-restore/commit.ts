@@ -34,6 +34,8 @@ import { importStore, importSummaryStore, summaryOf, type ImportEntry } from '..
 import { historyImportStore, historyImportSummaryStore, importedTxnStore, summaryOfEntry, type HistoryImportEntry } from '../history-import/store';
 import { manualTxnStore } from '../manual-txns';
 import { firePlanStore, planCurrencyStore } from '../fire-plan';
+import { firePlansStore, planFactsStore } from '../plan-copies';
+import { planScenariosStore } from '../plan-scenarios';
 import { clearCaches } from '../cache';
 import { SEAM, MAX_RESTORED_MANUAL_ACCOUNTS } from './parts';
 import { storeOfPart } from './check';
@@ -89,6 +91,28 @@ function merged<T extends Rec>(current: T | null, value: T, field: string): T {
   return { ...current, [field]: { ...(current[field] as Rec), ...(value[field] as Rec) } } as T;
 }
 
+/** The parts that bring the plan before it was copies (lib/fire-plan.ts,
+ *  lib/plan-scenarios.ts). */
+const LEGACY_PLAN_PARTS = [firePlanStore, planCurrencyStore, planScenariosStore].map((s) => `store:${s.name}`);
+
+/** The account's plans as copies (lib/plan-copies.ts) are one setting with
+ *  the plan: a file that brings plans replaces them all, never merges them
+ *  (setMany would keep a plan the file doesn't name, and one of them, the
+ *  oldest, can stand as yours). So on the batch that writes the first of the
+ *  file's plans, or, for a file from before copies, the first of its plan's
+ *  parts, every plan the account holds goes, damaged ones too (the scan lets
+ *  one through, lib/user-restore/empty.ts). A batch written twice clears and
+ *  writes its own plans again: no later one has run. The facts they share
+ *  are paired at the finish (factsPair). */
+async function clearPlans(ctx: Ctx, part: string, record: UserRestoreRecord): Promise<void> {
+  const plans = `store:${firePlansStore.name}`;
+  const batches = record.plan.batches;
+  const first = batches.some((b) => b.part === plans) ? batches.findIndex((b) => b.part === plans) : batches.findIndex((b) => LEGACY_PLAN_PARTS.includes(b.part));
+  if (first === -1 || first !== record.done || batches[first].part !== part) return;
+  const ids = await firePlansStore.ids(ctx);
+  if (ids.length > 0) await firePlansStore.remove(ctx, ...ids);
+}
+
 /**
  * Writes one batch, checked (checkBatch), into the container (see the
  * header). `record` is the restore's, re-read just before: what restored
@@ -96,6 +120,7 @@ function merged<T extends Rec>(current: T | null, value: T, field: string): T {
  * that can't be written as it is, and what the seam throws.
  */
 export async function writeBatch(ctx: Ctx, part: string, records: readonly Rec[], record: UserRestoreRecord): Promise<void> {
+  await clearPlans(ctx, part, record);
   const target = storeOfPart(part);
   if (target) {
     const { name, store } = target;
@@ -263,17 +288,35 @@ async function planPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Prom
   await absent.remove(ctx);
 }
 
+/** What every plan shares names one of the plans (lib/plan-copies.ts): a
+ *  file that brought plans (copies, or the plan before them) without it
+ *  leaves the account none, so the account's own never names a plan the file
+ *  replaced, or makes a plan it didn't bring yours. One this version doesn't
+ *  know is left, as planPair leaves the record. */
+async function factsPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Promise<void>): Promise<void> {
+  if (parts.has(`store:${planFactsStore.name}`)) return;
+  if (!parts.has(`store:${firePlansStore.name}`) && !LEGACY_PLAN_PARTS.some((p) => parts.has(p))) return;
+  const now = await planFactsStore.getReport(ctx);
+  if (now.value === null && !now.unreadable) return;
+  await before();
+  await planFactsStore.remove(ctx);
+}
+
 /**
  * What the finish works out from what was written (see the header): each
  * restored account's rows, the imports' summaries, and the holdings index;
- * and, given the restore's record, the Plan's pair (planPair). Then the
+ * and, given the restore's record, the Plan's pairs (planPair, factsPair). Then the
  * caches go, since net worth and transactions changed. Run again, it writes
  * the same. `before` runs before each write, and may refuse it by throwing
  * (the finish route: its time, and the record looked at again).
  */
 export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void>; record?: UserRestoreRecord; writeBy?: number } = {}): Promise<void> {
   const before = opts.before ?? (async () => {});
-  if (opts.record) await planPair(ctx, new Set(opts.record.plan.batches.map((b) => b.part)), before);
+  if (opts.record) {
+    const parts = new Set(opts.record.plan.batches.map((b) => b.part));
+    await planPair(ctx, parts, before);
+    await factsPair(ctx, parts, before);
+  }
   await restoredSpans(ctx, before);
   if (opts.record) await fileAnswers(ctx, opts.record, before);
   const [imports, historyImports, manualBooks, importedBooks] = await Promise.all([

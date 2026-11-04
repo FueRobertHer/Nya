@@ -107,6 +107,8 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
   'fire-plan-currency': 'the currency your Plan’s figures are in',
   'fire-plan-saved': 'the plan you saved as your plan',
   'plan-scenarios': (n) => `${n} saved plan ${n === 1 ? 'scenario' : 'scenarios'}`,
+  'fire-plans': (n) => `${n} ${n === 1 ? 'plan' : 'plans'}`,
+  'plan-facts': 'the facts your plans share',
   'expense-shares': (n) => `${n} shared ${n === 1 ? 'transaction' : 'transactions'}: ${n === 1 ? 'it counts' : 'they count'} whole, and ${n === 1 ? 'isn’t' : 'aren’t'} in anyone’s balance`,
   'expense-ious': (n) => `${n} ${n === 1 ? 'IOU' : 'IOUs'}`,
   'expense-payments': (n) => `${n} ${n === 1 ? 'payment' : 'payments'} you confirmed paid something back: ${n === 1 ? 'it counts' : 'they count'} as the bank shows ${n === 1 ? 'it' : 'them'}`,
@@ -641,6 +643,9 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...value('fire-plan-currency'),
     ...value('fire-plan-saved'),
     ...entries('plan-scenarios'),
+    // The plans as copies, entries before the facts that name one of them.
+    ...entries('fire-plans'),
+    ...value('plan-facts'),
     ...value('allocation-settings'),
     ...value('report-settings'),
     ...entries('runway-scenarios'),

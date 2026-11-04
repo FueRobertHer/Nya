@@ -1140,7 +1140,9 @@ describe('the route', () => {
   });
 
   test('a database failure is a 500 without the flag', async () => {
-    fake.failNext('get');
+    // The facts' read comes first, and isn't needed while the plan is
+    // fire-plan's (lib/plan-copies.ts readPlanAnswer): the plan's is second.
+    fake.failNext('get', 2);
     const res = await quiet(() => route.GET());
     expect(res.status).toBe(500);
     expect((await res.json()).unreadable).toBeUndefined();

@@ -118,6 +118,21 @@ export const DEFAULT_PLAN: FirePlan = {
   planFunding: [],
 };
 
+/** What a plan's arithmetic reads, in either version (lib/fire/plan-v2.ts):
+ *  everything but its version and its lists (lib/fire/compile.ts places a
+ *  plan's items), with version 2's stop at FI and own FI number when it has
+ *  them. */
+export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null };
+
+/** The age the plan stops working at: the one typed, or under "stop when I
+ *  reach FI" the search's answer (lib/fire/steady.ts), null when there is
+ *  none or it hasn't run. Every read of the stop outside the Ages sheet and
+ *  the readers goes through this or a view's stopAge
+ *  (test/plan-stop-source.test.ts). */
+export function stopOf(plan: Pick<PlanCore, 'targetAge' | 'stopAtFi'>, found: number | null = null): number | null {
+  return plan.stopAtFi ? found : plan.targetAge;
+}
+
 /** How the Plan's forms (components/PlanForms.tsx) hold a value as text: a
  *  number as it is, a share as a percent to four places. Exported so that a
  *  scenario recording a form's save (lib/fire/scenarios.ts) tells a change
@@ -207,8 +222,9 @@ function exactKeys(v: unknown, keys: readonly string[], field: string): Record<s
 
 /** A clean copy of a plan, or why it is not one. `input` checks everything a
  *  save must meet; otherwise only the shape and types, as a stored plan is
- *  checked (see the top of this file). */
-function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string; field: string } {
+ *  checked (see the top of this file). Version 2's reader checks the fields
+ *  it shares with version 1 here (lib/fire/plan-v2.ts). */
+export function readPlan(raw: unknown, input: boolean): { plan: FirePlan } | { error: string; field: string } {
   // Ranges and rules between fields apply to input only.
   const n = (v: unknown, field: string, min: number, max: number) => num(v, field, input ? min : -Infinity, input ? max : Infinity);
   const whole = (v: unknown, field: string, min: number, max: number) => int(v, field, input ? min : -Infinity, input ? max : Infinity);
@@ -455,8 +471,13 @@ export type FiView = {
   spending: Input;
   savings: Input;
   assets: Input;
-  /** Null without spending to base it on. */
+  /** The stop the figures are worked out at (stopOf): null without one. */
+  stopAge: number | null;
+  /** Your own, when typed; otherwise from spending, and null without it. */
   fiNumber: number | null;
+  /** The FI number spending works out to, beside your own (null without
+   *  spending); the same as fiNumber when none is typed. */
+  workedOut: number | null;
   /** Invested assets as a share of the FI number. */
   progress: number | null;
   /** Years until the FI number, at the plan's real return: 0 when already
@@ -478,22 +499,28 @@ const within = (v: number, min: number, max: number) => Number.isFinite(v) && v 
 
 /** Whether the FI formulas (lib/fire/fi.ts) take the plan's rates. Every plan
  *  parsePlan accepts does; a stored plan read leniently may not. */
-export function formulasTake(plan: FirePlan): boolean {
+export function formulasTake(plan: PlanCore): boolean {
   return within(plan.withdrawalRate, 1e-6, 1) && within(plan.taxRate, 0, 0.99) && within(plan.realReturn, -0.99, 1);
 }
 
 /** The deterministic FI view of a plan, from what was typed and what Nya
- *  measured. Total: for rates the formulas don't take, the figures are left
- *  out (null) rather than thrown on, so no stored plan can stop the tab. */
-export function fiView(plan: FirePlan, measured: Measured): FiView {
+ *  measured, at a stop (the typed one by default; the search's under "stop
+ *  when I reach FI", lib/fire/plan-figures.ts). Total: for rates the
+ *  formulas don't take, the figures are left out (null) rather than thrown
+ *  on, so no stored plan can stop the tab. */
+export function fiView(plan: PlanCore, measured: Measured, stop: number | null = stopOf(plan)): FiView {
   const off = new Set(measured.unmeasured ?? []);
   const spending = input(plan.spending, measured.spending, off.has('spending'));
   const savings = input(plan.savings, measured.savings, off.has('savings'));
   const assets = input(plan.assets, measured.assets, off.has('assets'));
   if (!formulasTake(plan)) {
-    return { spending, savings, assets, fiNumber: null, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
+    return { spending, savings, assets, stopAge: stop, fiNumber: null, workedOut: null, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
   }
-  const fi = spending.value === null ? null : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
+  const workedOut = spending.value === null ? null : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
+  // Your own FI number is the target wherever one is (D14); the worked-out
+  // one stays beside it.
+  const own = plan.fiNumber ?? null;
+  const fi = own ?? workedOut;
   // Nothing to measure from counts as none; a figure not measured is never
   // counted as zero, so nothing that rests on it is worked out.
   const blocked = savings.source === 'unmeasured' || assets.source === 'unmeasured';
@@ -502,19 +529,23 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
   const neither = assets.value === null && savings.value === null;
   const yearsToFi = fi === null || blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, fi);
   const fiAge = yearsToFi !== null && Number.isFinite(yearsToFi) && plan.age !== null ? plan.age + yearsToFi : null;
-  const span = plan.age !== null && plan.targetAge !== null ? plan.targetAge - plan.age : null;
+  const span = plan.age !== null && stop !== null ? stop - plan.age : null;
   const coastNumber = fi !== null && span !== null ? coastFiNumber(fi, plan.realReturn, span) : null;
   let barista: FiView['barista'] = null;
-  if (plan.partTimeIncome > 0 && spending.value !== null) {
+  // Worked out from spending, it could sit above your own number: not shown
+  // while one is typed.
+  if (plan.partTimeIncome > 0 && spending.value !== null && own === null) {
     const number = baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
     barista = { number, yearsTo: blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, number) };
   }
-  const from = projectFrom(plan, { savings, assets });
+  const from = projectFrom(plan, { savings, assets, stopAge: stop });
   return {
     spending,
     savings,
     assets,
+    stopAge: stop,
     fiNumber: fi,
+    workedOut,
     progress: fi !== null && fi > 0 && assets.value !== null ? assets.value / fi : null,
     yearsToFi,
     fiAge,
@@ -532,16 +563,17 @@ export function fiView(plan: FirePlan, measured: Measured): FiView {
  *  or with either there but not measured (never counted as zero). The one
  *  gate for fiView's atTargetAge, the walk's balance then (planFigures) and
  *  the path (lib/fire/path.ts). */
-export function projectFrom(plan: FirePlan, view: Pick<FiView, 'savings' | 'assets'>): { assets: number; savings: number; years: number } | null {
-  if (plan.age === null || plan.targetAge === null || !formulasTake(plan)) return null;
+export function projectFrom(plan: PlanCore, view: Pick<FiView, 'savings' | 'assets' | 'stopAge'>): { assets: number; savings: number; years: number } | null {
+  const stop = view.stopAge;
+  if (plan.age === null || stop === null || !formulasTake(plan)) return null;
   const { savings, assets } = view;
   if (savings.source === 'unmeasured' || assets.source === 'unmeasured') return null;
   if (assets.value === null && savings.value === null) return null;
-  return { assets: assets.value ?? 0, savings: savings.value ?? 0, years: Math.max(0, plan.targetAge - plan.age) };
+  return { assets: assets.value ?? 0, savings: savings.value ?? 0, years: Math.max(0, stop - plan.age) };
 }
 
 /** The rule as the engine takes it, starting at `rate` (VPW has none). */
-export function ruleSpec(plan: FirePlan, rate: number = plan.withdrawalRate): RuleSpec {
+export function ruleSpec(plan: PlanCore, rate: number = plan.withdrawalRate): RuleSpec {
   switch (plan.rule) {
     case 'constant':
     case 'percent':
@@ -554,21 +586,21 @@ export function ruleSpec(plan: FirePlan, rate: number = plan.withdrawalRate): Ru
   }
 }
 
-export function allocationOf(plan: FirePlan): SimPlan['allocation'] {
+export function allocationOf(plan: PlanCore): SimPlan['allocation'] {
   return { stocks: plan.stocksPct / 100, bonds: plan.bondsPct / 100, cash: (100 - plan.stocksPct - plan.bondsPct) / 100 };
 }
 
 /** The age the simulated retirement starts at: today's for a start from
- *  today's assets, the target age otherwise (each falls back to the other). */
-export function startAge(plan: FirePlan): number | null {
-  return plan.start === 'assets' ? plan.age ?? plan.targetAge : plan.targetAge ?? plan.age;
+ *  today's assets, the stop otherwise (each falls back to the other). */
+export function startAge(plan: PlanCore, stop: number | null = stopOf(plan)): number | null {
+  return plan.start === 'assets' ? plan.age ?? stop : stop ?? plan.age;
 }
 
 /** How long the simulated retirement runs: the plan's own length, or to
  *  PLAN_TO_AGE from the starting age, or DEFAULT_YEARS without an age. */
-export function planYears(plan: FirePlan): number {
+export function planYears(plan: PlanCore, stop: number | null = stopOf(plan)): number {
   if (plan.horizon !== null) return plan.horizon;
-  const age = startAge(plan);
+  const age = startAge(plan, stop);
   if (age === null) return DEFAULT_YEARS;
   return Math.min(MAX_YEARS, Math.max(10, PLAN_TO_AGE - age));
 }
@@ -582,28 +614,24 @@ export type EnginePlan = {
    *  typed balance). VPW sets its own share and ignores it. */
   rate: number;
   rateFrom: 'plan' | 'spending';
-  /** Income and expenses that could not be placed: no age to place them by,
-   *  or an expense dated before the plan starts. */
-  left: { income: PlanIncome[]; expenses: PlanExpense[] };
-  /** One-off expenses dated after the plan's own end. They are in the engine
-   *  plan like any other, so a longer column of the grid counts them (as it
-   *  counts income starting that late); the plan itself never reaches them. */
-  beyond: PlanExpense[];
 };
 
 export type Missing = 'spending' | 'assets' | 'balance';
 
 /**
- * The plan as the engine runs it, or what it needs first.
+ * The plan as the engine runs it, or what it needs first, at the view's
+ * stop. Its items' parts (income, one-offs, lower costs) are the compile's
+ * (lib/fire/compile.ts), added by planFigures (lib/fire/plan-figures.ts).
  *
  * Starting with the FI number, the first year withdraws the plan's rate of
  * it, which is your spending (grossed up for tax) by construction. Starting
- * from what you have now, or a balance you type, the question is whether
- * what you SPEND would have lasted, so the first year withdraws your
- * spending, grossed up for tax, and the rate is what that is of the balance
- * (a 10% rate is said as 10%, not quietly replaced by the plan's 4%).
+ * from what you have now, a balance you type or your own FI number, the
+ * question is whether what you SPEND would have lasted, so the first year
+ * withdraws your spending, grossed up for tax, and the rate is what that is
+ * of the balance (a 10% rate is said as 10%, not quietly replaced by the
+ * plan's 4%).
  */
-export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing: Missing } {
+export function enginePlan(plan: PlanCore, view: FiView): EnginePlan | { missing: Missing } {
   let startBalance: number | null;
   if (plan.start === 'fi-number') startBalance = view.fiNumber;
   else if (plan.start === 'assets') startBalance = view.assets.value;
@@ -613,32 +641,17 @@ export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing
   }
   let rate = plan.withdrawalRate;
   let rateFrom: EnginePlan['rateFrom'] = 'plan';
-  if (plan.start !== 'fi-number') {
+  // Your own FI number: the rate gives way, never the spending.
+  const typed = plan.start === 'fi-number' && (plan.fiNumber ?? null) !== null;
+  if (plan.start !== 'fi-number' || typed) {
     const spending = view.spending.value;
     if (spending === null) return { missing: 'spending' };
     if (!(startBalance > 0)) return { missing: plan.start === 'assets' ? 'assets' : 'balance' };
     rate = spending / (1 - plan.taxRate) / startBalance;
     rateFrom = 'spending';
   }
-  const years = planYears(plan);
-  const age = startAge(plan);
-  const left: EnginePlan['left'] = { income: [], expenses: [] };
-  const beyond: PlanExpense[] = [];
-  const income: SimPlan['income'] = [];
-  for (const s of plan.income) {
-    if (age === null) left.income.push(s);
-    else income.push({ amount: s.amount, fromYear: Math.max(0, s.fromAge - age), inflationAdjusted: s.inflationAdjusted });
-  }
-  const oneOffs: SimPlan['oneOffs'] = [];
-  for (const e of plan.expenses) {
-    const year = age === null ? -1 : e.atAge - age;
-    if (year < 0) {
-      left.expenses.push(e);
-      continue;
-    }
-    oneOffs.push({ amount: e.amount, year });
-    if (year >= years) beyond.push(e);
-  }
+  const years = planYears(plan, view.stopAge);
+  const age = startAge(plan, view.stopAge);
   return {
     sim: {
       startBalance,
@@ -648,14 +661,12 @@ export function enginePlan(plan: FirePlan, view: FiView): EnginePlan | { missing
       fee: plan.fee,
       taxRate: plan.taxRate,
       rule: ruleSpec(plan, rate),
-      income,
-      oneOffs,
+      income: [],
+      oneOffs: [],
       cashRealReturn: CASH_REAL_RETURN,
     },
     startAge: age,
     rate,
     rateFrom,
-    beyond,
-    left,
   };
 }
