@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { copyDiffParts, diffText, figureChoices, itemChoices, rowText, sameChange } from '@/components/plan-diff';
-import { asEvent, itemFromEvent, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
+import { asEvent, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
 import type { LifeEvent } from '@/lib/fire/events';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
-import { genEvents, rand } from './plan-gen';
+import { genEvents, itemFromEvent, rand } from './plan-gen';
 
 // A copy against your plan, without the page: life events read back from a
 // plan's items (lib/fire/items.ts asEvent), how a copy differs from your plan

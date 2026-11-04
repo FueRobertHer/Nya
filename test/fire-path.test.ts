@@ -362,10 +362,10 @@ describe('generated plans', () => {
   test('the only money in is the windfalls’, each once, at its own age from today', () => {
     let checked = 0;
     for (const { f, events } of cases) {
-      if (!f.events || f.plan.age === null) continue;
+      if (f.plan.age === null) continue;
       const age = f.plan.age;
       const windfalls = events.flatMap((e) => (e.kind === 'windfall' && e.atAge >= age ? [{ year: e.atAge - age, amount: e.amount }] : []));
-      expect(f.events.walk.moneyIn).toEqual(windfalls);
+      expect(f.events?.walk.moneyIn ?? []).toEqual(windfalls);
       checked += windfalls.length;
     }
     expect(checked).toBeGreaterThan(30);

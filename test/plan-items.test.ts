@@ -6,7 +6,6 @@ import {
   fixedEdges,
   incomeOf,
   isPlanItem,
-  itemFromEvent,
   itemFromExpense,
   itemFromIncome,
   itemRules,
@@ -15,11 +14,11 @@ import {
 } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { LifeEvent } from '@/lib/fire/events';
-import { genEvents, genPlan, rand } from './plan-gen';
+import { genEvents, genPlan, itemFromEvent, rand } from './plan-gen';
 
 // A plan's items (lib/fire/items.ts): the one shape, its checks, the upgrades
-// from version 1 and life events, the version 1 views, and the rules between
-// items.
+// from version 1, the version 1 views, and the rules between items. Also the
+// life events test/plan-gen.ts turns into items for the tests that use them.
 
 const age = (a: number, offset = 0) => ({ anchor: { at: 'age' as const, age: a }, offset });
 const base = (over: Partial<PlanItem>): PlanItem => ({
