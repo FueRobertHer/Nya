@@ -74,12 +74,12 @@ describe('a restore', () => {
     return 'passed';
   };
 
-  test('writes version 1, and refuses version 2, the Plan’s and a saved plan’s', () => {
+  test('writes the Plan in version 1, refusing version 2; a saved plan in either, as a newer release’s download holds one', () => {
     expect(refused({ part: 'store:fire-plan', records: [{ value: v1 }] })).toBe('passed');
     expect(refused({ part: 'store:fire-plan', records: [{ value: v2 }] })).toContain('only a newer version of Nya can save');
     const saved = (plan: unknown) => ({ version: 1, plan, savings: 30_000, currency: 'USD', inflation: 0.025, day: '2026-10-01', savedAt: '2026-10-01T12:00:00.000Z', rev: 'r1' });
     expect(refused({ part: 'store:fire-plan-saved', records: [{ value: saved(v1) }] })).toBe('passed');
-    expect(refused({ part: 'store:fire-plan-saved', records: [{ value: saved(v2) }] })).toContain('only a newer version of Nya can save');
+    expect(refused({ part: 'store:fire-plan-saved', records: [{ value: saved(v2) }] })).toBe('passed');
   });
 });
 

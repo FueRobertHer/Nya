@@ -17,9 +17,12 @@
 // any plan any release saved: isFirePlan checks the shape and types, not
 // today's ranges, and upgradePlan fills in a field added since. The ranges are
 // checked when a plan is saved (parsePlan, in the route).
+//
+// Once a newer release has made the plans copies (`fire-plans`,
+// lib/plan-copies.ts), the plan is read from there and this store is left
+// as it was: readPlanAnswer there says which.
 
 import { defineValueStore } from './repo';
-import { eager } from './eager';
 import type { Ctx } from './containers';
 import { isStoredPlan, upgradeStoredPlan, type StoredPlan } from './fire/plan-v2';
 import { hasTypedAmounts, isPlanCurrencyRecord, recordedCurrency, type PlanCurrencyRecord } from './fire/plan-currency';
@@ -74,13 +77,3 @@ export function planAnswer(plan: StoredPlan | null, record: PlanCurrencyRecord |
   return { plan, currency: recordedCurrency(plan, record) };
 }
 
-/** The saved plan and its currency, as planAnswer says them: the two reads
- *  begun together, so they share a round trip. A plan that can't be read
- *  throws (StoredDataUnreadableError), as the plan store does. */
-export async function readPlanAnswer(ctx: Ctx) {
-  const plan = eager(firePlanStore.get(ctx));
-  const record = eager(readCurrencyRecord(ctx));
-  const stored = await plan;
-  const { record: there, problem } = await record;
-  return planAnswer(stored, there, problem);
-}

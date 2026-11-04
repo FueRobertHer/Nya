@@ -94,6 +94,7 @@ const { getGoals } = await import('@/lib/goals');
 const { loadBudgets } = await import('@/lib/budget-store');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { firePlanStore } = await import('@/lib/fire-plan');
+const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { readStoredTxns } = await import('@/lib/transactions');
 const { secretsStore } = await import('@/lib/connectors/store');
 const { demoTarget } = await import('@/lib/demo-seed/guard');
@@ -382,6 +383,15 @@ describe('seeding', () => {
     await expect(seedDemoAccount(ctx, 'user_sam', demoProfile('Sam', TODAY), TODAY, quick)).rejects.toThrow(SeedRefused);
     expect(removed).toEqual([]);
     expect((await getItems(ctx)).map((i) => i.institution_name)).toEqual(['Chime']);
+  });
+
+  test('seeds the plan before copies: plans a newer version made go with the rest, and none is made, so the plan seeded is the one read', async () => {
+    const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
+    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' });
+    await planFactsStore.set(TEST_CTX, { version: 1, main: MAIN_ID, ...factsOf(DEFAULT_PLAN) });
+    await seedDemoAccount(TEST_CTX, 'user_alex', demoProfile('Alex', TODAY), TODAY, quick);
+    expect([await fake.type(`test:c:${TEST_CTX.container}:fire-plans`), await fake.type(`test:c:${TEST_CTX.container}:plan-facts`)]).toEqual(['none', 'none']);
+    expect(await firePlanStore.get(TEST_CTX)).not.toBeNull();
   });
 
   test('run again, it resets to the same account rather than adding to it', async () => {

@@ -4,6 +4,7 @@ import { storeFailure } from '@/lib/store-failure';
 import { planScenariosStore } from '@/lib/plan-scenarios';
 import { MAX_PLAN_SCENARIOS, nameTaken, parseScenarioDraft, type PlanScenario } from '@/lib/fire/scenarios';
 import { UnreadableEntriesError } from '@/lib/repo';
+import { firePlansStore, readCopies } from '@/lib/plan-copies';
 
 // The Plan scenarios the person saved (lib/fire/scenarios.ts), on the
 // storage seam (lib/plan-scenarios.ts). Only what each changes from the Plan
@@ -39,6 +40,13 @@ import { UnreadableEntriesError } from '@/lib/repo';
 // Scenarios ride on no cached payload, so nothing is cleared. Errors as on
 // the storage seam (lib/store-failure.ts): 503 with no container, 409 for one
 // that can't be read, 413 for one too large, else 500.
+//
+// Once a newer release has made the plans copies (`fire-plans`,
+// lib/plan-copies.ts), the scenarios became plans of their own: GET answers
+// no scenario, names every plan but yours among the ids a newer version
+// saved (so the release before's page says they are kept), and answers
+// `copies`, { names, count, main: { name, missing } }, for this one's; every
+// save is refused (409), since the scenarios aren't read any more.
 
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
@@ -68,9 +76,20 @@ async function nameUsed(ctx: Awaited<ReturnType<typeof dataCtx>>, name: string, 
 
 const taken = () => NextResponse.json({ error: 'Another scenario has that name: choose another, so they can be told apart.' }, { status: 409 });
 
+/** A save once the plans are copies: the page shows scenarios no more. */
+async function copiesMade(ctx: Awaited<ReturnType<typeof dataCtx>>): Promise<NextResponse | null> {
+  if ((await firePlansStore.count(ctx)) === 0) return null;
+  return NextResponse.json({ error: 'Your plan changed: load the page again', stale: true }, { status: 409 });
+}
+
 export async function GET() {
   try {
     const ctx = await dataCtx();
+    const copies = await readCopies(ctx);
+    if (copies) {
+      const { ids, names, main } = copies;
+      return NextResponse.json({ scenarios: [], unreadable_ids: [], unrecognised_ids: ids, copies: { names, count: ids.length, main } }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const { entries, unreadable, unrecognised } = await planScenariosStore.getAllReport(ctx);
     const scenarios = [...entries].map(([id, s]) => ({ id, ...s })).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     return NextResponse.json({ scenarios, unreadable_ids: unreadable, unrecognised_ids: unrecognised }, { headers: { 'Cache-Control': 'no-store' } });
@@ -89,6 +108,8 @@ export async function POST(req: Request) {
   const now = Date.now();
   try {
     const ctx = await dataCtx(now);
+    const made = await copiesMade(ctx);
+    if (made) return made;
     // Every stored entry counts, readable or not.
     if ((await planScenariosStore.count(ctx)) >= MAX_PLAN_SCENARIOS) {
       return NextResponse.json({ error: `At most ${MAX_PLAN_SCENARIOS} scenarios can be saved: delete one first` }, { status: 409 });
@@ -142,6 +163,8 @@ export async function PUT(req: Request) {
   const rev = crypto.randomUUID();
   try {
     const ctx = await dataCtx(now);
+    const made = await copiesMade(ctx);
+    if (made) return made;
     const usedElsewhere = await nameUsed(ctx, parsed.ok.name, id);
     let written: PlanScenario | null;
     try {
@@ -179,6 +202,8 @@ export async function DELETE(req: Request) {
   if (b.unreadable !== undefined && typeof b.unreadable !== 'boolean') return bad('unreadable is true or false');
   try {
     const ctx = await dataCtx();
+    const made = await copiesMade(ctx);
+    if (made) return made;
     try {
       await planScenariosStore.get(ctx, b.id);
     } catch (err) {

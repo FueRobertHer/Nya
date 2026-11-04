@@ -28,10 +28,12 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
 //     and its export and restore carry them;
-//   - its Plan (test/fixtures/release-before/fire) reads every plan, saved
-//     plan, scenario and currency record this release writes: E1 reads
-//     version 2 and edits through version 2's views, and writes version 1
-//     only, which a download keeps.
+//   - its Plan (test/fixtures/release-before/fire, E1's readers) reads every
+//     plan, saved plan, scenario and currency record this release writes,
+//     every plan GET answers from a copy's entry, and nothing this release
+//     writes makes the plans as copies (test/release-before-copies.test.ts,
+//     through the routes): this release reads them, and writes version 1
+//     only where E1 reads, which a download keeps.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -136,31 +138,49 @@ describe('the release before’s own code', () => {
     // From the integration branch this one merges into (c558fcf; the same
     // blobs as at 18c6ffd, where this branch began).
     const blobs: Record<string, string> = {
-      'crypto.ts': '52cd23e1bb8c9cf1c37a8aaf1e59e4d5055d71a2',
-      'containers.ts': '0c547c66695f11ba96aac4914364189c551a3fce',
-      'export.ts': '5906750754885798848a4dff583f00219bacb519',
-      'restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
-      'key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
-      // The plan's readers and arithmetic as at 5d366bd0, where E1 began
-      // (test/release-before-plan.test.ts; fire/inputs.ts is a type stub).
-      'fire/plan.ts': '77d77ae84e01d143a866b7a8831bc0304c9bf220',
-      'fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
-      'fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
-      'fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
-      'fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
-      'fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
-      'fire/events.ts': '9e334a6c3967f4a3e5390b2315b39d6a5bf8daff',
-      'fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
-      'fire/saved-plan.ts': 'd920ab9d4e4b8a266a600a3575945ba9e391a0e9',
-      'fire/plan-currency.ts': 'e9829d2c641a036f1a04a6dd146e3628aff814db',
-      'fire/plan-figures.ts': 'd3f8fb004fcd0c6af9ba720e283c844c4e179121',
-      'fire/path.ts': '3bfa79634c981f2e3dda76a77d8bc4a230a05ace',
-      'manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
-      'format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
-      'local-date.ts': '23883717b80397910e368084e865ca84f367f988',
+      'release-before/crypto.ts': '52cd23e1bb8c9cf1c37a8aaf1e59e4d5055d71a2',
+      'release-before/containers.ts': '0c547c66695f11ba96aac4914364189c551a3fce',
+      'release-before/export.ts': '5906750754885798848a4dff583f00219bacb519',
+      'release-before/restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
+      'release-before/key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
+      // The Plan's readers as at 8b430d55, E1 merged (fire/inputs.ts and
+      // fire/compile.ts are type stubs).
+      'release-before/fire/plan.ts': '96c25e73aef95782831f612c8a029216c9638620',
+      'release-before/fire/plan-v2.ts': '2b7b4875b972d81f01532d18139fc46350890cbe',
+      'release-before/fire/items.ts': '38d544424f9e917e7224937d3330dac717305e28',
+      'release-before/fire/events.ts': 'ead1b143150729a4406d6204d2b34003089c0e16',
+      'release-before/fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
+      'release-before/fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
+      'release-before/fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
+      'release-before/fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
+      'release-before/fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
+      'release-before/fire/saved-plan.ts': '89518d6f732c6c45ff6227c74f3be19fb3ca2c7c',
+      'release-before/fire/plan-currency.ts': 'a29d181ea65cf6963f2192c9e36b9705924fd8fc',
+      'release-before/fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
+      'release-before/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
+      'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
+      'release-before/local-date.ts': '23883717b80397910e368084e865ca84f367f988',
+      // The Plan's arithmetic from before D15, as at 5d366bd0, where E1
+      // began: what D15's switch off is held to (test/plan-figures-items.test.ts
+      // and the rest), until the switch goes. fire/inputs.ts is a type stub.
+      'before-d15/fire/plan.ts': '77d77ae84e01d143a866b7a8831bc0304c9bf220',
+      'before-d15/fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
+      'before-d15/fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
+      'before-d15/fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
+      'before-d15/fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
+      'before-d15/fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
+      'before-d15/fire/events.ts': '9e334a6c3967f4a3e5390b2315b39d6a5bf8daff',
+      'before-d15/fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
+      'before-d15/fire/saved-plan.ts': 'd920ab9d4e4b8a266a600a3575945ba9e391a0e9',
+      'before-d15/fire/plan-currency.ts': 'e9829d2c641a036f1a04a6dd146e3628aff814db',
+      'before-d15/fire/plan-figures.ts': 'd3f8fb004fcd0c6af9ba720e283c844c4e179121',
+      'before-d15/fire/path.ts': '3bfa79634c981f2e3dda76a77d8bc4a230a05ace',
+      'before-d15/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
+      'before-d15/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
+      'before-d15/local-date.ts': '23883717b80397910e368084e865ca84f367f988',
     };
     for (const [file, blob] of Object.entries(blobs)) {
-      const bytes = readFileSync(join(import.meta.dir, 'fixtures', 'release-before', file));
+      const bytes = readFileSync(join(import.meta.dir, 'fixtures', file));
       expect([file, createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')]).toEqual([file, blob]);
     }
   });
@@ -370,7 +390,7 @@ const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency'
 const { NO_CHANGES, recordSave } = await import('@/lib/fire/scenarios');
 const { genPlan, rand } = await import('./plan-gen');
 
-describe('the Plan, as E1 writes it', () => {
+describe('the Plan, as this release writes it where E1 reads', () => {
   /** A version 1 plan, edited as the cards edit it (an income dropped and
    *  one added, every one-off's amount changed, a figure typed), sent as a
    *  save sends it. Null where the edit makes more than version 1 takes. */
@@ -387,7 +407,7 @@ describe('the Plan, as E1 writes it', () => {
   };
   const plans = Array.from({ length: 300 }, (_, i) => edited(9100 + i));
 
-  test('its reader takes every plan E1 saves, as it is', () => {
+  test('its reader takes every plan this release saves, as it is', () => {
     let saved = 0;
     for (const { sent } of plans) {
       if (!sent) continue;
@@ -399,7 +419,7 @@ describe('the Plan, as E1 writes it', () => {
     expect(saved).toBeGreaterThan(250);
   });
 
-  test('its saved plan, scenario and currency record readers take what E1 writes beside it', () => {
+  test('its saved plan, scenario and currency record readers take what this release writes beside it', () => {
     for (const [i, { before, sent }] of plans.entries()) {
       if (!sent) continue;
       const saved = { version: 1, plan: sent, savings: 10_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: `r${i}` };

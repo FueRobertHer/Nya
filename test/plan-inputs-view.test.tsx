@@ -1218,3 +1218,53 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
     }
   });
 });
+
+describe('what a save sends once your plans are copies', () => {
+  const puts = (calls: Call[]) => calls.filter((c) => c.method === 'PUT' && c.url === '/api/fire-plan');
+  const facts = (p: { age: number | null; includeCash: boolean; planFunding: unknown[]; method: string }, partnerAge: number | null = null) => ({
+    age: p.age,
+    partnerAge,
+    includeCash: p.includeCash,
+    planFunding: p.planFunding,
+    method: p.method,
+  });
+  const saveTarget = async (tab: Awaited<ReturnType<typeof mount>>, age: string) => {
+    await press(tab.row('Ages'));
+    const ages = tab.dialog()!;
+    await act(async () => type(ages.findAll((e) => e.tagName === 'INPUT')[1], age));
+    await press(button(ages, 'Save'));
+    await settle(400);
+  };
+
+  test('the facts of the plan the page holds, never those of a save’s answer: an age saved elsewhere is never sent back', async () => {
+    let n = 0;
+    const calls = serve({
+      plan: { plan: PLAN, currency: null, updated_at: 'u1' },
+      // The first save's answer holds an age another device saved (50),
+      // which the page doesn't show.
+      answers: { 'PUT /api/fire-plan': (c) => [200, { plan: ++n === 1 ? { ...c.body.plan, age: 50 } : c.body.plan, currency: null, updated_at: `u${n + 1}` }] },
+    });
+    const tab = await mount();
+    await saveTarget(tab, '58');
+    await saveTarget(tab, '59');
+    const sent = puts(calls).map((c) => [c.body.plan.targetAge, c.body.plan.age, c.body.facts_were]);
+    expect(sent).toEqual([
+      [58, 40, facts(PLAN)],
+      [59, 40, facts(PLAN)],
+    ]);
+    await tab.unmount();
+  });
+
+  test('a version 2 entry is saved as version 2; a plan before copies as version 1', async () => {
+    for (const [answer, version] of [
+      [{ plan: planOf(PLAN), currency: null, updated_at: 'u1' }, 2],
+      [{ plan: PLAN, currency: null }, 1],
+    ] as const) {
+      const calls = serve({ plan: answer, answers: { 'PUT /api/fire-plan': (c) => [200, { ...answer, plan: c.body.plan }] } });
+      const tab = await mount();
+      await saveTarget(tab, '58');
+      expect(puts(calls).map((c) => c.body.plan.version)).toEqual([version]);
+      await tab.unmount();
+    }
+  });
+});

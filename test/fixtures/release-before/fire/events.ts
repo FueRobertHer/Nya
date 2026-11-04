@@ -37,6 +37,9 @@
 // and is not also a one-off. One that starts later stays in the simulation,
 // to the longest plan the engine runs, so the grid's longer columns count it.
 //
+// Where each counts is worked out with a plan's items (lib/fire/compile.ts
+// compileEvents), which life events are in memory (lib/fire/items.ts).
+//
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import { LIMITS } from './plan';
@@ -262,145 +265,6 @@ export type CompiledEvents = {
   sim: { oneOffs: OneOffExpense[]; income: OtherIncome[]; lowerSpending: LowerSpending[] };
   notes: EventNote[];
 };
-
-/**
- * Where each event counts: in the FI walk from today (`age`), in the
- * simulation from its start age (`startAge`) for `years`. Either age may be
- * unknown; then that part is left out, and noted.
- */
-export function compileEvents(events: readonly LifeEvent[], at: { age: number | null; startAge: number | null; years: number }): CompiledEvents {
-  const out: CompiledEvents = { walk: { moneyIn: [], costs: [], spans: [] }, lasting: [], later: [], sim: { oneOffs: [], income: [], lowerSpending: [] }, notes: [] };
-  const { age: a, startAge: S, years: Y } = at;
-  for (const e of events) {
-    const noted = new Set<EventPart>();
-    const note = (part: EventPart) => {
-      if (noted.has(part)) return;
-      noted.add(part);
-      out.notes.push({ id: e.id, part });
-    };
-    if (a === null && S === null) {
-      note('no-age');
-      continue;
-    }
-    // A change that happens once, before today, is in today's figures.
-    const start = e.kind === 'car' ? Math.max(...carAges(e)) : e.kind === 'raise' ? e.fromAge : e.kind === 'windfall' || e.kind === 'loan-end' ? e.atAge : null;
-    if (a !== null && start !== null && start < a) {
-      note('already');
-      continue;
-    }
-    // Without your age, a raise (only ever in the walk), or money in or cars
-    // all before the start age (which the simulation doesn't reach), count
-    // nowhere.
-    const walkOnly = e.kind === 'raise' || (S !== null && start !== null && start < S);
-    if (a === null) note(walkOnly ? 'no-today-walk' : 'no-today');
-
-    /** A cost paid once, at age x. */
-    const cost = (x: number, amount: number) => {
-      if (a !== null) {
-        if (x >= a) out.walk.costs.push({ year: x - a, amount });
-        else note('past');
-      }
-      if (S !== null && x >= S) {
-        out.sim.oneOffs.push({ amount, year: x - S });
-        if (x - S >= Y) note('after-end');
-      }
-    };
-    /** Money in once, at age x: in the walk before that year's costs; in the
-     *  simulation as income for that one year, which the engine invests
-     *  when the year doesn't need it (never a lower cost). */
-    const moneyIn = (x: number, amount: number) => {
-      if (a !== null) {
-        if (x >= a) out.walk.moneyIn.push({ year: x - a, amount });
-        else note('past');
-      }
-      if (S !== null && x >= S) {
-        const y = x - S;
-        if (y >= Y) note('after-end');
-        if (y < MAX_YEARS) out.sim.income.push({ amount, fromYear: y, toYear: y + 1, inflationAdjusted: true });
-      }
-    };
-    /** A change in yearly spending over ages [x0, x1), x1 null for good. */
-    const change = (x0: number, x1: number | null, d: number) => {
-      if (a !== null) {
-        if (x0 < a) note('past');
-        const from = Math.max(x0, a) - a;
-        const to = x1 === null ? null : x1 - a;
-        if (to === null || to > from) out.walk.spans.push({ from, to, delta: -d });
-      }
-      if (S === null) return;
-      if (x1 === null) {
-        if (x0 <= S) {
-          out.lasting.push({ id: e.id, amount: d });
-          return;
-        }
-        // To the longest plan the engine runs, so a longer grid column
-        // counts it as the plan's own length does.
-        const y0 = x0 - S;
-        if (y0 >= Y) note('after-end');
-        out.later.push({ id: e.id, amount: d, fromAge: x0 });
-        if (d > 0) for (let y = y0; y < MAX_YEARS; y++) out.sim.oneOffs.push({ amount: d, year: y });
-        else if (y0 < MAX_YEARS) out.sim.lowerSpending.push({ amount: -d, fromYear: y0 });
-        return;
-      }
-      const y0 = Math.max(x0, S) - S;
-      const y1 = Math.min(x1 - S, MAX_YEARS);
-      if (y1 <= y0) return;
-      if (y1 > Y) note('after-end');
-      if (d > 0) for (let y = y0; y < y1; y++) out.sim.oneOffs.push({ amount: d, year: y });
-      else out.sim.lowerSpending.push({ amount: -d, fromYear: y0, toYear: y1 });
-    };
-
-    switch (e.kind) {
-      case 'house':
-        if (e.cost > 0) cost(e.atAge, e.cost);
-        if (e.yearly !== 0) change(e.atAge, e.years === null ? null : e.atAge + e.years, e.yearly);
-        break;
-      case 'child':
-        change(e.fromAge, e.fromAge + e.years, e.yearly);
-        break;
-      case 'spending':
-        change(e.fromAge, e.years === null ? null : e.fromAge + e.years, e.yearly);
-        break;
-      case 'sabbatical': {
-        const x1 = e.fromAge + e.years;
-        if (a !== null) {
-          if (e.fromAge < a) note('past');
-          const from = Math.max(e.fromAge, a) - a;
-          if (x1 - a > from) out.walk.spans.push({ from, to: x1 - a, delta: -e.savingsLost });
-        }
-        if (S !== null && x1 > S) note('retired');
-        break;
-      }
-      case 'part-time': {
-        if (S === null) break;
-        if (e.fromAge < S) note('before-start');
-        const y0 = Math.max(e.fromAge, S) - S;
-        const y1 = Math.min(e.toAge - S, MAX_YEARS);
-        if (y1 > y0) {
-          out.sim.income.push({ amount: e.yearly, fromYear: y0, toYear: y1, inflationAdjusted: true });
-          if (y1 > Y) note('after-end');
-        }
-        break;
-      }
-      case 'car':
-        for (const x of carAges(e)) cost(x, e.cost);
-        break;
-      case 'windfall':
-        moneyIn(e.atAge, e.amount);
-        break;
-      case 'loan-end':
-        change(e.atAge, null, -e.yearly);
-        break;
-      case 'raise':
-        // More saved from its age, for good: the walk saves until FI. Never
-        // in the simulation, which spends (its words say so, wherever the
-        // start age is).
-        if (a !== null) out.walk.spans.push({ from: e.fromAge - a, to: null, delta: e.yearly });
-        break;
-    }
-  }
-  return out;
-}
 
 export const hasWalk = (w: WalkChanges) => w.moneyIn.length > 0 || w.costs.length > 0 || w.spans.length > 0;
 

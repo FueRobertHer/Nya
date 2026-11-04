@@ -19,7 +19,7 @@ import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import PlanCompare from './PlanCompare';
 import type { CompareColumn, ColumnOutcome } from './plan-compare';
-import type { ScenarioClient, ScenarioEntry, ScenariosState } from './plan-scenarios';
+import { copiesLines, type ScenarioClient, type ScenarioEntry, type ScenariosState } from './plan-scenarios';
 import { currencyText, eventCountsText, eventText, EVENT_PART_TEXT, laterText, resolveErrorText, retirementText, shortText, changeText, SETTING_NAMES } from './plan-scenario-text';
 import {
   NO_CHANGES,
@@ -389,13 +389,25 @@ export function ScenariosSheet({
       </>
     ) : (
       <>
-        <button className="btn secondary" ref={keep('new')} onClick={() => go({ kind: 'new' })} disabled={!changeable || list.length >= MAX_PLAN_SCENARIOS}>
-          New scenario
-        </button>
-        <p className="panel-note">
-          What-ifs beside your plan. Each keeps only what it changes (a stop age, a spending figure, a life event) and follows your plan for the rest, so a change
-          to your plan reaches every scenario.
-        </p>
+        {/* Once a newer version of Nya has made your plans copies, it shows
+            them, and every save here is refused: they are named instead. */}
+        {state.copies ? (
+          copiesLines(state.copies).map((line) => (
+            <p key={line} className="panel-note">
+              {line}
+            </p>
+          ))
+        ) : (
+          <>
+            <button className="btn secondary" ref={keep('new')} onClick={() => go({ kind: 'new' })} disabled={!changeable || list.length >= MAX_PLAN_SCENARIOS}>
+              New scenario
+            </button>
+            <p className="panel-note">
+              What-ifs beside your plan. Each keeps only what it changes (a stop age, a spending figure, a life event) and follows your plan for the rest, so a
+              change to your plan reaches every scenario.
+            </p>
+          </>
+        )}
         {whyNot && <p className="panel-note">{whyNot}</p>}
         {state.status === 'loading' && <ScenarioRowsSkeleton count={2} status="Loading your scenarios" />}
         {state.status === 'error' && (
@@ -408,7 +420,7 @@ export function ScenariosSheet({
             </button>
           </>
         )}
-        {ready && list.length === 0 && state.unreadable.length === 0 && state.unrecognised.length === 0 && (
+        {ready && !state.copies && list.length === 0 && state.unreadable.length === 0 && state.unrecognised.length === 0 && (
           <p className="empty-note">No scenarios yet. Make one to try stopping work earlier, spending more, or a life event, without changing your plan.</p>
         )}
         {ready && list.length > 0 && (
@@ -468,7 +480,7 @@ export function ScenariosSheet({
             })}
           </div>
         )}
-        {ready && list.length >= MAX_PLAN_SCENARIOS && <p className="panel-note">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one to make another.</p>}
+        {ready && !state.copies && list.length >= MAX_PLAN_SCENARIOS && <p className="panel-note">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one to make another.</p>}
         {state.unreadable.map((id) => (
           <div key={id} className="plan-row">
             <Notice level="critical">
@@ -479,7 +491,7 @@ export function ScenariosSheet({
             </button>
           </div>
         ))}
-        {state.unrecognised.length > 0 && (
+        {!state.copies && state.unrecognised.length > 0 && (
           <p className="panel-note">
             {state.unrecognised.length === 1 ? 'A scenario was' : `${state.unrecognised.length} scenarios were`} saved by a newer version of Nya: kept, and not shown here.
           </p>

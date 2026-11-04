@@ -43,6 +43,7 @@ import './lifecycle';
 import './manual-txns';
 import './migration/store';
 import './nightly-run-limit';
+import './plan-copies';
 import './plan-scenarios';
 import './planned-store';
 import './rate-limit';

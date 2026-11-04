@@ -17,6 +17,13 @@
 // loadBudgets), and a save that leaves no budget an empty copy of them by
 // name. Those can't be judged by their name, so they are read: one that holds
 // no budget is nothing, one that holds any, or can't be read, is budgets.
+//
+// YOUR PLAN AS A COPY. Once a newer release has made the plans copies
+// (lib/plan-copies.ts), an account with only its plan holds one entry of
+// `fire-plans`: a setting, as `fire-plan` is, whatever its id, and a restore
+// replaces it (lib/user-restore/commit.ts clearPlans), damaged or not. More
+// than one are copies of your plan, which the person made; one a newer
+// release wrote, which this one can't read, is data Nya doesn't show.
 
 import type { Ctx } from '../containers';
 import { containerKeys } from '../account-deletion';
@@ -26,6 +33,7 @@ import { ANY_CONNECTOR } from '../connectors/types';
 import { classOfKey } from './classes';
 import { budgetSetStore } from '../budget-store';
 import { getBudgetsReport } from '../budgets';
+import { firePlansStore } from '../plan-copies';
 
 /** What a scan found, grouped as the person would name it. */
 export type AccountScan = {
@@ -86,6 +94,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['planned bills and income', ['planned-items']],
   ['runway scenarios you saved', ['runway-scenarios']],
   ['plan scenarios you saved', ['plan-scenarios']],
+  ['copies of your plan', ['fire-plans']],
   ['the plan you saved as your plan', ['fire-plan-saved']],
   ['shared expenses', ['expense-people', 'expense-shares', 'expense-ious', 'expense-payments', 'expense-dismissed']],
   ['changes made with API tokens', ['api-changes']],
@@ -110,6 +119,15 @@ async function holdsNoBudget(ctx: Ctx, family: string): Promise<boolean> {
   return false;
 }
 
+/** What the account's plans are (see YOUR PLAN AS A COPY): its plan alone
+ *  ('setting'), one this version can't recognise ('unseen'), or copies
+ *  ('data'). */
+async function plansAre(ctx: Ctx): Promise<'setting' | 'unseen' | 'data'> {
+  const { entries, unreadable, unrecognised } = await firePlansStore.getAllReport(ctx);
+  if (entries.size + unreadable.length + unrecognised.length > 1) return 'data';
+  return unrecognised.length > 0 ? 'unseen' : 'setting';
+}
+
 /** Scans the account's container (see the header). Strict: a failure to scan
  *  or read throws, never reads as empty. */
 export async function scanAccount(ctx: Ctx): Promise<AccountScan> {
@@ -132,6 +150,18 @@ export async function scanAccount(ctx: Ctx): Promise<AccountScan> {
       continue;
     }
     if (family && (await holdsNoBudget(ctx, family))) continue;
+    if (family === firePlansStore.name) {
+      const are = await plansAre(ctx);
+      if (are === 'setting') {
+        settings.add(family);
+        continue;
+      }
+      if (are === 'unseen') {
+        found.add(UNSEEN);
+        unseen = true;
+        continue;
+      }
+    }
     const words = family ? GROUP_OF.get(family) : undefined;
     if (words) found.add(words);
     else {

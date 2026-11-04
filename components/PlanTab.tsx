@@ -113,6 +113,7 @@ import {
   type PlanIncome,
 } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, planOf, toStored, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
+import { factsOf, type Facts } from '@/lib/fire/copies';
 import { eventItems, expensesOf, incomeOf } from '@/lib/fire/items';
 import type { Count, ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
@@ -322,6 +323,17 @@ export default function PlanTab({
   // And the currency each save sends (set below, once the tab knows it).
   const [confirmed, setConfirmed] = useState<{ plan: StoredPlan | null; answer: CurrencyAnswer }>({ plan: null, answer: NO_ANSWER });
   const sendCurrency = useRef<string | null>(null);
+  // The facts of the plan this page holds (lib/fire/copies.ts), which each
+  // save sends as `facts_were`, so once your plans are copies a save writes
+  // only the facts the person changed over what every plan shares
+  // (app/api/fire-plan): taken from a load's answer, and from the plan a
+  // save sent once it is saved, never from a save's answer, since the store
+  // keeps the plan it sent and an age another device saved since isn't on
+  // the page. And whether the plan read is a copy's entry (its answer says
+  // when it was changed), whose version a save keeps.
+  const factsWere = useRef<Facts | null>(null);
+  const isCopy = useRef(false);
+  const answeringSave = useRef(false);
   // The plan loads through the shared copy, for the workplace plans shown
   // now; the store below is made once, so both are read through refs.
   const planInputs = useMemo(() => sharedInputs ?? createPlanInputsStore(), [sharedInputs]);
@@ -342,8 +354,14 @@ export default function PlanTab({
         // A save refused for what is stored now (its currency changed on
         // another device, say) says why.
         showRefusal: true,
-        extra: () => ({ currency: sendCurrency.current }),
-        onAnswer: (data) => setConfirmed({ plan: isStoredPlan(data.plan) ? data.plan : null, answer: readCurrencyAnswer(data) }),
+        extra: () => ({ currency: sendCurrency.current, ...(factsWere.current ? { facts_were: factsWere.current } : {}) }),
+        onAnswer: (data) => {
+          const plan = isStoredPlan(data.plan) ? data.plan : null;
+          isCopy.current = typeof data.updated_at === 'string';
+          if (answeringSave.current) answeringSave.current = false;
+          else factsWere.current = plan ? factsOf(plan) : null;
+          setConfirmed({ plan, answer: readCurrencyAnswer(data) });
+        },
         // Always asked for: nothing refuses a save made from a plan another
         // device changed since, so the tab never edits from a kept copy.
         read: () => inputsRef.current.load(plansRef.current, { force: true }),
@@ -358,6 +376,8 @@ export default function PlanTab({
               end = copy.beginSave();
             },
             ended: (answer: Record<string, unknown> | null) => {
+              // A save's answer, which onAnswer is handed next.
+              if (answer) answeringSave.current = true;
               if (answer) copy?.adopt(answer);
               end?.();
               end = copy = null;
@@ -608,16 +628,19 @@ export default function PlanTab({
   // Every save of the Plan itself, through its store, with the currency its
   // figures are in: never a first typed amount without one.
   const savePlanIn = async (next: FirePlanV2): Promise<boolean | string> => {
-    // Sent as version 1, what this release saves; what only version 2
-    // holds is refused here, with why.
-    const sent = toStored(next, 1);
+    // Sent as version 1, what this release saves to `fire-plan`; what only
+    // version 2 holds is refused here, with why. A copy's entry stays the
+    // version it was read as (a newer release made it).
+    const sent = toStored(next, isCopy.current && confirmed.plan?.version === 2 ? 2 : 1);
     if ('error' in sent) return sent.error;
     if (sendCurrency.current === null && currencyState.kind === 'follows' && hasTypedAmounts(sent.plan)) {
       return waitingOnAccounts
         ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
         : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.';
     }
-    return store.save(sent.plan);
+    const saved = await store.save(sent.plan);
+    if (saved) factsWere.current = factsOf(sent.plan);
+    return saved;
   };
 
   const measured = measuredInputs(inputs);

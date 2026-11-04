@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, fiView, repairPlan, type FirePlan, type FiView, type Measured, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
-import * as old from './fixtures/release-before/fire/plan';
+import * as old from './fixtures/before-d15/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { lastChange, walkToFi, type LifeEvent } from '@/lib/fire/events';
 import { compileEvents } from '@/lib/fire/compile';

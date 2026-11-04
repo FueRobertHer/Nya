@@ -23,7 +23,7 @@ import { scenarioOutcome } from './PlanScenarios';
 import { chevron, RIGHT } from './ActivityBar';
 import { EVENT_PART_TEXT } from './plan-scenario-text';
 import { askAgesText } from './plan-text';
-import type { ScenarioClient, ScenariosState } from './plan-scenarios';
+import { copiesLines, type ScenarioClient, type ScenariosState } from './plan-scenarios';
 import { WHAT_IF_TEMPLATES, fiWhen, previewText, scenarioRowText, whatIfName, withDraft, type FiWhen, type WhatIfTemplate } from './plan-what-if';
 import { MAX_PLAN_SCENARIOS, NO_CHANGES, resolveScenario, type ScenarioChanges } from '@/lib/fire/scenarios';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -169,7 +169,9 @@ export function WhatIfCard({
   const noAge = base.age === null;
   // A scenario's amounts are in your plan's currency: without one, none.
   const noCurrency = planCurrency === null;
-  const canTry = editable && canOpen && ready && !state.saving && !full && !noAge && !noCurrency;
+  // Once your plans are copies, a newer version of Nya makes them.
+  const copies = state.copies;
+  const canTry = editable && canOpen && ready && !copies && !state.saving && !full && !noAge && !noCurrency;
   const plan = fiWhen(baseFigures);
 
   const tryIt = async (event: LifeEvent): Promise<boolean | string> => {
@@ -219,11 +221,20 @@ export function WhatIfCard({
             </h3>
           </div>
           <div className="stack">
-            <p className="helper">Try a life choice with your own figures. It becomes a scenario, and your plan stays as it is.</p>
+            {copies ? (
+              copiesLines(copies).map((line) => (
+                <p key={line} className="helper">
+                  {line}
+                </p>
+              ))
+            ) : (
+              <p className="helper">Try a life choice with your own figures. It becomes a scenario, and your plan stays as it is.</p>
+            )}
             {/* Why the choices are off, read before them (since the screen
                 review): your age first, with the same ask as the answer's,
-                opening the same Ages sheet. */}
-            {noAge && (
+                opening the same Ages sheet. Not once your plans are copies,
+                which is why then. */}
+            {!copies && noAge && (
               <div>
                 <p className="helper">A life choice is placed by age.</p>
                 {onAskAge && (
@@ -241,7 +252,7 @@ export function WhatIfCard({
                 )}
               </div>
             )}
-            {!planCurrencyKnown ? (
+            {copies ? null : !planCurrencyKnown ? (
               <p className="helper">Say which currency your plan’s figures are in first (above): a scenario’s amounts are in it.</p>
             ) : (
               noCurrency && <p className="helper">{NO_CURRENCY}</p>
@@ -261,7 +272,7 @@ export function WhatIfCard({
                 </div>
               </div>
             )}
-            {ready && full && <p className="helper">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one in Scenarios to try another.</p>}
+            {ready && full && !copies && <p className="helper">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one in Scenarios to try another.</p>}
             <div className="chip-row" role="group" aria-label="Try a life choice">
               {WHAT_IF_TEMPLATES.map((t, i) => (
                 <button key={t.id} type="button" className="chip" aria-haspopup="dialog" onClick={() => pick(t)} disabled={!canTry} ref={i === 0 && canTry ? firstRef : undefined}>
