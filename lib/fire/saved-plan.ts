@@ -43,7 +43,7 @@ import type { ItemAges } from './compile';
 import type { WalkChanges } from './events';
 import type { PlanItem } from './items';
 import { parsePlan, type PlanCore } from './plan';
-import { isStoredPlan, upgradeStoredPlan, type StoredPlan } from './plan-v2';
+import { isStoredPlan, parsePlanV2, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 
 export type SavedPlan = {
   version: 1;
@@ -119,13 +119,14 @@ export function isSavedPlan(v: unknown): v is SavedPlan {
 }
 
 /** What a save must meet: exactly the draft's fields, the plan as the Plan's
- *  own save takes it (parsePlan), and the figures in range. */
+ *  own save takes it (parsePlanV2, or parsePlan for version 1), and the
+ *  figures in range. */
 export function parseSavedDraft(raw: unknown): { ok: SavedPlanDraft } | { error: string } {
   if (!isObject(raw)) return { error: 'Send the plan to save, as an object' };
   const extra = Object.keys(raw).find((k) => !(DRAFT_KEYS as readonly string[]).includes(k));
   if (extra) return { error: `${extra.slice(0, 40)} isn’t taken here` };
   if (!exactly(raw, DRAFT_KEYS)) return { error: 'A saved plan has plan, savings, currency and inflation' };
-  const parsed = parsePlan(raw.plan);
+  const parsed: { plan: StoredPlan } | { error: string } = isObject(raw.plan) && raw.plan.version === 2 ? parsePlanV2(raw.plan) : parsePlan(raw.plan);
   if ('error' in parsed) return { error: `plan: ${parsed.error}` };
   if (typeof raw.savings !== 'number' || !Number.isFinite(raw.savings) || Math.abs(raw.savings) > MAX_SAVINGS) return { error: 'savings is an amount a year' };
   if (raw.currency !== null && !(typeof raw.currency === 'string' && CURRENCY.test(raw.currency))) return { error: 'currency is a currency code, such as USD, or null' };

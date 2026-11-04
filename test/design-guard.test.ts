@@ -139,6 +139,8 @@ describe('design guard: controls and states read without color', () => {
     ['.chip {', 'var(--border-input)', 'a chip is edged in --border-input'],
     ['h1,', 'font-family: var(--font-display)', 'titles and figures are in Red Hat Display (look and feel, step 3)'],
     ['.radio-row {', 'min-height: var(--tap)', 'a radio row is a 44px target'],
+    ['.check-row {', 'min-height: var(--tap)', 'a check row is a 44px target'],
+    ['.list-row.neg .list-row-title {', 'color: var(--neg)', "a destructive action row's title is in --neg"],
     ['.upcoming-skeleton-chart,', 'aspect-ratio: 340 / 150', "Upcoming's chart skeleton keeps the chart's shape"],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'border-bottom: 3px solid var(--accent)', 'the current item of a switch has a bar'],
     ['.segmented > button:is([aria-selected="true"], [aria-checked="true"]) {', 'font-weight: var(--fw-bold)', 'the current item of a switch is bold'],

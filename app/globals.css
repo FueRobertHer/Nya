@@ -739,6 +739,13 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   font-weight: var(--fw-semibold);
 }
 
+/* A destructive action row (components/ActionRows.tsx `neg`): an object's
+   last action, its title in --neg and no chevron. It never acts at once: it
+   opens a level that asks first, whose .btn.danger acts. */
+.list-row.neg .list-row-title {
+  color: var(--neg);
+}
+
 .list-row-sub {
   color: var(--text-2);
   font-size: var(--fs-2);
@@ -4026,6 +4033,54 @@ button.danger-outline {
   display: block;
   color: var(--text-2);
   font-size: var(--fs-2);
+}
+
+/* Check rows (components/CheckRows.tsx): a few things to choose any of, a
+   44px row each, the whole row the target, under a legend. Above a sheet's
+   footer, for what a save does besides (Also change it in). */
+.check-rows {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  min-height: var(--tap);
+  padding: var(--sp-2) 0;
+  cursor: pointer;
+}
+
+.check-row + .check-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.check-row input {
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.check-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.check-row-title {
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+  overflow-wrap: anywhere;
+}
+
+.check-row-sub {
+  color: var(--text-2);
+  font-size: var(--fs-2);
+  overflow-wrap: anywhere;
 }
 
 /* --- download my data (components/DownloadMyData.tsx) --- */
@@ -8159,10 +8214,11 @@ button.review-keys-toggle {
   }
 }
 
-/* Plan scenarios (components/PlanScenarios.tsx, PlanCompare.tsx, PlanEvents.tsx):
-   the tag every card carries while a scenario is open, the card at its top,
-   and compare mode, laid out by metric so it reads top to bottom on a phone. */
-.plan-scenario-tag {
+/* Plans as copies (components/PlansSheet.tsx, CopyTag.tsx, PlanCompare.tsx,
+   PlanEvents.tsx): the tag every card and editing sheet carries while a copy
+   is open, the copy's card at its top, and compare mode, laid out by metric
+   so it reads top to bottom on a phone. */
+.plan-copy-tag {
   display: inline-block;
   margin-bottom: 8px;
   padding: 2px 8px;
@@ -8173,23 +8229,11 @@ button.review-keys-toggle {
   font-weight: 600;
 }
 
-.plan-scenario-card {
+.plan-copy-card {
   border-left: 3px solid var(--accent);
 }
 
-/* Its Scenarios button, at its foot, under what it changes. */
-.plan-scenario-card > .btn {
-  margin-top: var(--sp-3);
-}
-
-.plan-scenario-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 6px;
-}
-
-.plan-scenario-saves {
+.plan-copy-saves {
   margin-top: 12px;
 }
 
@@ -8198,7 +8242,7 @@ button.review-keys-toggle {
   gap: 16px;
 }
 
-/* A plan to compare is named by its scenario, up to 40 characters: its
+/* A plan to compare is named by its name, up to 40 characters: its
    chip wraps at 320px rather than push the sheet sideways. */
 .plan-compare-pick > .chip {
   max-width: 100%;

@@ -5,14 +5,15 @@ import { simulateOnPage } from './plan-on-page';
 // The What if… card on Your path (rollout phase 8c), rendered in the Plan tab
 // and used as a person would (react-dom/client over test/mini-dom.ts): where
 // it sits, a template's form with nothing filled in but its name, the FI age
-// it moves as the figures are typed, "Try it" making an ordinary scenario
-// and opening it, and the scenarios listed as life choices with their FI
-// age against your plan's. And its words on their own
-// (components/plan-what-if.ts). Every request is answered here, by path;
-// nothing reaches a network.
+// it moves as the figures are typed, "Try it" making a copy of your plan
+// with it and opening it (the tax plan's C2), and the copies listed in the
+// Plans sheet with their FI age against your plan's. Then the Life events
+// card, in an open copy and on your plan once it holds life events. And its
+// words on their own (components/plan-what-if.ts). Every request is
+// answered here, by path; nothing reaches a network.
 //
 // A rendered element never goes into toEqual or another matcher that diffs
-// (test/plan-tab-scenarios.test.tsx says why).
+// (test/plan-tab-copies.test.tsx says why).
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -29,30 +30,25 @@ for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { NO_CHANGES, MAX_PLAN_SCENARIOS } = await import('@/lib/fire/scenarios');
-const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText, fiWhen, scenarioRowText, withDraft } = await import('@/components/plan-what-if');
+const { MAX_FIRE_PLANS } = await import('@/lib/fire/copies');
+const { WHAT_IF_TEMPLATES, whatIfName, lifeChoiceText, previewText, fiWhen, withDraft } = await import('@/components/plan-what-if');
 const { setAmountsHidden } = await import('@/lib/format');
+const { planOf } = await import('@/lib/fire/plan-v2');
+const { eventsOf, withEvents } = await import('@/lib/fire/items');
+const { plansListing, copyRow } = await import('./plans-listing');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
-type Entry = import('@/components/plan-scenarios').ScenarioEntry;
+type Row = import('./plans-listing').Row;
 type LifeEvent = import('@/lib/fire/events').LifeEvent;
 
 // FI around 52 (51.8), with a 4% rate and 5% growth after inflation.
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
-const entry = (over: Partial<Entry> = {}): Entry => ({
-  id: 's1',
-  version: 1,
-  name: 'Retire at 50',
-  currency: 'USD',
-  createdAt: '2026-10-01T00:00:00.000Z',
-  savedAt: '2026-10-01T00:00:00.000Z',
-  rev: 'r1',
-  ...NO_CHANGES,
-  ...over,
-});
+/** A copy of your plan holding these life events, made on the given day. */
+const copy = (id: string, name: string, events: LifeEvent[] = [], currency = 'USD', day = 1): Row =>
+  copyRow(PLAN, id, name, { items: withEvents(planOf(PLAN), events).items }, currency, day);
 const home = (cost: number, atAge = 45): LifeEvent => ({ id: 'h', kind: 'house', label: 'Buying a home', atAge, cost, yearly: 0, years: null });
 
 type Call = { method: string; url: string; body: any };
-type Answer = (call: Call) => [number, unknown];
+type Answer = (call: Call) => [number, unknown] | Promise<[number, unknown]>;
 
 /** Answers by "METHOD /path"; records every call. */
 function serve(answers: Record<string, Answer | [number, unknown]>) {
@@ -61,20 +57,25 @@ function serve(answers: Record<string, Answer | [number, unknown]>) {
     const call = { method: init?.method ?? 'GET', url, body: init?.body ? JSON.parse(String(init.body)) : null };
     calls.push(call);
     const a = answers[`${call.method} ${url}`];
-    const [status, body] = typeof a === 'function' ? a(call) : (a ?? [404, { error: 'not here' }]);
+    const [status, body] = typeof a === 'function' ? await a(call) : (a ?? [404, { error: 'not here' }]);
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   };
   return calls;
 }
 
-const listing = (...scenarios: Entry[]): [number, unknown] => [200, { scenarios, unreadable_ids: [], unrecognised_ids: [] }];
+/** Your plan and these copies, as GET /api/plans lists them. */
+const listing = (...copies: Row[]): [number, unknown] => plansListing(PLAN, copies);
+/** A copy made by POST /api/plans, as the route answers it. */
+const made = (body: { name: string; plan: unknown; currency: string | null }) => ({
+  plan: { id: 'new1', name: body.name, plan: body.plan, currency: body.currency, created_at: '2026-10-26T00:00:00.000Z', updated_at: '2026-10-26T00:00:00.000Z' },
+});
 const pass = fakeClock();
 simulateOnPage();
 const settle = (ms = 30) => pass(ms);
 const classOf = (e: FakeElement) => (e.getAttribute('class') ?? '').split(' ');
 
 async function render(answers: Record<string, Answer | [number, unknown]>, over: Partial<PlanTabProps> = {}) {
-  const calls = serve({ 'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD' }], 'GET /api/allocation-settings': [200, { settings: null }], ...answers });
+  const calls = serve({ 'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD', updated_at: 'u1' }], 'GET /api/allocation-settings': [200, { settings: null }], 'GET /api/plans': listing(), ...answers });
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
@@ -82,21 +83,22 @@ async function render(answers: Record<string, Answer | [number, unknown]>, over:
   await act(async () => root.render(<PlanTab {...props} />));
   await settle();
   const find = (pred: (e: FakeElement) => boolean) => container.findAll(pred)[0] ?? null;
+  const dialog = () => find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true');
+  const titleOf = (b: FakeElement) => b.findAll((e) => classOf(e).includes('list-row-title'))[0]?.textContent ?? '';
+  /** The open sheet's rows: in the Plans sheet, each plan's. */
+  const sheetRows = () => dialog()?.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row')) ?? [];
   return {
     calls,
     container,
     unmount: () => act(async () => root.unmount()),
     card: () => find((e) => classOf(e).includes('plan-what-if')),
     chip: (label: string) => find((e) => e.tagName === 'BUTTON' && classOf(e).includes('chip') && e.textContent.trim() === label),
-    /** The card's rows: each scenario's name and what it says. */
-    rows: () =>
-      (find((e) => classOf(e).includes('plan-what-if'))?.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row')) ?? []).map((b) => [
-        b.findAll((e) => classOf(e).includes('list-row-title'))[0]?.textContent ?? '',
-        b.findAll((e) => classOf(e).includes('list-row-sub'))[0]?.textContent ?? '',
-      ]),
-    row: (name: string) =>
-      find((e) => classOf(e).includes('plan-what-if'))?.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row') && e.findAll((t) => classOf(t).includes('list-row-title'))[0]?.textContent === name)[0] ?? null,
-    dialog: () => find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true'),
+    /** The Plans sheet's rows: each plan's name and what it says. */
+    rows: () => sheetRows().map((b) => [titleOf(b), b.findAll((e) => classOf(e).includes('list-row-sub'))[0]?.textContent ?? '']),
+    row: (name: string) => sheetRows().find((b) => titleOf(b) === name) ?? null,
+    /** The bar's Plans button. */
+    plans: () => find((e) => e.tagName === 'BUTTON' && /^Plans(?: \(\d+\))?$/.test(e.textContent.trim())),
+    dialog,
     bar: () => find((e) => e.getAttribute('class') === 'plan-bar'),
   };
 }
@@ -115,14 +117,20 @@ const fill = async (within: FakeElement, words: string, value: string) => {
   await settle();
 };
 const button = (within: FakeElement, words: string) => within.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null;
+/** Opens a copy as a person does: the bar's Plans, its row, then Open it. */
+const openCopy = async (tab: Awaited<ReturnType<typeof render>>, name: string) => {
+  await press(tab.plans());
+  await press(tab.row(name));
+  await press(button(tab.dialog()!, 'Open it'));
+};
 /** The preview's first line, what the draft does to the FI age. */
 const preview = (sheet: FakeElement) => previewLines(sheet)[0] ?? null;
-/** Every line of the preview: its notes, and the scenario Try it makes. */
+/** Every line of the preview: its notes, and the copy Try it makes. */
 const previewLines = (sheet: FakeElement) => (sheet.findAll((e) => classOf(e).includes('notice') && classOf(e).includes('info'))[0]?.findAll((e) => e.tagName === 'P') ?? []).map((p) => p.textContent);
 
 describe('the What if… card', () => {
-  test('sits on Your path under Your figures, above income and one-offs, with your plan shown; not inside a scenario', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
+  test('sits on Your path under Your figures, above income and one-offs, with your plan shown; not inside a copy', async () => {
+    const tab = await render({ 'GET /api/plans': listing(copy('c1', 'Buy a home at 45', [home(200_000)])) });
     const path = tab.container.findAll((e) => e.getAttribute('role') === 'tabpanel')[0];
     const cards = path.findAll((e) => e.tagName === 'SECTION' || classOf(e).includes('card'));
     const at = (pred: (e: FakeElement) => boolean) => cards.findIndex(pred);
@@ -132,15 +140,15 @@ describe('the What if… card', () => {
     expect(whatIf).toBeGreaterThan(figures);
     expect(tab.card()?.textContent).toContain('What if…');
     expect(WHAT_IF_TEMPLATES.map((t) => tab.chip(t.label) !== null)).toEqual(WHAT_IF_TEMPLATES.map(() => true));
-    // Opened, the scenario's own figures are shown, and the card goes.
-    await press(tab.row('Buy a home at 45'));
-    expect(tab.bar()?.textContent).toContain('Scenario: Buy a home at 45');
+    // Opened, the copy's own figures are shown, and the card goes.
+    await openCopy(tab, 'Buy a home at 45');
+    expect(tab.bar()?.textContent).toContain('Copy: Buy a home at 45');
     expect(tab.card()).toBeNull();
     await tab.unmount();
   });
 
   test('a template opens its life event’s form with nothing filled in but the name, and the FI age moves as it is typed', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing() });
+    const tab = await render({});
     await press(tab.chip('Buy a home'));
     const sheet = tab.dialog() as FakeElement;
     expect(sheet.textContent).toContain('Buy a home');
@@ -152,7 +160,7 @@ describe('the What if… card', () => {
     await fill(sheet, 'At age', '45');
     expect(preview(sheet)).toBe('Fill in the figures to see how it moves your FI age.');
     await fill(sheet, 'Paid from your investments', '200000');
-    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 56 (4 years later).', 'Try it makes this the scenario “Buy a home at 45”, and opens it.']);
+    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 56 (4 years later).', 'Try it makes the copy “Buy a home at 45” of your plan with it, and opens it.']);
     // Only the move is said as it changes.
     const live = sheet.findAll((e) => e.getAttribute('role') === 'status');
     expect(live.map((e) => e.textContent)).toEqual(['In this what-if, FI moves from around 52 to around 56 (4 years later).']);
@@ -164,13 +172,12 @@ describe('the What if… card', () => {
     await tab.unmount();
   });
 
-  test('“Try it” makes an ordinary scenario of your plan with that one event, named after it, and opens it', async () => {
-    let made: unknown = null;
+  test('“Try it” makes a copy of your plan with that one event, named after it, and opens it', async () => {
+    let sent: any = null;
     const tab = await render({
-      'GET /api/plan-scenarios': listing(),
-      'POST /api/plan-scenarios': (call) => {
-        made = call.body.scenario;
-        return [200, { scenario: { ...call.body.scenario, id: 'new1', version: 1, createdAt: '2026-10-26T00:00:00.000Z', savedAt: '2026-10-26T00:00:00.000Z', rev: 'r1' } }];
+      'POST /api/plans': (call) => {
+        sent = call.body;
+        return [200, made(call.body)];
       },
     });
     await press(tab.chip('A career break'));
@@ -180,17 +187,20 @@ describe('the What if… card', () => {
     await fill(sheet, 'Saved less a year', '30000');
     expect(preview(sheet)).toBe('In this what-if, FI moves from around 52 to around 53 (1 year later).');
     await press(button(sheet, 'Try it'));
-    const { events, ...rest } = made as { events: LifeEvent[] } & Record<string, unknown>;
-    expect(rest).toEqual({ name: 'A career break at 45', currency: 'USD', set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] } });
-    expect(events.length).toBe(1);
+    // Your plan whole, from your plan's id, with the event its one item.
+    const { plan, ...rest } = sent as { plan: import('@/lib/fire/plan-v2').FirePlanV2 } & Record<string, unknown>;
+    expect(rest).toEqual({ from: 'main', name: 'A career break at 45', currency: 'USD' });
+    expect({ ...plan, items: [] as unknown[] }).toEqual(planOf(PLAN));
+    const events = eventsOf(plan);
+    expect([plan.items.length, events.length]).toEqual([1, 1]);
     const { id, ...event } = events[0];
     expect(typeof id).toBe('string');
     expect(event).toEqual({ kind: 'sabbatical', label: 'A career break', fromAge: 45, years: 2, savingsLost: 30_000 });
-    expect(tab.bar()?.textContent).toContain('Scenario: A career break at 45');
+    expect(tab.bar()?.textContent).toContain('Copy: A career break at 45');
     // The sheet slides out (it is still on the page, closed), and the card is gone.
     expect(tab.container.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'false').length).toBe(1);
     expect(tab.card()).toBeNull();
-    // Focus on the bar's heading, as a scenario opened from the Scenarios sheet.
+    // Focus on the bar's heading, as a copy opened from the Plans sheet.
     expect(dom.document.activeElement?.tagName).toMatch(/^H[1-6]$/);
     expect(dom.document.activeElement?.textContent).toContain('A career break at 45');
     // Nothing was saved to your plan.
@@ -199,7 +209,7 @@ describe('the What if… card', () => {
   });
 
   test('what an event leaves out is said under the preview, and part-time work says it doesn’t move the FI age', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing() });
+    const tab = await render({});
     await press(tab.chip('Buy a home'));
     let sheet = tab.dialog() as FakeElement;
     await fill(sheet, 'At age', '35');
@@ -221,14 +231,14 @@ describe('the What if… card', () => {
   });
 
   test('8d’s kinds as templates: a windfall, a raise and a loan paid off move FI sooner; one before today is left out, and says so', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing() });
+    const tab = await render({});
     await press(tab.chip('A windfall'));
     let sheet = tab.dialog() as FakeElement;
     expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A windfall');
     expect(preview(sheet)).toBe('Fill in the figures to see how it moves your FI age.');
     await fill(sheet, 'At age', '45');
     await fill(sheet, 'Amount, after tax', '200000');
-    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 49 (3 years sooner).', 'Try it makes this the scenario “A windfall at 45”, and opens it.']);
+    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 49 (3 years sooner).', 'Try it makes the copy “A windfall at 45” of your plan with it, and opens it.']);
     await press(button(sheet, 'Cancel'));
     await press(tab.chip('A raise'));
     sheet = tab.dialog() as FakeElement;
@@ -245,17 +255,16 @@ describe('the What if… card', () => {
     expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A loan paid off');
     await fill(sheet, 'Paid off at age', '45');
     await fill(sheet, 'Spending less a year', '12000');
-    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 47 (5 years sooner).', 'Try it makes this the scenario “Pay off a loan at 45”, and opens it.']);
+    expect(previewLines(sheet)).toEqual(['In this what-if, FI moves from around 52 to around 47 (5 years sooner).', 'Try it makes the copy “Pay off a loan at 45” of your plan with it, and opens it.']);
     await tab.unmount();
   });
 
-  test('“Buy a car” every few years: Try it makes the scenario with that car, named after its first', async () => {
-    let made: { events: LifeEvent[]; name: string } | null = null;
+  test('“Buy a car” every few years: Try it makes the copy with that car, named after its first', async () => {
+    let sent: { plan: import('@/lib/fire/plan-v2').FirePlanV2; name: string } | null = null;
     const tab = await render({
-      'GET /api/plan-scenarios': listing(),
-      'POST /api/plan-scenarios': (call) => {
-        made = call.body.scenario;
-        return [200, { scenario: { ...call.body.scenario, id: 'new1', version: 1, createdAt: '2026-10-26T00:00:00.000Z', savedAt: '2026-10-26T00:00:00.000Z', rev: 'r1' } }];
+      'POST /api/plans': (call) => {
+        sent = call.body;
+        return [200, made(call.body)];
       },
     });
     await press(tab.chip('Buy a car'));
@@ -273,14 +282,15 @@ describe('the What if… card', () => {
     await fill(sheet, 'How many in all', '3');
     expect(preview(sheet)).toBe('In this what-if, FI moves from around 52 to around 56 (4 years later).');
     await press(button(sheet, 'Try it'));
-    const { id: _, ...event } = made!.events[0];
-    expect([made!.name, made!.events.length, event]).toEqual(['Buy a car at 45', 1, { kind: 'car', label: 'A car', atAge: 45, cost: 80_000, every: 4, times: 3 }]);
-    expect(tab.bar()?.textContent).toContain('Scenario: Buy a car at 45');
+    const events = eventsOf(sent!.plan);
+    const { id: _, ...event } = events[0];
+    expect([sent!.name, events.length, event]).toEqual(['Buy a car at 45', 1, { kind: 'car', label: 'A car', atAge: 45, cost: 80_000, every: 4, times: 3 }]);
+    expect(tab.bar()?.textContent).toContain('Copy: Buy a car at 45');
     await tab.unmount();
   });
 
   test('a child wholly before today leaves the FI age where it is, and says why, without the part-time words', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing() });
+    const tab = await render({});
     await press(tab.chip('A child'));
     const sheet = tab.dialog() as FakeElement;
     await fill(sheet, 'From age', '30');
@@ -292,7 +302,7 @@ describe('the What if… card', () => {
   });
 
   test('without your age the templates are off, and why comes first: the same ask as the answer’s, before the choices; with a saved plan that can’t be read, there is no card', async () => {
-    const tab = await render({ 'GET /api/plan-inputs': [200, { plan: { ...PLAN, age: null }, currency: 'USD' }], 'GET /api/plan-scenarios': listing() });
+    const tab = await render({ 'GET /api/plan-inputs': [200, { plan: { ...PLAN, age: null }, currency: 'USD' }] });
     expect(tab.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
     const card = tab.card()!;
     expect(card.textContent).toContain('A life choice is placed by age.Add your age');
@@ -303,7 +313,7 @@ describe('the What if… card', () => {
     expect(classOf(ask)).toEqual(['btn', 'ghost', 'hero-ask']);
     expect(order.indexOf(ask)).toBeLessThan(order.indexOf(tab.chip('Buy a home')!));
     await tab.unmount();
-    const broken = await render({ 'GET /api/plan-inputs': [500, { error: 'no' }], 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
+    const broken = await render({ 'GET /api/plan-inputs': [500, { error: 'no' }], 'GET /api/plans': listing(copy('c1', 'Buy a home at 45', [home(200_000)])) });
     expect(broken.card()).toBeNull();
     await broken.unmount();
   });
@@ -331,7 +341,7 @@ describe('the What if… card', () => {
   const closeOf = (sheet: FakeElement) => sheet.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0] ?? null;
 
   test('its ask opens the Ages sheet; closed, focus is back on it, and once the age is saved, on the first life choice', async () => {
-    const tab = await render({ ...ageless(), 'GET /api/plan-scenarios': listing() });
+    const tab = await render(ageless());
     const ask = () => (tab.card() ? button(tab.card()!, 'Add your age') : null);
     await press(ask());
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Your ages');
@@ -346,14 +356,15 @@ describe('the What if… card', () => {
     await tab.unmount();
   }, 20_000);
 
-  test('once the age is saved and the choices are still off (no currency, or the most scenarios kept), focus goes to the card’s title', async () => {
+  test('once the age is saved and the choices are still off (no currency, or the most plans kept), focus goes to the card’s title', async () => {
     const title = (tab: Awaited<ReturnType<typeof render>>) => tab.card()!.findAll((e) => e.getAttribute('id') === 'plan-what-if-title')[0];
-    const full = Array.from({ length: MAX_PLAN_SCENARIOS }, (_, i) => entry({ id: `s${i}`, name: `Scenario ${i}` }));
+    // Your plan and ten copies: the most kept.
+    const full = Array.from({ length: MAX_FIRE_PLANS - 1 }, (_, i) => copy(`c${i}`, `Copy ${i}`, [], 'USD', i + 1));
     for (const [answers, said, over] of [
-      // Nothing typed, no accounts and no currency: none to give a
-      // scenario's amounts, and none needed to save the age.
-      [{ ...ageless({ currency: null }, { ...DEFAULT_PLAN, targetAge: 55 }), 'GET /api/plan-scenarios': listing() }, 'Your plan has no currency yet', { currency: null }],
-      [{ ...ageless(), 'GET /api/plan-scenarios': listing(...full) }, `You have ${MAX_PLAN_SCENARIOS} scenarios`, {}],
+      // Nothing typed, no accounts and no currency: none to give a copy's
+      // amounts, and none needed to save the age.
+      [{ ...ageless({ currency: null }, { ...DEFAULT_PLAN, targetAge: 55 }), 'GET /api/plans': plansListing(null, [], null) }, 'Your plan has no currency yet', { currency: null }],
+      [{ ...ageless(), 'GET /api/plans': listing(...full) }, `You have ${MAX_FIRE_PLANS} plans`, {}],
     ] as const) {
       const tab = await render(answers, over);
       const card = tab.card()!;
@@ -371,29 +382,53 @@ describe('the What if… card', () => {
   }, 30_000);
 
   test('a refused save is said in the form, which stays open', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing(), 'POST /api/plan-scenarios': [409, { error: 'Another scenario has that name: choose another, so they can be told apart.' }] });
+    const tab = await render({ 'POST /api/plans': [409, { error: 'Another plan has that name: choose another, so they can be told apart.' }] });
     await press(tab.chip('A child'));
     const sheet = tab.dialog() as FakeElement;
     await fill(sheet, 'From age', '42');
     await fill(sheet, 'More spending a year', '15000');
     await fill(sheet, 'For how many years', '18');
     await press(button(sheet, 'Try it'));
-    expect(tab.dialog()?.textContent).toContain('Another scenario has that name: choose another, so they can be told apart.');
-    expect(tab.bar()?.textContent).not.toContain('Scenario:');
+    expect(tab.dialog()?.textContent).toContain('Another plan has that name: choose another, so they can be told apart.');
+    expect(tab.bar()?.textContent).not.toContain('Copy:');
     await tab.unmount();
   });
 
-  test('lists the scenarios as life choices, each with its FI age against your plan’s', async () => {
+  // Before your plan has an entry (a new account), Try it makes it, and
+  // your plan is read again for its stamp (components/PlanTab.tsx
+  // createCopy), but only once made: the read takes What if… and its form
+  // off the page while it loads.
+  test('on a new account, a refused Try it keeps its form open with why', async () => {
     const tab = await render({
-      'GET /api/plan-scenarios': listing(
-        entry({ id: 'a', name: 'Buy a home at 45', events: [home(200_000)] }),
-        entry({ id: 'b', name: 'Spend less', events: [{ id: 'x', kind: 'spending', label: 'Less', fromAge: 41, yearly: -10_000, years: null }] }),
-        entry({ id: 'c', name: 'A trip at 60', events: [{ id: 'x', kind: 'spending', label: 'Trip', fromAge: 60, yearly: 100, years: 1 }] }),
-        entry({ id: 'd', name: 'A big home', events: [home(900_000, 42)] }),
-        entry({ id: 'e', name: 'In euros', currency: 'EUR', set: { spending: 30_000 } })
+      'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD', updated_at: null }],
+      'POST /api/plans': [409, { error: 'You have 11 plans, the most Nya keeps: delete one to make another.' }],
+    });
+    await press(tab.chip('A child'));
+    const sheet = tab.dialog() as FakeElement;
+    await fill(sheet, 'From age', '42');
+    await fill(sheet, 'More spending a year', '15000');
+    await fill(sheet, 'For how many years', '18');
+    await press(button(sheet, 'Try it'));
+    expect(tab.dialog()?.textContent).toContain('You have 11 plans, the most Nya keeps: delete one to make another.');
+    await tab.unmount();
+  });
+
+  // The list moved to the Plans sheet (C2): each row's FI age is said
+  // against your plan's as the card's rows said it, then how it differs
+  // (test/plan-diff.test.ts).
+  test('the copies Try it makes are listed in the Plans sheet, each with its FI age against your plan’s', async () => {
+    const tab = await render({
+      'GET /api/plans': listing(
+        copy('a', 'Buy a home at 45', [home(200_000)], 'USD', 1),
+        copy('b', 'Spend less', [{ id: 'x', kind: 'spending', label: 'Less', fromAge: 41, yearly: -10_000, years: null }], 'USD', 2),
+        copy('c', 'A trip at 60', [{ id: 'x', kind: 'spending', label: 'Trip', fromAge: 60, yearly: 100, years: 1 }], 'USD', 3),
+        copy('d', 'A big home', [home(900_000, 42)], 'USD', 4),
+        copyRow(PLAN, 'e', 'In euros', { spending: 30_000 }, 'EUR', 5)
       ),
     });
-    expect(tab.rows()).toEqual([
+    await press(tab.plans());
+    expect(tab.rows().map(([name, said]) => [name, said.split(' · ')[0]])).toEqual([
+      ['First plan', 'FI around 52'],
       ['Buy a home at 45', 'FI around 56, 4 years later'],
       ['Spend less', 'FI around 47, 5 years sooner'],
       ['A trip at 60', 'FI around 52, as in your plan'],
@@ -401,39 +436,60 @@ describe('the What if… card', () => {
       ['In euros', 'Not worked out: open it to see why'],
     ]);
     await press(tab.row('Spend less'));
-    expect(tab.bar()?.textContent).toContain('Scenario: Spend less');
-    // What the row said is what the scenario's FI card says.
+    await press(button(tab.dialog()!, 'Open it'));
+    expect(tab.bar()?.textContent).toContain('Copy: Spend less');
+    // What the row said is what the copy's FI card says.
     expect(tab.container.textContent).toContain('Financial independenceAround age 47');
     await tab.unmount();
   });
 
-  test('with ten scenarios the templates are off, and it says why; a list that can’t load says so, with Try again', async () => {
-    const ten = Array.from({ length: 10 }, (_, i) => entry({ id: `s${i}`, name: `S${i}` }));
-    const tab = await render({ 'GET /api/plan-scenarios': listing(...ten) });
+  test('while your plans load the templates are off, and it says so', async () => {
+    let release!: () => void;
+    const loaded = new Promise<void>((r) => (release = r));
+    const tab = await render({
+      'GET /api/plans': async () => {
+        await loaded;
+        return listing();
+      },
+    });
+    expect(tab.card()?.textContent).toContain('Your plans are still loading.');
     expect(tab.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
-    expect(tab.card()?.textContent).toContain('You have 10 scenarios, the most Nya keeps: delete one in Scenarios to try another.');
+    await act(async () => release());
+    await settle();
+    expect(tab.card()?.textContent).not.toContain('Your plans are still loading.');
+    expect(tab.chip('Buy a home')?.getAttribute('disabled')).toBeNull();
+    await tab.unmount();
+  });
+
+  test('with eleven plans the templates are off, and it says why; plans that can’t load say so, with Try again', async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => copy(`c${i}`, `C${i}`, [], 'USD', i + 1));
+    const tab = await render({ 'GET /api/plans': listing(...ten) });
+    expect(tab.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
+    expect(tab.card()?.textContent).toContain('You have 11 plans, the most Nya keeps: delete one in Plans to try another.');
     await tab.unmount();
 
     // Unreadable and unrecognised ones count, as the server counts them.
-    const stored = await render({ 'GET /api/plan-scenarios': [200, { scenarios: ten.slice(0, 8), unreadable_ids: ['u1'], unrecognised_ids: ['n1'] }] });
+    const [, body] = listing(...ten.slice(0, 8));
+    const stored = await render({ 'GET /api/plans': [200, { ...(body as object), unreadable_ids: ['u1'], unrecognised_ids: ['n1'] }] });
     expect(stored.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
-    expect(stored.card()?.textContent).toContain('You have 10 scenarios');
+    expect(stored.card()?.textContent).toContain('You have 11 plans');
     await stored.unmount();
 
     let fail = true;
-    const broken = await render({ 'GET /api/plan-scenarios': () => (fail ? [500, { error: 'Your saved scenarios couldn’t be loaded.' }] : listing(entry({ name: 'Back' }))) });
-    expect(broken.card()?.textContent).toContain('Your saved scenarios couldn’t be loaded.');
+    const broken = await render({ 'GET /api/plans': () => (fail ? [500, { error: 'Failed to load your plans' }] : listing()) });
+    expect(broken.card()?.textContent).toContain('Failed to load your plans');
     expect(broken.chip('Buy a home')?.getAttribute('disabled')).not.toBeNull();
     fail = false;
     await press(button(broken.card() as FakeElement, 'Try again'));
-    expect(broken.rows()).toEqual([['Back', 'FI around 52, as in your plan']]);
+    expect(broken.card()?.textContent).not.toContain('Failed to load your plans');
+    expect(broken.chip('Buy a home')?.getAttribute('disabled')).toBeNull();
     await broken.unmount();
   });
 
   test('with amounts hidden, the preview’s amounts are masked', async () => {
     setAmountsHidden(true);
     try {
-      const tab = await render({ 'GET /api/plan-scenarios': listing() });
+      const tab = await render({});
       await press(tab.chip('Buy a home'));
       const sheet = tab.dialog() as FakeElement;
       await fill(sheet, 'At age', '42');
@@ -447,24 +503,29 @@ describe('the What if… card', () => {
   });
 });
 
-describe('life choices stacked in a scenario', () => {
-  /** Saves a scenario as the server would, recording what was sent. */
-  const saving = (sent: any[]): Record<string, Answer> => ({
-    'PUT /api/plan-scenarios': (call) => {
+describe('life choices stacked in a copy', () => {
+  /** Saves plans as the server would (PUT /api/plans), recording what was
+   *  sent: each saved whole, at a new stamp. */
+  const saving = (sent: any[], rows: Row[]): Record<string, Answer> => ({
+    'PUT /api/plans': (call) => {
       sent.push(call.body);
-      return [200, { scenario: { ...entry(), ...call.body.scenario, id: call.body.id, rev: `r${sent.length + 1}` } }];
+      const plans = call.body.saves.map((x: { id: string; plan: unknown; currency: string | null }) => ({ ...rows.find((r) => r.id === x.id), plan: x.plan, currency: x.currency, updated_at: `u${sent.length + 1}` }));
+      return [200, { plans, main: null }];
     },
   });
+  /** The events saved in the first save's first plan. */
+  const savedEvents = (sent: any[]) => eventsOf(sent[0].saves[0].plan);
   const panel = (tab: Awaited<ReturnType<typeof render>>) => tab.container.findAll((e) => e.getAttribute('role') === 'tabpanel')[0];
   const titled = (words: string) => (e: FakeElement) => classOf(e).includes('card') && e.findAll((t) => classOf(t).includes('inst-name') && t.textContent.trim() === words).length > 0;
   const lifeCard = (tab: Awaited<ReturnType<typeof render>>) => panel(tab).findAll(titled('Life events'))[0] ?? null;
   const chipIn = (within: FakeElement, label: string) => within.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('chip') && e.textContent.trim() === label)[0] ?? null;
   const spending = (n: number): LifeEvent => ({ id: `g${n}`, kind: 'spending', label: `Gym ${n}`, fromAge: 60, yearly: 10, years: 1 });
 
-  test('in an open scenario its life events take the What if… card’s place, with the same choices, and one more adds to it, previewed against the scenario', async () => {
+  test('in an open copy its life events take the What if… card’s place, with the same choices, and one more adds to it, previewed against the copy', async () => {
     const sent: any[] = [];
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })), ...saving(sent) });
-    await press(tab.row('Buy a home at 45'));
+    const rows = [copy('c1', 'Buy a home at 45', [home(200_000)])];
+    const tab = await render({ 'GET /api/plans': listing(...rows), ...saving(sent, rows) });
+    await openCopy(tab, 'Buy a home at 45');
     const cards = panel(tab).findAll((e) => e.tagName === 'SECTION' || classOf(e).includes('card'));
     const at = (pred: (e: FakeElement) => boolean) => cards.findIndex(pred);
     const figures = at((e) => classOf(e).includes('plan-inputs'));
@@ -475,20 +536,24 @@ describe('life choices stacked in a scenario', () => {
     expect(WHAT_IF_TEMPLATES.map((t) => chipIn(card, t.label) !== null)).toEqual(WHAT_IF_TEMPLATES.map(() => true));
     await press(chipIn(card, 'A career break'));
     const sheet = tab.dialog() as FakeElement;
-    expect(sheet.textContent).toContain('A career break (Buy a home at 45)');
+    // Its title is the choice's; the copy is named at its top.
+    expect(sheet.getAttribute('aria-label')).toBe('A career break');
+    expect(sheet.textContent).toContain('Copy: Buy a home at 45');
     expect((field(sheet, 'Name') as unknown as { value: string }).value).toBe('A career break');
-    expect(preview(sheet)).toBe('Fill in the figures to see how it moves this scenario’s FI age.');
+    expect(preview(sheet)).toBe('Fill in the figures to see how it moves this copy’s FI age.');
     await fill(sheet, 'From age', '45');
     await fill(sheet, 'For how many years', '2');
     await fill(sheet, 'Saved less a year', '30000');
-    // Against the scenario as it is (FI around 56 with its home), not your plan.
-    expect(previewLines(sheet)).toEqual(['In this scenario, FI moves from around 56 to around 57 (1 year later).']);
+    // Against the copy as it is (FI around 56 with its home), not your plan.
+    expect(previewLines(sheet)).toEqual(['In this copy, FI moves from around 56 to around 57 (1 year later).']);
     expect(button(sheet, 'Save')).toBeNull();
-    await press(button(sheet, 'Add to this scenario'));
+    expect(sheet.textContent).toContain('Saved to this copy, not your plan.');
+    await press(button(sheet, 'Add to this copy'));
+    // The copy alone, whole, at the stamp it was loaded at.
     expect(sent.length).toBe(1);
-    expect(sent[0].based_on).toBe('r1');
-    expect(sent[0].scenario.events.map((e: LifeEvent) => e.kind)).toEqual(['house', 'sabbatical']);
-    // Both are listed, and the scenario's answer counts both.
+    expect(sent[0].saves.map((x: { id: string; based_on: string }) => [x.id, x.based_on])).toEqual([['c1', rows[0].updated_at]]);
+    expect(savedEvents(sent).map((e) => e.kind)).toEqual(['house', 'sabbatical']);
+    // Both are listed, and the copy's answer counts both.
     expect(tab.dialog()).toBeNull();
     expect(lifeCard(tab)!.textContent).toContain('Buying a home');
     expect(lifeCard(tab)!.textContent).toContain('A career break');
@@ -498,14 +563,14 @@ describe('life choices stacked in a scenario', () => {
     await tab.unmount();
   });
 
-  test('changing one of its events previews the change alone, against the scenario as it is', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Buy a home at 45', events: [home(200_000)] })) });
-    await press(tab.row('Buy a home at 45'));
+  test('changing one of its events previews the change alone, against the copy as it is', async () => {
+    const tab = await render({ 'GET /api/plans': listing(copy('c1', 'Buy a home at 45', [home(200_000)])) });
+    await openCopy(tab, 'Buy a home at 45');
     await press(lifeCard(tab)!.findAll((e) => e.getAttribute('aria-label') === 'Edit Buying a home')[0]);
     const sheet = tab.dialog() as FakeElement;
-    expect(preview(sheet)).toBe('In this scenario, FI stays around 56.');
+    expect(preview(sheet)).toBe('In this copy, FI stays around 56.');
     await fill(sheet, 'Paid from your investments', '100000');
-    expect(preview(sheet)).toBe('In this scenario, FI moves from around 56 to around 54 (2 years sooner).');
+    expect(preview(sheet)).toBe('In this copy, FI moves from around 56 to around 54 (2 years sooner).');
     expect(button(sheet, 'Save')).not.toBeNull();
     await tab.unmount();
   });
@@ -513,8 +578,9 @@ describe('life choices stacked in a scenario', () => {
   test('the tenth turns the choices off, says why, and focus goes to the card’s title', async () => {
     const sent: any[] = [];
     const nine = Array.from({ length: 9 }, (_, i) => spending(i));
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Many', events: nine })), ...saving(sent) });
-    await press(tab.row('Many'));
+    const rows = [copy('c1', 'Many', nine)];
+    const tab = await render({ 'GET /api/plans': listing(...rows), ...saving(sent, rows) });
+    await openCopy(tab, 'Many');
     const windfall = chipIn(lifeCard(tab)!, 'A windfall')!;
     expect(windfall.disabled).toBe(false);
     // As a browser: pressed, it takes focus, and once off it can't (mini-dom
@@ -529,34 +595,35 @@ describe('life choices stacked in a scenario', () => {
     const sheet = tab.dialog() as FakeElement;
     await fill(sheet, 'At age', '60');
     await fill(sheet, 'Amount, after tax', '1000');
-    await press(button(sheet, 'Add to this scenario'));
+    await press(button(sheet, 'Add to this copy'));
     await settle(400);
-    expect(sent[0].scenario.events.length).toBe(10);
+    expect(savedEvents(sent).length).toBe(10);
     const card = lifeCard(tab)!;
     expect(WHAT_IF_TEMPLATES.every((t) => chipIn(card, t.label)?.disabled)).toBe(true);
-    expect(card.textContent).toContain('A scenario holds at most 10 life events.');
+    expect(card.textContent).toContain('A plan holds at most 10 life events.');
     expect(dom.document.activeElement?.textContent).toBe('Life events');
     await tab.unmount();
   });
 
   test('an event removed: its Edit is gone, so focus goes to the card’s title', async () => {
     const sent: any[] = [];
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Two', events: [spending(1), spending(2)] })), ...saving(sent) });
-    await press(tab.row('Two'));
+    const rows = [copy('c1', 'Two', [spending(1), spending(2)])];
+    const tab = await render({ 'GET /api/plans': listing(...rows), ...saving(sent, rows) });
+    await openCopy(tab, 'Two');
     const edit = lifeCard(tab)!.findAll((e) => e.getAttribute('aria-label') === 'Edit Gym 1')[0];
     await act(async () => edit.focus());
     await press(edit);
-    await press(button(tab.dialog() as FakeElement, 'Remove from this scenario'));
+    await press(button(tab.dialog() as FakeElement, 'Remove from this copy'));
     await settle(400);
-    expect(sent[0].scenario.events.map((e: LifeEvent) => e.id)).toEqual(['g2']);
+    expect(savedEvents(sent).map((e) => e.id)).toEqual(['g2']);
     expect(dom.document.activeElement?.textContent).toBe('Life events');
     await tab.unmount();
   });
 
-  test('what the scenario’s other events leave out isn’t said under a new one’s preview', async () => {
+  test('what the copy’s other events leave out isn’t said under a new one’s preview', async () => {
     const child: LifeEvent = { id: 'c', kind: 'child', label: 'A child', fromAge: 30, yearly: 10_000, years: 5 };
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Kids', events: [child] })) });
-    await press(tab.row('Kids'));
+    const tab = await render({ 'GET /api/plans': listing(copy('c1', 'Kids', [child])) });
+    await openCopy(tab, 'Kids');
     // The child is before today, and its row says so.
     expect(lifeCard(tab)!.textContent).toContain('Some of it is before today');
     await press(chipIn(lifeCard(tab)!, 'A career break'));
@@ -564,41 +631,67 @@ describe('life choices stacked in a scenario', () => {
     await fill(sheet, 'From age', '45');
     await fill(sheet, 'For how many years', '2');
     await fill(sheet, 'Saved less a year', '30000');
-    expect(previewLines(sheet)).toEqual(['In this scenario, FI moves from around 52 to around 53 (1 year later).']);
+    expect(previewLines(sheet)).toEqual(['In this copy, FI moves from around 52 to around 53 (1 year later).']);
     await tab.unmount();
   });
 
-  test('a scenario with more than one life event says how many in its row', async () => {
-    const tab = await render({ 'GET /api/plan-scenarios': listing(entry({ name: 'Two', events: [spending(1), spending(2)] })) });
-    expect(tab.rows()[0][1]).toMatch(/ \(2 life events\)$/);
+  // Made your plan from a copy that held them: its card is on your plan too,
+  // to change and remove them; adding one stays What if…'s Try it.
+  test('on your plan once it holds life events: its card beside What if…, to edit and remove them, saved to your plan', async () => {
+    let put: any = null;
+    const mine = withEvents(planOf(PLAN), [home(200_000)]);
+    const tab = await render({
+      'GET /api/plan-inputs': [200, { plan: mine, currency: 'USD', updated_at: 'u1' }],
+      'PUT /api/fire-plan': (call) => {
+        put = call.body;
+        return [200, { plan: call.body.plan, currency: 'USD', updated_at: 'u2' }];
+      },
+    });
+    const card = lifeCard(tab)!;
+    expect(tab.card()).not.toBeNull();
+    expect(card.textContent).toContain('Buying a home');
+    expect(card.textContent).not.toContain('Copy:');
+    expect(WHAT_IF_TEMPLATES.map((t) => chipIn(card, t.label) === null)).toEqual(WHAT_IF_TEMPLATES.map(() => true));
+    expect(card.textContent).toContain('To try another life choice, use What if…: it makes a copy of your plan with it.');
+    await press(card.findAll((e) => e.getAttribute('aria-label') === 'Edit Buying a home')[0]);
+    const sheet = tab.dialog() as FakeElement;
+    expect(sheet.textContent).toContain('Saved to your plan.');
+    expect(button(sheet, 'Remove from your plan')).not.toBeNull();
+    // Against your plan as it is, home and all.
+    expect(preview(sheet)).toBe('In this what-if, FI stays around 56, as in your plan.');
+    await fill(sheet, 'Paid from your investments', '100000');
+    expect(preview(sheet)).toBe('In this what-if, FI moves from around 56 to around 54 (2 years sooner).');
+    await press(button(sheet, 'Save'));
+    await settle(400);
+    expect(put.based_on).toBe('u1');
+    expect(eventsOf(put.plan)).toEqual([home(100_000)]);
+    expect(tab.calls.filter((c) => c.url === '/api/plans' && c.method !== 'GET')).toEqual([]);
     await tab.unmount();
   });
 });
 
 describe('its words', () => {
   const plan = { kind: 'age', age: 52 } as const;
-  test('in a scenario: the preview against it as it is, a stack’s row, and a draft among its events', () => {
+  // A copy's row in the Plans sheet is test/plan-diff.test.ts's.
+  test('in a copy: the preview against it as it is, and a draft among its events', () => {
     const money = (n: number) => `$${n}`;
     const now = { kind: 'age', age: 56 } as const;
-    const say = (when: Parameters<typeof previewText>[0], kind: LifeEvent['kind'] | null = null) => previewText(when, now, money, kind, true, 'scenario');
-    expect(say({ kind: 'age', age: 57 })).toBe('In this scenario, FI moves from around 56 to around 57 (1 year later).');
-    expect(say({ kind: 'age', age: 56 })).toBe('In this scenario, FI stays around 56.');
-    expect(say({ kind: 'age', age: 56 }, 'part-time')).toBe('In this scenario, FI stays around 56: part-time work counts from the stop age on, in Will it last?, not in when you reach FI.');
-    expect(previewText({ kind: 'age', age: 50 }, { kind: 'not-run' }, money, null, true, 'scenario')).toBe('In this scenario, FI comes around 50.');
-    expect(say({ kind: 'now' })).toBe('In this scenario, you’re at FI.');
-    expect(say({ kind: 'never' })).toBe('In this scenario, FI isn’t reached at this savings rate.');
-    expect(say({ kind: 'not-run' })).toBe('In this scenario, the figures can’t be worked out: a lasting change takes spending in retirement below zero.');
-    expect(say(null)).toBe('Fill in the figures to see how it moves this scenario’s FI age.');
-    expect(scenarioRowText(0, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
-    expect(scenarioRowText(1, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
-    expect(scenarioRowText(3, { kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later (3 life events)');
+    const say = (when: Parameters<typeof previewText>[0], kind: LifeEvent['kind'] | null = null) => previewText(when, now, money, kind, true, 'copy');
+    expect(say({ kind: 'age', age: 57 })).toBe('In this copy, FI moves from around 56 to around 57 (1 year later).');
+    expect(say({ kind: 'age', age: 56 })).toBe('In this copy, FI stays around 56.');
+    expect(say({ kind: 'age', age: 56 }, 'part-time')).toBe('In this copy, FI stays around 56: part-time work counts from the stop age on, in Will it last?, not in when you reach FI.');
+    expect(previewText({ kind: 'age', age: 50 }, { kind: 'not-run' }, money, null, true, 'copy')).toBe('In this copy, FI comes around 50.');
+    expect(say({ kind: 'now' })).toBe('In this copy, you’re at FI.');
+    expect(say({ kind: 'never' })).toBe('In this copy, FI isn’t reached at this savings rate.');
+    expect(say({ kind: 'not-run' })).toBe('In this copy, the figures can’t be worked out: a lasting change takes spending in retirement below zero.');
+    expect(say(null)).toBe('Fill in the figures to see how it moves this copy’s FI age.');
     const a = home(1);
     const b = { ...home(2), id: 'b' };
     expect(withDraft([a], b)).toEqual([a, b]);
     // The same id: in its place.
     expect(withDraft([a, b], home(5))).toEqual([home(5), b]);
   });
-  test('a scenario’s line', () => {
+  test('a plan’s line, against your plan’s', () => {
     expect(lifeChoiceText({ kind: 'age', age: 53 }, plan)).toBe('FI around 53, 1 year later');
     expect(lifeChoiceText({ kind: 'age', age: 49 }, plan)).toBe('FI around 49, 3 years sooner');
     expect(lifeChoiceText({ kind: 'age', age: 49 }, { kind: 'none' })).toBe('FI around 49');
@@ -623,7 +716,7 @@ describe('its words', () => {
     expect(previewText({ kind: 'age', age: 52 }, plan, money)).toBe('In this what-if, FI stays around 52, as in your plan.');
     expect(previewText({ kind: 'never' }, plan, money)).toBe('In this what-if: Not reached at this savings rate.');
   });
-  test('a scenario’s name, from the event’s age, and another when it is taken', () => {
+  test('a copy’s name, from the event’s age, and another when it is taken', () => {
     const t = WHAT_IF_TEMPLATES.find((x) => x.id === 'home')!;
     const e = home(1, 38);
     expect(whatIfName(t, e, [])).toBe('Buy a home at 38');
@@ -642,35 +735,5 @@ describe('its words', () => {
   });
   test('no template suggests an amount', () => {
     for (const t of WHAT_IF_TEMPLATES) expect(`${t.label} ${t.name}`).not.toMatch(/\d|\$/);
-  });
-});
-
-describe('once a newer version of Nya has made your plans copies', () => {
-  const copies = (names: string[], count: number, main = { name: 'First plan', missing: false }): [number, unknown] => [
-    200,
-    { scenarios: [], unreadable_ids: [], unrecognised_ids: Array.from({ length: count }, (_, i) => `c${i}`), copies: { names, count, main } },
-  ];
-  const helpers = (card: FakeElement | null) => (card?.findAll((e) => e.tagName === 'P' && classOf(e).includes('helper')) ?? []).map((e) => e.textContent.trim());
-
-  test('the copies line in place of its intro, the choices off and no rows, even with only your plan there', async () => {
-    const tab = await render({ 'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD', updated_at: 'u1' }], 'GET /api/plan-scenarios': copies([], 0) });
-    expect(helpers(tab.card())).toEqual(['Your plans are copies now: make one in the newer version of Nya.']);
-    expect(WHAT_IF_TEMPLATES.every((t) => tab.chip(t.label)?.getAttribute('disabled') !== null)).toBe(true);
-    expect(tab.rows()).toEqual([]);
-    await tab.unmount();
-  });
-
-  test('the copies by name, your plan’s stand-in said first, and neither the age’s ask nor the most kept', async () => {
-    const tab = await render({
-      'GET /api/plan-inputs': [200, { plan: { ...PLAN, age: null }, currency: 'USD', updated_at: 'u1' }],
-      'GET /api/plan-scenarios': copies(['Stop at 52', 'No conversions'], 10, { name: 'Stop at 50', missing: true }),
-    });
-    expect(helpers(tab.card())).toEqual([
-      'Your plans are copies now: make one in the newer version of Nya.',
-      'Your plan wasn’t found, so “Stop at 50” is shown as yours.',
-      '10 plans made by a newer version of Nya are kept there: Stop at 52, No conversions and 8 more.',
-    ]);
-    for (const absent of ['A life choice is placed by age.', 'the most Nya keeps', 'Try a life choice']) expect(tab.card()?.textContent).not.toContain(absent);
-    await tab.unmount();
   });
 });

@@ -32,7 +32,7 @@ export type CurrencyCardMode =
   | { kind: 'ask'; text: string; offer: string[]; was: string | null; canAnswer: boolean }
   | { kind: 'first'; text: string; offer: string[]; picked: string | null }
   | { kind: 'waiting'; text: string }
-  | { kind: 'recorded'; currency: string; kept: string | null; relabelTo: string | null; previous: string | null; scenariosIn: number; offer: string[] }
+  | { kind: 'recorded'; currency: string; kept: string | null; relabelTo: string | null; previous: string | null; copiesIn: number; offer: string[] }
   | { kind: 'none' };
 
 type RecordedMode = Extract<CurrencyCardMode, { kind: 'recorded' }>;
@@ -293,7 +293,7 @@ export function CurrencyChangeSheet({
             <>
               <div className="stack tight">
                 <p className="panel-note">Read your plan’s figures as {to}, not {mode.currency}?</p>
-                <p className="panel-note">{relabelText(mode.currency, to, mode.scenariosIn)}</p>
+                <p className="panel-note">{relabelText(mode.currency, to, mode.copiesIn)}</p>
                 <Alert text={error} />
               </div>
               <div className="button-pair" style={{ marginTop: 16 }}>

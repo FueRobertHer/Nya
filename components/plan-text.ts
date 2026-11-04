@@ -119,7 +119,7 @@ export type FiHeadline = {
   /** Which ages the answer is still missing. */
   ask: 'both' | 'age' | 'stop' | null;
   /** Reached, and then the projection runs out before the stop age (a
-   *  scenario's life events can do that): said under it. */
+   *  plan's life events can do that): said under it. */
   runsOut: string | null;
 };
 
@@ -165,17 +165,17 @@ export function fiHeadline(
 
 /** What moved the walk, in the words the answer, the At age row and the
  *  chart say it with (lib/fire/plan-figures.ts walkFrom): one-offs and
- *  income (a plan's, with D15's switch, or a scenario's added ones) apart
- *  from a scenario's life events, both joined when both. Null when nothing
+ *  income (a plan's, with D15's switch) apart from its life events, both
+ *  joined when both. Null when nothing
  *  did. */
 export function walkWords(from: { items: boolean; events: boolean }): string | null {
-  if (from.items && from.events) return 'one-offs, income and this scenario’s life events';
+  if (from.items && from.events) return 'one-offs, income and this plan’s life events';
   if (from.items) return 'one-offs and income';
   return from.events ? EVENTS_WORDS : null;
 }
 
-/** A scenario's life events, as the walk's words have always named them. */
-export const EVENTS_WORDS = 'this scenario’s life events';
+/** A plan's life events, as the walk's words name them. */
+export const EVENTS_WORDS = 'this plan’s life events';
 
 /** What a headline's missing ages ask for, on a button that opens the Ages
  *  sheet. */
@@ -279,11 +279,11 @@ export const REBALANCE_TEXT: Record<Rebalance, string> = {
  *  more. Null when it leaves out nothing. */
 export function leftOutText(leftOut: PathAfter['leftOut']): string | null {
   const names = leftOut.items.map((i) => `${i.label} ${i.kind === 'income' ? 'from' : 'at'} ${i.age}`);
-  if (leftOut.events) names.push('this scenario’s life events after you stop');
+  if (leftOut.events) names.push('this plan’s life events after you stop');
   if (names.length === 0) return null;
   const shown = names.length > 3 ? [...names.slice(0, 3), `${names.length - 3} more`] : names;
   const list = shown.length <= 2 ? shown.join(' and ') : `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
-  // A scenario's life events are many, whatever else there is.
+  // A plan's life events are many, whatever else there is.
   return `Your FI number leaves out ${list}; this path counts ${names.length > 1 || leftOut.events ? 'them' : 'it'}.`;
 }
 

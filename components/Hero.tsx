@@ -38,7 +38,7 @@ export function Hero({
   figureClass?: string;
   /** What sits right under the figure, in the same block. */
   line?: ReactNode;
-  /** What comes before the label (an open scenario's tag, Drawdown's
+  /** What comes before the label (an open copy's tag, Drawdown's
    *  badge); nothing when there is none. */
   top?: ReactNode;
   /** The feature's own class: `net-worth-hero`, `plan-hero`, `drawdown-hero`,

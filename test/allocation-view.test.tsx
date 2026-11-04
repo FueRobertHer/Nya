@@ -656,12 +656,12 @@ describe('the card', () => {
     expect(html).toContain('<div id="allocation-panel" role="tabpanel" aria-labelledby="allocation-tab-class">');
   });
 
-  test('with a scenario open: says so, and its own settings, the same for every plan, can’t be changed there', () => {
+  test('with a copy open: says so, and its own settings, the same for every plan, can’t be changed there', () => {
     const html = renderToStaticMarkup(
-      <AllocationCard allocation={state()} plan={plan()} onUseMix={noop} settingsLocked scenarioName="Retire at 50" institutions={institutions} balancesAsOf={null} />
+      <AllocationCard allocation={state()} plan={plan()} onUseMix={noop} settingsLocked copyName="Retire at 50" institutions={institutions} balancesAsOf={null} />
     );
     const t = text(html);
-    expect(t).toContain('Scenario: Retire at 50');
+    expect(t).toContain('Copy: Retire at 50');
     expect(t).toContain('Your target, fund splits and tax buckets are the same for every plan: change them with your plan open.');
     expect(html).toMatch(/<button class="plan-edit" disabled="">Set a target<\/button>/);
   });

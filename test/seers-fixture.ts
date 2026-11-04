@@ -102,12 +102,15 @@ export async function seedEveryKind(
   const { incomeCarryoverStore } = await import('@/lib/budget-months-store');
   await incomeCarryoverStore.set(ctx, { version: 1, enabled: true, start: today.slice(0, 7) });
   ok('a runway scenario', await route('runway-scenarios', 'POST', { scenario: { name: 'Leaner months', months: 6, lower_by: 0, currency: null, income_until: null, planned: true, leave_out_one_offs: false } }));
-  ok(
-    'a plan scenario',
-    await route('plan-scenarios', 'POST', {
-      scenario: { name: 'Retire at 50', currency: 'USD', set: { targetAge: 50 }, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [{ id: 'c1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15000, years: 18 }] },
-    })
-  );
+  // Your plan, its facts and a copy of it holding a life event, through the
+  // Plan's routes (lib/plan-writes.ts).
+  const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
+  const { itemFromEvent } = await import('@/lib/fire/items');
+  const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
+  const mine = { ...DEFAULT_PLAN_V2, age: 35, targetAge: 55, spending: 40000 };
+  ok('your plan', await route('fire-plan', 'PUT', { plan: mine, currency: 'USD', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null }));
+  const child = itemFromEvent({ id: 'c1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15000, years: 18 });
+  ok('a copy of your plan', await route('plans', 'POST', { from: MAIN_ID, name: 'Retire at 50', plan: { ...mine, targetAge: 50, items: [child] }, currency: 'USD' }));
   ok('a plan saved as your plan', await route('saved-plan', 'PUT', { saved: { plan: { ...(await import('@/lib/fire/plan')).DEFAULT_PLAN, age: 35, targetAge: 55 }, savings: 20000, currency: 'USD', inflation: 0.03 }, based_on: null }));
 
   // ---- Settings, each as the app keeps it.
@@ -115,17 +118,28 @@ export async function seedEveryKind(
   await allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [{ ticker: 'VFIFX', split: { 'us-stocks': 60, bonds: 40 } }], accounts: [], target: null } as never);
   const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
   await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD', changes: [{ on: ago(10), from: null, to: 'USD' }] } as never);
+  // The plan before copies (the plan, its currency record and a scenario), as
+  // a restore of an older download or the release before leaves it: no route
+  // writes these now, and the Plan's first write above removed them, so they
+  // are written here, after it, through their stores.
   const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
+  const { planScenariosStore } = await import('@/lib/plan-scenarios');
   const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
   const { currencyRecord } = await import('@/lib/fire/plan-currency');
   await firePlanStore.set(ctx, DEFAULT_PLAN);
   await planCurrencyStore.set(ctx, currencyRecord(DEFAULT_PLAN, 'USD'));
-  // The plans as copies, as the release after this one first writes them
-  // (lib/plan-copies.ts): after the scenario's save, which they refuse.
-  const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
-  const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
-  await firePlansStore.set(ctx, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: 'USD', createdAt: at, updatedAt: at });
-  await planFactsStore.set(ctx, { version: 1, main: MAIN_ID, ...factsOf(DEFAULT_PLAN) });
+  await planScenariosStore.set(ctx, 'sc1', {
+    version: 1,
+    name: 'Retire at 50',
+    currency: 'USD',
+    createdAt: at,
+    savedAt: at,
+    rev: 'r1',
+    set: { targetAge: 50 },
+    income: { leaveOut: [], add: [] },
+    expenses: { leaveOut: [], add: [] },
+    events: [{ id: 'c1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15000, years: 18 }],
+  });
   const { plannedStore } = await import('@/lib/planned-store');
   const { EMPTY_PLANNED } = await import('@/lib/planned');
   await plannedStore.set(ctx, EMPTY_PLANNED);

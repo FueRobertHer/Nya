@@ -15,7 +15,7 @@ import {
   PlanSkeleton,
   ReportSkeleton,
   RunwaySkeleton,
-  ScenarioRowsSkeleton,
+  PlanRowsSkeleton,
   SettingsSkeleton,
   SharedWithMeSkeleton,
   SharePreviewSkeleton,
@@ -354,7 +354,7 @@ describe('the waits inside cards, sheets and reports', () => {
   const read = (p: string) => readFileSync(join(import.meta.dir, '..', 'components', p), 'utf8');
   // Classes the real views carry with no rule of their own: the skeleton is drawn on them too.
   const realClasses = new Set(
-    ['InvestmentActivity.tsx', 'VendorDefaultsCard.tsx', 'PlanScenarios.tsx', 'ReportView.tsx', 'RunwayReport.tsx', 'YearOverYearReport.tsx', 'DeleteAccount.tsx', 'Sharing.tsx'].flatMap((f) =>
+    ['InvestmentActivity.tsx', 'VendorDefaultsCard.tsx', 'PlansSheet.tsx', 'ReportView.tsx', 'RunwayReport.tsx', 'YearOverYearReport.tsx', 'DeleteAccount.tsx', 'Sharing.tsx'].flatMap((f) =>
       [...read(f).matchAll(/className="([^"]+)"/g)].flatMap((m) => m[1].split(' '))
     )
   );
@@ -384,7 +384,7 @@ describe('the waits inside cards, sheets and reports', () => {
     ['An investment account’s activity', renderToStaticMarkup(<InvestmentActivitySkeleton />), 'Loading investment activity', 'Loading investment activity'],
     ['Settings: Defaults', renderToStaticMarkup(<VendorDefaultsSkeleton />), 'Loading defaults', 'Loading defaults'],
     ['Sharing: what they see', renderToStaticMarkup(<SharePreviewSkeleton who="Sam" />), 'Loading what Sam sees', 'Loading what Sam sees'],
-    ['Scenarios', renderToStaticMarkup(<ScenarioRowsSkeleton count={2} status="Loading your scenarios" />), 'Loading your scenarios', 'Loading your scenarios'],
+    ['Plans', renderToStaticMarkup(<PlanRowsSkeleton count={2} status="Loading your plans" />), 'Loading your plans', 'Loading your plans'],
     ['The accountant’s report', renderToStaticMarkup(<ReportSkeleton title={null} status="Making the report" />), 'Making the report', 'Making the report'],
     ['Year over year', renderToStaticMarkup(<ReportSkeleton title="Year over year" className="yoy-report" status="Comparing the years" />), 'Comparing the years', 'Comparing the years'],
     ['The runway', renderToStaticMarkup(<RunwaySkeleton />), 'Working out the runway', 'Working out the runway'],
@@ -419,9 +419,9 @@ describe('the waits inside cards, sheets and reports', () => {
     expect(runway).toContain('skeleton block plan-skeleton-chart');
   });
 
-  test('no scenario rows held when none is saved; Sharing’s preview is their card, “Shared by you”', () => {
-    expect(renderToStaticMarkup(<ScenarioRowsSkeleton count={0} status="Loading your plan" />)).not.toContain('plan-row');
-    expect(renderToStaticMarkup(<ScenarioRowsSkeleton count={3} status="Loading your plan" />).match(/class="plan-row"/g)?.length).toBe(3);
+  test('no plan rows held when none is listed; Sharing’s preview is their card, “Shared by you”', () => {
+    expect(renderToStaticMarkup(<PlanRowsSkeleton count={0} status="Loading your plans" />)).not.toContain('list-row');
+    expect(renderToStaticMarkup(<PlanRowsSkeleton count={3} status="Loading your plans" />).match(/class="list-row"/g)?.length).toBe(3);
     expect(renderToStaticMarkup(<SharePreviewSkeleton who="Sam" />)).toContain('<h3>Shared by you</h3>');
   });
 
@@ -429,12 +429,12 @@ describe('the waits inside cards, sheets and reports', () => {
     expect(read('InvestmentActivity.tsx')).toContain('<InvestmentActivitySkeleton />');
     expect(read('VendorDefaultsCard.tsx')).toContain('<VendorDefaultsSkeleton />');
     expect(read('Sharing.tsx')).toContain('<SharePreviewSkeleton who={who} />');
-    expect(read('PlanScenarios.tsx')).toContain('<ScenarioRowsSkeleton');
+    expect(read('PlansSheet.tsx')).toContain('<PlanRowsSkeleton');
     expect(read('RunwayReport.tsx')).toContain('<RunwaySkeleton />');
     expect(read('ReportsPage.tsx')).toContain('<ReportSkeleton');
     expect(read('YearOverYearReport.tsx')).toContain('<ReportSkeleton');
     expect(read('DeleteAccount.tsx')).toContain('<DeleteAccountSkeleton />');
-    for (const f of ['InvestmentActivity.tsx', 'VendorDefaultsCard.tsx', 'Sharing.tsx', 'PlanScenarios.tsx', 'RunwayReport.tsx', 'ReportsPage.tsx', 'YearOverYearReport.tsx', 'DeleteAccount.tsx']) {
+    for (const f of ['InvestmentActivity.tsx', 'VendorDefaultsCard.tsx', 'Sharing.tsx', 'PlansSheet.tsx', 'RunwayReport.tsx', 'ReportsPage.tsx', 'YearOverYearReport.tsx', 'DeleteAccount.tsx']) {
       expect([f, read(f).includes('className="spinner')]).toEqual([f, false]);
     }
     // Kept (design-system.md, Skeleton): a small wait inside a card, in a box

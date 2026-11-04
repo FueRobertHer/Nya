@@ -1,7 +1,7 @@
 // components/plan-compare.ts
 //
 // Compare mode's rows (components/PlanCompare.tsx draws them): two to four
-// plans, the Plan and its scenarios, metric by metric, each against the
+// plans, yours and its copies, metric by metric, each against the
 // first plan that could be worked out. No React here, so what each cell
 // says can be tested on its own.
 //
@@ -13,7 +13,7 @@
 // balance and spending depend on it, so an amount difference between plans
 // that start with different balances, or where one starts with money it
 // wouldn't have then (retiring before it reaches its FI number, say), would
-// read as the scenario's doing. It isn't given; the cell says why instead.
+// read as the copy's doing. It isn't given; the cell says why instead.
 // And a plan that starts with more than it would have says so in its own
 // success cell, and in what a screen reader is given for it.
 
@@ -141,8 +141,8 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
 
   // When every plan worked out ends, if they all end together: at an age,
   // or, where one has no age to count from, after a number of years. A plan
-  // can have an age when your plan has none: a scenario that sets a
-  // retirement age starts at it (lib/fire/plan.ts startAge). Plans of both
+  // can have an age when another has none: one with a stop age starts
+  // at it (lib/fire/plan.ts startAge). Plans of both
   // kinds are compared by how long they run, as plans with no age are.
   const ends = columns.flatMap((c) => {
     if (c.outcome.kind !== 'figures' || !('sim' in c.outcome.figures.engine)) return [];

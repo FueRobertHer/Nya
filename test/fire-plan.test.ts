@@ -16,6 +16,9 @@ const { encrypt, decrypt } = await import('@/lib/crypto');
 const { StoredDataUnreadableError, readEncryptedJson, writeEncryptedJson } = await import('@/lib/stored-json');
 const { UnreadableValueError } = await import('@/lib/repo');
 const { firePlanStore } = await import('@/lib/fire-plan');
+const { firePlansStore } = await import('@/lib/plan-copies');
+const { DEFAULT_PLAN_V2, planOf } = await import('@/lib/fire/plan-v2');
+const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
@@ -1022,11 +1025,13 @@ describe('the store', () => {
     expect(String(await fake.get(ctxKey('fire-plan')))).not.toContain('50000');
   });
 
-  test('a plan saved before the store moved onto the seam reads back unchanged, and the old reader reads the new', async () => {
+  test('a plan saved before the store moved onto the seam reads back unchanged, and the old reader reads the new; the Plan reads neither', async () => {
     // Exactly as the store saved it before: lib/stored-json.ts, under the same key.
     await writeEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', saved, isFirePlan);
     expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
-    expect(await (await route.GET()).json()).toEqual({ plan: saved, currency: null });
+    // The plan is your plan's entry (lib/plan-copies.ts): this store is kept
+    // for a download and a restore, and never read as the plan.
+    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null });
     // And what the seam saves, the release before it reads: a rollback loses nothing.
     await firePlanStore.set(TEST_CTX, plan({ age: 41 }));
     expect(await readEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(plan({ age: 41 }));
@@ -1068,9 +1073,10 @@ describe('the store', () => {
     const old = { ...saved, withdrawalRate: 0.2, horizon: 61, targetAge: 30 };
     await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(old)));
     expect(await firePlanStore.get(TEST_CTX)).toEqual(old);
-    const res = await route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify({ plan: old }) }));
+    const res = await route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify({ plan: planOf(old), currency: 'USD', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null }) }));
     expect(res.status).toBe(400);
     expect(await stored()).toEqual(old);
+    expect(await fake.type(ctxKey('fire-plans'))).toBe('none');
   });
 
   test('damaged bytes are unreadable, a later release’s plan is not understood, and neither reads as none', async () => {
@@ -1102,6 +1108,9 @@ describe('the store', () => {
 
 describe('the route', () => {
   const put = (body: unknown) => route.PUT(new Request('http://x', { method: 'PUT', body: typeof body === 'string' ? body : JSON.stringify(body) }));
+  /** Your plan's first save, as a page sends it. */
+  const first = (p: unknown) => put({ plan: p, currency: null, facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null });
+  const v2 = (over: Partial<FirePlan> = {}) => planOf(plan(over));
   const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
     const orig = console.error;
     console.error = () => {};
@@ -1112,37 +1121,39 @@ describe('the route', () => {
     }
   };
 
-  test('loads null before anything is saved, then what was saved', async () => {
-    expect(await (await route.GET()).json()).toEqual({ plan: null, currency: null });
-    const res = await put({ plan: plan({ age: 30 }) });
+  test('loads the defaults, with no stamp, before anything is saved, then what was saved', async () => {
+    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null });
+    const res = await first(v2({ age: 30 }));
     expect(res.status).toBe(200);
-    expect(await (await route.GET()).json()).toEqual({ plan: plan({ age: 30 }), currency: null });
+    const { updated_at } = await res.json();
+    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: v2({ age: 30 }), currency: null, updated_at });
   });
 
   test('refuses an invalid plan with the reason, and stores nothing', async () => {
-    const res = await put({ plan: { ...DEFAULT_PLAN, withdrawalRate: 4 } });
+    const res = await first(v2({ withdrawalRate: 4 }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain('withdrawalRate');
-    expect(await fake.get(ctxKey('fire-plan'))).toBeNull();
+    expect(await fake.type(ctxKey('fire-plans'))).toBe('none');
     expect((await put('{not json')).status).toBe(400);
-    expect((await put({})).status).toBe(400);
     expect((await put(null)).status).toBe(400);
+    expect((await put([])).status).toBe(400);
+    expect((await first(DEFAULT_PLAN)).status).toBe(400); // version 1: what a page from before copies sends
+    expect(await fake.type(ctxKey('fire-plans'))).toBe('none');
   });
 
-  test('an unreadable store is a flagged 409 on load and on save, and is left alone', async () => {
-    await fake.set(ctxKey('fire-plan'), 'unreadable');
+  test('your plan’s entry unreadable is a flagged 409 on load and on save, and is left alone', async () => {
+    await fake.hset(ctxKey('fire-plans'), { [MAIN_ID]: 'unreadable' });
     const get = await quiet(() => route.GET());
     expect(get.status).toBe(409);
     expect(await get.json()).toMatchObject({ unreadable: true });
-    const res = await quiet(() => put({ plan: DEFAULT_PLAN }));
+    const res = await quiet(() => put({ plan: DEFAULT_PLAN_V2, currency: null, facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null }));
     expect(res.status).toBe(409);
-    expect(await fake.get<string>(ctxKey('fire-plan'))).toBe('unreadable');
+    expect(await fake.hget<string>(ctxKey('fire-plans'), MAIN_ID)).toBe('unreadable');
   });
 
   test('a database failure is a 500 without the flag', async () => {
-    // The facts' read comes first, and isn't needed while the plan is
-    // fire-plan's (lib/plan-copies.ts readPlanAnswer): the plan's is second.
-    fake.failNext('get', 2);
+    // How many plans there are, read beside the facts and your plan's entry.
+    fake.failNext('hlen');
     const res = await quiet(() => route.GET());
     expect(res.status).toBe(500);
     expect((await res.json()).unreadable).toBeUndefined();
@@ -1152,10 +1163,11 @@ describe('the route', () => {
     const before = process.env.MAX_TXN_BLOB_CHARS;
     process.env.MAX_TXN_BLOB_CHARS = '100';
     try {
-      const res = await quiet(() => put({ plan: plan({ age: 30 }) }));
+      const res = await quiet(() => first(v2({ age: 30 })));
       expect(res.status).toBe(413);
       expect((await res.json()).error).toContain('too large to save');
-      expect(await fake.get(ctxKey('fire-plan'))).toBeNull();
+      expect([await fake.type(ctxKey('fire-plans')), await fake.type(ctxKey('plan-facts'))]).toEqual(['none', 'none']);
+      expect(await firePlansStore.count(TEST_CTX)).toBe(0);
     } finally {
       if (before === undefined) delete process.env.MAX_TXN_BLOB_CHARS;
       else process.env.MAX_TXN_BLOB_CHARS = before;

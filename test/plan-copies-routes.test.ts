@@ -3,12 +3,14 @@ import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscop
 import type { FirePlan, PlanIncome } from '@/lib/fire/plan';
 import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 
-// The plan once a newer release has made the plans copies (lib/plan-copies.ts),
-// through the routes: GET /api/fire-plan and /api/plan-inputs answer your
-// plan's entry, PUT and POST save into it on the rules of app/api/fire-plan
-// (the stamp, the version, the facts as the page loaded them, the currency),
-// the scenario routes name the copies and save nothing, and nothing here ever
-// makes either store.
+// The plans as copies read (lib/plan-copies.ts), and your plan saved, through
+// the routes: GET /api/fire-plan and /api/plan-inputs answer your plan's
+// entry with the facts in its fields (the defaults while there is none, never
+// the plan before copies), GET /api/plans every plan, and PUT and POST
+// /api/fire-plan save into your entry on the rules of app/api/fire-plan (the
+// stamp, the version, the facts as the page loaded them, the currency). The
+// other plans' writes, and your plan's first entry, are
+// test/plans-routes.test.ts's.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -19,7 +21,6 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const { encrypt } = await import('@/lib/crypto');
 const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
-const { planScenariosStore } = await import('@/lib/plan-scenarios');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { planOf } = await import('@/lib/fire/plan-v2');
 const { itemFromIncome } = await import('@/lib/fire/items');
@@ -27,7 +28,7 @@ const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
 const planRoute = await import('@/app/api/fire-plan/route');
 const inputsRoute = await import('@/app/api/plan-inputs/route');
-const scenariosRoute = await import('@/app/api/plan-scenarios/route');
+const plansRoute = await import('@/app/api/plans/route');
 
 beforeEach(async () => {
   fake.reset();
@@ -42,9 +43,14 @@ const OTHER_DEVICE = 'Changed on another device: load it again';
 const PARTIAL = 'Your age was saved; the rest wasn’t: try again';
 const STALE_CURRENCY = 'The currency your plan’s figures are in was changed since this page loaded it, so nothing was saved: load it again.';
 const FIRST_CURRENCY = 'Say which currency your plan’s figures are in, then save again: nothing was saved.';
+const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null };
 
 const income = (over: Partial<PlanIncome> = {}): PlanIncome => ({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true, ...over });
+/** Your plan as an entry may hold it: version 1, as the release before saved it. */
 const TYPED: FirePlan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, income: [income()] };
+/** And as this release saves it: version 2. */
+const TYPED2 = planOf(TYPED);
+const BLANK2 = planOf(DEFAULT_PLAN);
 const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'First plan', plan: TYPED, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT, ...over });
 const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(TYPED), ...over });
 const pension = { ...itemFromIncome(income({ id: 'pen', label: 'Pension' })), kind: 'pension' as const };
@@ -56,8 +62,11 @@ const get = async () => json(await planRoute.GET());
 const put = async (body: unknown) => json(await planRoute.PUT(req('fire-plan', 'PUT', body)));
 const post = async (body: unknown) => json(await planRoute.POST(req('fire-plan', 'POST', body)));
 const inputs = async () => json(await inputsRoute.GET(req('plan-inputs', 'GET')));
-const scenarios = async (method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: unknown) =>
-  json(method === 'GET' ? await scenariosRoute.GET() : await (scenariosRoute[method] as (r: Request) => Promise<Response>)(req('plan-scenarios', method, body)));
+const list = async () => json(await plansRoute.GET());
+/** Your plan's save as a page sends it, loaded at `based_on` with the facts
+ *  of TYPED unless said. */
+const save = (plan: unknown, based_on: string | null = AT, over: { currency?: string | null; facts_were?: unknown } = {}) =>
+  put({ plan, currency: over.currency === undefined ? 'USD' : over.currency, facts_were: over.facts_were ?? factsOf(TYPED), based_on });
 
 const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   const error = console.error;
@@ -73,58 +82,69 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
 const DAMAGED = 'damaged-bytes-not-ciphertext-at-all';
 const damageEntry = (id: string) => fake.hset(ctxKey('fire-plans'), { [id]: DAMAGED });
 /** Each entry's stored bytes, and the facts', to hold a refusal to "nothing written". */
-const raw = async () => ({ plans: await fake.hgetall(ctxKey('fire-plans')), facts: await fake.get(ctxKey('plan-facts')) });
+const raw = async () => ({ plans: await fake.hgetall<Record<string, string>>(ctxKey('fire-plans')), facts: await fake.get(ctxKey('plan-facts')) });
 
-/** Runs `before` just before the store's next compare-and-set reads, as
- *  another device's write landing between this save's read and its write. */
-function between(store: { update: (...a: any[]) => Promise<unknown> }, before: () => Promise<unknown>) {
-  const update = store.update;
-  store.update = async (...args: any[]) => {
-    store.update = update;
+/** Runs `before` just before the store's next compare-and-set over entries,
+ *  as another device's write landing between this save's read and its write. */
+function between(before: () => Promise<unknown>) {
+  const store = firePlansStore as unknown as { updateMany: (...a: unknown[]) => Promise<unknown> };
+  const real = store.updateMany;
+  store.updateMany = async (...args: unknown[]) => {
+    store.updateMany = real;
     await before();
-    return update.apply(store, args);
+    return real.apply(firePlansStore, args);
   };
-  return () => (store.update = update);
 }
 
-/** The legacy plan and its record, as every account has them until copies. */
+/** The plan before copies and its record, as an account may still hold them. */
 async function legacy(plan: FirePlan = { ...DEFAULT_PLAN, spending: 30_000 }) {
   await firePlanStore.set(ctx, plan);
   await planCurrencyStore.set(ctx, currencyRecord(plan, 'EUR'));
   return plan;
 }
 
-describe('the plan read, before copies', () => {
-  test('is the plan and its record, as before; the facts alone change nothing', async () => {
-    const plan = await legacy();
-    const before = await get();
-    expect(before).toEqual({ status: 200, body: { plan, currency: 'EUR' } });
+/** The ids GET /api/plans lists, yours first, and which is yours. */
+const listed = async () => {
+  const { body } = await list();
+  return { main: body.main, missing: body.missing, ids: body.plans.map((p: { id: string }) => p.id), names: body.plans.map((p: { name: string }) => p.name) };
+};
+
+describe('the plan read, before any entry', () => {
+  test('is the defaults, never the plan before copies; the facts alone change nothing', async () => {
+    await legacy();
+    expect(await get()).toEqual({ status: 200, body: NO_PLAN });
     await planFactsStore.set(ctx, facts({ age: 60 }));
-    expect(await get()).toEqual(before);
-    expect((await inputs()).body).toEqual({ plan, currency: 'EUR', plans: [] });
+    expect(await get()).toEqual({ status: 200, body: NO_PLAN });
+    expect((await inputs()).body).toEqual({ ...NO_PLAN, plans: [] });
+    expect(await listed()).toEqual({ main: MAIN_ID, missing: false, ids: [MAIN_ID], names: ['First plan'] });
   });
 
-  test('a damaged facts value beside no copies is never read into the answer', async () => {
-    const plan = await legacy();
+  test('damaged facts, or a damaged plan before copies, beside no entry are never read into the answer', async () => {
+    await fake.set(ctxKey('fire-plan'), DAMAGED);
+    await fake.set(ctxKey('fire-plan-currency'), DAMAGED);
     await fake.set(ctxKey('plan-facts'), DAMAGED);
-    expect(await get()).toEqual({ status: 200, body: { plan, currency: 'EUR' } });
+    expect(await get()).toEqual({ status: 200, body: NO_PLAN });
     expect((await inputs()).status).toBe(200);
+    expect((await list()).status).toBe(200);
   });
 });
 
-describe('the plan read, once there are copies', () => {
-  test('is your plan’s entry, with the facts in its fields, its currency and its stamp; the legacy plan isn’t read', async () => {
+describe('the plan read, once there are entries', () => {
+  test('is your plan’s entry, with the facts in its fields, its id, its currency and its stamp', async () => {
     await legacy();
     await firePlansStore.set(ctx, MAIN_ID, entry({ updatedAt: 'stamp-1' }));
     await planFactsStore.set(ctx, facts({ age: 50, includeCash: true }));
-    const want = { plan: { ...TYPED, age: 50, includeCash: true }, currency: 'USD', updated_at: 'stamp-1' };
+    const want = { id: MAIN_ID, plan: { ...TYPED, age: 50, includeCash: true }, currency: 'USD', updated_at: 'stamp-1' };
     expect(await get()).toEqual({ status: 200, body: want });
     expect((await inputs()).body).toEqual({ ...want, plans: [] });
+    expect((await list()).body.plans).toEqual([{ id: MAIN_ID, name: 'First plan', plan: want.plan, currency: 'USD', created_at: AT, updated_at: 'stamp-1' }]);
   });
 
-  test('without the facts, the entry’s own fields are them', async () => {
+  test('without the facts, your entry’s own fields are them, every copy’s too', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect((await get()).body).toEqual({ plan: TYPED, currency: 'USD', updated_at: AT });
+    await firePlansStore.set(ctx, 'x', entry({ name: 'Older age', plan: { ...TYPED, age: 30, targetAge: 52 }, createdAt: '2026-11-02T10:00:00.000Z' }));
+    expect((await get()).body).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'USD', updated_at: AT });
+    expect((await list()).body.plans[1].plan).toEqual({ ...TYPED, targetAge: 52 });
   });
 
   test('a partner’s age in the facts reads a version 1 entry as version 2', async () => {
@@ -136,60 +156,67 @@ describe('the plan read, once there are copies', () => {
   test('an entry with nothing typed answers no currency, so the Plan follows the accounts', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ plan: DEFAULT_PLAN, currency: 'USD' }));
     expect((await get()).body.currency).toBeNull();
+    expect((await list()).body.plans[0].currency).toBeNull();
   });
 
   test('a version 2 entry whose only amount is a pension answers its currency', async () => {
-    await firePlansStore.set(ctx, MAIN_ID, entry({ plan: { ...planOf(DEFAULT_PLAN), items: [pension] }, currency: 'EUR' }));
+    await firePlansStore.set(ctx, MAIN_ID, entry({ plan: { ...BLANK2, items: [pension] }, currency: 'EUR' }));
     expect((await get()).body.currency).toBe('EUR');
   });
 
-  test('the facts naming a plan not there: main, else the oldest, and the scenario list says so', async () => {
+  test('the facts naming a plan not there: main, else the oldest, and the list says so', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await firePlansStore.set(ctx, 'x', entry({ name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, createdAt: '2026-11-02T10:00:00.000Z' }));
     await planFactsStore.set(ctx, facts({ main: 'gone' }));
-    expect((await get()).body.plan.targetAge).toBe(55);
-    expect((await scenarios('GET')).body.copies).toEqual({ names: ['Stop at 52'], count: 1, main: { name: 'First plan', missing: true } });
+    expect((await get()).body).toMatchObject({ id: MAIN_ID, plan: { targetAge: 55 } });
+    expect(await listed()).toEqual({ main: MAIN_ID, missing: true, ids: [MAIN_ID, 'x'], names: ['First plan', 'Stop at 52'] });
     await firePlansStore.remove(ctx, MAIN_ID);
-    expect((await get()).body.plan.targetAge).toBe(52);
-    expect((await scenarios('GET')).body.copies).toEqual({ names: [], count: 0, main: { name: 'Stop at 52', missing: true } });
+    expect((await get()).body).toMatchObject({ id: 'x', plan: { targetAge: 52 } });
+    expect(await listed()).toEqual({ main: 'x', missing: true, ids: ['x'], names: ['Stop at 52'] });
   });
 
   test('main there without the facts: yours, nothing said; no main and no facts: the oldest, said', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect((await scenarios('GET')).body.copies.main).toEqual({ name: 'First plan', missing: false });
+    expect((await listed()).missing).toBe(false);
     await firePlansStore.remove(ctx, MAIN_ID);
     await firePlansStore.set(ctx, 'b', entry({ name: 'Later', createdAt: '2026-11-03T10:00:00.000Z' }));
     await firePlansStore.set(ctx, 'a', entry({ name: 'Earlier', createdAt: '2026-11-02T10:00:00.000Z' }));
-    expect((await scenarios('GET')).body.copies).toEqual({ names: ['Later'], count: 1, main: { name: 'Earlier', missing: true } });
+    expect(await listed()).toEqual({ main: 'a', missing: true, ids: ['a', 'b'], names: ['Earlier', 'Later'] });
+    expect((await get()).body.id).toBe('a');
   });
 
-  test('a copy that can’t be read never stops it, and is counted, not named', async () => {
+  test('copies listed in the order they were made; one that can’t be read, or a newer version saved, never stops it and is named by id', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    await firePlansStore.set(ctx, 'x', entry({ name: 'Stop at 52', createdAt: '2026-11-02T10:00:00.000Z' }));
+    await firePlansStore.set(ctx, 'y', entry({ name: 'Second', createdAt: '2026-11-03T10:00:00.000Z' }));
+    await firePlansStore.set(ctx, 'x', entry({ name: 'First copy', createdAt: '2026-11-02T10:00:00.000Z' }));
     await damageEntry('broken');
     await fake.hset(ctxKey('fire-plans'), { later: await encrypt(ctx, JSON.stringify({ ...entry(), tax: { filing: 'single' } })) });
     expect((await get()).status).toBe(200);
-    const listed = await scenarios('GET');
-    expect(listed.body).toEqual({ scenarios: [], unreadable_ids: [], unrecognised_ids: ['x', 'broken', 'later'], copies: { names: ['Stop at 52'], count: 3, main: { name: 'First plan', missing: false } } });
+    expect((await inputs()).status).toBe(200);
+    const { body } = await list();
+    expect([body.plans.map((p: { id: string }) => p.id), body.unreadable_ids, body.unrecognised_ids]).toEqual([[MAIN_ID, 'x', 'y'], ['broken'], ['later']]);
   });
 
-  test('a damaged legacy plan or record beside copies never stops it', async () => {
+  test('a damaged plan before copies or record beside entries never stops it', async () => {
     await fake.set(ctxKey('fire-plan'), DAMAGED);
     await fake.set(ctxKey('fire-plan-currency'), DAMAGED);
     await firePlansStore.set(ctx, MAIN_ID, entry());
     expect((await get()).status).toBe(200);
     expect((await inputs()).status).toBe(200);
+    expect((await save(TYPED2)).status).toBe(200);
   });
 
-  test('damaged facts beside copies: unreadable everywhere, never the legacy plan or the defaults', async () => {
+  test('damaged facts beside entries: unreadable everywhere, never the defaults, and nothing written', async () => {
     await legacy();
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await fake.set(ctxKey('plan-facts'), DAMAGED);
+    const was = await raw();
     await quiet(async () => {
-      for (const r of [await get(), await inputs(), await put({ plan: TYPED, currency: 'USD' }), await post({ currency: 'USD', amounts: typedAmounts(TYPED) }), await scenarios('GET')]) {
+      for (const r of [await get(), await inputs(), await list(), await save(TYPED2), await post({ currency: 'USD', amounts: typedAmounts(TYPED) })]) {
         expect([r.status, r.body.unreadable]).toEqual([409, true]);
       }
     });
+    expect(await raw()).toEqual(was);
     expect(await firePlanStore.get(ctx)).toEqual({ ...DEFAULT_PLAN, spending: 30_000 });
   });
 
@@ -201,7 +228,7 @@ describe('the plan read, once there are copies', () => {
       await firePlansStore.set(ctx, MAIN_ID, entry());
       await damageEntry('x');
       await planFactsStore.set(ctx, facts({ main: 'x' }));
-      expect([(await get()).status, (await scenarios('GET')).status, (await put({ plan: TYPED, currency: 'USD' })).status]).toEqual([409, 409, 409]);
+      expect([(await get()).status, (await list()).status, (await save(TYPED2)).status]).toEqual([409, 409, 409]);
       await planFactsStore.remove(ctx);
       await firePlansStore.remove(ctx, MAIN_ID);
       expect((await get()).body.unreadable).toBe(true);
@@ -217,14 +244,16 @@ describe('the plan the facts name, with main there too', () => {
     await planFactsStore.set(ctx, facts({ main: 'x' }));
   });
 
-  test('is read, and the scenario list names main among the copies', async () => {
-    expect((await get()).body).toEqual({ plan: X.plan, currency: 'USD', updated_at: 'x-1' });
-    expect((await scenarios('GET')).body.copies).toEqual({ names: ['First plan'], count: 1, main: { name: 'Stop at 52', missing: false } });
+  test('is read, and the list names it yours, main among the copies', async () => {
+    expect((await get()).body).toEqual({ id: 'x', plan: X.plan, currency: 'USD', updated_at: 'x-1' });
+    expect(await listed()).toEqual({ main: 'x', missing: false, ids: ['x', MAIN_ID], names: ['Stop at 52', 'First plan'] });
   });
 
-  test('is the one PUT and POST write, main left byte for byte', async () => {
+  test('is the one PUT and POST write, at its own stamp, main left byte for byte', async () => {
     const main = (await fake.hgetall<Record<string, string>>(ctxKey('fire-plans')))![MAIN_ID];
-    expect((await put({ plan: { ...TYPED, targetAge: 53 }, currency: 'USD', facts_were: factsOf(TYPED) })).status).toBe(200);
+    expect(await save({ ...TYPED2, targetAge: 53 }, AT)).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
+    const r = await save({ ...TYPED2, targetAge: 53 }, 'x-1');
+    expect([r.status, r.body.id]).toEqual([200, 'x']);
     expect((await firePlansStore.get(ctx, 'x'))!.plan.targetAge).toBe(53);
     await firePlansStore.update(ctx, 'x', (cur) => ({ ...cur!, currency: null }));
     expect((await post({ currency: 'EUR', amounts: typedAmounts({ ...TYPED, targetAge: 53 }) })).status).toBe(200);
@@ -234,119 +263,95 @@ describe('the plan the facts name, with main there too', () => {
 });
 
 describe('saving your plan (PUT)', () => {
-  test('any key but the plan, its currency, the facts it was loaded with and the stamp is refused, copies or not', async () => {
-    expect(await put({ plan: TYPED, scenario: 'x' })).toEqual({ status: 400, body: { error: 'scenario isn’t taken here' } });
+  test('any key but the plan, its currency, the facts it was loaded with and the stamp is refused, as is one of the wrong type', async () => {
+    expect(await put({ plan: TYPED2, scenario: 'x', facts_were: factsOf(TYPED), based_on: null })).toEqual({ status: 400, body: { error: 'scenario isn’t taken here' } });
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect((await put({ plan: TYPED, currency: 'USD', id: 'x' })).status).toBe(400);
-    expect((await put({ plan: TYPED, facts_were: { age: 'forty' } })).status).toBe(400);
-    expect((await put({ plan: TYPED, based_on: 7 })).status).toBe(400);
+    expect((await put({ plan: TYPED2, currency: 'USD', id: 'x', facts_were: factsOf(TYPED), based_on: AT })).status).toBe(400);
+    expect((await put({ plan: TYPED2, facts_were: { age: 'forty' }, based_on: AT })).status).toBe(400);
+    expect((await put({ plan: TYPED2, facts_were: factsOf(TYPED), based_on: 7 })).status).toBe(400);
+    expect((await put({ plan: TYPED2, currency: 'usd', facts_were: factsOf(TYPED), based_on: AT })).status).toBe(400);
+    expect(await firePlansStore.get(ctx, MAIN_ID)).toEqual(entry());
   });
 
-  test('before copies: today’s save, facts_were and based_on ignored, a version 2 plan refused, and neither store made', async () => {
-    const r = await put({ plan: TYPED, currency: 'USD', facts_were: factsOf({ ...TYPED, age: 70 }), based_on: 'whatever' });
-    expect(r).toEqual({ status: 200, body: { plan: TYPED, currency: 'USD' } });
-    expect(await firePlanStore.get(ctx)).toEqual(TYPED);
-    expect((await put({ plan: planOf(TYPED) })).status).toBe(400);
-    expect([await firePlansStore.count(ctx), await planFactsStore.get(ctx)]).toEqual([0, null]);
-  });
-
-  test('once there are copies: into your entry with a newer stamp, never the legacy plan', async () => {
+  test('into your entry with a newer stamp; the plan before copies neither read nor written', async () => {
     const was = await legacy();
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await planFactsStore.set(ctx, facts());
-    const next = { ...TYPED, spending: 45_000 };
-    const r = await put({ plan: next, currency: 'USD', facts_were: factsOf(TYPED) });
+    const next = { ...TYPED2, spending: 45_000 };
+    const r = await save(next);
     expect(r.status).toBe(200);
     const stored = (await firePlansStore.get(ctx, MAIN_ID))!;
     expect(stored).toEqual({ ...entry(), plan: next, updatedAt: stored.updatedAt });
     expect(stored.updatedAt > AT).toBe(true);
-    expect(r.body).toEqual({ plan: next, currency: 'USD', updated_at: stored.updatedAt });
+    expect(r.body).toEqual({ id: MAIN_ID, plan: next, currency: 'USD', updated_at: stored.updatedAt });
     expect(await firePlanStore.get(ctx)).toEqual(was);
   });
 
-  test('the stamp sent: matching taken, another refused, none taken', async () => {
+  test('the stamp sent: matching taken, another refused', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ updatedAt: 'stamp-1' }));
-    expect(await put({ plan: TYPED, currency: 'USD', based_on: 'stamp-0' })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
-    const ok = await put({ plan: TYPED, currency: 'USD', based_on: 'stamp-1' });
-    expect(ok.status).toBe(200);
-    expect((await put({ plan: TYPED, currency: 'USD' })).status).toBe(200);
+    expect(await save(TYPED2, 'stamp-0')).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
+    expect(await save(TYPED2, null)).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
+    expect((await save(TYPED2, 'stamp-1')).status).toBe(200);
   });
 
-  test('a version 1 plan over a version 2 entry is refused, so nothing it can’t show is dropped; version 2 is taken', async () => {
-    const two = { ...planOf(TYPED), items: [...planOf(TYPED).items, pension] };
-    await firePlansStore.set(ctx, MAIN_ID, entry({ plan: two }));
-    expect(await put({ plan: TYPED, currency: 'USD' })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
-    const r = await put({ plan: { ...two, spending: 41_000 }, currency: 'USD' });
+  test('version 2 is what is saved, over an entry of either version; version 1 is refused', async () => {
+    await firePlansStore.set(ctx, MAIN_ID, entry());
+    expect((await save(TYPED)).status).toBe(400);
+    const two = { ...TYPED2, items: [...TYPED2.items, pension] };
+    const r = await save(two);
     expect(r.status).toBe(200);
-    expect((await firePlansStore.get(ctx, MAIN_ID))!.plan).toEqual({ ...two, spending: 41_000 });
+    expect((await firePlansStore.get(ctx, MAIN_ID))!.plan).toEqual(two);
+    expect((await save({ ...two, spending: 41_000 }, r.body.updated_at)).status).toBe(200);
   });
 
   test('facts unchanged from those loaded: none written, and another device’s age stands', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await planFactsStore.set(ctx, facts({ age: 50 }));
     // Loaded at 40; another device has saved 50 since.
-    const r = await put({ plan: { ...TYPED, spending: 41_000 }, currency: 'USD', facts_were: factsOf(TYPED) });
+    const r = await save({ ...TYPED2, spending: 41_000 });
     expect(r.status).toBe(200);
     expect((await planFactsStore.get(ctx))!.age).toBe(50);
-    expect(r.body.plan).toEqual({ ...TYPED, spending: 41_000, age: 50 });
+    expect(r.body.plan).toEqual({ ...TYPED2, spending: 41_000, age: 50 });
   });
 
   test('facts changed from those loaded: written for every plan', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
+    await firePlansStore.set(ctx, 'x', entry({ name: 'Copy', createdAt: '2026-11-02T10:00:00.000Z' }));
     await planFactsStore.set(ctx, facts());
-    const r = await put({ plan: { ...TYPED, age: 41 }, currency: 'USD', facts_were: factsOf(TYPED) });
+    const r = await save({ ...TYPED2, age: 41 });
     expect(r.status).toBe(200);
     expect(await planFactsStore.get(ctx)).toEqual(facts({ age: 41 }));
+    expect((await list()).body.plans[1].plan.age).toBe(41);
   });
 
   test('facts changed over facts changed elsewhere: refused, and nothing written', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await planFactsStore.set(ctx, facts({ age: 50 }));
     const before = await raw();
-    expect(await put({ plan: { ...TYPED, age: 41 }, currency: 'USD', facts_were: factsOf(TYPED) })).toEqual({ status: 409, body: { error: OTHER_DEVICE, stale: true } });
+    expect(await save({ ...TYPED2, age: 41 })).toEqual({ status: 409, body: { error: OTHER_DEVICE, stale: true } });
     expect(await raw()).toEqual(before);
   });
 
-  test('from the release before’s page (no facts sent): taken only with the facts as they are', async () => {
+  test('without the facts: a change makes them, from your entry’s fields, and goes into the entry', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    await planFactsStore.set(ctx, facts());
-    expect((await put({ plan: { ...TYPED, spending: 41_000 }, currency: 'USD' })).status).toBe(200);
-    expect(await put({ plan: { ...TYPED, age: 41 }, currency: 'USD' })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
-    expect((await planFactsStore.get(ctx))!.age).toBe(40);
-  });
-
-  test('without the facts: a change goes into the entry, and never makes them', async () => {
-    await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect((await put({ plan: { ...TYPED, age: 41 }, currency: 'USD', facts_were: factsOf(TYPED) })).status).toBe(200);
+    expect((await save({ ...TYPED2, age: 41 })).status).toBe(200);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.plan.age).toBe(41);
-    expect(await planFactsStore.get(ctx)).toBeNull();
-  });
-
-  test('without the facts, an age saved elsewhere between the read and the write: refused for a save changing it, kept by one that doesn’t', async () => {
-    await firePlansStore.set(ctx, MAIN_ID, entry());
-    const elsewhere = () => firePlansStore.update(ctx, MAIN_ID, (cur) => ({ ...cur!, plan: { ...cur!.plan, age: 50 } }));
-    between(firePlansStore, elsewhere);
-    expect(await put({ plan: { ...TYPED, age: 41 }, currency: 'USD', facts_were: factsOf(TYPED) })).toEqual({ status: 409, body: { error: OTHER_DEVICE, stale: true } });
-    expect((await firePlansStore.get(ctx, MAIN_ID))!.plan.age).toBe(50);
-    await firePlansStore.set(ctx, MAIN_ID, entry());
-    between(firePlansStore, elsewhere);
-    expect((await put({ plan: { ...TYPED, spending: 41_000 }, currency: 'USD', facts_were: factsOf(TYPED) })).status).toBe(200);
-    expect((await firePlansStore.get(ctx, MAIN_ID))!.plan).toEqual({ ...TYPED, spending: 41_000, age: 50 });
+    expect(await planFactsStore.get(ctx)).toEqual(facts({ age: 41 }));
   });
 
   test('a refusal before the first write leaves every entry and the facts byte for byte', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ updatedAt: 'stamp-1' }));
     await planFactsStore.set(ctx, facts());
     const before = await raw();
-    expect((await put({ plan: { ...TYPED, age: 41 }, currency: 'USD', facts_were: factsOf(TYPED), based_on: 'stamp-0' })).status).toBe(409);
+    expect((await save({ ...TYPED2, age: 41 }, 'stamp-0')).status).toBe(409);
     expect(await raw()).toEqual(before);
   });
 
   test('a refusal at the entry’s write after the facts landed says so, the entry as it was, the facts new', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ updatedAt: 'stamp-1' }));
     await planFactsStore.set(ctx, facts());
-    between(firePlansStore, () => firePlansStore.update(ctx, MAIN_ID, (cur) => ({ ...cur!, updatedAt: 'stamp-2' })));
-    const r = await quiet(() => put({ plan: { ...TYPED, age: 41 }, currency: 'USD', facts_were: factsOf(TYPED), based_on: 'stamp-1' }));
+    between(() => firePlansStore.update(ctx, MAIN_ID, (cur) => ({ ...cur!, updatedAt: 'stamp-2' })));
+    const r = await quiet(() => save({ ...TYPED2, age: 41 }, 'stamp-1'));
     expect(r).toEqual({ status: 409, body: { error: PARTIAL, stale: true } });
     expect(await firePlansStore.get(ctx, MAIN_ID)).toEqual(entry({ updatedAt: 'stamp-2' }));
     expect(await planFactsStore.get(ctx)).toEqual(facts({ age: 41 }));
@@ -355,18 +360,19 @@ describe('saving your plan (PUT)', () => {
   test('an entry deleted mid-save isn’t made again', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await firePlansStore.set(ctx, 'x', entry({ name: 'Other', createdAt: '2026-11-02T10:00:00.000Z' }));
-    between(firePlansStore, () => firePlansStore.remove(ctx, MAIN_ID));
-    expect(await put({ plan: TYPED, currency: 'USD', facts_were: factsOf(TYPED) })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
+    between(() => firePlansStore.remove(ctx, MAIN_ID));
+    expect(await save(TYPED2)).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
     expect(await firePlansStore.ids(ctx)).toEqual(['x']);
   });
 
   test('the currency: another over typed amounts refused, a first over nothing typed taken, nothing typed keeps the entry’s', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect(await put({ plan: TYPED, currency: 'EUR' })).toEqual({ status: 409, body: { error: STALE_CURRENCY, stale: true } });
+    expect(await save(TYPED2, AT, { currency: 'EUR' })).toEqual({ status: 409, body: { error: STALE_CURRENCY, stale: true } });
     await firePlansStore.set(ctx, MAIN_ID, entry({ plan: DEFAULT_PLAN, currency: 'USD' }));
-    expect((await put({ plan: { ...DEFAULT_PLAN, targetAge: 60 }, currency: 'EUR' })).status).toBe(200);
+    const blank = await save({ ...BLANK2, targetAge: 60 }, AT, { currency: 'EUR', facts_were: factsOf(DEFAULT_PLAN) });
+    expect(blank.status).toBe(200);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.currency).toBe('USD');
-    const r = await put({ plan: TYPED, currency: 'EUR', facts_were: factsOf(DEFAULT_PLAN) });
+    const r = await save(TYPED2, blank.body.updated_at, { currency: 'EUR', facts_were: factsOf(DEFAULT_PLAN) });
     expect([r.status, r.body.currency]).toEqual([200, 'EUR']);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.currency).toBe('EUR');
   });
@@ -374,22 +380,22 @@ describe('saving your plan (PUT)', () => {
   test('first amounts with no currency over an entry holding none: refused, the currency it kept never theirs', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ plan: DEFAULT_PLAN, currency: 'EUR' }));
     const before = await raw();
-    expect(await put({ plan: TYPED, currency: null, facts_were: factsOf(DEFAULT_PLAN) })).toEqual({ status: 409, body: { error: FIRST_CURRENCY } });
+    expect(await save(TYPED2, AT, { currency: null, facts_were: factsOf(DEFAULT_PLAN) })).toEqual({ status: 409, body: { error: FIRST_CURRENCY } });
     expect(await raw()).toEqual(before);
     // Over amounts, a save with no currency keeps the entry's: theirs.
     await firePlansStore.set(ctx, MAIN_ID, entry());
-    const kept = await put({ plan: { ...TYPED, spending: 41_000 }, currency: null });
+    const kept = await save({ ...TYPED2, spending: 41_000 }, AT, { currency: null });
     expect([kept.status, kept.body.currency]).toEqual([200, 'USD']);
   });
 
   test('a save in another currency over a version 2 entry whose only amount is a pension is refused', async () => {
-    const two = { ...planOf(DEFAULT_PLAN), items: [pension] };
+    const two = { ...BLANK2, items: [pension] };
     await firePlansStore.set(ctx, MAIN_ID, entry({ plan: two, currency: 'USD' }));
-    expect(await put({ plan: { ...two, targetAge: 60 }, currency: 'EUR' })).toEqual({ status: 409, body: { error: STALE_CURRENCY, stale: true } });
+    expect(await save({ ...two, targetAge: 60 }, AT, { currency: 'EUR', facts_were: factsOf(two) })).toEqual({ status: 409, body: { error: STALE_CURRENCY, stale: true } });
   });
 });
 
-describe('recording the currency (POST), once there are copies', () => {
+describe('recording the currency (POST)', () => {
   const amounts = typedAmounts(TYPED);
 
   test('over nothing typed refused; a first one taken; a change only when the person answered', async () => {
@@ -397,7 +403,8 @@ describe('recording the currency (POST), once there are copies', () => {
     expect((await post({ currency: 'USD', amounts: typedAmounts(DEFAULT_PLAN) })).status).toBe(409);
     await firePlansStore.set(ctx, MAIN_ID, entry({ currency: null }));
     const first = await post({ currency: 'USD', amounts });
-    expect([first.status, first.body.currency]).toEqual([200, 'USD']);
+    expect([first.status, first.body.currency, first.body.id]).toEqual([200, 'USD', MAIN_ID]);
+    expect(first.body.updated_at > AT).toBe(true);
     expect((await post({ currency: 'EUR', amounts })).status).toBe(409);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.currency).toBe('USD');
     expect((await post({ currency: 'EUR', amounts, answered: true })).body.currency).toBe('EUR');
@@ -406,33 +413,23 @@ describe('recording the currency (POST), once there are copies', () => {
   test('for amounts other than the entry’s, refused as stale, including a save landing between its read and its write', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ currency: null }));
     expect((await post({ currency: 'USD', amounts: typedAmounts({ ...TYPED, spending: 1 }) })).body.stale).toBe(true);
-    between(firePlansStore, () => firePlansStore.update(ctx, MAIN_ID, (cur) => ({ ...cur!, plan: { ...TYPED, spending: 99_000 } })));
+    const store = firePlansStore as unknown as { update: (...a: unknown[]) => Promise<unknown> };
+    const real = store.update;
+    store.update = async (...args: unknown[]) => {
+      store.update = real;
+      await real.apply(firePlansStore, [ctx, MAIN_ID, (cur: PlanEntry) => ({ ...cur, plan: { ...TYPED, spending: 99_000 } })]);
+      return real.apply(firePlansStore, args);
+    };
     const r = await post({ currency: 'USD', amounts });
     expect([r.status, r.body.stale]).toEqual([409, true]);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.currency).toBeNull();
   });
-});
 
-describe('the scenario routes, once there are copies', () => {
-  test('list no scenario, name the copies, and save nothing, even with only your plan there', async () => {
-    await planScenariosStore.set(ctx, 'sc1', { version: 1, name: 'Old', currency: null, createdAt: AT, savedAt: AT, rev: 'r1', set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] });
-    await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect((await scenarios('GET')).body).toEqual({ scenarios: [], unreadable_ids: [], unrecognised_ids: [], copies: { names: [], count: 0, main: { name: 'First plan', missing: false } } });
-    const draft = { name: 'New', currency: null, set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] };
-    for (const r of [await scenarios('POST', { scenario: draft }), await scenarios('PUT', { id: 'sc1', scenario: draft, based_on: 'r1' }), await scenarios('DELETE', { id: 'sc1' })]) {
-      expect(r).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
+  test('what it takes is checked', async () => {
+    await firePlansStore.set(ctx, MAIN_ID, entry({ currency: null }));
+    for (const body of [[], { currency: 'usd', amounts }, { currency: 'USD' }, { currency: 'USD', amounts: { spending: 1 } }, { currency: 'USD', amounts, also: 1 }, { currency: 'USD', amounts, answered: 'yes' }]) {
+      expect((await post(body)).status).toBe(400);
     }
-    expect(await planScenariosStore.ids(ctx)).toEqual(['sc1']);
-  });
-});
-
-describe('nothing here makes either store', () => {
-  test('saving the plan, its currency and a scenario before copies', async () => {
-    expect((await put({ plan: TYPED, currency: 'USD', facts_were: factsOf(TYPED) })).status).toBe(200);
-    expect((await post({ currency: 'EUR', amounts: typedAmounts(TYPED), answered: true })).status).toBe(200);
-    const draft = { name: 'New', currency: 'USD', set: { targetAge: 50 }, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] };
-    expect((await scenarios('POST', { scenario: draft })).status).toBe(200);
-    expect([await firePlansStore.count(ctx), await planFactsStore.get(ctx)]).toEqual([0, null]);
-    expect([await fake.type(ctxKey('fire-plans')), await fake.type(ctxKey('plan-facts'))]).toEqual(['none', 'none']);
+    expect((await firePlansStore.get(ctx, MAIN_ID))!.currency).toBeNull();
   });
 });

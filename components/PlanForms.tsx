@@ -7,17 +7,18 @@
 // saving is paused (the Plan's figure rows always open their sheets), and
 // then says why above its buttons.
 //
-// With a scenario open (lib/fire/scenarios.ts), the plan a form holds is the
-// scenario's, and onSave records what changed in it as the scenario's own
-// (components/plan-savers.ts). What a scenario can't change (your age, how
-// figures are measured, the method, the part-time income) is shown, but
-// can't be edited there, and the form says where its save goes.
+// With a copy open (the tax plan's C2), the plan a form holds is the copy's,
+// and onSave saves it whole (components/plan-savers.ts). What every plan
+// shares (your age, how figures are measured, the method) is shown, but
+// can't be edited there, and the form says where its save goes. A figure's
+// sheet, or one editing an income or a one-off, offers Also change it in
+// (components/AlsoChange.tsx): the other plans the same change can go to.
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, parsePlan, pctText, startAge, stopOf, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, pctText, startAge, stopOf, type FirePlan, type PlanCore, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { expensesOf, incomeOf, withExpenses, withIncome } from '@/lib/fire/items';
-import { planOf, toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
+import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
@@ -28,18 +29,22 @@ import { Why } from './Why';
 import { Segmented } from './Segmented';
 import FieldError from './FieldError';
 import { Notice } from './TotalCaveats';
+import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
   plan: FirePlanV2;
-  /** Resolves true once the server has the plan, false when it didn't take
+  /** Resolves true once the server has the plan (and the plans checked in
+   *  Also change it in, `also`, the same change), false when it didn't take
    *  it, or with why it was refused before it was sent. */
-  onSave: (next: FirePlanV2) => Promise<boolean | string>;
+  onSave: (next: FirePlanV2, also?: readonly string[]) => Promise<boolean | string>;
   onDone: () => void;
   /** False while the saved plan is loading or unreadable: nothing is saved. */
   editable: boolean;
-  /** The open scenario's name, which the save goes to; null for the Plan. */
-  scenario?: string | null;
+  /** The open copy's name, which the save goes to; null for your plan. */
+  copy?: string | null;
+  /** The other plans this change can go to too, with their value now. */
+  also?: readonly AlsoChoice[];
   /** Why saving is paused for more than a moment (the saved plan couldn't
    *  be read, a repair waits, its currency isn't known), said above the
    *  buttons; null while it isn't, or only for a moment (a save under way). */
@@ -49,8 +54,8 @@ type SaveProps = {
   planInWalk?: boolean;
 };
 
-/** Said beside an input a scenario can't change. */
-const SAME_IN_EVERY_PLAN = 'the same in every scenario: change it with your plan open.';
+/** Said beside an input a copy can't change. */
+const SAME_IN_EVERY_PLAN = 'the same in every plan: change it on your plan.';
 
 /** What was typed that can't be saved, and the fields it is about (each by
  *  the name `readNumber` is given): said under the last of them, and named
@@ -88,8 +93,11 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
   const [error, setError] = useState('');
   const [wrong, setWrong] = useState<FieldProblem | null>(null);
   const [saving, setSaving] = useState(false);
+  // The plans checked in Also change it in.
+  const [alsoIn, setAlsoIn] = useState<string[]>([]);
   const errorId = useId();
-  async function save(build: () => FirePlanV2) {
+  /** `also`: the change goes to the plans checked too; never a removal's. */
+  async function save(build: () => FirePlanV2, also = true) {
     let next: FirePlanV2;
     try {
       next = build();
@@ -102,21 +110,15 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
       throw err;
     }
     setWrong(null);
-    // The server checks again; this catches anything the fields above missed,
-    // in version 1's words: what this release saves (lib/fire/plan-v2.ts).
-    const sent = toStored(next, 1);
-    if ('error' in sent) {
-      setError(sent.error);
-      return;
-    }
-    const parsed = parsePlan(sent.plan);
+    // The server checks again; this catches anything the fields above missed.
+    const parsed = parsePlanV2(next);
     if ('error' in parsed) {
       setError(`That plan can't be saved: ${parsed.error}.`);
       return;
     }
     setError('');
     setSaving(true);
-    const ok = await onSave(planOf(parsed.plan));
+    const ok = await onSave(parsed.plan, also ? alsoIn : []);
     setSaving(false);
     if (ok === true) onDone();
     else setError(typeof ok === 'string' ? ok : 'It was not saved. Try again in a moment.');
@@ -127,7 +129,7 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
   /** What is wrong, said here when the last field it is about is one of `names`. */
   const under = (...names: string[]) =>
     wrong && names.includes(wrong.fields[wrong.fields.length - 1]) ? <FieldError id={errorId}>{wrong.message}</FieldError> : null;
-  return { error, saving, save, field, under, disabled: saving || !editable };
+  return { error, saving, save, field, under, alsoIn, setAlsoIn, disabled: saving || !editable };
 }
 
 function Buttons({
@@ -136,21 +138,29 @@ function Buttons({
   saving,
   onSave,
   extra,
-  scenario = null,
+  copy = null,
   paused = null,
+  also = [],
+  alsoIn = [],
+  onAlso,
 }: {
   onDone: () => void;
   disabled: boolean;
   saving: boolean;
   onSave: () => void;
   extra?: React.ReactNode;
-  scenario?: string | null;
+  copy?: string | null;
   paused?: string | null;
+  /** Also change it in: the plans offered, and those checked. */
+  also?: readonly AlsoChoice[];
+  alsoIn?: readonly string[];
+  onAlso?: (ids: string[]) => void;
 }) {
   return (
     <>
       {extra}
-      {scenario && <p className="panel-note plan-scenario-saves">Saved to the scenario “{scenario}”, not your plan.</p>}
+      {onAlso && <AlsoChange choices={also} checked={alsoIn} onChange={onAlso} disabled={saving} />}
+      {copy && <p className="panel-note plan-copy-saves">Saved to this copy, not your plan.</p>}
       {paused && <p className="helper plan-paused">{paused}</p>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onDone} disabled={saving}>
@@ -216,11 +226,11 @@ export function AboutForm(props: SaveProps) {
             onChange={(e) => setAge(e.target.value)}
             placeholder="Not set"
             {...s.field('Your age')}
-            disabled={s.saving || !!props.scenario}
+            disabled={s.saving || !!props.copy}
           />
         </label>
         {s.under('Your age')}
-        {props.scenario && <p className="panel-note">Your age is {SAME_IN_EVERY_PLAN}</p>}
+        {props.copy && <p className="panel-note">Your age is {SAME_IN_EVERY_PLAN}</p>}
         <label className="field">
           Stop age
           <input
@@ -241,7 +251,7 @@ export function AboutForm(props: SaveProps) {
         </Notice>
       )}
       <Buttons
-        scenario={props.scenario}
+        copy={props.copy}
         paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
@@ -376,10 +386,10 @@ export function FigureForm(
       {kind === 'assets' && (
         <>
           <label className="plan-check">
-            <input type="checkbox" checked={includeCash} onChange={(e) => setIncludeCash(e.target.checked)} disabled={s.saving || !!props.scenario} />
+            <input type="checkbox" checked={includeCash} onChange={(e) => setIncludeCash(e.target.checked)} disabled={s.saving || !!props.copy} />
             Count checking and savings accounts too
           </label>
-          {props.scenario && <p className="panel-note">Counting cash is how your figures are measured: {SAME_IN_EVERY_PLAN}</p>}
+          {props.copy && <p className="panel-note">Counting cash is how your figures are measured: {SAME_IN_EVERY_PLAN}</p>}
           {live && live.accounts.length > 0 && mode === 'measured' && (
             <ul className="plan-accounts">
               {live.accounts.map((a) => (
@@ -410,7 +420,7 @@ export function FigureForm(
               <Choice
                 label={`How ${p.label} is paid into`}
                 value={funding.get(p.account_id) ?? 'unset'}
-                disabled={s.saving || !!props.scenario}
+                disabled={s.saving || !!props.copy}
                 onChange={(v) =>
                   setFunding((m) => {
                     const next = new Map(m);
@@ -435,7 +445,10 @@ export function FigureForm(
         </Notice>
       )}
       <Buttons
-        scenario={props.scenario}
+        copy={props.copy}
+        also={props.also}
+        alsoIn={s.alsoIn}
+        onAlso={s.setAlsoIn}
         paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
@@ -512,7 +525,7 @@ export type AssumptionsAt = 'stress' | 'mix';
  */
 export function AssumptionsForm(
   props: SaveProps & {
-    /** The spending the FI number rests on (in a scenario, its spending in
+    /** The spending the FI number rests on (with lasting changes, its spending in
      *  retirement); null when the plan shown isn't worked out. */
     fiSpending: number | null;
     assets: number | null;
@@ -654,11 +667,11 @@ export function AssumptionsForm(
             onChange={(e) => setPartTime(e.target.value)}
             placeholder="None"
             {...s.field('Part-time income')}
-            disabled={s.saving || !!props.scenario}
+            disabled={s.saving}
           />
         </label>
         {s.under('Part-time income')}
-        {props.scenario && <p className="helper">The part-time income for Barista FI is your plan’s: {SAME_IN_EVERY_PLAN} Part-time work in this scenario is a life event.</p>}
+        {props.copy && <p className="helper">This copy’s own. Part-time work from an age is a life event in its Life events card.</p>}
       </div>
 
       <h3 className="plan-heading" ref={stressRef}>
@@ -667,12 +680,12 @@ export function AssumptionsForm(
       <div className="sheet-form">
         <label className="field">
           Method
-          <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving || !!props.scenario}>
+          <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving || !!props.copy}>
             <option value="historical">{METHOD_NAMES.historical}</option>
             <option value="monte-carlo">{METHOD_NAMES['monte-carlo']}</option>
           </select>
         </label>
-        {props.scenario && <p className="helper">The method is {SAME_IN_EVERY_PLAN}</p>}
+        {props.copy && <p className="helper">The method is {SAME_IN_EVERY_PLAN}</p>}
         <p className="helper">
           {method === 'historical'
             ? 'Starts the plan in every month since 1871 that leaves all of it inside the data, and lives through what followed.'
@@ -839,7 +852,7 @@ export function AssumptionsForm(
           {s.error}
         </Notice>
       )}
-      <Buttons scenario={props.scenario} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </div>
   );
 }
@@ -871,7 +884,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       </p>
       <p className="helper">
         {props.planInWalk ? 'Counts in your FI date until you reach it, and in Will it last? from where it starts, never in your FI number.' : 'Counts in Will it last?, never in your FI date or FI number.'} Part-time work is{' '}
-        {props.scenario ? 'a life event in this scenario' : 'a life choice in What if…'}, and Barista FI&apos;s
+        {props.copy ? 'a life event in this copy' : 'a life choice in What if…'}, and Barista FI&apos;s
         part-time income is in Assumptions.
       </p>
       <div className="sheet-form">
@@ -922,7 +935,10 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         </Notice>
       )}
       <Buttons
-        scenario={props.scenario}
+        copy={props.copy}
+        also={props.also}
+        alsoIn={s.alsoIn}
+        onAlso={s.setAlsoIn}
         paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
@@ -930,7 +946,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         onSave={() => s.save(build)}
         extra={
           item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withIncome(plan, incomeOf(plan).filter((x) => x.id !== item.id)))}>
+            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withIncome(plan, incomeOf(plan).filter((x) => x.id !== item.id)), false)}>
               Remove
             </button>
           )
@@ -976,7 +992,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         ) : (
           <>
             {start !== null ? `Counts in Will it last? at ${start} or later, where that starts, never in your FI date.` : 'Counts in Will it last? once your age places it, never in your FI date.'}{' '}
-            {props.scenario ? "To move this scenario's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
+            {props.copy ? "To move this copy's FI date with it, add it to its life events" : 'To move your FI date with it, try it in What if… as a life choice'}
             {item ? ' instead, and remove it here, or it counts twice.' : ' instead of here.'}
           </>
         )}
@@ -1019,7 +1035,10 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         </Notice>
       )}
       <Buttons
-        scenario={props.scenario}
+        copy={props.copy}
+        also={props.also}
+        alsoIn={s.alsoIn}
+        onAlso={s.setAlsoIn}
         paused={props.paused}
         onDone={props.onDone}
         disabled={s.disabled}
@@ -1027,7 +1046,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         onSave={() => s.save(build)}
         extra={
           item && (
-            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withExpenses(plan, expensesOf(plan).filter((x) => x.id !== item.id)))}>
+            <button className="danger-outline" style={{ marginTop: 12 }} disabled={s.disabled} onClick={() => s.save(() => withExpenses(plan, expensesOf(plan).filter((x) => x.id !== item.id)), false)}>
               Remove
             </button>
           )

@@ -315,9 +315,9 @@ export const WAITING_TEXT = 'Nya is waiting for your accounts to load to tell wh
 export const recordedText = (currency: string) => `Your plan’s figures are in ${currency}, the currency they were typed in.`;
 
 /** What a change of the recorded currency means, before it is made. */
-export function relabelText(from: string, to: string, scenariosIn: number): string {
-  const scenarios = scenariosIn > 0 ? ` ${scenariosIn} scenario${scenariosIn === 1 ? '' : 's'} with amounts typed in ${from} then aren’t worked out until you say their amounts are in ${to} too.` : '';
-  return `Every figure you typed in your plan is then read in ${to}, exactly as typed: nothing is converted. That is right only if you typed them in ${to}, not ${from}.${scenarios}`;
+export function relabelText(from: string, to: string, copiesIn: number): string {
+  const copies = copiesIn > 0 ? ` ${copiesIn === 1 ? '1 copy' : `${copiesIn} copies`} of your plan with amounts typed in ${from} then ${copiesIn === 1 ? 'isn’t' : 'aren’t'} worked out until you say ${copiesIn === 1 ? 'its' : 'their'} amounts are in ${to} too.` : '';
+  return `Every figure you typed in your plan is then read in ${to}, exactly as typed: nothing is converted. That is right only if you typed them in ${to}, not ${from}.${copies}`;
 }
 
 const join = (list: readonly string[]) => (list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);

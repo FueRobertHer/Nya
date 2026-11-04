@@ -94,7 +94,11 @@ const { getGoals } = await import('@/lib/goals');
 const { loadBudgets } = await import('@/lib/budget-store');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { firePlanStore } = await import('@/lib/fire-plan');
-const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
+const { firePlansStore, planFactsStore, readPlanAnswer } = await import('@/lib/plan-copies');
+const { planScenariosStore } = await import('@/lib/plan-scenarios');
+const { parsePlanV2, planOf } = await import('@/lib/fire/plan-v2');
+const { incomeOf } = await import('@/lib/fire/items');
+const { MAIN_ID, factsOf, holdsAmounts } = await import('@/lib/fire/copies');
 const { readStoredTxns } = await import('@/lib/transactions');
 const { secretsStore } = await import('@/lib/connectors/store');
 const { demoTarget } = await import('@/lib/demo-seed/guard');
@@ -209,7 +213,10 @@ describe('the profiles', () => {
       const masks = p.institutions.flatMap((i) => i.accounts.map((a) => a.mask));
       expect(new Set(masks).size).toBe(masks.length);
       for (const g of p.goals) if (g.mask !== null) expect(masks).toContain(g.mask);
-      expect('error' in parsePlan({ ...DEFAULT_PLAN, ...p.plan })).toBe(false);
+      const plan = parsePlan({ ...DEFAULT_PLAN, ...p.plan });
+      if ('error' in plan) throw new Error(`${name}'s plan is refused: ${plan.error}`);
+      // As the seed saves it: version 2, which is what the route takes.
+      expect('error' in parsePlanV2(planOf(plan.plan))).toBe(false);
     }
   });
 
@@ -367,11 +374,29 @@ describe('seeding', () => {
     expect(budgets.categories[categoryForKey(ix, PLAID, 'FOOD_AND_DRINK')!.id]).toEqual({ amount: profile.budgets.FOOD_AND_DRINK });
     expect(Object.keys(budgets.categories)).toHaveLength(Object.keys(profile.budgets).length);
 
-    // Seeded as version 1, what this release saves.
-    const plan = await firePlanStore.get(ctx);
-    if (plan?.version !== 1) throw new Error('expected a version 1 plan');
+    // Seeded as your plan's entry, version 2 as this release saves, in USD
+    // (the sandbox's currency) since it types an income; then the facts.
+    const mine = await firePlansStore.get(ctx, MAIN_ID);
+    expect(mine).toMatchObject({ name: 'First plan', tax: null, currency: 'USD' });
+    const plan = mine!.plan;
+    if (plan.version !== 2) throw new Error('expected a version 2 plan');
     expect([plan.age, plan.targetAge]).toEqual([38, 52]);
-    expect(plan.income.map((i) => i.fromAge)).toEqual([67]);
+    expect(incomeOf(plan).map((i) => i.fromAge)).toEqual([67]);
+    expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...factsOf(plan) });
+    expect(await firePlanStore.get(ctx)).toBeNull();
+  });
+
+  test('every profile’s plan is your plan alone, and holds a currency wherever it holds an amount', async () => {
+    for (const name of NAMES) {
+      await seedDemoAccount(TEST_CTX, `user_${name.toLowerCase()}`, demoProfile(name, TODAY), TODAY, quick);
+      const entries = await firePlansStore.getAll(TEST_CTX);
+      expect([name, [...entries.keys()]]).toEqual([name, [MAIN_ID]]);
+      for (const [id, e] of entries) {
+        if (holdsAmounts(e.plan)) expect([name, id, e.currency]).toEqual([name, id, 'USD']);
+        else expect([name, id, e.currency]).toEqual([name, id, null]);
+      }
+      expect((await readPlanAnswer(TEST_CTX)).plan?.age).toBe(demoProfile(name, TODAY).plan.age);
+    }
   });
 
   test('refuses before changing anything when emptying would be refused', async () => {
@@ -385,13 +410,18 @@ describe('seeding', () => {
     expect((await getItems(ctx)).map((i) => i.institution_name)).toEqual(['Chime']);
   });
 
-  test('seeds the plan before copies: plans a newer version made go with the rest, and none is made, so the plan seeded is the one read', async () => {
-    const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
-    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' });
-    await planFactsStore.set(TEST_CTX, { version: 1, main: MAIN_ID, ...factsOf(DEFAULT_PLAN) });
+  test('seeds your plan over what was there: the plans, their facts and the plan before copies go with the rest, so the plan seeded is the one read', async () => {
+    const at = '2026-10-01T00:00:00.000Z';
+    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: at, updatedAt: at });
+    await firePlansStore.set(TEST_CTX, 'x', { name: 'A visitor’s copy', plan: { ...DEFAULT_PLAN, age: 60 }, tax: null, currency: null, createdAt: at, updatedAt: at });
+    await planFactsStore.set(TEST_CTX, { version: 1, main: 'x', ...factsOf({ ...DEFAULT_PLAN, age: 60 }) });
+    await firePlanStore.set(TEST_CTX, { ...DEFAULT_PLAN, age: 70 });
+    await planScenariosStore.set(TEST_CTX, 'sc1', { version: 1, name: 'Old', currency: null, createdAt: at, savedAt: at, rev: 'r1', set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] });
     await seedDemoAccount(TEST_CTX, 'user_alex', demoProfile('Alex', TODAY), TODAY, quick);
-    expect([await fake.type(`test:c:${TEST_CTX.container}:fire-plans`), await fake.type(`test:c:${TEST_CTX.container}:plan-facts`)]).toEqual(['none', 'none']);
-    expect(await firePlanStore.get(TEST_CTX)).not.toBeNull();
+    expect(await firePlansStore.ids(TEST_CTX)).toEqual([MAIN_ID]);
+    expect((await planFactsStore.get(TEST_CTX))!.main).toBe(MAIN_ID);
+    expect([await firePlanStore.get(TEST_CTX), await planScenariosStore.ids(TEST_CTX)]).toEqual([null, []]);
+    expect((await readPlanAnswer(TEST_CTX)).plan).toMatchObject({ age: 31, targetAge: 45 });
   });
 
   test('run again, it resets to the same account rather than adding to it', async () => {

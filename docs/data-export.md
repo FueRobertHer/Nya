@@ -614,7 +614,7 @@ Your shared transactions: `id` is the transaction's id (a bank's, as in `transac
 
 #### `fire-plan`
 
-The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never saved any. Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in, as the tab reads it.
+The Plan tab's saved assumptions before your plans were copies (`lib/fire/plan.ts`), or `null`. Nothing reads it now: your plan is in [`fire-plans`](#fire-plans), and the first save of a plan, a new copy or a Try it removes this, with [`fire-plan-currency`](#fire-plan-currency) and [`plan-scenarios`](#plan-scenarios). Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in.
 
 | Field | Meaning |
 | --- | --- |
@@ -632,7 +632,7 @@ The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never sa
 
 #### `fire-plan-currency`
 
-The currency the amounts you typed in your [plan](#fire-plan) are in (`lib/fire/plan-currency.ts`), or `null` if none was recorded (a plan with nothing typed, or one saved before Nya kept it). It is kept beside the plan, not in it, so the release before reads your plan as it always has. It says something about the plan only while its `amounts` are the plan's typed amounts: once any of them differs, the Plan tab asks which currency they are in. Brought back with the plan, it still holds for it; a file without it brings the plan back with its currency to be said.
+The currency the amounts you typed in your [plan](#fire-plan) before copies are in (`lib/fire/plan-currency.ts`), or `null` if none was recorded (a plan with nothing typed, or one saved before Nya kept it). Nothing reads it now, and it goes with that plan. It was kept beside the plan, not in it, so the release before read your plan as it always had. It says something about the plan only while its `amounts` are the plan's typed amounts: once any of them differs, the Plan tab asks which currency they are in. Brought back with the plan, it still holds for it; a file without it brings the plan back with its currency to be said.
 
 | Field | Meaning |
 | --- | --- |
@@ -657,15 +657,15 @@ The plan you said is your plan, with **This is my plan** on the Plan tab ([progr
 
 #### `fire-plans`
 
-Your plans, once a newer version of Nya has made them copies (`lib/fire/copies.ts`): your plan and each copy of it, each under its id (`main` for the plan you had before, until another is made yours, and a random id for each copy). An empty list until then: this version never makes one. While it holds a plan, the Plan tab and Home read your plan from it instead of [`fire-plan`](#fire-plan), and the copies instead of [`plan-scenarios`](#plan-scenarios), which are left as they were. Each `value`, never a figure worked out from it:
+Your [plans](features.md#plans-and-compare-mode) (`lib/fire/copies.ts`, `lib/plan-copies.ts`): your plan and each copy of it, each under its id (`main` for the first plan, until another is made yours, and a random id for each copy), up to 11. An empty list until your first save of a plan, a new copy or a Try it, which makes your plan's entry. Each `value`, never a figure worked out from it:
 
 | Field | Meaning |
 | --- | --- |
 | `name` | Its name. |
-| `plan` | The whole plan, in the shape of [`fire-plan`](#fire-plan), or of a newer version's version 2. Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here. |
+| `plan` | The whole plan, version 2 (`lib/fire/plan-v2.ts`): the fields of [`fire-plan`](#fire-plan) but `income[]` and `expenses[]`, with `items[]` in their place (each income, one-off and life event, up to 25: `id`, `label`, `kind`, when it starts and stops, its amounts once and a year, how often it repeats, and whose it is), `partnerAge`, `stopAtFi` (stop when you reach FI) and `fiNumber` (your own, or `null` to work it out). An entry saved before may hold version 1. Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here, and every save keeps them the same here too. |
 | `tax` | The plan's own tax choices: `null`. |
 | `currency` | The currency its amounts are in, or `null` for a plan that holds none. |
-| `createdAt`, `updatedAt` | When it was made, and last changed: a newer version's page names the `updatedAt` a change was made on. |
+| `createdAt`, `updatedAt` | When it was made, and last changed: a page names the `updatedAt` a change was made on, so one made from a version changed since is refused. Every save gives the entries it writes an `updatedAt` no other entry holds. |
 
 Brought back, a file's plans replace every plan the account holds, never mixed with them.
 
@@ -805,7 +805,7 @@ Undoing the import deletes its entry, and so does forgetting the earlier account
 
 #### `plan-facts`
 
-What every plan in [`fire-plans`](#fire-plans) shares, and which of them is yours (`lib/fire/copies.ts`), or `null`: written with the plans by a newer version of Nya.
+What every plan in [`fire-plans`](#fire-plans) shares, and which of them is yours (`lib/fire/copies.ts`), or `null` before your plan's first save. Written with the plans: a change to what they share is written here first.
 
 | Field | Meaning |
 | --- | --- |
@@ -820,7 +820,7 @@ A file that brings plans back without it leaves the account none.
 
 #### `plan-scenarios`
 
-The [scenarios](features.md#scenarios-and-compare-mode) you saved beside your Plan (`lib/fire/scenarios.ts`), each under a random id: only what each changes from your plan, its name and the currency its amounts are in, never a figure worked out from them, which the Plan tab works out again whenever one is shown. Each `value`:
+The scenarios you saved beside your Plan before your plans were [copies](features.md#plans-and-compare-mode) (`lib/fire/scenarios.ts`), each under a random id: only what each changes from your plan, its name and the currency its amounts are in, never a figure worked out from them. Nothing reads them now, and they go with [`fire-plan`](#fire-plan). Each `value`:
 
 | Field | Meaning |
 | --- | --- |

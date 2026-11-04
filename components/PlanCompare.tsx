@@ -1,6 +1,6 @@
 'use client';
 
-// Compare mode's view: two to four plans, the Plan and its scenarios, metric
+// Compare mode's view: two to four plans, yours and its copies, metric
 // by metric (components/plan-compare.ts), then what each plan is and what
 // they share. Laid out by metric, a small table each with a row per plan, so
 // it reads top to bottom on a phone, where four plans side by side would not
@@ -99,7 +99,7 @@ export default function PlanCompare({
           {method === 'historical'
             ? `${METHOD_NAMES.historical}: each plan starts in every month that leaves its whole length inside the history, and lives through what followed.`
             : `${METHOD_NAMES['monte-carlo']}: every plan is judged on the same ${plainNumber(DEFAULT_RUNS)} runs (seed ${DEFAULT_SEED}), built from ${BLOCK_MONTHS / 12}-year blocks of months drawn at random from the history, each run to its own length.`}{' '}
-          Your plan’s method: a scenario can’t change it, so the differences come from the plans alone.
+          Your plan’s method, the same in every plan, so the differences come from the plans alone.
         </li>
         {lengths && (
           <li>

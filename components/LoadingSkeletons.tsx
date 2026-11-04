@@ -316,37 +316,26 @@ export function VendorDefaultsSkeleton() {
   );
 }
 
-/** A scenario's row in the Plan's Scenarios sheet (components/PlanScenarios.tsx),
- *  its name and what it changes still to come, its buttons unavailable. */
-export function ScenarioRowsSkeleton({ count, status }: { count: number; status: string }) {
+/** The plans' rows in the Plan's Plans sheet (components/PlansSheet.tsx),
+ *  each name and FI age still to come, as the rows will be: one button each,
+ *  ending in a chevron. */
+export function PlanRowsSkeleton({ count, status }: { count: number; status: string }) {
   useInStep();
   return (
     <div aria-busy="true">
       {count > 0 && (
-        <div className="plan-rows" inert aria-hidden="true">
+        <ul className="card list-rows" inert aria-hidden="true">
           {Array.from({ length: count }, (_, i) => (
-            <div key={i} className="plan-row">
-              <div className="plan-row-main">
-                <span className="plan-row-label">
+            <li key={i}>
+              <div className="list-row">
+                <span className="list-row-text">
                   <span className="skeleton rows-skeleton-title" />
+                  <span className="skeleton rows-skeleton-sub" />
                 </span>
-                <button className="plan-edit" disabled tabIndex={-1}>
-                  Open
-                </button>
               </div>
-              <div className="plan-row-note">
-                <span className="skeleton rows-skeleton-sub" />
-              </div>
-              <div className="plan-scenario-actions">
-                {['Rename', 'Duplicate', 'Delete'].map((w) => (
-                  <button key={w} className="plan-edit" disabled tabIndex={-1}>
-                    {w}
-                  </button>
-                ))}
-              </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
       <Status label={status} />
     </div>
@@ -695,7 +684,7 @@ export function PlanSkeleton({ segment = null }: { segment?: PlanSegment | null 
   return (
     <>
       <div inert>
-        <PlanBar segment={segment} onSegment={nothing} scenario={null} scenariosCount={null} onScenarios={nothing} onBack={nothing} />
+        <PlanBar segment={segment} onSegment={nothing} copy={null} plansCount={null} onPlans={nothing} onBack={nothing} />
       </div>
       <PlanPanelSkeleton segment={segment} />
     </>

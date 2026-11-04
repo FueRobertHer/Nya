@@ -1,17 +1,16 @@
 'use client';
 
 // The What if… card on Your path (rollout phase 8c), under Your figures,
-// with your plan shown: life choices as templates, and your scenarios as the
-// choices tried, each with its FI age against your plan's. A template opens
-// the life event's own form (components/PlanEvents.tsx EventForm) with
-// nothing filled in but its name, says how it moves the FI age as it is
-// typed, and "Try it" makes an ordinary scenario of it, your plan's own with
-// that one life event, named after it ("Buy a home at 38"), and opens it.
-// Nothing stored changes shape, and nothing records which template made it.
-// With a scenario open the card isn't drawn: the scenario's Life events card
-// takes its place with the same choices, each added to the scenario, and
-// the same preview (DraftPreview) measured against the scenario as it is.
-// The words are in components/plan-what-if.ts.
+// with your plan shown: life choices as templates. A template opens the life
+// event's own form (components/PlanEvents.tsx EventForm) with nothing filled
+// in but its name, says how it moves the FI age as it is typed, and "Try
+// it" makes a copy of your plan with that life event in it, named after it
+// ("Buy a home at 38"), and opens it (the tax plan's C2). The copies are
+// listed in the Plans sheet (components/PlansSheet.tsx). With a copy open
+// the card isn't drawn: the copy's Life events card takes its place with the
+// same choices, each added to the copy, and the same preview (DraftPreview)
+// measured against the copy as it is. The words are in
+// components/plan-what-if.ts.
 
 import { useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
@@ -19,46 +18,39 @@ import { Masked } from './HideAmounts';
 import { CAUTION } from './ConnectionStatus';
 import { INFO, LevelWord } from './TotalCaveats';
 import { EventForm, type Checked } from './PlanEvents';
-import { scenarioOutcome } from './PlanScenarios';
-import { chevron, RIGHT } from './ActivityBar';
 import { EVENT_PART_TEXT } from './plan-scenario-text';
 import { askAgesText } from './plan-text';
-import { copiesLines, type ScenarioClient, type ScenariosState } from './plan-scenarios';
-import { WHAT_IF_TEMPLATES, fiWhen, previewText, scenarioRowText, whatIfName, withDraft, type FiWhen, type WhatIfTemplate } from './plan-what-if';
-import { MAX_PLAN_SCENARIOS, NO_CHANGES, resolveScenario, type ScenarioChanges } from '@/lib/fire/scenarios';
+import { plansCount, type PlansState } from './plan-list';
+import { WHAT_IF_TEMPLATES, fiWhen, previewText, whatIfName, withDraft, type FiWhen, type WhatIfTemplate } from './plan-what-if';
+import { MAX_FIRE_PLANS } from '@/lib/fire/copies';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { EventNote, LifeEvent } from '@/lib/fire/events';
-import type { FirePlan, Measured } from '@/lib/fire/plan';
+import type { Measured } from '@/lib/fire/plan';
 import type { Count } from '@/lib/fire/compile';
-import { eventItems } from '@/lib/fire/items';
-import { planOf } from '@/lib/fire/plan-v2';
+import { eventsOf, withEvents } from '@/lib/fire/items';
+import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 
-/** Said when the Plan has no currency to give a scenario's amounts, as a
- *  save into an open scenario says it (components/PlanTab.tsx persistIn). */
-const NO_CURRENCY = 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.';
+/** Said when your plan has no currency to give a copy's amounts. */
+const NO_CURRENCY = 'Your plan has no currency yet (no accounts to take it from), so a life choice’s amounts have none: add an account first.';
 
-/** A scenario with this event in it, as it would open: when it reaches FI,
- *  and what of this event (not the others) is left out and why
- *  (lib/fire/plan-figures.ts). On your plan, `changes` is none. */
-function draftOutcome(base: FirePlan, measured: Measured, count: Count, changes: ScenarioChanges, event: LifeEvent): { when: FiWhen; notes: EventNote[] } {
-  const events = withDraft(changes.events, event);
-  const r = resolveScenario(base, { ...changes, events });
-  if (!r.ok) return { when: { kind: 'not-run' }, notes: [] };
-  const f = planFigures(planOf(r.plan), measured, { events: eventItems(events), count });
+/** The plan with this event in it (in place of the one it edits, else
+ *  added): when it reaches FI, and what of this event is left out and why
+ *  (lib/fire/plan-figures.ts). */
+function draftOutcome(plan: FirePlanV2, measured: Measured, count: Count, event: LifeEvent): { when: FiWhen; notes: EventNote[] } {
+  const f = planFigures(withEvents(plan, withDraft(eventsOf(plan), event)), measured, { count });
   if ('refused' in f) return { when: { kind: 'not-run' }, notes: [] };
-  return { when: fiWhen(f), notes: (f.events?.notes ?? []).filter((n) => n.id === event.id) };
+  return { when: fiWhen(f), notes: f.itemNotes.filter((n) => n.id === event.id).map(({ id, part }) => ({ id, part })) };
 }
 
 /** How a draft moves the FI age, said in its form as it is typed, with what
  *  of it is left out and why: against your plan on the What if… card, and
- *  against the open scenario as it is in its Life events card. */
+ *  against the open copy as it is in its Life events card. */
 export function DraftPreview({
   checked,
   kind,
-  base,
+  plan,
   measured,
   count,
-  changes,
   against,
   where,
   money,
@@ -66,20 +58,20 @@ export function DraftPreview({
 }: {
   checked: Checked;
   kind: LifeEvent['kind'];
-  base: FirePlan;
+  /** The plan it goes into: your plan, or the copy open. */
+  plan: FirePlanV2;
   measured: Measured;
   count: Count;
-  changes: ScenarioChanges;
-  /** What it moves from: your plan's figures, or the scenario's now (null
-   *  when they aren't worked out). */
+  /** What it moves from: that plan's figures now (null when they aren't
+   *  worked out). */
   against: PlanFigures | null;
-  where: 'what-if' | 'scenario';
+  where: 'what-if' | 'copy';
   money: (n: number) => string;
   /** A last line, under the notes. */
   children?: ReactNode;
 }) {
   const draft = 'ok' in checked ? checked.ok : null;
-  const d = draft ? draftOutcome(base, measured, count, changes, draft) : null;
+  const d = draft ? draftOutcome(plan, measured, count, draft) : null;
   return (
     <div className="notice info">
       {INFO}
@@ -104,41 +96,41 @@ export function WhatIfCard({
   baseFigures,
   measured,
   count,
-  state,
-  client,
+  plans,
   planCurrency,
   planCurrencyKnown,
   editable,
   canOpen,
   money,
-  onOpen,
+  onTry,
+  onRetry,
   onAskAge,
   reloading = false,
   askRef,
   firstRef,
 }: {
   /** The card is drawn: your plan is shown. Its sheet stays mounted either
-   *  way, so one closing as its scenario opens slides out. */
+   *  way, so one closing as its copy opens slides out. */
   shown: boolean;
-  /** Your plan as the tab shows it, loaded, in version 1 (scenarios are
-   *  kept against it). */
-  base: FirePlan;
+  /** Your plan as the tab shows it, loaded. */
+  base: FirePlanV2;
   baseFigures: PlanFigures;
   measured: Measured;
   count: Count;
-  state: ScenariosState;
-  client: ScenarioClient;
+  plans: PlansState;
   planCurrency: string | null;
   /** Whether the Plan's currency is known (lib/fire/plan-currency.ts). */
   planCurrencyKnown: boolean;
   /** Your plan can be changed now: saving nothing, waiting on no repair,
    *  its currency known. */
   editable: boolean;
-  /** Scenarios can be opened now. */
+  /** Copies can be opened now. */
   canOpen: boolean;
   money: (n: number) => string;
-  /** Opens a scenario under the scenario bar. */
-  onOpen: (id: string) => void;
+  /** Makes a copy of your plan with this event, named `name`, and opens it. */
+  onTry: (event: LifeEvent, name: string) => Promise<true | string>;
+  /** Loads the plans again, after they failed. */
+  onRetry: () => void;
   /** Opens the Ages sheet (the same as the ask under the answer), from the
    *  prompt that leads the card while your age isn't typed. */
   onAskAge?: () => void;
@@ -161,28 +153,23 @@ export function WhatIfCard({
   };
   const close = () => setTemplate(null);
 
-  const ready = state.status === 'ready';
-  const list = state.list;
-  // Every stored scenario counts toward the most kept, readable or not.
-  const full = list.length + state.unreadable.length + state.unrecognised.length >= MAX_PLAN_SCENARIOS;
+  const ready = plans.status === 'ready';
+  // Every stored plan counts toward the most kept, readable or not.
+  const full = plansCount(plans) >= MAX_FIRE_PLANS;
   // Life events are placed by age: without yours, none can be.
   const noAge = base.age === null;
-  // A scenario's amounts are in your plan's currency: without one, none.
+  // A copy's amounts are in your plan's currency: without one, none.
   const noCurrency = planCurrency === null;
-  // Once your plans are copies, a newer version of Nya makes them.
-  const copies = state.copies;
-  const canTry = editable && canOpen && ready && !copies && !state.saving && !full && !noAge && !noCurrency;
-  const plan = fiWhen(baseFigures);
+  const canTry = editable && canOpen && ready && !plans.saving && !full && !noAge && !noCurrency;
 
   const tryIt = async (event: LifeEvent): Promise<boolean | string> => {
     if (!held) return false;
     if (planCurrency === null) return NO_CURRENCY;
-    const r = await client.create({ name: whatIfName(held, event, list), currency: planCurrency, ...NO_CHANGES, events: [event] });
-    if ('error' in r) return r.error;
-    // In one commit, so the scenario's heading takes focus as it opens.
-    close();
-    onOpen(r.ok.id);
-    return true;
+    const r = await onTry(event, whatIfName(held, event, plans.list));
+    // Made and opened, in one commit with this close, so the copy's heading
+    // takes focus as it opens.
+    if (r === true) close();
+    return r;
   };
 
   const sheet = (
@@ -201,8 +188,8 @@ export function WhatIfCard({
           savingText="Trying…"
           whereText="Your plan stays as it is."
           preview={(checked: Checked) => (
-            <DraftPreview checked={checked} kind={held.kind} base={base} measured={measured} count={count} changes={NO_CHANGES} against={baseFigures} where="what-if" money={money}>
-              {'ok' in checked && <p>{`Try it makes this the scenario “${whatIfName(held, checked.ok, list)}”, and opens it.`}</p>}
+            <DraftPreview checked={checked} kind={held.kind} plan={base} measured={measured} count={count} against={baseFigures} where="what-if" money={money}>
+              {'ok' in checked && <p>{`Try it makes the copy “${whatIfName(held, checked.ok, plans.list)}” of your plan with it, and opens it.`}</p>}
             </DraftPreview>
           )}
         />
@@ -210,7 +197,7 @@ export function WhatIfCard({
     </Sheet>
   );
   // The sheet keeps one place in the tree, outside the card, so one closing
-  // as its scenario opens (and the card goes) slides out.
+  // as its copy opens (and the card goes) slides out.
   return (
     <>
       {shown && (
@@ -221,20 +208,11 @@ export function WhatIfCard({
             </h3>
           </div>
           <div className="stack">
-            {copies ? (
-              copiesLines(copies).map((line) => (
-                <p key={line} className="helper">
-                  {line}
-                </p>
-              ))
-            ) : (
-              <p className="helper">Try a life choice with your own figures. It becomes a scenario, and your plan stays as it is.</p>
-            )}
+            <p className="helper">Try a life choice with your own figures. It becomes a copy of your plan, and your plan stays as it is.</p>
             {/* Why the choices are off, read before them (since the screen
                 review): your age first, with the same ask as the answer's,
-                opening the same Ages sheet. Not once your plans are copies,
-                which is why then. */}
-            {!copies && noAge && (
+                opening the same Ages sheet. */}
+            {noAge && (
               <div>
                 <p className="helper">A life choice is placed by age.</p>
                 {onAskAge && (
@@ -252,27 +230,27 @@ export function WhatIfCard({
                 )}
               </div>
             )}
-            {copies ? null : !planCurrencyKnown ? (
-              <p className="helper">Say which currency your plan’s figures are in first (above): a scenario’s amounts are in it.</p>
+            {!planCurrencyKnown ? (
+              <p className="helper">Say which currency your plan’s figures are in first (above): a copy’s amounts are in it.</p>
             ) : (
               noCurrency && <p className="helper">{NO_CURRENCY}</p>
             )}
-            {state.status === 'loading' && <p className="helper">Your scenarios are still loading.</p>}
-            {state.status === 'error' && (
+            {plans.status === 'loading' && <p className="helper">Your plans are still loading.</p>}
+            {plans.status === 'error' && (
               <div className="notice caution">
                 {CAUTION}
                 <div className="stack tight">
                   <p>
                     <LevelWord level="caution" />
-                    {state.error}
+                    {plans.error}
                   </p>
-                  <button type="button" className="btn secondary" onClick={() => void client.load()}>
+                  <button type="button" className="btn secondary" onClick={onRetry}>
                     Try again
                   </button>
                 </div>
               </div>
             )}
-            {ready && full && !copies && <p className="helper">You have {MAX_PLAN_SCENARIOS} scenarios, the most Nya keeps: delete one in Scenarios to try another.</p>}
+            {ready && full && <p className="helper">You have {MAX_FIRE_PLANS} plans, the most Nya keeps: delete one in Plans to try another.</p>}
             <div className="chip-row" role="group" aria-label="Try a life choice">
               {WHAT_IF_TEMPLATES.map((t, i) => (
                 <button key={t.id} type="button" className="chip" aria-haspopup="dialog" onClick={() => pick(t)} disabled={!canTry} ref={i === 0 && canTry ? firstRef : undefined}>
@@ -281,25 +259,6 @@ export function WhatIfCard({
               ))}
             </div>
           </div>
-          {ready && list.length > 0 && (
-            <ul className="list-rows" aria-label="Your scenarios">
-              {list.map((s) => {
-                const outcome = scenarioOutcome(base, s, measured, count, planCurrency, planCurrencyKnown);
-                const when = fiWhen(outcome.kind === 'figures' ? outcome.figures : null);
-                return (
-                  <li key={s.id}>
-                    <button type="button" className="list-row" onClick={() => onOpen(s.id)} disabled={!canOpen || state.saving}>
-                      <span className="list-row-text">
-                        <span className="list-row-title">{s.name}</span>
-                        <span className="list-row-sub">{scenarioRowText(s.events.length, when, plan)}</span>
-                      </span>
-                      {chevron(RIGHT)}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
         </section>
       )}
       {sheet}

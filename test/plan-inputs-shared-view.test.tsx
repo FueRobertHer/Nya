@@ -29,6 +29,7 @@ const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { localDate } = await import('@/lib/local-date');
 const { createPlanInputsStore } = await import('@/lib/plan-inputs-store');
+const { plansListing } = await import('./plans-listing');
 type Txn = import('@/components/MonthBreakdown').Txn;
 type AssetInstitution = import('@/lib/fire/inputs').AssetInstitution;
 type PlanInputsStore = import('@/lib/plan-inputs-store').PlanInputsStore;
@@ -87,7 +88,7 @@ function serve() {
         state.plan = call.body.plan;
         return [200, { plan: state.plan, currency: call.body.currency }];
       }
-      if (u.pathname === '/api/plan-scenarios') return [200, { scenarios: [], unreadable_ids: [], unrecognised_ids: [] }];
+      if (u.pathname === '/api/plans' && method === 'GET') return plansListing(null);
       if (u.pathname === '/api/allocation-settings') return [200, { settings: null }];
       return [404, { error: 'not here' }];
     })();

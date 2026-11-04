@@ -4,23 +4,22 @@ import { simulateOnPage } from './plan-on-page';
 
 // The Plan tab's pinned bar and segments (rollout phase 6b,
 // docs/design/information-architecture.md#plan), used as a person would
-// (react-dom/client over test/mini-dom.ts): "Your plan" or the scenario open
-// as its heading, over Your path, Drawdown and Portfolio, each its own
-// panel and all three mounted; the bar there before the plan has loaded, and
-// the same bar, heading and Scenarios sheet once it has; the Scenarios sheet
-// from the bar and from the open scenario's card, and where focus goes as a
-// scenario opens and is left; the scenario's card above the panels, saying
-// why one isn't worked out whatever segment is chosen; where a switch
-// scrolls to, one --sp-2 under the bar; focus where it belongs when the
-// click comes between a commit in the background and its effects; what the
-// tab closes by itself, moving no focus; and Home's FI line landing on the
-// heading. The sheet's own
-// levels are test/plan-scenarios-sheet-view.test.tsx's; the dashboard's side
-// of the landing is test/plan-landing-source.test.ts's. Every request is
-// answered here, by path; nothing reaches a network.
+// (react-dom/client over test/mini-dom.ts): "Your plan" or the copy open as
+// its heading, over Your path, Drawdown and Portfolio, each its own panel and
+// all three mounted; the bar there before the plan has loaded, and the same
+// bar, heading and Plans sheet once it has; the Plans sheet from the bar and
+// from the open copy's card, and where focus goes as a copy opens and is
+// left; the copy's card above the panels, saying why one isn't worked out
+// whatever segment is chosen; where a switch scrolls to, one --sp-2 under the
+// bar; focus where it belongs when the click comes between a commit in the
+// background and its effects; what the tab closes by itself, moving no
+// focus; and Home's FI line landing on the heading. The sheet's own levels
+// are test/plans-sheet-view.test.tsx's; the dashboard's side of the landing
+// is test/plan-landing-source.test.ts's. Every request is answered here, by
+// path; nothing reaches a network.
 //
 // A rendered element never goes into toEqual or another matcher that diffs
-// (test/plan-tab-scenarios.test.tsx says why): elements are compared with
+// (test/plan-tab-copies.test.tsx says why): elements are compared with
 // toBe, or outlined first.
 
 const dom = installDom();
@@ -79,10 +78,11 @@ const { createRoot } = trackRoots(require('react-dom/client') as typeof import('
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { default: PlanBar, PLAN_TITLE, openingSegment } = await import('@/components/PlanBar');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { NO_CHANGES } = await import('@/lib/fire/scenarios');
+const { itemFromEvent } = await import('@/lib/fire/items');
+const { plansListing, copyRow } = await import('./plans-listing');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type PlanSegment = import('@/components/PlanBar').PlanSegment;
-type Entry = import('@/components/plan-scenarios').ScenarioEntry;
+type Row = import('./plans-listing').Row;
 
 // mini-dom's window has no scrollBy: each scroll the tab asks for is kept.
 const scrolls: number[] = [];
@@ -103,40 +103,33 @@ afterEach(() => {
 });
 
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
-const entry = (id: string, name: string, over: Partial<Entry> = {}): Entry => ({
-  id,
-  version: 1,
-  name,
-  currency: 'USD',
-  createdAt: '2026-10-01T00:00:00.000Z',
-  savedAt: '2026-10-01T00:00:00.000Z',
-  rev: 'r1',
-  ...NO_CHANGES,
-  set: { targetAge: 50 },
-  ...over,
-});
-const RETIRE = entry('a', 'Retire at 50');
-const SABBATICAL = entry('b', 'Sabbatical 2029', { set: { spending: 30_000 } });
-// Retiring before the age now breaks a rule of the Plan's: not worked out,
-// so its life event is on no card.
-const TOO_SOON = entry('c', 'Retire at 30', { set: { targetAge: 30 }, events: [{ id: 'w', kind: 'spending', label: 'Wedding', fromAge: 42, yearly: 20_000, years: 1 }] });
-// Its amounts typed in euros, the Plan's figures recorded in dollars.
-const IN_EUROS = entry('f', 'In euros', { currency: 'EUR', set: { spending: 45_000 } });
+const RETIRE = copyRow(PLAN, 'a', 'Retire at 50', { targetAge: 50 }, 'USD', 1);
+const SABBATICAL = copyRow(PLAN, 'b', 'Sabbatical 2029', { spending: 30_000 }, 'USD', 2);
+// Its stop before your age now: a value that doesn't fit your plan as it is
+// now, so it is shown repaired, and its card says what to save.
+const TOO_SOON = copyRow(PLAN, 'c', 'Retire at 30', { targetAge: 30 }, 'USD', 3);
+// Its amounts typed in euros, your plan's figures recorded in dollars: not
+// worked out, so its life event is on no card.
+const IN_EUROS = copyRow(PLAN, 'f', 'In euros', { spending: 45_000, items: [itemFromEvent({ id: 'w', kind: 'spending', label: 'Wedding', fromAge: 42, yearly: 20_000, years: 1 })] }, 'EUR', 4);
 // Lasting changes that take spending in retirement below zero: refused.
-const BELOW_ZERO = entry('d', 'Mortgage gone', { set: {}, events: [{ id: 'x', kind: 'spending', label: 'Mortgage paid off', fromAge: 41, yearly: -45_000, years: null }] });
-const GYM = entry('e', 'Gym', { set: {}, events: [{ id: 'g', kind: 'spending', label: 'Gym', fromAge: 41, yearly: 1_000, years: 5 }] });
+const BELOW_ZERO = copyRow(PLAN, 'd', 'Mortgage gone', { items: [itemFromEvent({ id: 'x', kind: 'spending', label: 'Mortgage paid off', fromAge: 41, yearly: -45_000, years: null })] }, 'USD', 5);
+const GYM = copyRow(PLAN, 'e', 'Gym', { items: [itemFromEvent({ id: 'g', kind: 'spending', label: 'Gym', fromAge: 41, yearly: 1_000, years: 5 })] }, 'USD', 6);
 
 type Call = { method: string; url: string; body: any };
 
 type Answer = (call: Call) => [number, unknown] | undefined | Promise<[number, unknown] | undefined>;
 
-/** The routes the tab calls, answered as the real ones would: the plan (or
- *  a promise of it, to hold its load open), and the scenarios, kept here as
- *  they are changed; `answers`, by "METHOD /path", go first where they give
- *  one. Every call is recorded. */
-function serve({ plan = { plan: PLAN, currency: 'USD' } as unknown, scenarios = [] as Entry[] | null, answers = {} as Record<string, Answer> } = {}) {
-  let list = scenarios ? [...scenarios] : [];
+/** The routes the tab calls, answered as the real ones would: the plan
+ *  (`plan`, or a promise of it, to hold its load open; else the one that is
+ *  yours now), and your plans (yours, "First plan", then `copies`, or null
+ *  for a list that can't be loaded), kept here as they are changed; `answers`, by "METHOD /path", go first where they
+ *  give one. Every call is recorded. */
+function serve({ plan = undefined as unknown, copies = [] as Row[] | null, answers = {} as Record<string, Answer> } = {}) {
+  let rows = (plansListing(PLAN, copies ?? [])[1] as { plans: Row[] }).plans;
+  let main = 'main';
   let made = 0;
+  let stamps = 0;
+  const stamp = () => `2026-11-01T00:00:${String(++stamps).padStart(2, '0')}.000Z`;
   const calls: Call[] = [];
   (globalThis as any).fetch = async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
@@ -146,24 +139,35 @@ function serve({ plan = { plan: PLAN, currency: 'USD' } as unknown, scenarios = 
     const answer = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
     const given = await answers[`${method} ${url}`]?.(call);
     if (given) return answer(given[1], given[0]);
-    if (url === '/api/plan-inputs' && method === 'GET') return answer(await plan);
-    if (url === '/api/plan-scenarios') {
-      if (scenarios === null) return answer({ error: 'Your saved scenarios couldn’t be loaded.' }, 500);
+    if (url === '/api/plan-inputs' && method === 'GET') return answer(plan !== undefined ? await plan : { plan: rows.find((r) => r.id === main)!.plan, currency: 'USD' });
+    if (url === '/api/plans') {
+      if (copies === null) return answer({ error: 'Your plans couldn’t be loaded.' }, 500);
       if (method === 'POST') {
-        const created = { ...entry(`new${++made}`, body.scenario.name), ...body.scenario };
-        list = [...list, created];
-        return answer({ scenario: created });
+        const at = stamp();
+        const row: Row = { id: `new${++made}`, name: body.name, plan: body.plan, currency: body.currency, created_at: at, updated_at: at };
+        rows = [...rows, row];
+        return answer({ plan: row });
       }
       if (method === 'PUT') {
-        const now = { ...list.find((s) => s.id === body.id)!, ...body.scenario, rev: 'r2' };
-        list = list.map((s) => (s.id === body.id ? now : s));
-        return answer({ scenario: now });
+        const saved: Row[] = body.saves.map((x: { id: string; plan: Row['plan']; currency: string | null }) => ({ ...rows.find((r) => r.id === x.id)!, plan: x.plan, currency: x.currency, updated_at: stamp() }));
+        rows = rows.map((r) => saved.find((x) => x.id === r.id) ?? r);
+        return answer({ plans: saved, main: null });
+      }
+      if (method === 'PATCH' && 'main' in body) {
+        main = body.main;
+        const row = rows.find((r) => r.id === main)!;
+        return answer({ id: row.id, plan: row.plan, currency: row.currency, updated_at: row.updated_at });
+      }
+      if (method === 'PATCH') {
+        const row = { ...rows.find((r) => r.id === body.id)!, ...('name' in body ? { name: body.name } : { currency: body.currency }), updated_at: stamp() };
+        rows = rows.map((r) => (r.id === row.id ? row : r));
+        return answer({ plan: row });
       }
       if (method === 'DELETE') {
-        list = list.filter((s) => s.id !== body.id);
+        rows = rows.filter((r) => r.id !== body.id);
         return answer({ ok: true });
       }
-      return answer({ scenarios: list, unreadable_ids: [], unrecognised_ids: [] });
+      return answer({ main, missing: false, plans: rows, unreadable_ids: [], unrecognised_ids: [] });
     }
     if (url === '/api/allocation-settings') return answer({ settings: null });
     return answer({ error: 'not here' }, 404);
@@ -212,7 +216,7 @@ async function mount(props: Partial<PlanTabProps> = {}) {
   const tab = (label: string) => tabs().filter((e) => e.textContent === label)[0];
   const panels = () => find((e) => e.getAttribute('role') === 'tabpanel' && has(e, 'plan-panel'));
   const panelOf = (label: string) => panels().find((p) => p.getAttribute('aria-labelledby') === tab(label).getAttribute('id'))!;
-  const card = () => find((e) => has(e, 'plan-scenario-card'))[0] ?? null;
+  const card = () => find((e) => has(e, 'plan-copy-card'))[0] ?? null;
   const dialog = () => find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')[0] ?? null;
   return {
     container,
@@ -255,17 +259,24 @@ async function mount(props: Partial<PlanTabProps> = {}) {
      *  the tab each is labelled by. */
     shown: () => panels().filter((p) => !p.hasAttribute('hidden')).map((p) => tabs().find((t) => t.getAttribute('id') === p.getAttribute('aria-labelledby'))?.textContent),
     title: () => find((e) => e.getAttribute('id') === PLAN_TITLE)[0],
-    /** The bar's Scenarios button, drawn on your plan. */
-    scenarios: () => bar().findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Scenarios'))[0] ?? null,
+    /** The bar's Plans button, drawn on your plan. */
+    plans: () => bar().findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Plans'))[0] ?? null,
     arrow: () => bar().findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0] ?? null,
     card,
-    /** The card's Scenarios button, at its foot. */
-    cardScenarios: () => card()?.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Scenarios'))[0] ?? null,
+    /** The card's Plans button, at its foot. */
+    cardPlans: () => card()?.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Plans'))[0] ?? null,
+    /** A button on the card, by its words. */
+    onCard: (words: string) => card()?.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null,
     dialog,
     /** The open sheet with this title. */
     sheet: (title: string) => find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true' && e.getAttribute('aria-label') === title)[0] ?? null,
     /** A control in the open sheet, by its name. */
     inSheet: (label: string) => dialog()?.findAll((e) => e.getAttribute('aria-label') === label || (e.tagName === 'BUTTON' && e.textContent.trim() === label))[0] ?? null,
+    /** A row in an open sheet, by its title: a plan in the Plans sheet's
+     *  list, or one of a plan's actions. */
+    rowIn: (title: string) =>
+      find((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('data-open') === 'true')
+        .flatMap((d) => d.findAll((e) => e.tagName === 'BUTTON' && has(e, 'list-row') && e.findAll((t) => has(t, 'list-row-title'))[0]?.textContent === title))[0] ?? null,
     /** The card titles in a panel: a card's name, its total's label, or the
      *  heading in its header (Your figures'). */
     titles: (p: FakeElement) =>
@@ -278,20 +289,27 @@ async function mount(props: Partial<PlanTabProps> = {}) {
 }
 type Tab = Awaited<ReturnType<typeof mount>>;
 
-/** Opens a scenario from the bar's Scenarios sheet. */
+/** Opens a plan from the sheet already open: its row, then Open it in its
+ *  level. */
+async function openInSheet(tab: Tab, name: string) {
+  await press(tab.rowIn(name));
+  await press(tab.rowIn('Open it'));
+}
+
+/** Opens a copy from the bar's Plans sheet. */
 async function openFromBar(tab: Tab, name: string) {
-  await press(tab.scenarios());
-  await press(tab.inSheet(`Open ${name}`));
+  await press(tab.plans());
+  await openInSheet(tab, name);
 }
 
 /** Lays the page out: the bar pinned at the top, with `rects` saying where
- *  the scenario's card and the panels are. */
+ *  the copy's card and the panels are. */
 function layout(rects: { card?: number; panel?: number }) {
   FakeElement.prototype.getBoundingClientRect = function (this: FakeElement) {
     const at = (top: number, bottom: number) => ({ x: 0, y: top, top, bottom, left: 0, right: 0, width: 0, height: bottom - top });
     if (has(this, 'plan-bar')) return at(0, 120);
     // The card's place: the slot that holds it (and its life events, when refused).
-    if (rects.card !== undefined && this.childNodes.some((c) => c instanceof FakeElement && has(c, 'plan-scenario-card'))) return at(rects.card, rects.card + 400);
+    if (rects.card !== undefined && this.childNodes.some((c) => c instanceof FakeElement && has(c, 'plan-copy-card'))) return at(rects.card, rects.card + 400);
     if (rects.panel !== undefined && this.getAttribute('role') === 'tabpanel') return at(rects.panel, rects.panel + 3000);
     return realRect.call(this);
   };
@@ -299,11 +317,11 @@ function layout(rects: { card?: number; panel?: number }) {
 
 describe('the bar, before and after the plan loads', () => {
   test('before the saved plan has loaded: the bar with "Your plan", three segments, each its skeleton, and no figure', async () => {
-    serve({ plan: new Promise(() => {}), scenarios: [RETIRE] });
+    serve({ plan: new Promise(() => {}), copies: [RETIRE] });
     const tab = await mount();
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.title().tagName).toBe('H2');
-    // Focusable by script, so Home's FI line and an opened scenario land on it.
+    // Focusable by script, so Home's FI line and an opened copy land on it.
     expect(tab.title().getAttribute('tabindex')).toBe('-1');
     expect(tab.tabs().map((e) => e.textContent)).toEqual(['Your path', 'Drawdown', 'Portfolio']);
     expect(tab.panels().length).toBe(3);
@@ -312,14 +330,15 @@ describe('the bar, before and after the plan loads', () => {
       expect(p.findAll((e) => e.getAttribute('aria-busy') === 'true').length).toBe(1);
     }
     expect(tab.text()).not.toContain('FI number');
-    // The sheet can be opened meanwhile: it says why nothing opens yet.
-    expect(tab.scenarios()?.textContent).toBe('Scenarios (1)');
+    // The sheet can be opened meanwhile: it says why nothing opens yet. Your
+    // plan and its copy, counted once listed.
+    expect(tab.plans()?.textContent).toBe('Plans (2)');
     await tab.unmount();
   });
 
   test('landed on while the plan loads, the heading keeps focus as it arrives: the same bar, the same heading', async () => {
     let release!: () => void;
-    serve({ plan: new Promise((r) => (release = () => r({ plan: PLAN, currency: 'USD' }))), scenarios: [RETIRE] });
+    serve({ plan: new Promise((r) => (release = () => r({ plan: PLAN, currency: 'USD' }))), copies: [RETIRE] });
     let landed = 0;
     const tab = await mount({ landing: Date.now(), onLanded: () => landed++ });
     const title = tab.title();
@@ -333,19 +352,19 @@ describe('the bar, before and after the plan loads', () => {
     await tab.unmount();
   });
 
-  test('a Scenarios sheet opened while the plan loads lists nothing, says why, and is still open, listing them, once it has loaded', async () => {
+  test('a Plans sheet opened while the plan loads lists nothing, says why, and is still open, listing them, once it has loaded', async () => {
     let release!: () => void;
-    serve({ plan: new Promise((r) => (release = () => r({ plan: PLAN, currency: 'USD' }))), scenarios: [RETIRE] });
+    serve({ plan: new Promise((r) => (release = () => r({ plan: PLAN, currency: 'USD' }))), copies: [RETIRE] });
     const tab = await mount();
-    await press(tab.scenarios());
+    await press(tab.plans());
     const sheet = tab.dialog();
-    expect(sheet?.getAttribute('aria-label')).toBe('Scenarios');
-    expect(sheet?.textContent).toContain('Your plan is still loading: scenarios open, and are compared, once it has.');
-    expect(tab.inSheet('Open Retire at 50')).toBeNull();
+    expect(sheet?.getAttribute('aria-label')).toBe('Plans');
+    expect(sheet?.textContent).toContain('Your plan is still loading: plans open, and are compared, once it has.');
+    expect(tab.rowIn('Retire at 50')).toBeNull();
     await act(async () => release());
     await settle();
     expect(tab.dialog()).toBe(sheet!);
-    expect(tab.inSheet('Open Retire at 50')?.disabled).toBe(false);
+    expect(tab.rowIn('Retire at 50')?.disabled).toBe(false);
     await tab.unmount();
   });
 });
@@ -537,7 +556,7 @@ describe('where the Plan opens', () => {
     /** What a person reads or hears of an element: its text and every label. */
     const said = (el: FakeElement) => [el.textContent, ...el.findAll((e) => e.hasAttribute('aria-label')).map((e) => e.getAttribute('aria-label'))].join(' ');
     for (const row of ['Assumptions', 'Ages']) {
-      serve({ scenarios: [RETIRE] });
+      serve({ copies: [RETIRE] });
       const tab = await mount();
       expect(said(tab.container)).not.toMatch(/stress/i);
       await press(tab.row(row));
@@ -548,67 +567,72 @@ describe('where the Plan opens', () => {
   });
 });
 
-describe('Scenarios, from the bar and from the card', () => {
-  test('"Scenarios (N)" counts them once listed, and says no number while none is known', async () => {
-    serve({ scenarios: [RETIRE, SABBATICAL] });
-    const two = await mount();
-    expect(two.scenarios()?.textContent).toBe('Scenarios (2)');
-    expect(two.scenarios()?.getAttribute('class')).toBe('btn ghost');
-    expect(two.scenarios()?.getAttribute('aria-haspopup')).toBe('dialog');
-    await two.unmount();
-    serve({ scenarios: [] });
-    const none = await mount();
-    expect(none.scenarios()?.textContent).toBe('Scenarios');
-    await none.unmount();
-    serve({ scenarios: null });
+describe('Plans, from the bar and from the card', () => {
+  test('"Plans (N)" counts every plan, yours included, from two, and says no number while none is known', async () => {
+    serve({ copies: [RETIRE, SABBATICAL] });
+    const three = await mount();
+    expect(three.plans()?.textContent).toBe('Plans (3)');
+    expect(three.plans()?.getAttribute('class')).toBe('btn ghost');
+    expect(three.plans()?.getAttribute('aria-haspopup')).toBe('dialog');
+    await three.unmount();
+    serve({ copies: [] });
+    const one = await mount();
+    expect(one.plans()?.textContent).toBe('Plans');
+    await one.unmount();
+    serve({ copies: null });
     const failed = await mount();
-    expect(failed.scenarios()?.textContent).toBe('Scenarios');
-    await press(failed.scenarios());
-    expect(failed.dialog()?.textContent).toContain('Your saved scenarios couldn’t be loaded.');
+    expect(failed.plans()?.textContent).toBe('Plans');
+    await press(failed.plans());
+    expect(failed.dialog()?.textContent).toContain('Your plans couldn’t be loaded.');
     await failed.unmount();
   });
 
-  test('the sheet holds the list; New scenario is its second level, and back; a rename saved goes back to the list', async () => {
-    const calls = serve({ scenarios: [RETIRE, SABBATICAL] });
+  test('the sheet holds the list, yours first; a row opens its plan’s level, New copy is a level of its own, and back; a rename saved goes back to the plan’s level', async () => {
+    const calls = serve({ copies: [RETIRE, SABBATICAL] });
     const tab = await mount();
-    await press(tab.scenarios());
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Scenarios');
-    expect(tab.inSheet('Open Retire at 50')).not.toBeNull();
-    expect(tab.inSheet('Open Sabbatical 2029')).not.toBeNull();
-    await press(tab.inSheet('New scenario'));
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('New scenario');
+    await press(tab.plans());
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Plans');
+    expect(tab.dialog()!.findAll((e) => has(e, 'list-row-title')).map((e) => e.textContent)).toEqual(['First plan', 'Retire at 50', 'Sabbatical 2029']);
+    expect(tab.rowIn('First plan')!.findAll((e) => has(e, 'badge')).map((e) => e.textContent)).toEqual(['Your plan']);
+    await press(tab.inSheet('New copy'));
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('New copy');
     await press(tab.inSheet('Back'));
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Scenarios');
-    await press(tab.inSheet('Rename Retire at 50'));
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Plans');
+    await press(tab.rowIn('Retire at 50'));
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Retire at 50');
+    await press(tab.rowIn('Rename'));
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Rename');
     await act(async () => type(tab.dialog()!.findAll((e) => e.tagName === 'INPUT')[0], 'Retire at 52'));
     await press(tab.inSheet('Save'));
-    expect(calls.filter((c) => c.method === 'PUT').map((c) => c.body.scenario.name)).toEqual(['Retire at 52']);
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Scenarios');
-    expect(tab.inSheet('Open Retire at 52')).not.toBeNull();
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.body)).toEqual([{ id: 'a', name: 'Retire at 52', based_on: RETIRE.updated_at }]);
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Retire at 52');
+    await press(tab.inSheet('Back'));
+    expect(tab.rowIn('Retire at 52')).not.toBeNull();
     // Nothing opened by it: your plan is still the one shown.
     expect(tab.title().textContent).toBe('Your plan');
     await tab.unmount();
   });
 
-  test('Open closes the sheet with the scenario shown, on the segment chosen: the heading names it and has focus, and its card is above the panels', async () => {
-    serve({ scenarios: [RETIRE, SABBATICAL] });
+  test('Open it closes the sheet with the copy shown, on the segment chosen: the heading names it and has focus, and its card is above the panels', async () => {
+    serve({ copies: [RETIRE, SABBATICAL] });
     const tab = await mount();
     await act(async () => click(tab.tab('Drawdown')));
     const title = tab.title();
     await openFromBar(tab, 'Retire at 50');
     expect(tab.dialog()).toBeNull();
     expect(tab.title()).toBe(title);
-    expect(title.textContent).toBe('Scenario: Retire at 50');
+    expect(title.textContent).toBe('Copy: Retire at 50');
     expect(dom.document.activeElement).toBe(title);
     expect(tab.selected()).toEqual(['Drawdown']);
-    // The bar has its arrow back, and no Scenarios of its own: the card has it.
+    // The bar has its arrow back, and no Plans of its own: the card has it.
     expect(tab.arrow()).not.toBeNull();
-    expect(tab.scenarios()).toBeNull();
+    expect(tab.plans()).toBeNull();
     const card = tab.card()!;
-    expect(card.textContent).toContain('Everything below is this scenario');
-    expect(tab.cardScenarios()?.textContent).toBe('Scenarios (2)');
-    expect(tab.cardScenarios()?.getAttribute('class')).toBe('btn secondary');
+    // How it differs from your plan, then Make this your plan and Plans.
+    expect(card.textContent).toContain('Stop age: 50 (your plan: 55).');
+    expect(tab.cardPlans()?.textContent).toBe('Plans (3)');
+    expect(tab.cardPlans()?.getAttribute('class')).toBe('btn ghost');
+    expect(tab.onCard('Make this your plan')?.getAttribute('class')).toBe('btn ghost');
     // Under the bar, above every panel, in none of them.
     expect(tab.order(card)).toBeGreaterThan(tab.order(tab.bar()));
     expect(tab.order(card)).toBeLessThan(Math.min(...tab.panels().map(tab.order)));
@@ -616,28 +640,28 @@ describe('Scenarios, from the bar and from the card', () => {
     await tab.unmount();
   });
 
-  test('inside a scenario the card’s Scenarios opens the sheet: another opened there takes the heading, and the open one’s row leads back to your plan, to the bar’s Scenarios', async () => {
-    serve({ scenarios: [RETIRE, SABBATICAL] });
+  test('inside a copy the card’s Plans opens the sheet: another opened there takes the heading, and your plan’s Open it leads back to it, to the bar’s Plans', async () => {
+    serve({ copies: [RETIRE, SABBATICAL] });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    await press(tab.cardScenarios());
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Scenarios');
-    await press(tab.inSheet('Open Sabbatical 2029'));
+    await press(tab.cardPlans());
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Plans');
+    await openInSheet(tab, 'Sabbatical 2029');
     expect(tab.dialog()).toBeNull();
-    expect(tab.title().textContent).toBe('Scenario: Sabbatical 2029');
+    expect(tab.title().textContent).toBe('Copy: Sabbatical 2029');
     expect(dom.document.activeElement).toBe(tab.title());
-    await press(tab.cardScenarios());
-    // The open one's row: "Back to your plan".
-    await press(tab.inSheet('Back to your plan'));
+    await press(tab.cardPlans());
+    // Your plan's row, then Open it.
+    await openInSheet(tab, 'First plan');
     expect(tab.dialog()).toBeNull();
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.card()).toBeNull();
-    expect(dom.document.activeElement).toBe(tab.scenarios()!);
+    expect(dom.document.activeElement).toBe(tab.plans()!);
     await tab.unmount();
   });
 
-  test('the bar’s arrow back to your plan does the same: "Your plan", and focus on the bar’s Scenarios', async () => {
-    serve({ scenarios: [RETIRE] });
+  test('the bar’s arrow back to your plan does the same: "Your plan", and focus on the bar’s Plans', async () => {
+    serve({ copies: [RETIRE] });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
     expect(tab.arrow()?.getAttribute('class')).toBe('icon-btn');
@@ -645,76 +669,98 @@ describe('Scenarios, from the bar and from the card', () => {
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.arrow()).toBeNull();
     expect(tab.card()).toBeNull();
-    expect(dom.document.activeElement).toBe(tab.scenarios()!);
+    expect(dom.document.activeElement).toBe(tab.plans()!);
     await tab.unmount();
   });
 
-  test('the open scenario deleted in the sheet: the sheet stays on its list, and closed, gives focus to the bar’s Scenarios, the card’s having gone', async () => {
-    const calls = serve({ scenarios: [RETIRE, SABBATICAL] });
+  test('the open copy deleted in the sheet, after its level asks: the sheet goes back to its list, and closed, gives focus to the bar’s Plans, the card’s having gone', async () => {
+    const calls = serve({ copies: [RETIRE, SABBATICAL] });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    await press(tab.cardScenarios());
-    await press(tab.inSheet('Delete Retire at 50'));
-    const confirm = tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Delete' && has(e, 'danger'))[0];
-    await press(confirm);
-    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.body.id)).toEqual(['a']);
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Scenarios');
+    await press(tab.cardPlans());
+    await press(tab.rowIn('Retire at 50'));
+    // The destructive row, last.
+    const del = tab.rowIn('Delete')!;
+    expect(has(del, 'neg')).toBe(true);
+    await press(del);
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Delete');
+    expect(tab.dialog()?.textContent).toContain('Delete “Retire at 50”? Your plan isn’t changed. This can’t be undone.');
+    expect(calls.filter((c) => c.method === 'DELETE')).toEqual([]);
+    await press(tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Delete' && has(e, 'danger'))[0]);
+    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.body)).toEqual([{ id: 'a', based_on: RETIRE.updated_at }]);
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Plans');
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.card()).toBeNull();
     // Closing it moved nothing out of the sheet meanwhile.
     expect(tab.dialog()!.findAll((e) => e === dom.document.activeElement).length).toBe(1);
     await press(tab.inSheet('Close'));
     expect(tab.dialog()).toBeNull();
-    expect(dom.document.activeElement).toBe(tab.scenarios()!);
-    expect(tab.scenarios()?.textContent).toBe('Scenarios (1)');
+    expect(dom.document.activeElement).toBe(tab.plans()!);
+    expect(tab.plans()?.textContent).toBe('Plans (2)');
+    await tab.unmount();
+  });
+
+  test('Make this your plan on the card: the copy is your plan, shown as yours, focus on the bar’s Plans, and the status line says so', async () => {
+    const calls = serve({ copies: [RETIRE, SABBATICAL] });
+    const tab = await mount();
+    await openFromBar(tab, 'Retire at 50');
+    await press(tab.onCard('Make this your plan'));
+    await settle(100);
+    expect(calls.filter((c) => c.method === 'PATCH').map((c) => c.body)).toEqual([{ main: 'a', based_on: RETIRE.updated_at }]);
+    expect(tab.title().textContent).toBe('Your plan');
+    expect(tab.card()).toBeNull();
+    expect(dom.document.activeElement).toBe(tab.plans()!);
+    expect(tab.text()).toContain('stop at 50');
+    expect(tab.container.findAll((e) => e.getAttribute('role') === 'status').map((e) => e.textContent)).toContain('“Retire at 50” is your plan now.');
     await tab.unmount();
   });
 });
 
 describe('what the tab does by itself', () => {
-  test('after a reload of the scenarios fails, no count is said, on the card or the bar, and the sheet shows only why', async () => {
+  test('after a reload of the plans fails, no count is said, on the card or the bar, and the sheet shows only why', async () => {
     let loads = 0;
     serve({
-      scenarios: [RETIRE, SABBATICAL],
+      copies: [RETIRE, SABBATICAL],
       answers: {
-        'GET /api/plan-scenarios': () => (loads++ === 0 ? undefined : [500, { error: 'Your saved scenarios couldn’t be loaded.' }]),
-        // A save refused: the list is loaded again, and that fails.
-        'PUT /api/plan-scenarios': () => [500, { error: 'It wasn’t saved. Try again in a moment.' }],
+        'GET /api/plans': () => (loads++ === 0 ? undefined : [500, { error: 'Your plans couldn’t be loaded.' }]),
+        // A change refused: the list is loaded again, and that fails.
+        'PATCH /api/plans': () => [500, { error: 'It wasn’t made your plan. Try again in a moment.' }],
       },
     });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    expect(tab.cardScenarios()?.textContent).toBe('Scenarios (2)');
-    await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0]);
+    expect(tab.cardPlans()?.textContent).toBe('Plans (3)');
+    await press(tab.onCard('Make this your plan'));
     expect(loads).toBe(2);
-    // The scenario stays open on the list the client kept, its count unsaid.
-    expect(tab.title().textContent).toBe('Scenario: Retire at 50');
-    expect(tab.cardScenarios()?.textContent).toBe('Scenarios');
-    await press(tab.cardScenarios());
-    expect(tab.dialog()?.textContent).toContain('Your saved scenarios couldn’t be loaded.');
-    expect(tab.inSheet('Open Sabbatical 2029')).toBeNull();
-    expect(tab.inSheet('Back to your plan')).toBeNull();
+    // The copy stays open on the list the client kept, its count unsaid.
+    expect(tab.title().textContent).toBe('Copy: Retire at 50');
+    expect(tab.card()!.textContent).toContain('It wasn’t made your plan. Try again in a moment.');
+    expect(tab.cardPlans()?.textContent).toBe('Plans');
+    await press(tab.cardPlans());
+    expect(tab.dialog()?.textContent).toContain('Your plans couldn’t be loaded.');
+    expect(tab.rowIn('First plan')).toBeNull();
+    expect(tab.rowIn('Sabbatical 2029')).toBeNull();
     await press(tab.inSheet('Close'));
     await press(tab.arrow());
-    expect(tab.scenarios()?.textContent).toBe('Scenarios');
+    expect(tab.plans()?.textContent).toBe('Plans');
     await tab.unmount();
   });
 
-  test('a scenario deleted elsewhere closes, and focus stays where it was', async () => {
+  test('a copy deleted elsewhere closes, and focus stays where it was', async () => {
     let gone = false;
     serve({
-      scenarios: [RETIRE],
+      copies: [RETIRE],
       answers: {
-        'GET /api/plan-scenarios': () => (gone ? [200, { scenarios: [], unreadable_ids: [], unrecognised_ids: [] }] : undefined),
-        'PUT /api/plan-scenarios': () => {
+        'GET /api/plans': () => (gone ? plansListing(PLAN) : undefined),
+        'PATCH /api/plans': () => {
           gone = true;
-          return [404, { error: 'That scenario isn’t there any more: it was deleted.' }];
+          return [404, { error: 'That plan isn’t there any more: it was deleted.' }];
         },
       },
     });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    const pressed = tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0];
+    const pressed = tab.onCard('Make this your plan')!;
     await press(pressed);
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.card()).toBeNull();
@@ -722,11 +768,11 @@ describe('what the tab does by itself', () => {
     await tab.unmount();
   });
 
-  test('a scenario closed while a repair of the Plan waits: focus stays where it was, and the sheet says why none opens', async () => {
+  test('a copy closed while a repair of your plan waits: focus stays where it was, and the sheet says why none opens', async () => {
     let plans = 0;
     let refuse!: () => void;
     serve({
-      scenarios: [RETIRE],
+      copies: [RETIRE],
       answers: {
         // Read again after the save below is refused: a value this version
         // can't use, so a repair waits.
@@ -735,14 +781,14 @@ describe('what the tab does by itself', () => {
       },
     });
     const tab = await mount();
-    // A save of the Plan under way, and a scenario opened meanwhile.
+    // A save of your plan under way, and a copy opened meanwhile.
     await press(tab.row('Ages'));
     const form = tab.sheet('Your ages')!;
     await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '58'));
     await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
-    await press(tab.scenarios());
-    await press(tab.sheet('Scenarios')!.findAll((e) => e.getAttribute('aria-label') === 'Open Retire at 50')[0]);
-    expect(tab.title().textContent).toBe('Scenario: Retire at 50');
+    await press(tab.plans());
+    await openInSheet(tab, 'Retire at 50');
+    expect(tab.title().textContent).toBe('Copy: Retire at 50');
     const portfolio = tab.tab('Portfolio');
     portfolio.focus();
     await act(async () => refuse());
@@ -751,29 +797,27 @@ describe('what the tab does by itself', () => {
     expect(tab.title().textContent).toBe('Your plan');
     expect(tab.card()).toBeNull();
     expect(dom.document.activeElement).toBe(portfolio);
-    await press(tab.scenarios());
-    expect(tab.dialog()?.textContent).toContain('Your saved plan has values to fix first (at the top of the Plan tab): scenarios open once it is saved.');
+    await press(tab.plans());
+    expect(tab.sheet('Plans')?.textContent).toContain('Your saved plan has values to fix first (at the top of the Plan tab): plans open once it is saved.');
     await tab.unmount();
   });
 });
 
-describe('the scenario’s card, on every segment', () => {
+describe('the copy’s card, on every segment', () => {
   test('one that isn’t worked out says why above the panels, whatever segment is chosen, and the panels draw nothing for it', async () => {
-    serve({ scenarios: [TOO_SOON] });
+    serve({ copies: [IN_EUROS] });
     const tab = await mount();
-    await openFromBar(tab, 'Retire at 30');
+    await openFromBar(tab, 'In euros');
     const card = tab.card()!;
-    expect(card.textContent).toContain('It stops working at 30, before your age now (40).');
-    // Its life event is on no card: the line says where neither is.
-    expect(card.textContent).toContain('1 life event.');
-    expect(card.textContent).not.toContain('1 life event, below.');
-    expect(card.textContent).not.toContain('1 life event, on Your path.');
+    expect(card.textContent).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
+    // Its life event is said in how it differs, and is on no card.
+    expect(card.textContent).toContain('Adds “Wedding”');
     for (const label of ['Your path', 'Drawdown', 'Portfolio']) {
       await act(async () => click(tab.tab(label)));
       expect(tab.card()).toBe(card);
       expect(tab.order(card)).toBeLessThan(tab.order(tab.panelOf(label)));
     }
-    // Only the Progress card, which is about the plan saved as your plan, never the scenario.
+    // Only the Progress card, which is about the plan saved as your plan, never the copy.
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Progress']);
     expect(tab.titles(tab.panelOf('Drawdown'))).toEqual([]);
     expect(drawdownRows(tab)).toEqual(['Assumptions', 'About these numbers']);
@@ -783,13 +827,30 @@ describe('the scenario’s card, on every segment', () => {
     await tab.unmount();
   });
 
+  // A copy is shown with your plan's facts in it (lib/fire/copies.ts): a stop
+  // before your age now is a value that doesn't fit them, repaired.
+  test('one with a value that doesn’t fit your plan now says so on every segment, and offers to save it that way', async () => {
+    serve({ copies: [TOO_SOON] });
+    const tab = await mount();
+    await openFromBar(tab, 'Retire at 30');
+    const card = tab.card()!;
+    expect(card.textContent).toContain('nothing is saved to it until you choose Save it this way.');
+    expect(tab.onCard('Save it this way')).not.toBeNull();
+    for (const label of ['Your path', 'Drawdown', 'Portfolio']) {
+      await act(async () => click(tab.tab(label)));
+      expect(tab.card()).toBe(card);
+    }
+    // Worked out, on the values it shows.
+    expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Will it last?');
+    await tab.unmount();
+  });
+
   test('one refused for lasting changes below zero has its life events with it, above the panels, to change', async () => {
-    serve({ scenarios: [BELOW_ZERO] });
+    serve({ copies: [BELOW_ZERO] });
     const tab = await mount();
     await openFromBar(tab, 'Mortgage gone');
     const slot = tab.card()!.parentNode as FakeElement;
-    expect(slot.textContent).toContain('Its lasting changes in spending take your spending in retirement below zero');
-    expect(tab.card()!.textContent).toContain('1 life event, below.');
+    expect(tab.card()!.textContent).toContain('Its lasting changes in spending take your spending in retirement below zero');
     const edit = slot.findAll((e) => e.getAttribute('aria-label') === 'Edit Mortgage paid off');
     expect(edit.length).toBe(1);
     for (const p of tab.panels()) expect(p.textContent).not.toContain('Life events');
@@ -799,13 +860,13 @@ describe('the scenario’s card, on every segment', () => {
 
   // Worked out in lib/fire/plan.worker.ts, on its own thread, as in a
   // browser: the one test in these suites whose answers come from there.
-  test('one worked out with life events: they are on Your path, and the card says so', async () => {
+  test('one worked out with life events: they are on Your path, and the card says what it adds', async () => {
     const posted = realWorkers();
     jest.useRealTimers();
-    serve({ scenarios: [GYM] });
+    serve({ copies: [GYM] });
     const tab = await mount();
     await openFromBar(tab, 'Gym');
-    expect(tab.card()!.textContent).toContain('1 life event, on Your path.');
+    expect(tab.card()!.textContent).toContain('Adds “Gym”');
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Life events', 'Income and one-off expenses', 'Progress']);
     expect(tab.panelOf('Drawdown').textContent).toContain('as the Life events card on Your path says');
     expect(posted()).toBeGreaterThan(0);
@@ -830,25 +891,25 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     await tab.unmount();
   });
 
-  test('a scenario opened lands on its card; a switch then lands on the panel, unless the card says why it isn’t worked out', async () => {
-    serve({ scenarios: [RETIRE, TOO_SOON] });
+  test('a copy opened lands on its card; a switch then lands on the panel, unless the card says what isn’t to be scrolled past', async () => {
+    serve({ copies: [RETIRE, TOO_SOON] });
     const tab = await mount();
     layout({ card: -500, panel: -900 });
     await openFromBar(tab, 'Retire at 50');
     expect(scrolls).toEqual([-628]);
     await act(async () => click(tab.tab('Drawdown')));
     expect(scrolls).toEqual([-628, -1028]);
-    await press(tab.cardScenarios());
-    await press(tab.inSheet('Open Retire at 30'));
+    await press(tab.cardPlans());
+    await openInSheet(tab, 'Retire at 30');
     expect(scrolls).toEqual([-628, -1028, -628]);
-    // What it says isn't scrolled past.
+    // What it says (a value to fix) isn't scrolled past.
     await act(async () => click(tab.tab('Your path')));
     expect(scrolls).toEqual([-628, -1028, -628, -628]);
     await tab.unmount();
   });
 
-  test('nor is its amounts typed in another currency than the Plan’s', async () => {
-    serve({ scenarios: [IN_EUROS] });
+  test('nor is its amounts typed in another currency than your plan’s', async () => {
+    serve({ copies: [IN_EUROS] });
     const tab = await mount();
     await openFromBar(tab, 'In euros');
     expect(tab.card()!.textContent).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
@@ -859,13 +920,30 @@ describe('where a switch scrolls to, under the pinned bar', () => {
   });
 
   test('nor a save’s notice, left with no form to say it in', async () => {
-    const newer = { ...RETIRE, rev: 'r2', set: { targetAge: 50, withdrawalRate: 0.035 } };
-    const stale = 'This scenario was changed on another device: here it is as it is now.';
-    serve({ scenarios: [RETIRE], answers: { 'PUT /api/plan-scenarios': () => [409, { error: stale, stale: true, scenario: newer }] } });
+    // Said in the page's words, the list being read again already.
+    const stale = 'Changed on another device, so nothing of your change was kept: make it again if it still applies.';
+    let refused = false;
+    serve({
+      copies: [RETIRE],
+      answers: {
+        'PUT /api/plans': () => {
+          refused = true;
+          return [409, { error: 'Your plan changed: load the page again', stale: true }];
+        },
+        // Read again after: the copy as another device saved it.
+        'GET /api/plans': () => (refused ? plansListing(PLAN, [copyRow(PLAN, 'a', 'Retire at 50', { targetAge: 50, withdrawalRate: 0.035 }, 'USD', 20)]) : undefined),
+      },
+    });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    await press(tab.card()!.findAll((e) => e.getAttribute('aria-label') === 'Use your plan’s stop age')[0]);
-    // Worked out still, its notice on the card.
+    await press(tab.row('Ages'));
+    const form = tab.sheet('Your ages')!;
+    await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '52'));
+    await press(form.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
+    await settle(400);
+    // The drawer closed with the version it was opened on; its notice is on
+    // the card, the copy worked out still.
+    expect(tab.sheet('Your ages')).toBeNull();
     expect(tab.card()!.textContent).toContain(stale);
     expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Will it last?');
     layout({ card: -500, panel: -900 });
@@ -880,42 +958,44 @@ describe('a click between a commit in the background and its effects', () => {
   // grid's, Compare's), and React runs that commit's effects in a task of its
   // own. A click in between has them run first, before its own render: what
   // that click asks to focus must wait for the commit that draws it.
-  test('the bar’s arrow: focus on the bar’s Scenarios, drawn once the scenario is left', async () => {
-    serve({ scenarios: [RETIRE, SABBATICAL] });
+  test('the bar’s arrow: focus on the bar’s Plans, drawn once the copy is left', async () => {
+    serve({ copies: [RETIRE, SABBATICAL] });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
     const arrow = tab.arrow()!;
     arrow.focus();
     await tab.inTheGap({ balancesSaved: true }, () => click(arrow));
     expect(tab.title().textContent).toBe('Your plan');
-    expect(dom.document.activeElement).toBe(tab.scenarios()!);
+    expect(dom.document.activeElement).toBe(tab.plans()!);
     await tab.unmount();
   });
 
-  test('another scenario opened from the card’s sheet: focus on the heading, and the card scrolled to', async () => {
-    serve({ scenarios: [RETIRE, SABBATICAL] });
+  test('another copy opened from the card’s sheet: focus on the heading, and the card scrolled to', async () => {
+    serve({ copies: [RETIRE, SABBATICAL] });
     const tab = await mount();
     await openFromBar(tab, 'Retire at 50');
-    await press(tab.cardScenarios());
+    await press(tab.cardPlans());
+    await press(tab.rowIn('Sabbatical 2029'));
     layout({ card: -500, panel: -900 });
-    const open = tab.inSheet('Open Sabbatical 2029')!;
+    const open = tab.rowIn('Open it')!;
     open.focus();
     await tab.inTheGap({ balancesFailed: true }, () => click(open));
-    expect(tab.title().textContent).toBe('Scenario: Sabbatical 2029');
+    expect(tab.title().textContent).toBe('Copy: Sabbatical 2029');
     expect(dom.document.activeElement).toBe(tab.title());
     expect(scrolls).toEqual([-628]);
     await tab.unmount();
   });
 
   test('one opened from the bar’s sheet: the card scrolled to', async () => {
-    serve({ scenarios: [RETIRE] });
+    serve({ copies: [RETIRE] });
     const tab = await mount();
-    await press(tab.scenarios());
+    await press(tab.plans());
+    await press(tab.rowIn('Retire at 50'));
     layout({ card: -500, panel: -900 });
-    const open = tab.inSheet('Open Retire at 50')!;
+    const open = tab.rowIn('Open it')!;
     open.focus();
     await tab.inTheGap({ balancesSaved: true }, () => click(open));
-    expect(tab.title().textContent).toBe('Scenario: Retire at 50');
+    expect(tab.title().textContent).toBe('Copy: Retire at 50');
     expect(dom.document.activeElement).toBe(tab.title());
     expect(scrolls).toEqual([-628]);
     await tab.unmount();
@@ -943,17 +1023,37 @@ describe('Home’s FI line landing on the heading', () => {
 });
 
 describe('the bar by itself', () => {
-  test('with a scenario open: the arrow back, then "Scenario: " and its whole name as the heading, and no Scenarios button', async () => {
+  test('on your plan: "Your plan" as the heading, then Plans, counting every plan from two', async () => {
+    const container = dom.document.createElement('div');
+    dom.document.body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    let opened = 0;
+    for (const [count, words] of [
+      [3, 'Plans (3)'],
+      [2, 'Plans (2)'],
+      [1, 'Plans'],
+      [null, 'Plans'],
+    ] as const) {
+      await act(async () => root.render(<PlanBar segment="path" onSegment={() => {}} copy={null} plansCount={count} onPlans={() => opened++} onBack={() => {}} />));
+      const heading = container.findAll((e) => e.tagName === 'H2')[0];
+      expect(outline(heading)).toBe('<h2>Your plan</h2>');
+      const buttons = container.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('role') !== 'tab');
+      expect(buttons.map((b) => [b.textContent, b.getAttribute('class'), b.getAttribute('aria-haspopup')])).toEqual([[words, 'btn ghost', 'dialog']]);
+    }
+    await act(async () => click(container.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('role') !== 'tab')[0]));
+    expect(opened).toBe(1);
+    await act(async () => root.unmount());
+  });
+
+  test('with a copy open: the arrow back, then "Copy: " and its whole name as the heading, and no Plans button', async () => {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
     let back = 0;
     const name = 'Retire at 45 and travel for a year first';
-    await act(async () =>
-      root.render(<PlanBar segment="path" onSegment={() => {}} scenario={name} scenariosCount={3} onScenarios={() => {}} onBack={() => back++} />)
-    );
+    await act(async () => root.render(<PlanBar segment="path" onSegment={() => {}} copy={name} plansCount={3} onPlans={() => {}} onBack={() => back++} />));
     const heading = container.findAll((e) => e.tagName === 'H2')[0];
-    expect(outline(heading)).toBe(`<h2>Scenario: ${name}</h2>`);
+    expect(outline(heading)).toBe(`<h2>Copy: ${name}</h2>`);
     expect([heading.getAttribute('id'), heading.getAttribute('tabindex'), heading.getAttribute('class')]).toEqual([PLAN_TITLE, '-1', 'plan-title']);
     const buttons = container.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('role') !== 'tab');
     expect(buttons.map(outline)).toEqual(['<button aria-label="Back to your plan"></button>']);

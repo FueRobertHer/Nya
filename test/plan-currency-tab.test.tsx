@@ -20,7 +20,7 @@ import { simulateOnPage } from './plan-on-page';
 // Every request is answered here, by path; nothing reaches a network.
 //
 // A rendered element never goes into a matcher that diffs (see
-// test/plan-tab-scenarios.test.tsx): elements are counted, or outlined first.
+// test/plan-tab-copies.test.tsx): elements are counted, or outlined first.
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -37,6 +37,7 @@ const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { MASK, setAmountsHidden } = await import('@/lib/format');
+const { plansListing, copyRow } = await import('./plans-listing');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type AssetInstitution = import('@/lib/fire/inputs').AssetInstitution;
 type AssetAccount = import('@/lib/fire/inputs').AssetAccount;
@@ -102,7 +103,7 @@ function planServer(start: { plan: any; record?: { currency: string; amounts: un
         s.record = { currency: c.body.currency, amounts: c.body.amounts };
         return [200, answer()];
       },
-      'GET /api/plan-scenarios': [200, EMPTY] as [number, unknown],
+      'GET /api/plans': plansListing(null),
       'GET /api/allocation-settings': [200, { settings: null }] as [number, unknown],
     },
   };
@@ -112,7 +113,6 @@ function planServer(start: { plan: any; record?: { currency: string; amounts: un
 const pass = fakeClock({ now: new Date(AS_OF) });
 simulateOnPage();
 const settle = (ms = 30) => pass(ms);
-const EMPTY = { scenarios: [], unreadable_ids: [], unrecognised_ids: [] };
 
 async function render(props: Partial<PlanTabProps> = {}) {
   const container = dom.document.createElement('div');
@@ -459,7 +459,7 @@ describe('a recorded currency', () => {
   const answers = (): Record<string, Answer | [number, unknown]> => ({
     'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD' }],
     'PUT /api/fire-plan': (c) => [200, { plan: c.body.plan, currency: c.body.currency }],
-    'GET /api/plan-scenarios': [200, EMPTY],
+    'GET /api/plans': plansListing(PLAN),
     'GET /api/allocation-settings': [200, { settings: null }],
   });
 
@@ -544,7 +544,7 @@ describe('a recorded currency', () => {
     serve({
       'GET /api/plan-inputs': () => [200, ++loads === 1 ? { plan: PLAN, currency: 'USD' } : { plan: PLAN, currency: null, currency_problem: 'unreadable' }],
       'POST /api/fire-plan': (c) => (++records === 1 ? [409, { error: 'Your plan was changed since this page loaded it, so nothing was recorded: load it again.', stale: true }] : [200, { plan: PLAN, currency: c.body.currency }]),
-      'GET /api/plan-scenarios': [200, EMPTY],
+      'GET /api/plans': plansListing(PLAN),
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render();
@@ -582,52 +582,43 @@ describe('a recorded currency', () => {
   });
 });
 
-describe('scenarios against the Plan’s currency', () => {
-  const scenario = (id: string, name: string, currency: string) => ({
-    id,
-    version: 1,
-    name,
-    currency,
-    createdAt: '2026-10-01T00:00:00.000Z',
-    savedAt: '2026-10-01T00:00:00.000Z',
-    rev: 'r1',
-    set: { targetAge: 50, spending: 45_000 },
-    income: { leaveOut: [], add: [] },
-    expenses: { leaveOut: [], add: [] },
-    events: [],
-  });
+describe('copies against your plan’s currency', () => {
+  const changes = { targetAge: 50, spending: 45_000 };
 
-  test('recorded in USD with the accounts all in EUR: one typed in USD is the Plan’s and is worked out; one typed in EUR is not, until the person says', async () => {
+  test('recorded in USD with the accounts all in EUR: a copy typed in USD is your plan’s and is worked out; one typed in EUR is not, until the person says', async () => {
     serve({
       'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD' }],
-      'GET /api/plan-scenarios': [200, { ...EMPTY, scenarios: [scenario('s1', 'In dollars', 'USD'), scenario('s2', 'In euros', 'EUR')] }],
+      'GET /api/plans': plansListing(PLAN, [copyRow(PLAN, 'c1', 'In dollars', changes, 'USD', 1), copyRow(PLAN, 'c2', 'In euros', changes, 'EUR', 2)]),
       'GET /api/allocation-settings': [200, { settings: null }],
     });
     const tab = await render({ institutions: broker([EUR()]) });
-    // Opened from the Scenarios sheet: the bar's button, then the row's Open.
-    await press(tab.buttons('Scenarios (2)')[0]);
-    await press(tab.openDialog()?.findAll((e) => e.getAttribute('aria-label') === 'Open In dollars')[0]);
-    expect(tab.text()).toContain('Scenario: In dollars');
+    // Opened from the Plans sheet: the bar's button, the row, then Open it.
+    const open = async (name: string) => {
+      await press(tab.buttons('Plans (3)')[0]);
+      await press(tab.openDialog()?.findAll((e) => e.tagName === 'BUTTON' && e.findAll((t) => t.getAttribute('class') === 'list-row-title')[0]?.textContent === name)[0]);
+      await press(tab.openDialog()?.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Open it')[0]);
+    };
+    await open('In dollars');
+    expect(tab.text()).toContain('Copy: In dollars');
     expect(tab.buttons('They’re in USD').length).toBe(0);
     expect(tab.text()).toContain('Will it last?');
     // The other is listed with why it isn't worked out, in the sheet's
-    // Compare, opened from the open scenario's card.
-    await press(tab.buttons('Scenarios (2)')[0]);
+    // Compare, opened from the open copy's card.
+    await press(tab.buttons('Plans (3)')[0]);
+    await press(tab.openDialog()?.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Compare')[0]);
     const sheet = tab.openDialog()!;
     expect(sheet.textContent).toContain('Its amounts were typed in EUR, and your plan is now in USD.');
     await press(sheet.findAll((e) => e.getAttribute('aria-label') === 'Close')[0]);
     // Back to your plan by the bar's arrow, and the other opened.
     await press(tab.container.findAll((e) => e.getAttribute('class') === 'plan-bar')[0].findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0]);
-    await press(tab.buttons('Scenarios (2)')[0]);
-    await press(tab.openDialog()?.findAll((e) => e.getAttribute('aria-label') === 'Open In euros')[0]);
-    expect(tab.text()).toContain('Scenario: In euros');
+    await open('In euros');
+    expect(tab.text()).toContain('Copy: In euros');
     expect(tab.text()).not.toContain('Will it last?');
-    // Offered at once: the Plan's currency is recorded, so it can't move.
+    // Offered at once: your plan's currency is recorded, so it can't move.
     expect(tab.buttons('They’re in USD').length).toBe(1);
     await tab.unmount();
   });
 });
-
 
 describe('a figure not measured is never counted as zero (review round 2)', () => {
   let n = 0;

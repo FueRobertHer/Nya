@@ -95,9 +95,6 @@
   "components/PlanForms.tsx": {
     "inlineLayoutStyles": 7
   },
-  "components/PlanScenarios.tsx": {
-    "inlineLayoutStyles": 6
-  },
   "components/PlanTab.tsx": {
     "inlineLayoutStyles": 3
   },
