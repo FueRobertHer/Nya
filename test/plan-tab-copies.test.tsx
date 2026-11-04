@@ -147,16 +147,18 @@ async function stored(): Promise<{ main: string; byName: Record<string, Row> }> 
 const pass = fakeClock();
 simulateOnPage();
 /** Lets `ms` pass on the fake clock, then more until no route has been
- *  answering for three steps (a write's many Redis commands outlast the
- *  turns a step lets settle, and an answer can start another request: a
- *  write refused reads the list again, so one look finding none answering
- *  may fall between the two), and what the answers start. */
+ *  answering for three steps, and what the answers start. A route seals what
+ *  it reads and writes on a real thread (crypto.subtle, lib/crypto.ts), so
+ *  however busy the machine, this waits for it, with no limit on the steps,
+ *  and the clock only creeps meanwhile (for a retry's backoff, lib/repo.ts).
+ *  An answer can start another request (a write refused reads the list
+ *  again), so one look finding none answering may fall between the two. */
 async function settle(ms = 30) {
   await pass(ms);
-  for (let i = 0, quiet = 0; i < 1000; i++) {
+  for (let quiet = 0; ; ) {
     if (inflight > 0) quiet = 0;
     else if (++quiet > 3) return;
-    await pass(10);
+    await pass(quiet > 0 ? 10 : 1);
   }
 }
 const classOf = (e: FakeElement) => (e.getAttribute('class') ?? '').split(' ');
@@ -554,7 +556,10 @@ describe('your plan read again after a write', () => {
     before = async (call) => {
       if (call.method !== 'GET' || call.path !== '/api/plan-inputs') return;
       before = null;
+      // Held on purpose: nothing for settle to wait for until it is let go.
+      inflight--;
       await held;
+      inflight++;
     };
     return async () => {
       release();
