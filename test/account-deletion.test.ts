@@ -185,6 +185,14 @@ describe('deleting my account', () => {
     expect(String(await fake.hget(ownersKey(), 'user_owner'))).toBe(TEST_CONTAINER);
   });
 
+  test('takes keys nothing names any more with it: the Plan’s from before copies, left by an older version', async () => {
+    for (const name of ['fire-plan', 'fire-plan-currency']) await fake.set(`test:c:${partner.container}:${name}`, 'left-by-an-older-version');
+    await fake.hset(`test:c:${partner.container}:plan-scenarios`, { sc1: 'left-by-an-older-version' });
+    const res = await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }));
+    expect(res.status).toBe(200);
+    expect(keysOf(partner.container)).toEqual([]);
+  });
+
   test('takes both records of showings on its connections with it, the one in the other person’s container too', async () => {
     // Each has been shown what the other shares: a record on each side.
     expect((await as('user_partner', () => route('shared', 'GET'))).body.shared).toHaveLength(1);

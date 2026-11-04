@@ -1,7 +1,7 @@
 // lib/fire/plan.ts
 //
-// The person's plan assumptions, as stored (lib/fire-plan.ts, one encrypted
-// value per container) and as the Plan tab edits them, and how they turn into
+// The person's plan assumptions, as stored (each plan's entry in `fire-plans`,
+// lib/plan-copies.ts, encrypted) and as the Plan tab edits them, and how they turn into
 // the deterministic FI view and an engine plan.
 //
 // The stored value holds only what the person chose or typed. Anything Nya
@@ -13,7 +13,7 @@
 // runs every PUT through it, and the forms run every edit through it. Every
 // field must be present, of its type and in today's range, the rules between
 // fields must hold, and nothing else may be there. isFirePlan is what a
-// stored plan must be to read back (lib/fire-plan.ts): the same shape and
+// stored plan must be to read back (lib/plan-copies.ts): the same shape and
 // types, but none of the ranges or rules, which a later release may change; a
 // plan saved under one release must never become unreadable under the next.
 // upgradePlan fills in a field added since a plan was saved. Imports no data
@@ -403,7 +403,7 @@ export function isFirePlan(v: unknown): v is FirePlan {
 }
 
 /**
- * A stored plan in the current shape, for the store's reads (lib/fire-plan.ts).
+ * A stored plan in the current shape, for the store's reads (lib/plan-copies.ts).
  * Fills in any field the plan was saved without, from DEFAULT_PLAN: a field
  * added since it was saved. Anything else, a later version's plan among them
  * (a release rolled back reading what a newer one saved), is returned as it

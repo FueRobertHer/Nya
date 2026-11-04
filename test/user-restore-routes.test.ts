@@ -838,6 +838,15 @@ describe('undo and emptying', () => {
 });
 
 describe('what emptying takes', () => {
+  test('keys nothing names any more go too: the Plan’s from before copies, which put the account in use', async () => {
+    for (const name of ['fire-plan', 'fire-plan-currency']) await fake.set(ctxKey(name), 'left-by-an-older-version');
+    await fake.hset(ctxKey('plan-scenarios'), { sc1: 'left-by-an-older-version' });
+    expect(await scanAccount(ctx)).toMatchObject({ empty: false, unseen: true });
+    expect(await call('POST', '/api/user-restore', { action: 'empty', confirm: 'empty my account', password: 'hunter2' })).toEqual({ status: 200, body: { emptied: true } });
+    expect([await fake.type(ctxKey('fire-plan')), await fake.type(ctxKey('fire-plan-currency')), await fake.type(ctxKey('plan-scenarios'))]).toEqual(['none', 'none', 'none']);
+    expect(await scanAccount(ctx)).toMatchObject({ empty: true, unseen: false });
+  });
+
   test('what is derived from the data goes with it: the holdings index and the walk record, so a later restore reads its own', async () => {
     const { recordHoldings, observeHoldings, readHoldingsRange, readHoldingsSpan } = await import('@/lib/holdings-history');
     const { importedRowsChanged } = await import('@/lib/history-import/extend');

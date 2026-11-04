@@ -26,7 +26,7 @@
 
 import { readJsonBytes, JsonReadError, type JsonEvent, type JsonPath } from './stream';
 import { CORE, HEADER, checkFormat, problemShape, seamEntry, type Check } from './shapes';
-import { CORE_PARTS, HEADER_PARTS, NEVER_CORE, SEAM, isKnownPart } from './parts';
+import { CORE_PARTS, HEADER_PARTS, NEVER_CORE, RETIRED_PARTS, SEAM, isKnownPart } from './parts';
 import { acrossParts, accountsOf, Batcher, endedInFile, historySpan, turningIn, restoreProblems, restoredRowOf, smallParts, type BookEntry, type Collected, type Fact, type Without } from './plan';
 import { BATCH_BYTES, BOOK_ROWS, investmentCoverageId, investmentPartId, MAX_BATCHES, restoredBookId } from './ids';
 import { isRecord } from './records';
@@ -76,7 +76,7 @@ function buildOf(path: JsonPath): boolean {
     if ((HEADER_PARTS as readonly string[]).includes(part) || WHOLE.has(part)) return true;
     if (EACH.has(part)) return false;
     const seam = SEAM[part];
-    if (!seam) return false; // refused when it is seen
+    if (!seam) return false; // refused when it is seen, or a retired part read past
     return seam.kind === 'value';
   }
   const seam = SEAM[part];
@@ -104,6 +104,7 @@ export async function collect(source: FileSource): Promise<Collected> {
     books: new Map(),
     facts: new Map(),
     never: { api_tokens: 0, sharing: 0, attachments: 0 },
+    retiredHeld: false,
   };
   const header: Record<string, unknown> = {};
   let wanted = new Set<string>();
@@ -127,6 +128,19 @@ export async function collect(source: FileSource): Promise<Collected> {
       if (!c.parts.includes(part)) c.parts.push(part);
     }
     if (typeof part !== 'string') return;
+    // A store Nya no longer keeps (parts.ts RETIRED_PARTS): read past and
+    // never written, before any check below (a value part is walked, not
+    // built). A map part must still be a list, as every map part; whether
+    // one the preview names holds anything is noted.
+    if (Object.hasOwn(RETIRED_PARTS, part)) {
+      const retired = RETIRED_PARTS[part];
+      if (e.path.length === 1 && e.kind !== 'end') {
+        if (retired.kind === 'map' && !(e.kind === 'start' && e.container === 'array')) refuse(`This file can’t be brought back: ${part}: must be a list.`);
+        if (retired.kind === 'value' && (e.kind === 'start' || e.value !== null) && retired.said) c.retiredHeld = true;
+      }
+      if (e.path.length >= 2 && retired.kind === 'map' && retired.said) c.retiredHeld = true;
+      return;
+    }
     if (e.kind === 'value' && e.path.length === 1) {
       if ((HEADER_PARTS as readonly string[]).includes(part)) {
         header[part] = e.value;

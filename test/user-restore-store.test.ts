@@ -84,6 +84,9 @@ describe('the record', () => {
   test('a whole record reads', () => {
     expect(S.isUserRestoreRecord(RECORD)).toBe(true);
     expect(S.isUserRestoreRecord({ ...RECORD, status: 'finished', finished_at: '2026-10-17T10:05:00.000Z', undo_until: '2026-10-24T10:05:00.000Z', done: 1 })).toBe(true);
+    // What the preview says an old file's plan left out (lib/user-restore/plan.ts):
+    // a count like any, under the check the release before has as well.
+    expect(S.isUserRestoreRecord({ ...RECORD, left_out: { plan_before_copies: 1 } })).toBe(true);
   });
 
   test('closed: an unknown field, a status of the operator’s restore, or more done than planned is unrecognised', () => {
