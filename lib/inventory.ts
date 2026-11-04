@@ -786,6 +786,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     unit: VALUE,
     kept: 'Your data',
   },
+  'fire-plans': {
+    group: 'plans',
+    name: 'Your plans',
+    about: 'Your plan and each copy of it you made on the Plan tab: its name, its assumptions, the currency its amounts are in and when it was made and changed, never a figure. Kept only once a newer version of Nya has made your plans copies.',
+    unit: ['plan', 'plans'],
+    kept: 'Your data',
+    plain: 'The id main and random ids, as field names.',
+  },
   'goal-plans': {
     group: 'plans',
     name: 'How each goal is funded, and when it is due',
@@ -916,6 +924,13 @@ const STORES: Readonly<Record<string, Entry>> = {
     kept: 'Your data',
     seen: ['connector', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
+  },
+  'plan-facts': {
+    group: 'plans',
+    name: 'The facts every plan shares',
+    about: 'Which of your plans is yours, and what every plan takes from it: your age and your partner’s, whether cash counts, which accounts fund the plan and how its figures are worked out.',
+    unit: VALUE,
+    kept: 'Your data',
   },
   'plan-scenarios': {
     group: 'plans',

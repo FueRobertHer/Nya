@@ -44,7 +44,8 @@
 // reliably, else the one the person picked (the tab asks first), so this
 // release never leaves typed amounts without a record.
 
-import type { FirePlan } from './plan';
+import { expensesOf, incomeOf } from './items';
+import type { StoredPlan } from './plan-v2';
 import type { InvestedAssets, TrailingFlows } from './inputs';
 
 /** The amounts typed in a plan, in its own order. */
@@ -58,22 +59,26 @@ export type TypedAmounts = {
   expenses: { id: string; amount: number }[];
 };
 
-export function typedAmounts(plan: FirePlan): TypedAmounts {
+export function typedAmounts(plan: StoredPlan): TypedAmounts {
+  // Version 2's lists are its items as version 1 shows them
+  // (lib/fire/items.ts), so a record made under either version reads the same.
+  const income = plan.version === 2 ? incomeOf(plan) : plan.income;
+  const expenses = plan.version === 2 ? expensesOf(plan) : plan.expenses;
   return {
     spending: plan.spending,
     savings: plan.savings,
     assets: plan.assets,
     startBalance: plan.startBalance,
     partTimeIncome: plan.partTimeIncome,
-    income: plan.income.map((i) => ({ id: i.id, amount: i.amount })),
-    expenses: plan.expenses.map((e) => ({ id: e.id, amount: e.amount })),
+    income: income.map((i) => ({ id: i.id, amount: i.amount })),
+    expenses: expenses.map((e) => ({ id: e.id, amount: e.amount })),
   };
 }
 
 /** Whether a plan holds any amount the person typed: a figure typed over a
  *  measured one, a start balance, part-time income, other income or a
  *  one-off. */
-export function hasTypedAmounts(plan: FirePlan): boolean {
+export function hasTypedAmounts(plan: StoredPlan): boolean {
   const a = typedAmounts(plan);
   return a.spending !== null || a.savings !== null || a.assets !== null || a.startBalance !== null || a.partTimeIncome !== 0 || a.income.length > 0 || a.expenses.length > 0;
 }
@@ -127,14 +132,14 @@ export function isPlanCurrencyRecord(v: unknown): v is PlanCurrencyRecord {
 }
 
 /** The record a save of `plan` in `currency` writes. */
-export function currencyRecord(plan: FirePlan, currency: string): PlanCurrencyRecord {
+export function currencyRecord(plan: StoredPlan, currency: string): PlanCurrencyRecord {
   return { version: 1, currency, amounts: typedAmounts(plan) };
 }
 
 /** The currency the record says `plan`'s typed figures are in, or null when
  *  it says nothing about them: no record, a plan with nothing typed, or a
  *  record of other amounts than the plan's (see the top of this file). */
-export function recordedCurrency(plan: FirePlan | null, record: PlanCurrencyRecord | null): string | null {
+export function recordedCurrency(plan: StoredPlan | null, record: PlanCurrencyRecord | null): string | null {
   if (!plan || !record || !hasTypedAmounts(plan)) return null;
   return sameAmounts(typedAmounts(plan), record.amounts) ? record.currency : null;
 }
@@ -222,7 +227,7 @@ export type PlanCurrencyState =
 
 /** From the plan the server last confirmed (never one a save has yet to
  *  write) and its answer. */
-export function planCurrencyState(stored: FirePlan | null, answer: CurrencyAnswer, shown: string | null): PlanCurrencyState {
+export function planCurrencyState(stored: StoredPlan | null, answer: CurrencyAnswer, shown: string | null): PlanCurrencyState {
   if (answer.currency) return { kind: 'recorded', currency: answer.currency };
   if (!stored || !hasTypedAmounts(stored)) return { kind: 'follows', currency: shown };
   return { kind: 'unknown', shown, problem: answer.problem, was: answer.was };

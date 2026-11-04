@@ -94,6 +94,9 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'fire-plan': { kind: 'value', restore: 'write' },
   'fire-plan-currency': { kind: 'value', restore: 'write' },
   'fire-plan-saved': { kind: 'value', restore: 'write' },
+  // Twice MAX_FIRE_PLANS (lib/fire/copies.ts), for plan-scenarios' reason
+  // below.
+  'fire-plans': { kind: 'map', restore: 'write', max: 22 },
   // MAX_GOALS (lib/goal-model.ts).
   'goal-plans': { kind: 'map', restore: 'write', max: 20 },
   'history-imports': { kind: 'map', restore: 'write', split: { field: 'records', as: 'list' } },
@@ -106,6 +109,7 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'manual-transactions': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
   // Twice MAX_PLAN_SCENARIOS (lib/fire/scenarios.ts): saves that met at the
   // limit before it was taken again after each write could leave more.
+  'plan-facts': { kind: 'value', restore: 'write' },
   'plan-scenarios': { kind: 'map', restore: 'write', max: 20 },
   'planned-items': { kind: 'value', restore: 'write' },
   'report-settings': { kind: 'value', restore: 'write' },

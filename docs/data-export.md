@@ -145,7 +145,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `attachments` | The receipts and documents you attached: what each is and which transaction it is on, never the file ([below](#attachments)). |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-scenarios`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-facts`, `plan-scenarios`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -159,7 +159,7 @@ Empty when the file has everything. Otherwise one entry for each part of the fil
 | --- | --- |
 | `section` | The part of the file: its field, such as `manual_accounts`, `account_history` or `holdings:history`. |
 | `problem` | `unreadable`: the stored data is damaged, so nothing in it can be read, by this version of Nya or any other. `unrecognised`: it looks intact, but was saved in a form this version of Nya doesn't know (a later version may have written it); it is kept as it is, and a version that knows it reads it. In `sharing`, also `unavailable` and `record_id_unreadable` ([below](#sharing)). |
-| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `income-carryover`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
+| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `income-carryover`, `plan-facts`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
 | `count` | How many are missing, in place of `ids`, for a part whose ids are kept out of the file: `api_tokens`, since a token's id is part of the token. |
 
 A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
@@ -647,13 +647,27 @@ The plan you said is your plan, with **This is my plan** on the Plan tab ([progr
 | Field | Meaning |
 | --- | --- |
 | `version` | The shape's version: 1. |
-| `plan` | Your plan's assumptions as they were, in the shape of [`fire-plan`](#fire-plan). |
+| `plan` | Your plan's assumptions as they were, in the shape of [`fire-plan`](#fire-plan). A download from a newer version of Nya may hold its version 2 (with the items it adds), which this version reads and brings back. |
 | `savings` | The annual savings your plan used that day, in today's dollars then: the figure you typed, or Nya's measurement if you hadn't. |
 | `currency` | The currency your plan's amounts were in, and the one your invested assets are added up in; `null` when no account named one. |
 | `inflation` | Inflation a year, as a fraction (`0.03` is 3%): your plan is raised by it to compare with balances, which are in each day's money. |
 | `day` | The UTC day you saved it (`YYYY-MM-DD`), the days balances are recorded by. |
 | `savedAt` | When you saved it. |
 | `rev` | A random id, new on every save: the version a change is made to. |
+
+#### `fire-plans`
+
+Your plans, once a newer version of Nya has made them copies (`lib/fire/copies.ts`): your plan and each copy of it, each under its id (`main` for the plan you had before, until another is made yours, and a random id for each copy). An empty list until then: this version never makes one. While it holds a plan, the Plan tab and Home read your plan from it instead of [`fire-plan`](#fire-plan), and the copies instead of [`plan-scenarios`](#plan-scenarios), which are left as they were. Each `value`, never a figure worked out from it:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Its name. |
+| `plan` | The whole plan, in the shape of [`fire-plan`](#fire-plan), or of a newer version's version 2. Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here. |
+| `tax` | The plan's own tax choices: `null`. |
+| `currency` | The currency its amounts are in, or `null` for a plan that holds none. |
+| `createdAt`, `updatedAt` | When it was made, and last changed: a newer version's page names the `updatedAt` a change was made on. |
+
+Brought back, a file's plans replace every plan the account holds, never mixed with them.
 
 #### `goal-plans`
 
@@ -788,6 +802,21 @@ Each file you imported into a linked account: one entry per import, `id` the imp
 | `records[]` | Every transaction the file held, in file order: `line`, `outcome` (`imported`, `duplicate`, `present`, `repeated`, `skipped` or `unreadable`), `row_id` (the row it became, the one it was found already imported as, or, for one skipped, the one whose bank id it shared), `twin` (the transaction it was shown beside: `kind`, `bank` or `imported`, its `id` (the bank's `transaction_id`, or the earlier file's row), `date`, `name` and `amount`, how many `days` apart, the `confidence`, `high`, `medium` or `low`, `edge` when it was only possibly the same across the edge of the bank's days (`before-bank`), of this file's (`outside-file`) or of the earlier file's (`outside-import`), and what you `chose`, `same` or `new`), `reason` (why it couldn't be read, or was skipped), and `raw`, the record as the file had it, always. |
 
 Undoing the import deletes its entry, and so does forgetting the earlier account. The list of past imports reads a summary of each entry kept beside it (`history-import-summaries`), which isn't in the download; nor is what the estimated history drawn from imports covers (`imported-history-walk`), whose points are in `net_worth_history` and `account_history`.
+
+#### `plan-facts`
+
+What every plan in [`fire-plans`](#fire-plans) shares, and which of them is yours (`lib/fire/copies.ts`), or `null`: written with the plans by a newer version of Nya.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `main` | The id of your plan in `fire-plans`. |
+| `age`, `partnerAge` | Your age and your partner's, or `null`. |
+| `includeCash` | Whether checking and savings count as invested. |
+| `planFunding[]` | How each workplace plan is paid into, as in [`fire-plan`](#fire-plan). |
+| `method` | The simulation's method: `historical` or `monte-carlo`. |
+
+A file that brings plans back without it leaves the account none.
 
 #### `plan-scenarios`
 

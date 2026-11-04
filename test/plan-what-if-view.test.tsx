@@ -644,3 +644,33 @@ describe('its words', () => {
     for (const t of WHAT_IF_TEMPLATES) expect(`${t.label} ${t.name}`).not.toMatch(/\d|\$/);
   });
 });
+
+describe('once a newer version of Nya has made your plans copies', () => {
+  const copies = (names: string[], count: number, main = { name: 'First plan', missing: false }): [number, unknown] => [
+    200,
+    { scenarios: [], unreadable_ids: [], unrecognised_ids: Array.from({ length: count }, (_, i) => `c${i}`), copies: { names, count, main } },
+  ];
+  const helpers = (card: FakeElement | null) => (card?.findAll((e) => e.tagName === 'P' && classOf(e).includes('helper')) ?? []).map((e) => e.textContent.trim());
+
+  test('the copies line in place of its intro, the choices off and no rows, even with only your plan there', async () => {
+    const tab = await render({ 'GET /api/plan-inputs': [200, { plan: PLAN, currency: 'USD', updated_at: 'u1' }], 'GET /api/plan-scenarios': copies([], 0) });
+    expect(helpers(tab.card())).toEqual(['Your plans are copies now: make one in the newer version of Nya.']);
+    expect(WHAT_IF_TEMPLATES.every((t) => tab.chip(t.label)?.getAttribute('disabled') !== null)).toBe(true);
+    expect(tab.rows()).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('the copies by name, your plan’s stand-in said first, and neither the age’s ask nor the most kept', async () => {
+    const tab = await render({
+      'GET /api/plan-inputs': [200, { plan: { ...PLAN, age: null }, currency: 'USD', updated_at: 'u1' }],
+      'GET /api/plan-scenarios': copies(['Stop at 52', 'No conversions'], 10, { name: 'Stop at 50', missing: true }),
+    });
+    expect(helpers(tab.card())).toEqual([
+      'Your plans are copies now: make one in the newer version of Nya.',
+      'Your plan wasn’t found, so “Stop at 50” is shown as yours.',
+      '10 plans made by a newer version of Nya are kept there: Stop at 52, No conversions and 8 more.',
+    ]);
+    for (const absent of ['A life choice is placed by age.', 'the most Nya keeps', 'Try a life choice']) expect(tab.card()?.textContent).not.toContain(absent);
+    await tab.unmount();
+  });
+});

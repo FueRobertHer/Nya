@@ -1,6 +1,7 @@
-// Seeded plans and life events for the tests that hold E1's arithmetic and
-// readers to the release before's (test/fixtures/release-before): the same
-// seed gives the same cases on every run.
+// Seeded plans and life events for the tests that hold the Plan's arithmetic
+// to that from before D15 (test/fixtures/before-d15) and its writes to the
+// release before's readers (test/fixtures/release-before): the same seed
+// gives the same cases on every run.
 
 import { seededRandom } from '@/lib/fire/random';
 import { DEFAULT_PLAN, type FirePlan, type PlanExpense, type PlanIncome, type StartChoice } from '@/lib/fire/plan';
@@ -11,7 +12,7 @@ import { planFigures } from '@/lib/fire/plan-figures';
 import { planOf } from '@/lib/fire/plan-v2';
 import type { Measured } from '@/lib/fire/plan';
 
-/** D15's switch off: every figure as the release before had it. */
+/** D15's switch off: every figure as the release before E1 had it. */
 export const OFF: Count = { planInWalk: false };
 export const ON: Count = { planInWalk: true };
 

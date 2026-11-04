@@ -146,6 +146,10 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'fire-plan-currency': 'setting',
   // The plan the person said is theirs: kept by them, as their scenarios are.
   'fire-plan-saved': 'data',
+  // Your plans as copies (lib/plan-copies.ts), kept by you as the scenarios
+  // they were made from: data, but one entry alone is your plan, a setting as
+  // `fire-plan` is (the scan reads it, lib/user-restore/empty.ts).
+  'fire-plans': 'data',
   'goal-plans': 'data',
   'history-import-summaries': 'data',
   'history-imports': 'data',
@@ -161,6 +165,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'income-carryover': 'setting',
   'manual-transactions': 'data',
   // What-ifs the person kept beside their Plan: theirs, as the runway's are.
+  // What every plan shares, and which is yours: your plan's settings.
+  'plan-facts': 'setting',
   'plan-scenarios': 'data',
   'planned-items': 'data',
   'report-settings': 'setting',
