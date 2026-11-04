@@ -5,9 +5,9 @@
 
 import { seededRandom } from '@/lib/fire/random';
 import { DEFAULT_PLAN, type FirePlan, type PlanExpense, type PlanIncome, type StartChoice } from '@/lib/fire/plan';
-import type { LifeEvent } from '@/lib/fire/events';
-import type { Count } from '@/lib/fire/compile';
-import { eventItems } from '@/lib/fire/items';
+import type { CompiledEvents, LifeEvent } from '@/lib/fire/events';
+import { compileItems, type Count, type ItemAges } from '@/lib/fire/compile';
+import { fixedEdges, itemFromEvent, type PlanItem } from '@/lib/fire/items';
 import { planFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { Measured } from '@/lib/fire/plan';
@@ -17,10 +17,31 @@ import { wholeMoney } from '@/components/plan-text';
 export const OFF: Count = { planInWalk: false };
 export const ON: Count = { planInWalk: true };
 
-/** A version 1 plan's figures, with a scenario's life events, as the Plan
- *  tab works them out (in memory as version 2). */
+/** A version 1 plan's figures, with life events run beside its items, as the
+ *  Plan tab works them out (in memory as version 2). */
 export function figuresOf(p: FirePlan, m: Measured, events: readonly LifeEvent[] = [], count: Count = OFF) {
-  return planFigures(planOf(p), m, { events: eventItems(events), count });
+  return planFigures(planOf(p), m, { events: events.map(itemFromEvent), count });
+}
+
+/** The ages of items timed by ages alone (life events, version 1's lists):
+ *  their own, an end for good null. */
+export function fixedAges(items: readonly PlanItem[]): ItemAges[] {
+  const edges = fixedEdges({ items: [...items], age: null, partnerAge: null, targetAge: null, stopAtFi: false });
+  return items.map((_, i) => {
+    const start = edges.get(`${i}:start`);
+    return start === undefined ? null : { start, end: edges.get(`${i}:end`) ?? null };
+  });
+}
+
+/**
+ * Where each life event counts: in the FI walk from today (`age`), in the
+ * simulation from its start age (`startAge`) for `years`. Either age may be
+ * unknown; then that part is left out, and noted.
+ */
+export function compileEvents(events: readonly LifeEvent[], at: { age: number | null; startAge: number | null; years: number }): CompiledEvents {
+  const items = events.map(itemFromEvent);
+  const { notes, inWalk: _inWalk, ...rest } = compileItems(items, fixedAges(items), { ...at, stop: null, taxRate: 0 }, OFF);
+  return { ...rest, notes: notes.map(({ id, part }) => ({ id, part })) };
 }
 
 /** What the Plan tab gives its Timeline card for a plan, in dollars and
@@ -113,7 +134,7 @@ export function genMeasured(g: Rand) {
   };
 }
 
-/** Life events parseLifeEvent takes, up to 10, with distinct ids. */
+/** Life events in their ranges, up to 6, with distinct ids. */
 export function genEvents(g: Rand, prefix = 'ev'): LifeEvent[] {
   return Array.from({ length: g.int(0, 6) }, (_, i): LifeEvent => {
     const id = `${prefix}${i}`;

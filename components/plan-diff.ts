@@ -2,16 +2,16 @@
 //
 // How a copy differs from your plan, in words: the copy's card, its row and
 // its level in the Plans sheet, and compare mode (components/PlansSheet.tsx).
-// Each part is one difference: the stop, a setting (the ones a scenario
-// could change, lib/fire/scenarios.ts SET_FIELDS), your own FI number, each
-// item by id (added, changed, left out), and for anything else that other
-// settings differ. The facts (your age, how figures are measured, the
-// method) are the same in every plan, so never a difference. Every amount
-// goes through the `money` a caller gives (components/plan-text.ts
-// wholeMoney), so hidden amounts stay hidden. No engine, no data.
+// Each part is one difference: the stop, a setting (lib/fire/plan-list.ts
+// SET_FIELDS), your own FI number, each item by id (added, changed, left out),
+// and for anything else that other settings differ. The facts (your age, how
+// figures are measured, the method) are the same in every plan, so never a
+// difference. Every amount goes through the `money` a caller gives
+// (components/plan-text.ts wholeMoney), so hidden amounts stay hidden. No
+// engine, no data.
 
 import { stopOf } from '@/lib/fire/plan';
-import { SET_FIELDS, type SetField } from '@/lib/fire/scenarios';
+import { SET_FIELDS, type SetField } from '@/lib/fire/plan-list';
 import { asEvent, asExpense, asIncome, type PlanItem } from '@/lib/fire/items';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import { lifeChoiceText, type FiWhen } from './plan-fi-when';
@@ -20,8 +20,8 @@ import { SETTING_NAMES, eventText, itemText, settingText } from './plan-scenario
 
 type Money = (n: number) => string;
 
-/** The settings said one by one: every one a scenario could change but the
- *  stop, which is said first, from stopOf. */
+/** The settings said one by one: every one but the stop, which is said first,
+ *  from stopOf. */
 const SETTINGS = SET_FIELDS.filter((f): f is Exclude<SetField, 'targetAge'> => f !== 'targetAge');
 
 /** The fields said above, or the same in every plan: anything else that

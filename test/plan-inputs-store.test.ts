@@ -177,9 +177,9 @@ describe('joining a request', () => {
 });
 
 describe('a save', () => {
-  test('its answer replaces everything but the rows, the currency’s fields together, and leaves freshness alone', async () => {
+  test('its answer replaces everything but the rows, and leaves freshness alone', async () => {
     let asked = 0;
-    const answers: Answer[] = [[200, { plan: { age: 40 }, currency: null, currency_problem: 'stale', currency_was: 'EUR', plans: IDS.map((id) => row(id)) }]];
+    const answers: Answer[] = [[200, { plan: { age: 40 }, currency: null, updated_at: '2026-11-01T00:00:00.000Z', plans: IDS.map((id) => row(id)) }]];
     const store = createPlanInputsStore({ fetch: (u) => (asked++, server(() => answers[0]).fetch(u)), now: () => clock });
     await store.load(IDS);
     store.adopt({ plan: { age: 41 }, currency: 'USD' });

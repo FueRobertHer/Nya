@@ -1,10 +1,10 @@
 // lib/fire/events.ts
 //
-// A scenario's life events (lib/fire/scenarios.ts): buying a home, a child, a
-// sabbatical, part-time work, a change in spending, a car (once or every few
-// years), a raise, a windfall and a loan paid off, each with the person's
-// own figures, never a default. Their shape and checks, where each counts,
-// and the FI walk that dates financial independence with them.
+// Life events: buying a home, a child, a sabbatical, part-time work, a change
+// in spending, a car (once or every few years), a raise, a windfall and a loan
+// paid off, each with the person's own figures, never a default. Their shape,
+// where each counts, and the FI walk that dates financial independence with
+// them.
 //
 // TWO MODELS OF THE SAME YEARS, as the Plan already has two:
 //
@@ -38,13 +38,13 @@
 // to the longest plan the engine runs, so the grid's longer columns count it.
 //
 // Where each counts is worked out with a plan's items (lib/fire/compile.ts
-// compileEvents), which life events are in memory (lib/fire/items.ts).
+// compileItems), which life events are in memory (lib/fire/items.ts).
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import { LIMITS } from './plan';
 import { yearsToTarget } from './fi';
-import { MAX_YEARS, type LowerSpending, type OneOffExpense, type OtherIncome } from './simulate';
+import type { LowerSpending, OneOffExpense, OtherIncome } from './simulate';
 
 export type LifeEvent =
   /** A cost paid from investments when it is bought (0 when the down payment
@@ -73,154 +73,19 @@ export type LifeEvent =
    *  atAge: its payments, in measured spending until then. */
   | { id: string; kind: 'loan-end'; label: string; atAge: number; yearly: number };
 
-export type LifeEventKind = LifeEvent['kind'];
-export const EVENT_KINDS: readonly LifeEventKind[] = ['house', 'child', 'sabbatical', 'part-time', 'spending', 'car', 'raise', 'windfall', 'loan-end'];
-
 export const EVENT_LIMITS = {
-  events: 10,
   /** A yearly amount, either way. */
   yearly: LIMITS.money,
   /** A cost paid once, as the Plan's one-off expenses. */
   cost: LIMITS.money * 10,
-  childYears: [1, 40],
-  sabbaticalYears: [1, 10],
-  spanYears: [1, MAX_YEARS],
   /** Years between cars, and how many in all, when there is more than one. */
   carEvery: [2, 30],
   carTimes: [2, 20],
 } as const;
 
-const KEYS: Record<LifeEventKind, readonly string[]> = {
-  house: ['id', 'kind', 'label', 'atAge', 'cost', 'yearly', 'years'],
-  child: ['id', 'kind', 'label', 'fromAge', 'yearly', 'years'],
-  sabbatical: ['id', 'kind', 'label', 'fromAge', 'years', 'savingsLost'],
-  'part-time': ['id', 'kind', 'label', 'fromAge', 'toAge', 'yearly'],
-  spending: ['id', 'kind', 'label', 'fromAge', 'yearly', 'years'],
-  car: ['id', 'kind', 'label', 'atAge', 'cost', 'every', 'times'],
-  raise: ['id', 'kind', 'label', 'fromAge', 'yearly'],
-  windfall: ['id', 'kind', 'label', 'atAge', 'amount'],
-  'loan-end': ['id', 'kind', 'label', 'atAge', 'yearly'],
-};
-
 /** The ages a car is bought at: atAge, then every so many years. */
 export function carAges(e: Extract<LifeEvent, { kind: 'car' }>): number[] {
   return Array.from({ length: e.times }, (_, i) => e.atAge + i * (e.every ?? 0));
-}
-
-const ID = /^[A-Za-z0-9_-]{1,40}$/;
-const CONTROL = /[\u0000-\u001f\u007f]/;
-const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-
-/** Whether a value is a life event as stored: its kind's exact fields, of
- *  their types, whatever ranges applied when it was saved. */
-export function isLifeEvent(v: unknown): v is LifeEvent {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
-  const e = v as Record<string, unknown>;
-  if (typeof e.kind !== 'string' || !(EVENT_KINDS as readonly string[]).includes(e.kind)) return false;
-  const keys = KEYS[e.kind as LifeEventKind];
-  if (Object.keys(e).length !== keys.length || !keys.every((k) => Object.hasOwn(e, k))) return false;
-  if (typeof e.id !== 'string' || typeof e.label !== 'string') return false;
-  for (const k of keys) {
-    if (k === 'id' || k === 'kind' || k === 'label') continue;
-    if (k === 'years' && e.years === null && (e.kind === 'house' || e.kind === 'spending')) continue;
-    if (k === 'every' && e.every === null && e.kind === 'car') continue;
-    if (!finite(e[k])) return false;
-  }
-  return true;
-}
-
-/** A life event as a save sends it, checked against today's ranges, or why
- *  it can't be saved. */
-export function parseLifeEvent(raw: unknown, at: string): { ok: LifeEvent } | { error: string } {
-  if (!isLifeEvent(raw)) {
-    const kind = typeof raw === 'object' && raw !== null ? (raw as { kind?: unknown }).kind : undefined;
-    return { error: typeof kind === 'string' && (EVENT_KINDS as readonly string[]).includes(kind) ? `${at} has fields its kind doesn’t take, or misses one` : `${at} is not a kind of life event` };
-  }
-  const e = raw;
-  if (!ID.test(e.id)) return { error: `${at}.id must be a short id` };
-  const label = e.label.trim();
-  if (!label || label.length > LIMITS.label || CONTROL.test(label)) return { error: `${at} needs a name of 1 to ${LIMITS.label} characters, on one line` };
-  const [ageMin, ageMax] = LIMITS.eventAge;
-  const age = (v: number, what: string) => (Number.isInteger(v) && v >= ageMin && v <= ageMax ? null : `${at}: ${what} is a whole number from ${ageMin} to ${ageMax}`);
-  const whole = (v: number, [min, max]: readonly [number, number], what: string) => (Number.isInteger(v) && v >= min && v <= max ? null : `${at}: ${what} is a whole number of years from ${min} to ${max}`);
-  const amount = (v: number, min: number, max: number, what: string) => (v >= min && v <= max ? null : `${at}: ${what} is an amount from ${min} to ${max}`);
-  const positive = (v: number, what: string) => (v > 0 && v <= EVENT_LIMITS.yearly ? null : `${at}: ${what} is an amount above 0, up to ${EVENT_LIMITS.yearly}`);
-  let error: string | null = null;
-  switch (e.kind) {
-    case 'house':
-      error =
-        age(e.atAge, 'the age') ??
-        amount(e.cost, 0, EVENT_LIMITS.cost, 'what is paid from investments') ??
-        amount(e.yearly, -EVENT_LIMITS.yearly, EVENT_LIMITS.yearly, 'the change in yearly spending') ??
-        (e.years === null ? null : whole(e.years, EVENT_LIMITS.spanYears, 'how long the change lasts')) ??
-        (e.cost === 0 && e.yearly === 0 ? `${at}: a home needs what it costs from investments, or a change in yearly spending` : null);
-      break;
-    case 'child':
-      error = age(e.fromAge, 'the age') ?? positive(e.yearly, 'the extra spending a year') ?? whole(e.years, EVENT_LIMITS.childYears, 'how long it lasts');
-      break;
-    case 'sabbatical':
-      error = age(e.fromAge, 'the age') ?? whole(e.years, EVENT_LIMITS.sabbaticalYears, 'how long it lasts') ?? positive(e.savingsLost, 'how much less is saved a year');
-      break;
-    case 'part-time':
-      error =
-        age(e.fromAge, 'the age it starts') ??
-        age(e.toAge, 'the age it stops') ??
-        (e.toAge > e.fromAge ? null : `${at}: part-time work stops after it starts`) ??
-        positive(e.yearly, 'the income a year');
-      break;
-    case 'spending':
-      error =
-        age(e.fromAge, 'the age') ??
-        (e.yearly !== 0 && Math.abs(e.yearly) <= EVENT_LIMITS.yearly ? null : `${at}: the change a year is an amount other than 0, up to ${EVENT_LIMITS.yearly} either way`) ??
-        (e.years === null ? null : whole(e.years, EVENT_LIMITS.spanYears, 'how long the change lasts'));
-      break;
-    case 'car':
-      error =
-        age(e.atAge, 'the age') ??
-        (e.cost > 0 && e.cost <= EVENT_LIMITS.cost ? null : `${at}: what each car takes from investments is an amount above 0, up to ${EVENT_LIMITS.cost}`) ??
-        (e.every === null
-          ? e.times === 1
-            ? null
-            : `${at}: a car bought once is 1 in all`
-          : (whole(e.every, EVENT_LIMITS.carEvery, 'the time between cars') ??
-            (Number.isInteger(e.times) && e.times >= EVENT_LIMITS.carTimes[0] && e.times <= EVENT_LIMITS.carTimes[1] ? null : `${at}: cars every few years are ${EVENT_LIMITS.carTimes[0]} to ${EVENT_LIMITS.carTimes[1]} in all`) ??
-            (e.atAge + e.every * (e.times - 1) <= ageMax ? null : `${at}: the last car would come after age ${ageMax}`)));
-      break;
-    case 'raise':
-      error = age(e.fromAge, 'the age') ?? positive(e.yearly, 'how much more is saved a year');
-      break;
-    case 'windfall':
-      error = age(e.atAge, 'the age') ?? (e.amount > 0 && e.amount <= EVENT_LIMITS.cost ? null : `${at}: the amount is above 0, up to ${EVENT_LIMITS.cost}`);
-      break;
-    case 'loan-end':
-      error = age(e.atAge, 'the age') ?? positive(e.yearly, 'how much less is spent a year');
-      break;
-  }
-  if (error) return { error };
-  return { ok: { ...e, label } };
-}
-
-/** The ages an event covers, [from, to): `to` null for good. */
-export function eventSpan(e: LifeEvent): { from: number; to: number | null } {
-  switch (e.kind) {
-    case 'house':
-      return { from: e.atAge, to: e.years === null ? null : e.atAge + e.years };
-    case 'child':
-    case 'sabbatical':
-      return { from: e.fromAge, to: e.fromAge + e.years };
-    case 'part-time':
-      return { from: e.fromAge, to: e.toAge };
-    case 'spending':
-      return { from: e.fromAge, to: e.years === null ? null : e.fromAge + e.years };
-    case 'car':
-      return { from: e.atAge, to: e.atAge + (e.every ?? 0) * (e.times - 1) + 1 };
-    case 'windfall':
-      return { from: e.atAge, to: e.atAge + 1 };
-    case 'raise':
-      return { from: e.fromAge, to: null };
-    case 'loan-end':
-      return { from: e.atAge, to: null };
-  }
 }
 
 /** What the walk counts: money in and costs at the start of a year, and
