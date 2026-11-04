@@ -1756,15 +1756,21 @@ const REPAIR_NAMES: Record<string, string> = {
   ceiling: 'the ceiling',
   income: 'other income',
   expenses: 'one-off expenses',
+  items: 'the items past the 25 a plan holds',
+  partnerAge: 'your partner’s age',
+  stopAtFi: 'stopping when you reach FI',
+  fiNumber: 'your own FI number',
   planFunding: 'how a workplace plan is paid into',
 };
 
 /** What a repair changed, in words: an income or one-off by its label, or by
- *  what it was when it has none. */
+ *  what it was when it has none; any other item (lib/fire/plan-v2.ts
+ *  repairOf names it `items`) by its label. */
 function repairName(f: Repair, money: (n: number) => string): string {
   if (!f.item) return REPAIR_NAMES[f.field] ?? f.field;
   const label = f.item.label.trim();
   if (f.field === 'income') return label ? `the income "${label}"` : `an income of ${money(f.item.amount)} a year from age ${f.item.age}`;
+  if (f.field === 'items') return label ? `the item "${label}"` : 'an item';
   return label ? `the one-off "${label}"` : `a one-off of ${money(f.item.amount)} at age ${f.item.age}`;
 }
 
