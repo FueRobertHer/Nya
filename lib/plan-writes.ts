@@ -13,8 +13,9 @@
 // plans hold at the write, so never one another entry holds or held before,
 // since `PUT /api/fire-plan` names no id and a shared stamp could let a stale
 // save of your plan land in a copy made your plan since. Names are checked
-// there too; only two copies made in the same instant (neither in the
-// other's compare) can share one, which a rename mends.
+// there too, against the plans read: two writes on two devices at once (a
+// new copy and a rename, say, neither reading the other's plan) can still
+// give two plans one name, which a rename mends.
 //
 // While `fire-plans` holds no entry, your plan is the defaults, never saved
 // (`based_on: null`): the first write of anything makes its entry, then

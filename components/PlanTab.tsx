@@ -291,6 +291,10 @@ export type PlanTabProps = {
   onMovedSeen?: () => void;
 };
 
+/** Said by New copy, Duplicate and a rename of your plan while your plan
+ *  is read again after a write: what is held is from before it. */
+const READING_AGAIN = 'Still loading your plan after the last change. Try again in a moment.';
+
 export default function PlanTab({
   txns,
   txnsLoading,
@@ -447,7 +451,8 @@ export default function PlanTab({
   // Your plan read again after a write changed it (a rename, an Also save
   // with it checked): what it held stays loaded until the answer is in, so
   // the copy open, its card, a drawer and the sheet's plans stay as they
-  // are (editing still waits, editableNow). Not after a failed load, nor
+  // are (editing still waits, editableNow, and so does anything made from
+  // it or naming its version: READING_AGAIN). Not after a failed load, nor
   // once the list names another plan yours (Make this your plan): what is
   // held is then no longer your plan.
   const [settled, setSettled] = useState<ListStatus | null>(null);
@@ -1283,6 +1288,7 @@ export default function PlanTab({
    *  with it, so your plan is read again once it is made (not when refused:
    *  the read takes What if… off the page, and its form with why). */
   const createCopy = async (from: string, name: string, openIt: boolean, whole?: FirePlanV2): Promise<true | string> => {
+    if (state.status !== 'ready') return READING_AGAIN;
     const source = from === plansState.main ? { plan: basePlan, currency: sendCurrency.current } : views.get(from);
     if (!source) return 'That plan changed since this opened, so nothing was made: open it again.';
     const currency = 'row' in source ? (holdsAmounts(source.plan) ? source.row.currency : sendCurrency.current) : source.currency;
@@ -1303,6 +1309,7 @@ export default function PlanTab({
     const row = plansState.list.find((r) => r.id === id);
     if (!row) return 'That plan changed since this opened, so nothing was renamed: open it again.';
     const mine = id === plansState.main;
+    if (mine && state.status !== 'ready') return READING_AGAIN;
     const r = await plansClient.rename(id, name, mine ? stampRef.current : row.updated_at);
     // Your plan's version moves with its name: read again, so its next save
     // names the new one.

@@ -641,6 +641,36 @@ describe('your plan read again after a write', () => {
     expect(dom.document.activeElement).toBe(tab.sheetRow('Retire at 50')!);
     await tab.unmount();
   });
+
+  test('Duplicate of your plan while it is read again after an Also save: nothing is made from what it held before, and once read the copy has the change', async () => {
+    await seedPlan();
+    await seedCopy('Retire at 50', { targetAge: 50 });
+    const tab = await render();
+    await openCopy(tab, 'Retire at 50');
+    await press(tab.row('Annual spending'));
+    const sheet = tab.dialog()!;
+    await fill(sheet, 'Spending a year', '45000');
+    await checkAlso(sheet, 'First plan (your plan)');
+    const release = holdRead();
+    await press(button(sheet, 'Save'));
+    await settle(400);
+    await press(tab.plans());
+    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Duplicate'));
+    const level = tab.dialog()!;
+    expect(level.getAttribute('aria-label')).toBe('Duplicate');
+    await press(button(level, 'Make it'));
+    await settle(200);
+    expect(level.textContent).toContain('Still loading your plan after the last change. Try again in a moment.');
+    expect(Object.keys((await stored()).byName)).toEqual(['First plan', 'Retire at 50']);
+    await release();
+    await press(button(tab.dialog(), 'Make it'));
+    await settle(400);
+    const { byName } = await stored();
+    expect(Object.keys(byName)).toEqual(['First plan', 'Retire at 50', 'First plan (copy)']);
+    expect(byName['First plan (copy)'].plan.spending).toBe(45_000);
+    await tab.unmount();
+  });
 });
 
 describe('Make this your plan', () => {
