@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, parsePlan, repairPlan, upgradePlan, type FirePlan } from '@/lib/fire/plan';
 import { DEFAULT_PLAN_V2, basePlanOf, isFirePlanV2, isStoredPlan, parsePlanV2, planOf, repairPlanV2, toStored, upgradeStoredPlan, type FirePlanV2 } from '@/lib/fire/plan-v2';
-import { expensesOf, incomeOf, itemFromEvent, withExpenses, withIncome } from '@/lib/fire/items';
+import { expensesOf, incomeOf, itemFromEvent, itemFromExpense, itemFromIncome } from '@/lib/fire/items';
 import * as old from './fixtures/before-d15/fire/plan';
 import { genPlan, rand } from './plan-gen';
 
@@ -23,12 +23,14 @@ describe('version 1 in memory and back', () => {
     }
   });
 
-  test('edits through the cards’ views keep each list’s order, whatever the items’ order', () => {
+  test('each list keeps its order when sent back, whatever the items’ order', () => {
     // No incomes and two one-offs, then an income: the items interleave.
     const v1: FirePlan = { ...DEFAULT_PLAN, age: 40, expenses: [{ id: 'a', label: 'A', amount: 1, atAge: 50 }, { id: 'b', label: 'B', amount: 2, atAge: 45 }] };
-    let p = planOf(v1);
-    p = withIncome(p, [{ id: 'i', label: 'I', amount: 3, fromAge: 67, inflationAdjusted: true }]);
-    p = withExpenses(p, [...expensesOf(p), { id: 'c', label: 'C', amount: 4, atAge: 60 }]);
+    const first = planOf(v1);
+    const p = {
+      ...first,
+      items: [...first.items, itemFromIncome({ id: 'i', label: 'I', amount: 3, fromAge: 67, inflationAdjusted: true }), itemFromExpense({ id: 'c', label: 'C', amount: 4, atAge: 60 })],
+    };
     const back = toStored(p, 1) as { plan: FirePlan };
     expect(back.plan.income.map((x) => x.id)).toEqual(['i']);
     expect(back.plan.expenses.map((x) => x.id)).toEqual(['a', 'b', 'c']);
@@ -42,7 +44,7 @@ describe('version 1 in memory and back', () => {
     expect(toStored({ ...p, items: [itemFromEvent({ id: 'r', kind: 'raise', label: 'Raise', fromAge: 40, yearly: 1 })] }, 1)).toEqual({ error: 'This plan holds items only a newer version of Nya can save.' });
     expect(toStored({ ...p, stopAtFi: true }, 1)).toEqual({ error: 'This plan holds settings only a newer version of Nya can save.' });
     const six = Array.from({ length: 6 }, (_, i) => ({ id: `i${i}`, label: 'I', amount: 1, fromAge: 60, inflationAdjusted: true }));
-    expect(toStored(withIncome(p, six), 1)).toEqual({ error: 'A plan takes 5 incomes at most.' });
+    expect(toStored({ ...p, items: six.map(itemFromIncome) }, 1)).toEqual({ error: 'A plan takes 5 incomes at most.' });
     expect(toStored({ ...p, stopAtFi: true }, 2)).toEqual({ plan: { ...p, stopAtFi: true } });
   });
 });

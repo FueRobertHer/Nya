@@ -11,8 +11,6 @@ import {
   itemFromIncome,
   itemRules,
   parseItem,
-  withExpenses,
-  withIncome,
   type PlanItem,
 } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -20,8 +18,8 @@ import type { LifeEvent } from '@/lib/fire/events';
 import { genEvents, genPlan, rand } from './plan-gen';
 
 // A plan's items (lib/fire/items.ts): the one shape, its checks, the upgrades
-// from version 1 and life events, the cards' version 1 views, and the rules
-// between items.
+// from version 1 and life events, the version 1 views, and the rules between
+// items.
 
 const age = (a: number, offset = 0) => ({ anchor: { at: 'age' as const, age: a }, offset });
 const base = (over: Partial<PlanItem>): PlanItem => ({
@@ -107,34 +105,15 @@ describe('the upgrades', () => {
   });
 });
 
-describe('the cards’ views', () => {
+describe('the version 1 views', () => {
   const a = itemFromIncome({ id: 'a', label: 'A', amount: 1, fromAge: 60, inflationAdjusted: true });
   const x = itemFromExpense({ id: 'x', label: 'X', amount: 2, atAge: 50 });
   const pay = itemFromEvent({ id: 'r', kind: 'raise', label: 'Raise', fromAge: 41, yearly: 5 });
 
-  test('read in item order, and write each list keeping every other item where it is', () => {
+  test('read in item order', () => {
     const p = plan([a, x, pay]);
     expect(incomeOf(p).map((i) => i.id)).toEqual(['a']);
     expect(expensesOf(p).map((i) => i.id)).toEqual(['x']);
-    const b = { id: 'b', label: 'B', amount: 3, fromAge: 70, inflationAdjusted: true };
-    expect(withIncome(p, [...incomeOf(p), b]).items.map((i) => i.id)).toEqual(['a', 'x', 'r', 'b']);
-    expect(withIncome(p, []).items.map((i) => i.id)).toEqual(['x', 'r']);
-    expect(withExpenses(p, [{ ...expensesOf(p)[0], amount: 9 }]).items.map((i) => [i.id, i.once])).toEqual([
-      ['a', null],
-      ['x', 9],
-      ['r', null],
-    ]);
-  });
-
-  test('an id already among the items, of any kind, is replaced where it is, never doubled', () => {
-    const p = plan([a, x, pay]);
-    const clash = { id: 'r', label: 'Now income', amount: 7, fromAge: 65, inflationAdjusted: true };
-    const next = withIncome(p, [...incomeOf(p), clash]);
-    expect(next.items.map((i) => [i.id, i.kind])).toEqual([
-      ['a', 'other-income'],
-      ['x', 'one-off'],
-      ['r', 'other-income'],
-    ]);
   });
 });
 

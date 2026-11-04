@@ -12,11 +12,12 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const plaid = { accounts: [] as any[], events: [] as string[], delayMs: 0 };
+const plaid = { accounts: [] as any[], events: [] as string[], delayMs: 0, holdUntil: null as Promise<void> | null };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     accountsGet: async () => {
       if (plaid.delayMs > 0) await new Promise((r) => setTimeout(r, plaid.delayMs));
+      if (plaid.holdUntil) await plaid.holdUntil;
       plaid.events.push('plaid answered');
       return { data: { item: { institution_id: 'ins_1' }, accounts: plaid.accounts } };
     },
@@ -49,6 +50,28 @@ const BTC = account('btc', 'investment', 0.5, { unofficial: 'BTC' });
 async function load(query = '?refresh=1') {
   const res = await route.GET(new Request(`http://x/api/net-worth${query}`));
   return { status: res.status, body: (await res.json()) as any };
+}
+/** A load whose Plaid answers once the history's stored layers are read, as
+ *  in the app, where Plaid takes far longer than Redis. Answering at once, it
+ *  races them: the layers wait for the settings, so on a busy machine today's
+ *  point can land first and read as a stored day. */
+async function loadWithLayersRead() {
+  const unread = new Set([':history:net-worth', ':history:accounts']);
+  let allRead = () => {};
+  plaid.holdUntil = new Promise((resolve) => (allRead = resolve));
+  const hgetall = fake.hgetall.bind(fake);
+  fake.hgetall = (async (key: string) => {
+    const map = await hgetall(key);
+    for (const suffix of unread) if (key.endsWith(suffix)) unread.delete(suffix);
+    if (unread.size === 0) allRead();
+    return map;
+  }) as typeof fake.hgetall;
+  try {
+    return await load();
+  } finally {
+    fake.hgetall = hgetall;
+    plaid.holdUntil = null;
+  }
 }
 const chooseHome = (home: string | null) => currencySettingsStore.set(TEST_CTX, { ...NO_SETTINGS, home });
 const storedTotal = async (day: string) => Number(await decrypt(TEST_CTX, (await fake.hget<string>(ctxKey('history:net-worth'), day))!));
@@ -106,7 +129,7 @@ describe('with a home currency', () => {
 
   test('the chart, each day at its own rate, today’s point the hero’s', async () => {
     await chooseHome('EUR');
-    const { body } = await load();
+    const { body } = await loadWithLayersRead();
     expect(body.base.history.map((p: any) => [p.date, p.value])).toEqual([
       ['2026-09-11', 2862.66], // 2,000 + 1,000 / 1.1592
       ['2026-09-14', 2865.73],

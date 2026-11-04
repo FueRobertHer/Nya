@@ -41,7 +41,8 @@ import { TimelineCard } from '@/components/PlanTimeline';
 import { INITIAL_PLANS } from '@/components/plan-list';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
-import { withEvents, withIncome, withItem, type PlanItem } from '@/lib/fire/items';
+import type { LifeEvent } from '@/lib/fire/events';
+import { itemFromEvent, itemFromIncome, withItem, type PlanItem } from '@/lib/fire/items';
 import { wholeMoney } from '@/components/plan-text';
 import { InputsCard } from '@/components/PlanTab';
 import { FigureForm } from '@/components/PlanForms';
@@ -1313,7 +1314,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Plan > Your path: Also change it in for an income, as each plan holds it': () => {
     const { plans, money } = COPIES();
     const pension = { id: 'pen', label: 'Pension', amount: 18_000, fromAge: 60, inflationAdjusted: false };
-    const targets = plans.map((p, i) => ({ id: p.id, name: p.name, plan: withIncome(p.plan, [{ ...pension, amount: 18_000 + i * 2_000 }]) }));
+    const targets = plans.map((p, i) => ({ id: p.id, name: p.name, plan: withItem(p.plan, itemFromIncome({ ...pension, amount: 18_000 + i * 2_000 })) }));
     return <AlsoChange choices={itemChoices(targets, 'pen', money)} checked={['c1']} onChange={() => {}} />;
   },
   // An open copy's Timeline, a row each with its figures in words: every
@@ -1322,7 +1323,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   // in its point's label.
   'Plan > Your path: a copy’s Timeline, of every kind': () => {
     const base = planOf({ ...DEFAULT_PLAN, age: 40, targetAge: 50, spending: 40_000, savings: 50_000, assets: 500_000, withdrawalRate: 0.04 });
-    const events = withEvents(base, [
+    const lifeEvents: LifeEvent[] = [
       { id: 'h', kind: 'house', label: 'Home', atAge: 44, cost: 100_000, yearly: 6_000, years: null },
       { id: 'c', kind: 'child', label: 'Child', fromAge: 42, yearly: 15_000, years: 18 },
       { id: 's', kind: 'sabbatical', label: 'Off', fromAge: 45, years: 1, savingsLost: 80_000 },
@@ -1333,7 +1334,8 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       { id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 },
       { id: 'g', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 },
       { id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 },
-    ]);
+    ];
+    const events = { ...base, items: [...base.items, ...lifeEvents.map(itemFromEvent)] };
     const onBalance: PlanItem = {
       id: 'b',
       label: 'Downshift',

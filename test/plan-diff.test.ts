@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { copyDiffParts, diffText, figureChoices, itemChoices, rowText, sameChange } from '@/components/plan-diff';
-import { asEvent, eventsOf, itemFromEvent, itemFromExpense, itemFromIncome, withEvents, type PlanItem } from '@/lib/fire/items';
+import { asEvent, itemFromEvent, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
 import type { LifeEvent } from '@/lib/fire/events';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { genEvents, rand } from './plan-gen';
 
 // A copy against your plan, without the page: life events read back from a
-// plan's items (lib/fire/items.ts asEvent, eventsOf, withEvents), how a copy
-// differs from your plan in words, and Also change it in's change made in
-// another plan and its choices (components/plan-diff.ts).
+// plan's items (lib/fire/items.ts asEvent), how a copy differs from your plan
+// in words, and Also change it in's change made in another plan and its
+// choices (components/plan-diff.ts).
 
 const money = (n: number) => `$${n.toLocaleString('en-US')}`;
 const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...DEFAULT_PLAN_V2, age: 40, targetAge: 55, spending: 40_000, savings: 20_000, assets: 300_000, ...over });
@@ -34,18 +34,6 @@ describe('life events as items, and back', () => {
     expect(asEvent({ ...child, beforeTax: true })).toBeNull();
     expect(asEvent({ ...child, owner: 'partner' } as PlanItem)).toBeNull();
     expect(asEvent({ ...child, inflationAdjusted: false })).toBeNull();
-  });
-
-  test('eventsOf reads them in item order; withEvents changes them where they are, adds new ones last, and leaves the rest', () => {
-    const p = plan({ items: [RENT, itemFromEvent(CHILD), ROOF, itemFromEvent(WINDFALL)] });
-    expect(eventsOf(p)).toEqual([CHILD, WINDFALL]);
-    const older = { ...CHILD, yearly: 18_000 };
-    const car: LifeEvent = { id: 'e3', kind: 'car', label: 'A car', atAge: 45, cost: 30_000, every: 8, times: 3 };
-    const next = withEvents(p, [older, car]);
-    expect(next.items.map((x) => x.id)).toEqual(['i1', 'e1', 'x1', 'e3']);
-    expect(eventsOf(next)).toEqual([older, car]);
-    expect(next.items[0]).toBe(RENT);
-    expect(next.items[2]).toBe(ROOF);
   });
 });
 

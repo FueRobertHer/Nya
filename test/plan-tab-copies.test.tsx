@@ -53,7 +53,7 @@ const { default: FiProgressCard } = await import('@/components/FiProgressCard');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { planOf } = await import('@/lib/fire/plan-v2');
 const { factsOf } = await import('@/lib/fire/copies');
-const { eventsOf, incomeOf, itemFromEvent, itemFromIncome } = await import('@/lib/fire/items');
+const { asEvent, incomeOf, itemFromEvent, itemFromIncome } = await import('@/lib/fire/items');
 const { EVENT_PART_TEXT } = await import('@/components/plan-scenario-text');
 const { CHANGED } = await import('@/lib/plan-writes');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
@@ -75,6 +75,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 /** Your plan: every figure typed, in USD. */
 const PLAN: FirePlanV2 = planOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 });
 const SOCIAL = itemFromIncome({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true });
+const eventsOf = (plan: FirePlanV2) => plan.items.flatMap((x) => asEvent(x) ?? []);
 
 // The routes as the app runs them: the plans' real, the rest answered here.
 type Call = { method: string; path: string; body: any };
