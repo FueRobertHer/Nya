@@ -227,11 +227,12 @@ describe('the release before reads every plan this release writes', () => {
     const plan: FirePlanV2 = { ...TYPED, partnerAge: 38, items };
     const main = ok(await save(plan, null, DEFAULTS)).updated_at as string;
     let entries = await readsAll(MAIN_ID, 'every kind');
-    expect(entries.get(MAIN_ID)!.plan.items).toEqual(items);
+    expect((entries.get(MAIN_ID)!.plan as FirePlanV2).items).toEqual(items);
     const facts = factsOf(plan);
     ok(await save({ ...plan, stopAtFi: true, fiNumber: 1_500_000 }, main, facts));
     entries = await readsAll(MAIN_ID, 'the stop at FI and your own FI number');
-    expect([entries.get(MAIN_ID)!.plan.stopAtFi, entries.get(MAIN_ID)!.plan.fiNumber]).toEqual([true, 1_500_000]);
+    const saved = entries.get(MAIN_ID)!.plan as FirePlanV2;
+    expect([saved.stopAtFi, saved.fiNumber]).toEqual([true, 1_500_000]);
     ok(await plans('POST', { from: MAIN_ID, name: 'Part-time work when you stop', plan: { ...plan, items: items.slice(0, 3) }, currency: 'USD' }));
     await readsAll(MAIN_ID, 'a Try it with items on anchors');
 
