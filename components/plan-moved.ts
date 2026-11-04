@@ -46,8 +46,7 @@ export function countedNames(f: PlanFigures, by: number | null): string[] {
   const age = f.plan.age;
   if (age === null) return [];
   const out: string[] = [];
-  for (let i = 0; i < f.planItems; i++) {
-    const item = f.items[i];
+  for (const [i, item] of f.plan.items.entries()) {
     if (!f.inWalk[i] || !MONEY_KINDS.includes(item.kind)) continue;
     const at = movesAt(item, f.resolution.ages[i], age);
     if (at === null || (by !== null && at >= by)) continue;

@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { compileItems, type CompileAt } from '@/lib/fire/compile';
-import { itemFromEvent, itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
+import { itemFromExpense, itemFromIncome, type PlanItem } from '@/lib/fire/items';
 import * as oldEvents from './fixtures/before-d15/fire/events';
 import * as oldPlan from './fixtures/before-d15/fire/plan';
-import { compileEvents, fixedAges, genEvents, genMeasured, genPlan, rand } from './plan-gen';
+import { compileEvents, fixedAges, genEvents, genMeasured, genPlan, itemFromEvent, rand } from './plan-gen';
 
 // Where each item counts (lib/fire/compile.ts), held to the arithmetic from
 // before D15 for what it had (test/fixtures/before-d15, the release before

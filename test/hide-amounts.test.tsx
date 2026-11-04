@@ -42,7 +42,7 @@ import { INITIAL_PLANS } from '@/components/plan-list';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { LifeEvent } from '@/lib/fire/events';
-import { itemFromEvent, itemFromIncome, withItem, type PlanItem } from '@/lib/fire/items';
+import { itemFromIncome, withItem, type PlanItem } from '@/lib/fire/items';
 import { wholeMoney } from '@/components/plan-text';
 import { InputsCard } from '@/components/PlanTab';
 import { FigureForm } from '@/components/PlanForms';
@@ -96,7 +96,7 @@ import HandoffSheet from '@/components/HandoffSheet';
 import IouSheet from '@/components/IouSheet';
 import { cardOf as sharedCard, daysAgo as sharedDaysAgo, shared as sharedState, txn as sharedTxn } from './shared-expenses-fixture';
 import { planOf } from '@/lib/fire/plan-v2';
-import { figuresOf, OFF, timelineProps } from './plan-gen';
+import { figuresOf, itemFromEvent, OFF, timelineProps } from './plan-gen';
 
 // Hide amounts (components/hide-amounts.ts): the switch that shows the app's
 // structure while hiding its figures. Every money amount the main screens

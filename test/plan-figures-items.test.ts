@@ -3,6 +3,7 @@ import { planPath } from '@/lib/fire/path';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { expensesOf, incomeOf } from '@/lib/fire/items';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
+import { planOf } from '@/lib/fire/plan-v2';
 import * as oldFigures from './fixtures/before-d15/fire/plan-figures';
 import * as oldPath from './fixtures/before-d15/fire/path';
 import * as oldSaved from './fixtures/before-d15/fire/saved-plan';
@@ -46,8 +47,11 @@ describe('with the switch off, the release before’s figures exactly', () => {
       expect([now.retirement, now.short, now.walked, now.walkedSavings, now.startsWith]).toEqual([was.retirement, was.short, was.walked, was.walkedSavings, was.startsWith]);
       if (was.events === null) expect(now.events).toBeNull();
       else {
-        const e = now.events as NonNullable<PlanFigures['events']>;
-        expect([e.walk, e.lasting, e.later, e.notes]).toEqual([was.events.walk, was.events.lasting, was.events.later, was.events.notes]);
+        // Null now where none of them counts, which every reader takes as none.
+        const e = now.events ?? { walk: { moneyIn: [], costs: [], spans: [] }, lasting: [], later: [] };
+        // Then, the life events' notes were the events' own; now, an item's.
+        const notes = now.itemNotes.filter((n) => n.at >= planOf(p).items.length).map(({ id, part }) => ({ id, part }));
+        expect([e.walk, e.lasting, e.later, notes]).toEqual([was.events.walk, was.events.lasting, was.events.later, was.events.notes]);
       }
       expect(now.walkFrom.items).toBe(false);
     }
@@ -74,7 +78,9 @@ describe('with the switch off, the release before’s figures exactly', () => {
       const now = figuresOf(p, m, events);
       if ('refused' in was || 'refused' in now || 'missing' in was.engine) continue;
       const { left, beyond } = was.engine;
-      const ids = (...parts: string[]) => new Set(now.itemNotes.filter((n) => parts.includes(n.part)).map((n) => n.id));
+      // The version 1 lists' own notes, which come before the life events'.
+      const own = planOf(p).items.length;
+      const ids = (...parts: string[]) => new Set(now.itemNotes.filter((n) => n.at < own && parts.includes(n.part)).map((n) => n.id));
       const unplaced = ids('no-age', 'before-start', 'after-end');
       expect(incomeOf(now.plan).filter((x) => !unplaced.has(x.id))).toEqual(p.income.filter((x) => !left.income.includes(x)));
       expect(expensesOf(now.plan).filter((x) => !unplaced.has(x.id))).toEqual(p.expenses.filter((x) => !left.expenses.includes(x) && !beyond.includes(x)));

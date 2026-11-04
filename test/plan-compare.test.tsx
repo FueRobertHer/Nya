@@ -14,7 +14,7 @@ import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf } from '@/lib/fire/plan-v2';
-import { itemFromEvent, withItem } from '@/lib/fire/items';
+import { withItem } from '@/lib/fire/items';
 import type { LifeEvent } from '@/lib/fire/events';
 import { runPlanJob } from '@/lib/fire/jobs';
 import { usMarket } from '@/lib/fire/us-market';
@@ -22,7 +22,7 @@ import { HISTORY_COUNT, HISTORY_FIRST, historySpan } from '@/lib/fire/history-sp
 import { simulate, type SimResult } from '@/lib/fire/simulate';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
-import { figuresOf, OFF, timelineProps } from './plan-gen';
+import { figuresOf, itemFromEvent, OFF, timelineProps } from './plan-gen';
 
 // Compare mode (components/plan-compare.ts, PlanCompare.tsx), the open
 // copy's card and the Plans sheet (components/PlansSheet.tsx), and the list

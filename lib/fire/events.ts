@@ -37,8 +37,8 @@
 // and is not also a one-off. One that starts later stays in the simulation,
 // to the longest plan the engine runs, so the grid's longer columns count it.
 //
-// Where each counts is worked out with a plan's items (lib/fire/compile.ts
-// compileItems), which life events are in memory (lib/fire/items.ts).
+// A plan holds these as items (lib/fire/items.ts), and where each counts is
+// worked out with them (lib/fire/compile.ts compileItems).
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
@@ -128,7 +128,6 @@ export type CompiledEvents = {
    *  the FI number, which says so. */
   later: { id: string; amount: number; fromAge: number }[];
   sim: { oneOffs: OneOffExpense[]; income: OtherIncome[]; lowerSpending: LowerSpending[] };
-  notes: EventNote[];
 };
 
 export const hasWalk = (w: WalkChanges) => w.moneyIn.length > 0 || w.costs.length > 0 || w.spans.length > 0;
