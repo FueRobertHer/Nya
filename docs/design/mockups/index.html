@@ -772,7 +772,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <h2>Plan</h2>
       <ul class="changes">
         <li>The first segment becomes Your path: one answer against your own stop age, one chart from today to that age, then the four rows it rests on.</li>
-        <li>Life events stay in scenarios, and become easy to find: a What if… card on Your path offers templates (a home, a car, travel, a child, a raise, a windfall, a loan that ends). Picking one creates a scenario named after it and shows how it moves your FI age. Your plan stays what you have locked in. Since C2 of the tax plan (2026-11-04) scenarios are copies: whole plans beside yours, listed in the Plans sheet, and Try it makes one.</li>
+        <li>A choice you're weighing is a copy; what you expect is a plan item, of any kind (since E2 of the tax plan, 2026-11-04). The Timeline on Your path holds them, and Add to your Timeline offers templates (a home, a child, a car, a cost, Social Security, a windfall, a change in pay, part-time work and more). Picking one asks for your own figures and says what is possible as it is typed; Try it in a copy makes a whole plan beside yours, listed in the Plans sheet.</li>
         <li>Words: "financial independence" and the FI terms stay as labels, plain words carry the meaning ("growth after inflation", "how much you'd draw each year", "you could stop saving now"), and nothing says "retire early".</li>
         <li>Each input is one row; how it was worked out is in its sheet behind Why?. Caveats stay on the figure: critical ones in full, lesser ones as one line that says how many and what kind.</li>
         <li>Every result keeps a short "Hypothetical, from US history" label; the full text and data sources are said once, in About these numbers.</li>
@@ -822,7 +822,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are copies, made from What if… below it, not pins. Since P of the tax plan it opens on Whole path: the line runs on past the stop to the plan's end, drawing your spending, with the wash and the FI number over the saving years only, and "To 55" (your own stop age) shows the saving years alone; under it, what the FI number leaves out that the path counts. Once the stop has come, the chart is the drawdown from today, with no switch. Home's FI line says the same words. The answer is on the page, not in a card, with how it is worked out in one line under it, said once (no Years to FI row); with no age typed, a ghost "Add your age" line under it asks for it, and What if… asks the same way before its choices. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
+        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are copies, made from the Timeline below it, not pins. Since P of the tax plan it opens on Whole path: the line runs on past the stop to the plan's end, drawing your spending, with the wash and the FI number over the saving years only, and "To 55" (your own stop age) shows the saving years alone; under it, what the FI number leaves out that the path counts. Once the stop has come, the chart is the drawdown from today, with no switch. Home's FI line says the same words. The answer is on the page, not in a card, with how it is worked out in one line under it, said once (no Years to FI row); with no age typed, a ghost "Add your age" line under it asks for it, and What if… asks the same way before its choices. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
       </figure>
 
       <figure class="shot">
@@ -833,13 +833,14 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
               <div class="seg"><span class="on">Your path</span><span>Drawdown</span><span>Portfolio</span></div>
             </div>
             <div class="card flush">
-              <div class="card-header"><h2>What if…</h2></div>
-              <div class="small muted" style="padding:0 14px 8px">Try a life choice with your own figures. It becomes a copy of your plan, and your plan stays as it is.</div>
-              <div class="chips" style="padding:0 14px 10px"><span class="chip">Buy a home</span><span class="chip">A car</span><span class="chip">Travel</span><span class="chip">A child</span><span class="chip">A raise</span><span class="chip">More…</span></div>
-            </div>
-            <div class="card flush">
-              <div class="card-header"><h2>Income and one-offs</h2></div>
-              <div class="row"><span class="row-ico">S</span><div class="main"><span class="title">Social Security</span><span class="sub">From 67 · <span class="money">$28,000</span> a year</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="card-header"><h2>Timeline</h2><span class="btn ghost sm">Add</span></div>
+              <div class="small muted" style="padding:0 14px 8px">In your FI date: costs, windfalls, changes in pay, work that starts before you stop, and other money in, until you reach it. In Will it last?: costs, windfalls and income, from 55, where it starts.</div>
+              <div class="section-title" style="padding:0 14px">At 41</div>
+              <div class="row"><div class="main"><span class="title">Buying a home</span><span class="sub">Counts in your FI date</span></div><span class="money">$80,000</span><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="section-title" style="padding:0 14px">You stop at 55</div>
+              <div class="row"><div class="main"><span class="title">Part-time work</span><span class="sub">Until 60 · before tax</span></div><span class="money">$20,000</span><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="section-title" style="padding:0 14px">At 67</div>
+              <div class="row"><div class="main"><span class="title">Social Security</span><span class="sub">For good</span></div><span class="money">$28,000</span><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
             <div class="card flush">
               <div class="row"><div class="main"><span class="title">Will it last?</span><span class="sub">Test a stop at 55 against US market history</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
@@ -853,7 +854,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>YOUR PATH, SCROLLED</b>What if… offers the templates; a chip opens one, and Try it makes a copy of your plan with it and opens it. Since C2 of the tax plan the copies are listed in the Plans sheet, from the bar, not on this card; while your plans load it says so, and when they couldn't be loaded, why, with Try again. Income and one-offs stay on your plan, unchanged. Progress, last, sets what was recorded against the plan you said is yours (8e), and the chart above draws both before today.</figcaption>
+        <figcaption><b>YOUR PATH, SCROLLED</b>The Timeline holds everything the plan has, on the points in time that place it: what starts on a point is listed under it, and each row opens its sheet. It replaced What if…, Income and one-offs and Life events in E2 of the tax plan.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -862,19 +863,27 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <div class="scrim"></div>
           <div class="sheet" style="max-height:94%">
             <div class="handle"></div>
-            <div class="sheet-head"><h2>What if…</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
-            <div class="row"><span class="row-ico info">H</span><div class="main"><span class="title">Buy a home</span><span class="sub">A down payment, then costs that end and costs that stay</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">V</span><div class="main"><span class="title">Buy a car</span><span class="sub">Once, or every few years</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">T</span><div class="main"><span class="title">Travel or a big expense</span><span class="sub">Once, or a yearly amount for a while</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">C</span><div class="main"><span class="title">A child</span><span class="sub">A yearly cost for some years</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">B</span><div class="main"><span class="title">A career break</span><span class="sub">Savings stop for a while</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">R</span><div class="main"><span class="title">A raise, or part-time work</span><span class="sub">Save more before FI, or earn after it</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">W</span><div class="main"><span class="title">A windfall</span><span class="sub">An inheritance, a bonus, a sale</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico info">L</span><div class="main"><span class="title">A loan ends</span><span class="sub">Spending falls when it is paid off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-            <div class="row"><span class="row-ico">+</span><div class="main"><span class="title">Something else</span><span class="sub">A yearly change, or a one-off</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="sheet-head"><h2>Add to your Timeline</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div class="small muted" style="padding:0 14px 8px">What you expect goes in your plan; a choice you’re weighing, try it in a copy.</div>
+            <div class="section-title">Money out</div>
+            <div class="row"><div class="main"><span class="title">Buy a home</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">A child</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Buy a car</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Pay off a loan</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">A change in spending</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">A cost</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="section-title">Money in</div>
+            <div class="row"><div class="main"><span class="title">Social Security</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">A pension</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">A windfall</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Other income</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="section-title">Work</div>
+            <div class="row"><div class="main"><span class="title">A change in pay</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Part-time work</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">A career break</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
           </div>
         </div></div>
-        <figcaption><b>WHAT IF…, MORE</b>Every template, in plain names. Kinds that are new to the engine arrive in phase 8d: a car that repeats, a raise, a windfall, a loan that ends. Social Security and pensions stay income on your plan.</figcaption>
+        <figcaption><b>ADD TO YOUR TIMELINE</b>Thirteen templates in three groups, each opening its item's sheet with back to here. In an open copy the helper says everything goes in that copy.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -886,18 +895,19 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="sheet-head"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><h2>Buy a home</h2></div>
             <div class="section-title">Name</div>
             <div class="field">Buying a home</div>
-            <div class="section-title">At age</div>
-            <div class="field">&nbsp;</div>
-            <div class="section-title">Paid from your investments (0 if from cash the plan doesn't count)</div>
+            <div class="section-title">Paid from your investments</div>
             <div class="field">$</div>
-            <div class="section-title">Change in yearly spending from then: the mortgage, taxes and upkeep, less rent</div>
-            <div class="btn-row" style="flex-wrap:nowrap"><div class="field" style="flex:1">$</div><span class="chip">More</span><span class="chip">Less</span></div>
-            <div class="btn-row" style="flex-wrap:nowrap"><span class="chip">For good</span><div class="field" style="flex:1">for how many years</div></div>
-            <div class="notice info"><svg><use href="#i-info"/></svg><span>In this what-if, FI moves from around 39 to around 42 (3 years later). Try it makes the copy “Buy a home at 38” of your plan with it, and opens it.</span></div>
-            <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn primary">Try it</span></div>
+            <div class="section-title">Change in yearly spending from then</div>
+            <div class="field">$</div>
+            <div class="row"><div class="main"><span class="title">Starts</span><span class="sub">At 38</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="row"><div class="main"><span class="title">Ends</span><span class="sub">For good</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            <div class="section-title">What’s possible</div>
+            <div class="row"><div class="main"><span class="title">On your steady path</span><span class="sub">From 38</span></div></div>
+            <div class="row"><div class="main"><span class="title">Your FI date</span><span class="sub">From around 39 to around 42</span></div></div>
+            <div class="sheet-foot"><span class="btn secondary">Try it in a copy</span><span class="btn primary">Add to your plan</span></div>
           </div>
         </div></div>
-        <figcaption><b>A TEMPLATE</b>Your own figures only: nothing is filled in but the event's name, and nothing is suggested (features.md). The form is the home life event's own: one change in yearly spending, for some years or for good (built in 8c). The effect shows as you type. "Try it" makes a copy of your plan named "Buy a home at 38" with the life event, and opens it; "Back to your plan" returns.</figcaption>
+        <figcaption><b>AN ITEM</b>Your own figures only: nothing is filled in but its name, and nothing is suggested (features.md). Starts and Ends each open a level of radio rows, the picked one's fields under it, and what is possible says where it lands as it is typed.</figcaption>
       </figure>
 
       <figure class="shot">

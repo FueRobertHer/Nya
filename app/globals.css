@@ -344,7 +344,7 @@ h2 {
    keeps Text. */
 h1,
 .card-header > :is(h2, h3),
-.empty-state > :is(h2, h3),
+.empty-state > :is(h2, h3, h4),
 .sheet-header h2,
 .month-stepper-title,
 .plan-title,
@@ -843,16 +843,21 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   padding: 0 var(--inset) var(--sp-3);
 }
 
-/* The Plan's What if… card: its scenarios' rows, under the chips, run to
-   the card's foot, as Your figures' do. */
-.plan-what-if:has(> .list-rows) {
-  padding-bottom: 0;
-  overflow: hidden;
+/* The Plan's Timeline (components/PlanTimeline.tsx): each point's rows run to
+   the card's edges, and to its foot when the card ends in rows; a last point
+   with nothing under it keeps the card's padding. */
+.plan-timeline-point > .section-label {
+  margin-bottom: var(--sp-2);
 }
 
-.plan-what-if > .list-rows {
-  margin-top: var(--sp-3);
+.plan-timeline-point > .list-rows {
+  margin-inline: calc(-1 * var(--inset));
   margin-bottom: 0;
+}
+
+.plan-timeline:has(> .stack > .plan-timeline-point:last-child) {
+  padding-bottom: 0;
+  overflow: hidden;
 }
 
 /* This month's FI line arrives after Home paints, or not at all: until a
@@ -2036,7 +2041,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   gap: var(--sp-2);
 }
 
-.empty-state > :is(h2, h3) {
+.empty-state > :is(h2, h3, h4) {
   margin: 0;
   font-size: var(--fs-3);
   font-weight: var(--fw-semibold);
@@ -4013,8 +4018,29 @@ button.danger-outline {
   cursor: pointer;
 }
 
-.radio-row + .radio-row {
+.radio-row + .radio-row,
+.radio-row-detail + .radio-row {
   border-top: 1px solid var(--border-subtle);
+}
+
+/* An option that is off (its reason is the group's helper): 60%, as a
+   button that is off. */
+.radio-row:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The picked option's own fields, under its row and in line with its name
+   (the radio's width and the row's gap). */
+.radio-row-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 0 var(--sp-3) calc(13px + 10px);
+}
+
+.radio-rows > .helper {
+  margin: 0 0 var(--sp-1);
 }
 
 .radio-row input {
@@ -8215,7 +8241,7 @@ button.review-keys-toggle {
 }
 
 /* Plans as copies (components/PlansSheet.tsx, CopyTag.tsx, PlanCompare.tsx,
-   PlanEvents.tsx): the tag every card and editing sheet carries while a copy
+   PlanTimeline.tsx): the tag every card and editing sheet carries while a copy
    is open, and compare mode, laid out by metric so it reads top to bottom on
    a phone. The copy's card (.plan-copy-card) is a plain card, as the
    CopyOpen board draws it. */

@@ -89,11 +89,8 @@
   "components/PlanCurrency.tsx": {
     "inlineLayoutStyles": 9
   },
-  "components/PlanEvents.tsx": {
-    "inlineLayoutStyles": 3
-  },
   "components/PlanForms.tsx": {
-    "inlineLayoutStyles": 7
+    "inlineLayoutStyles": 3
   },
   "components/PlanTab.tsx": {
     "inlineLayoutStyles": 3

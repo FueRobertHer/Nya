@@ -17,6 +17,8 @@ export type EmptyAction = {
   opens?: boolean;
   /** Where a closing sheet can give focus back. */
   ref?: Ref<HTMLButtonElement>;
+  /** Held while what it acts on reloads: it keeps focus, and does nothing. */
+  held?: boolean;
 };
 
 export default function EmptyState({
@@ -32,8 +34,9 @@ export default function EmptyState({
   line: string;
   action: EmptyAction;
   /** h3 under a bar's heading (Budgets), h2 where the card's is the panel's
-   *  first (Activity's Shared). */
-  heading?: 'h2' | 'h3';
+   *  first (Activity's Shared), h4 inside a card with its own h3 (the Plan's
+   *  Timeline). */
+  heading?: 'h2' | 'h3' | 'h4';
   /** The heading's id, for the card's aria-labelledby. */
   id?: string;
   /** What must still be said, between the line and the action. */
@@ -45,7 +48,7 @@ export default function EmptyState({
       <Heading id={id}>{title}</Heading>
       <p className="helper">{line}</p>
       {children}
-      <button type="button" className="btn" ref={action.ref} aria-haspopup={action.opens ? 'dialog' : undefined} onClick={action.onSelect}>
+      <button type="button" className="btn" ref={action.ref} aria-haspopup={action.opens ? 'dialog' : undefined} aria-disabled={action.held || undefined} onClick={action.held ? undefined : action.onSelect}>
         {action.label}
       </button>
     </div>

@@ -9,8 +9,9 @@ import type { LifeEvent } from '@/lib/fire/events';
 import type { Count } from '@/lib/fire/compile';
 import { eventItems } from '@/lib/fire/items';
 import { planFigures } from '@/lib/fire/plan-figures';
-import { planOf } from '@/lib/fire/plan-v2';
+import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { Measured } from '@/lib/fire/plan';
+import { wholeMoney } from '@/components/plan-text';
 
 /** D15's switch off: every figure as the release before E1 had it. */
 export const OFF: Count = { planInWalk: false };
@@ -20,6 +21,31 @@ export const ON: Count = { planInWalk: true };
  *  tab works them out (in memory as version 2). */
 export function figuresOf(p: FirePlan, m: Measured, events: readonly LifeEvent[] = [], count: Count = OFF) {
   return planFigures(planOf(p), m, { events: eventItems(events), count });
+}
+
+/** What the Plan tab gives its Timeline card for a plan, in dollars and
+ *  saving nothing. */
+export function timelineProps(plan: FirePlanV2, m: Measured = { spending: null, savings: null, assets: null }, count: Count = ON) {
+  const f = planFigures(plan, m, { count });
+  const refused = 'refused' in f;
+  return {
+    plan,
+    figures: refused ? null : f,
+    refused,
+    measured: m,
+    count,
+    copyName: null as string | null,
+    version: 'v1',
+    editable: true,
+    paused: null as string | null,
+    money: (n: number) => wholeMoney(n, 'USD'),
+    planInWalk: count.planInWalk,
+    savings: plan.savings ?? m.savings,
+    onSave: async () => true as boolean | string,
+    alsoFor: () => [],
+    tryIt: null,
+    onAskAge: () => {},
+  };
 }
 
 export type Rand = { n: () => number; int: (min: number, max: number) => number; pick: <T>(xs: readonly T[]) => T; chance: (p: number) => boolean };

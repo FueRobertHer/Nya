@@ -221,7 +221,7 @@ describe('a plan saved before its currency was recorded', () => {
     expect(tab.figures()!.contains(tab.region())).toBe(true);
     // Recorded on the tab's own: focus stays where it was.
     expect(dom.document.activeElement).toBe(dom.document.body);
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: false, paused: null });
     expect(tab.text()).toContain('$1,000,000');
     await tab.unmount();
   });
@@ -232,7 +232,7 @@ describe('a plan saved before its currency was recorded', () => {
     expect(posts(calls).length).toBe(0);
     expect(tab.said()).toBe('Nya is waiting for your accounts to load to tell which currency your plan’s figures are in. Nothing on the Plan is saved until it can.');
     expect(tab.region()!.findAll((e) => e.tagName === 'BUTTON').length).toBe(0);
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: true, paused: NOT_KNOWN });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: true, paused: NOT_KNOWN });
     await tab.unmount();
   });
 
@@ -262,7 +262,7 @@ describe('a plan saved before its currency was recorded', () => {
     expect(posts(calls).length).toBe(0);
     expect(tab.said()).toContain('They’re shown in EUR for now, the currency most of your invested accounts are in, but as many of your invested accounts are in another currency');
     expect(tab.text()).toContain('€1,000,000');
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: true, paused: NOT_KNOWN });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: true, paused: NOT_KNOWN });
     expect(await saving(tab, 'Annual spending')).toEqual({ disabled: true, paused: NOT_KNOWN });
     expect(tab.buttons('They’re in EUR').length).toBe(1);
     await press(tab.buttons('They’re in USD')[0]);
@@ -271,7 +271,7 @@ describe('a plan saved before its currency was recorded', () => {
     expect(tab.text()).toContain('$1,000,000');
     expect(tab.text()).not.toContain('€1,000,000');
     expect(tab.said()).toContain('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Some of your accounts are in EUR');
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: false, paused: null });
     expect(puts(calls).length).toBe(0);
     await tab.unmount();
   });
@@ -331,10 +331,10 @@ describe('a plan saved before its currency was recorded', () => {
     const tab = await render({ institutions: [], txns: [], currency: null });
     expect(posts(calls).length).toBe(0);
     expect(tab.said()).toContain('Which currency are they in?');
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: true, paused: NOT_KNOWN });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: true, paused: NOT_KNOWN });
     await another(tab, 'JPY');
     expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([['JPY', true]]);
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: false, paused: null });
     await tab.unmount();
   });
 });
@@ -349,7 +349,7 @@ describe('a record that no longer fits', () => {
     expect(tab.said()).toContain('Nya recorded your plan’s figures as USD, but they were changed since in a way that didn’t record a currency');
     const offered = tab.region()!.findAll((e) => e.tagName === 'BUTTON').map((b) => b.textContent.trim());
     expect(offered.slice(0, 2)).toEqual(['They’re still in USD', 'They’re in EUR']);
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: true, paused: NOT_KNOWN });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: true, paused: NOT_KNOWN });
     await press(tab.buttons('They’re still in USD')[0]);
     expect(posts(calls).map((c) => c.body)).toEqual([{ currency: 'USD', amounts: typedAmounts({ ...PLAN, spending: 60_000 }), answered: true }]);
     expect(tab.text()).toContain('$1,500,000');
@@ -394,9 +394,9 @@ describe('the first amount', () => {
     expect(gets(calls).length).toBe(1);
     expect(server.s.plan.spending).toBe(40_000);
     expect(tab.text()).toContain('$1,000,000');
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: false, paused: null });
     // The next save keeps the amount.
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     await press(tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
     expect(puts(calls).map((c) => c.body.plan.spending)).toEqual([40_000, 40_000]);
     await tab.unmount();
@@ -419,7 +419,7 @@ describe('the first amount', () => {
     // A save got past the disabled controls (test/mini-dom.ts pressThrough):
     // the row, which opens its sheet whatever the state, then the sheet's
     // Save, disabled while the currency isn't known. Held open.
-    await act(async () => void pressThrough(tab.row('Ages')!));
+    await act(async () => void pressThrough(tab.row('Household')!));
     await settle();
     const save = tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0];
     expect(save.disabled).toBe(true);
@@ -450,7 +450,7 @@ describe('the first amount', () => {
     await saveSpending(tab, '4000000');
     expect(puts(calls).map((c) => [c.body.currency, c.body.plan.spending])).toEqual([['JPY', 4_000_000]]);
     expect(tab.said()).toContain('Your plan’s figures are in JPY');
-    expect(await saving(tab, 'Ages')).toEqual({ disabled: false, paused: null });
+    expect(await saving(tab, 'Household')).toEqual({ disabled: false, paused: null });
     await tab.unmount();
   });
 });
@@ -482,7 +482,7 @@ describe('a recorded currency', () => {
   test('each save sends it with the plan', async () => {
     const calls = serve(answers());
     const tab = await render();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     await press(tab.buttons('Save')[0]);
     expect(puts(calls).map((c) => [c.body.currency, c.body.plan.spending])).toEqual([['USD', 40_000]]);
     await tab.unmount();
@@ -688,7 +688,7 @@ describe('a failed load of the balances, and a refused save (review round 2)', (
     const reason = 'The currency your plan’s figures are in was changed since this page loaded it, so nothing was saved: load it again.';
     serve({ ...planServer({ plan: PLAN, record: { currency: 'USD', amounts: typedAmounts(PLAN) } }).answers, 'PUT /api/fire-plan': [409, { error: reason, stale: true }] });
     const tab = await render();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     await press(tab.buttons('Save')[0]);
     await settle(400);
     expect(tab.text()).toContain(`Not saved: ${reason}`);
@@ -748,7 +748,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     ]);
     serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, ECB] });
     const tab = await render({ institutions: dollars, txns: mirror });
-    expect(tab.text()).toMatch(/FI number \$[\d,]+: \$[\d,]+ a year ÷ 4% withdrawal rate/);
+    expect(tab.text()).toMatch(/FI numberWorked out from spending and tax, at 4%\$[\d,]+/);
     expect(tab.text()).toMatch(/Annual spending\d+ days, scaled up to a year\$[\d,]+/);
     expect(tab.text()).toContain('Financial independenceNeeds your savingsYour savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
     expect(tab.text()).toMatch(/Annual savingsNot measured--Caution: The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);

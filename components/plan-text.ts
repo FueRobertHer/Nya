@@ -169,13 +169,13 @@ export function fiHeadline(
  *  joined when both. Null when nothing
  *  did. */
 export function walkWords(from: { items: boolean; events: boolean }): string | null {
-  if (from.items && from.events) return 'one-offs, income and this plan’s life events';
+  if (from.items && from.events) return 'one-offs, income and this plan’s items';
   if (from.items) return 'one-offs and income';
   return from.events ? EVENTS_WORDS : null;
 }
 
 /** A plan's life events, as the walk's words name them. */
-export const EVENTS_WORDS = 'this plan’s life events';
+export const EVENTS_WORDS = 'this plan’s items';
 
 /** What a headline's missing ages ask for, on a button that opens the Ages
  *  sheet. */
@@ -279,7 +279,7 @@ export const REBALANCE_TEXT: Record<Rebalance, string> = {
  *  more. Null when it leaves out nothing. */
 export function leftOutText(leftOut: PathAfter['leftOut']): string | null {
   const names = leftOut.items.map((i) => `${i.label} ${i.kind === 'income' ? 'from' : 'at'} ${i.age}`);
-  if (leftOut.events) names.push('this plan’s life events after you stop');
+  if (leftOut.events) names.push('this plan’s items after you stop');
   if (names.length === 0) return null;
   const shown = names.length > 3 ? [...names.slice(0, 3), `${names.length - 3} more`] : names;
   const list = shown.length <= 2 ? shown.join(' and ') : `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;

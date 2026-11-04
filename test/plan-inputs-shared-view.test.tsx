@@ -168,7 +168,7 @@ describe('Home and the Plan on one copy', () => {
     // savings with the workplace plan's $6,000 in them.
     const p = await plan(store);
     expect(server.inputs().length).toBe(2);
-    expect(p.text()).toContain('FI number $1,000,000: $40,000 a year ÷ 4% withdrawal rate');
+    expect(p.text()).toContain('FI numberWorked out from spending and tax, at 4%$1,000,000');
     expect(p.text()).toContain('Saving $30,600 a year');
     await saveRate(p, '3.5');
     await settle(400);

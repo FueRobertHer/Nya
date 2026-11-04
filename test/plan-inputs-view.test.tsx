@@ -139,10 +139,11 @@ const REFUSED: NoTransactionsView = { without: [{ institution_name: 'Acme CU', r
 
 /** Each row's title, and the title of the sheet it opens. */
 const ROWS: [string, string][] = [
+  ['FI number', 'FI number'],
   ['Annual spending', 'Annual spending'],
   ['Invested assets', 'Invested assets'],
   ['Annual savings', 'Annual savings'],
-  ['Ages', 'Your ages'],
+  ['Household', 'Household'],
   ['Assumptions', 'Assumptions'],
 ];
 
@@ -317,13 +318,13 @@ async function openCopy(tab: Tab, name: string) {
 }
 
 describe('Your figures, under the FI card', () => {
-  test('five rows in today’s order, each a button that opens its sheet: its title, where the figure comes from, the figure (savings with its rate under it) and a chevron', async () => {
+  test('six rows in today’s order, each a button that opens its sheet: its title, where the figure comes from, the figure (savings with its rate under it) and a chevron', async () => {
     serve();
     const tab = await mount();
     const card = tab.card()!;
-    // A card of its own on Your path, between the FI card and the What if… card (8c).
+    // A card of its own on Your path, between the FI card and the Timeline (E2).
     expect(tab.panel('path').contains(card)).toBe(true);
-    expect(tab.titles(tab.panel('path'))).toEqual(['Financial independence', 'Your figures', 'What if…', 'Income and one-off expenses', 'Progress']);
+    expect(tab.titles(tab.panel('path'))).toEqual(['Financial independence', 'Your figures', 'Timeline', 'Progress']);
     const heading = card.findAll((e) => e.tagName === 'H3')[0];
     expect([heading.textContent, heading.getAttribute('id'), card.getAttribute('aria-labelledby')]).toEqual(['Your figures', 'plan-inputs-title', 'plan-inputs-title']);
     expect(has(heading.parentNode, 'card-header')).toBe(true);
@@ -341,11 +342,12 @@ describe('Your figures, under the FI card', () => {
       ];
     });
     expect(said).toEqual([
+      ['FI number', 'Worked out from spending and tax, at 4%', '$900,000', null],
       ['Annual spending', 'A year, from transactions', '$36,000', null],
       ['Invested assets', '1 account, as of Oct 6, 3:12 PM', '$300,000', null],
       ['Annual savings', 'Estimated from a year', '$24,000', '40% savings rate'],
       // Their figures are their subs, with no value beside them.
-      ['Ages', '40 now, stop at 55', null, null],
+      ['Household', '40 now, stop at 55', null, null],
       ['Assumptions', '4% withdrawal · 5% growth after inflation until FI · 0% tax', null, null],
     ]);
     for (const r of tab.rows()) {
@@ -362,12 +364,12 @@ describe('Your figures, under the FI card', () => {
   test('ages not set, or one of them; part-time income among the assumptions', async () => {
     serve({ plan: { plan: { ...PLAN, age: null, targetAge: null, partTimeIncome: 28_000 }, currency: 'USD' } });
     const none = await mount();
-    expect(part(none.row('Ages')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place income by age');
+    expect(part(none.row('Household')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place what’s on your Timeline');
     expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% growth after inflation until FI · 0% tax · $28,000 part-time');
     await none.unmount();
     serve({ plan: { plan: { ...PLAN, age: null }, currency: null } });
     const one = await mount();
-    expect(part(one.row('Ages')!, 'list-row-sub')?.textContent).toBe('? now, stop at 55');
+    expect(part(one.row('Household')!, 'list-row-sub')?.textContent).toBe('? now, stop at 55');
     await one.unmount();
   });
 });
@@ -395,25 +397,18 @@ describe('focus back on the row', () => {
     await tab.unmount();
   }, 20_000);
 
-  test('an income’s or a one-off’s sheet, opened after a figure’s, never gives focus to the figure’s row', async () => {
+  test('the Timeline’s sheet, opened after a figure’s, never gives focus to the figure’s row', async () => {
     serve();
     const tab = await mount();
-    for (const [add, sheet] of [
-      ['Add income', 'Other income'],
-      ['Add a one-off', 'One-off expense'],
-    ]) {
-      await tap(tab.row('Annual savings'));
-      await press(button(tab.dialog()!, 'Cancel'));
-      await settle(400);
-      expect(dom.document.activeElement).toBe(tab.row('Annual savings')!);
-      await tap(button(tab.container, add));
-      expect(tab.dialog()?.getAttribute('aria-label')).toBe(sheet);
-      await press(button(tab.dialog()!, 'Cancel'));
-      await settle(400);
-      // Back where the sheet found it: on the page, not on a figure's row.
-      expect(dom.document.activeElement).toBe(dom.document.body);
-      expect(tab.rows().some((r) => r === dom.document.activeElement)).toBe(false);
-    }
+    await tap(tab.row('Annual savings'));
+    await press(button(tab.dialog()!, 'Cancel'));
+    await settle(400);
+    expect(dom.document.activeElement).toBe(tab.row('Annual savings')!);
+    await tap(button(tab.container, 'Add'));
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Add to your Timeline');
+    await press(closeOf(tab.dialog()!));
+    await settle(400);
+    expect(tab.rows().some((r) => r === dom.document.activeElement)).toBe(false);
     await tab.unmount();
   }, 20_000);
 
@@ -465,7 +460,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
     });
     // The accounts still loading: the currency can't be told yet.
     const tab = await mount({ balancesAsOf: null });
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     expect(tab.region()?.textContent).toContain('Nya is waiting for your accounts to load');
     expect(pausedLine(sheet)).toBe("Which currency your plan's figures are in isn't known yet (at the top of the Plan tab), so this can't be saved yet.");
@@ -488,7 +483,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
   test('the saved plan couldn’t be read: the sheets show the defaults, and say so', async () => {
     serve({ answers: { 'GET /api/plan-inputs': () => [500, { error: 'no' }] } });
     const tab = await mount();
-    expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place income by age');
+    expect(part(tab.row('Household')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place what’s on your Timeline');
     expect(await everySheet(tab)).toEqual(
       sheets(false, "Your saved plan couldn't be read, so this shows the defaults and can't be saved yet: try again at the top of the Plan tab.")
     );
@@ -507,7 +502,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
       },
     });
     const tab = await mount();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const form = tab.dialog()!;
     await act(async () => type(form.findAll((e) => e.tagName === 'INPUT')[1], '58'));
     await press(button(form, 'Save'));
@@ -516,7 +511,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
     await press(button(form, 'Cancel'));
     await settle(400);
     // The plan as it was loaded, its ages kept, and nothing can be saved.
-    expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('40 now, stop at 55');
+    expect(part(tab.row('Household')!, 'list-row-sub')?.textContent).toBe('40 now, stop at 55');
     expect(await everySheet(tab)).toEqual(sheets(false, "Your saved plan couldn't be read, so this can't be saved yet: try again at the top of the Plan tab."));
     // Read again: every row held, still a button in the tab order, and a press opens nothing.
     await press(button(tab.container, 'Try again'));
@@ -580,7 +575,7 @@ describe('rows open while saving is paused, and the sheet says why', () => {
       },
     });
     const tab = await mount();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     expect([button(sheet, 'Save')?.disabled, pausedLine(sheet)]).toEqual([true, NOT_KNOWN]);
     await act(async () => refuse());
@@ -611,6 +606,7 @@ describe('the notes under each row', () => {
     // Under the button, in the row's item, never in the button.
     for (const r of tab.rows()) expect(r.findAll((e) => e.tagName === 'DETAILS' || has(e, 'notice')).length).toBe(0);
     expect(ROWS.map(([title]) => kids(tab.row(title)!.parentNode!).map((e) => e.getAttribute('class')))).toEqual([
+      ['list-row'],
       ['list-row', 'row-notes'],
       ['list-row', 'row-notes'],
       ['list-row', 'row-notes'],
@@ -656,10 +652,11 @@ describe('the notes under each row', () => {
       return [title, id === null ? null : by.length === 1 && by[0] === tab.notesOf(title)];
     });
     expect(described).toEqual([
+      ['FI number', null],
       ['Annual spending', true],
       ['Invested assets', true],
       ['Annual savings', true],
-      ['Ages', null],
+      ['Household', null],
       ['Assumptions', null],
     ]);
     await tab.unmount();
@@ -777,7 +774,7 @@ describe('a sheet holds the saved plan it opened on', () => {
       await act(async () => click(button(tab.container, 'Try again')!));
       await settle(100);
       expect(gets).toBe(2);
-      expect(part(tab.row('Ages')!, 'list-row-sub')?.textContent).toBe('40 now, stop at 55');
+      expect(part(tab.row('Household')!, 'list-row-sub')?.textContent).toBe('40 now, stop at 55');
       expect(tab.dialog()).toBe(sheet);
       expect([title, button(sheet, 'Save')?.disabled, pausedLine(sheet)]).toEqual([title, true, READ_AGAIN]);
       await press(button(sheet, 'Save'));
@@ -842,7 +839,7 @@ describe('a sheet holds the saved plan it opened on', () => {
       },
     });
     const tab = await mount();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const ages = tab.dialog()!;
     await act(async () => type(ages.findAll((e) => e.tagName === 'INPUT')[1], '58'));
     await press(button(ages, 'Save'));
@@ -885,7 +882,7 @@ describe('a sheet holds the saved plan it opened on', () => {
       },
     });
     const tab = await mount();
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const sheet = tab.dialog()!;
     await act(async () => type(sheet.findAll((e) => e.tagName === 'INPUT')[1], '58'));
     await press(button(sheet, 'Save'));
@@ -1144,7 +1141,7 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
 });
 
 describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
-  test('a button under the answer opens the Ages sheet; closed, focus is back on it, and once the ages are saved (the button gone) on the Ages row', async () => {
+  test('a button under the answer opens the Household sheet; closed, focus is back on it, and once the ages are saved (the button gone) on the Household row', async () => {
     let current: unknown = { ...DEFAULT_PLAN };
     serve({
       answers: {
@@ -1174,7 +1171,7 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
     expect(hero().textContent).toContain('Coast FINeeds your ages');
     expect(tab.panel('path').textContent).not.toContain('Years to FI');
     await press(ask());
-    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Your ages');
+    expect(tab.dialog()?.getAttribute('aria-label')).toBe('Household');
     await press(closeOf(tab.dialog()!));
     await settle(400);
     expect(dom.document.activeElement).toBe(ask()!);
@@ -1189,7 +1186,7 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
     expect(ask()).toBeNull();
     expect(tab.panel('path').textContent).toContain('Financial independenceAround age');
     expect(tab.panel('path').textContent).toMatch(/years? (before|after) you stop at 55|Right when you stop at 55/);
-    expect(dom.document.activeElement).toBe(tab.row('Ages')!);
+    expect(dom.document.activeElement).toBe(tab.row('Household')!);
     await tab.unmount();
   }, 20_000);
 
@@ -1201,7 +1198,7 @@ describe('the answer asks for the ages it needs (rollout phase 8b)', () => {
     ] as const) {
       serve({ plan: { plan: { ...DEFAULT_PLAN, ...over }, currency: null } });
       const tab = await mount();
-      // The answer's own ask, not What if…'s.
+      // The answer's own ask, not the Timeline's.
       const hero = part(tab.panel('path'), 'plan-hero')!;
       expect(button(hero, words)).not.toBeNull();
       expect(hero.textContent).toContain(`Coast FI${coast}`);
@@ -1220,7 +1217,7 @@ describe('what a save sends once your plans are copies', () => {
     method: p.method,
   });
   const saveTarget = async (tab: Awaited<ReturnType<typeof mount>>, age: string) => {
-    await press(tab.row('Ages'));
+    await press(tab.row('Household'));
     const ages = tab.dialog()!;
     await act(async () => type(ages.findAll((e) => e.tagName === 'INPUT')[1], age));
     await press(button(ages, 'Save'));

@@ -9,8 +9,8 @@ import { simulateOnPage } from './plan-on-page';
 // (lib/flag-read.ts newUntil) Your path's answer says what it moved, and
 // Progress what its line now counts, until Got it, which hides both for the
 // session (the dashboard keeps it). The walk's words name one-offs and
-// income apart from a plan's life events, and the income and one-off
-// card's words follow the switch. Rendered as a person sees it
+// income apart from a plan's life events, and the Timeline's words follow
+// the switch. Rendered as a person sees it
 // (react-dom/client over test/mini-dom.ts); every request is answered here.
 
 const dom = installDom();
@@ -24,12 +24,14 @@ const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
-const { default: PlanTab, EventsCard, FiCard } = await import('@/components/PlanTab');
+const { default: PlanTab, FiCard } = await import('@/components/PlanTab');
+const { TimelineCard } = await import('@/components/PlanTimeline');
 const { default: FiProgressCard } = await import('@/components/FiProgressCard');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { planOf } = await import('@/lib/fire/plan-v2');
 const { planFigures } = await import('@/lib/fire/plan-figures');
 const { wholeMoney } = await import('@/components/plan-text');
+const { timelineProps } = await import('./plan-gen');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type FirePlan = import('@/lib/fire/plan').FirePlan;
 type PlanFigures = import('@/lib/fire/plan-figures').PlanFigures;
@@ -183,44 +185,42 @@ describe('Your path while D15 is new', () => {
   });
 });
 
-describe('the income and one-off card follows the switch', () => {
+describe('the Timeline follows the switch', () => {
   const card = (planInWalk: boolean, p: FirePlan = PLAN) => {
-    const f = figures(p, planInWalk);
-    const html = renderToStaticMarkup(
-      <EventsCard plan={f.plan} engine={f.engine} notes={f.itemNotes} money={(n) => wholeMoney(n, 'USD')} editable open={() => {}} planInWalk={planInWalk} />
-    );
+    const html = renderToStaticMarkup(<TimelineCard {...timelineProps(planOf(p), NONE, { planInWalk })} />);
     return html.replace(/<[^>]+>/g, ' ').replaceAll('&#x27;', "'").replace(/\s+/g, ' ');
   };
 
-  test('on: they count in the FI date until you reach it, and a one-off before Will it last? counts there only', () => {
-    expect(card(true)).toContain('They count in your FI date until you reach it, and in Will it last? from age 55, where it starts, never in your FI number.');
-    expect(card(true)).toContain("at age 45. Before 55, where Will it last? starts, so it counts in your FI date, not in Will it last?");
+  test('on: one-offs and income count in the FI date until you reach it, and a one-off before Will it last? counts there only', () => {
+    expect(card(true)).toContain('In your FI date: costs, windfalls, changes in pay, work that starts before you stop, and other money in, until you reach it. In Will it last?: costs, windfalls and income, from 55, where it starts.');
+    expect(card(true)).toContain('Before 55, where Will it last? starts, so it counts in your FI date, not in Will it last?');
+    expect(card(true)).toContain('Counts in your FI date');
   });
 
-  test('off: today’s words', () => {
-    expect(card(false)).toContain('They count in Will it last? from age 55, where it starts, never in your FI date or FI number.');
-    expect(card(false)).toContain("at age 45. Before 55, where Will it last? starts, so it isn't counted anywhere.");
+  test('off: a cost and income don’t count there yet, and the row says so by not saying it', () => {
+    expect(card(false)).toContain('a cost and income don’t count there yet. In Will it last?: costs, windfalls and income, from 55, where it starts.');
+    expect(card(false)).toContain('Before 55, where Will it last? starts, so it isn’t counted anywhere.');
+    expect(card(false)).not.toContain('Counts in your FI date');
   });
 
-  test('with Will it last? not run, no row says where it has them, as before', () => {
+  test('with Will it last? not run, no row says where it has them', () => {
     const p = { ...PLAN, spending: null, expenses: [ROOF, { id: 'late', label: 'Late', amount: 1_000, atAge: 99 }] };
     for (const on of [true, false]) {
       expect(figures(p, on).engine).toEqual({ missing: 'spending' });
       const text = card(on, p);
-      expect(text).toContain('Roof $100,000 at age 45 Edit');
-      expect(text).toContain('Late $1,000 at age 99 Edit');
+      expect(text).toContain('Roof');
+      expect(text).toContain('Late');
       expect(text).not.toContain('Not in the simulation');
       expect(text).not.toContain('After the plan ends');
     }
   });
 
-  test('a version 2 plan’s items it can’t show are said to be there', () => {
+  test('a version 2 plan’s items of every kind are shown, not counted as more', () => {
     const f = figures(PLAN, true);
-    const life = { ...f.plan.items[0], id: 'kid', kind: 'child' as const, label: 'A child' };
-    const html = renderToStaticMarkup(
-      <EventsCard plan={{ ...f.plan, items: [...f.plan.items, life, { ...life, id: 'kid2' }] }} engine={f.engine} notes={f.itemNotes} money={(n) => wholeMoney(n, 'USD')} editable open={() => {}} planInWalk />
-    );
-    expect(html).toContain('2 more items count in your plan: a newer version of Nya shows them.');
+    const life = { ...f.plan.items[0], id: 'kid', kind: 'child' as const, label: 'A child', from: { anchor: { at: 'age' as const, age: 46 }, offset: 0 }, until: { years: 18 }, once: null, yearly: 15_000 };
+    const html = renderToStaticMarkup(<TimelineCard {...timelineProps({ ...f.plan, items: [...f.plan.items, life] }, NONE, { planInWalk: true })} />);
+    expect(html).toContain('A child');
+    expect(html).not.toContain('a newer version of Nya');
   });
 });
 
@@ -268,14 +268,14 @@ describe('the answer’s words', () => {
       .replaceAll('&#x27;', "'")
       .replace(/\s+/g, ' ');
 
-  test('the walk names one-offs and income apart from a plan’s life events, both joined when both', () => {
+  test('the walk names one-offs and income apart from a plan’s other items, both joined when both', () => {
     const f = figures(PLAN, true);
     expect(answer(f, { items: true, events: false })).toContain('Growing a steady 5% a year after inflation, with one-offs and income in their years.');
     expect(answer(f, { items: true, events: false })).toContain('with one-offs and income in the years they cover.');
-    // A plan's life events alone: the words they always had.
-    expect(answer(f, { items: false, events: true })).toContain('Growing a steady 5% a year after inflation, with this plan’s life events changing what is saved in their years.');
-    expect(answer(f, { items: false, events: true })).toContain('with this plan’s life events in the years they cover.');
-    expect(answer(f, { items: true, events: true })).toContain('Growing a steady 5% a year after inflation, with one-offs, income and this plan’s life events in their years.');
+    // A plan's other items alone.
+    expect(answer(f, { items: false, events: true })).toContain('Growing a steady 5% a year after inflation, with this plan’s items changing what is saved in their years.');
+    expect(answer(f, { items: false, events: true })).toContain('with this plan’s items in the years they cover.');
+    expect(answer(f, { items: true, events: true })).toContain('Growing a steady 5% a year after inflation, with one-offs, income and this plan’s items in their years.');
   });
 
   const v2 = (over: Partial<FirePlanV2>) => planFigures({ ...planOf(PLAN), ...over }, NONE, { count: { planInWalk: true } }) as PlanFigures;
