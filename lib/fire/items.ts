@@ -280,33 +280,6 @@ export function itemFromExpense(x: PlanExpense): PlanItem {
   return item(x.id, x.label, 'one-off', ageWhen(x.atAge), { once: x.amount });
 }
 
-/** A life event, as an item with the same figures and id, its ages
- *  as age anchors: a raise is pay up for good, a career break pay down by
- *  what it costs in saving for its years, part-time work with what it
- *  replaces not said (so it stays out of the walk, as it was). */
-export function itemFromEvent(e: LifeEvent): PlanItem {
-  switch (e.kind) {
-    case 'house':
-      return item(e.id, e.label, 'home', ageWhen(e.atAge), { until: e.years === null ? null : { years: e.years }, once: e.cost, yearly: e.yearly });
-    case 'child':
-      return item(e.id, e.label, 'child', ageWhen(e.fromAge), { until: { years: e.years }, yearly: e.yearly });
-    case 'sabbatical':
-      return item(e.id, e.label, 'pay', ageWhen(e.fromAge), { until: { years: e.years }, yearly: -e.savingsLost });
-    case 'part-time':
-      return item(e.id, e.label, 'part-time', ageWhen(e.fromAge), { until: ageWhen(e.toAge), yearly: e.yearly });
-    case 'spending':
-      return item(e.id, e.label, 'spending', ageWhen(e.fromAge), { until: e.years === null ? null : { years: e.years }, yearly: e.yearly });
-    case 'car':
-      return item(e.id, e.label, 'car', ageWhen(e.atAge), { once: e.cost, every: e.every, times: e.times });
-    case 'raise':
-      return item(e.id, e.label, 'pay', ageWhen(e.fromAge), { yearly: e.yearly });
-    case 'windfall':
-      return item(e.id, e.label, 'windfall', ageWhen(e.atAge), { once: e.amount });
-    case 'loan-end':
-      return item(e.id, e.label, 'loan-end', ageWhen(e.atAge), { yearly: e.yearly });
-  }
-}
-
 const plainAge = (w: When): number | null => (w.anchor.at === 'age' && w.offset === 0 ? w.anchor.age : null);
 const plain = (x: PlanItem) => x.owner === null && !x.beforeTax && x.replaces === null && x.every === null && x.times === null;
 
@@ -335,9 +308,9 @@ export const expensesOf = (plan: Items): PlanExpense[] => plan.items.map(asExpen
 
 const yearsOf = (until: PlanItem['until']): number | null | undefined => (until === null ? null : 'years' in until ? until.years : undefined);
 
-/** The item as a life event, or null unless it is exactly what itemFromEvent
- *  makes of one: what a copy's diff and the release before's readers call a
- *  life event. */
+/** The item as a life event, or null unless it says only what one could, with
+ *  its ages as plain age anchors: what a copy's diff and the release before's
+ *  readers call a life event. */
 export function asEvent(x: PlanItem): LifeEvent | null {
   const age = plainAge(x.from);
   if (age === null || x.owner !== null || x.beforeTax || x.replaces !== null || !x.inflationAdjusted) return null;

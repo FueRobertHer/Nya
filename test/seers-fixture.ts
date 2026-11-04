@@ -105,7 +105,7 @@ export async function seedEveryKind(
   // Your plan, its facts and a copy of it holding a life event, through the
   // Plan's routes (lib/plan-writes.ts).
   const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
-  const { itemFromEvent } = await import('@/lib/fire/items');
+  const { itemFromEvent } = await import('./plan-gen');
   const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
   const mine = { ...DEFAULT_PLAN_V2, age: 35, targetAge: 55, spending: 40000 };
   ok('your plan', await route('fire-plan', 'PUT', { plan: mine, currency: 'USD', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null }));

@@ -40,7 +40,7 @@ const sim = (f: PlanFigures) => {
 const measured: Measured = { spending: 40_000, savings: 50_000, assets: 500_000 };
 const thePlan = plan({ age: 40, targetAge: 55, income: [income()], expenses: [expense()] });
 
-describe('a plan with nothing run beside it', () => {
+describe('a plan with no life events', () => {
   test('its figures are fiView and enginePlan exactly, for every start', () => {
     for (const start of ['fi-number', 'assets', 'custom'] as const) {
       const p = { ...thePlan, start, startBalance: start === 'custom' ? 900_000 : null };
