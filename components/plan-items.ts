@@ -179,6 +179,16 @@ export function itemAmount(x: PlanItem): ItemAmount {
   }
 }
 
+/** Whether an item counts in the FI date: the walk has it, and it starts by
+ *  then (the walk ends at FI, so income at 67 with FI around 52 moves nothing). */
+export function countsInFiDate(f: PlanFigures, i: number): boolean {
+  if (!f.inWalk[i]) return false;
+  const start = f.resolution.ages[i]?.start ?? null;
+  const fi = fiWhen(f);
+  if (start === null) return true;
+  return fi.kind === 'age' ? start <= fi.age : fi.kind !== 'now';
+}
+
 /** A Timeline row's sub: how it starts when its point doesn't say it (an
  *  offset, or a start before today), how it ends or repeats, "before tax",
  *  and "counts in your FI date" exactly when the walk counts it. */
@@ -463,9 +473,11 @@ export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, ot
   const a = x.from.anchor;
   const n = Math.abs(x.from.offset);
   const dir = x.from.offset < 0 ? 'before' : 'after';
+  // The item's own name, once it has one: the template's says what it is.
+  const what = x.label !== template.name ? x.label : template.label;
   let when: string;
   // Too long with the years, "before you stop" says enough.
-  const by = (what: string) => (x.from.offset === 0 ? `when ${what === 'FI' ? 'you reach FI' : what}` : `${template.label} ${years(n)} ${dir} ${what}`.length <= SCENARIO_NAME_MAX ? `${years(n)} ${dir} ${what}` : `${dir} ${what}`);
+  const by = (where: string) => (x.from.offset === 0 ? `when ${where === 'FI' ? 'you reach FI' : where}` : `${what} ${years(n)} ${dir} ${where}`.length <= SCENARIO_NAME_MAX ? `${years(n)} ${dir} ${where}` : `${dir} ${where}`);
   switch (a.at) {
     case 'age':
       when = `${x.kind === 'part-time' ? 'from' : 'at'} ${x.owner === 'partner' ? 'your partner’s ' : ''}${a.age + x.from.offset}`;
@@ -485,7 +497,7 @@ export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, ot
       break;
     }
   }
-  const base = `${template.label} ${when}`;
+  const base = `${what} ${when}`;
   const first = fit(base, SCENARIO_NAME_MAX);
   if (!nameTaken(others, first)) return first;
   for (let k = 2; ; k++) {
@@ -539,6 +551,8 @@ export type PreviewInput = {
   startAge: number | null;
   /** The steady path's highest balance and its age, with the draft in. */
   most: { amount: number; age: number } | null;
+  /** The steady path's balances, with the draft in. */
+  points?: readonly { age: number; balance: number }[];
   /** Measured or typed savings a year, for a change in pay. */
   savings: number | null;
   /** The age the steady path with the draft runs out at, if it does. */
@@ -617,10 +631,16 @@ export function previewLines(p: PreviewInput): PreviewLines {
     rows.push({ key: 'You’d save', value: `${p.money(Math.max(0, p.savings + x.yearly))} a year, not ${p.money(p.savings)}` });
   }
 
+  // Part-time work before the stop: what it pays, less what it replaces.
+  if (x.kind === 'part-time' && p.savings !== null && x.yearly !== null && x.replaces !== null && ages && stop !== null && ages.start < stop) {
+    const pays = x.yearly * (x.beforeTax ? 1 - f.plan.taxRate : 1);
+    rows.push({ key: 'You’d save', value: `${p.money(Math.max(0, p.savings + pays - x.replaces))} a year, not ${p.money(p.savings)}` });
+  }
+
   // Where it counts this time.
   const fiAge = after.kind === 'age' ? after.age : null;
   if (ages) {
-    const inWalk = i >= 0 && f.inWalk[i];
+    const inWalk = i >= 0 && countsInFiDate(f, i);
     const starts = `Starts at ${ages.start}`;
     if (a.at === 'fi') {
       const without = p.without ? fiWhen(p.without) : null;
@@ -636,9 +656,15 @@ export function previewLines(p: PreviewInput): PreviewLines {
         }
       }
     } else if (inWalk) {
-      lines.push(`${starts}, before ${fiAge !== null ? 'your FI date' : 'you reach FI'}, so it counts in ${whose} FI date${x.kind === 'pay' ? ' every year until you reach it' : ''}.`);
+      lines.push(`${starts}, ${fiAge === ages.start ? 'the year you reach FI' : `before ${fiAge !== null ? 'your FI date' : 'you reach FI'}`}, so it counts in ${whose} FI date${x.kind === 'pay' ? ' every year until you reach it' : ''}.`);
     } else if (fiAge !== null && ages.start >= fiAge && !INCOME_KINDS.includes(x.kind)) {
       lines.push(`It starts after you reach FI, so it counts in Will it last?, not in your FI date or your FI number.`);
+      // Still saving, a cost can undo what reaching FI meant.
+      const next = p.points?.find((q) => q.age === ages.start + 1);
+      const fiNumber = f.view.fiNumber;
+      if (ONCE_KINDS.includes(x.kind) && (x.once ?? 0) > 0 && (stop === null || ages.start < stop) && next && fiNumber !== null && next.balance < fiNumber) {
+        lines.push(`At ${ages.start} it takes you back under your FI number: Will it last? counts it.`);
+      }
     } else if (x.kind === 'part-time' && stop !== null && ages.start >= stop) {
       lines.push(`Starts ${ages.start === stop ? 'when you stop' : `at ${ages.start}, after you stop`}: income in Will it last?. Your FI date, which assumes full-time work until then, ${after.kind === 'age' ? `stays around ${after.age}` : 'doesn’t move'}.`);
     } else if (p.startAge !== null && ages.start >= p.startAge) {
@@ -646,6 +672,16 @@ export function previewLines(p: PreviewInput): PreviewLines {
     }
   }
   if (a.at === 'balance') lines.push('Checked on the balance at the start of each year, and started once, so the spending it adds can’t switch it off again.');
+  // Refused between fixed ages (lib/fire/items.ts itemRules); on an anchor
+  // that moves, they are said to meet where the steady path has them.
+  if (x.kind === 'part-time' && ages) {
+    const clash = f.plan.items.find((y, j) => {
+      const o = f.resolution.ages[j];
+      if (y.id === x.id || y.kind !== 'part-time' || (y.owner === 'partner') !== (x.owner === 'partner') || !o) return false;
+      return ages.start < (o.end ?? Infinity) && o.start < (ages.end ?? Infinity);
+    });
+    if (clash) lines.push(`It overlaps “${clash.label}” on your steady path, for one person. Both count in those years, so change when one of them starts or ends.`);
+  }
 
   if (p.runsOutAt !== null) lines.push(`On ${p.where === 'copy' ? 'this copy’s' : 'this'} steady path your invested assets run out at ${p.runsOutAt}.`);
   if (ages && onSteadyPath(x, f.plan)) {

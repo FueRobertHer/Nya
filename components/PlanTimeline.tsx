@@ -25,6 +25,7 @@ import {
   CHIP_TEMPLATES,
   ITEMS_FULL_TEXT,
   copyNameFor,
+  countsInFiDate,
   everyRunText,
   itemAmount,
   itemCautions,
@@ -64,7 +65,7 @@ export type TimelineTry = {
 type Level = { at: 'add' } | { at: 'item' } | { at: 'starts' } | { at: 'ends' } | { at: 'remove' };
 
 /** The draft with its preview's figures, kept by what was checked. */
-type Worked = { key: string; f: PlanFigures | 'refused'; without: PlanFigures | null; runsOutAt: number | null; most: { amount: number; age: number } | null };
+type Worked = { key: string; f: PlanFigures | 'refused'; without: PlanFigures | null; runsOutAt: number | null; most: { amount: number; age: number } | null; points: readonly { age: number; balance: number }[] };
 
 export function TimelineCard({
   plan,
@@ -223,14 +224,14 @@ export function TimelineCard({
     const timer = setTimeout(() => {
       const f = planFigures(withItem(plan, item), measured, { count });
       if ('refused' in f) {
-        setWorked({ key: checkedKey, f: 'refused', without: null, runsOutAt: null, most: null });
+        setWorked({ key: checkedKey, f: 'refused', without: null, runsOutAt: null, most: null, points: [] });
         return;
       }
       const path = planPath(f);
       const points = [...(path?.points ?? []), ...(path?.after?.points ?? [])];
       const top = points.reduce<{ amount: number; age: number } | null>((m, p) => (m && m.amount >= p.balance ? m : { amount: p.balance, age: p.age }), null);
       const off = item.from.anchor.at === 'fi' ? planFigures(withoutItem(plan, item.id), measured, { count }) : null;
-      setWorked({ key: checkedKey, f, without: off && !('refused' in off) ? off : null, runsOutAt: path?.after?.runsOutAt ?? null, most: top });
+      setWorked({ key: checkedKey, f, without: off && !('refused' in off) ? off : null, runsOutAt: path?.after?.runsOutAt ?? null, most: top, points });
     }, 200);
     return () => clearTimeout(timer);
     // checkedKey stands for checked; measured is a new object each render.
@@ -352,7 +353,7 @@ export function TimelineCard({
           <span className="list-row-text">
             <span className="list-row-title">{itemTitle(x, plan)}</span>
             <span className="list-row-sub">
-              <Masked>{rowSub(x, plan, money, { start, inWalk: !!figures?.inWalk[i] })}</Masked>
+              <Masked>{rowSub(x, plan, money, { start, inWalk: figures ? countsInFiDate(figures, i) : false })}</Masked>
             </span>
           </span>
           <span className="list-row-value money plan-input-value">
@@ -533,6 +534,7 @@ export function TimelineCard({
           money,
           startAge,
           most: worked?.key === checkedKey ? worked.most : null,
+          points: worked?.key === checkedKey ? worked.points : [],
           savings,
           runsOutAt: worked?.key === checkedKey ? worked.runsOutAt : null,
         })

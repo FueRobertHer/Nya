@@ -8,6 +8,7 @@ import {
   TEMPLATE_GROUPS,
   beforeStartText,
   copyNameFor,
+  countsInFiDate,
   endWords,
   everyRunText,
   itemAmount,
@@ -215,20 +216,40 @@ describe('copies and refusals', () => {
   const pt = ITEM_TEMPLATES.find((t) => t.id === 'part-time')!;
   test('a copy’s name: the template, its start, never an amount', () => {
     const plan = { ...base, items: [] };
-    expect(copyNameFor(home, mk('h', 'home', at(38), { once: 100_000 }), plan, [])).toBe('Buy a home at 38');
-    expect(copyNameFor(pt, mk('p', 'part-time', at(50), { until: at(55) }), plan, [])).toBe('Part-time work from 50');
-    expect(copyNameFor(pt, mk('p', 'part-time', on('stop'), { until: at(55) }), plan, [])).toBe('Part-time work when you stop');
-    expect(copyNameFor(home, mk('h', 'home', on('fi')), plan, [])).toBe('Buy a home when you reach FI');
-    expect(copyNameFor(home, mk('h', 'home', { anchor: { at: 'balance', amount: 2_000_000 }, offset: 0 }), plan, [])).toBe('Buy a home at a milestone');
-    expect(copyNameFor(ITEM_TEMPLATES.find((t) => t.id === 'spending')!, mk('s', 'spending', on('stop', -2)), plan, [])).toBe('A change in spending before you stop');
-    expect(copyNameFor(home, mk('h', 'home', on('stop', -2)), plan, [])).toBe('Buy a home 2 years before you stop');
-    expect(copyNameFor(home, mk('h', 'home', at(38)), plan, [{ id: 'a', name: 'Buy a home at 38' }, { id: 'b', name: 'buy a home at 38 (2)' }])).toBe('Buy a home at 38 (3)');
+    const named = (t: typeof home, x: PlanItem) => ({ ...x, label: t.name });
+    expect(copyNameFor(home, named(home, mk('h', 'home', at(38), { once: 100_000 })), plan, [])).toBe('Buy a home at 38');
+    expect(copyNameFor(pt, named(pt, mk('p', 'part-time', at(50), { until: at(55) })), plan, [])).toBe('Part-time work from 50');
+    expect(copyNameFor(pt, named(pt, mk('p', 'part-time', on('stop'), { until: at(55) })), plan, [])).toBe('Part-time work when you stop');
+    expect(copyNameFor(home, named(home, mk('h', 'home', on('fi'))), plan, [])).toBe('Buy a home when you reach FI');
+    expect(copyNameFor(home, named(home, mk('h', 'home', { anchor: { at: 'balance', amount: 2_000_000 }, offset: 0 })), plan, [])).toBe('Buy a home at a milestone');
+    expect(copyNameFor(ITEM_TEMPLATES.find((t) => t.id === 'spending')!, mk('s', 'spending', on('stop', -2), { label: 'A change in spending' }), plan, [])).toBe('A change in spending before you stop');
+    expect(copyNameFor(home, named(home, mk('h', 'home', on('stop', -2))), plan, [])).toBe('Buy a home 2 years before you stop');
+    expect(copyNameFor(home, named(home, mk('h', 'home', at(38))), plan, [{ id: 'a', name: 'Buy a home at 38' }, { id: 'b', name: 'buy a home at 38 (2)' }])).toBe('Buy a home at 38 (3)');
+  });
+
+  test('a copy’s name takes the item’s own name, once it has one', () => {
+    const t = ITEM_TEMPLATES.find((x) => x.id === 'other-income')!;
+    expect(copyNameFor(t, mk('x', 'other-income', at(67), { label: 'Rent', yearly: 1 }), base, [])).toBe('Rent at 67');
+    expect(copyNameFor(t, mk('x', 'other-income', at(67), { label: t.name, yearly: 1 }), base, [])).toBe('Other income at 67');
   });
 
   test('a refusal names the items', () => {
     const plan = { items: [mk('a', 'spending', at(40), { label: 'Travel' }), mk('b', 'car', at(40), { label: 'A car' })] };
     expect(itemRuleText('items[0] and items[1] wait on each other', plan)).toBe('“Travel” and “A car” wait on each other.');
     expect(itemRuleText('items[1].until is before its start', plan)).toBe('“A car” is before its start.');
+  });
+});
+
+describe('counts in your FI date', () => {
+  const money2 = (x: PlanItem, over = {}) => rowSub(x, { ...base, items: [x], ...over }, money, { start: null, inWalk: countsInFiDate(figures({ items: [x], ...over }, ON), 0) });
+
+  test('what the walk has, by the time you reach FI: income at 67 with FI around 46 moves nothing', () => {
+    expect(money2(mk('x', 'other-income', at(45), { yearly: 1_000 }))).toContain('ounts in your FI date');
+    expect(money2(mk('x', 'other-income', at(67), { yearly: 1_000 }))).not.toContain('ounts in your FI date');
+    // Already at FI: nothing moves it.
+    expect(money2(mk('x', 'one-off', at(45), { once: 1_000 }), { assets: 5_000_000 })).not.toContain('ounts in your FI date');
+    // With no FI on the walk, it is what the search is looking through.
+    expect(money2(mk('x', 'one-off', at(45), { once: 1_000 }), { savings: 0, assets: 1_000, spending: 90_000 })).toContain('ounts in your FI date');
   });
 });
 
