@@ -137,6 +137,7 @@ export function Sheet({
   title,
   onClose,
   onBack,
+  backLabel = 'Back',
   level: levelName,
   footer,
   children,
@@ -146,6 +147,9 @@ export function Sheet({
   onClose: () => void;
   /** Shows a back arrow before the title (a second level inside the drawer). */
   onBack?: () => void;
+  /** The back arrow's name, where "Back" alone wouldn't say to what ("Back
+   *  to Buy a car"). */
+  backLabel?: string;
   /** Which level is shown, for a sheet with more than one inside it (a
    *  budget's: its rollover, then the reset under that), so a step from one
    *  inner level to another moves focus too. Left out, the levels are the
@@ -216,7 +220,7 @@ export function Sheet({
         <div className="sheet-handle" aria-hidden="true" />
         <div className="sheet-header">
           {onBack && (
-            <button className="sheet-icon-btn" onClick={onBack} aria-label="Back">
+            <button className="sheet-icon-btn" onClick={onBack} aria-label={backLabel}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="m15 18-6-6 6-6" />
               </svg>

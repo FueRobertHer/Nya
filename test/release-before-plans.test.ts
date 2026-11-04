@@ -2,6 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
+import type { PlanItem } from '@/lib/fire/items';
 
 // The release before (C2, whose readers of the plans as copies are in
 // test/fixtures/release-before/fire/copies.ts byte for byte, pinned by
@@ -14,11 +15,14 @@ import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 // (isPlanFacts), your plan is the one it picks (mainOf, never said to be
 // missing), every entry that holds an amount holds its currency, and what its
 // GET answers from them is the plan this release answers. A saved plan of
-// version 2 is a saved plan to it (isSavedPlan). And its restore
-// (test/fixtures/release-before/user-restore/parts.ts, C2's) takes a download
-// this release makes, plans and all: it refuses a file with a part it doesn't
-// know, or without one of its header parts, and reads each store part as the
-// kind its own list says.
+// version 2 is a saved plan to it (isSavedPlan). E2 writes items of every
+// kind on every anchor, the stop at FI, your partner's age and your own FI
+// number, all of which C2 reads, and C2's cards keep the items they can't
+// show (its withIncome, withExpenses and withEvents).
+// And its restore (test/fixtures/release-before/user-restore/parts.ts, C2's)
+// takes a download this release makes, plans and all: it refuses a file with
+// a part it doesn't know, or without one of its header parts, and reads each
+// store part as the kind its own list says.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -29,6 +33,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const oCopies = await import('./fixtures/release-before/fire/copies');
 const oSaved = await import('./fixtures/release-before/fire/saved-plan');
 const oPlanV2 = await import('./fixtures/release-before/fire/plan-v2');
+const oItems = await import('./fixtures/release-before/fire/items');
 const { openStored } = await import('@/lib/repo');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { savedPlanStore } = await import('@/lib/saved-plan');
@@ -105,8 +110,8 @@ async function readsAll(main: string, what: string) {
     if (oCopies.holdsAmounts(e.plan)) expect([what, id, typeof e.currency]).toEqual([what, id, 'string']);
   }
   const mine = entries.get(main)!;
-  const c1 = { id: main, plan: oCopies.withFacts(mine.plan, f), currency: oCopies.holdsAmounts(mine.plan) ? mine.currency : null, updated_at: mine.updatedAt };
-  expect([what, await (await planRoute.GET()).json()]).toEqual([what, c1]);
+  const c2 = { id: main, plan: oCopies.withFacts(mine.plan, f), currency: oCopies.holdsAmounts(mine.plan) ? mine.currency : null, updated_at: mine.updatedAt };
+  expect([what, await (await planRoute.GET()).json()]).toEqual([what, c2]);
   return entries;
 }
 
@@ -192,6 +197,57 @@ describe('the release before reads every plan this release writes', () => {
       await readsAll(MAIN_ID, `seed ${seed}`);
     }
     expect(saved).toBeGreaterThan(30);
+  });
+
+  test('items of every kind on every anchor, the stop at FI and your own FI number', async () => {
+    const mk = (id: string, kind: PlanItem['kind'], from: PlanItem['from'], set: Partial<PlanItem>): PlanItem => ({
+      id,
+      label: id,
+      kind,
+      from,
+      until: null,
+      once: null,
+      yearly: null,
+      replaces: null,
+      every: null,
+      times: null,
+      inflationAdjusted: true,
+      owner: null,
+      beforeTax: false,
+      ...set,
+    });
+    const at = (age: number) => ({ anchor: { at: 'age' as const, age }, offset: 0 });
+    const items: PlanItem[] = [
+      mk('ss', 'social-security', at(67), { yearly: 18_000, owner: 'partner', beforeTax: true }),
+      mk('pension', 'pension', { anchor: { at: 'stop' }, offset: 5 }, { yearly: 12_000, inflationAdjusted: false, owner: 'you' }),
+      mk('pt', 'part-time', { anchor: { at: 'stop' }, offset: 0 }, { until: at(60), yearly: 24_000, replaces: 0, beforeTax: true, owner: 'you' }),
+      mk('other', 'other-income', { anchor: { at: 'fi' }, offset: 0 }, { until: { years: 10 }, yearly: 5_000 }),
+      mk('home', 'home', at(45), { once: 100_000, yearly: -6_000 }),
+      mk('kid', 'child', at(42), { until: { years: 18 }, yearly: 10_000 }),
+      mk('car', 'car', { anchor: { at: 'fi' }, offset: -1 }, { once: 40_000, every: 8, times: 3 }),
+      mk('travel', 'spending', { anchor: { at: 'balance', amount: 2_000_000 }, offset: 0 }, { yearly: 10_000 }),
+      mk('loan', 'loan-end', { anchor: { at: 'item', id: 'home', edge: 'start' }, offset: 10 }, { yearly: 6_000 }),
+      mk('job', 'pay', at(45), { until: { anchor: { at: 'item', id: 'pt', edge: 'start' }, offset: 0 }, yearly: -20_000, owner: 'you' }),
+      mk('gift', 'windfall', at(60), { once: 50_000 }),
+      mk('roof', 'one-off', { anchor: { at: 'stop' }, offset: 2 }, { once: 30_000 }),
+    ];
+    const plan: FirePlanV2 = { ...TYPED, partnerAge: 38, items };
+    const main = ok(await save(plan, null, DEFAULTS)).updated_at as string;
+    let entries = await readsAll(MAIN_ID, 'every kind');
+    expect((entries.get(MAIN_ID)!.plan as FirePlanV2).items).toEqual(items);
+    const facts = factsOf(plan);
+    ok(await save({ ...plan, stopAtFi: true, fiNumber: 1_500_000 }, main, facts));
+    entries = await readsAll(MAIN_ID, 'the stop at FI and your own FI number');
+    const saved = entries.get(MAIN_ID)!.plan as FirePlanV2;
+    expect([saved.stopAtFi, saved.fiNumber]).toEqual([true, 1_500_000]);
+    ok(await plans('POST', { from: MAIN_ID, name: 'Part-time work when you stop', plan: { ...plan, items: items.slice(0, 3) }, currency: 'USD' }));
+    await readsAll(MAIN_ID, 'a Try it with items on anchors');
+
+    // C2's cards edit through its views, and keep every item they can't show.
+    const v1 = { id: 'v1', label: 'Rent', amount: 9_000, fromAge: 70, inflationAdjusted: true };
+    const kept = oItems.withIncome(oItems.withExpenses(oItems.withEvents(plan, oItems.eventsOf(plan)), oItems.expensesOf(plan)), [...oItems.incomeOf(plan), v1]);
+    expect(kept.items.slice(0, items.length)).toEqual(items);
+    expect(kept.items.length).toBe(items.length + 1);
   });
 
   test('a saved plan of version 2, as this release’s saved plan route stores it', async () => {

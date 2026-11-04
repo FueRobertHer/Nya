@@ -14,8 +14,9 @@ import { stopOf } from '@/lib/fire/plan';
 import { SET_FIELDS, type SetField } from '@/lib/fire/scenarios';
 import { asEvent, asExpense, asIncome, type PlanItem } from '@/lib/fire/items';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
+import { lifeChoiceText, type FiWhen } from './plan-fi-when';
+import { itemSentence } from './plan-items';
 import { SETTING_NAMES, eventText, itemText, settingText } from './plan-scenario-text';
-import { lifeChoiceText, type FiWhen } from './plan-what-if';
 
 type Money = (n: number) => string;
 
@@ -39,14 +40,16 @@ function stopText(p: FirePlanV2): string {
   return at === null ? 'not set' : `${at}`;
 }
 
-/** An item in words, when it is one the Plan's cards show; else null. */
-function itemWords(x: PlanItem, money: Money): string | null {
+/** An item in words: as version 1's income, one-offs and life events said
+ *  it, for one of those, and otherwise as the Timeline says it (its anchor
+ *  read in `plan`, the plan that holds it). */
+function itemWords(x: PlanItem, plan: FirePlanV2, money: Money): string {
   const income = asIncome(x);
   if (income) return itemText('income', income, money);
   const expense = asExpense(x);
   if (expense) return itemText('expenses', expense, money);
   const event = asEvent(x);
-  return event ? eventText(event, money) : null;
+  return event ? eventText(event, money) : itemSentence(x, plan, money);
 }
 
 /** Every way `copy` differs from `main`, a sentence each, in this order: the
@@ -68,17 +71,16 @@ export function copyDiffParts(main: FirePlanV2, copy: FirePlanV2, money: Money):
   const copyIds = new Set(copy.items.map((x) => x.id));
   for (const x of copy.items) {
     const was = mainItems.get(x.id);
-    const words = itemWords(x, money);
-    if (!was) parts.push(`Adds “${x.label}”${words ? `: ${words}` : ''}`);
+    const words = itemWords(x, copy, money);
+    if (!was) parts.push(`Adds “${x.label}”: ${words}`);
     else if (!same(x, was)) {
-      const before = itemWords(was, money);
-      parts.push(words && before ? `“${x.label}”: ${words}, instead of ${before}` : `Changes “${x.label}”`);
+      const before = itemWords(was, main, money);
+      parts.push(words !== before ? `“${x.label}”: ${words}, instead of ${before}` : `Changes “${x.label}”`);
     }
   }
   for (const x of main.items) {
     if (copyIds.has(x.id)) continue;
-    const words = itemWords(x, money);
-    parts.push(`Leaves out “${x.label}”${words ? ` (${words})` : ''}`);
+    parts.push(`Leaves out “${x.label}” (${itemWords(x, main, money)})`);
   }
   const keys = new Set([...Object.keys(copy), ...Object.keys(main)].filter((k) => !SAID.has(k)));
   if ([...keys].some((k) => !same((copy as Record<string, unknown>)[k], (main as Record<string, unknown>)[k]))) parts.push('Other settings differ');
@@ -103,10 +105,10 @@ export function rowText(when: FiWhen, plan: FiWhen | null, parts: readonly strin
   return `${fi} · ${parts[0]}${parts.length > 1 ? `, and ${parts.length - 1} more` : ''}`;
 }
 
-/** An item there, in words, for Also change it in: as its card says it, or
- *  its name for one no card shows. */
-export function itemValue(x: PlanItem, money: Money): string {
-  return itemWords(x, money) ?? x.label;
+/** An item there, in words, for Also change it in, read in the plan that
+ *  holds it. */
+export function itemValue(x: PlanItem, plan: FirePlanV2, money: Money): string {
+  return itemWords(x, plan, money);
 }
 
 /** The facts every plan shares: the same in every plan, so never a change
@@ -147,6 +149,6 @@ export function figureChoices(targets: readonly AlsoTarget[], kind: 'spending' |
 export function itemChoices(targets: readonly AlsoTarget[], itemId: string, money: Money): { id: string; name: string; value: string }[] {
   return targets.flatMap(({ id, name, plan }) => {
     const x = plan.items.find((i) => i.id === itemId);
-    return x ? [{ id, name, value: itemValue(x, money) }] : [];
+    return x ? [{ id, name, value: itemValue(x, plan, money) }] : [];
   });
 }

@@ -37,11 +37,11 @@ import PlanCompare from '@/components/PlanCompare';
 import AlsoChange from '@/components/AlsoChange';
 import { copyDiffParts, figureChoices, itemChoices } from '@/components/plan-diff';
 import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanProgress';
-import { LifeEventsCard } from '@/components/PlanEvents';
+import { TimelineCard } from '@/components/PlanTimeline';
 import { INITIAL_PLANS } from '@/components/plan-list';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
-import { withIncome } from '@/lib/fire/items';
+import { withEvents, withIncome, withItem, type PlanItem } from '@/lib/fire/items';
 import { wholeMoney } from '@/components/plan-text';
 import { InputsCard } from '@/components/PlanTab';
 import { FigureForm } from '@/components/PlanForms';
@@ -95,7 +95,7 @@ import HandoffSheet from '@/components/HandoffSheet';
 import IouSheet from '@/components/IouSheet';
 import { cardOf as sharedCard, daysAgo as sharedDaysAgo, shared as sharedState, txn as sharedTxn } from './shared-expenses-fixture';
 import { planOf } from '@/lib/fire/plan-v2';
-import { figuresOf, OFF } from './plan-gen';
+import { figuresOf, OFF, timelineProps } from './plan-gen';
 
 // Hide amounts (components/hide-amounts.ts): the switch that shows the app's
 // structure while hiding its figures. Every money amount the main screens
@@ -1316,37 +1316,47 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     const targets = plans.map((p, i) => ({ id: p.id, name: p.name, plan: withIncome(p.plan, [{ ...pension, amount: 18_000 + i * 2_000 }]) }));
     return <AlsoChange choices={itemChoices(targets, 'pen', money)} checked={['c1']} onChange={() => {}} />;
   },
-  // An open copy's life events, a row each with its figures in words:
-  // every kind, rollout 8d's car (once and every few years), raise, windfall
-  // and loan paid off among them.
-  'Plan > Your path: a copy’s life events, of every kind': () => (
-    <LifeEventsCard
-      copyName="Retire at 50"
-      version="s1@r1"
-      events={[
-        { id: 'h', kind: 'house', label: 'Home', atAge: 44, cost: 100_000, yearly: 6_000, years: null },
-        { id: 'c', kind: 'child', label: 'Child', fromAge: 42, yearly: 15_000, years: 18 },
-        { id: 's', kind: 'sabbatical', label: 'Off', fromAge: 45, years: 1, savingsLost: 80_000 },
-        { id: 'p', kind: 'part-time', label: 'Part time', fromAge: 50, toAge: 60, yearly: 20_000 },
-        { id: 'x', kind: 'spending', label: 'Less', fromAge: 65, yearly: -8_000, years: 10 },
-        { id: 'v', kind: 'car', label: 'Car', atAge: 46, cost: 30_000, every: null, times: 1 },
-        { id: 'w', kind: 'car', label: 'Cars', atAge: 50, cost: 35_000, every: 8, times: 4 },
-        { id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 },
-        { id: 'g', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 },
-        { id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 },
-      ]}
-      notes={[]}
-      money={(n) => wholeMoney(n, 'USD')}
-      editable
-      onSave={async () => true}
-    />
-  ),
+  // An open copy's Timeline, a row each with its figures in words: every
+  // kind, rollout 8d's car (once and every few years), raise, windfall and
+  // loan paid off among them, and an item on a balance, which puts an amount
+  // in its point's label.
+  'Plan > Your path: a copy’s Timeline, of every kind': () => {
+    const base = planOf({ ...DEFAULT_PLAN, age: 40, targetAge: 50, spending: 40_000, savings: 50_000, assets: 500_000, withdrawalRate: 0.04 });
+    const events = withEvents(base, [
+      { id: 'h', kind: 'house', label: 'Home', atAge: 44, cost: 100_000, yearly: 6_000, years: null },
+      { id: 'c', kind: 'child', label: 'Child', fromAge: 42, yearly: 15_000, years: 18 },
+      { id: 's', kind: 'sabbatical', label: 'Off', fromAge: 45, years: 1, savingsLost: 80_000 },
+      { id: 'p', kind: 'part-time', label: 'Part time', fromAge: 50, toAge: 60, yearly: 20_000 },
+      { id: 'x', kind: 'spending', label: 'Less', fromAge: 65, yearly: -8_000, years: 10 },
+      { id: 'v', kind: 'car', label: 'Car', atAge: 46, cost: 30_000, every: null, times: 1 },
+      { id: 'w', kind: 'car', label: 'Cars', atAge: 50, cost: 35_000, every: 8, times: 4 },
+      { id: 'r', kind: 'raise', label: 'Raise', fromAge: 42, yearly: 10_000 },
+      { id: 'g', kind: 'windfall', label: 'Gift', atAge: 60, amount: 200_000 },
+      { id: 'l', kind: 'loan-end', label: 'Loan', atAge: 48, yearly: 18_000 },
+    ]);
+    const onBalance: PlanItem = {
+      id: 'b',
+      label: 'Downshift',
+      kind: 'spending',
+      from: { anchor: { at: 'balance', amount: 1_200_000 }, offset: 0 },
+      until: null,
+      once: null,
+      yearly: -5_000,
+      replaces: null,
+      every: null,
+      times: null,
+      inflationAdjusted: true,
+      owner: 'you',
+      beforeTax: false,
+    };
+    return <TimelineCard {...timelineProps(withItem(events, onBalance), undefined, OFF)} copyName="Retire at 50" version="s1@r1" />;
+  },
   // Your figures as rollout 6c draws them: each figure's row, its notes under
   // it (two gathered into a line, one in full), measured savings' rate as its
   // second line, and the assumptions, part-time income among them, as a sub.
   'Plan > Your path: Your figures, their notes, the savings rate and the assumptions': () => {
     const args = planFigureArgs();
-    return <InputsCard figures={figureNotes(args)} view={args.view} money={args.money} onOpen={() => {}} />;
+    return <InputsCard figures={figureNotes(args)} view={args.view} plan={args.plan} money={args.money} onOpen={() => {}} />;
   },
   // A figure's sheet, drawn by itself (the tab opens it only once its row is
   // pressed): Nya's figure, measured and not typed, and Why?.

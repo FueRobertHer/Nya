@@ -1,17 +1,18 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import PlanTab, { EventsCard, FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, simulationAnswered, unreadText, windowText, type Outcome } from '@/components/PlanTab';
+import PlanTab, { FiCard, GridCard, InputsCard, RepairCard, SimulationCard, assetCaveatLines, simulationAnswered, unreadText, windowText, type Outcome } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
 import PlanFanChart from '@/components/PlanFanChart';
 import { DrawnWidth } from '@/components/drawn-width';
-import { ExpenseForm, FigureForm, IncomeForm } from '@/components/PlanForms';
+import { FigureForm } from '@/components/PlanForms';
+import { TimelineCard } from '@/components/PlanTimeline';
 import PlanGrid from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
 import { dayName, monthName, pct, progressText, successText, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf } from '@/lib/fire/plan-v2';
-import { figuresOf } from './plan-gen';
+import { figuresOf, OFF, timelineProps } from './plan-gen';
 import { simulate, successGrid } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
@@ -89,7 +90,7 @@ function YourPath({ a, currencyNote }: { a: FigureArgs; currencyNote: string | n
   return (
     <>
       <FiCard {...a} currencyNote={currencyNote} />
-      <InputsCard figures={figureNotes(a)} view={a.view} money={a.money} onOpen={noop} />
+      <InputsCard figures={figureNotes(a)} view={a.view} plan={a.plan} money={a.money} onOpen={noop} />
     </>
   );
 }
@@ -176,7 +177,9 @@ describe('the FI card', () => {
     const html = cardHtml(plan());
     const t = text(html);
     expect(t).toContain('$1,000,000');
-    expect(t).toContain('$40,000 a year ÷ 4% withdrawal rate');
+    // How it is worked out is in the FI number's sheet (E2); its row says where it comes from.
+    expect(t).not.toContain('$40,000 a year ÷ 4% withdrawal rate');
+    expect(text(figureRow(html, 'FI number'))).toContain('FI number Worked out from spending and tax, at 4% $1,000,000');
     // Where each comes from is its row's sub (rollout phase 6c); how savings
     // were estimated is behind Why? in its sheet.
     expect(text(figureRow(html, 'Annual spending'))).toContain('Annual spending A year, from transactions $40,000');
@@ -456,6 +459,7 @@ describe('the simulation card', () => {
       <SimulationCard
         plan={f.plan}
         notes={f.itemNotes}
+        ages={f.resolution.ages}
         view={view}
         engine={engine}
         outcome={outcome}
@@ -519,8 +523,8 @@ describe('the simulation card', () => {
     const html = render(p, measured, { badge: 'Inputs may be low' });
     const t = text(html);
     expect(html).toContain('<h4 class="plan-heading">From Your path</h4>');
-    expect(t).toContain('Social Security: $24,000 a year after tax from age 67, rising with inflation.');
-    expect(t).toContain("Roof: $30,000 at age 70, on top of the year's spending.");
+    expect(t).toContain('Social Security: $24,000 a year, at 67, for good.');
+    expect(t).toContain('Roof: $30,000, at 70.');
     expect(html).toContain('<div class="plan-card-badge"><span class="badge warn">Inputs may be low</span></div>');
   });
 
@@ -885,50 +889,35 @@ describe('the fan chart', () => {
   });
 });
 
-describe('income and one-offs', () => {
+describe('income and one-offs on the Timeline', () => {
+  const card = (p: FirePlan) => text(renderToStaticMarkup(<TimelineCard {...timelineProps(planOf(p), undefined, OFF)} />));
+
   test('lists them, and says when one is left out of the simulation or comes after it', () => {
     const p = plan({
       income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }],
       expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 60 }],
     });
-    const t = text(renderToStaticMarkup(<EventsCard {...cardOf(p)} money={money} editable open={noop} />));
-    expect(t).toContain('Social Security $24,000 a year from age 67, after tax, rises with inflation. Not in the simulation: add your age.');
-    expect(t).toContain('Roof $30,000 at age 60. Not in the simulation');
-    const aged = plan({ ...p, targetAge: 50, horizon: 5 });
-    const late = text(renderToStaticMarkup(<EventsCard {...cardOf(aged)} money={money} editable open={noop} />));
-    expect(late).toContain("Roof $30,000 at age 60. After the plan ends at 55: only the grid's longer columns reach it.");
+    const t = card(p);
+    expect(t).toContain('Social Security');
+    expect(t).toContain('$24,000');
+    expect(t).toContain('Not placed: add your age.');
+    expect(t).toContain('Roof');
+    expect(card(plan({ ...p, age: 40, targetAge: 50, spending: 40_000, horizon: 5 }))).toContain('After the plan ends at 55: only the grid’s longer columns reach it.');
   });
 
-  test('says where they count: in Will it last? from where it starts, never the FI date; a one-off before then nowhere', () => {
+  test('says where they count, from where Will it last? starts; a one-off before then nowhere, and one before today not at all', () => {
     const p = plan({
+      age: 40,
       targetAge: 50,
+      spending: 40_000,
       income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }],
       expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 45 }],
     });
-    const t = text(renderToStaticMarkup(<EventsCard {...cardOf(p)} money={money} editable open={noop} />));
-    expect(t).toContain('They count in Will it last? from age 50, where it starts, never in your FI date or FI number.');
-    expect(t).toContain("Roof $30,000 at age 45. Before 50, where Will it last? starts, so it isn't counted anywhere.");
-    // Without an age to place them, no line about where they count: each says to add it.
-    const none = plan({ expenses: p.expenses });
-    const n = text(renderToStaticMarkup(<EventsCard {...cardOf(none)} money={money} editable open={noop} />));
-    expect(n).not.toContain('They count in');
-    expect(n).toContain('Roof $30,000 at age 45. Not in the simulation: add your age.');
+    const t = card(p);
+    expect(t).toContain('In Will it last?: costs, windfalls and income, from 50, where it starts.');
+    expect(t).toContain('Before 50, where Will it last? starts, so it isn’t counted anywhere.');
     // One before today: already spent, so your measured figures may count it.
-    const past = plan({ age: 40, targetAge: 50, expenses: [{ id: 'car', label: 'Car', amount: 20_000, atAge: 38 }] });
-    expect(text(renderToStaticMarkup(<EventsCard {...cardOf(past)} money={money} editable open={noop} />))).toContain("Car $20,000 at age 38. Before today, so it isn't counted: your measured figures may already count it.");
-  });
-
-  test('their sheets say where they count, and point to where a life event goes: What if… on your plan, the copy’s own life events in one', () => {
-    const roof = { id: "roof", label: "Roof", amount: 30_000, atAge: 45 };
-    const sheet = (Form: typeof IncomeForm | typeof ExpenseForm, copy: string | null, item: typeof roof | null = null) =>
-      text(renderToStaticMarkup(<Form plan={planOf(plan(item ? { expenses: [item] } : {}))} item={item as never} onSave={async () => true} onDone={noop} editable copy={copy} />));
-    expect(sheet(IncomeForm, null)).toContain("Counts in Will it last?, never in your FI date or FI number. Part-time work is a life choice in What if…, and Barista FI's part-time income is in Assumptions.");
-    expect(sheet(IncomeForm, "Retire at 50")).toContain("Part-time work is a life event in this copy, and Barista FI's part-time income is in Assumptions.");
-    // A new one goes there instead; one kept here as well would count twice.
-    expect(sheet(ExpenseForm, null)).toContain("Counts in Will it last? once your age places it, never in your FI date. To move your FI date with it, try it in What if… as a life choice instead of here.");
-    expect(text(renderToStaticMarkup(<ExpenseForm plan={planOf(plan({ targetAge: 55 }))} item={null} onSave={async () => true} onDone={noop} editable />))).toContain("Counts in Will it last? at 55 or later, where that starts, never in your FI date.");
-    expect(sheet(ExpenseForm, null, roof)).toContain("try it in What if… as a life choice instead, and remove it here, or it counts twice.");
-    expect(sheet(ExpenseForm, "Retire at 50", roof)).toContain("To move this copy's FI date with it, add it to its life events instead, and remove it here, or it counts twice.");
+    expect(card(plan({ age: 40, targetAge: 50, spending: 40_000, expenses: [{ id: 'car', label: 'Car', amount: 20_000, atAge: 38 }] }))).toContain('Before today, so it isn’t counted: your measured figures may already count it.');
   });
 });
 

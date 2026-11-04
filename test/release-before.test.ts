@@ -159,6 +159,8 @@ describe('the release before’s own code', () => {
       'release-before/fire/saved-plan.ts': '517a6e34e3c9592a7d47deddc9b9c2bc45668f3b',
       'release-before/fire/plan-currency.ts': '905e7a56feaed793b4d1b1ad0a4bba79ec3b1200',
       'release-before/fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
+      // The plans as copies' reader, the same blob from baa20327 (C1) to
+      // b681a09f (C2).
       'release-before/fire/copies.ts': '399126acb55179193e830a759db2d8b9a053cf79',
       // The parts of a download its restore knows, as at b681a09f.
       'release-before/user-restore/parts.ts': '4ee9199874325d3a19232c23c3ce0be07ddafe6f',

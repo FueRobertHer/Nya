@@ -8,7 +8,7 @@
 // stay hidden. No engine, no data.
 
 import { allocationOf, type FirePlan, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
-import { carAges, type EventPart, type LifeEvent, type LifeEventKind, type Shortfall } from '@/lib/fire/events';
+import { carAges, type EventPart, type LifeEvent, type Shortfall } from '@/lib/fire/events';
 import type { StartsWith } from '@/lib/fire/plan-figures';
 import { settingOf, type ScenarioChange, type ScenarioChanges, type SetField } from '@/lib/fire/scenarios';
 import { RULE_NAMES, REBALANCE_TEXT, pct } from './plan-text';
@@ -38,18 +38,6 @@ export const START_NAMES: Record<FirePlan['start'], string> = {
   'fi-number': 'your FI number, at the stop age',
   assets: 'your invested assets, today',
   custom: 'a balance you typed, at the stop age',
-};
-
-export const EVENT_NAMES: Record<LifeEventKind, string> = {
-  house: 'Buying a home',
-  child: 'A child',
-  sabbatical: 'A sabbatical',
-  'part-time': 'Part-time work',
-  spending: 'A change in spending',
-  car: 'A car',
-  raise: 'A raise',
-  windfall: 'A windfall',
-  'loan-end': 'A loan paid off',
 };
 
 /** A setting's value in words. */
@@ -155,19 +143,6 @@ export function eventText(e: LifeEvent, money: Money): string {
   }
 }
 
-/** Where an event counts, in a sentence. */
-export function eventCountsText(e: LifeEvent): string {
-  if (e.kind === 'part-time') return 'In the simulation from the stop age, as income for its years. Not in the FI date, which assumes full-time work until FI.';
-  if (e.kind === 'sabbatical') return 'In the FI date: it lowers what is saved in its years.';
-  if (e.kind === 'raise') return 'In the FI date: more is saved each year from its age. Not in the simulation: it changes what you save, never what you spend once you stop.';
-  if (e.kind === 'windfall') return 'In the FI date, added to your investments at its age, and in the simulation as money in that year when it comes from the stop age on.';
-  if (e.kind === 'car') return `In the FI date, from your investments at ${e.every === null ? 'its age' : 'each one’s age'}, and in the simulation as a one-off for each one from the stop age.`;
-  if (((e.kind === 'house' || e.kind === 'spending') && e.years === null) || e.kind === 'loan-end') {
-    return 'In the FI date from its age, and in the simulation: in effect at the stop age, it is part of your spending in retirement, and so of your FI number.';
-  }
-  return 'In the FI date in every year it covers, and in the simulation for its years from the stop age.';
-}
-
 export const EVENT_PART_TEXT: Record<EventPart, string> = {
   past: 'Some of it is before today: it counts from today, and your measured figures may already count what has begun.',
   already: 'It is before today, so it is left out: your measured figures may already count it.',
@@ -240,7 +215,7 @@ export function resolveErrorText(field: string, error: string, base: FirePlan, s
 
 /** Retirement spending with lasting changes, beside the FI number. */
 export function retirementText(spending: number, lasting: number, today: number, money: Money): string {
-  return `${money(spending)} a year in retirement: ${money(today)} now, ${lasting >= 0 ? 'and' : 'less'} ${money(Math.abs(lasting))} a year of lasting changes from this plan’s life events`;
+  return `${money(spending)} a year in retirement: ${money(today)} now, ${lasting >= 0 ? 'and' : 'less'} ${money(Math.abs(lasting))} a year of lasting changes from this plan’s items`;
 }
 
 /** Lasting changes that start after the retirement age, which the FI number
