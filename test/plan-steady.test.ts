@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { planPath } from '@/lib/fire/path';
-import { walkToFi } from '@/lib/fire/events';
+import { savingsIn, walkToFi } from '@/lib/fire/events';
 import { projectBalance } from '@/lib/fire/fi';
 import { itemFromExpense, type Anchor, type PlanItem } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -31,6 +31,22 @@ const figures = (over: Partial<FirePlanV2>): PlanFigures => {
   if ('refused' in f) throw new Error('refused');
   return f;
 };
+
+describe('two part-time jobs begun before today, one ending on FI', () => {
+  const job = (id: string, start: number, until: PlanItem['until']): PlanItem => ({ ...itemFromExpense({ id, label: id, amount: 0, atAge: 50 }), kind: 'part-time', from: when({ at: 'age', age: start }), until, once: null, yearly: 25_000, replaces: 50_000 });
+
+  test('the take-home they replaced comes back once, so saving is what it was', () => {
+    const f = figures({ assets: 300_000, items: [job('a', 36, when({ at: 'fi' }, -2)), job('b', 38, when({ at: 'age', age: 43 }))] });
+    const [a, b] = f.resolution.ages as { start: number; end: number }[];
+    expect(b.end).toBe(43);
+    expect(a.end).toBeGreaterThan(43);
+    const w = f.events!.walk;
+    expect(savingsIn(w, C, 2)).toBe(C);
+    // One gone, so its pay is; the take-home isn't back while the other runs.
+    expect(savingsIn(w, C, 3)).toBe(C - 25_000);
+    expect(savingsIn(w, C, a.end - 40)).toBe(C);
+  });
+});
 
 describe('fixed edges', () => {
   test('an age, an edge on another item’s end, the stop', () => {

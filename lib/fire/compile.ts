@@ -16,7 +16,10 @@
 //     with inflation counts at its amount in the walk, as the simulation
 //     counts it from the year it first does;
 //   - part-time work that says what it replaces, starting before the stop:
-//     in the walk, what it pays less what it replaces;
+//     in the walk, what it pays less what it replaces. Two that overlap for
+//     one person both count, as changes in pay add (one that takes over from
+//     another starts on its end, so they can't meet). Begun before today, one
+//     person's take-home comes back once (`takeHomeBack`);
 //   - pay up or down: a raise for good, a career break for its years, any
 //     change between;
 //   - income given before tax at 1 - taxRate, in the walk and the simulation.
@@ -53,10 +56,40 @@ export type CompiledItems = CompiledEvents & {
 /** The ages a repeat is bought at: its start, then every so many years. */
 const repeats = (x: PlanItem, start: number) => Array.from({ length: x.times ?? 1 }, (_, k) => start + k * (x.every ?? 0));
 
+/** Part-time work begun before today and still running is in measured saving,
+ *  which has the take-home it replaced gone once, however many jobs there are.
+ *  So one person's comes back once: the largest said, from the last of their
+ *  ends, and not at all while one of them runs for good. By item, what comes
+ *  back at its end. */
+function takeHomeBack(items: readonly PlanItem[], ages: readonly ItemAges[], a: number | null, stop: number | null): Map<number, number> {
+  const back = new Map<number, number>();
+  if (a === null || stop === null) return back;
+  for (const partner of [false, true]) {
+    let last: number | null = null;
+    let lastEnd = -Infinity;
+    let largest = 0;
+    let forGood = false;
+    for (const [i, x] of items.entries()) {
+      const placed = ages[i];
+      if (x.kind !== 'part-time' || (x.owner === 'partner') !== partner || !x.replaces || !placed) continue;
+      if (placed.start >= a || placed.start >= stop || (placed.end !== null && placed.end <= a)) continue;
+      largest = Math.max(largest, x.replaces);
+      if (placed.end === null) forGood = true;
+      else if (placed.end > lastEnd) {
+        last = i;
+        lastEnd = placed.end;
+      }
+    }
+    if (last !== null && !forGood) back.set(last, largest);
+  }
+  return back;
+}
+
 /** Where each item counts, at `ages` (one per item). */
 export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges[], at: CompileAt, count: Count): CompiledItems {
   const out: CompiledItems = { walk: { moneyIn: [], costs: [], spans: [] }, lasting: [], later: [], sim: { oneOffs: [], income: [], lowerSpending: [] }, notes: [], inWalk: items.map(() => false) };
   const { age: a, startAge: S, years: Y, stop, taxRate } = at;
+  const comesBack = takeHomeBack(items, ages, a, stop);
   for (const [i, x] of items.entries()) {
     const placed = ages[i];
     if (placed === null) continue;
@@ -217,10 +250,11 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
         const pays = afterTax(yearly);
         // In the walk only when it says what it replaces and starts before
         // the stop; begun before today, in measured saving, so from its end
-        // the walk adds back what it replaced less what it paid.
+        // the walk takes out what it paid and adds back the take-home it
+        // replaced, once for one person.
         if (x.replaces !== null && a !== null && stop !== null && start < stop) {
           if (start >= a) span(start - a, end === null ? null : end - a, pays - x.replaces);
-          else if (end !== null && end > a) span(end - a, null, x.replaces - pays);
+          else if (end !== null && end > a) span(end - a, null, (comesBack.get(i) ?? 0) - pays);
         }
         if (S === null) break;
         if (start < S) note('before-start');

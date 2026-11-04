@@ -129,6 +129,34 @@ describe('a row’s notes', () => {
     expect(onBalance).toMatch(/Starts at \d+ in every run, as on your steady path: Will it last\? starts from the balance you typed, not your own path\./);
   });
 
+  describe('two part-time jobs that meet on the steady path', () => {
+    const job = (label: string, from: PlanItem['from'], until: PlanItem['until'], set: Partial<PlanItem> = {}) => mk(label, 'part-time', from, { until, yearly: 20_000, replaces: 30_000, ...set });
+    const says = (other: string) => `<span class="plan-warning">It overlaps “${other}” on your steady path. Both count in those years. If one takes over from the other, start it when the other ends.</span>`;
+
+    test('each row says so, naming the other', () => {
+      const html = card({ ...PLAN, items: [job('Shop', at(41), at(90)), job('Consulting', on('fi', -1), at(90))] });
+      expect(html).toContain(says('Consulting'));
+      expect(html).toContain(says('Shop'));
+    });
+
+    test('nothing when one takes over from the other, for a partner’s, or for one running no years', () => {
+      const shop = job('Shop', at(41), on('fi', -1));
+      const plan = (b: PlanItem) => text(card({ ...PLAN, partnerAge: 40, items: [shop, b] }));
+      expect(plan(job('Consulting', { anchor: { at: 'item', id: 'Shop', edge: 'end' }, offset: 0 }, at(90)))).not.toContain('It overlaps');
+      expect(plan(job('Hers', at(42), at(90), { owner: 'partner' }))).not.toContain('It overlaps');
+      // Its end on FI falls before its start, so the steady path has it run none.
+      expect(plan(job('None', at(45), on('fi', -20)))).not.toContain('It overlaps');
+    });
+
+    test('nothing for years that count nowhere: all before today, or in neither the FI date nor Will it last?', () => {
+      expect(text(card({ ...PLAN, items: [job('Over', at(30), at(38)), job('Now', at(36), on('fi', -1))] }))).not.toContain('It overlaps');
+      const unsaid = { replaces: null };
+      const neither = text(card({ ...PLAN, items: [job('Shop', at(41), on('fi', -1), unsaid), job('Gig', at(45), on('fi', -1), unsaid)] }));
+      expect(neither).toContain('Say what take-home it replaces');
+      expect(neither).not.toContain('It overlaps');
+    });
+  });
+
   test('a milestone never reached is last, with the nearest the steady path comes', () => {
     const html = card({ ...PLAN, items: [ROOF, mk('Yacht', 'one-off', { anchor: { at: 'balance', amount: 900_000_000 }, offset: 0 }, { once: 1_000 })] });
     const t = text(html);

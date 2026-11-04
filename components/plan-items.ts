@@ -437,6 +437,26 @@ export function rowNoteText(
   return notePartText(x, part, o.plan, o.startAge);
 }
 
+/** Two part-time items for one person are refused between fixed ages
+ *  (lib/fire/items.ts itemRules). On an anchor that moves they can still meet,
+ *  and both count there (lib/fire/compile.ts), so each says so, by where the
+ *  steady path has them. Only from today, since years gone count nowhere, and
+ *  only where both do count: both in the FI date, or the years in Will it
+ *  last? An item that runs no years meets nothing. */
+function overlapText(x: PlanItem, f: PlanFigures, i: number, startAge: number | null): string | null {
+  const ages = f.resolution.ages[i];
+  if (x.kind !== 'part-time' || !ages) return null;
+  const clash = f.plan.items.find((y, j) => {
+    const o = f.resolution.ages[j];
+    if (j === i || y.kind !== 'part-time' || (y.owner === 'partner') !== (x.owner === 'partner') || !o) return false;
+    const from = Math.max(ages.start, o.start, f.plan.age ?? -Infinity);
+    const to = Math.min(ages.end ?? Infinity, o.end ?? Infinity);
+    if (from >= to) return false;
+    return (countsInFiDate(f, i) && countsInFiDate(f, j)) || (startAge !== null && to > startAge);
+  });
+  return clash ? `It overlaps “${clash.label}” on your steady path. Both count in those years. If one takes over from the other, start it when the other ends.` : null;
+}
+
 /** What the compile says of an item, the same in its row and its sheet. */
 export function itemWarnings(x: PlanItem, f: PlanFigures, i: number): string[] {
   const sim = 'sim' in f.engine ? f.engine : null;
@@ -445,7 +465,8 @@ export function itemWarnings(x: PlanItem, f: PlanFigures, i: number): string[] {
   const at = f.resolution.ages[i]?.start ?? null;
   const inFi = countsInFiDate(f, i);
   const said = f.itemNotes.filter((n) => n.id === x.id).flatMap((n) => rowNoteText(x, n.part, { plan: f.plan, at, startAge, end, inFi, runs: sim !== null }) ?? []);
-  return [...new Set(said)];
+  const overlap = overlapText(x, f, i, startAge);
+  return [...new Set(overlap ? [...said, overlap] : said)];
 }
 
 /** Whether an item is placed by the steady path in every run of Will it
@@ -660,8 +681,9 @@ export function previewLines(p: PreviewInput): PreviewLines {
     rows.push({ key: 'You’d save', value: `${p.money(Math.max(0, p.savings + x.yearly))} a year, not ${p.money(p.savings)}` });
   }
 
-  // Part-time work before the stop: what it pays, less what it replaces.
-  if (x.kind === 'part-time' && p.savings !== null && x.yearly !== null && x.replaces !== null && ages && stop !== null && ages.start < stop) {
+  // Part-time work before the stop: what it pays, less what it replaces. Begun
+  // before today it is in the saving this would be measured against.
+  if (x.kind === 'part-time' && p.savings !== null && x.yearly !== null && x.replaces !== null && ages && stop !== null && ages.start < stop && today !== null && ages.start >= today) {
     const pays = x.yearly * (x.beforeTax ? 1 - f.plan.taxRate : 1);
     rows.push({ key: 'You’d save', value: `${p.money(Math.max(0, p.savings + pays - x.replaces))} a year, not ${p.money(p.savings)}` });
   }
@@ -704,16 +726,6 @@ export function previewLines(p: PreviewInput): PreviewLines {
     }
   }
   if (a.at === 'balance') lines.push('Checked on the balance at the start of each year, and started once, so the spending it adds can’t switch it off again.');
-  // Refused between fixed ages (lib/fire/items.ts itemRules); on an anchor
-  // that moves, they are said to meet where the steady path has them.
-  if (x.kind === 'part-time' && ages) {
-    const clash = f.plan.items.find((y, j) => {
-      const o = f.resolution.ages[j];
-      if (y.id === x.id || y.kind !== 'part-time' || (y.owner === 'partner') !== (x.owner === 'partner') || !o) return false;
-      return ages.start < (o.end ?? Infinity) && o.start < (ages.end ?? Infinity);
-    });
-    if (clash) lines.push(`It overlaps “${clash.label}” on your steady path, for one person. Both count in those years, so change when one of them starts or ends.`);
-  }
 
   if (p.runsOutAt !== null) lines.push(`On ${p.where === 'copy' ? 'this copy’s' : 'this'} steady path your invested assets run out at ${p.runsOutAt}.`);
   if (ages && onSteadyPath(x, f.plan)) {
