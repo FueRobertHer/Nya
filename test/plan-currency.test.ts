@@ -7,14 +7,11 @@ import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import {
   askText,
   candidates,
-  currencyRecord,
   hasTypedAmounts,
-  isPlanCurrencyRecord,
   keptText,
   planCurrencyState,
   firstText,
   readCurrencyAnswer,
-  recordedCurrency,
   relabelOffer,
   shownFrom,
   unconfirmedText,
@@ -56,39 +53,6 @@ describe('what a record is for', () => {
       TYPED,
     ]) {
       expect(hasTypedAmounts(p)).toBe(true);
-    }
-  });
-
-  test('a record holds while the plan’s typed amounts are the ones it was made for, whatever else changed', () => {
-    const record = currencyRecord(TYPED, 'USD');
-    expect(isPlanCurrencyRecord(record)).toBe(true);
-    expect(recordedCurrency(TYPED, record)).toBe('USD');
-    // An age or a rate changed since (the release before saves those too): still USD.
-    expect(recordedCurrency({ ...TYPED, age: 41, withdrawalRate: 0.035, method: 'monte-carlo' }, record)).toBe('USD');
-    // Any amount changed, added or taken away: not known, so the Plan asks.
-    for (const changed of [
-      { ...TYPED, spending: 45_000 },
-      { ...TYPED, savings: null },
-      { ...TYPED, startBalance: 1 },
-      { ...TYPED, partTimeIncome: 5 },
-      { ...TYPED, income: [] },
-      { ...TYPED, income: [{ ...TYPED.income[0], amount: 21_000 }] },
-      { ...TYPED, expenses: [{ id: 'roof', label: 'Roof', amount: 15_000, atAge: 50 }] },
-    ]) {
-      expect(recordedCurrency(changed, record)).toBeNull();
-    }
-    // A label or an age of an item is not an amount.
-    expect(recordedCurrency({ ...TYPED, income: [{ ...TYPED.income[0], label: 'SS', fromAge: 70 }] }, record)).toBe('USD');
-    // Nothing typed: no currency of its own, whatever a record says.
-    expect(recordedCurrency(DEFAULT_PLAN, currencyRecord(DEFAULT_PLAN, 'USD'))).toBeNull();
-    expect(recordedCurrency(TYPED, null)).toBeNull();
-    expect(recordedCurrency(null, record)).toBeNull();
-  });
-
-  test('the stored shape is closed: a later version, a field it doesn’t know or a bad code is not a record', () => {
-    const r = currencyRecord(TYPED, 'EUR');
-    for (const later of [{ ...r, version: 2 }, { ...r, also: 1 }, { ...r, currency: 'eur' }, { ...r, currency: 'EURO' }, { ...r, amounts: { ...r.amounts, extra: 1 } }, { ...r, amounts: { ...r.amounts, spending: '40000' } }, null, 'EUR']) {
-      expect(isPlanCurrencyRecord(later)).toBe(false);
     }
   });
 

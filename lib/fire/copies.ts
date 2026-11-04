@@ -2,13 +2,11 @@
 //
 // Plans as copies (the tax plan's D14): every plan a whole FirePlan, one
 // entry each in `fire-plans`, and what every plan shares (the facts, and
-// which plan is yours) in `plan-facts` (lib/plan-copies.ts). The scenarios
-// (lib/fire/scenarios.ts) become copies on the first write of the release
-// after this one (C2); this one reads the stores, so a rollback from it
-// neither loses a copy nor saves your plan where it isn't read first.
+// which plan is yours) in `plan-facts` (lib/plan-copies.ts), written through
+// lib/plan-writes.ts.
 //
 // READS TAKE WHAT ANY RELEASE WROTE. isPlanEntry and isPlanFacts check the
-// shape and types, never a range, as isPlanScenario does: an entry a later
+// shape and types, never a range, as isFirePlan does: an entry a later
 // rule refuses still reads. A `tax` that isn't null (the per plan tax choices,
 // from T2's reader) and facts of version 2 (E2's, with the tax facts) are a
 // newer release's: not recognised, so never written over from here.
@@ -18,10 +16,9 @@
 // (test/release-before.test.ts), so it imports only the plan modules.
 
 import { DEFAULT_PLAN, isFirePlan, type FirePlan, type PlanFunding } from './plan';
-import { basePlanOf, isStoredPlan, planOf, toStored, upgradeStoredPlan, type FirePlanV2, type StoredPlan } from './plan-v2';
-import { eventItems } from './items';
-import { MAX_PLAN_SCENARIOS, applyScenario, hasAmounts, resolveScenario, type Applied, type PlanScenario } from './scenarios';
-import { hasTypedAmounts, recordedCurrency, type PlanCurrencyRecord } from './plan-currency';
+import { isStoredPlan, planOf, upgradeStoredPlan, type StoredPlan } from './plan-v2';
+import { MAX_PLAN_SCENARIOS } from './scenarios';
+import { hasTypedAmounts } from './plan-currency';
 
 /** One plan, as `fire-plans` stores it. */
 export type PlanEntry = {
@@ -52,10 +49,9 @@ export type Facts = {
 /** The facts, and which entry is yours, as `plan-facts` stores them. */
 export type PlanFacts = Facts & { version: 1; main: string };
 
-/** The main plan's id before any plan is made yours: the plan there was
- *  before copies. */
+/** Your first plan's id, before another is made yours. */
 export const MAIN_ID = 'main';
-/** Your plan and today's scenarios' limit. */
+/** Your plan and as many more as scenarios were limited to. */
 export const MAX_FIRE_PLANS = 1 + MAX_PLAN_SCENARIOS;
 
 const ENTRY_KEYS = ['name', 'plan', 'tax', 'currency', 'createdAt', 'updatedAt'];
@@ -155,55 +151,4 @@ export function mainOf(
   if (oldest) return { id: oldest[0], missing: true };
   const other = [...report.unreadable, ...report.unrecognised].sort()[0];
   return other === undefined ? null : { id: other, missing: true };
-}
-
-/** One scenario as a copy: its plan, and why it isn't run (the rule it
- *  breaks now, as its card says), with the replacements left out that it
- *  names. */
-export type MigratedCopy = { id: string; entry: PlanEntry; notRun: string | null; orphans: Applied['orphans'] };
-
-export type Migration = { main: PlanEntry; facts: PlanFacts; copies: MigratedCopy[] };
-
-/**
- * The plan and its scenarios as copies, in memory, for the first write
- * (copies-and-data.md, Migration). Your plan as stored, id `main`, its
- * currency only from a record that holds; each scenario on the plan the page
- * runs it on (version 1, repaired), its life events as items after its
- * incomes and one-offs, keeping its id, name and createdAt. A scenario's own
- * currency only where it holds amounts of its own (otherCurrency's reading);
- * else your plan's, whose amounts the copy holds. `stamps` are each entry's
- * first `updatedAt`, which the first write works out (the legacy plan's
- * SHA-1, each scenario's rev).
- *
- * Refused, with why, where no copy can be right: a plan with typed amounts
- * whose currency isn't known (no record that holds), a version 2 legacy plan
- * (scenarios run on version 1 only), a scenario with your plan's id.
- */
-export function migratePlans(
-  legacy: StoredPlan | null,
-  record: PlanCurrencyRecord | null,
-  scenarios: readonly (readonly [string, PlanScenario])[],
-  at: string,
-  stamps: { main: string; copies: ReadonlyMap<string, string> }
-): { ok: Migration } | { error: string } {
-  const stored: StoredPlan = legacy ?? DEFAULT_PLAN;
-  if (stored.version === 2) return { error: 'Your plan holds what only a newer version of Nya saves, so its scenarios can’t become plans of their own.' };
-  const currency = recordedCurrency(stored, record);
-  if (currency === null && hasTypedAmounts(stored)) return { error: 'Say which currency your plan’s figures are in first, so each plan keeps it.' };
-  if (scenarios.some(([id]) => id === MAIN_ID)) return { error: `A scenario has the id "${MAIN_ID}", which your plan takes.` };
-  const base = toStored(basePlanOf(stored).plan, 1);
-  // A version 1 plan, repaired, always reads back as version 1.
-  if ('error' in base) return { error: base.error };
-  const main: PlanEntry = { name: 'First plan', plan: stored, tax: null, currency, createdAt: at, updatedAt: stamps.main };
-  const facts: PlanFacts = { version: 1, main: MAIN_ID, ...factsOf(stored) };
-  const copies = scenarios.map(([id, s]): MigratedCopy => {
-    const r = resolveScenario(base.plan, s);
-    const applied: Applied = r.ok ? r : applyScenario(base.plan, s);
-    const v2: FirePlanV2 = planOf(applied.plan);
-    const plan: FirePlanV2 = { ...v2, items: [...v2.items, ...eventItems(s.events)] };
-    const own = hasAmounts(s) && s.currency !== null ? s.currency : currency;
-    const entry: PlanEntry = { name: s.name, plan, tax: null, currency: holdsAmounts(plan) ? own : null, createdAt: s.createdAt, updatedAt: stamps.copies.get(id) ?? at };
-    return { id, entry, notRun: r.ok ? null : r.error, orphans: applied.orphans };
-  });
-  return { ok: { main, facts, copies } };
 }

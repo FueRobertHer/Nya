@@ -18,12 +18,12 @@
 // name. Those can't be judged by their name, so they are read: one that holds
 // no budget is nothing, one that holds any, or can't be read, is budgets.
 //
-// YOUR PLAN AS A COPY. Once a newer release has made the plans copies
-// (lib/plan-copies.ts), an account with only its plan holds one entry of
-// `fire-plans`: a setting, as `fire-plan` is, whatever its id, and a restore
-// replaces it (lib/user-restore/commit.ts clearPlans), damaged or not. More
-// than one are copies of your plan, which the person made; one a newer
-// release wrote, which this one can't read, is data Nya doesn't show.
+// YOUR PLAN AS A COPY. Your plans are copies (lib/plan-copies.ts): an
+// account with only its plan holds one entry of `fire-plans`, a setting
+// whatever its id, and a restore replaces it (lib/user-restore/commit.ts
+// clearsPlans), damaged or not. More than one are copies of your plan, which
+// the person made; one a newer release wrote, which this one can't read, is
+// data Nya doesn't show.
 
 import type { Ctx } from '../containers';
 import { containerKeys } from '../account-deletion';
@@ -93,7 +93,6 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['holdings history', ['holdings:history']],
   ['planned bills and income', ['planned-items']],
   ['runway scenarios you saved', ['runway-scenarios']],
-  ['plan scenarios you saved', ['plan-scenarios']],
   ['copies of your plan', ['fire-plans']],
   ['the plan you saved as your plan', ['fire-plan-saved']],
   ['shared expenses', ['expense-people', 'expense-shares', 'expense-ious', 'expense-payments', 'expense-dismissed']],

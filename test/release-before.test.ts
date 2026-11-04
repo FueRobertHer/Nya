@@ -32,7 +32,10 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     as copies in fire/copies.ts) reads every plan this release writes:
 //     each entry of `fire-plans` and `plan-facts`, your plan the one it
 //     picks, each with its currency where it holds an amount, and every saved
-//     plan (test/release-before-plans.test.ts, through the routes).
+//     plan (test/release-before-plans.test.ts, through the routes);
+//   - its restore (test/fixtures/release-before/user-restore/parts.ts, C2's)
+//     knows every part of a download this release makes
+//     (test/release-before-plans.test.ts).
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -159,6 +162,8 @@ describe('the release before’s own code', () => {
       // The plans as copies' reader, the same blob from baa20327 (C1) to
       // b681a09f (C2).
       'release-before/fire/copies.ts': '399126acb55179193e830a759db2d8b9a053cf79',
+      // The parts of a download its restore knows, as at b681a09f.
+      'release-before/user-restore/parts.ts': '4ee9199874325d3a19232c23c3ce0be07ddafe6f',
       'release-before/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
       'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
       'release-before/local-date.ts': '23883717b80397910e368084e865ca84f367f988',
@@ -384,12 +389,10 @@ describe('the release before, reading what this release writes', () => {
 // The Plan's modules, the release before's and this one's.
 const oPlan = await import('./fixtures/release-before/fire/plan');
 const oSaved = await import('./fixtures/release-before/fire/saved-plan');
-const oScenarios = await import('./fixtures/release-before/fire/scenarios');
 const oCurrency = await import('./fixtures/release-before/fire/plan-currency');
 const { planOf, toStored, upgradeStoredPlan } = await import('@/lib/fire/plan-v2');
 const { expensesOf, incomeOf, withExpenses, withIncome } = await import('@/lib/fire/items');
-const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
-const { NO_CHANGES, recordSave } = await import('@/lib/fire/scenarios');
+const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { genPlan, rand } = await import('./plan-gen');
 
 describe('the Plan, as this release writes it where C2 reads', () => {
@@ -421,22 +424,12 @@ describe('the Plan, as this release writes it where C2 reads', () => {
     expect(saved).toBeGreaterThan(250);
   });
 
-  test('its saved plan, scenario and currency record readers take what this release writes beside it', () => {
-    for (const [i, { before, sent }] of plans.entries()) {
+  test('its saved plan reader takes what this release saves beside it, and its amounts are the ones this release compares', () => {
+    for (const [i, { sent }] of plans.entries()) {
       if (!sent) continue;
       const saved = { version: 1, plan: sent, savings: 10_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: `r${i}` };
       expect(oSaved.isSavedPlan(saved)).toBe(true);
-      // A scenario saved from an edit made on top of the plan (lib/fire/
-      // scenarios.ts, unchanged in E1, its base the plan as version 1).
-      const changes = recordSave(before, NO_CHANGES, sent);
-      if ('ok' in changes) {
-        const scenario = { ...changes.ok, name: 'Edited', currency: 'USD', version: 1, createdAt: '2026-11-01T12:00:00.000Z', savedAt: '2026-11-01T12:00:00.000Z', rev: `s${i}` };
-        expect(oScenarios.isPlanScenario(scenario)).toBe(true);
-      }
-      const record = currencyRecord(sent, 'USD');
-      expect(oCurrency.isPlanCurrencyRecord(record)).toBe(true);
       expect(typedAmounts(sent)).toEqual(oCurrency.typedAmounts(sent));
-      if (oCurrency.hasTypedAmounts(sent)) expect(oCurrency.recordedCurrency(sent, record)).toBe('USD');
     }
   });
 

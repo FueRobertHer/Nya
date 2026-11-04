@@ -1,13 +1,14 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld } from './restore-fixture';
 
 // The stores added since a restore was first built (designs/restore-2.md,
 // section 4), through a real download and restore (test/restore-run.ts):
-// Plan scenarios, runway scenarios and the Plan's currency come back as the
-// download had them; the Plan and its currency's record go together; the
-// record of what API tokens changed never comes back, is counted as left
-// out, and makes an account in use; and the API tokens made here are said.
+// runway scenarios and the plan saved as your plan come back as the download
+// had them; the Plan's parts from before copies, retired since, never reach
+// the restored copy; the record of what API tokens changed never comes back,
+// is counted as left out, and makes an account in use; and the API tokens
+// made here are said.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.APP_PASSWORD = 'hunter2';
@@ -18,10 +19,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { forgetEpochs } = await import('@/lib/sessions');
-const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { currencyRecord } = await import('@/lib/fire/plan-currency');
-const { planScenariosStore } = await import('@/lib/plan-scenarios');
 const { savedPlanStore } = await import('@/lib/saved-plan');
 const { runwayScenariosStore } = await import('@/lib/report/runway-scenario-store');
 const { changeStore } = await import('@/lib/api-changes');
@@ -73,62 +71,28 @@ const CHANGE = {
 };
 const CHANGE_ID = '20261001.0123456789abcdef.0123456789ab';
 
-describe('Plan scenarios, runway scenarios and the Plan’s currency', () => {
+describe('runway scenarios and the plan saved as your plan', () => {
   test('come back as the download had them, and go into the restored copy’s own download the same', async () => {
-    await firePlanStore.set(OTHER, PLAN);
-    await planCurrencyStore.set(OTHER, currencyRecord(PLAN, 'EUR'));
-    await planScenariosStore.set(OTHER, 'sc1', SCENARIO);
     await savedPlanStore.set(OTHER, SAVED);
     await runwayScenariosStore.set(OTHER, 'rw1', RUNWAY);
     const text = await downloadText(new Date(), OTHER);
     expect((await restoreAll(text)).status).toBe('finished');
-    expect(await firePlanStore.get(ctx)).toEqual(PLAN);
-    expect(await planCurrencyStore.get(ctx)).toEqual(currencyRecord(PLAN, 'EUR'));
-    expect(await planScenariosStore.get(ctx, 'sc1')).toEqual(SCENARIO);
     expect(await savedPlanStore.get(ctx)).toEqual(SAVED);
     expect(await runwayScenariosStore.get(ctx, 'rw1')).toEqual(RUNWAY);
     const was = JSON.parse(text);
     const again = JSON.parse(await downloadText(new Date()));
-    for (const part of ['fire-plan', 'fire-plan-currency', 'fire-plan-saved', 'plan-scenarios', 'runway-scenarios']) expect([part, again[part]]).toEqual([part, was[part]]);
+    for (const part of ['fire-plan-saved', 'runway-scenarios']) expect([part, again[part]]).toEqual([part, was[part]]);
   });
 });
 
-describe('the Plan and its currency’s record go together', () => {
-  /** The account restored into has a Plan of its own, typed in dollars. */
-  const tried = async () => {
-    const own = { ...DEFAULT_PLAN, spending: 40_000, savings: 12_000 };
-    await firePlanStore.set(ctx, own);
-    await planCurrencyStore.set(ctx, currencyRecord(own, 'USD'));
-    return own;
-  };
-
-  test('a file whose Plan has no record of its currency takes the account’s record away, so the Plan asks', async () => {
-    await firePlanStore.set(OTHER, PLAN);
-    const text = await downloadText(new Date(), OTHER);
-    await tried();
-    // Settings alone: the account is empty enough.
-    expect((await scanAccount(ctx)).found).toEqual([]);
-    await restoreAll(text);
-    expect(await firePlanStore.get(ctx)).toEqual(PLAN);
-    expect(await planCurrencyStore.get(ctx)).toBeNull();
-  });
-
-  test('a file with both replaces both', async () => {
-    await firePlanStore.set(OTHER, PLAN);
-    await planCurrencyStore.set(OTHER, currencyRecord(PLAN, 'EUR'));
-    const text = await downloadText(new Date(), OTHER);
-    await tried();
-    await restoreAll(text);
-    expect(await firePlanStore.get(ctx)).toEqual(PLAN);
-    expect(await planCurrencyStore.get(ctx)).toEqual(currencyRecord(PLAN, 'EUR'));
-  });
-
-  test('a file with neither keeps the account’s pair', async () => {
-    const text = await downloadText(new Date(), OTHER);
-    const own = await tried();
-    await restoreAll(text);
-    expect(await firePlanStore.get(ctx)).toEqual(own);
-    expect(await planCurrencyStore.get(ctx)).toEqual(currencyRecord(own, 'USD'));
+describe('the Plan’s parts from before copies', () => {
+  test('in an old file, are never written, so the restored copy holds none of them and its own download has none', async () => {
+    const old = { ...JSON.parse(await downloadText(new Date(), OTHER)), 'fire-plan': PLAN, 'fire-plan-currency': { version: 1, currency: 'EUR', amounts: { spending: 40_000 } }, 'plan-scenarios': [{ id: 'sc1', value: SCENARIO }] };
+    expect((await restoreAll(JSON.stringify(old))).status).toBe('finished');
+    const parts = ['fire-plan', 'fire-plan-currency', 'plan-scenarios'];
+    for (const part of parts) expect([part, await fake.type(ctxKey(part))]).toEqual([part, 'none']);
+    const again = JSON.parse(await downloadText(new Date()));
+    for (const part of parts) expect([part, Object.hasOwn(again, part)]).toEqual([part, false]);
   });
 });
 

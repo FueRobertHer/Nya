@@ -765,20 +765,6 @@ const STORES: Readonly<Record<string, Entry>> = {
     seen: ['shared', 'api', 'email'],
     plain: TXN_IDS,
   },
-  'fire-plan': {
-    group: 'plans',
-    name: 'Your plan’s assumptions',
-    about: 'What the Plan tab’s FI figures and its test of a retirement use.',
-    unit: VALUE,
-    kept: 'Your data',
-  },
-  'fire-plan-currency': {
-    group: 'plans',
-    name: 'The currency your plan’s figures are in',
-    about: 'The currency you typed your plan’s amounts in, with those amounts as the save that recorded it left them, so a plan changed since is told apart.',
-    unit: VALUE,
-    kept: 'Your data',
-  },
   'fire-plan-saved': {
     group: 'plans',
     name: 'The plan you saved as your plan',
@@ -931,14 +917,6 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Which of your plans is yours, and what every plan takes from it: your age and your partner’s, whether cash counts, which accounts fund the plan and how its figures are worked out.',
     unit: VALUE,
     kept: 'Your data',
-  },
-  'plan-scenarios': {
-    group: 'plans',
-    name: 'Your saved plan scenarios',
-    about: 'The name, the changes from your plan and the life events of each scenario you saved on the Plan tab, and the currency its amounts are in, never a figure.',
-    unit: ['scenario', 'scenarios'],
-    kept: 'Your data',
-    plain: RANDOM_IDS,
   },
   'planned-items': {
     group: 'plans',

@@ -8,7 +8,7 @@ import { clearCaches } from '@/lib/cache';
 import { batchesCount, BATCHES_PER_HOUR, recordView, userRestoreStore, type UserRestoreRecord } from '@/lib/user-restore/store';
 import { isUserRestoreId, MAX_BATCH_BODY, UNDO_DAYS } from '@/lib/user-restore/ids';
 import { isCalendarDay } from '@/lib/user-restore/records';
-import { BatchRefused, checkBatch } from '@/lib/user-restore/check';
+import { BatchRefused, checkBatch, isPartName } from '@/lib/user-restore/check';
 import { JsonReadError, parseStrict } from '@/lib/user-restore/stream';
 import { BatchNotWritten, finishWrites, writeBatch } from '@/lib/user-restore/commit';
 import { restoredRepairsView } from '@/lib/sign-repair';
@@ -117,6 +117,15 @@ function checked(bytes: Uint8Array, exported: string): { part: string; records: 
 
 const stillWriting = (r: UserRestoreRecord | null, id: string): r is UserRestoreRecord => !!r && r.id === id && r.status === 'writing';
 
+/** A restore still writing that another release planned, with a part this
+ *  one doesn't write (a store retired since, lib/user-restore/parts.ts
+ *  RETIRED_PARTS): its batches, rebuilt here from the file, aren't the ones
+ *  it planned, so it can only be undone. A finished one is never refused. */
+function plannedElsewhere(record: UserRestoreRecord): NextResponse | null {
+  if (record.status !== 'writing' || record.plan.batches.every((b) => isPartName(b.part))) return null;
+  return refuse('Undo this restore, then bring the file back again: another version of Nya planned it, so it can’t go on here.', 409);
+}
+
 function notWriting(record: UserRestoreRecord | null): NextResponse {
   if (!record) return refuse('There is no restore here to send this to: it was undone, or never started.', 404);
   if (record.status === 'undoing') return refuse('This restore is being undone.', 409);
@@ -168,6 +177,8 @@ async function write(ctx: Ctx, req: Request, id: string, indexText: string | nul
 
   const record = await userRestoreStore.get(ctx);
   if (!record || record.id !== id || record.status === 'undoing') return notWriting(record);
+  const elsewhere = plannedElsewhere(record);
+  if (elsewhere) return elsewhere;
   if (index >= record.plan.batches.length) return refuse('This batch isn’t in the restore’s plan.', 400);
   const planned = record.plan.batches[index];
   // Taken of the bytes received: a body cut short, or a file changed since
@@ -214,6 +225,8 @@ async function finish(ctx: Ctx, id: string): Promise<NextResponse> {
   const record = await userRestoreStore.get(ctx);
   if (record && record.id === id && record.status === 'finished') return NextResponse.json({ record: recordView(record) }, { headers: NO_STORE });
   if (!stillWriting(record, id)) return notWriting(record);
+  const elsewhere = plannedElsewhere(record);
+  if (elsewhere) return elsewhere;
   if (record.done < record.plan.batches.length) {
     return refuse(`This restore has ${record.plan.batches.length - record.done} batches left to send.`, 409, { done: record.done });
   }

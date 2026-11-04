@@ -118,28 +118,6 @@ export async function seedEveryKind(
   await allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [{ ticker: 'VFIFX', split: { 'us-stocks': 60, bonds: 40 } }], accounts: [], target: null } as never);
   const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
   await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD', changes: [{ on: ago(10), from: null, to: 'USD' }] } as never);
-  // The plan before copies (the plan, its currency record and a scenario), as
-  // a restore of an older download or the release before leaves it: no route
-  // writes these now, and the Plan's first write above removed them, so they
-  // are written here, after it, through their stores.
-  const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
-  const { planScenariosStore } = await import('@/lib/plan-scenarios');
-  const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-  const { currencyRecord } = await import('@/lib/fire/plan-currency');
-  await firePlanStore.set(ctx, DEFAULT_PLAN);
-  await planCurrencyStore.set(ctx, currencyRecord(DEFAULT_PLAN, 'USD'));
-  await planScenariosStore.set(ctx, 'sc1', {
-    version: 1,
-    name: 'Retire at 50',
-    currency: 'USD',
-    createdAt: at,
-    savedAt: at,
-    rev: 'r1',
-    set: { targetAge: 50 },
-    income: { leaveOut: [], add: [] },
-    expenses: { leaveOut: [], add: [] },
-    events: [{ id: 'c1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15000, years: 18 }],
-  });
   const { plannedStore } = await import('@/lib/planned-store');
   const { EMPTY_PLANNED } = await import('@/lib/planned');
   await plannedStore.set(ctx, EMPTY_PLANNED);

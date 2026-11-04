@@ -6,8 +6,8 @@ import type { PlanEntry } from '@/lib/fire/copies';
 // Plans as copies, written (lib/plan-writes.ts), through the routes on
 // FakeRedis: GET, PUT and POST /api/fire-plan for your plan, and
 // /api/plans for every plan. Your plan's first entry made by whichever write
-// comes first (a save, a New copy, Try it, a rename), then `plan-facts`, then
-// the plan before copies removed; two first writes at once; stamps no two
+// comes first (a save, a New copy, Try it, a rename), then `plan-facts`; two
+// first writes at once; stamps no two
 // entries share; the facts written first, several entries all or none; each
 // change of a copy at the stamp the page loaded; the limit and the names;
 // the currency a copy takes; entries that can't be read, or a newer version
@@ -21,14 +21,11 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
-const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
-const { planScenariosStore } = await import('@/lib/plan-scenarios');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
 const { itemFromEvent, itemFromIncome } = await import('@/lib/fire/items');
 const { MAIN_ID, MAX_FIRE_PLANS, factsOf } = await import('@/lib/fire/copies');
-const { currencyRecord } = await import('@/lib/fire/plan-currency');
 const { AT_MOST, CHANGED, FIRST_CURRENCY, KEEP_MAIN, NAME_TAKEN, NOTHING_TYPED, OTHER_DEVICE, STALE_CURRENCY } = await import('@/lib/plan-writes');
 const planRoute = await import('@/app/api/fire-plan/route');
 const plansRoute = await import('@/app/api/plans/route');
@@ -107,28 +104,13 @@ function before(store: object, method: string, first: () => Promise<unknown>) {
   };
 }
 
-/** The plan before copies, as every account held it: the plan, its
- *  currency record and a scenario. */
-async function legacy() {
-  const plan = { ...DEFAULT_PLAN, spending: 30_000 };
-  await firePlanStore.set(ctx, plan);
-  await planCurrencyStore.set(ctx, currencyRecord(plan, 'EUR'));
-  const at = '2026-11-01T10:00:00.000Z';
-  await planScenariosStore.set(ctx, 'sc1', { version: 1, name: 'Old', currency: null, createdAt: at, savedAt: at, rev: 'r1', set: {}, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [] });
-}
-const legacyKeys = async () => [await fake.type(ctxKey('fire-plan')), await fake.type(ctxKey('fire-plan-currency')), await fake.type(ctxKey('plan-scenarios'))];
-
 /** The order of the writes after a first entry, each named as it lands (the
- *  entries, the facts, the purge), for every test of the describe it is
- *  called in. */
+ *  entries, the facts), for every test of the describe it is called in. */
 function watchOrder(): string[] {
   const order: string[] = [];
   const watched: [object, string, string][] = [
     [firePlansStore, 'updateMany', 'entries'],
     [planFactsStore, 'update', 'facts'],
-    [firePlanStore, 'remove', 'purge'],
-    [planCurrencyStore, 'remove', 'purge'],
-    [planScenariosStore, 'remove', 'purge'],
   ];
   const reals = new Map<string, (...a: unknown[]) => Promise<unknown>>();
   beforeEach(() => {
@@ -153,8 +135,7 @@ function watchOrder(): string[] {
 describe('your plan’s first entry', () => {
   const order = watchOrder();
 
-  test('before it, your plan is the defaults: the plan before copies is never read', async () => {
-    await legacy();
+  test('before it, your plan is the defaults', async () => {
     expect(await get()).toEqual({ status: 200, body: NO_PLAN });
     expect((await list()).body).toEqual({
       main: MAIN_ID,
@@ -165,46 +146,39 @@ describe('your plan’s first entry', () => {
     });
   });
 
-  test('a save makes it, "First plan", then the facts, then removes the plan before copies', async () => {
-    await legacy();
+  test('a save makes it, "First plan", then the facts', async () => {
     const r = await save({ ...TYPED, age: 41 }, null, { facts_were: DEFAULTS });
     expect(r.status).toBe(200);
     const entry = await stored(MAIN_ID);
     expect(entry).toEqual({ name: 'First plan', plan: { ...TYPED, age: 41 }, tax: null, currency: 'USD', createdAt: entry.createdAt, updatedAt: entry.updatedAt });
     expect(r.body).toEqual({ id: MAIN_ID, plan: { ...TYPED, age: 41 }, currency: 'USD', updated_at: entry.updatedAt });
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...factsOf({ ...TYPED, age: 41 }) });
-    expect(order).toEqual(['entries', 'facts', 'purge', 'purge', 'purge']);
-    expect(await legacyKeys()).toEqual(['none', 'none', 'none']);
+    expect(order).toEqual(['entries', 'facts']);
     expect(await get()).toEqual({ status: 200, body: r.body });
   });
 
-  test('a New copy makes it beside the copy, your plan the defaults, then the facts, then the purge', async () => {
-    await legacy();
+  test('a New copy makes it beside the copy, your plan the defaults, then the facts', async () => {
     const made = await copy('Stop at 52', { ...DEFAULT_PLAN_V2, targetAge: 52 });
-    expect(order).toEqual(['entries', 'facts', 'purge', 'purge', 'purge']);
+    expect(order).toEqual(['entries', 'facts']);
     expect((await firePlansStore.ids(ctx)).sort()).toEqual([MAIN_ID, made.id].sort());
     const main = await stored(MAIN_ID);
     expect(main).toEqual({ name: 'First plan', plan: DEFAULT_PLAN_V2, tax: null, currency: null, createdAt: main.createdAt, updatedAt: main.updatedAt });
     expect(await stored(made.id)).toEqual({ name: 'Stop at 52', plan: { ...DEFAULT_PLAN_V2, targetAge: 52 }, tax: null, currency: null, createdAt: made.created_at, updatedAt: made.updated_at });
     expect(main.updatedAt).not.toBe(made.updated_at);
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...DEFAULTS });
-    expect(await legacyKeys()).toEqual(['none', 'none', 'none']);
     // Your plan is saved now: it has a stamp.
     expect((await get()).body).toEqual({ id: MAIN_ID, plan: DEFAULT_PLAN_V2, currency: null, updated_at: main.updatedAt });
   });
 
   test('Try it makes it too: the copy holds the event, in the currency sent, your plan the defaults with none', async () => {
-    await legacy();
     // No currency for the event's first amounts: refused, nothing written.
     expect(await plans('POST', { from: MAIN_ID, name: 'A child', plan: { ...DEFAULT_PLAN_V2, items: [child] }, currency: null })).toEqual({ status: 409, body: { error: FIRST_CURRENCY } });
     expect([await fake.type(ctxKey('fire-plans')), await fake.type(ctxKey('plan-facts'))]).toEqual(['none', 'none']);
-    expect(await legacyKeys()).toEqual(['string', 'string', 'hash']);
     const made = await copy('A child', { ...DEFAULT_PLAN_V2, items: [child] }, 'EUR');
     expect(made.currency).toBe('EUR');
     expect(((await stored(made.id)).plan as FirePlanV2).items).toEqual([child]);
     expect((await stored(MAIN_ID)).currency).toBeNull();
-    expect(order).toEqual(['entries', 'facts', 'purge', 'purge', 'purge']);
-    expect(await legacyKeys()).toEqual(['none', 'none', 'none']);
+    expect(order).toEqual(['entries', 'facts']);
   });
 
   test('a rename of your plan before it is saved makes it, under that name', async () => {
@@ -212,21 +186,6 @@ describe('your plan’s first entry', () => {
     expect(r.status).toBe(200);
     expect(await stored(MAIN_ID)).toMatchObject({ name: 'Base', plan: DEFAULT_PLAN_V2 });
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...DEFAULTS });
-  });
-
-  test('the purge takes damaged bytes too; one that fails is logged, and the save stands', async () => {
-    await fake.set(ctxKey('fire-plan'), DAMAGED);
-    await fake.set(ctxKey('fire-plan-currency'), DAMAGED);
-    await yours();
-    expect(await legacyKeys()).toEqual(['none', 'none', 'none']);
-    fake.reset();
-    await registerTestContainer(fake);
-    await legacy();
-    fake.failNext('del');
-    expect((await quiet(() => save(TYPED, null, { facts_were: DEFAULTS }))).status).toBe(200);
-    expect(await stored(MAIN_ID)).toMatchObject({ plan: TYPED });
-    // Nothing reads them: the plan is the entry.
-    expect((await get()).body.plan).toEqual(TYPED);
   });
 
   test('a leftover facts value, damaged or not, is replaced by the first entry’s', async () => {
@@ -262,13 +221,11 @@ describe('your plan’s first entry', () => {
 
 describe('two first writes at once', () => {
   test('the second to land finds your plan’s entry and is refused at its stamp: one entry, the first’s facts', async () => {
-    await legacy();
     before(firePlansStore, 'updateMany', () => save({ ...TYPED, age: 50 }, null, { facts_were: DEFAULTS }));
     expect(await save({ ...TYPED, age: 41 }, null, { facts_were: DEFAULTS })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
     expect(await firePlansStore.ids(ctx)).toEqual([MAIN_ID]);
     expect((await stored(MAIN_ID)).plan.age).toBe(50);
     expect((await planFactsStore.get(ctx))!.age).toBe(50);
-    expect(await legacyKeys()).toEqual(['none', 'none', 'none']);
   });
 
   test('a Try it beside a save: the copy isn’t made over your plan made meanwhile', async () => {
@@ -756,11 +713,9 @@ describe('a page from before copies (the release before)', () => {
     expect(await raw()).toEqual(was);
   });
 
-  test('before your plan is saved too, the plan before copies left as it is', async () => {
-    await legacy();
+  test('before your plan is saved too, writing nothing', async () => {
     expect(await put({ plan: { ...DEFAULT_PLAN, age: 41 }, currency: 'USD' })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
-    expect(await fake.type(ctxKey('fire-plans'))).toBe('none');
-    expect(await legacyKeys()).toEqual(['string', 'string', 'hash']);
+    expect([await fake.type(ctxKey('fire-plans')), await fake.type(ctxKey('plan-facts'))]).toEqual(['none', 'none']);
   });
 
   test('a version 1 plan with a stamp is refused: version 2 is what is saved', async () => {

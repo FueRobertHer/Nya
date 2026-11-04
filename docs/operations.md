@@ -524,12 +524,6 @@ The ECB's reference rates, which a person's home currency converts with ([archit
 
 **Rolling forward again.** Nothing to run: the person's choice and their own rates are as they were, and the rates are brought up to date by the next run.
 
-## The Plan's currency, and rolling back
-
-The currency the Plan's typed figures are in is a value store beside the plan, `fire-plan-currency` ([architecture.md](architecture.md#storage-seam)). Nothing to run: a plan saved before has its currency recorded the first time its owner opens the Plan tab with every account loaded, or they are asked.
-
-**What a rollback sees.** The release before never reads the store, and the plan's own shape is unchanged, so its Plan tab and Home's FI card work as before, in the accounts' currency as they always were. A save there writes the plan alone. Back on this release, a save that left every typed amount as it was keeps the record. One that changed an amount leaves the record apart from the plan, so the tab asks which currency the figures are in rather than read them in the old one. A download from the release before has no `fire-plan-currency` part. The release before refuses a download from this one, as it refuses any part it doesn't know.
-
 ## The saved plan, and rolling back
 
 **This is my plan** on the Plan tab keeps a value store of its own, `fire-plan-saved` ([architecture.md](architecture.md#storage-seam)), beside the plan. Nothing to run: it is empty until someone saves one.
@@ -538,18 +532,32 @@ The currency the Plan's typed figures are in is a value store beside the plan, `
 
 ## Plans as copies, and rolling back
 
-Since C2 every plan is a copy: `fire-plans`, one entry per plan, and `plan-facts`, the facts every plan shares and which plan is yours ([architecture.md](architecture.md#plans-as-copies)). Nothing to run, and nothing is migrated: nobody's plan needed carrying over, so the plan before copies (`fire-plan`, its currency record and `plan-scenarios`) is never read. An account's first save of a plan, New copy or Try it makes your plan's entry from what it holds, then `plan-facts`, then removes those three. Until then the Plan shows the defaults.
+Since C2 every plan is a copy: `fire-plans`, one entry per plan, and `plan-facts`, the facts every plan shares and which plan is yours ([architecture.md](architecture.md#plans-as-copies)). Nothing was migrated: nobody's plan needed carrying over. An account's first save of a plan, New copy or Try it makes your plan's entry from what it holds, then `plan-facts`. Until then the Plan shows the defaults.
+
+**The stores from before copies are gone.** `fire-plan`, its currency record `fire-plan-currency` and `plan-scenarios` are no longer declared: no download carries them, and nothing reads or writes them. A restore reads past them in an old file, and says its plan doesn't come back when it holds one and brings no plans ([data-export.md](data-export.md#parts-from-before-plans-were-copies)). Deleting an account and Empty this account remove a key left under those names with the rest.
+
+**Removing what is left.** Keys still under those names (C2 removed them at an account's first write of a plan, and a restore of an old file under C2 wrote them again) are in no download now, and the scan before a restore counts them as data Nya doesn't show. Delete them by hand in the Upstash console's CLI, just before the merge and again once the deploy is live:
+
+```
+SCAN 0 MATCH *:c:????????-????-????-????-????????????:fire-plan COUNT 10000
+```
+
+Repeat it from each answer's cursor until the cursor is 0, then do the same for `fire-plan-currency` and `plan-scenarios`, and `DEL` each key found. It is done when all three scans come back empty. The leading `*` covers every prefix in the one database (`production`, `preview`, `dev`, and any scratch one); the container id's shape and the exact name at the end keep `fire-plans`, `fire-plan-saved` and any key nested deeper out. The run before the merge is safe: C2's Plan reads only `fire-plans` and `plan-facts`, and its download and its first write of a plan take an old key that isn't there as nothing there. Run it again once this release is live again after a rollback to C2 in which an old file was restored, and after restoring an environment from a nightly archive taken before the cleanup. After the `DEL`, only the nightly archives hold them, until they age out as any deleted key does.
 
 **Open tabs.** A Plan tab loaded before C2 sends saves without the stamp C2 asks for, and `PUT /api/fire-plan` answers them 409 ("Your plan changed: load the page again"), so it loads again rather than write past a copy. `/api/plan-scenarios` is gone, so its Scenarios sheet says it couldn't load.
 
-**Rolling back to C2.** E2 writes nothing C2's readers don't take (`test/release-before-plans.test.ts`, with C2's readers as `test/fixtures/release-before`): every item kind and anchor, `stopAtFi`, `partnerAge` and `fiNumber` arrived in E1. C2's page shows what it can and says "N more items count in your plan" for the rest, and refuses a change that would lose them. Its Ages sheet checks your age against `targetAge`, which E2 keeps hidden under stop when I reach FI: after a rollback, an age past that kept stop is refused until the stop is typed again, and the sheet says why.
+**Restores across the deploy.** A restore started on one release and resumed on the other builds its batches from the file again, and they no longer match the ones it planned. This release refuses to send the next batch of a restore E2 or C2 planned with one of the old parts, or to finish one, saying "Undo this restore, then bring the file back again"; of one planned here, their page says "This isn't the file this restore started from", or "This file has more in it than the restore planned" once every planned batch was sent. Either way, undo it (which removes whatever it wrote, old keys included) and start again. A resume whose batches all fall before what was sent says "This file has less in it than the restore planned", whose way out is the undo too. A page left open across the deploy is refused at its check or its start: load it again.
 
-**Rolling back to C1.** C2's entries stay C1-readable (C1's `isPlanEntry`, `plan-facts` version 1, an entry holding amounts always has a currency; `test/release-before-plans.test.ts`), so C1 reads your plan from them and saves into it, and names the copies in one line. Two things read differently there:
+**Rolling back to E2.** E2 changed none of the plan stores, the download or the restore, and this release changes no write of a plan, so E2 reads every plan it writes, as C2 does (C2's readers, against every write, in `test/release-before-plans.test.ts`). E2's Plan reads only `fire-plans` and `plan-facts`, and its download and its first write of a plan take an old key that isn't there as nothing there, so the cleanup changes nothing for it. A download from this release has no old parts, which its restore takes: it refuses only a part it doesn't know (the same test holds this release's download to C2's list, which E2 kept). A restore record made here may count `plan_before_copies` among what was left out, which its check takes and its card doesn't show. A restore of an old file under it writes the old keys again: run the cleanup once this release is back.
 
-- A copy made your plan that holds life events is read and worked out in C1, but C1 saves only what it holds itself, so a change that would lose its life events is refused, saying so, and the plan stays as it is until C2 is back.
-- A plan or scenarios from before copies are gone once an account has saved under C2: C1 shows the copies, not them.
+**Rolling back to C2.** All of that holds for C2. E2 writes nothing C2's readers don't take (`test/release-before-plans.test.ts`, with C2's readers as `test/fixtures/release-before`): every item kind and anchor, `stopAtFi`, `partnerAge` and `fiNumber` arrived in E1. C2's page shows what it can and says "N more items count in your plan" for the rest, and refuses a change that would lose them. Its Ages sheet checks your age against `targetAge`, which E2 keeps hidden under stop when I reach FI: after a rollback, an age past that kept stop is refused until the stop is typed again, and the sheet says why.
 
-**Restores.** A download from C2 restores in C2: its plans replace every plan the account holds, and a file without `plan-facts` leaves the account none. A download from before C2 holds only the plan before copies: restoring it clears the account's copies and facts (C1's rule for a file without them) and its plan is not read, so the Plan starts from the defaults. Say so to anyone restoring an old file who expects their plan back: it was the cost of not migrating.
+**Rolling back to C1.** C2's entries stay C1-readable (C1's `isPlanEntry`, `plan-facts` version 1, an entry holding amounts always has a currency), so C1 reads your plan from them and saves into it, and names the copies in one line. Two things read differently there:
+
+- A copy made your plan that holds life events is read and worked out in C1, but C1 saves only what it holds itself, so a change that would lose its life events is refused, saying so, and the plan stays as it is until this release is back.
+- A plan or scenarios from before copies are gone: C1 shows the copies, not them.
+
+**Restores.** A file's plans replace every plan the account holds, and a file with plans but without `plan-facts` leaves the account none. A file with no plans, one from before copies among them, leaves the account's plans and facts as they are, and one from before copies says its plan doesn't come back. Say so to anyone restoring an old file who expects their plan back: it was the cost of not migrating.
 
 ## The tax law tables, each year
 

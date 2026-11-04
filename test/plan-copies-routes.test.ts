@@ -5,8 +5,8 @@ import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 
 // The plans as copies read (lib/plan-copies.ts), and your plan saved, through
 // the routes: GET /api/fire-plan and /api/plan-inputs answer your plan's
-// entry with the facts in its fields (the defaults while there is none, never
-// the plan before copies), GET /api/plans every plan, and PUT and POST
+// entry with the facts in its fields (the defaults while there is none),
+// GET /api/plans every plan, and PUT and POST
 // /api/fire-plan save into your entry on the rules of app/api/fire-plan (the
 // stamp, the version, the facts as the page loaded them, the currency). The
 // other plans' writes, and your plan's first entry, are
@@ -19,13 +19,12 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
-const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { planOf } = await import('@/lib/fire/plan-v2');
 const { itemFromIncome } = await import('@/lib/fire/items');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
-const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
+const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const planRoute = await import('@/app/api/fire-plan/route');
 const inputsRoute = await import('@/app/api/plan-inputs/route');
 const plansRoute = await import('@/app/api/plans/route');
@@ -96,13 +95,6 @@ function between(before: () => Promise<unknown>) {
   };
 }
 
-/** The plan before copies and its record, as an account may still hold them. */
-async function legacy(plan: FirePlan = { ...DEFAULT_PLAN, spending: 30_000 }) {
-  await firePlanStore.set(ctx, plan);
-  await planCurrencyStore.set(ctx, currencyRecord(plan, 'EUR'));
-  return plan;
-}
-
 /** The ids GET /api/plans lists, yours first, and which is yours. */
 const listed = async () => {
   const { body } = await list();
@@ -110,8 +102,7 @@ const listed = async () => {
 };
 
 describe('the plan read, before any entry', () => {
-  test('is the defaults, never the plan before copies; the facts alone change nothing', async () => {
-    await legacy();
+  test('is the defaults; the facts alone change nothing', async () => {
     expect(await get()).toEqual({ status: 200, body: NO_PLAN });
     await planFactsStore.set(ctx, facts({ age: 60 }));
     expect(await get()).toEqual({ status: 200, body: NO_PLAN });
@@ -119,9 +110,7 @@ describe('the plan read, before any entry', () => {
     expect(await listed()).toEqual({ main: MAIN_ID, missing: false, ids: [MAIN_ID], names: ['First plan'] });
   });
 
-  test('damaged facts, or a damaged plan before copies, beside no entry are never read into the answer', async () => {
-    await fake.set(ctxKey('fire-plan'), DAMAGED);
-    await fake.set(ctxKey('fire-plan-currency'), DAMAGED);
+  test('damaged facts beside no entry are never read into the answer', async () => {
     await fake.set(ctxKey('plan-facts'), DAMAGED);
     expect(await get()).toEqual({ status: 200, body: NO_PLAN });
     expect((await inputs()).status).toBe(200);
@@ -131,7 +120,6 @@ describe('the plan read, before any entry', () => {
 
 describe('the plan read, once there are entries', () => {
   test('is your plan’s entry, with the facts in its fields, its id, its currency and its stamp', async () => {
-    await legacy();
     await firePlansStore.set(ctx, MAIN_ID, entry({ updatedAt: 'stamp-1' }));
     await planFactsStore.set(ctx, facts({ age: 50, includeCash: true }));
     const want = { id: MAIN_ID, plan: { ...TYPED, age: 50, includeCash: true }, currency: 'USD', updated_at: 'stamp-1' };
@@ -197,17 +185,7 @@ describe('the plan read, once there are entries', () => {
     expect([body.plans.map((p: { id: string }) => p.id), body.unreadable_ids, body.unrecognised_ids]).toEqual([[MAIN_ID, 'x', 'y'], ['broken'], ['later']]);
   });
 
-  test('a damaged plan before copies or record beside entries never stops it', async () => {
-    await fake.set(ctxKey('fire-plan'), DAMAGED);
-    await fake.set(ctxKey('fire-plan-currency'), DAMAGED);
-    await firePlansStore.set(ctx, MAIN_ID, entry());
-    expect((await get()).status).toBe(200);
-    expect((await inputs()).status).toBe(200);
-    expect((await save(TYPED2)).status).toBe(200);
-  });
-
   test('damaged facts beside entries: unreadable everywhere, never the defaults, and nothing written', async () => {
-    await legacy();
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await fake.set(ctxKey('plan-facts'), DAMAGED);
     const was = await raw();
@@ -217,7 +195,6 @@ describe('the plan read, once there are entries', () => {
       }
     });
     expect(await raw()).toEqual(was);
-    expect(await firePlanStore.get(ctx)).toEqual({ ...DEFAULT_PLAN, spending: 30_000 });
   });
 
   test('your entry can’t be read: unreadable, whether named, main, or every one there', async () => {
@@ -273,8 +250,7 @@ describe('saving your plan (PUT)', () => {
     expect(await firePlansStore.get(ctx, MAIN_ID)).toEqual(entry());
   });
 
-  test('into your entry with a newer stamp; the plan before copies neither read nor written', async () => {
-    const was = await legacy();
+  test('into your entry with a newer stamp', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await planFactsStore.set(ctx, facts());
     const next = { ...TYPED2, spending: 45_000 };
@@ -284,7 +260,6 @@ describe('saving your plan (PUT)', () => {
     expect(stored).toEqual({ ...entry(), plan: next, updatedAt: stored.updatedAt });
     expect(stored.updatedAt > AT).toBe(true);
     expect(r.body).toEqual({ id: MAIN_ID, plan: next, currency: 'USD', updated_at: stored.updatedAt });
-    expect(await firePlanStore.get(ctx)).toEqual(was);
   });
 
   test('the stamp sent: matching taken, another refused', async () => {

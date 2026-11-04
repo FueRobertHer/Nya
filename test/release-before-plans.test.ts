@@ -19,6 +19,10 @@ import type { PlanItem } from '@/lib/fire/items';
 // kind on every anchor, the stop at FI, your partner's age and your own FI
 // number, all of which C2 reads, and C2's cards keep the items they can't
 // show (its withIncome, withExpenses and withEvents).
+// And its restore (test/fixtures/release-before/user-restore/parts.ts, C2's)
+// takes a download this release makes, plans and all: it refuses a file with
+// a part it doesn't know, or without one of its header parts, and reads each
+// store part as the kind its own list says.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -39,6 +43,9 @@ const { eventItems, itemFromEvent, itemFromIncome } = await import('@/lib/fire/i
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { genEvents, genPlan, rand } = await import('./plan-gen');
+const oParts = await import('./fixtures/release-before/user-restore/parts');
+const { SEAM } = await import('@/lib/user-restore/parts');
+const { buildUserExport, collectUserData } = await import('@/lib/user-export');
 const planRoute = await import('@/app/api/fire-plan/route');
 const plansRoute = await import('@/app/api/plans/route');
 const savedRoute = await import('@/app/api/saved-plan/route');
@@ -249,6 +256,20 @@ describe('the release before reads every plan this release writes', () => {
       expect((await call(savedRoute.PUT, 'saved-plan', 'PUT', body)).status).toBe(200);
       expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
     }
+  });
+});
+
+describe('a download this release makes, as the release before’s restore reads it', () => {
+  test('every part is one it knows, every header part it needs is there, and each store part is of the kind it reads', async () => {
+    ok(await save(TYPED, null, DEFAULTS));
+    ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
+    const keys = Object.keys(buildUserExport(await collectUserData({ ctx, userId: null }), new Date('2026-11-04T12:00:00.000Z')));
+    expect(keys).toContain('fire-plans');
+    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual([]);
+    expect(oParts.HEADER_PARTS.filter((p) => !keys.includes(p))).toEqual([]);
+    const shared = Object.keys(SEAM).filter((name) => Object.hasOwn(oParts.SEAM, name));
+    expect(shared.length).toBeGreaterThan(30);
+    for (const name of shared) expect([name, SEAM[name].kind]).toEqual([name, oParts.SEAM[name].kind]);
   });
 });
 

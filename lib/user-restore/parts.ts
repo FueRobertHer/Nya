@@ -91,11 +91,9 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'expense-people': { kind: 'map', restore: 'write', max: 200 },
   'expense-settings': { kind: 'value', restore: 'write' },
   'expense-shares': { kind: 'map', restore: 'write', max: 5_000 },
-  'fire-plan': { kind: 'value', restore: 'write' },
-  'fire-plan-currency': { kind: 'value', restore: 'write' },
   'fire-plan-saved': { kind: 'value', restore: 'write' },
-  // Twice MAX_FIRE_PLANS (lib/fire/copies.ts), for plan-scenarios' reason
-  // below.
+  // Twice MAX_FIRE_PLANS (lib/fire/copies.ts): writes that met at the limit
+  // before it was taken again after each one could leave more.
   'fire-plans': { kind: 'map', restore: 'write', max: 22 },
   // MAX_GOALS (lib/goal-model.ts).
   'goal-plans': { kind: 'map', restore: 'write', max: 20 },
@@ -107,10 +105,7 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   imports: { kind: 'map', restore: 'write', split: { field: 'records', as: 'list' } },
   'income-carryover': { kind: 'value', restore: 'write' },
   'manual-transactions': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
-  // Twice MAX_PLAN_SCENARIOS (lib/fire/scenarios.ts): saves that met at the
-  // limit before it was taken again after each write could leave more.
   'plan-facts': { kind: 'value', restore: 'write' },
-  'plan-scenarios': { kind: 'map', restore: 'write', max: 20 },
   'planned-items': { kind: 'value', restore: 'write' },
   'report-settings': { kind: 'value', restore: 'write' },
   'restored-accounts': { kind: 'map', restore: 'write' },
@@ -135,12 +130,29 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'weekly-summary': { kind: 'value', restore: 'write' },
 };
 
+/** The parts of stores Nya no longer keeps, which downloads made before
+ *  they went still have (every download had each, empty or not): read and
+ *  left out, so an older backup still comes back. When a store goes, its
+ *  part moves here from SEAM (docs/data-export.md, "Retiring a store").
+ *  `said`: whether the preview says it doesn't come back when the file's
+ *  holds something.
+ *
+ *  The plan before plans were copies (the tax plan's C2): its assumptions
+ *  and its scenarios, said; its currency record, which means nothing
+ *  without them, not. */
+export const RETIRED_PARTS: Readonly<Record<string, { kind: SeamPart['kind']; said: boolean }>> = {
+  'fire-plan': { kind: 'value', said: true },
+  'fire-plan-currency': { kind: 'value', said: false },
+  'plan-scenarios': { kind: 'map', said: true },
+};
+
 /** Manual accounts a restore writes at most: the Add form's limit
  *  (MAX_MANUAL_ACCOUNTS, lib/manual.ts) and every account a connector can
  *  feed (MAX_CONNECTOR_ACCOUNTS), which a disconnect may keep as manual
  *  accounts beside them. A file with more couldn't have come from Nya. */
 export const MAX_RESTORED_MANUAL_ACCOUNTS = 50 + 100;
 
-/** Whether a top-level key is a part this release knows. */
+/** Whether a top-level key is a part this release knows, retired ones
+ *  included. */
 export const isKnownPart = (key: string): boolean =>
-  (HEADER_PARTS as readonly string[]).includes(key) || (CORE_PARTS as readonly string[]).includes(key) || Object.hasOwn(SEAM, key);
+  (HEADER_PARTS as readonly string[]).includes(key) || (CORE_PARTS as readonly string[]).includes(key) || Object.hasOwn(SEAM, key) || Object.hasOwn(RETIRED_PARTS, key);

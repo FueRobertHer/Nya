@@ -66,10 +66,10 @@ describe('the scan', () => {
     await fake.set(ctxKey('download-count'), '1');
     await fake.hset(ctxKey('api-tokens'), { t1: 'x' });
     await fake.set(ctxKey('categories'), 'x');
-    await fake.set(ctxKey('fire-plan'), 'x');
+    await fake.set(ctxKey('plan-facts'), 'x');
     const scan = await scanAccount(ctx);
     expect(scan.empty).toBe(true);
-    expect(scan.settings).toEqual(['categories', 'fire-plan']);
+    expect(scan.settings).toEqual(['categories', 'plan-facts']);
   });
 
   test('the person’s money makes it in use, said in words, with the banks by name', async () => {

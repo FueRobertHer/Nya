@@ -8,9 +8,8 @@
 //
 // These are the plan. While `fire-plans` holds no entry, the plan is the
 // defaults, never saved: the first write of any plan makes your plan's entry
-// (lib/plan-writes.ts). The plan before copies (`fire-plan`, its currency
-// record and the scenarios) is never read: the first write removes it, as
-// nobody's plan needed carrying over (the tax plan's C2).
+// (lib/plan-writes.ts). Nobody's plan needed carrying over from before
+// copies (the tax plan's C2), and those stores are gone.
 //
 // Your plan's entry and the facts are read strictly, as the plan always was;
 // a copy that can't be read never stops Home.

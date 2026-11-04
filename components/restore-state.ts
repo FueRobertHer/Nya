@@ -154,6 +154,9 @@ const SETTINGS = new Set([
   'store:review-settings',
   'store:weekly-summary',
   'store:allocation-settings',
+  // Only in the record of a restore finished before plans were copies' old
+  // stores went, still in its undo window: said as it was then. A restore
+  // now never brings it back.
   'store:fire-plan',
   'store:plan-facts',
   'store:income-carryover',
@@ -184,7 +187,8 @@ export function broughtLines(brought: Readonly<Record<string, number>>, history:
 }
 
 /** What doesn't come back, in words: pending transactions and what was said
- *  only about them, and what never comes back. `never` counts the file's
+ *  only about them, what never comes back, and the Plan as Nya kept it before
+ *  plans were copies (lib/user-restore/plan.ts smallParts). `never` counts the file's
  *  API tokens, sharing connections, and receipts and documents. */
 export function leftOutLines(left: Readonly<Record<string, number>>, never: { api_tokens: number; sharing: number; attachments?: number }): string[] {
   const out: string[] = [];
@@ -197,6 +201,7 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   if (never.sharing > 0) out.push(`${plural(never.sharing, 'sharing connection')}: sharing is between two people, so share again from here`);
   const changes = left['api_changes'] ?? 0;
   if (changes > 0) out.push(`${plural(changes, 'change')} made with API tokens in your other copy: about that copy, whose tokens don’t come back`);
+  if ((left['plan_before_copies'] ?? 0) > 0) out.push('your Plan and its scenarios as an older version of Nya kept them: make them again on the Plan tab if you need them');
   const files = never.attachments ?? 0;
   if (files > 0) {
     out.push(`${files === 1 ? 'a receipt or document' : `${plainNumber(files)} receipts and documents`}: a restore doesn’t bring the files back yet, so keep your ZIP download of them`);

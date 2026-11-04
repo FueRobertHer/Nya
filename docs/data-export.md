@@ -62,7 +62,7 @@ A JSON download, protected or not, brings everything in it back into another cop
 
 **Into an empty account only.** A restore brings back a whole copy, so it goes only into an account with nothing of yours in it yet: no bank, no manual account, no transactions, budgets or goals. Settings alone are allowed, and the file's replace them. Otherwise the card says what it found. To start again in an account that has data, **Empty this account first**: after a fresh sign-in and typing `empty my account`, everything in it goes but your sign-in and API tokens. Emptying is refused while a bank is connected (deleting its keys would leave the connection running at Plaid, SimpleFIN or Lunch Flow) and when another sign-in shares the account. Demo accounts can do neither.
 
-**The file stays on your device.** It is read in the page a few megabytes at a time, never sent whole, so a file of years of transactions opens on a phone; a protected one is opened first with its passphrase, there, as on [Open a protected download](#opening-it). Every record is checked against what this version of Nya writes, and anything it doesn't know refuses the whole file: a newer version's field, a part it doesn't know, version 3, damaged JSON, a key written twice. Then the page says what comes back and what doesn't. What the file names under [`problems`](#problems) refuses it when the rest is read against it (your categories, budgets or accounts); a damaged entry you can do without (a note, a split, a day of history) is named with the transactions it affects, and left out once you confirm.
+**The file stays on your device.** It is read in the page a few megabytes at a time, never sent whole, so a file of years of transactions opens on a phone; a protected one is opened first with its passphrase, there, as on [Open a protected download](#opening-it). Every record is checked against what this version of Nya writes, and anything it doesn't know refuses the whole file: a newer version's field, a part it doesn't know, version 3, damaged JSON, a key written twice. A part Nya no longer keeps (the Plan's [from before plans were copies](#parts-from-before-plans-were-copies)) is known, read past and never written. Then the page says what comes back and what doesn't. What the file names under [`problems`](#problems) refuses it when the rest is read against it (your categories, budgets or accounts); a damaged entry you can do without (a note, a split, a day of history) is named with the transactions it affects, and left out once you confirm.
 
 **What comes back**, every id kept: your categories and their groups, tags and rules, manual accounts with their transactions and imports, transactions imported into linked accounts, what you said about transactions (categories, merchant names, notes, tags, exclusions, splits, groups, approvals), your [shared expenses](#shared-expenses) (the people, shares, IOUs and payments, a share or a payment on a bank's transaction held with it until the bank is connected and linked again), the links between earlier accounts and new ones, hidden accounts and account ends, budgets with their months and rollover, goals with their plans, the Plan, planned bills and income, timeline notes, holdings history, every layer of your balance history (each recorded day back into recorded history, unchanged: Nya measured it), your home currency and your own exchange rates (a manual account in its own currency, to the cent), and your settings. The ECB's exchange rates are in no download: they are the same for everyone and kept apart from every account, so a restore, its undo and emptying an account neither bring them nor touch them. A connection to SimpleFIN or Lunch Flow comes back without its credential (the Access URL, the API key), as after an operator restore: connect it again with a new Setup Token, or an API key from Lunch Flow, and its accounts keep their history. What the download leaves out because the entries hold it (each import's summary, the holdings index) is worked out again at the end.
 
@@ -78,7 +78,7 @@ A JSON download, protected or not, brings everything in it back into another cop
 
 **An account's history being turned over** to match its kind as the download was made (its `notes` say so): the restore's finish turns over the days its restored totals prove counted the other way, as the other copy's job would have, and its preview says it will. If some day can't be told exactly (its total explained more than one way, or none to tell it by), it turns nothing over, rather than guess: the card names the account and those days, and whoever runs the copy can repair it.
 
-**Never**: pending transactions (the bank sends them again once posted) and what you said only about them; credentials (bank access tokens, the SimpleFIN Access URL, the Lunch Flow API key, API tokens: make new ones); sharing, which is between two people; and the app's machinery. **Not yet**: receipts and documents. The file lists them under `attachments`, but not the files, so a restore brings none back: the page says how many the file lists, and to keep your ZIP files of them. Emptying the account, or undoing a restore, keeps the files already in the account, not on a transaction. Investment transactions come back into a store of their own, kept for your next download, not shown yet.
+**Never**: pending transactions (the bank sends them again once posted) and what you said only about them; your Plan and its scenarios as a version of Nya from before plans were copies kept them, which the page names when the file holds them and brings no plans ([below](#parts-from-before-plans-were-copies)); credentials (bank access tokens, the SimpleFIN Access URL, the Lunch Flow API key, API tokens: make new ones); sharing, which is between two people; and the app's machinery. **Not yet**: receipts and documents. The file lists them under `attachments`, but not the files, so a restore brings none back: the page says how many the file lists, and to keep your ZIP files of them. Emptying the account, or undoing a restore, keeps the files already in the account, not on a transaction. Investment transactions come back into a store of their own, kept for your next download, not shown yet.
 
 **In batches, each checked again.** The page sends the file's records in batches under 3.5 MB, each with its SHA-256 in the plan the restore's record keeps. The server takes a batch only in the plan's order, only if its digest is the plan's, and checks every record again with its store's own check before writing it under your account's own key. The parts only the server's checks can read are sent to them before the start, so a file is checked to its end before anything is written, and a batch sent twice is written once. Nothing of the file is kept but the values it holds: not the file, not a batch, not in a log.
 
@@ -145,7 +145,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `attachments` | The receipts and documents you attached: what each is and which transaction it is on, never the file ([below](#attachments)). |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-facts`, `plan-scenarios`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -159,7 +159,7 @@ Empty when the file has everything. Otherwise one entry for each part of the fil
 | --- | --- |
 | `section` | The part of the file: its field, such as `manual_accounts`, `account_history` or `holdings:history`. |
 | `problem` | `unreadable`: the stored data is damaged, so nothing in it can be read, by this version of Nya or any other. `unrecognised`: it looks intact, but was saved in a form this version of Nya doesn't know (a later version may have written it); it is kept as it is, and a version that knows it reads it. In `sharing`, also `unavailable` and `record_id_unreadable` ([below](#sharing)). |
-| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan`, `fire-plan-currency`, `fire-plan-saved`, `income-carryover`, `plan-facts`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
+| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan-saved`, `income-carryover`, `plan-facts`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
 | `count` | How many are missing, in place of `ids`, for a part whose ids are kept out of the file: `api_tokens`, since a token's id is part of the token. |
 
 A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
@@ -612,42 +612,14 @@ Your shared transactions: `id` is the transaction's id (a bank's, as in `transac
 | `carry_key` | Recorded when you disconnected the transaction's institution: the transaction's account, day, amount in cents and the bank's own description (`account\|date\|cents\|description`), which find it again under the account you link the old one to. Absent otherwise. |
 | `created_at`, `updated_at` | When it was made and last changed. |
 
-#### `fire-plan`
-
-The Plan tab's saved assumptions before your plans were copies (`lib/fire/plan.ts`), or `null`. Nothing reads it now: your plan is in [`fire-plans`](#fire-plans), and the first save of a plan, a new copy or a Try it removes this, with [`fire-plan-currency`](#fire-plan-currency) and [`plan-scenarios`](#plan-scenarios). Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in.
-
-| Field | Meaning |
-| --- | --- |
-| `version` | The shape's version: 1. |
-| `age`, `targetAge` | Your age and the age you plan to stop working, or `null`. |
-| `spending`, `savings`, `assets` | A figure you typed over Nya's, or `null` to use what Nya measures. |
-| `includeCash` | Whether checking and savings count as invested. |
-| `withdrawalRate`, `realReturn`, `taxRate` | Fractions: `0.04` is 4%. |
-| `partTimeIncome` | Barista FI's part-time income a year, after tax; 0 leaves it out. |
-| `method`, `rule`, `start`, `startBalance`, `horizon` | The simulation: `historical` or `monte-carlo`, the withdrawal rule, where it starts (`fi-number`, `assets`, or `custom` with `startBalance`), and its length in years (`null` runs to age 95). |
-| `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
-| `income[]` | `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
-| `expenses[]` | `id`, `label`, `amount`, `atAge`. |
-| `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
-
-#### `fire-plan-currency`
-
-The currency the amounts you typed in your [plan](#fire-plan) before copies are in (`lib/fire/plan-currency.ts`), or `null` if none was recorded (a plan with nothing typed, or one saved before Nya kept it). Nothing reads it now, and it goes with that plan. It was kept beside the plan, not in it, so the release before read your plan as it always had. It says something about the plan only while its `amounts` are the plan's typed amounts: once any of them differs, the Plan tab asks which currency they are in. Brought back with the plan, it still holds for it; a file without it brings the plan back with its currency to be said.
-
-| Field | Meaning |
-| --- | --- |
-| `version` | The shape's version: 1. |
-| `currency` | The currency's three-letter code. |
-| `amounts` | The plan's typed amounts as the save that recorded the currency left them: `spending`, `savings`, `assets` and `startBalance` (each a number or `null`), `partTimeIncome`, and `income[]` and `expenses[]`, each `id` and `amount`. |
-
 #### `fire-plan-saved`
 
-The plan you said is your plan, with **This is my plan** on the Plan tab ([progress against your plan](features.md#progress-against-your-plan), `lib/fire/saved-plan.ts`), or `null` if you never did or stopped comparing. It holds your [plan](#fire-plan)'s assumptions as they were that day, the savings it used and an inflation rate, never a figure worked out from them: no FI number, no FI age, and no balance on any day, not even the one it starts from, which the Plan tab adds up again from your recorded balances (in `account_history`) each time it is shown.
+The plan you said is your plan, with **This is my plan** on the Plan tab ([progress against your plan](features.md#progress-against-your-plan), `lib/fire/saved-plan.ts`), or `null` if you never did or stopped comparing. It holds your [plan](#fire-plans)'s assumptions as they were that day, the savings it used and an inflation rate, never a figure worked out from them: no FI number, no FI age, and no balance on any day, not even the one it starts from, which the Plan tab adds up again from your recorded balances (in `account_history`) each time it is shown.
 
 | Field | Meaning |
 | --- | --- |
 | `version` | The shape's version: 1. |
-| `plan` | Your plan's assumptions as they were, in the shape of [`fire-plan`](#fire-plan). A download from a newer version of Nya may hold its version 2 (with the items it adds), which this version reads and brings back. |
+| `plan` | Your plan's assumptions as they were, in a plan's shape ([its fields](#a-plans-fields)): version 2, as every plan is saved since your plans became copies, or version 1 in one saved before. |
 | `savings` | The annual savings your plan used that day, in today's dollars then: the figure you typed, or Nya's measurement if you hadn't. |
 | `currency` | The currency your plan's amounts were in, and the one your invested assets are added up in; `null` when no account named one. |
 | `inflation` | Inflation a year, as a fraction (`0.03` is 3%): your plan is raised by it to compare with balances, which are in each day's money. |
@@ -662,12 +634,38 @@ Your [plans](features.md#plans-and-compare-mode) (`lib/fire/copies.ts`, `lib/pla
 | Field | Meaning |
 | --- | --- |
 | `name` | Its name. |
-| `plan` | The whole plan, version 2 (`lib/fire/plan-v2.ts`): the fields of [`fire-plan`](#fire-plan) but `income[]` and `expenses[]`, with `items[]` in their place (each income, one-off and life event, up to 25: `id`, `label`, `kind`, when it starts and stops, its amounts once and a year, how often it repeats, and whose it is), `partnerAge`, `stopAtFi` (stop when you reach FI) and `fiNumber` (your own, or `null` to work it out). An entry saved before may hold version 1. Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here, and every save keeps them the same here too. |
+| `plan` | The whole plan ([its fields below](#a-plans-fields)), version 2 (`lib/fire/plan-v2.ts`). An entry saved before may hold version 1 (`lib/fire/plan.ts`). Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here, and every save keeps them the same here too. |
 | `tax` | The plan's own tax choices: `null`. |
 | `currency` | The currency its amounts are in, or `null` for a plan that holds none. |
 | `createdAt`, `updatedAt` | When it was made, and last changed: a page names the `updatedAt` a change was made on, so one made from a version changed since is refused. Every save gives the entries it writes an `updatedAt` no other entry holds. |
 
 Brought back, a file's plans replace every plan the account holds, never mixed with them.
+
+##### A plan's fields
+
+Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1 or 2. |
+| `age`, `targetAge` | Your age and the age you plan to stop working, or `null`. |
+| `spending`, `savings`, `assets` | A figure you typed over Nya's, or `null` to use what Nya measures. |
+| `includeCash` | Whether checking and savings count as invested. |
+| `withdrawalRate`, `realReturn`, `taxRate` | Fractions: `0.04` is 4%. |
+| `partTimeIncome` | Barista FI's part-time income a year, after tax; 0 leaves it out. |
+| `method`, `rule`, `start`, `startBalance`, `horizon` | The simulation: `historical` or `monte-carlo`, the withdrawal rule, where it starts (`fi-number`, `assets`, or `custom` with `startBalance`), and its length in years (`null` runs to age 95). |
+| `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
+| `income[]` | Version 1: `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
+| `expenses[]` | Version 1: `id`, `label`, `amount`, `atAge`. |
+| `items[]` | Version 2, in place of `income[]` and `expenses[]`: each income, one-off and life event, up to 25: `id`, `label`, `kind`, when it starts and stops, its amounts once and a year, how often it repeats, and whose it is. |
+| `partnerAge`, `stopAtFi`, `fiNumber` | Version 2: your partner's age, or `null`; whether you stop when you reach FI; and your own FI number, or `null` to work it out. |
+| `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
+
+#### Parts from before plans were copies
+
+A download made before Nya stopped keeping them has three more parts, the Plan's from before your plans were [copies](#fire-plans): `fire-plan`, your plan as it was then (one value, or `null`); `fire-plan-currency`, the currency its typed amounts were in (one value, or `null`); and `plan-scenarios`, the scenarios you saved beside it, each only what it changed from your plan (a list of `{ "id": ..., "value": ... }`). Nothing has read them since your plans became copies, and a download made now leaves them out.
+
+Brought back, they are read past and never written (`lib/user-restore/parts.ts`, `RETIRED_PARTS`). When `fire-plan` or `plan-scenarios` holds something, or `problems` names one, and the file brings no plans in `fire-plans`, the page says before the start that your Plan and its scenarios as that version kept them don't come back, so you can make them again on the Plan tab; the account's own plans and facts stay as they are. A file that brings plans says nothing of them: those plans are what that version used. `plan-scenarios` must still be a list, as any part of entries.
 
 #### `goal-plans`
 
@@ -813,25 +811,10 @@ What every plan in [`fire-plans`](#fire-plans) shares, and which of them is your
 | `main` | The id of your plan in `fire-plans`. |
 | `age`, `partnerAge` | Your age and your partner's, or `null`. |
 | `includeCash` | Whether checking and savings count as invested. |
-| `planFunding[]` | How each workplace plan is paid into, as in [`fire-plan`](#fire-plan). |
+| `planFunding[]` | How each workplace plan is paid into, as in [a plan's fields](#a-plans-fields). |
 | `method` | The simulation's method: `historical` or `monte-carlo`. |
 
 A file that brings plans back without it leaves the account none.
-
-#### `plan-scenarios`
-
-The scenarios you saved beside your Plan before your plans were [copies](features.md#plans-and-compare-mode) (`lib/fire/scenarios.ts`), each under a random id: only what each changes from your plan, its name and the currency its amounts are in, never a figure worked out from them. Nothing reads them now, and they go with [`fire-plan`](#fire-plan). Each `value`:
-
-| Field | Meaning |
-| --- | --- |
-| `version` | The shape's version: 1. |
-| `name` | Its name, up to 40 characters. |
-| `currency` | The currency its amounts were typed in (your plan's then), or `null` while it holds none. |
-| `createdAt`, `savedAt` | When it was made, and last saved. |
-| `rev` | A random id, new on every save: the version an edit is made to. |
-| `set` | The settings of your [plan](#fire-plan) it sets, each by the plan's own field name, as values: any of `targetAge`, `spending`, `savings`, `assets` (`null` for Nya's measured figure), `withdrawalRate`, `realReturn`, `taxRate`, `rule`, `floor`, `ceiling`, `start`, `startBalance`, `horizon`, `rebalance`, `fee`, and `mix` (`stocksPct` and `bondsPct` together). A setting not listed follows your plan. |
-| `income`, `expenses` | For your plan's other income and one-off expenses: `leaveOut`, the ids of the plan's items it leaves out, and `add`, items in the plan's own shapes. An added item with the id of one it leaves out replaces it. |
-| `events[]` | Its life events: `id`, `kind` (`house`, `child`, `sabbatical`, `part-time`, `spending`, `car`, `raise`, `windfall` or `loan-end`), `label`, and the kind's own figures: a home's `atAge`, `cost` from investments, `yearly` change in spending and `years` (`null` for good); a child's `fromAge`, `yearly` and `years`; a sabbatical's `fromAge`, `years` and `savingsLost` a year; part-time work's `fromAge`, `toAge` and `yearly` income after tax; a change in spending's `fromAge`, `yearly` (below zero for less) and `years` (`null` for good); a car's `atAge`, `cost` from investments for each one, `every` (years between cars, `null` for one car) and `times` (how many in all); a raise's `fromAge` and `yearly` more saved; a windfall's `atAge` and `amount` after tax; a loan paid off's `atAge` and `yearly` less spent from then, for good. |
 
 #### `planned-items`
 
@@ -1206,3 +1189,7 @@ Deleting your account deletes your data now, and the nightly backups expire it l
 A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it with the seam's reports (`getAllReport`, `getReport`), so an entry it can't read is named under `problems` rather than stopping the download, unless an entry of `SECTIONS` exports it itself and names it in `covers` (as `sharing` does `sharing-access-log`, to put each record beside its connection). Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that. Give it an entry in `lib/inventory.ts` too, in plain words, so **Your data** lists it ([features.md](features.md#your-data)): `test/inventory.test.ts` fails until it has one.
 
 The older stores are read by hand. One that stands alone (nothing else needs to read it to build the file) is an entry in `SECTIONS`: its key in the file, its name for errors, a reader that returns the store already in its exported shape and throws on anything that says nothing about the data (storage, keys), and either throws on an entry it can't read or names it (`problems`, by the seam's rules: `openStored` in `lib/repo.ts`), and, if it names accounts, which ids it names, so `accounts` lists them. Its key goes in `STORED_KEYS`. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.
+
+## Retiring a store
+
+Every download made while a store was declared exportable has its part, and a restore refuses a file with a part it doesn't know, so a store that goes takes its part out of `SEAM` and into `RETIRED_PARTS` (`lib/user-restore/parts.ts`), with its kind: the file reader then reads past it, never writes it, and still checks a part of entries is a list. If an old file's part held something the person would miss, say so in the preview, as [the Plan's](#parts-from-before-plans-were-copies) does. Delete the store's file and its entry in `lib/inventory.ts`, and describe the part where this page describes the others. Keys an account still holds under the old name are no longer in any download, and the scan before a restore counts them as data Nya doesn't show, so remove them from the database by hand around the release ([operations.md](operations.md#plans-as-copies-and-rolling-back) has the Plan's).

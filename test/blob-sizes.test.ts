@@ -18,8 +18,8 @@ const { saveItem } = await import('@/lib/storage');
 const route = await import('@/app/api/storage-usage/route');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { txnAnnotationStore } = await import('@/lib/txn-annotations');
-const { firePlanStore } = await import('@/lib/fire-plan');
-const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
+const { tagStore } = await import('@/lib/tags-store');
+const { emptyTagSet } = await import('@/lib/tags');
 const { plannedStore } = await import('@/lib/planned-store');
 const { EMPTY_PLANNED } = await import('@/lib/planned');
 const { apiTokenStore, apiRequestCount } = await import('@/lib/api-token-store');
@@ -163,14 +163,14 @@ describe('the stores on the storage seam, measured', () => {
     await txnAnnotationStore.set(ctx, 't1', { excluded: true, updated_at: at });
     // A record that can't be read takes room all the same.
     await fake.hset(ctxKey('transaction-annotations'), { t2: 'damaged-but-stored' });
-    await firePlanStore.set(ctx, DEFAULT_PLAN);
+    await tagStore.set(ctx, emptyTagSet());
     // A counter is bookkeeping, never listed.
     await fake.set(ctxKey('download-count'), '3');
     // Another container's stores are its own.
     await manualTxnStore.set({ container: A } as any, 'manual_z', { version: 1, rows: [{ ...row(9), account_id: 'manual_z' }] } as any);
 
     const usage = await readStorageUsage(ctx);
-    const plan = (fake.strings.get(ctxKey('fire-plan')) ?? '').length;
+    const tags = (fake.strings.get(ctxKey('tags')) ?? '').length;
     const books = fake.hashes.get(ctxKey('manual-transactions'))!;
     expect(usage.stores).toEqual(
       [
@@ -190,7 +190,7 @@ describe('the stores on the storage seam, measured', () => {
           largest_id: 't1',
           largest_chars: fake.hashes.get(ctxKey('transaction-annotations'))!.get('t1')!.length,
         },
-        { store: 'fire-plan', what: 'plan assumptions', entries: 1, chars: plan, largest_id: null, largest_chars: plan },
+        { store: 'tags', what: 'tags', entries: 1, chars: tags, largest_id: null, largest_chars: tags },
       ].sort((x, y) => y.chars - x.chars)
     );
     expect(usage.stores_chars).toBe(usage.stores.reduce((n, s) => n + s.chars, 0));
