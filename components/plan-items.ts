@@ -385,6 +385,29 @@ export function notePartText(x: PlanItem, part: keyof typeof EVENT_PART_TEXT, pl
   return part === 'before-start' ? beforeStartText(x, plan, startAge) : EVENT_PART_TEXT[part];
 }
 
+/** A row's note from the figures (lib/fire/plan-figures.ts itemNotes), in
+ *  the words its kind had before E2: a cost's and income's as the Income and
+ *  one-off expenses card said them, the rest as the life events' did (with
+ *  part-time's before-start as beforeStartText has it). `at` is where it
+ *  starts; `end` where Will it last? ends. */
+export function rowNoteText(
+  x: PlanItem,
+  part: keyof typeof EVENT_PART_TEXT,
+  o: { plan: Pick<FirePlanV2, 'start' | 'age'>; at: number | null; startAge: number | null; end: number | null; planInWalk: boolean }
+): string | null {
+  const money = x.kind === 'one-off' || (INCOME_KINDS.includes(x.kind) && x.kind !== 'part-time');
+  if (money && part === 'no-age') return 'Not in the simulation: add your age.';
+  if (x.kind === 'one-off') {
+    if (part === 'before-start') {
+      if (o.startAge === null) return 'Not in the simulation: add your age.';
+      if (o.plan.age !== null && o.at !== null && o.at < o.plan.age) return 'Before today, so it isn’t counted: your measured figures may already count it.';
+      return o.planInWalk ? `Before ${o.startAge}, where Will it last? starts, so it counts in your FI date, not in Will it last?` : `Before ${o.startAge}, where Will it last? starts, so it isn’t counted anywhere.`;
+    }
+    if (part === 'after-end') return `After the plan ends${o.end !== null ? ` at ${o.end}` : ''}: only the grid’s longer columns reach it.`;
+  }
+  return notePartText(x, part, o.plan, o.startAge);
+}
+
 /** Whether an item is placed by the steady path in every run of Will it
  *  last? (on FI or a balance, or timed by one of those). */
 export function onSteadyPath(x: PlanItem, plan: Facts, seen = new Set<string>()): boolean {

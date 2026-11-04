@@ -63,7 +63,7 @@ import type { Txn } from './MonthBreakdown';
 import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
 import PlanGrid, { type FailedCell } from './PlanGrid';
-import { AboutForm, AssumptionsForm, ExpenseForm, FigureForm, IncomeForm, type AssumptionsAt, type FigureKind } from './PlanForms';
+import { AboutForm, AssumptionsForm, FigureForm, type AssumptionsAt, type FigureKind } from './PlanForms';
 import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
 import {
@@ -111,13 +111,11 @@ import {
   type Missing,
   type PlanCore,
   type Repair,
-  type PlanExpense,
-  type PlanIncome,
 } from '@/lib/fire/plan';
-import { basePlanOf, isStoredPlan, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
-import { factsOf, holdsAmounts, withFacts, type Facts } from '@/lib/fire/copies';
-import { eventsOf, expensesOf, incomeOf, withEvents } from '@/lib/fire/items';
-import type { Count, ItemNote } from '@/lib/fire/compile';
+import { basePlanOf, isStoredPlan, parsePlanV2, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
+import { MAX_FIRE_PLANS, factsOf, holdsAmounts, withFacts, type Facts } from '@/lib/fire/copies';
+import { withItem, type PlanItem } from '@/lib/fire/items';
+import type { Count, ItemAges, ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
 import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
@@ -127,9 +125,8 @@ import PlanBar, { openingSegment, planPanelId, planTabId, type PlanSegment } fro
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
 import { CopyTag } from './CopyTag';
-import { LifeEventsCard, type Checked } from './PlanEvents';
-import type { LifeEvent } from '@/lib/fire/events';
-import { DraftPreview, WhatIfCard } from './PlanWhatIf';
+import { TimelineCard } from './PlanTimeline';
+import { itemRuleText, itemSentence } from './plan-items';
 import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, type PlanSave, type PlansState } from './plan-list';
 import { planSavers, type Save } from './plan-savers';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
@@ -201,17 +198,13 @@ export type SheetState =
   // test's part or its mix; `mix` is the allocation's, filled in, as it was
   // when "Use my allocation in the plan" was pressed.
   | { kind: 'assumptions'; at?: AssumptionsAt; mix?: PlanMix & { ok: true } }
-  | { kind: 'numbers' }
-  | { kind: 'income'; item: PlanIncome | null }
-  | { kind: 'expense'; item: PlanExpense | null };
+  | { kind: 'numbers' };
 
 const SHEET_TITLES: Record<SheetState['kind'], string> = {
   about: 'Your ages',
   figure: '',
   assumptions: 'Assumptions',
   numbers: 'About these numbers',
-  income: 'Other income',
-  expense: 'One-off expense',
 };
 
 const FIGURE_TITLES: Record<FigureKind, string> = {
@@ -673,7 +666,11 @@ export default function PlanTab({
   const measured = measuredInputs(inputs);
   // The Plan's figures by the same function a copy's come from
   // (lib/fire/plan-figures.ts).
-  const baseFigures = planFigures(basePlan, measured, { count }) as PlanFigures;
+  // Null when your plan isn't worked out: its lasting changes take its
+  // spending in retirement below zero (measured spending can fall with no
+  // save at all), and Your path says so, with its Timeline to fix them.
+  const baseRun = planFigures(basePlan, measured, { count });
+  const baseFigures: PlanFigures | null = 'refused' in baseRun ? null : baseRun;
   // Plan amounts are in the Plan's own currency, the one its figures were
   // typed in, once recorded; otherwise the accounts' own, or the
   // transactions' (lib/fire/plan-currency.ts).
@@ -717,6 +714,7 @@ export default function PlanTab({
   const openFigures = openView?.figures ?? null;
   const shown: PlanFigures | null = entry ? (openFigures && !('refused' in openFigures) ? openFigures : null) : baseFigures;
   const problem = openFigures && 'refused' in openFigures ? REFUSED_TEXT : null;
+  const baseRefused = !entry && baseFigures === null;
   /** The plan the forms edit: the copy open, or your plan. */
   const shownPlan = openView?.plan ?? basePlan;
   const plan = shown?.plan ?? shownPlan;
@@ -920,9 +918,9 @@ export default function PlanTab({
     let row = openedFrom.current === 'mix' ? mixHeading.current : openedFrom.current ? (inputRows.current.get(openedFrom.current) ?? null) : null;
     // The answer's ask goes once the ages are saved: then to the Ages row.
     if (openedFrom.current === 'ask-about' && !row?.isConnected) row = inputRows.current.get('about') ?? null;
-    // What if…'s goes once the age is saved: then to its first life choice
-    // when one can be tried, or else its title (components/PlanWhatIf.tsx).
-    if (openedFrom.current === 'ask-what-if' && !row?.isConnected) row = inputRows.current.get('what-if-first') ?? null;
+    // The Timeline's goes once the age is saved: then to its Add
+    // (components/PlanTimeline.tsx).
+    if (openedFrom.current === 'ask-timeline' && !row?.isConnected) row = inputRows.current.get('timeline-first') ?? null;
     if (!closed || !row?.isConnected) return;
     let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
@@ -1017,9 +1015,8 @@ export default function PlanTab({
   // paused for more than a moment, the sheet says why above its buttons.
   // Nothing for a save under way, or a sheet whose plan was replaced under
   // it, as before.
-  const paused = formEditable
-    ? null
-    : state.status === 'error'
+  const savesWait =
+    state.status === 'error'
       ? state.value === null
         ? "Your saved plan couldn't be read, so this shows the defaults and can't be saved yet: try again at the top of the Plan tab."
         : "Your saved plan couldn't be read, so this can't be saved yet: try again at the top of the Plan tab."
@@ -1033,9 +1030,33 @@ export default function PlanTab({
             ? "Your saved plan has values to fix first (at the top of the Plan tab), so this can't be saved yet."
             : copyFixing
               ? "This copy has values to fix first (on its card, under the bar), so this can't be saved yet."
-              : replaced && editable && !other && sheetFor === shownFor
-                ? "Your saved plan was read again since this opened, so this can't be saved: close it and open it again."
-                : null;
+              : null;
+  const paused = formEditable
+    ? null
+    : (savesWait ?? (state.status === 'ready' && replaced && editable && !other && sheetFor === shownFor ? "Your saved plan was read again since this opened, so this can't be saved: close it and open it again." : null));
+  // The Timeline's own sheet (components/PlanTimeline.tsx): it keeps the
+  // version it opened on itself, so only the plan's state matters here.
+  const timelineEditable = editable && !other && !copyFixing;
+  const timelinePaused = timelineEditable ? null : savesWait;
+  /** Whether a save would turn a plan that is worked out into one that isn't. */
+  const breaks = (was: FirePlanV2, next: FirePlanV2) => !('refused' in planFigures(was, measured, { count })) && 'refused' in planFigures(next, measured, { count });
+  /** The Timeline's saves: refused, by name, for a plan checked in Also
+   *  change it in that the change breaks, and for one taken below zero; a
+   *  plan already refused can be fixed a step at a time. */
+  const saveTimeline = async (next: FirePlanV2, also: readonly string[], before: FirePlanV2): Promise<boolean | string> => {
+    if (!timelineEditable) return timelinePaused ?? false;
+    const facts = factsOf(next);
+    for (const id of also) {
+      const there = alsoPlans.find((x) => x.row.id === id);
+      if (!there) continue;
+      const changed = planOf(withFacts(sameChange(before, next, there.plan), facts));
+      const parsed = parsePlanV2(changed);
+      if ('error' in parsed) return `${there.row.name} can’t take this change, so nothing was saved: ${itemRuleText(parsed.error, changed)} Untick it to save the rest.`;
+      if (breaks(there.plan, changed)) return `${there.row.name} can’t take this change, so nothing was saved: its spending in retirement would go below zero. Untick it to save the rest.`;
+    }
+    if (breaks(before, next)) return `With this, ${REFUSED_TEXT.charAt(0).toLowerCase()}${REFUSED_TEXT.slice(1)} Nothing was saved.`;
+    return saversRef.current.form(next, also);
+  };
   // The plan saved as your plan and what was recorded since (rollout 8e), for
   // the Progress card and, with the Plan shown, the chart's lines before today.
   const progress = useProgress(institutions);
@@ -1055,8 +1076,8 @@ export default function PlanTab({
   // plan's one-offs and income moved, on the Plan's answer and Progress's
   // line, until Got it (one for both).
   const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
-  const offFigures = movedNew && entry === null && !('refused' in baseFigures) ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
-  const movedText = offFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
+  const offFigures = movedNew && entry === null && baseFigures ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
+  const movedText = offFigures && baseFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
       entry === null &&
@@ -1079,33 +1100,11 @@ export default function PlanTab({
           ? "Your saved plan has values to fix first (at the top of the Plan tab), so this can't be saved yet."
           : !currencyKnown
             ? "Which currency your plan's figures are in isn't known yet (at the top of the Plan tab), so this can't be saved yet."
-            : baseFigures.view.savings.source === 'measured' && (txnsLoading || txnsFailed || unread.length > 0)
+            : figures.view.savings.source === 'measured' && (txnsLoading || txnsFailed || unread.length > 0)
               ? "Some of your transactions haven't loaded or couldn't be read, so Nya's savings figure may be off: save once they have, or type your savings in Your figures."
               : null;
   const copyName = entry?.name ?? null;
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk };
-  // The life events of the plan shown: the copy's, or your plan's when it
-  // holds any (made yours from a copy that did). Each form says how its
-  // event moves that plan's FI age as it is now; on a refused copy there is
-  // nothing to move from, so its fix says what the event makes of it: still
-  // not worked out, or the FI age it comes to.
-  const shownEvents = eventsOf(shownPlan);
-  const eventIds = new Set(shownEvents.map((e) => e.id));
-  const eventNotes = shown ? shown.itemNotes.filter((n) => eventIds.has(n.id)).map(({ id, part }) => ({ id, part })) : [];
-  const lifeEvents =
-    entry || shownEvents.length > 0
-      ? {
-          copyName,
-          version: shownFor ?? storedKey,
-          events: shownEvents,
-          editable: editable && !other && !copyFixing,
-          onSave: (events: LifeEvent[], also?: { to: readonly string[] }) => saveShown(withEvents(shownPlan, events), also?.to ?? []),
-          preview: (checked: Checked, kind: LifeEvent['kind']) => (
-            <DraftPreview checked={checked} kind={kind} plan={shownPlan} measured={measured} count={count} against={shown} where={entry ? 'copy' : 'what-if'} money={money} />
-          ),
-          alsoFor: (id: string) => itemChoices(alsoTargets, id, money),
-        }
-      : null;
 
   // What each figure the plan shown rests on says, worked out once for the
   // rows under the FI card, their sheets' Why? and Drawdown's notice
@@ -1269,13 +1268,14 @@ export default function PlanTab({
           : reliably.why === 'loading' || reliably.why === 'failed' || reliably.why === 'problem' || reliably.why === 'empty-balance'
             ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
             : 'Your plan’s currency can’t be told from your accounts: say which you’ll type your plan’s figures in first (above), and this is offered then.';
-  // What the plan's life events do to the FI card's figures, a line each.
+  // What the plan's items do to the FI card's figures, a line each: for any
+  // item, whatever it is timed by.
   const lifeNotes: string[] = [];
-  if (shown && (entry || shownEvents.length > 0)) {
+  if (shown && (entry || shownPlan.items.length > 0)) {
     if (shown.retirement && shown.view.spending.value !== null) lifeNotes.push(`FI number from ${retirementText(shown.retirement.spending, shown.retirement.lasting, shown.view.spending.value, money)}.`);
     const later = laterText(shown.events?.later ?? [], money);
     if (later) lifeNotes.push(later);
-    if (shownEvents.length > 0) lifeNotes.push(`Coast and Barista FI leave ${entry ? 'this copy’s' : 'your plan’s'} life events out, but for lasting changes in spending.`);
+    if (shownPlan.items.length > 0) lifeNotes.push(`Coast and Barista FI leave ${entry ? 'this copy’s' : 'your plan’s'} items out, but for lasting changes in spending.`);
   }
   // How many plans there are, for the bar's and the card's Plans: none said
   // until they are listed (after a failed reload the client keeps the list
@@ -1283,10 +1283,10 @@ export default function PlanTab({
   const plansShown = plansState.status === 'ready' ? plansCount(plansState) : null;
 
   /** Makes a copy of `from` (your plan's id, or a copy's) named `name`, with
-   *  `whole` in it when given (Try it's life event), else as it is; opens
-   *  it when `openIt`. Your plan's first save, when it has none, is made
-   *  with it, so your plan is read again once it is made (not when refused:
-   *  the read takes What if… off the page, and its form with why). */
+   *  `whole` in it when given (Try it's item), else as it is; opens it when
+   *  `openIt`. Your plan's first save, when it has none, is made with it,
+   *  so your plan is read again once it is made (not when refused: the read
+   *  takes the Timeline's sheet off the page, and its form with why). */
   const createCopy = async (from: string, name: string, openIt: boolean, whole?: FirePlanV2): Promise<true | string> => {
     if (state.status !== 'ready') return READING_AGAIN;
     const source = from === plansState.main ? { plan: basePlan, currency: sendCurrency.current } : views.get(from);
@@ -1303,8 +1303,9 @@ export default function PlanTab({
     }
     return true;
   };
-  /** What if…'s Try it: a copy of your plan with the life event in it. */
-  const tryIt = (event: LifeEvent, name: string) => createCopy(plansState.main, name, true, withEvents(basePlan, [...eventsOf(basePlan), event]));
+  /** The Timeline's Try it: a copy of your plan with the item in it (in place
+   *  of the one it changes, else added). */
+  const tryItem = (item: PlanItem, name: string) => createCopy(plansState.main, name, true, withItem(basePlan, item));
   const renamePlan = async (id: string, name: string): Promise<true | string> => {
     const row = plansState.list.find((r) => r.id === id);
     if (!row) return 'That plan changed since this opened, so nothing was renamed: open it again.';
@@ -1352,7 +1353,7 @@ export default function PlanTab({
     !planLoaded || plansState.status !== 'ready'
       ? []
       : plansState.list.flatMap((row): SheetPlan[] => {
-          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: { kind: 'figures', figures: baseFigures } }];
+          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: baseFigures ? { kind: 'figures', figures: baseFigures } : { kind: 'not-run', reason: REFUSED_TEXT } }];
           const v = views.get(row.id);
           if (!v) return [];
           const outcome: PlanOutcome = v.other
@@ -1440,6 +1441,49 @@ export default function PlanTab({
   // An open copy with amounts typed in another currency, or lasting changes
   // below zero, has nothing worked out: its card says why, on every segment.
   const worked = shown !== null;
+  // Every plan listed counts toward the most kept, readable or not; a copy's
+  // amounts are in your plan's currency.
+  const plansFull = plansCount(plansState) >= MAX_FIRE_PLANS;
+  const canTry = editable && canOpen && plansState.status === 'ready' && !plansState.saving && !plansFull && basePlan.age !== null && planCurrency !== null;
+  const tryWhy = !currencyKnown ? (
+    <p className="helper">Say which currency your plan’s figures are in first (above): a copy’s amounts are in it.</p>
+  ) : planCurrency === null ? (
+    <p className="helper">Your plan has no currency yet (no accounts to take it from), so an item’s amounts have none: add an account first.</p>
+  ) : plansState.status === 'loading' ? (
+    <p className="helper">Your plans are still loading.</p>
+  ) : plansState.status === 'error' ? (
+    <Notice level="caution">
+      {plansState.error}{' '}
+      <button type="button" className="btn secondary" onClick={() => void plansClient.load()}>
+        Try again
+      </button>
+    </Notice>
+  ) : plansFull ? (
+    <p className="helper">You have {MAX_FIRE_PLANS} plans, the most Nya keeps: delete one in Plans to try another.</p>
+  ) : null;
+  const timeline = planLoaded && (
+    <TimelineCard
+      plan={shownPlan}
+      figures={shown}
+      refused={refused || baseRefused}
+      measured={measured}
+      count={count}
+      copyName={copyName}
+      version={shownFor ?? storedKey}
+      editable={timelineEditable}
+      paused={timelinePaused}
+      money={money}
+      planInWalk={planInWalk}
+      savings={view.savings.value}
+      onSave={saveTimeline}
+      alsoFor={(id) => itemChoices(alsoTargets, id, money)}
+      tryIt={entry ? null : { can: canTry, why: tryWhy, plans: plansState.list, onTry: tryItem }}
+      onAskAge={() => open({ kind: 'about' }, 'ask-timeline')}
+      askRef={(el) => inputRowRef('ask-timeline', el)}
+      firstRef={(el) => inputRowRef('timeline-first', el)}
+      reloading={reloading}
+    />
+  );
   // The currency, quiet, is a line at the foot of Your figures, beside the
   // figures it is about, so nothing above the bar arrives as the plan loads;
   // above the bar while it needs the person, or with Your figures not drawn.
@@ -1507,12 +1551,12 @@ export default function PlanTab({
         onBack={leave}
       />
       {/* The open copy's card, under the bar on every segment, and when it
-          is refused for lasting changes below zero, its life events, the
-          ones to change, with it. */}
+          is refused for lasting changes below zero, its Timeline, the items
+          to change, with it. */}
       {entry && (
         <div ref={cardRef}>
           {copyCard}
-          {refused && lifeEvents && <LifeEventsCard {...lifeEvents} notes={[]} money={money} />}
+          {refused && timeline}
         </div>
       )}
 
@@ -1569,36 +1613,14 @@ export default function PlanTab({
               currency={currencyInFigures ? currencyCard : null}
             />
 
-            {/* With a copy open, its life events take the What if… card's
-                place, with the same choices, added to the copy; on your plan
-                they are there when it holds any. */}
-            {lifeEvents && shown && <LifeEventsCard {...lifeEvents} notes={eventNotes} money={money} />}
-
-            {/* Only over your saved plan, never the defaults; the card is
-                drawn with your plan shown, and its sheet stays mounted. */}
-            {planLoaded && (
-              <WhatIfCard
-                shown={!entry}
-                base={basePlan}
-                baseFigures={baseFigures}
-                measured={measured}
-                count={count}
-                plans={plansState}
-                planCurrency={planCurrency}
-                planCurrencyKnown={currencyKnown}
-                editable={editable}
-                canOpen={canOpen}
-                money={money}
-                onTry={tryIt}
-                onRetry={() => void plansClient.load()}
-                onAskAge={() => open({ kind: 'about' }, 'ask-what-if')}
-                reloading={reloading}
-                askRef={(el) => inputRowRef('ask-what-if', el)}
-                firstRef={(el) => inputRowRef('what-if-first', el)}
-              />
-            )}
-
-            <EventsCard plan={plan} engine={engine} notes={shown?.itemNotes ?? []} money={money} editable={editable} open={open} copyName={copyName} planInWalk={planInWalk} />
+            {timeline}
+          </>
+        )}
+        {/* Your plan isn't worked out: why, and its Timeline, to fix it. */}
+        {baseRefused && (
+          <>
+            <Notice level="critical">{REFUSED_TEXT}</Notice>
+            {timeline}
           </>
         )}
         {/* Progress against the plan saved as your plan (rollout 8e): the
@@ -1607,7 +1629,7 @@ export default function PlanTab({
           <PlanProgress
             progress={progress}
             plan={basePlan}
-            savings={baseFigures.view.savings}
+            savings={figures.view.savings}
             currency={figures.currency}
             institutions={institutions}
             blocked={progressBlocked}
@@ -1631,7 +1653,7 @@ export default function PlanTab({
             <SimulationCard
               copyName={copyName}
               startsWith={shown?.startsWith ?? null}
-              hasEvents={shownEvents.length > 0}
+              ages={shown?.resolution.ages ?? []}
               retirementLine={shown?.retirement && view.spending.value !== null ? `Spending in retirement: ${retirementText(shown.retirement.spending, shown.retirement.lasting, view.spending.value, money)}.` : null}
               plan={plan}
               notes={shown?.itemNotes ?? []}
@@ -1722,8 +1744,6 @@ export default function PlanTab({
             also={figureChoices(alsoTargets, shownSheet.figure, money)}
           />
         )}
-        {shownSheet?.kind === 'income' && <IncomeForm key={opened} {...formProps} item={shownSheet.item} also={shownSheet.item ? itemChoices(alsoTargets, shownSheet.item.id, money) : []} />}
-        {shownSheet?.kind === 'expense' && <ExpenseForm key={opened} {...formProps} item={shownSheet.item} also={shownSheet.item ? itemChoices(alsoTargets, shownSheet.item.id, money) : []} />}
       </Sheet>
       {plansSheet}
     </>
@@ -2163,7 +2183,7 @@ export type InputKind = 'spending' | 'savings' | 'assets' | 'about' | 'assumptio
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Drawdown's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-what-if' | 'what-if-first';
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first';
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {
@@ -2404,7 +2424,7 @@ const MISSING_FIGURE: Record<Missing, string> = {
 export function SimulationCard({
   copyName = null,
   startsWith = null,
-  hasEvents = false,
+  ages = [],
   retirementLine = null,
   plan,
   notes,
@@ -2422,8 +2442,9 @@ export function SimulationCard({
   /** What the plan starts with, and what it would have then
    *  (lib/fire/plan-figures.ts): the start line under the answer. */
   startsWith?: StartsWith | null;
-  /** The plan shown has life events, which are in the simulation too. */
-  hasEvents?: boolean;
+  /** Where each of the plan's items falls on the steady path (null: not
+   *  placed), for what this says it takes from Your path. */
+  ages?: readonly ItemAges[];
   /** Spending in retirement with its life events' lasting changes, in words:
    *  what the simulation withdraws in place of what is spent now. */
   retirementLine?: string | null;
@@ -2486,8 +2507,8 @@ export function SimulationCard({
   // Placed by the compile (lib/fire/compile.ts): not one left out for want
   // of an age or before the start, nor a one-off after the plan's end.
   const unplaced = new Set(notes.filter((n) => n.part === 'no-age' || n.part === 'before-start' || n.part === 'after-end').map((n) => n.id));
-  const placedIncome = incomeOf(plan).filter((x) => !unplaced.has(x.id));
-  const placedExpenses = expensesOf(plan).filter((x) => !unplaced.has(x.id));
+  // A change in pay ends when you stop, so it never reaches the simulation.
+  const placed = plan.items.filter((x, i) => !unplaced.has(x.id) && ages[i] !== null && ages[i] !== undefined && x.kind !== 'pay');
   const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;
@@ -2635,21 +2656,15 @@ export function SimulationCard({
 
         {/* Its settings are in the Assumptions sheet (rollout 6d); what it
             takes from Your path is said here. */}
-        {(placedIncome.length > 0 || placedExpenses.length > 0 || hasEvents) && (
+        {placed.length > 0 && (
           <>
             <h4 className="plan-heading">From Your path</h4>
             <ul className="plan-assumptions">
-              {placedIncome.map((x) => (
+              {placed.map((x) => (
                 <li key={x.id}>
-                  {x.label}: <Masked>{money(x.amount)}</Masked> a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
+                  {x.label}: <Masked>{itemSentence(x, plan, money)}</Masked>.
                 </li>
               ))}
-              {placedExpenses.map((x) => (
-                <li key={x.id}>
-                  {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
-                </li>
-              ))}
-              {hasEvents && <li>This plan’s life events, from the stop age on, as the Life events card on Your path says.</li>}
             </ul>
           </>
         )}
@@ -2759,109 +2774,6 @@ export function GridCard({
         <p className="plan-definition">Every column uses the same runs, each extended to the longer lengths.</p>
       )}
       {sayHypothetical && <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>}
-    </div>
-  );
-}
-
-export function EventsCard({
-  plan,
-  engine,
-  notes,
-  money,
-  editable,
-  open,
-  copyName = null,
-  planInWalk = false,
-}: {
-  plan: FirePlanV2;
-  engine: EnginePlan | { missing: Missing };
-  /** The plan's items' notes (lib/fire/plan-figures.ts itemNotes). */
-  notes: readonly ItemNote[];
-  money: (n: number) => string;
-  editable: boolean;
-  open: (s: SheetState) => void;
-  /** The open copy's name, said at the top; null with your plan open. */
-  copyName?: string | null;
-  /** D15's switch: one-offs and income count in the FI date too. */
-  planInWalk?: boolean;
-}) {
-  // Where the simulation has them, so only when it runs.
-  const ids = (...parts: string[]) => new Set('sim' in engine ? notes.filter((n) => parts.includes(n.part)).map((n) => n.id) : []);
-  const leftOut = ids('no-age', 'before-start');
-  const beyond = ids('after-end');
-  const income = incomeOf(plan);
-  const expenses = expensesOf(plan);
-  const end = 'sim' in engine && engine.startAge !== null ? engine.startAge + engine.sim.years : null;
-  // Where these count: in the simulation, from the age it starts at (your
-  // stop age, or today's when it starts from what you have now), and with
-  // D15's switch in the FI walk until FI (lib/fire/compile.ts).
-  const start = 'sim' in engine ? engine.startAge : null;
-  const any = income.length > 0 || expenses.length > 0;
-  // A version 2 plan's items with no place here or on the Life events card
-  // (lib/fire/items.ts asIncome, asExpense, asEvent): counted, and said to
-  // be there.
-  const unshown = plan.items.length - income.length - expenses.length - eventsOf(plan).length;
-  const whose = copyName ? 'this copy' : 'your plan';
-  return (
-    <div className="card">
-      <CopyTag name={copyName} />
-      <div className="inst-header">
-        <div className="inst-name">Income and one-off expenses</div>
-      </div>
-      {!any && <p className="empty-note">Add Social Security, a pension, or a big one-off cost such as a roof, to see how it changes the plan.</p>}
-      {any && planInWalk && (
-        <p className="helper">
-          {start !== null
-            ? `They count in your FI date until you reach it, and in Will it last? from age ${start}, where it starts, never in your FI number.`
-            : 'They count in your FI date until you reach it, and in Will it last? from where it starts, never in your FI number.'}
-        </p>
-      )}
-      {any && !planInWalk && start !== null && <p className="helper">They count in Will it last? from age {start}, where it starts, never in your FI date or FI number.</p>}
-      {unshown > 0 && (
-        <p className="helper">
-          {unshown === 1 ? `1 more item counts in ${whose}: a newer version of Nya shows it.` : `${unshown} more items count in ${whose}: a newer version of Nya shows them.`}
-        </p>
-      )}
-      <div className="plan-rows">
-        {income.map((x) => (
-          <Row
-            key={x.id}
-            label={x.label}
-            value={`${money(x.amount)} a year`}
-            note={`from age ${x.fromAge}, after tax${x.inflationAdjusted ? ', rises with inflation' : ", in today's dollars, then fixed (loses value to inflation)"}${leftOut.has(x.id) ? '. Not in the simulation: add your age.' : ''}`}
-            action={<EditButton onClick={() => open({ kind: 'income', item: x })} disabled={!editable} label={`Edit ${x.label}`} />}
-          />
-        ))}
-        {expenses.map((x) => (
-          <Row
-            key={x.id}
-            label={x.label}
-            value={money(x.amount)}
-            note={`at age ${x.atAge}${
-              leftOut.has(x.id)
-                ? start !== null
-                  ? plan.age !== null && x.atAge < plan.age
-                    ? ". Before today, so it isn't counted: your measured figures may already count it."
-                    : planInWalk
-                      ? `. Before ${start}, where Will it last? starts, so it counts in your FI date, not in Will it last?`
-                      : `. Before ${start}, where Will it last? starts, so it isn't counted anywhere.`
-                  : '. Not in the simulation: add your age.'
-                : beyond.has(x.id)
-                  ? `. After the plan ends${end !== null ? ` at ${end}` : ''}: only the grid's longer columns reach it.`
-                  : ''
-            }`}
-            action={<EditButton onClick={() => open({ kind: 'expense', item: x })} disabled={!editable} label={`Edit ${x.label}`} />}
-          />
-        ))}
-      </div>
-      <div className="card-actions">
-        <button className="secondary" onClick={() => open({ kind: 'income', item: null })} disabled={!editable || income.length >= 5}>
-          Add income
-        </button>
-        <button className="secondary" onClick={() => open({ kind: 'expense', item: null })} disabled={!editable || expenses.length >= 10}>
-          Add a one-off
-        </button>
-      </div>
     </div>
   );
 }
