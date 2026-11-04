@@ -6,24 +6,18 @@
 // `plan-facts`, one value: which entry is yours and the facts every plan
 // shares.
 //
-// THIS RELEASE NEVER MAKES EITHER. The release after it (C2) is the first to
-// write them; this one reads them, saves your plan into its entry once they
-// are there (app/api/fire-plan), and brings them back from a file that holds
-// them (lib/user-restore). Until then every account reads the plan from
-// `fire-plan` and its currency record (lib/fire-plan.ts), exactly as before,
-// so the release before, this one's rollback target, never meets a store it
-// doesn't know.
+// These are the plan. While `fire-plans` holds no entry, the plan is the
+// defaults, never saved: the first write of any plan makes your plan's entry
+// (lib/plan-writes.ts). The plan before copies (`fire-plan`, its currency
+// record and the scenarios) is never read: the first write removes it, as
+// nobody's plan needed carrying over (the tax plan's C2).
 //
-// Once `fire-plans` holds an entry, it is the plan: GET answers your plan's
-// entry with the facts applied, and the scenarios (lib/plan-scenarios.ts)
-// are read no more, since they became the copies. Your plan's entry and the
-// facts are read strictly, as the plan always was; a copy that can't be read
-// never stops Home.
+// Your plan's entry and the facts are read strictly, as the plan always was;
+// a copy that can't be read never stops Home.
 
 import { defineMapStore, defineValueStore, UnreadableEntriesError } from './repo';
 import { eager } from './eager';
 import type { Ctx } from './containers';
-import { firePlanStore, planAnswer, readCurrencyRecord } from './fire-plan';
 import { MAIN_ID, factsOf, holdsAmounts, isPlanEntry, isPlanFacts, mainOf, upgradePlanEntry, withFacts, type PlanEntry, type PlanFacts } from './fire/copies';
 
 export const firePlansStore = defineMapStore<PlanEntry>('fire-plans', {
@@ -39,94 +33,112 @@ export const planFactsStore = defineValueStore<PlanFacts>('plan-facts', {
   exportable: true, // what the person typed
 });
 
+/** Your plan's name when its entry is first made. */
+export const FIRST_PLAN = 'First plan';
+
 /** Your plan's entry, and the facts read beside it (null without
  *  `plan-facts`, where the entry's own fields hold them). `missing` when it
  *  isn't the plan the facts name (lib/fire/copies.ts mainOf). */
 export type MainPlan = { id: string; entry: PlanEntry; facts: PlanFacts | null; missing: boolean };
 
-type Begun = { facts: Promise<PlanFacts | null>; main: Promise<PlanEntry | null>; count: Promise<number> };
-
-/** The three reads that say whether the plan is in `fire-plans`, and which
- *  is yours there, begun together (one round trip). */
-const beginMain = (ctx: Ctx): Begun => ({
-  facts: eager(planFactsStore.get(ctx)),
-  main: eager(firePlansStore.get(ctx, MAIN_ID)),
-  count: eager(firePlansStore.count(ctx)),
-});
+type Report = { entries: ReadonlyMap<string, PlanEntry>; unreadable: readonly string[]; unrecognised: readonly string[] };
 
 /** One entry of a report, or the error a strict read of it throws. */
-function entryOf(report: { entries: ReadonlyMap<string, PlanEntry>; unreadable: readonly string[]; unrecognised: readonly string[] }, id: string): PlanEntry {
+export function entryOf(report: Report, id: string): PlanEntry {
   const entry = report.entries.get(id);
   if (entry) return entry;
   throw new UnreadableEntriesError(firePlansStore.what, report.unreadable.includes(id) ? [id] : [], report.unrecognised.includes(id) ? [id] : []);
 }
 
-async function mainFrom(ctx: Ctx, begun: Begun): Promise<MainPlan | null> {
-  if ((await begun.count) === 0) return null;
-  const facts = await begun.facts;
+/** Your plan's entry, or null while `fire-plans` holds none (the plan is
+ *  then the defaults). Strict: an entry or facts that can't be read throw
+ *  (StoredDataUnreadableError). The three reads are begun together (one
+ *  round trip); the whole map is read only in the rare case the plan the
+ *  facts name isn't there (Make this your plan and Delete on two devices). */
+export async function readMain(ctx: Ctx): Promise<MainPlan | null> {
+  const factsRead = eager(planFactsStore.get(ctx));
+  const mainRead = eager(firePlansStore.get(ctx, MAIN_ID));
+  if ((await firePlansStore.count(ctx)) === 0) return null;
+  const facts = await factsRead;
   const named = facts?.main ?? MAIN_ID;
-  const entry = named === MAIN_ID ? await begun.main : await firePlansStore.get(ctx, named);
+  const entry = named === MAIN_ID ? await mainRead : await firePlansStore.get(ctx, named);
   if (entry) return { id: named, entry, facts, missing: false };
-  // The plan named isn't there (Make this your plan and Delete on two
-  // devices): the rare fallback, over the whole map.
   const report = await firePlansStore.getAllReport(ctx);
   const pick = mainOf(facts, report);
-  // Every entry gone since it was counted: the plan is the legacy one again.
+  // Every entry gone since it was counted: the defaults again.
   if (!pick) return null;
   return { id: pick.id, entry: entryOf(report, pick.id), facts, missing: pick.missing };
 }
 
-/** Your plan's entry, or null while `fire-plans` holds none (the plan is
- *  then `fire-plan`, as before). Strict: an entry or facts that can't be read
- *  throw (StoredDataUnreadableError). */
-export async function readMain(ctx: Ctx): Promise<MainPlan | null> {
-  return mainFrom(ctx, beginMain(ctx));
-}
-
 /** What GET answers from your plan's entry: the plan with the facts in its
  *  fields, its currency where it holds an amount (else null, so the Plan
- *  follows the accounts, as a plan with nothing typed always has), and its
- *  stamp, so a page can name the version a save was made on. */
+ *  follows the accounts, as a plan with nothing typed always has), its id
+ *  and its stamp, so a page can name the version a save was made on. */
 export function mainAnswer(m: MainPlan) {
   return {
+    id: m.id,
     plan: withFacts(m.entry.plan, m.facts ?? factsOf(m.entry.plan)),
     currency: holdsAmounts(m.entry.plan) ? m.entry.currency : null,
     updated_at: m.entry.updatedAt,
   };
 }
 
+/** What GET answers while your plan has no entry: the defaults, never saved,
+ *  with no stamp (a save then sends `based_on: null`). */
+export const NO_PLAN_ANSWER = { id: MAIN_ID, plan: null, currency: null, updated_at: null } as const;
+
 /** The plan and its currency, as GET /api/fire-plan and /api/plan-inputs
- *  answer them: your plan's entry once `fire-plans` holds one, else the
- *  legacy plan and its record (lib/fire-plan.ts planAnswer). The five reads
- *  are begun together, so they share a round trip, and only those the
- *  answer needs are awaited: a damaged `plan-facts` beside no `fire-plans`,
- *  or a damaged legacy plan beside it, is never read into the answer. */
+ *  answer them: your plan's entry, or the defaults while there is none. */
 export async function readPlanAnswer(ctx: Ctx) {
-  const begun = beginMain(ctx);
-  const legacy = eager(firePlanStore.get(ctx));
-  const record = eager(readCurrencyRecord(ctx));
-  const main = await mainFrom(ctx, begun);
-  if (main) return mainAnswer(main);
-  const stored = await legacy;
-  const { record: there, problem } = await record;
-  return planAnswer(stored, there, problem);
+  const main = await readMain(ctx);
+  return main ? mainAnswer(main) : NO_PLAN_ANSWER;
 }
 
-/** The plans but yours, for the Plan's scenario list once `fire-plans` holds
- *  an entry (null before): the readable ones' names in the order they were
- *  made, every id (readable or not), and your plan's name and whether it is
- *  the one the facts name. Your plan is picked as readMain picks it, so the
- *  two never disagree: one that can't be read throws here too. */
-export async function readCopies(ctx: Ctx): Promise<{ ids: string[]; names: string[]; main: { name: string; missing: boolean } } | null> {
-  const count = eager(firePlansStore.count(ctx));
-  const read = eager(planFactsStore.get(ctx));
-  if ((await count) === 0) return null;
-  const facts = await read;
-  const report = await firePlansStore.getAllReport(ctx);
+/** One plan as the Plans sheet reads it: the facts every plan shares in its
+ *  fields, its currency where it holds an amount, its stamps. Your plan
+ *  before its entry is made has no plan (the defaults) and no stamps. */
+export type PlanRow = {
+  id: string;
+  name: string;
+  plan: PlanEntry['plan'] | null;
+  currency: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export function rowOf(id: string, entry: PlanEntry, facts: PlanFacts | null, main: PlanEntry): PlanRow {
+  return {
+    id,
+    name: entry.name,
+    plan: withFacts(entry.plan, facts ?? factsOf(main.plan)),
+    currency: holdsAmounts(entry.plan) ? entry.currency : null,
+    created_at: entry.createdAt,
+    updated_at: entry.updatedAt,
+  };
+}
+
+/** Every plan, for the Plans sheet (GET /api/plans): yours first, then the
+ *  copies in the order they were made, with the ids of any that can't be
+ *  read (damaged ones may be deleted, once the person confirms) or that a
+ *  newer version saved (kept, never offered). Your plan is picked as
+ *  readMain picks it, and read as strictly. */
+export async function readPlans(ctx: Ctx): Promise<{ main: string; missing: boolean; plans: PlanRow[]; unreadable_ids: string[]; unrecognised_ids: string[] }> {
+  const factsRead = eager(planFactsStore.get(ctx));
+  const reportRead = eager(firePlansStore.getAllReport(ctx));
+  if ((await firePlansStore.count(ctx)) === 0) {
+    return { main: MAIN_ID, missing: false, plans: [{ id: MAIN_ID, name: FIRST_PLAN, plan: null, currency: null, created_at: null, updated_at: null }], unreadable_ids: [], unrecognised_ids: [] };
+  }
+  const facts = await factsRead;
+  const report = await reportRead;
   const pick = mainOf(facts, report);
-  if (!pick) return null;
+  if (!pick) return readPlans(ctx);
   const main = entryOf(report, pick.id);
-  const readable = [...report.entries].filter(([id]) => id !== pick.id).sort(([a, x], [b, y]) => x.createdAt.localeCompare(y.createdAt) || a.localeCompare(b));
-  const others = [...report.unreadable, ...report.unrecognised].filter((id) => id !== pick.id);
-  return { ids: [...readable.map(([id]) => id), ...others], names: readable.map(([, e]) => e.name), main: { name: main.name, missing: pick.missing } };
+  const copies = [...report.entries].filter(([id]) => id !== pick.id).sort(([a, x], [b, y]) => x.createdAt.localeCompare(y.createdAt) || a.localeCompare(b));
+  return {
+    main: pick.id,
+    missing: pick.missing,
+    plans: [rowOf(pick.id, main, facts, main), ...copies.map(([id, e]) => rowOf(id, e, facts, main))],
+    unreadable_ids: report.unreadable.filter((id) => id !== pick.id),
+    unrecognised_ids: report.unrecognised.filter((id) => id !== pick.id),
+  };
 }

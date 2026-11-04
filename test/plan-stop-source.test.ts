@@ -6,12 +6,14 @@ import { join, relative } from 'node:path';
 // "stop when I reach FI" reaches every figure and word. A read of targetAge
 // itself is allowed only where it is the stored field: the readers and the
 // Ages sheet that types it, and version 1's scenarios, which keep a stop age
-// of their own. A file not listed here, or a count that rises, fails.
+// of their own; and where it names the setting, never its value (how a copy
+// differs, components/plan-diff.ts). A file not listed here, or a count that
+// rises, fails.
 //
 // Reads are `.targetAge` (and `?.targetAge`), `['targetAge']`, and targetAge
 // in destructuring braces. Writes aren't reads (a `targetAge:` key, as the
 // path after the stop and the search set it), nor the field's name as a
-// string (PlanScenarios' and PlanTab's repair labels). The loops over a
+// string (PlanTab's repair labels). The loops over a
 // plan's keys (lib/fire/scenarios.ts settingOf and recordSave) read every
 // field alike, the stop among them, as version 1's scenarios do.
 
@@ -21,6 +23,7 @@ const ALLOWED: Record<string, { reads: number; why: string }> = {
   'lib/fire/scenarios.ts': { reads: 4, why: 'version 1’s scenarios and their own stop age' },
   'components/plan-scenario-text.ts': { reads: 2, why: 'a version 1 scenario’s stop age, in its words' },
   'components/PlanForms.tsx': { reads: 1, why: 'the Ages sheet, where the stop age is typed' },
+  'components/plan-diff.ts': { reads: 1, why: 'the stop setting’s name; its value is said through stopOf' },
 };
 
 const READS = [/\.targetAge\b/g, /\[\s*'targetAge'\s*\]/g, /(?:const|let|var)\s*\{[^}]*\btargetAge\b[^}]*\}\s*=/g, /\(\s*\{[^}]*\btargetAge\b(?!\s*:)[^}]*\}[^)]*\)\s*(?:=>|\{|:)/g];

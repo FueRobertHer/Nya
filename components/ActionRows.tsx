@@ -5,7 +5,11 @@
 // (the screen review found the transaction sheet's Split, Group with others,
 // Share the cost and Exclude from budgets as tonal buttons of four widths,
 // wrapping raggedly). A row that opens another sheet ends in a chevron and
-// says so to a screen reader; one that acts in place has none.
+// says so to a screen reader; one that acts in place has none. A
+// destructive row (`neg`, Delete) is an object's last, its title in --neg
+// and a sub saying it asks first; it opens a confirm level, so a screen
+// reader hears that, but has no chevron (docs/design/design-system.md,
+// Destructive action row).
 
 import { chevron, RIGHT } from './MonthStepper';
 
@@ -19,6 +23,8 @@ export type SheetAction = {
   sub?: string;
   /** It opens another sheet. */
   opens?: boolean;
+  /** It destroys something (after a confirm level): last, in --neg. */
+  neg?: boolean;
   onSelect: () => void;
 };
 
@@ -28,12 +34,12 @@ export default function ActionRows({ rows }: { rows: readonly SheetAction[] }) {
     <ul className="card list-rows">
       {rows.map((r) => (
         <li key={r.key}>
-          <button type="button" className="list-row" aria-haspopup={r.opens ? 'dialog' : undefined} onClick={r.onSelect}>
+          <button type="button" className={r.neg ? 'list-row neg' : 'list-row'} aria-haspopup={r.opens ? 'dialog' : undefined} onClick={r.onSelect}>
             <span className="list-row-text">
               <span className="list-row-title">{r.title}</span>
               {r.sub && <span className="list-row-sub">{r.sub}</span>}
             </span>
-            {r.opens && chevron(RIGHT)}
+            {r.opens && !r.neg && chevron(RIGHT)}
           </button>
         </li>
       ))}

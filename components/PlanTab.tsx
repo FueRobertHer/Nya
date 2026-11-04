@@ -10,8 +10,8 @@
 // docs/design/information-architecture.md#plan): what is about the whole
 // plan (its load error, a save's error, a repair waiting, its currency), then
 // a pinned bar (components/PlanBar.tsx) naming the plan shown, your plan or
-// the scenario open, over three segments, and with a scenario open its card
-// under the bar, above every segment. All three segments stay mounted, the
+// the copy open, over three segments, and with a copy open its card under
+// the bar, above every segment. All three segments stay mounted, the
 // others hidden, and the bar is drawn before the plan has loaded, so Home's
 // FI line has its heading to land on. It opens on Your path, or on Drawdown
 // once the stop age has come (D2 of the tax plan), decided once the plan has
@@ -25,8 +25,8 @@
 //     balances that are old or short (components/plan-figure-notes.ts). How
 //     a measured figure was worked out is behind Why? in its sheet. A figure
 //     that may be short says so; none is presented as complete when it may
-//     not be. Then the What if… card on your plan, or an open scenario's
-//     life events in its place, and other income and one-off expenses.
+//     not be. Then the What if… card on your plan, or an open copy's life
+//     events in its place, and other income and one-off expenses.
 //   - Drawdown (Stress test until T1 of the tax plan): one notice when the
 //     spending or invested assets the simulation uses may be low, then "Will it last?": the plan run through
 //     history or Monte Carlo (lib/fire/simulate.ts), with the success rate
@@ -39,22 +39,24 @@
 //     target, over time, and the mix the simulation can take from it, on the
 //     person's word.
 //
-// Only the plan's assumptions go to the server (/api/fire-plan), saved whole
-// on each change through lib/whole-list-store.ts, which never lets an
-// unloaded plan be saved over the real one. They load, with the workplace
-// plans' contributions, through the copy of the Plan's inputs the tab
-// shares with Home's FI line (lib/plan-inputs-store.ts): always asked for
-// here, and every save's answer goes into the copy, so Home shows it.
+// Your plan goes to the server (/api/fire-plan), saved whole on each change
+// through lib/whole-list-store.ts, which never lets an unloaded plan be
+// saved over the real one, each save naming the version it was made from.
+// It loads, with the workplace plans' contributions, through the copy of the
+// Plan's inputs the tab shares with Home's FI line
+// (lib/plan-inputs-store.ts): always asked for here, and every save's answer
+// goes into the copy, so Home shows it.
 //
-// SCENARIOS (lib/fire/scenarios.ts, components/PlanScenarios.tsx): named
-// what-ifs beside the Plan, each only what it changes, listed, made and
-// compared in the Scenarios sheet, which the bar opens on your plan and the
-// scenario's card opens inside one. Opening one shows the whole tab as that
-// scenario, every card saying so, and every save the tab makes goes through
-// components/plan-savers.ts, which sends the forms' and Use my allocation's
-// saves to the scenario and gives the repair, the method and the allocation
-// settings no saver at all: nothing done with a scenario open can reach the
-// Plan.
+// COPIES (the tax plan's C2, lib/plan-copies.ts, components/PlansSheet.tsx):
+// every plan is whole, yours and its copies, listed, made, renamed, deleted,
+// made yours and compared in the Plans sheet, which the bar opens, and the
+// open copy's card too (components/plan-list.ts holds them). Opening one
+// shows the whole tab as that copy, every card saying so, with your plan's
+// facts (your age, how figures are measured, the method) in it, and every
+// save the tab makes goes through components/plan-savers.ts: to the copy,
+// whole, and to the plans checked in Also change it in with it, never to
+// your plan unasked. The repair and the allocation settings are your plan's
+// own, so a copy has no saver for them.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
@@ -88,7 +90,7 @@ import {
 } from './plan-text';
 import { fiMovedText, stillNew } from './plan-moved';
 import { Hero } from './Hero';
-import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
+import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
@@ -112,26 +114,27 @@ import {
   type PlanExpense,
   type PlanIncome,
 } from '@/lib/fire/plan';
-import { basePlanOf, isStoredPlan, planOf, toStored, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
-import { factsOf, type Facts } from '@/lib/fire/copies';
-import { eventItems, expensesOf, incomeOf } from '@/lib/fire/items';
+import { basePlanOf, isStoredPlan, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
+import { factsOf, holdsAmounts, withFacts, type Facts } from '@/lib/fire/copies';
+import { eventsOf, expensesOf, incomeOf, withEvents } from '@/lib/fire/items';
 import type { Count, ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
 import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
-import { ScenarioCard, ScenariosSheet, NEWER_TEXT, REFUSED_TEXT, rememberResult, type FixForm } from './PlanScenarios';
+import { CopyCard, PlansSheet, REFUSED_TEXT, rememberResult, type PlanOutcome, type SheetPlan } from './PlansSheet';
 import PlanBar, { openingSegment, planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
-import { ScenarioTag } from './ScenarioTag';
+import { CopyTag } from './CopyTag';
 import { LifeEventsCard, type Checked } from './PlanEvents';
 import type { LifeEvent } from '@/lib/fire/events';
 import { DraftPreview, WhatIfCard } from './PlanWhatIf';
-import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './plan-scenarios';
+import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, type PlanSave, type PlansState } from './plan-list';
 import { planSavers, type Save } from './plan-savers';
-import { currencyText, laterText, resolveErrorText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
-import { planFigures, resolveSaved, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
+import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
+import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { planPath, type PathRange, type PlanPath } from '@/lib/fire/path';
 import PlanPathChart, { wholeShown } from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
@@ -153,20 +156,6 @@ import {
 } from '@/lib/fire/plan-currency';
 import { recordPlanCurrency } from './plan-currency-client';
 import { CurrencyChangeSheet, PlanCurrencyCard, currencyQuiet, type CurrencyCardMode } from './PlanCurrency';
-import {
-  applyScenario,
-  changesOf,
-  currencyFor,
-  hasAmounts,
-  otherCurrency,
-  pruneMoot,
-  recordSave,
-  resolveScenario,
-  restoreItem,
-  scenarioChanges,
-  type ScenarioChanges,
-  type ScenarioDraft,
-} from '@/lib/fire/scenarios';
 import { plainNumber } from '@/lib/format';
 import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
@@ -192,6 +181,18 @@ function useLast<T>(value: T | null): T | null {
   if (value !== null) last.current = value;
   return last.current;
 }
+
+/** A copy as the tab shows it: with your plan's facts in it, repaired where
+ *  a value no longer fits them (and what had to change), the currency its
+ *  amounts were typed in when it isn't your plan's now, and its figures
+ *  (none then). */
+type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null };
+
+/** Said for a save with nowhere to record its amounts' currency. */
+const NO_COPY_CURRENCY = 'Your plan has no currency yet, so this copy can’t hold amounts: say which currency your plan’s figures are in first (above), then save again.';
+
+/** A save's answer as a button on a card shows it: done, or why not. */
+const said = (r: boolean | string): true | string => (r === true ? true : r === false ? 'It wasn’t saved. Try again in a moment.' : r);
 
 export type SheetState =
   | { kind: 'about' }
@@ -290,6 +291,10 @@ export type PlanTabProps = {
   onMovedSeen?: () => void;
 };
 
+/** Said by New copy, Duplicate and a rename of your plan while your plan
+ *  is read again after a write: what is held is from before it. */
+const READING_AGAIN = 'Still loading your plan after the last change. Try again in a moment.';
+
 export default function PlanTab({
   txns,
   txnsLoading,
@@ -321,19 +326,28 @@ export default function PlanTab({
   // figures are in as the route answered with it (lib/fire/plan-currency.ts):
   // never the plan a save has yet to write, which the store shows at once.
   // And the currency each save sends (set below, once the tab knows it).
-  const [confirmed, setConfirmed] = useState<{ plan: StoredPlan | null; answer: CurrencyAnswer }>({ plan: null, answer: NO_ANSWER });
+  const [confirmed, setConfirmed] = useState<{ plan: StoredPlan | null; answer: CurrencyAnswer; id: string | null }>({ plan: null, answer: NO_ANSWER, id: null });
   const sendCurrency = useRef<string | null>(null);
   // The facts of the plan this page holds (lib/fire/copies.ts), which each
-  // save sends as `facts_were`, so once your plans are copies a save writes
-  // only the facts the person changed over what every plan shares
-  // (app/api/fire-plan): taken from a load's answer, and from the plan a
-  // save sent once it is saved, never from a save's answer, since the store
-  // keeps the plan it sent and an age another device saved since isn't on
-  // the page. And whether the plan read is a copy's entry (its answer says
-  // when it was changed), whose version a save keeps.
-  const factsWere = useRef<Facts | null>(null);
-  const isCopy = useRef(false);
+  // save sends as `facts_were`, so a save writes only the facts the person
+  // changed over what every plan shares (lib/plan-writes.ts): taken from a
+  // load's answer (the defaults' before your plan is first saved), and from
+  // the plan a save sent once it is saved, never from a save's answer,
+  // since the store keeps the plan it sent and an age another device saved
+  // since isn't on the page. And your plan's version, from every answer,
+  // which each save names (`based_on`, null before your plan is first
+  // saved), so one made from a version changed since is refused.
+  const factsWere = useRef<Facts>(factsOf(DEFAULT_PLAN));
+  const stampRef = useRef<string | null>(null);
   const answeringSave = useRef(false);
+  // Your plans (components/plan-list.ts): yours and its copies, for the
+  // Plans sheet, Also change it in and the copy open. Made before the store,
+  // whose answers its row of your plan takes.
+  const [plansState, setPlansState] = useState<PlansState>(INITIAL_PLANS);
+  const plansClient = useMemo(() => createPlansClient(setPlansState), []);
+  useEffect(() => {
+    void plansClient.load();
+  }, [plansClient]);
   // The plan loads through the shared copy, for the workplace plans shown
   // now; the store below is made once, so both are read through refs.
   const planInputs = useMemo(() => sharedInputs ?? createPlanInputsStore(), [sharedInputs]);
@@ -354,13 +368,16 @@ export default function PlanTab({
         // A save refused for what is stored now (its currency changed on
         // another device, say) says why.
         showRefusal: true,
-        extra: () => ({ currency: sendCurrency.current, ...(factsWere.current ? { facts_were: factsWere.current } : {}) }),
+        extra: () => ({ currency: sendCurrency.current, facts_were: factsWere.current, based_on: stampRef.current }),
         onAnswer: (data) => {
           const plan = isStoredPlan(data.plan) ? data.plan : null;
-          isCopy.current = typeof data.updated_at === 'string';
+          stampRef.current = typeof data.updated_at === 'string' ? data.updated_at : null;
           if (answeringSave.current) answeringSave.current = false;
-          else factsWere.current = plan ? factsOf(plan) : null;
-          setConfirmed({ plan, answer: readCurrencyAnswer(data) });
+          else factsWere.current = factsOf(plan ?? DEFAULT_PLAN);
+          setConfirmed({ plan, answer: readCurrencyAnswer(data), id: typeof data.id === 'string' ? data.id : null });
+          // Your plan's row in the Plans sheet takes it (or the list is read
+          // again, when another plan is yours now).
+          plansClient.adoptMain(data);
         },
         // Always asked for: nothing refuses a save made from a plan another
         // device changed since, so the tab never edits from a kept copy.
@@ -395,19 +412,12 @@ export default function PlanTab({
   // was saved, say): the tab works from a repaired copy, says what changed,
   // and offers to save it; saving any change saves it too. Nothing here ever
   // computes with a value outside what the formulas take.
-  // A version 1 plan is repaired by today's repair and held as version 2 in
-  // memory (lib/fire/plan-v2.ts basePlanOf); each save sends version 1.
+  // A version 1 plan is repaired by today's repair and held as version 2
+  // (lib/fire/plan-v2.ts basePlanOf), which each save sends.
   const stored: StoredPlan = state.value ?? DEFAULT_PLAN;
   const repair = useMemo(() => basePlanOf(stored), [stored]);
   /** The Plan as the tab shows it: the repaired one while a repair waits. */
   const basePlan = repair.plan;
-  /** The Plan in version 1, which scenarios are kept against
-   *  (lib/fire/scenarios.ts); null for a plan only a newer version of Nya
-   *  saves, which runs none. */
-  const scenarioBase = useMemo(() => {
-    const r = toStored(basePlan, 1);
-    return 'plan' in r ? r.plan : null;
-  }, [basePlan]);
   // While a repair waits, nothing but "Save it this way" saves: a save from
   // anywhere else would commit it unseen, dropping what it leaves out.
   const repairing = repair.fixed.length > 0;
@@ -434,24 +444,36 @@ export default function PlanTab({
   const range = rangeShown ?? ownRange;
   const chooseRange = onRange ?? setOwnRange;
 
-  // The Plan's scenarios, and the one open, if any. None opens before the
-  // Plan has loaded, or while a repair of it waits (one open closes): a
-  // scenario is a set of changes to the Plan, so it means nothing without it.
-  const [scenState, setScenState] = useState<ScenariosState>(INITIAL_SCENARIOS);
-  const scenarios = useMemo(() => createScenarioClient(setScenState), []);
-  useEffect(() => {
-    void scenarios.load();
-  }, [scenarios]);
+  // The copy open, if any. None opens before your plan has loaded, or while
+  // a repair of it waits (one open closes): a copy is shown with your plan's
+  // facts in it. One deleted, or made your plan, closes.
   const [openId, setOpenId] = useState<string | null>(null);
-  const planLoaded = state.status === 'ready';
-  const canOpen = planLoaded && !repairing && scenarioBase !== null;
-  const entry = openId !== null && canOpen ? (scenState.list.find((s) => s.id === openId) ?? null) : null;
+  // Your plan read again after a write changed it (a rename, an Also save
+  // with it checked): what it held stays loaded until the answer is in, so
+  // the copy open, its card, a drawer and the sheet's plans stay as they
+  // are (editing still waits, editableNow, and so does anything made from
+  // it or naming its version: READING_AGAIN). Not after a failed load, nor
+  // once the list names another plan yours (Make this your plan): what is
+  // held is then no longer your plan.
+  const [settled, setSettled] = useState<ListStatus | null>(null);
+  if (state.status !== 'loading' && state.status !== settled) setSettled(state.status);
+  const planLoaded = state.status === 'ready' || (state.status === 'loading' && settled === 'ready' && confirmed.id === plansState.main);
+  const canOpen = planLoaded && !repairing;
+  const entry = openId !== null && canOpen ? (plansState.list.find((r) => r.id === openId && r.id !== plansState.main && r.plan !== null) ?? null) : null;
   useEffect(() => {
     if (openId === null) return;
-    if ((planLoaded && repairing) || (scenState.status === 'ready' && !scenState.list.some((s) => s.id === openId))) setOpenId(null);
-  }, [openId, planLoaded, repairing, scenState]);
+    if ((planLoaded && repairing) || (plansState.status === 'ready' && (openId === plansState.main || !plansState.list.some((r) => r.id === openId)))) setOpenId(null);
+  }, [openId, planLoaded, repairing, plansState]);
+  // Another plan made yours on another device, seen as the list loads: your
+  // plan is read again, once for each.
+  const mainSeen = useRef<string | null>(null);
+  useEffect(() => {
+    if (plansState.status !== 'ready' || !planLoaded || confirmed.id === null || plansState.main === confirmed.id || mainSeen.current === plansState.main) return;
+    mainSeen.current = plansState.main;
+    void store.load();
+  }, [plansState.status, plansState.main, planLoaded, confirmed.id, store]);
   // And once the currency the plan's figures are in is known (below).
-  const editableNow = state.status === 'ready' && !state.saving && !repairing && (!entry || !scenState.saving);
+  const editableNow = state.status === 'ready' && !state.saving && !repairing && !plansState.saving;
 
   // Before a plan's first typed amount: the currency the person said they'll
   // type it in, when the accounts can't tell it (lib/fire/plan-currency.ts).
@@ -533,11 +555,16 @@ export default function PlanTab({
     const copy = planInputs;
     const end = copy.beginSave();
     const r = await recordPlanCurrency(c, typedAmounts(stored), byPerson);
-    if (r.ok && r.body) copy.adopt(r.body);
+    if (r.ok && r.body) {
+      copy.adopt(r.body);
+      // Recording it gives your plan a new version, which the next save names.
+      if (typeof r.body.updated_at === 'string') stampRef.current = r.body.updated_at;
+      plansClient.adoptMain(r.body);
+    }
     end();
     setRecordingNow(false);
     if (r.ok) {
-      setConfirmed({ plan: r.plan ?? stored, answer: r.answer });
+      setConfirmed((was) => ({ plan: r.plan ?? stored, answer: r.answer, id: was.id }));
       setPrevious(byPerson && before && before !== c ? before : null);
       setCurrencySaid(`Your plan’s figures are recorded as ${c}.`);
       return true;
@@ -586,7 +613,7 @@ export default function PlanTab({
             kept: keptText(currencyState.currency, inputs, !!(txnFx || balanceFx)),
             relabelTo: relabelOffer(currencyState.currency, inputs),
             previous,
-            scenariosIn: scenState.list.filter((x) => hasAmounts(x) && x.currency === currencyState.currency).length,
+            copiesIn: copiesOf(plansState).filter((r) => r.plan !== null && holdsAmounts(r.plan) && r.currency === currencyState.currency).length,
             offer,
           }
         : // Nothing typed yet: asked only when the accounts can't tell it.
@@ -625,26 +652,26 @@ export default function PlanTab({
   useEffect(() => {
     if (currencyMode.kind !== 'recorded') setChanging(null);
   }, [currencyMode.kind]);
-  // Every save of the Plan itself, through its store, with the currency its
+  /** Why a save must wait: it gives your plan its first typed amount, with
+   *  no currency yet to record it in. */
+  const firstAmountWait = (p: FirePlanV2): string | null =>
+    sendCurrency.current === null && currencyState.kind === 'follows' && holdsAmounts(p)
+      ? waitingOnAccounts
+        ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
+        : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.'
+      : null;
+  // Every save of your plan alone, through its store, with the currency its
   // figures are in: never a first typed amount without one.
   const savePlanIn = async (next: FirePlanV2): Promise<boolean | string> => {
-    // Sent as version 1, what this release saves to `fire-plan`; what only
-    // version 2 holds is refused here, with why. A copy's entry stays the
-    // version it was read as (a newer release made it).
-    const sent = toStored(next, isCopy.current && confirmed.plan?.version === 2 ? 2 : 1);
-    if ('error' in sent) return sent.error;
-    if (sendCurrency.current === null && currencyState.kind === 'follows' && hasTypedAmounts(sent.plan)) {
-      return waitingOnAccounts
-        ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
-        : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.';
-    }
-    const saved = await store.save(sent.plan);
-    if (saved) factsWere.current = factsOf(sent.plan);
+    const wait = firstAmountWait(next);
+    if (wait) return wait;
+    const saved = await store.save(next);
+    if (saved) factsWere.current = factsOf(next);
     return saved;
   };
 
   const measured = measuredInputs(inputs);
-  // The Plan's figures by the same function a scenario's come from
+  // The Plan's figures by the same function a copy's come from
   // (lib/fire/plan-figures.ts).
   const baseFigures = planFigures(basePlan, measured, { count }) as PlanFigures;
   // Plan amounts are in the Plan's own currency, the one its figures were
@@ -662,32 +689,48 @@ export default function PlanTab({
   // In the plan's currency, so its mix is of what the plan counts.
   const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx });
 
-  // The open scenario: resolved against the Plan as shown, unless its
-  // amounts were typed in another currency than the Plan's now, or it breaks
-  // one of the Plan's rules now (then only why is shown, nothing worked out).
+  // Every copy as the tab shows it: with your plan's facts in it, repaired
+  // where a value no longer fits them (your age moved past its stop age,
+  // say: its card says so, and offers to save it that way), and its figures,
+  // unless its amounts were typed in another currency than your plan's now
+  // (then only why is shown, nothing worked out). For the copy open, its row
+  // in the Plans sheet, and Also change it in.
   const planCurrency = figures.currency;
-  const other = entry ? otherCurrency(entry, planCurrency) : null;
-  const resolved = entry && scenarioBase ? resolveScenario(scenarioBase, entry) : null;
-  const openFigures = entry && resolved?.ok && !other ? planFigures(planOf(resolved.plan), measured, { events: eventItems(entry.events), count }) : null;
+  const measuredKey = JSON.stringify(measured);
+  const views = useMemo(() => {
+    const m = new Map<string, PlanView>();
+    if (!planLoaded) return m;
+    const facts = factsOf(basePlan);
+    for (const row of plansState.list) {
+      if (row.id === plansState.main || row.plan === null) continue;
+      const r = basePlanOf(withFacts(row.plan, facts));
+      const other = holdsAmounts(row.plan) && row.currency !== null && planCurrency !== null && row.currency !== planCurrency ? row.currency : null;
+      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: other ? null : planFigures(r.plan, measured, { count }) });
+    }
+    return m;
+    // measuredKey stands for measured, a new object each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count]);
+  const openView = entry ? (views.get(entry.id) ?? null) : null;
+  const other = openView?.other ?? null;
+  const copyFixing = !!openView && openView.fixed.length > 0;
+  const openFigures = openView?.figures ?? null;
   const shown: PlanFigures | null = entry ? (openFigures && !('refused' in openFigures) ? openFigures : null) : baseFigures;
-  const problem =
-    entry && resolved && !resolved.ok
-      ? { text: resolveErrorText(resolved.field, resolved.error, scenarioBase as FirePlan, entry), field: resolved.field }
-      : openFigures && 'refused' in openFigures
-        ? { text: REFUSED_TEXT, field: null }
-        : null;
-  const plan = shown?.plan ?? basePlan;
+  const problem = openFigures && 'refused' in openFigures ? REFUSED_TEXT : null;
+  /** The plan the forms edit: the copy open, or your plan. */
+  const shownPlan = openView?.plan ?? basePlan;
+  const plan = shown?.plan ?? shownPlan;
   const view = shown?.view ?? figures.view;
   // The path from today to the stop age (lib/fire/path.ts), the chart's
-  // line, and where it can't go on, which the At age row says. Both plans'
-  // ages are parsed (the Plan is repaired, a scenario resolved), so it is
-  // never longer than a plan can be.
+  // line, and where it can't go on, which the At age row says. Every plan's
+  // ages are parsed (each is repaired), so it is never longer than a plan
+  // can be.
   const path = useMemo(() => (shown ? planPath(shown) : null), [shown]);
   const stopShort = path?.short ?? null;
   const stopWalked = path?.fromWalk ?? false;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
   const sim = 'sim' in engine ? engine.sim : null;
-  // The Plan's method: a scenario never changes it.
+  // Your plan's method: the same in every plan.
   const simKey = sim ? JSON.stringify([plan.method, sim]) : null;
   const simKeyRef = useRef(simKey);
   simKeyRef.current = simKey;
@@ -813,13 +856,13 @@ export default function PlanTab({
   }, [gridKey]);
   const shownGrid = grid && grid.key === gridKey ? grid : null;
 
-  // The drawer, and the plan it was opened for: the open scenario, at the
-  // version it was opened on, or null for the Plan. A form saves only to the
-  // plan it was opened for, and the drawer closes whenever the plan shown
-  // changes (a scenario opened, closed, deleted elsewhere, or changed on
-  // another device), so a form left open can never send one plan's values
-  // to another, or a version's values over a newer one.
-  const shownFor = entry ? `${entry.id}@${entry.rev}` : null;
+  // The drawer, and the plan it was opened for: the copy open, at the
+  // version it was opened on, or null for your plan. A form saves only to
+  // the plan it was opened for, and the drawer closes whenever the plan
+  // shown changes (a copy opened, closed, deleted elsewhere, saved, or
+  // changed on another device), so a form left open can never send one
+  // plan's values to another, or a version's values over a newer one.
+  const shownFor = entry ? `${entry.id}@${entry.updated_at}` : null;
   const shownForRef = useRef(shownFor);
   shownForRef.current = shownFor;
   const [sheet, setSheet] = useState<SheetState | null>(null);
@@ -885,62 +928,91 @@ export default function PlanTab({
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
     if (lost) row.focus({ preventScroll: true });
   }, [sheetOpen]);
-  // What a scenario's save said that has no form left to say it in: changed
-  // on another device, so the drawer closed on the version it was made to.
+  // What a copy's save said that has no form left to say it in: refused for
+  // what is stored now, so the drawer closed on the version it was made to.
   const [notice, setNotice] = useState<{ for: string; text: string } | null>(null);
 
-  // Saving into the open scenario: what a form's save changes, recorded as
-  // the scenario's own changes (lib/fire/scenarios.ts recordSave), with the
-  // currency its amounts are in (the Plan's when this is its first).
-  const persistIn = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<true | { error: string; stale: boolean }> => {
-    if (!entry) return { error: 'It wasn’t saved. Try again in a moment.', stale: false };
-    if (!scenarioBase) return { error: NEWER_TEXT, stale: false };
-    const kept = pruneMoot(scenarioBase, changes);
-    const draft: ScenarioDraft = { name: entry.name, currency: currencyNow !== undefined ? currencyNow : currencyFor(entry, kept, planCurrency), ...kept };
-    if (hasAmounts(draft) && draft.currency === null) return { error: 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.', stale: false };
-    const r = await scenarios.save(entry.id, draft, entry.rev);
-    if ('ok' in r) {
-      setNotice(null);
-      return true;
+  /** Saves plans whole through /api/plans, all or none (the copy open, and
+   *  the plans checked in Also change it in): true, or why not. Your plan,
+   *  when among them, is read again after, so its store and Home have it. */
+  const savePlans = async (saves: PlanSave[]): Promise<true | string> => {
+    const mainIn = saves.some((x) => x.id === plansState.main);
+    const r = await plansClient.save(saves, factsWere.current);
+    if (mainIn) void store.load();
+    if ('error' in r) {
+      if (!r.stale) return r.error;
+      // The list is read again on a refusal (components/plan-list.ts), so the
+      // server's "load it again" is done: said in words for what is shown now.
+      if (entry) setNotice({ for: entry.id, text: 'Changed on another device, so nothing of your change was kept: make it again if it still applies.' });
+      return 'Changed on another device, so nothing was saved: save again to make your change in what is there now.';
     }
-    if (r.stale) setNotice({ for: entry.id, text: `${r.error} Nothing of your change was kept: make it again if it still applies.` });
-    return { error: r.error, stale: !!r.stale };
+    setNotice(null);
+    return true;
   };
-  /** For a drawer's form: what to say in it (it closes on a stale save). */
-  const persist = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<boolean | string> => {
-    const r = await persistIn(changes, currencyNow);
-    return r === true ? true : r.error;
+  // The currency the plan shown is saved with: a copy's own once it holds an
+  // amount, else your plan's.
+  const shownCurrency = entry?.plan && holdsAmounts(entry.plan) ? entry.currency : sendCurrency.current;
+  // Every other plan the same change can go to (Also change it in): each
+  // that reads and needs no repair with your plan's facts in it, holding its
+  // amounts in the currency of the plan shown, or none. In the list's order,
+  // your plan first.
+  const alsoPlans: { row: PlanRow; plan: FirePlanV2; currency: string | null }[] =
+    plansState.status !== 'ready' || !planLoaded
+      ? []
+      : plansState.list.flatMap((row) => {
+          if (row.id === (entry ? entry.id : plansState.main)) return [];
+          const mine = row.id === plansState.main;
+          const v = mine ? null : views.get(row.id);
+          const p = mine ? (repairing ? null : basePlan) : v && v.fixed.length === 0 ? v.plan : null;
+          if (!p) return [];
+          const currency = !holdsAmounts(p) ? null : mine ? sendCurrency.current : row.currency;
+          return currency === null || currency === shownCurrency ? [{ row, plan: p, currency }] : [];
+        });
+  // As offered (components/plan-diff.ts figureChoices, itemChoices): your
+  // plan named so.
+  const alsoTargets: AlsoTarget[] = alsoPlans.map(({ row, plan: p }) => ({ id: row.id, name: row.id === plansState.main ? `${row.name} (your plan)` : row.name, plan: p }));
+  /** Every save of the plan shown, from its forms and cards: your plan alone
+   *  through its store; the copy open, or any plans checked in Also change
+   *  it in, all together through /api/plans, each with the same change made
+   *  in it (components/plan-diff.ts sameChange) from `before`, the plan the
+   *  form was opened on. */
+  const saveShown = async (next: FirePlanV2, also: readonly string[] = [], before: FirePlanV2 = shownPlan): Promise<boolean | string> => {
+    if (!entry && also.length === 0) return savePlanIn(next);
+    if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
+    const wait = entry ? null : firstAmountWait(next);
+    if (wait) return wait;
+    if (entry && shownCurrency === null && holdsAmounts(next)) return NO_COPY_CURRENCY;
+    const saves: PlanSave[] = [
+      entry
+        ? { id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at }
+        : { id: plansState.main, plan: next, currency: shownCurrency, based_on: stampRef.current },
+    ];
+    const facts = factsOf(next);
+    for (const id of also) {
+      const there = alsoPlans.find((x) => x.row.id === id);
+      if (!there) return 'A plan checked in Also change it in changed since this opened, so nothing was saved: open it again.';
+      saves.push({
+        id,
+        plan: planOf(withFacts(sameChange(before, next, there.plan), facts)),
+        currency: there.currency ?? shownCurrency,
+        based_on: id === plansState.main ? stampRef.current : there.row.updated_at,
+      });
+    }
+    return savePlans(saves);
   };
-  /** For a button on the page (the scenario's card, an item's row): null
-   *  when the notice says it already, so it isn't said twice. */
-  const persistHere = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<boolean | string | null> => {
-    const r = await persistIn(changes, currencyNow);
-    return r === true ? true : r.stale ? null : r.error;
-  };
-  const saveToScenario: Save | null = entry
-    ? async (next) => {
-        if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
-        if (!scenarioBase) return NEWER_TEXT;
-        const sent = toStored(next, 1);
-        if ('error' in sent) return sent.error;
-        const r = recordSave(scenarioBase, entry, sent.plan);
-        if ('error' in r) return r.error;
-        return persist(r.ok);
-      }
-    : null;
   // Every save the tab makes, from one place (components/plan-savers.ts).
-  const savers = planSavers({ scenario: saveToScenario, savePlan: savePlanIn, repaired: repairing ? repair.plan : null });
-  const formPlan = entry && scenarioBase ? planOf(applyScenario(scenarioBase, entry).plan) : basePlan;
+  const savers = planSavers({ copy: entry ? saveShown : null, savePlan: saveShown, repaired: repairing ? repair.plan : null });
+  const formPlan = shownPlan;
   const saversRef = useRef(savers);
   saversRef.current = savers;
   // Bound when the drawer opened: refused once the plan shown isn't the one
   // it was opened for (the drawer is closing by then).
   const saveFor =
     (target: string | null): Save =>
-    async (next) =>
-      target === shownForRef.current ? saversRef.current.form(next) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
+    async (next, also) =>
+      target === shownForRef.current ? saversRef.current.form(next, also) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
   const replaced = sheet !== null && !state.saving && state.status === 'ready' && storedKey !== openedOn.current;
-  const formEditable = editable && !other && sheetFor === shownFor && !replaced;
+  const formEditable = editable && !other && !copyFixing && sheetFor === shownFor && !replaced;
   // The figures' rows open their sheets whatever the state: while saving is
   // paused for more than a moment, the sheet says why above its buttons.
   // Nothing for a save under way, or a sheet whose plan was replaced under
@@ -959,9 +1031,11 @@ export default function PlanTab({
             : "Which currency your plan's figures are in isn't known yet (at the top of the Plan tab), so this can't be saved yet."
           : repairing
             ? "Your saved plan has values to fix first (at the top of the Plan tab), so this can't be saved yet."
-            : replaced && editable && !other && sheetFor === shownFor
-              ? "Your saved plan was read again since this opened, so this can't be saved: close it and open it again."
-              : null;
+            : copyFixing
+              ? "This copy has values to fix first (on its card, under the bar), so this can't be saved yet."
+              : replaced && editable && !other && sheetFor === shownFor
+                ? "Your saved plan was read again since this opened, so this can't be saved: close it and open it again."
+                : null;
   // The plan saved as your plan and what was recorded since (rollout 8e), for
   // the Progress card and, with the Plan shown, the chart's lines before today.
   const progress = useProgress(institutions);
@@ -1008,25 +1082,30 @@ export default function PlanTab({
             : baseFigures.view.savings.source === 'measured' && (txnsLoading || txnsFailed || unread.length > 0)
               ? "Some of your transactions haven't loaded or couldn't be read, so Nya's savings figure may be off: save once they have, or type your savings in Your figures."
               : null;
-  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, scenario: entry?.name ?? null, paused, planInWalk };
-  const scenarioName = entry?.name ?? null;
-  // The open scenario's life events: saved as its own, and each form says how
-  // its event moves the scenario's FI age as it is now. On a refused one
-  // there is nothing to move from, so its fix says what the event makes of
-  // it: still not worked out, or the FI age it comes to.
+  const copyName = entry?.name ?? null;
+  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk };
+  // The life events of the plan shown: the copy's, or your plan's when it
+  // holds any (made yours from a copy that did). Each form says how its
+  // event moves that plan's FI age as it is now; on a refused copy there is
+  // nothing to move from, so its fix says what the event makes of it: still
+  // not worked out, or the FI age it comes to.
+  const shownEvents = eventsOf(shownPlan);
+  const eventIds = new Set(shownEvents.map((e) => e.id));
+  const eventNotes = shown ? shown.itemNotes.filter((n) => eventIds.has(n.id)).map(({ id, part }) => ({ id, part })) : [];
   const lifeEvents =
-    entry && scenarioBase
-    ? {
-        scenarioName: entry.name,
-        version: shownFor ?? '',
-        events: entry.events,
-        editable: editable && !other,
-        onSave: (events: LifeEvent[]) => persist({ ...changesOf(entry), events }),
-        preview: (checked: Checked, kind: LifeEvent['kind']) => (
-          <DraftPreview checked={checked} kind={kind} base={scenarioBase} measured={measured} count={count} changes={changesOf(entry)} against={shown} where="scenario" money={money} />
-        ),
-      }
-    : null;
+    entry || shownEvents.length > 0
+      ? {
+          copyName,
+          version: shownFor ?? storedKey,
+          events: shownEvents,
+          editable: editable && !other && !copyFixing,
+          onSave: (events: LifeEvent[], also?: { to: readonly string[] }) => saveShown(withEvents(shownPlan, events), also?.to ?? []),
+          preview: (checked: Checked, kind: LifeEvent['kind']) => (
+            <DraftPreview checked={checked} kind={kind} plan={shownPlan} measured={measured} count={count} against={shown} where={entry ? 'copy' : 'what-if'} money={money} />
+          ),
+          alsoFor: (id: string) => itemChoices(alsoTargets, id, money),
+        }
+      : null;
 
   // What each figure the plan shown rests on says, worked out once for the
   // rows under the FI card, their sheets' Why? and Drawdown's notice
@@ -1056,12 +1135,12 @@ export default function PlanTab({
   // Design-system rule 3: a badge on each card the notice is about.
   const stressBadge = stressNotes.length === 0 ? null : stressNotes.length === 1 ? 'An input may be low' : 'Inputs may be low';
 
-  // The bar, its heading and its Scenarios button, the scenario's card (with
+  // The bar, its heading and its Plans button, the copy's card (with
   // the life events that fix it, when it is refused) and the panel shown:
   // what a switch scrolls to, and what focus moves to.
   const barRef = useRef<HTMLDivElement | null>(null);
   const titleRef = useRef<HTMLHeadingElement | null>(null);
-  const scenariosRef = useRef<HTMLButtonElement | null>(null);
+  const plansButtonRef = useRef<HTMLButtonElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   // After the person's answer on the currency's card: focus on it, or on the
@@ -1084,56 +1163,56 @@ export default function PlanTab({
     const gap = parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue('--sp-2')) || 0;
     window.scrollBy(0, top - bottom - gap);
   };
-  // The Scenarios sheet, and the button that opened it. Closed, the sheet
-  // gives focus back to that button; when the button went while it was open
-  // (with the scenario's card: the scenario was deleted meanwhile), the
-  // bar's Scenarios takes focus instead (below).
-  const [scenariosOpen, setScenariosOpen] = useState(false);
-  const scenariosFrom = useRef<Element | null>(null);
+  // The Plans sheet, and the button that opened it. Closed, the sheet gives
+  // focus back to that button; when the button went while it was open (with
+  // the copy's card: the copy was deleted or made your plan meanwhile), the
+  // bar's Plans takes focus instead (below).
+  const [plansOpen, setPlansOpen] = useState(false);
+  const plansFrom = useRef<Element | null>(null);
   /** `within`: the bar's button, or the card's place. The button pressed is
    *  the one focused, where a browser focuses what is pressed; where none is
    *  (Safari), its card stands for it, gone exactly when it is. */
-  const openScenarios = (within: HTMLElement | null) => {
+  const openPlans = (within: HTMLElement | null) => {
     const pressed = document.activeElement;
-    scenariosFrom.current = within && pressed && within.contains(pressed) ? pressed : within;
-    setScenariosOpen(true);
+    plansFrom.current = within && pressed && within.contains(pressed) ? pressed : within;
+    setPlansOpen(true);
   };
-  const closeScenarios = () => setScenariosOpen(false);
+  const closePlans = () => setPlansOpen(false);
   // What takes focus once the bar has drawn the plan now shown: its heading
-  // when a scenario opens (from the Scenarios sheet, on your plan or inside
-  // another scenario), with the scenario's card scrolled into view, since
-  // focus in the pinned bar scrolls nothing; its Scenarios button when one is
-  // left, as the arrow, the card and the sheet's row that left it are gone,
-  // or when the sheet closes and the button that opened it has gone. Set by
-  // the handler that opens or leaves, which closes the sheet in the same
-  // commit, so the sheet gives focus back first and loses it to this. Run
-  // only by the commit that changes the plan shown or the sheet: a commit in
-  // between (a simulation's answer, say), its effects still waiting when the
-  // click comes, would otherwise take the request before the bar has drawn
-  // what it is for. A scenario the tab closes itself (deleted elsewhere, a
-  // repair waiting), or one deleted in the sheet, moves nothing.
-  const focusNext = useRef<'title' | 'scenarios' | null>(null);
+  // when a copy opens (from the Plans sheet, What if…, on your plan or inside
+  // another copy), with the copy's card scrolled into view, since focus in
+  // the pinned bar scrolls nothing; its Plans button when one is left, as
+  // the arrow, the card and the sheet's row that left it are gone, or when
+  // the sheet closes and the button that opened it has gone. Set by the
+  // handler that opens or leaves, which closes the sheet in the same commit,
+  // so the sheet gives focus back first and loses it to this. Run only by
+  // the commit that changes the plan shown or the sheet: a commit in between
+  // (a simulation's answer, say), its effects still waiting when the click
+  // comes, would otherwise take the request before the bar has drawn what
+  // it is for. A copy the tab closes itself (deleted elsewhere, a repair
+  // waiting), or one deleted in the sheet, moves nothing.
+  const focusNext = useRef<'title' | 'plans' | null>(null);
   useEffect(() => {
     const to = focusNext.current;
     focusNext.current = null;
     if (to === 'title') {
       titleRef.current?.focus({ preventScroll: true });
       underBar(cardRef.current);
-    } else if (to === 'scenarios' || (!scenariosOpen && scenariosFrom.current && !scenariosFrom.current.isConnected)) {
-      scenariosRef.current?.focus({ preventScroll: true });
+    } else if (to === 'plans' || (!plansOpen && plansFrom.current && !plansFrom.current.isConnected)) {
+      plansButtonRef.current?.focus({ preventScroll: true });
     }
-    if (!scenariosOpen) scenariosFrom.current = null;
+    if (!plansOpen) plansFrom.current = null;
     // underBar reads only refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId, scenariosOpen]);
-  // A notice is about the scenario as it was open: leaving it, or opening
-  // one, starts without it.
+  }, [openId, plansOpen]);
+  // A notice is about the copy as it was open: leaving it, or opening one,
+  // starts without it.
   const leave = () => {
     setNotice(null);
     setOpenId(null);
-    focusNext.current = 'scenarios';
+    focusNext.current = 'plans';
   };
-  const openScenario = (id: string | null) => {
+  const openCopy = (id: string | null) => {
     setNotice(null);
     setOpenId(id);
     if (id !== null && id !== openId) focusNext.current = 'title';
@@ -1149,11 +1228,11 @@ export default function PlanTab({
   }, [landing]);
 
   // A segment chosen while the bar is pinned opens at its top, just under the
-  // bar, not where the last one was scrolled to; at the scenario's card
-  // instead while that says something about the scenario never to be scrolled
-  // past (its amounts typed in another currency, a rule it breaks, a save's
-  // notice). An error after a change on the card stays where it is.
-  const cardSays = !!entry && (other !== null || problem !== null || (notice !== null && notice.for === entry.id));
+  // bar, not where the last one was scrolled to; at the copy's card instead
+  // while that says something about the copy never to be scrolled past (its
+  // amounts typed in another currency, lasting changes below zero, values to
+  // fix, a save's notice). An error after a change on the card stays where it is.
+  const cardSays = !!entry && (other !== null || problem !== null || copyFixing || (notice !== null && notice.for === entry.id));
   const landOn = useRef<'panel' | 'card' | null>(null);
   useEffect(() => {
     const to = landOn.current;
@@ -1170,11 +1249,12 @@ export default function PlanTab({
   };
 
   // The status line says which plan the tab shows, so a switch is never
-  // silent.
+  // silent, and when another plan became yours.
   const everOpened = useRef(false);
   if (entry) everOpened.current = true;
-  const shownStatus = entry ? `Showing the scenario ${entry.name}.` : everOpened.current ? 'Showing your plan.' : '';
-  // A scenario's "They're in" relabels its amounts into the Plan's currency.
+  const shownStatus = entry ? `Showing the copy ${entry.name}.` : everOpened.current ? 'Showing your plan.' : '';
+  const [mainSaid, setMainSaid] = useState('');
+  // A copy's "They're in" relabels its amounts into your plan's currency.
   // Once that is recorded it can't move, so it is offered at once. Before,
   // for a plan with nothing typed it is the accounts', which may read
   // otherwise while they load or tie (shownReliably): not offered until it
@@ -1189,62 +1269,126 @@ export default function PlanTab({
           : reliably.why === 'loading' || reliably.why === 'failed' || reliably.why === 'problem' || reliably.why === 'empty-balance'
             ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
             : 'Your plan’s currency can’t be told from your accounts: say which you’ll type your plan’s figures in first (above), and this is offered then.';
-  const changes = entry && scenarioBase ? scenarioChanges(scenarioBase, entry) : [];
-  const scenarioMarks = entry
-    ? {
-        name: entry.name,
-        replaced: new Set(changes.flatMap((c) => (c.kind === 'replaced' ? [c.item.id] : []))),
-        added: new Set(changes.flatMap((c) => (c.kind === 'added' ? [c.item.id] : []))),
-        leftOut: changes.flatMap((c) => (c.kind === 'left-out' ? [{ list: c.list, item: c.item }] : [])),
-        onRestore: async (list: 'income' | 'expenses', id: string) => {
-          if (!scenarioBase) return NEWER_TEXT;
-          const r = restoreItem(scenarioBase, entry, list, id);
-          return 'error' in r ? r.error : persistHere(r.ok);
-        },
-      }
-    : null;
-  const scenarioNotes: string[] = [];
-  if (entry && shown) {
-    if (shown.retirement && shown.view.spending.value !== null) scenarioNotes.push(`FI number from ${retirementText(shown.retirement.spending, shown.retirement.lasting, shown.view.spending.value, money)}.`);
+  // What the plan's life events do to the FI card's figures, a line each.
+  const lifeNotes: string[] = [];
+  if (shown && (entry || shownEvents.length > 0)) {
+    if (shown.retirement && shown.view.spending.value !== null) lifeNotes.push(`FI number from ${retirementText(shown.retirement.spending, shown.retirement.lasting, shown.view.spending.value, money)}.`);
     const later = laterText(shown.events?.later ?? [], money);
-    if (later) scenarioNotes.push(later);
-    if (entry.events.length > 0) scenarioNotes.push('Coast and Barista FI leave this scenario’s life events out, but for lasting changes in spending.');
+    if (later) lifeNotes.push(later);
+    if (shownEvents.length > 0) lifeNotes.push(`Coast and Barista FI leave ${entry ? 'this copy’s' : 'your plan’s'} life events out, but for lasting changes in spending.`);
   }
-  // How many scenarios there are, for the bar's and the card's Scenarios:
-  // none said until they are listed (after a failed reload the client keeps
-  // the list it had, but the sheet shows only why it couldn't load).
-  const scenariosCount = scenState.status === 'ready' ? scenState.list.length : null;
+  // How many plans there are, for the bar's and the card's Plans: none said
+  // until they are listed (after a failed reload the client keeps the list
+  // it had, but the sheet shows only why it couldn't load).
+  const plansShown = plansState.status === 'ready' ? plansCount(plansState) : null;
+
+  /** Makes a copy of `from` (your plan's id, or a copy's) named `name`, with
+   *  `whole` in it when given (Try it's life event), else as it is; opens
+   *  it when `openIt`. Your plan's first save, when it has none, is made
+   *  with it, so your plan is read again once it is made (not when refused:
+   *  the read takes What if… off the page, and its form with why). */
+  const createCopy = async (from: string, name: string, openIt: boolean, whole?: FirePlanV2): Promise<true | string> => {
+    if (state.status !== 'ready') return READING_AGAIN;
+    const source = from === plansState.main ? { plan: basePlan, currency: sendCurrency.current } : views.get(from);
+    if (!source) return 'That plan changed since this opened, so nothing was made: open it again.';
+    const currency = 'row' in source ? (holdsAmounts(source.plan) ? source.row.currency : sendCurrency.current) : source.currency;
+    const r = await plansClient.create({ from, name, plan: whole ?? source.plan, currency });
+    if ('error' in r) return r.error;
+    if (stampRef.current === null) void store.load();
+    // The copy opens with the sheet closed, in one commit, as Open it does,
+    // so the sheet's focus going back loses to the copy's heading.
+    if (openIt) {
+      closePlans();
+      openCopy(r.ok.id);
+    }
+    return true;
+  };
+  /** What if…'s Try it: a copy of your plan with the life event in it. */
+  const tryIt = (event: LifeEvent, name: string) => createCopy(plansState.main, name, true, withEvents(basePlan, [...eventsOf(basePlan), event]));
+  const renamePlan = async (id: string, name: string): Promise<true | string> => {
+    const row = plansState.list.find((r) => r.id === id);
+    if (!row) return 'That plan changed since this opened, so nothing was renamed: open it again.';
+    const mine = id === plansState.main;
+    if (mine && state.status !== 'ready') return READING_AGAIN;
+    const r = await plansClient.rename(id, name, mine ? stampRef.current : row.updated_at);
+    // Your plan's version moves with its name: read again, so its next save
+    // names the new one.
+    if (mine) void store.load();
+    return 'error' in r ? r.error : true;
+  };
+  const deletePlan = async (id: string, unreadable: boolean): Promise<true | string> => {
+    const row = plansState.list.find((r) => r.id === id);
+    const r = await plansClient.remove(id, row?.updated_at ?? null, unreadable);
+    return 'error' in r ? r.error : true;
+  };
+  // Make this your plan: the copy becomes yours, and yours a copy. Its answer
+  // goes into the shared copy of the Plan's inputs at once, so Home's line
+  // moves with it, and your plan and the list are read again; the copy
+  // closes, since it is your plan now, and the status line says so.
+  const makeMain = async (id: string): Promise<true | string> => {
+    const row = plansState.list.find((r) => r.id === id);
+    if (!row || row.updated_at === null) return 'That plan changed since this opened, so it wasn’t made your plan: open it again.';
+    mainSeen.current = id;
+    const r = await plansClient.makeMain(id, row.updated_at);
+    if ('error' in r) return r.error;
+    planInputs.adopt(r.ok.body);
+    void store.load();
+    if (openId === id) {
+      setNotice(null);
+      setOpenId(null);
+      if (!plansOpen) focusNext.current = 'plans';
+    }
+    setMainSaid(`“${row.name}” is your plan now.`);
+    return true;
+  };
+  const relabelCopy = async (): Promise<true | string> => {
+    if (!entry || !planCurrency) return 'It wasn’t saved. Try again in a moment.';
+    const r = await plansClient.relabel(entry.id, planCurrency, entry.updated_at);
+    return 'error' in r ? r.error : true;
+  };
+  // Every plan that reads, as the sheet lists it: yours first, then the
+  // copies, each with its figures (the sheet words how each differs).
+  const sheetPlans: SheetPlan[] =
+    !planLoaded || plansState.status !== 'ready'
+      ? []
+      : plansState.list.flatMap((row): SheetPlan[] => {
+          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: { kind: 'figures', figures: baseFigures } }];
+          const v = views.get(row.id);
+          if (!v) return [];
+          const outcome: PlanOutcome = v.other
+            ? { kind: 'not-run', reason: currencyText(v.other, planCurrency ?? v.other, currencyKnown) }
+            : v.figures && !('refused' in v.figures)
+              ? { kind: 'figures', figures: v.figures }
+              : { kind: 'not-run', reason: REFUSED_TEXT };
+          return [{ id: row.id, name: row.name, isMain: false, updatedAt: row.updated_at, plan: v.plan, outcome }];
+        });
   // Mounted always, closed or open, from its first render: the plans picked
   // for Compare last for the visit, and the sheet can be opened while the
   // plan loads (it says why nothing opens yet).
-  const scenariosSheet = (
-    <ScenariosSheet
-      open={scenariosOpen}
-      onClose={closeScenarios}
-      onLeave={leave}
-      state={scenState}
-      client={scenarios}
-      base={scenarioBase}
-      baseFigures={baseFigures}
-      measured={measured}
-      count={count}
-      planCurrency={planCurrency}
-      planCurrencyKnown={currencyKnown}
-      canOpen={canOpen}
-      planState={state.status}
+  const plansSheet = (
+    <PlansSheet
+      open={plansOpen}
+      onClose={closePlans}
+      state={plansState}
+      plans={sheetPlans}
+      measuring={txnsLoading}
+      planState={planLoaded ? 'ready' : state.status}
       whyNot={
         state.status === 'error'
-          ? 'Your saved plan couldn’t be read, so scenarios can’t be worked out against it: try again at the top of the Plan tab.'
+          ? 'Your saved plan couldn’t be read, so your plans can’t be worked out against it: try again at the top of the Plan tab.'
           : !planLoaded
-            ? 'Your plan is still loading: scenarios open, and are compared, once it has.'
+            ? 'Your plan is still loading: plans open, and are compared, once it has.'
             : repairing
-              ? 'Your saved plan has values to fix first (at the top of the Plan tab): scenarios open once it is saved.'
-              : scenarioBase === null
-                ? NEWER_TEXT
-                : null
+              ? 'Your saved plan has values to fix first (at the top of the Plan tab): plans open once it is saved.'
+              : null
       }
       openId={entry ? entry.id : null}
-      onOpen={openScenario}
+      onOpen={openCopy}
+      onCreate={(from, name, openIt) => createCopy(from, name, openIt)}
+      onRename={renamePlan}
+      onDelete={deletePlan}
+      onMakeMain={makeMain}
+      onRetry={() => void plansClient.load()}
       run={(job, signal) => runner().run(job, signal)}
       cache={answers}
       method={basePlan.method}
@@ -1252,30 +1396,24 @@ export default function PlanTab({
       today={inputs.today}
     />
   );
-  const fixForm = (f: Exclude<FixForm, null>) =>
-    open(f === 'about' ? { kind: 'about' } : f === 'assumptions' ? { kind: 'assumptions' } : f === 'simulation' ? { kind: 'assumptions', at: 'stress' } : { kind: 'figure', figure: f });
   // Lasting changes below zero: nothing is worked out, and the life events
   // are what to change, so they stay with the card, on every segment.
   const refused = !!openFigures && 'refused' in openFigures;
-  const scenarioCard = entry && scenarioBase && (
-    <ScenarioCard
-      entry={entry}
-      base={scenarioBase}
-      problem={problem}
+  const copyCard = entry && openView && (
+    <CopyCard
+      parts={copyDiffParts(basePlan, openView.plan, money)}
       other={other}
-      planCurrency={planCurrency}
-      planCurrencyKnown={currencyKnown}
+      currencyLine={other && planCurrency ? currencyText(other, planCurrency, currencyKnown) : null}
       confirmWhyNot={confirmWhyNot}
-      editable={editable}
-      money={money}
-      eventsCount={entry.events.length}
-      eventsWhere={shown ? 'path' : refused ? 'below' : null}
-      onSave={(c) => persistHere(c)}
-      onConfirmCurrency={() => persistHere(changesOf(entry), planCurrency)}
-      onFix={fixForm}
+      planCurrency={planCurrency}
+      problem={problem}
+      repair={copyFixing ? { text: copyRepairText(openView.fixed, money), onSave: async () => said(await saveShown(openView.plan)) } : null}
       notice={notice && notice.for === entry.id ? notice.text : null}
-      scenariosCount={scenariosCount}
-      onScenarios={() => openScenarios(cardRef.current)}
+      editable={editable}
+      onRelabel={relabelCopy}
+      onMakeMain={() => makeMain(entry.id)}
+      plansCount={plansShown}
+      onPlans={() => openPlans(cardRef.current)}
     />
   );
 
@@ -1299,9 +1437,8 @@ export default function PlanTab({
   // record that changed elsewhere), the figures' rows open nothing: a sheet
   // opened then would hold the plan the load replaces, and save it back.
   const reloading = state.status === 'loading' && !firstLoad;
-  // An open scenario with amounts typed in another currency, or one that
-  // breaks a rule of the Plan's, has nothing worked out: its card says why,
-  // on every segment.
+  // An open copy with amounts typed in another currency, or lasting changes
+  // below zero, has nothing worked out: its card says why, on every segment.
   const worked = shown !== null;
   // The currency, quiet, is a line at the foot of Your figures, beside the
   // figures it is about, so nothing above the bar arrives as the plan loads;
@@ -1310,7 +1447,7 @@ export default function PlanTab({
   regionShown.current = !currencyInFigures || segment === 'path';
   // Whether focus is in the card or its line as it is now, read before it
   // moves: when it moves on its own (the accounts say something new, a
-  // scenario opens), focus follows it rather than falling to the page.
+  // copy opens), focus follows it rather than falling to the page.
   if (typeof document !== 'undefined' && regionRef.current) currencyHadFocus.current = regionRef.current.contains(document.activeElement);
   useEffect(() => {
     const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
@@ -1355,23 +1492,26 @@ export default function PlanTab({
       <div className="visually-hidden" role="status">
         {currencySaid}
       </div>
+      <div className="visually-hidden" role="status">
+        {mainSaid}
+      </div>
       <PlanBar
         ref={barRef}
         titleRef={titleRef}
-        scenariosRef={scenariosRef}
+        plansRef={plansButtonRef}
         segment={segment}
         onSegment={switchSegment}
-        scenario={scenarioName}
-        scenariosCount={scenariosCount}
-        onScenarios={() => openScenarios(scenariosRef.current)}
+        copy={copyName}
+        plansCount={plansShown}
+        onPlans={() => openPlans(plansButtonRef.current)}
         onBack={leave}
       />
-      {/* The open scenario's card, under the bar on every segment, and when
-          it is refused for lasting changes below zero, its life events, the
+      {/* The open copy's card, under the bar on every segment, and when it
+          is refused for lasting changes below zero, its life events, the
           ones to change, with it. */}
       {entry && (
         <div ref={cardRef}>
-          {scenarioCard}
+          {copyCard}
           {refused && lifeEvents && <LifeEventsCard {...lifeEvents} notes={[]} money={money} />}
         </div>
       )}
@@ -1382,8 +1522,8 @@ export default function PlanTab({
         {worked && (
           <>
             <FiCard
-              scenarioName={scenarioName}
-              scenarioNotes={scenarioNotes}
+              copyName={copyName}
+              lifeNotes={lifeNotes}
               retirementSpending={shown?.retirement?.spending ?? null}
               walked={shown?.walked ?? false}
               walkedSavings={shown?.walkedSavings ?? null}
@@ -1422,34 +1562,35 @@ export default function PlanTab({
               figures={figureTexts}
               view={view}
               money={money}
-              scenarioName={scenarioName}
+              copyName={copyName}
               held={reloading}
               onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' ? { kind } : { kind: 'figure', figure: kind }, kind)}
               rowRef={inputRowRef}
               currency={currencyInFigures ? currencyCard : null}
             />
 
-            {/* With a scenario open, its life events take the What if…
-                card's place, with the same choices, added to the scenario. */}
-            {lifeEvents && shown && <LifeEventsCard {...lifeEvents} notes={shown.events?.notes ?? []} money={money} />}
+            {/* With a copy open, its life events take the What if… card's
+                place, with the same choices, added to the copy; on your plan
+                they are there when it holds any. */}
+            {lifeEvents && shown && <LifeEventsCard {...lifeEvents} notes={eventNotes} money={money} />}
 
             {/* Only over your saved plan, never the defaults; the card is
                 drawn with your plan shown, and its sheet stays mounted. */}
-            {planLoaded && scenarioBase && (
+            {planLoaded && (
               <WhatIfCard
                 shown={!entry}
-                base={scenarioBase}
+                base={basePlan}
                 baseFigures={baseFigures}
                 measured={measured}
                 count={count}
-                state={scenState}
-                client={scenarios}
+                plans={plansState}
                 planCurrency={planCurrency}
                 planCurrencyKnown={currencyKnown}
                 editable={editable}
                 canOpen={canOpen}
                 money={money}
-                onOpen={openScenario}
+                onTry={tryIt}
+                onRetry={() => void plansClient.load()}
                 onAskAge={() => open({ kind: 'about' }, 'ask-what-if')}
                 reloading={reloading}
                 askRef={(el) => inputRowRef('ask-what-if', el)}
@@ -1457,11 +1598,11 @@ export default function PlanTab({
               />
             )}
 
-            <EventsCard plan={plan} engine={engine} notes={shown?.itemNotes ?? []} money={money} editable={editable} open={open} scenario={scenarioMarks} planInWalk={planInWalk} />
+            <EventsCard plan={plan} engine={engine} notes={shown?.itemNotes ?? []} money={money} editable={editable} open={open} copyName={copyName} planInWalk={planInWalk} />
           </>
         )}
         {/* Progress against the plan saved as your plan (rollout 8e): the
-            Plan's, whatever is open, so outside what a scenario can refuse. */}
+            Plan's, whatever is open, so outside what a copy can refuse. */}
         {planLoaded && (
           <PlanProgress
             progress={progress}
@@ -1470,7 +1611,7 @@ export default function PlanTab({
             currency={figures.currency}
             institutions={institutions}
             blocked={progressBlocked}
-            scenarioOpen={entry !== null}
+            copyOpen={entry !== null}
             items={savedItems}
             moved={movedNew}
             onMovedSeen={onMovedSeen}
@@ -1488,9 +1629,9 @@ export default function PlanTab({
 
           {worked && (
             <SimulationCard
-              scenarioName={scenarioName}
+              copyName={copyName}
               startsWith={shown?.startsWith ?? null}
-              hasEvents={!!entry && entry.events.length > 0}
+              hasEvents={shownEvents.length > 0}
               retirementLine={shown?.retirement && view.spending.value !== null ? `Spending in retirement: ${retirementText(shown.retirement.spending, shown.retirement.lasting, view.spending.value, money)}.` : null}
               plan={plan}
               notes={shown?.itemNotes ?? []}
@@ -1507,7 +1648,7 @@ export default function PlanTab({
 
           {worked && 'sim' in engine && (
             <GridCard
-              scenarioName={scenarioName}
+              copyName={copyName}
               plan={plan}
               cells={shownGrid?.cells ?? null}
               failed={shownGrid?.failed ?? []}
@@ -1538,7 +1679,7 @@ export default function PlanTab({
               open({ kind: 'assumptions', at: 'mix', mix }, 'mix');
             }}
             settingsLocked={!savers.allocationSettings}
-            scenarioName={scenarioName}
+            copyName={copyName}
             planKey={shownFor ?? 'plan'}
             institutions={institutions}
             balancesAsOf={balancesAsOf}
@@ -1549,15 +1690,10 @@ export default function PlanTab({
           skeleton in none of them, of no segment's words. */}
       {segment === null && <PlanPanelSkeleton segment={null} />}
 
-      <Sheet
-        open={!!sheet}
-        title={
-          shownSheet
-            ? `${shownSheet.kind === 'figure' ? FIGURE_TITLES[shownSheet.figure] : SHEET_TITLES[shownSheet.kind]}${scenarioName ? ` (${scenarioName})` : ''}`
-            : ''
-        }
-        onClose={close}
-      >
+      <Sheet open={!!sheet} title={shownSheet ? (shownSheet.kind === 'figure' ? FIGURE_TITLES[shownSheet.figure] : SHEET_TITLES[shownSheet.kind]) : ''} onClose={close}>
+        {/* Atop every sheet that edits the copy open, so one isn't taken for
+            your plan. */}
+        {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
         {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
         {shownSheet?.kind === 'assumptions' && (
           <AssumptionsForm
@@ -1583,12 +1719,13 @@ export default function PlanTab({
             why={figureTexts[shownSheet.figure].why}
             assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
+            also={figureChoices(alsoTargets, shownSheet.figure, money)}
           />
         )}
-        {shownSheet?.kind === 'income' && <IncomeForm key={opened} {...formProps} item={shownSheet.item} />}
-        {shownSheet?.kind === 'expense' && <ExpenseForm key={opened} {...formProps} item={shownSheet.item} />}
+        {shownSheet?.kind === 'income' && <IncomeForm key={opened} {...formProps} item={shownSheet.item} also={shownSheet.item ? itemChoices(alsoTargets, shownSheet.item.id, money) : []} />}
+        {shownSheet?.kind === 'expense' && <ExpenseForm key={opened} {...formProps} item={shownSheet.item} also={shownSheet.item ? itemChoices(alsoTargets, shownSheet.item.id, money) : []} />}
       </Sheet>
-      {scenariosSheet}
+      {plansSheet}
     </>
   );
 }
@@ -1659,6 +1796,15 @@ export function RepairCard({ fixed, editable, onSave, money }: { fixed: Repair[]
   );
 }
 
+/** What a copy holds that doesn't fit your plan as it is now (your age
+ *  moved past its stop age, say), for its card. */
+function copyRepairText(fixed: Repair[], money: (n: number) => string): string {
+  if (fixed.some((f) => f.field === 'plan')) return 'This copy can’t be used by this version of Nya with your plan as it is now, so it shows the defaults. Nothing is saved to it until you choose Save it this way.';
+  const what = names(fixed.map((f) => repairName(f, money)));
+  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding');
+  return `This copy has ${fixed.length === 1 ? 'a value that doesn’t' : 'values that don’t'} fit your plan as it is now: ${what}. It shows the defaults instead${dropped ? ' and leaves out what is named' : ''}, and nothing is saved to it until you choose Save it this way.`;
+}
+
 /** One line of the FI card: a label, its figure, and notes under them. */
 function Row({ label, value, note, action }: { label: string; value: React.ReactNode; note?: React.ReactNode; action?: React.ReactNode }) {
   return (
@@ -1691,8 +1837,8 @@ function EditButton({ onClick, disabled, label }: { onClick: () => void; disable
  *  the rows under it (InputsCard): of their inputs it reads only what its
  *  lines on the number need. */
 export function FiCard({
-  scenarioName = null,
-  scenarioNotes = [],
+  copyName = null,
+  lifeNotes = [],
   retirementSpending = null,
   walked = false,
   walkedSavings = null,
@@ -1720,19 +1866,19 @@ export function FiCard({
   convertedNote = null,
   money,
 }: {
-  /** The open scenario's name, said at the top; null with the Plan open. */
-  scenarioName?: string | null;
-  /** What an open scenario's life events do to these figures, a line each. */
-  scenarioNotes?: string[];
-  /** Spending in retirement with a scenario's lasting changes, which the FI
-   *  number is worked out from, when it differs from today's. */
+  /** The open copy's name, said at the top; null with your plan open. */
+  copyName?: string | null;
+  /** What the plan's life events do to these figures, a line each. */
+  lifeNotes?: string[];
+  /** Spending in retirement with the life events' lasting changes, which
+   *  the FI number is worked out from, when it differs from today's. */
   retirementSpending?: number | null;
-  /** The answer came from the walk with a scenario’s life events. */
+  /** The answer came from the walk with the plan's life events. */
   walked?: boolean;
-  /** What that walk saves a year after the scenario's last change. */
+  /** What that walk saves a year after the last change. */
   walkedSavings?: number | null;
   /** What moved the walk (lib/fire/plan-figures.ts walkFrom), for its words;
-   *  left out, a scenario's life events, as before items. */
+   *  left out, the plan's life events, as before items. */
   walkFrom?: { items: boolean; events: boolean };
   /** D15's line while new (components/plan-moved.ts fiMovedText), under the
    *  answer's lines with Got it, which hides it for the session. */
@@ -1742,7 +1888,7 @@ export function FiCard({
   fiShort?: string | null;
   /** Why there is no balance at the stop age: the walk can't get there. */
   stopShort?: string | null;
-  /** The balance at the stop age is the walk's, with a scenario's life events. */
+  /** The balance at the stop age is the walk's, with the plan's life events. */
   stopWalked?: boolean;
   /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
   path?: PlanPath | null;
@@ -1799,12 +1945,12 @@ export function FiCard({
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
     howLine =
       words === EVENTS_WORDS
-        ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this scenario’s life events changing what is saved in their years.`
+        ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this plan’s life events changing what is saved in their years.`
         : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words} in their years.`;
   } else if (walked && view.yearsToFi === Infinity) {
     howLine =
       words === EVENTS_WORDS
-        ? `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
+        ? `With this plan’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
         : `With ${words} in their years you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
     howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
@@ -1820,7 +1966,7 @@ export function FiCard({
   const fiSpending = retirementSpending ?? spending.value;
   // The answer first (rollout phase 8b): when FI comes, against the age you'd
   // like to stop, in the same words as Home's FI line. Where the projection
-  // runs out before the stop age (at FI already, or after a scenario reaches
+  // runs out before the stop age (at FI already, or after a copy reaches
   // it), it says so; a walk that never gets there says why under the answer.
   // Not worked out, the answer names what it needs, never "--".
   const runsOutAt = !fiShort && path?.short && plan.age !== null ? plan.age + path.short.year : null;
@@ -1844,7 +1990,7 @@ export function FiCard({
       level={3}
       label="Financial independence"
       className="plan-hero"
-      top={scenarioName ? <ScenarioTag name={scenarioName} /> : undefined}
+      top={copyName ? <CopyTag name={copyName} /> : undefined}
       // Words, not amounts, but from the figures: through Masked, as every
       // line read from them is (test/amount-sources.ts).
       figure={<Masked>{head.headline}</Masked>}
@@ -1937,7 +2083,7 @@ export function FiCard({
                 : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
-      {scenarioNotes.map((n) => (
+      {lifeNotes.map((n) => (
         <div key={n} className="as-of">
           <Masked>{n}</Masked>
         </div>
@@ -2106,7 +2252,7 @@ export function InputsCard({
   figures,
   view,
   money,
-  scenarioName = null,
+  copyName = null,
   held = false,
   onOpen,
   rowRef,
@@ -2117,8 +2263,8 @@ export function InputsCard({
   /** The figures themselves, as the plan shown has them. */
   view: FiView;
   money: (n: number) => string;
-  /** The open scenario's name, said at the top; null with the Plan open. */
-  scenarioName?: string | null;
+  /** The open copy's name, said at the top; null with your plan open. */
+  copyName?: string | null;
   /** The saved plan is being read again: the rows open nothing meanwhile,
    *  and stay in the tab order. */
   held?: boolean;
@@ -2139,7 +2285,7 @@ export function InputsCard({
   });
   return (
     <section className="card plan-inputs" aria-labelledby="plan-inputs-title">
-      <ScenarioTag name={scenarioName} />
+      <CopyTag name={copyName} />
       <div className="card-header">
         <h3 id="plan-inputs-title">Your figures</h3>
       </div>
@@ -2250,7 +2396,7 @@ const MISSING_FIGURE: Record<Missing, string> = {
  *  row's, under the cards (rollout 6d): the line's "historical starts" or
  *  "Monte Carlo runs" names the method, which is set there. */
 export function SimulationCard({
-  scenarioName = null,
+  copyName = null,
   startsWith = null,
   hasEvents = false,
   retirementLine = null,
@@ -2265,14 +2411,14 @@ export function SimulationCard({
   badge = null,
   onRetry,
 }: {
-  /** The open scenario's name, said at the top; null with the Plan open. */
-  scenarioName?: string | null;
+  /** The open copy's name, said at the top; null with your plan open. */
+  copyName?: string | null;
   /** What the plan starts with, and what it would have then
    *  (lib/fire/plan-figures.ts): the start line under the answer. */
   startsWith?: StartsWith | null;
-  /** The open scenario has life events, which are in the simulation too. */
+  /** The plan shown has life events, which are in the simulation too. */
   hasEvents?: boolean;
-  /** Spending in retirement with a scenario's lasting changes, in words:
+  /** Spending in retirement with its life events' lasting changes, in words:
    *  what the simulation withdraws in place of what is spent now. */
   retirementLine?: string | null;
   plan: FirePlanV2;
@@ -2291,11 +2437,11 @@ export function SimulationCard({
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
 }) {
-  // Over the label: an open scenario's tag, and the badge.
+  // Over the label: an open copy's tag, and the badge.
   const top =
-    scenarioName || badge ? (
+    copyName || badge ? (
       <>
-        <ScenarioTag name={scenarioName} />
+        <CopyTag name={copyName} />
         {badge && (
           <div className="plan-card-badge">
             <span className="badge warn">{badge}</span>
@@ -2497,7 +2643,7 @@ export function SimulationCard({
                   {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
                 </li>
               ))}
-              {hasEvents && <li>This scenario’s life events, from the stop age on, as the Life events card on Your path says.</li>}
+              {hasEvents && <li>This plan’s life events, from the stop age on, as the Life events card on Your path says.</li>}
             </ul>
           </>
         )}
@@ -2514,7 +2660,7 @@ export function simulationAnswered(engine: EnginePlan | { missing: Missing }, ou
 }
 
 export function GridCard({
-  scenarioName = null,
+  copyName = null,
   plan,
   cells,
   failed = [],
@@ -2531,7 +2677,8 @@ export function GridCard({
   /** That its figures are hypothetical, from US history: false when "Will it
    *  last?" above it says so (simulationAnswered), so one view says it once. */
   sayHypothetical?: boolean;
-  scenarioName?: string | null;
+  /** The open copy's name, said at the top; null with your plan open. */
+  copyName?: string | null;
   plan: PlanCore;
   cells: GridCell[] | null;
   /** Cells that couldn't be worked out, and whether that was because the
@@ -2560,7 +2707,7 @@ export function GridCard({
     });
   return (
     <div className="card">
-      <ScenarioTag name={scenarioName} />
+      <CopyTag name={copyName} />
       <div className="card-header">
         <h3>{plan.rule === 'vpw' ? 'By length' : 'By withdrawal rate and length'}</h3>
       </div>
@@ -2610,18 +2757,6 @@ export function GridCard({
   );
 }
 
-/** What an open scenario does to the Plan's income and one-offs, for the
- *  card that lists them: which it replaced or added, and which it left out,
- *  each of those with "Use your plan's", never just missing. */
-export type ScenarioMarks = {
-  name: string;
-  replaced: Set<string>;
-  added: Set<string>;
-  leftOut: { list: 'income' | 'expenses'; item: PlanIncome | PlanExpense }[];
-  /** null: not saved, and the scenario's card says why. */
-  onRestore: (list: 'income' | 'expenses', id: string) => Promise<boolean | string | null>;
-};
-
 export function EventsCard({
   plan,
   engine,
@@ -2629,7 +2764,7 @@ export function EventsCard({
   money,
   editable,
   open,
-  scenario = null,
+  copyName = null,
   planInWalk = false,
 }: {
   plan: FirePlanV2;
@@ -2639,12 +2774,11 @@ export function EventsCard({
   money: (n: number) => string;
   editable: boolean;
   open: (s: SheetState) => void;
-  scenario?: ScenarioMarks | null;
+  /** The open copy's name, said at the top; null with your plan open. */
+  copyName?: string | null;
   /** D15's switch: one-offs and income count in the FI date too. */
   planInWalk?: boolean;
 }) {
-  const [restoreError, setRestoreError] = useState('');
-  const mark = (id: string) => (scenario?.replaced.has(id) ? ' Changed in this scenario.' : scenario?.added.has(id) ? ' Added in this scenario.' : '');
   // Where the simulation has them, so only when it runs.
   const ids = (...parts: string[]) => new Set('sim' in engine ? notes.filter((n) => parts.includes(n.part)).map((n) => n.id) : []);
   const leftOut = ids('no-age', 'before-start');
@@ -2657,12 +2791,14 @@ export function EventsCard({
   // D15's switch in the FI walk until FI (lib/fire/compile.ts).
   const start = 'sim' in engine ? engine.startAge : null;
   const any = income.length > 0 || expenses.length > 0;
-  // A version 2 plan's items with no place on this card (lib/fire/items.ts
-  // asIncome, asExpense): counted, and said to be there.
-  const unshown = plan.items.length - income.length - expenses.length;
+  // A version 2 plan's items with no place here or on the Life events card
+  // (lib/fire/items.ts asIncome, asExpense, asEvent): counted, and said to
+  // be there.
+  const unshown = plan.items.length - income.length - expenses.length - eventsOf(plan).length;
+  const whose = copyName ? 'this copy' : 'your plan';
   return (
     <div className="card">
-      <ScenarioTag name={scenario?.name} />
+      <CopyTag name={copyName} />
       <div className="inst-header">
         <div className="inst-name">Income and one-off expenses</div>
       </div>
@@ -2677,7 +2813,7 @@ export function EventsCard({
       {any && !planInWalk && start !== null && <p className="helper">They count in Will it last? from age {start}, where it starts, never in your FI date or FI number.</p>}
       {unshown > 0 && (
         <p className="helper">
-          {unshown === 1 ? '1 more item counts in your plan: a newer version of Nya shows it.' : `${unshown} more items count in your plan: a newer version of Nya shows them.`}
+          {unshown === 1 ? `1 more item counts in ${whose}: a newer version of Nya shows it.` : `${unshown} more items count in ${whose}: a newer version of Nya shows them.`}
         </p>
       )}
       <div className="plan-rows">
@@ -2686,7 +2822,7 @@ export function EventsCard({
             key={x.id}
             label={x.label}
             value={`${money(x.amount)} a year`}
-            note={`from age ${x.fromAge}, after tax${x.inflationAdjusted ? ', rises with inflation' : ", in today's dollars, then fixed (loses value to inflation)"}${leftOut.has(x.id) ? '. Not in the simulation: add your age.' : ''}${mark(x.id)}`}
+            note={`from age ${x.fromAge}, after tax${x.inflationAdjusted ? ', rises with inflation' : ", in today's dollars, then fixed (loses value to inflation)"}${leftOut.has(x.id) ? '. Not in the simulation: add your age.' : ''}`}
             action={<EditButton onClick={() => open({ kind: 'income', item: x })} disabled={!editable} label={`Edit ${x.label}`} />}
           />
         ))}
@@ -2707,37 +2843,11 @@ export function EventsCard({
                 : beyond.has(x.id)
                   ? `. After the plan ends${end !== null ? ` at ${end}` : ''}: only the grid's longer columns reach it.`
                   : ''
-            }${mark(x.id)}`}
+            }`}
             action={<EditButton onClick={() => open({ kind: 'expense', item: x })} disabled={!editable} label={`Edit ${x.label}`} />}
           />
         ))}
-        {scenario?.leftOut.map(({ list, item }) => (
-          <Row
-            key={`out-${item.id}`}
-            label={item.label}
-            value="Left out"
-            note="Your plan has it; this scenario leaves it out."
-            action={
-              <button
-                className="plan-edit"
-                disabled={!editable}
-                aria-label={`Use your plan’s ${item.label}`}
-                onClick={async () => {
-                  const r = await scenario.onRestore(list, item.id);
-                  setRestoreError(r === true || r === null ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
-                }}
-              >
-                Use your plan’s
-              </button>
-            }
-          />
-        ))}
       </div>
-      {restoreError && (
-        <Notice level="critical" role="alert">
-          {restoreError}
-        </Notice>
-      )}
       <div className="card-actions">
         <button className="secondary" onClick={() => open({ kind: 'income', item: null })} disabled={!editable || income.length >= 5}>
           Add income

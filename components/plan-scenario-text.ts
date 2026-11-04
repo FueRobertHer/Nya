@@ -176,7 +176,7 @@ export const EVENT_PART_TEXT: Record<EventPart, string> = {
   'no-age': 'Without your age or a stop age it can’t be placed, so it is left out.',
   retired: 'Its years from the stop age change nothing: by then you have stopped working.',
   'before-start':
-    'Its years before the stop age are left out: in this plan you work full time until then. For part-time work in place of full-time work, set this scenario’s stop age to when full-time work stops.',
+    'Its years before the stop age are left out: in this plan you work full time until then. For part-time work in place of full-time work, set this plan’s stop age to when full-time work stops.',
   'after-end': 'Some of it is after the plan ends: only the grid’s longer columns reach it.',
 };
 
@@ -240,7 +240,7 @@ export function resolveErrorText(field: string, error: string, base: FirePlan, s
 
 /** Retirement spending with lasting changes, beside the FI number. */
 export function retirementText(spending: number, lasting: number, today: number, money: Money): string {
-  return `${money(spending)} a year in retirement: ${money(today)} now, ${lasting >= 0 ? 'and' : 'less'} ${money(Math.abs(lasting))} a year of lasting changes from this scenario’s life events`;
+  return `${money(spending)} a year in retirement: ${money(today)} now, ${lasting >= 0 ? 'and' : 'less'} ${money(Math.abs(lasting))} a year of lasting changes from this plan’s life events`;
 }
 
 /** Lasting changes that start after the retirement age, which the FI number

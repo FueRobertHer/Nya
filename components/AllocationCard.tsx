@@ -28,7 +28,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
-import { ScenarioTag } from './ScenarioTag';
+import { CopyTag } from './CopyTag';
 import { Choice } from './PlanForms';
 import { axisDay, dayLabel, dayName, wholeMoney } from './plan-text';
 import { keysHelp, useChartKeys } from './chart-keys';
@@ -200,11 +200,11 @@ export type AllocationCardProps = {
    *  gone (the plan took the mix). */
   onUseMix: (mix: PlanMix & { ok: true }, returnTo: HTMLElement | null) => void;
   /** The allocation settings (target, splits, buckets) can't be saved here:
-   *  a scenario is open, and they are the same for every plan. */
+   *  a copy is open, and they are the same for every plan. */
   settingsLocked?: boolean;
-  /** The open scenario's name, said at the top. */
-  scenarioName?: string | null;
-  /** Which plan the card is shown for (a scenario's id, or "plan"): its
+  /** The open copy's name, said at the top. */
+  copyName?: string | null;
+  /** Which plan the card is shown for (a copy's id, or "plan"): its
    *  drawer closes when that changes. */
   planKey?: string;
   /** Every institution, for naming accounts missing from a recorded day. */
@@ -212,7 +212,7 @@ export type AllocationCardProps = {
   balancesAsOf: string | null;
 };
 
-export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, scenarioName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
+export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, copyName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
   const { alloc, mix, settings, withSettings } = allocation;
   const [view, setView] = useState<'class' | 'bucket'>('class');
   const [sheet, setSheet] = useState<SheetState | null>(null);
@@ -234,7 +234,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
   // classifies with the saved splits, is read again after each one.
   const [saves, setSaves] = useState(0);
   const saveSettings = async (next: AllocationSettings) => {
-    // The same for every plan: never from inside a scenario, whatever a
+    // The same for every plan: never from inside a copy, whatever a
     // control lets through.
     if (settingsLocked) return false;
     const ok = await allocation.save(next);
@@ -262,7 +262,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
 
   return (
     <div className="card alloc-card">
-      <ScenarioTag name={scenarioName} />
+      <CopyTag name={copyName} />
       <div className="stack tight">
         <div className="inst-header">
           <div className="inst-name">Allocation</div>

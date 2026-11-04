@@ -19,7 +19,7 @@ import { planOf } from '@/lib/fire/plan-v2';
 // is answered here, by path; nothing reaches a network.
 //
 // A rendered element never goes into toEqual or another matcher that diffs
-// (test/plan-tab-scenarios.test.tsx says why): elements are compared with
+// (test/plan-tab-copies.test.tsx says why): elements are compared with
 // toBe, or their words and attributes are.
 
 const dom = installDom();
@@ -83,14 +83,14 @@ const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
 const { PAYROLL_NOTE, dayName } = await import('@/components/plan-text');
 const { localDate } = await import('@/lib/local-date');
-const { NO_CHANGES } = await import('@/lib/fire/scenarios');
+const { plansListing, copyRow } = await import('./plans-listing');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type PlanSegment = import('@/components/PlanBar').PlanSegment;
 type Txn = import('@/components/MonthBreakdown').Txn;
 type AssetInstitution = import('@/lib/fire/inputs').AssetInstitution;
 type AssetAccount = import('@/lib/fire/inputs').AssetAccount;
 type NoTransactionsView = import('@/lib/no-transactions').NoTransactionsView;
-type Entry = import('@/components/plan-scenarios').ScenarioEntry;
+type Row = import('./plans-listing').Row;
 
 // mini-dom's window has no scrollBy, and no layout: a switch scrolls nowhere.
 (globalThis as unknown as { window: { scrollBy: () => void } }).window.scrollBy = () => {};
@@ -150,7 +150,7 @@ type Call = { method: string; url: string; body: any };
 type Answer = (call: Call) => [number, unknown] | undefined | Promise<[number, unknown] | undefined>;
 
 /** The routes the tab calls: the plan (`plan`, the GET's answer), no
- *  scenarios, no allocation settings; `answers`, by "METHOD /path", go first
+ *  copies, no allocation settings; `answers`, by "METHOD /path", go first
  *  where they give one. Every call is recorded. */
 function serve({ plan = { plan: PLAN, currency: null } as unknown, answers = {} as Record<string, Answer> } = {}) {
   const calls: Call[] = [];
@@ -162,7 +162,7 @@ function serve({ plan = { plan: PLAN, currency: null } as unknown, answers = {} 
     const given = await answers[`${method} ${url}`]?.(call);
     if (given) return answer(given[1], given[0]);
     if (url === '/api/plan-inputs' && method === 'GET') return answer(plan);
-    if (url === '/api/plan-scenarios') return answer({ scenarios: [], unreadable_ids: [], unrecognised_ids: [] });
+    if (url === '/api/plans' && method === 'GET') return answer(plansListing(null)[1]);
     if (url === '/api/allocation-settings') return answer({ settings: null });
     return answer({ error: 'not here' }, 404);
   };
@@ -304,24 +304,15 @@ const valueOf = (row: FakeElement) => {
   return value ? kids(value)[0].textContent : null;
 };
 
-/** A saved scenario, as the scenarios route lists it. */
-const scenario = (over: Partial<Entry>): Entry => ({
-  id: 's1',
-  version: 1,
-  name: 'A scenario',
-  currency: 'USD',
-  createdAt: '2026-10-01T00:00:00.000Z',
-  savedAt: '2026-10-01T00:00:00.000Z',
-  rev: 'r1',
-  ...NO_CHANGES,
-  ...over,
-});
+/** Your plan and its copies, as GET /api/plans lists them. */
+const listed = (...copies: Row[]) => ({ 'GET /api/plans': (): [number, unknown] => plansListing(PLAN, copies) });
 
-/** Opens a scenario as a person does: the Scenarios sheet (the bar's
- *  button, or the open scenario's card's), then its row's Open. */
-async function openScenario(tab: Tab, name: string) {
-  await press(tab.container.findAll((e) => e.tagName === 'BUTTON' && /^Scenarios(?: \(\d+\))?$/.test(e.textContent.trim()))[0]);
-  await press(tab.dialog()?.findAll((e) => e.getAttribute('aria-label') === `Open ${name}`)[0]);
+/** Opens a copy as a person does: the Plans sheet (the bar's button, or the
+ *  open copy's card's), its row, then Open it. */
+async function openCopy(tab: Tab, name: string) {
+  await press(tab.container.findAll((e) => e.tagName === 'BUTTON' && /^Plans(?: \(\d+\))?$/.test(e.textContent.trim()))[0]);
+  await press(tab.dialog()?.findAll((e) => e.tagName === 'BUTTON' && part(e, 'list-row-title')?.textContent === name)[0]);
+  await press(button(tab.dialog()!, 'Open it'));
   await settle(400);
 }
 
@@ -1033,19 +1024,17 @@ describe('Drawdown’s notice', () => {
     await tab.unmount();
   });
 
-  test('with a scenario open, of the scenario’s inputs: kept while it measures the spending, gone once it types its own', async () => {
-    const later = scenario({ id: 's1', name: 'Retire at 50', set: { targetAge: 50 } });
-    const typed = scenario({ id: 's2', name: 'Spend more', set: { spending: 55_000 } });
-    serve({ answers: { 'GET /api/plan-scenarios': () => [200, { scenarios: [later, typed], unreadable_ids: [], unrecognised_ids: [] }] } });
+  test('with a copy open, of the copy’s inputs: kept while it measures the spending, gone once it types its own', async () => {
+    serve({ answers: listed(copyRow(PLAN, 'c1', 'Retire at 50', { targetAge: 50 }, null, 1), copyRow(PLAN, 'c2', 'Spend more', { spending: 55_000 }, 'USD', 2)) });
     const tab = await mount({ txnWithout: REFUSED });
     expect(notice(tab)?.each).toEqual([['notice caution', `Caution: ${SPENDING}`]]);
-    await openScenario(tab, 'Retire at 50');
-    expect(tab.container.textContent).toContain('Scenario: Retire at 50');
+    await openCopy(tab, 'Retire at 50');
+    expect(tab.container.textContent).toContain('Copy: Retire at 50');
     expect(notice(tab)).toEqual({ line: null, each: [['notice caution', `Caution: ${SPENDING}`]] });
-    await openScenario(tab, 'Spend more');
-    expect(tab.container.textContent).toContain('Scenario: Spend more');
+    await openCopy(tab, 'Spend more');
+    expect(tab.container.textContent).toContain('Copy: Spend more');
     none(tab);
-    // Under the row too, the spending is the scenario's own.
+    // Under the row too, the spending is the copy's own.
     expect(part(tab.row('Annual spending')!, 'list-row-sub')?.textContent).toBe('Typed by you');
     await tab.unmount();
   });
@@ -1085,7 +1074,7 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
     expect(puts(calls).length).toBe(1);
     const sent = puts(calls)[0].body.plan;
     expect([sent.withdrawalRate, sent.fee, sent.method]).toEqual([0.035, 0.002, 'monte-carlo']);
-    expect({ ...sent, withdrawalRate: PLAN.withdrawalRate, fee: PLAN.fee, method: PLAN.method }).toEqual(PLAN);
+    expect({ ...sent, withdrawalRate: PLAN.withdrawalRate, fee: PLAN.fee, method: PLAN.method }).toEqual(planOf(PLAN));
     await settle(400);
     expect(tab.dialog()).toBeNull();
     // Said in the answer's line (Drawdown's hero has no meta since the tax
@@ -1123,19 +1112,21 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
     await tab.unmount();
   });
 
-  test('with a scenario open, the method and the part-time income are the plan’s, and say so', async () => {
-    const later = scenario({ id: 's1', name: 'Retire at 50', set: { targetAge: 50 } });
-    serve({ answers: { 'GET /api/plan-scenarios': () => [200, { scenarios: [later], unreadable_ids: [], unrecognised_ids: [] }] } });
+  // The method is one of the facts every plan shares; the part-time
+  // income is each plan's own (lib/fire/copies.ts).
+  test('with a copy open, the method is your plan’s and says so, and the part-time income is the copy’s', async () => {
+    serve({ answers: listed(copyRow(PLAN, 'c1', 'Retire at 50', { targetAge: 50 }, null)) });
     const tab = await mount();
-    await openScenario(tab, 'Retire at 50');
+    await openCopy(tab, 'Retire at 50');
     await press(tab.row('Assumptions'));
     const sheet = tab.dialog()!;
-    expect(sheet.getAttribute('aria-label')).toBe('Assumptions (Retire at 50)');
+    expect(sheet.getAttribute('aria-label')).toBe('Assumptions');
+    expect(sheet.textContent).toContain('Copy: Retire at 50');
     expect(field(sheet, 'Method')?.disabled).toBe(true);
-    expect(field(sheet, 'Part-time income')?.disabled).toBe(true);
+    expect(field(sheet, 'Part-time income')?.disabled).toBe(false);
     expect(field(sheet, 'Withdrawal rate')?.disabled).toBe(false);
-    expect(sheet.textContent).toContain('The method is the same in every scenario: change it with your plan open.');
-    expect(sheet.textContent).toContain('Saved to the scenario “Retire at 50”, not your plan.');
+    expect(sheet.textContent).toContain('The method is the same in every plan: change it on your plan.');
+    expect(sheet.textContent).toContain('Saved to this copy, not your plan.');
     await tab.unmount();
   });
 
@@ -1255,15 +1246,18 @@ describe('what a save sends once your plans are copies', () => {
     await tab.unmount();
   });
 
-  test('a version 2 entry is saved as version 2; a plan before copies as version 1', async () => {
-    for (const [answer, version] of [
-      [{ plan: planOf(PLAN), currency: null, updated_at: 'u1' }, 2],
-      [{ plan: PLAN, currency: null }, 1],
+  // Since C2 every save is version 2, and names the stamp the page loaded:
+  // null before your plan's entry is made (app/api/fire-plan refuses a save
+  // that names none).
+  test('every save is version 2, a version 1 plan’s too, with the stamp it was loaded at', async () => {
+    for (const [answer, stamp] of [
+      [{ plan: planOf(PLAN), currency: null, updated_at: 'u1' }, 'u1'],
+      [{ plan: PLAN, currency: null, updated_at: null }, null],
     ] as const) {
       const calls = serve({ plan: answer, answers: { 'PUT /api/fire-plan': (c) => [200, { ...answer, plan: c.body.plan }] } });
       const tab = await mount();
       await saveTarget(tab, '58');
-      expect(puts(calls).map((c) => c.body.plan.version)).toEqual([version]);
+      expect(puts(calls).map((c) => [c.body.plan.version, c.body.based_on])).toEqual([[2, stamp]]);
       await tab.unmount();
     }
   });

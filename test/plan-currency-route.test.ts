@@ -1,15 +1,18 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import './clerk-mock';
-import type { FirePlan } from '@/lib/fire/plan';
+import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 
-// The currency the Plan's figures are in, stored beside the plan
-// (lib/fire-plan.ts planCurrencyStore) and answered with it
-// (app/api/fire-plan): an older stored Plan read without change, what each
-// save records, what the release before does after a rollback (it reads the
-// plan as ever, never this store, and a save of its own that changes an
-// amount leaves the record apart, so the Plan asks), a record that can't be
-// read or is a newer version's, and the download and a restore round trip.
+// The currency the Plan's figures are in: kept in your plan's entry
+// (`fire-plans`, lib/plan-copies.ts) beside the amounts it is the currency
+// of, written in the same write as they are, and answered with the plan
+// (app/api/fire-plan). What each save records, what recording it alone
+// takes, and the download and a restore. The record the plan before copies
+// kept beside it (lib/fire-plan.ts planCurrencyStore) stays declared, so a
+// download and a restore still carry its bytes, but nothing reads it any
+// more, damaged, a newer version's or whole: the first write removes it. The
+// release before reads the currency in each entry
+// (test/release-before-plans.test.ts).
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.APP_PASSWORD = 'hunter2';
@@ -20,11 +23,12 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt, decrypt } = await import('@/lib/crypto');
-const { readEncryptedJson } = await import('@/lib/stored-json');
 const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
+const { firePlansStore } = await import('@/lib/plan-copies');
 const { declaredStore } = await import('@/lib/stores');
-const { UnreadableValueError } = await import('@/lib/repo');
-const { DEFAULT_PLAN, isFirePlan } = await import('@/lib/fire/plan');
+const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
+const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
+const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
 const { classify } = await import('@/lib/reencrypt');
 const { SEAM } = await import('@/lib/user-restore/parts');
@@ -38,11 +42,25 @@ beforeEach(async () => {
   process.env.RESTORE_ENABLED = '1';
 });
 
-const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
+const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...DEFAULT_PLAN_V2, ...over });
 const TYPED = plan({ age: 40, targetAge: 55, spending: 40_000, savings: 30_000 });
+const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null };
 const put = (body: unknown) => route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }));
 const post = (body: unknown) => route.POST(new Request('http://x', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }));
 const get = async () => (await route.GET()).json();
+/** Your plan's save as a page sends it: loaded at `based_on`, with the
+ *  facts it holds (none of these saves changes one but where said). */
+const save = async (p: FirePlanV2, currency: string | null, based_on: string | null, facts_were = factsOf(p)) => {
+  const res = await put({ plan: p, currency, facts_were, based_on });
+  return { status: res.status, body: await res.json() };
+};
+/** Your plan's first save. */
+const first = async (p: FirePlanV2, currency: string | null) => {
+  const r = await save(p, currency, null, factsOf(DEFAULT_PLAN_V2));
+  expect(r.status).toBe(200);
+  return r.body;
+};
+const mine = async () => (await firePlansStore.get(TEST_CTX, MAIN_ID))!;
 const recordKey = ctxKey('fire-plan-currency');
 const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   const orig = console.error;
@@ -54,8 +72,8 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
   }
 };
 
-describe('the store', () => {
-  test('is declared on the seam beside the plan, in the download, and on the key inventory', () => {
+describe('the record before copies', () => {
+  test('is still declared on the seam beside the plan, in the download, and on the key inventory', () => {
     expect(planCurrencyStore.name).toBe('fire-plan-currency');
     expect(planCurrencyStore.kind).toBe('value');
     expect(declaredStore('fire-plan-currency')).toBe(planCurrencyStore);
@@ -65,243 +83,168 @@ describe('the store', () => {
   });
 
   test('encrypted: neither the currency nor an amount is readable in the database', async () => {
-    await planCurrencyStore.set(TEST_CTX, currencyRecord(TYPED, 'EUR'));
-    // Quotes are never in ciphertext: none of the record's JSON is there.
+    await planCurrencyStore.set(TEST_CTX, currencyRecord(DEFAULT_PLAN, 'EUR'));
     const raw = String(await fake.get(recordKey));
     expect(raw).not.toContain('"EUR"');
-    expect(raw).not.toContain('"spending":40000');
-    expect(JSON.parse(await decrypt(TEST_CTX, raw))).toEqual({ version: 1, currency: 'EUR', amounts: typedAmounts(TYPED) });
-  });
-});
-
-describe('an older stored Plan', () => {
-  test('reads without change: the plan as it was saved, and no currency, since none was recorded', async () => {
-    // Exactly as every release before saved it, and nothing beside it.
-    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(TYPED)));
-    expect(await get()).toEqual({ plan: TYPED, currency: null });
-    expect(await fake.get(recordKey)).toBeNull();
-    expect(JSON.parse(await decrypt(TEST_CTX, String(await fake.get(ctxKey('fire-plan')))))).toEqual(TYPED);
+    expect(JSON.parse(await decrypt(TEST_CTX, raw))).toEqual({ version: 1, currency: 'EUR', amounts: typedAmounts(DEFAULT_PLAN) });
   });
 
-  test('its currency recorded for the plan as stored, with the amounts the page shows; a plan changed since is refused', async () => {
-    await firePlanStore.set(TEST_CTX, TYPED);
-    const stale = await post({ currency: 'USD', amounts: typedAmounts({ ...TYPED, spending: 45_000 }) });
-    expect(stale.status).toBe(409);
-    expect(await stale.json()).toMatchObject({ stale: true });
-    expect(await fake.get(recordKey)).toBeNull();
-    const res = await post({ currency: 'USD', amounts: typedAmounts(TYPED) });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ plan: TYPED, currency: 'USD' });
-    expect(await get()).toEqual({ plan: TYPED, currency: 'USD' });
-    // The plan itself is untouched.
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(TYPED);
-  });
-
-  test('nothing to record for a plan with nothing typed, or none at all; what it takes is checked', async () => {
-    expect((await post({ currency: 'USD', amounts: typedAmounts(DEFAULT_PLAN) })).status).toBe(409);
-    await firePlanStore.set(TEST_CTX, plan({ age: 40 }));
-    expect((await post({ currency: 'USD', amounts: typedAmounts(DEFAULT_PLAN) })).status).toBe(409);
-    for (const body of ['{no', [], { currency: 'usd', amounts: typedAmounts(TYPED) }, { currency: 'USD' }, { currency: 'USD', amounts: { spending: 1 } }, { currency: 'USD', amounts: typedAmounts(TYPED), also: 1 }, { currency: 'USD', amounts: typedAmounts(TYPED), answered: 'yes' }]) {
-      expect((await post(body)).status).toBe(400);
+  test('is never read, whole, damaged or a newer version’s: the plan is the defaults, and the first save removes it', async () => {
+    const legacy = { ...DEFAULT_PLAN, age: 40, spending: 40_000 };
+    for (const record of [
+      async () => planCurrencyStore.set(TEST_CTX, currencyRecord(legacy, 'EUR')),
+      async () => fake.set(recordKey, 'damaged-bytes-not-ciphertext-at-all'),
+      async () => fake.set(recordKey, await encrypt(TEST_CTX, JSON.stringify({ version: 2, currency: 'EUR', amounts: typedAmounts(legacy), by: 'item' }))),
+    ]) {
+      fake.reset();
+      await registerTestContainer(fake);
+      await firePlanStore.set(TEST_CTX, legacy);
+      await record();
+      expect(await get()).toEqual(NO_PLAN);
+      // Nothing to record a currency for: no plan is saved.
+      expect((await post({ currency: 'EUR', amounts: typedAmounts(legacy), answered: true })).status).toBe(409);
+      const saved = await first(TYPED, 'USD');
+      expect(saved.currency).toBe('USD');
+      expect([await fake.get(recordKey), await fake.get(ctxKey('fire-plan'))]).toEqual([null, null]);
     }
-    expect(await fake.get(recordKey)).toBeNull();
   });
 });
-
-/** Runs `f` with a store's method failing, as a dropped connection would. */
-async function failing<T>(target: object, method: string, f: () => Promise<T>): Promise<T> {
-  const o = target as Record<string, unknown>;
-  const real = o[method];
-  o[method] = async () => {
-    throw new Error('connection reset');
-  };
-  try {
-    return await quiet(f);
-  } finally {
-    o[method] = real;
-  }
-}
 
 describe('each save', () => {
-  test('records the currency with the plan; a save that names none (a page open since before the update) leaves the record, said to no longer fit once an amount changes', async () => {
-    const res = await put({ plan: TYPED, currency: 'EUR' });
-    expect(await res.json()).toEqual({ plan: TYPED, currency: 'EUR' });
-    expect(await get()).toEqual({ plan: TYPED, currency: 'EUR' });
-    // An age changed by a page that sends no currency: the amounts are the same.
-    expect(await (await put({ plan: { ...TYPED, age: 41 } })).json()).toEqual({ plan: { ...TYPED, age: 41 }, currency: 'EUR' });
-    // An amount changed by one: a record of other amounts, said, with its currency.
-    const changed = { ...TYPED, age: 41, spending: 50_000 };
-    expect(await (await put({ plan: changed })).json()).toEqual({ plan: changed, currency: null, currency_problem: 'stale', currency_was: 'EUR' });
-    expect(await get()).toEqual({ plan: changed, currency: null, currency_problem: 'stale', currency_was: 'EUR' });
+  test('records the currency in your plan’s entry, in the same write as its amounts, and answers it', async () => {
+    const saved = await first(TYPED, 'EUR');
+    expect(saved).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'EUR', updated_at: saved.updated_at });
+    expect(await mine()).toMatchObject({ plan: TYPED, currency: 'EUR', updatedAt: saved.updated_at });
+    expect(await get()).toEqual(saved);
+    expect(await fake.get(recordKey)).toBeNull();
   });
 
-  test('the first amount’s save records the currency in its own write', async () => {
-    await put({ plan: plan({ age: 40 }) });
-    expect(await get()).toEqual({ plan: plan({ age: 40 }), currency: null });
-    expect(await (await put({ plan: TYPED, currency: 'USD' })).json()).toEqual({ plan: TYPED, currency: 'USD' });
-    expect(await planCurrencyStore.get(TEST_CTX)).toEqual(currencyRecord(TYPED, 'USD'));
+  test('a save naming none keeps the currency over the amounts; first amounts with none are refused, and nothing written', async () => {
+    const blank = await first(plan({ age: 40 }), null);
+    expect(blank.currency).toBeNull();
+    const before = await fake.hgetall<Record<string, string>>(ctxKey('fire-plans'));
+    const refused = await save(TYPED, null, blank.updated_at);
+    expect(refused).toEqual({ status: 409, body: { error: 'Say which currency your plan’s figures are in, then save again: nothing was saved.' } });
+    expect(await fake.hgetall<Record<string, string>>(ctxKey('fire-plans'))).toEqual(before);
+    const typed = await save(TYPED, 'USD', blank.updated_at);
+    expect(typed.body.currency).toBe('USD');
+    const kept = await save({ ...TYPED, spending: 50_000 }, null, typed.body.updated_at);
+    expect([kept.status, kept.body.currency]).toEqual([200, 'USD']);
+    expect((await mine()).currency).toBe('USD');
   });
 
-  test('never changes what the figures mean: another currency than the one recorded, or over a record that no longer fits, is refused and nothing is written', async () => {
-    await put({ plan: TYPED, currency: 'USD' });
-    // A page that didn't see a change of currency on another device.
-    const other = await put({ plan: { ...TYPED, spending: 41_000 }, currency: 'EUR' });
-    expect([other.status, (await other.json()).stale]).toEqual([409, true]);
-    expect(await get()).toEqual({ plan: TYPED, currency: 'USD' });
-    // A record that no longer fits: not settled by a save, only by an answer.
-    await firePlanStore.set(TEST_CTX, { ...TYPED, spending: 42_000 });
-    const over = await put({ plan: { ...TYPED, spending: 43_000 }, currency: 'USD' });
-    expect(over.status).toBe(409);
-    expect(await get()).toEqual({ plan: { ...TYPED, spending: 42_000 }, currency: null, currency_problem: 'stale', currency_was: 'USD' });
+  test('never changes what the figures mean: another currency over the amounts is refused, and nothing written', async () => {
+    const saved = await first(TYPED, 'USD');
+    const other = await save({ ...TYPED, spending: 41_000 }, 'EUR', saved.updated_at);
+    expect(other).toEqual({ status: 409, body: { error: 'The currency your plan’s figures are in was changed since this page loaded it, so nothing was saved: load it again.', stale: true } });
+    expect(await get()).toEqual(saved);
+  });
+
+  test('once the amounts are gone, the next ones may be in another currency', async () => {
+    const saved = await first(TYPED, 'USD');
+    const blank = await save(plan({ age: 40 }), null, saved.updated_at);
+    expect([blank.status, blank.body.currency]).toEqual([200, null]);
+    const euros = await save(TYPED, 'EUR', blank.body.updated_at);
+    expect([euros.status, euros.body.currency]).toEqual([200, 'EUR']);
   });
 
   test('refuses a currency that isn’t a code, and saves nothing', async () => {
-    const res = await put({ plan: TYPED, currency: 'Euro' });
+    const res = await put({ plan: TYPED, currency: 'Euro', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null });
     expect(res.status).toBe(400);
-    expect(await fake.get(ctxKey('fire-plan'))).toBeNull();
-    expect(await fake.get(recordKey)).toBeNull();
+    expect(await fake.type(ctxKey('fire-plans'))).toBe('none');
   });
 
-  test('the record is written first, and put back only when the plan was refused before it was written', async () => {
-    await put({ plan: TYPED, currency: 'USD' });
-    const changed = { ...TYPED, spending: 60_000 };
-    const plans = firePlanStore as unknown as Record<string, unknown>;
-    const realSet = plans.set as typeof firePlanStore.set;
-    const withPlanSet = async <T>(set: typeof firePlanStore.set, f: () => Promise<T>) => {
-      plans.set = set;
+  test('a write that fails leaves the plan and its currency both as they were; one written with its reply lost holds both', async () => {
+    const saved = await first(TYPED, 'USD');
+    const plans = firePlansStore as unknown as Record<string, unknown>;
+    const real = plans.updateMany as typeof firePlansStore.updateMany;
+    const withWrite = async <T>(write: typeof firePlansStore.updateMany, f: () => Promise<T>) => {
+      plans.updateMany = write;
       try {
         return await quiet(f);
       } finally {
-        plans.set = realSet;
+        plans.updateMany = real;
       }
     };
-    // Refused before anything was written (over a value the seam can't read):
-    // the record goes back to what it was.
-    const refused = await withPlanSet(async () => {
-      throw new UnreadableValueError('plan assumptions', false);
-    }, () => put({ plan: changed, currency: 'USD' }));
-    expect(refused.status).toBe(409);
-    expect(await get()).toEqual({ plan: TYPED, currency: 'USD' });
-    // Written, and the reply lost: the new record stays, and fits.
-    const lost = await withPlanSet(async (ctx, v) => {
-      await realSet(ctx, v);
+    const dropped = await withWrite(async () => {
+      throw new Error('connection reset');
+    }, () => save({ ...TYPED, spending: 60_000 }, 'USD', saved.updated_at));
+    expect(dropped.status).toBe(500);
+    expect(await get()).toEqual(saved);
+    const lost = await withWrite(async (...args) => {
+      await real.apply(firePlansStore, args);
       throw new Error('timed out');
-    }, () => put({ plan: changed, currency: 'USD' }));
+    }, () => save({ ...TYPED, spending: 60_000 }, 'USD', saved.updated_at));
     expect(lost.status).toBe(500);
-    expect(await get()).toEqual({ plan: changed, currency: 'USD' });
-    // Never written, the connection dropped: the record is of the new
-    // amounts, the plan of the old, so it asks, USD first.
-    const again = { ...TYPED, spending: 70_000 };
-    expect((await failing(firePlanStore, 'set', () => put({ plan: again, currency: 'USD' }))).status).toBe(500);
-    expect(await get()).toEqual({ plan: changed, currency: null, currency_problem: 'stale', currency_was: 'USD' });
-    // A first record: with the plan written and the reply lost, it stays and
-    // fits, so the tab never records another on its own.
-    fake.reset();
-    await registerTestContainer(fake);
-    await put({ plan: plan({ age: 40 }) });
-    await withPlanSet(async (ctx, v) => {
-      await realSet(ctx, v);
-      throw new Error('timed out');
-    }, () => put({ plan: TYPED, currency: 'EUR' }));
-    expect(await get()).toEqual({ plan: TYPED, currency: 'EUR' });
-    // Refused before writing: taken away again, the plan with nothing typed.
-    fake.reset();
-    await registerTestContainer(fake);
-    await put({ plan: plan({ age: 40 }) });
-    await withPlanSet(async () => {
-      throw new UnreadableValueError('plan assumptions', false);
-    }, () => put({ plan: TYPED, currency: 'EUR' }));
-    expect(await get()).toEqual({ plan: plan({ age: 40 }), currency: null });
-    expect(await fake.get(recordKey)).toBeNull();
+    expect(await get()).toMatchObject({ plan: { ...TYPED, spending: 60_000 }, currency: 'USD' });
   });
 });
 
 describe('recording the currency alone', () => {
-  test('without the person’s answer, only a plan with no record at all: never over one that no longer fits, nor to change one', async () => {
-    await put({ plan: TYPED, currency: 'USD' });
+  test('for your plan as stored, with the amounts the page shows; a plan changed since is refused', async () => {
+    const saved = await first(TYPED, 'USD');
+    await firePlansStore.update(TEST_CTX, MAIN_ID, (cur) => ({ ...cur!, currency: null }));
+    const stale = await post({ currency: 'USD', amounts: typedAmounts({ ...TYPED, spending: 45_000 }) });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ stale: true });
+    expect((await mine()).currency).toBeNull();
+    const res = await post({ currency: 'USD', amounts: typedAmounts(TYPED) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'USD', updated_at: body.updated_at });
+    expect(body.updated_at > saved.updated_at).toBe(true);
+    // The plan itself is untouched.
+    expect((await mine()).plan).toEqual(TYPED);
+  });
+
+  test('without the person’s answer, only over none: never to change one; the answer replaces it', async () => {
+    await first(TYPED, 'USD');
     // The same, again: nothing to change.
     expect((await post({ currency: 'USD', amounts: typedAmounts(TYPED) })).status).toBe(200);
-    // Another currency for the same amounts: only the person's answer.
     const change = await post({ currency: 'EUR', amounts: typedAmounts(TYPED) });
     expect([change.status, (await change.json()).stale]).toEqual([409, true]);
-    expect(await (await post({ currency: 'EUR', amounts: typedAmounts(TYPED), answered: true })).json()).toEqual({ plan: TYPED, currency: 'EUR' });
-    // No longer fitting: likewise.
-    const changed = { ...TYPED, spending: 45_000 };
-    await firePlanStore.set(TEST_CTX, changed);
-    expect((await post({ currency: 'EUR', amounts: typedAmounts(changed) })).status).toBe(409);
-    expect(await get()).toMatchObject({ currency: null, currency_problem: 'stale', currency_was: 'EUR' });
-    expect(await (await post({ currency: 'EUR', amounts: typedAmounts(changed), answered: true })).json()).toEqual({ plan: changed, currency: 'EUR' });
-  });
-});
-
-describe('after a rollback, the release before', () => {
-  test('reads the plan as it always has: this release changes nothing of its shape, and keeps its currency elsewhere', async () => {
-    await put({ plan: TYPED, currency: 'EUR' });
-    // The release before's reader: the same store, the same check.
-    expect(await readEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(TYPED);
+    expect((await mine()).currency).toBe('USD');
+    expect(await (await post({ currency: 'EUR', amounts: typedAmounts(TYPED), answered: true })).json()).toMatchObject({ plan: TYPED, currency: 'EUR' });
+    expect((await mine()).currency).toBe('EUR');
   });
 
-  test('saving the plan alone (all it knows) keeps the record while no amount changes, and leaves it apart once one does: the Plan then asks', async () => {
-    await put({ plan: TYPED, currency: 'EUR' });
-    // What its save writes: the plan, never the record.
-    await firePlanStore.set(TEST_CTX, { ...TYPED, withdrawalRate: 0.035 });
-    expect(await get()).toMatchObject({ currency: 'EUR' });
-    await firePlanStore.set(TEST_CTX, { ...TYPED, spending: 36_000 });
-    expect(await get()).toEqual({ plan: { ...TYPED, spending: 36_000 }, currency: null, currency_problem: 'stale', currency_was: 'EUR' });
-    // The record is still there as it was, never rewritten without a save of this release.
-    expect(await planCurrencyStore.get(TEST_CTX)).toEqual(currencyRecord(TYPED, 'EUR'));
-  });
-});
-
-describe('a record that can’t be read', () => {
-  test('damaged: the plan still loads, says so, a save leaves it alone, and only the person’s answer replaces it', async () => {
-    await firePlanStore.set(TEST_CTX, TYPED);
-    await fake.set(recordKey, 'damaged-bytes-not-ciphertext-at-all');
-    expect(await get()).toEqual({ plan: TYPED, currency: null, currency_problem: 'unreadable' });
-    const saved = await put({ plan: { ...TYPED, age: 41 }, currency: 'USD' });
-    expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ plan: { ...TYPED, age: 41 }, currency: null, currency_problem: 'unreadable' });
-    expect(await fake.get<string>(recordKey)).toBe('damaged-bytes-not-ciphertext-at-all');
-    const amounts = typedAmounts(TYPED);
-    const refused = await post({ currency: 'USD', amounts });
-    expect([refused.status, (await refused.json()).unreadable]).toEqual([409, true]);
-    expect(await fake.get<string>(recordKey)).toBe('damaged-bytes-not-ciphertext-at-all');
-    expect(await (await post({ currency: 'USD', amounts, answered: true })).json()).toEqual({ plan: { ...TYPED, age: 41 }, currency: 'USD' });
-  });
-
-  test('a newer version’s: never written over, by a save or an answer', async () => {
-    await firePlanStore.set(TEST_CTX, TYPED);
-    const newer = await encrypt(TEST_CTX, JSON.stringify({ version: 2, currency: 'EUR', amounts: typedAmounts(TYPED), by: 'item' }));
-    await fake.set(recordKey, newer);
-    expect(await get()).toEqual({ plan: TYPED, currency: null, currency_problem: 'newer' });
-    expect((await put({ plan: TYPED, currency: 'USD' })).status).toBe(200);
-    expect((await post({ currency: 'USD', amounts: typedAmounts(TYPED), answered: true })).status).toBe(409);
-    expect(await fake.get<string>(recordKey)).toBe(newer);
+  test('nothing to record before your plan is saved, or for one with nothing typed; what it takes is checked', async () => {
+    expect((await post({ currency: 'USD', amounts: typedAmounts(TYPED) })).status).toBe(409);
+    await first(plan({ age: 40 }), null);
+    expect((await post({ currency: 'USD', amounts: typedAmounts(DEFAULT_PLAN_V2) })).status).toBe(409);
+    for (const body of ['{no', [], { currency: 'usd', amounts: typedAmounts(TYPED) }, { currency: 'USD' }, { currency: 'USD', amounts: { spending: 1 } }, { currency: 'USD', amounts: typedAmounts(TYPED), also: 1 }, { currency: 'USD', amounts: typedAmounts(TYPED), answered: 'yes' }]) {
+      expect((await post(body)).status).toBe(400);
+    }
+    expect((await mine()).currency).toBeNull();
   });
 });
 
 describe('the download and a restore', () => {
-  test('the record is a part of its own, and comes back with the plan, still holding for it', async () => {
-    await put({ plan: TYPED, currency: 'EUR' });
+  test('the currency is in your plan’s entry, and comes back with it, still holding for its amounts', async () => {
+    const saved = await first(TYPED, 'EUR');
     const text = await downloadText(EXPORTED);
     const doc = JSON.parse(text);
-    expect(doc['fire-plan']).toEqual(TYPED);
-    expect(doc['fire-plan-currency']).toEqual({ version: 1, currency: 'EUR', amounts: typedAmounts(TYPED) });
-    fake.reset();
-    await registerTestContainer(fake);
-    expect(await get()).toEqual({ plan: null, currency: null });
-    const record = await restoreAll(text);
-    expect(record.status).toBe('finished');
-    expect(await get()).toEqual({ plan: TYPED, currency: 'EUR' });
-  });
-
-  test('a download from the release before has no record: the plan comes back, and its currency isn’t known until said', async () => {
-    await firePlanStore.set(TEST_CTX, TYPED);
-    const doc = JSON.parse(await downloadText(EXPORTED));
+    expect(doc['fire-plans']).toEqual([{ id: MAIN_ID, value: { name: 'First plan', plan: TYPED, tax: null, currency: 'EUR', createdAt: expect.any(String), updatedAt: saved.updated_at } }]);
     expect(doc['fire-plan-currency']).toBeNull();
     fake.reset();
     await registerTestContainer(fake);
-    await restoreAll(JSON.stringify(doc));
-    expect(await get()).toEqual({ plan: TYPED, currency: null });
+    expect(await get()).toEqual(NO_PLAN);
+    const record = await restoreAll(text);
+    expect(record.status).toBe('finished');
+    expect(await get()).toEqual(saved);
+  });
+
+  test('a download from before copies brings no plan back: the Plan is the defaults until it is saved', async () => {
+    const legacy = { ...DEFAULT_PLAN, age: 40, spending: 40_000 };
+    await firePlanStore.set(TEST_CTX, legacy);
+    await planCurrencyStore.set(TEST_CTX, currencyRecord(legacy, 'EUR'));
+    const doc = JSON.parse(await downloadText(EXPORTED));
+    expect(doc['fire-plan-currency']).toEqual(currencyRecord(legacy, 'EUR'));
+    fake.reset();
+    await registerTestContainer(fake);
+    expect((await restoreAll(JSON.stringify(doc))).status).toBe('finished');
+    expect(await get()).toEqual(NO_PLAN);
+    await first(TYPED, 'USD');
+    expect([await fake.get(recordKey), await fake.get(ctxKey('fire-plan'))]).toEqual([null, null]);
   });
 });

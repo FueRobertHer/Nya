@@ -32,13 +32,16 @@ import { IncomePoolHeader } from '@/components/IncomePool';
 import DebtPayoff from '@/components/DebtPayoff';
 import PlanFanChart from '@/components/PlanFanChart';
 import PlanPathChart from '@/components/PlanPathChart';
-import { ScenariosSheet } from '@/components/PlanScenarios';
+import { CopyCard, PlanDetails, PlansSheet, type SheetPlan } from '@/components/PlansSheet';
+import PlanCompare from '@/components/PlanCompare';
+import AlsoChange from '@/components/AlsoChange';
+import { copyDiffParts, figureChoices, itemChoices } from '@/components/plan-diff';
 import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanProgress';
 import { LifeEventsCard } from '@/components/PlanEvents';
-import { createScenarioClient, INITIAL_SCENARIOS } from '@/components/plan-scenarios';
+import { INITIAL_PLANS } from '@/components/plan-list';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
-import { NO_CHANGES } from '@/lib/fire/scenarios';
+import { withIncome } from '@/lib/fire/items';
 import { wholeMoney } from '@/components/plan-text';
 import { InputsCard } from '@/components/PlanTab';
 import { FigureForm } from '@/components/PlanForms';
@@ -857,6 +860,23 @@ const YOY: YearOverYearReport = {
  *  investment accounts, one more at Vanguard not shown; and part-time income
  *  among the assumptions. Made as it is drawn, so its amounts are written as
  *  the switch says. */
+/** Your plan and a copy that spends more, as the Plans sheet holds them. */
+function COPIES(): { plans: SheetPlan[]; money: (n: number) => string } {
+  const money = (n: number) => wholeMoney(n, 'USD');
+  const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
+  const copy = { ...plan, spending: 52_000 };
+  const measured = { spending: 40_000, savings: 30_000, assets: 300_000 };
+  const sheetPlan = (id: string, name: string, p: typeof plan): SheetPlan => ({
+    id,
+    name,
+    isMain: id === 'main',
+    updatedAt: null,
+    plan: planOf(p),
+    outcome: { kind: 'figures', figures: figuresOf(p, measured) as PlanFigures },
+  });
+  return { plans: [sheetPlan('main', 'First plan', plan), sheetPlan('c1', 'Spend more', copy)], money };
+}
+
 function planFigureArgs(): FigureArgs {
   const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, partTimeIncome: 28_000 };
   const flows: TrailingFlows = {
@@ -1206,41 +1226,29 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       onRange={() => {}}
     />
   ),
-  // Since rollout phase 6b the scenarios are listed and compared in a sheet
-  // (the Plan's bar, which opens it, has no amounts, and is left to the
-  // source scans): a scenario's change, and Compare's figures beside your
-  // plan's.
-  'Plan: the Scenarios sheet, a scenario’s change and Compare': () => {
-    const plan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
-    const measured = { spending: 40_000, savings: 30_000, assets: 300_000 };
-    const scenario = {
-      id: 's1',
-      version: 1 as const,
-      name: 'Spend more',
-      currency: 'USD',
-      createdAt: '2026-10-01T00:00:00.000Z',
-      savedAt: '2026-10-01T00:00:00.000Z',
-      rev: 'r1',
-      ...NO_CHANGES,
-      set: { spending: 52_000 },
-    };
+  // Since C2 of the tax plan your plans are listed in the Plans sheet (the
+  // Plan's bar, which opens it, has no amounts, and is left to the source
+  // scans): each plan's FI age and how a copy differs from yours, a row
+  // each; Compare's figures beside your plan's, on a level of its own; and
+  // the open copy's card.
+  'Plan: the Plans sheet, each plan’s FI age and how a copy differs from yours': () => {
+    const { plans } = COPIES();
     return (
-      <ScenariosSheet
+      <PlansSheet
         open
         onClose={() => {}}
-        onLeave={() => {}}
-        state={{ ...INITIAL_SCENARIOS, status: 'ready', list: [scenario] }}
-        client={createScenarioClient(() => {})}
-        base={plan}
-        baseFigures={figuresOf(plan, measured) as PlanFigures}
-        count={OFF}
-        measured={measured}
-        planCurrency="USD"
-        canOpen
+        state={{ ...INITIAL_PLANS, status: 'ready', list: plans.map((p) => ({ id: p.id, name: p.name, plan: p.plan, currency: 'USD', created_at: null, updated_at: null })) }}
+        plans={plans}
+        measuring={false}
         planState="ready"
         whyNot={null}
         openId={null}
         onOpen={() => {}}
+        onCreate={async () => true}
+        onRename={async () => true}
+        onDelete={async () => true}
+        onMakeMain={async () => true}
+        onRetry={() => {}}
         run={() => new Promise(() => {})}
         cache={new Map()}
         method="historical"
@@ -1249,12 +1257,71 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       />
     );
   },
-  // An open scenario's life events, a row each with its figures in words:
+  'Plan: Compare, each plan’s figures and how it differs from yours': () => {
+    const { plans, money } = COPIES();
+    const outcome = (p: SheetPlan) => (p.outcome.kind === 'figures' ? { kind: 'figures' as const, figures: p.outcome.figures, result: 'pending' as const } : p.outcome);
+    return (
+      <PlanCompare
+        columns={plans.map((p) => ({ id: p.id, name: p.isMain ? 'Your plan' : p.name, isPlan: p.isMain, outcome: outcome(p) }))}
+        method="historical"
+        money={money}
+        today="2026-10-23"
+        details={Object.fromEntries(plans.map((p) => [p.id, <PlanDetails key={p.id} plan={p} parts={p.isMain ? [] : copyDiffParts(plans[0].plan, p.plan, money)} outcome={outcome(p)} money={money} />]))}
+      />
+    );
+  },
+  'Plan: the open copy’s card, how it differs from your plan': () => {
+    const { plans, money } = COPIES();
+    return (
+      <CopyCard
+        parts={copyDiffParts(plans[0].plan, plans[1].plan, money)}
+        other={null}
+        currencyLine={null}
+        confirmWhyNot={null}
+        planCurrency="USD"
+        problem={null}
+        repair={null}
+        notice={null}
+        editable
+        onRelabel={async () => true}
+        onMakeMain={async () => true}
+        plansCount={2}
+        onPlans={() => {}}
+      />
+    );
+  },
+  // Also change it in (C2): a figure's sheet offers the other plans, each
+  // with its figure there; an income's, each plan holding it, as it is there.
+  'Plan > Your path: a figure’s sheet, Also change it in with each plan’s figure there': () => {
+    const args = planFigureArgs();
+    const { plans, money } = COPIES();
+    return (
+      <FigureForm
+        plan={planOf({ ...DEFAULT_PLAN, ...args.plan })}
+        onSave={async () => true}
+        onDone={() => {}}
+        editable
+        kind="spending"
+        measured={args.flows!.spending}
+        measuredText={`from ${windowText(args.flows!)}`}
+        why={figureNotes(args).spending.why}
+        currency="USD"
+        also={figureChoices(plans.map((p) => ({ id: p.id, name: p.name, plan: p.plan })), 'spending', money)}
+      />
+    );
+  },
+  'Plan > Your path: Also change it in for an income, as each plan holds it': () => {
+    const { plans, money } = COPIES();
+    const pension = { id: 'pen', label: 'Pension', amount: 18_000, fromAge: 60, inflationAdjusted: false };
+    const targets = plans.map((p, i) => ({ id: p.id, name: p.name, plan: withIncome(p.plan, [{ ...pension, amount: 18_000 + i * 2_000 }]) }));
+    return <AlsoChange choices={itemChoices(targets, 'pen', money)} checked={['c1']} onChange={() => {}} />;
+  },
+  // An open copy's life events, a row each with its figures in words:
   // every kind, rollout 8d's car (once and every few years), raise, windfall
   // and loan paid off among them.
-  'Plan > Your path: a scenario’s life events, of every kind': () => (
+  'Plan > Your path: a copy’s life events, of every kind': () => (
     <LifeEventsCard
-      scenarioName="Retire at 50"
+      copyName="Retire at 50"
       version="s1@r1"
       events={[
         { id: 'h', kind: 'house', label: 'Home', atAge: 44, cost: 100_000, yearly: 6_000, years: null },
@@ -1425,7 +1492,7 @@ const PROGRESS = {
   },
   plan: { ...DEFAULT_PLAN, age: 35, targetAge: 55, realReturn: 0.04 },
   blocked: null,
-  scenarioOpen: false,
+  copyOpen: false,
   savings: { value: 18_000, source: 'measured' as const },
   money: (n: number) => wholeMoney(n, 'USD'),
   nameOf: (id: string) => (id === 'ira' ? 'IRA at Broker' : 'New IRA at Broker'),

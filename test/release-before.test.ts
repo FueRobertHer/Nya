@@ -28,12 +28,11 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
 //     and its export and restore carry them;
-//   - its Plan (test/fixtures/release-before/fire, E1's readers) reads every
-//     plan, saved plan, scenario and currency record this release writes,
-//     every plan GET answers from a copy's entry, and nothing this release
-//     writes makes the plans as copies (test/release-before-copies.test.ts,
-//     through the routes): this release reads them, and writes version 1
-//     only where E1 reads, which a download keeps.
+//   - its Plan (test/fixtures/release-before/fire, C1's readers, its plans
+//     as copies in fire/copies.ts) reads every plan this release writes:
+//     each entry of `fire-plans` and `plan-facts`, your plan the one it
+//     picks, each with its currency where it holds an amount, and every saved
+//     plan (test/release-before-plans.test.ts, through the routes).
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -157,6 +156,9 @@ describe('the release before’s own code', () => {
       'release-before/fire/saved-plan.ts': '89518d6f732c6c45ff6227c74f3be19fb3ca2c7c',
       'release-before/fire/plan-currency.ts': 'a29d181ea65cf6963f2192c9e36b9705924fd8fc',
       'release-before/fire/scenarios.ts': 'bbdeeb3f756f4f4a6fe03a4641b8907e2ce1722d',
+      // The plans as copies' reader as at baa20327, C1 merged (the files
+      // above it imports are the same blobs there).
+      'release-before/fire/copies.ts': '399126acb55179193e830a759db2d8b9a053cf79',
       'release-before/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
       'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
       'release-before/local-date.ts': '23883717b80397910e368084e865ca84f367f988',

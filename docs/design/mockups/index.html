@@ -129,6 +129,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .row-ico.crit { background: var(--neg-tint); color: var(--neg); }
 .app .row-ico.warn { background: var(--warn-tint); color: var(--warn); }
 .app .row-ico.info { background: var(--elevated); color: var(--text-2); }
+.app .check { width: 18px; height: 18px; flex: none; border: 1.5px solid var(--text-3); border-radius: 4px; }
 .app .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 1px 6px; border-radius: 6px; background: var(--elevated); color: var(--text-2); white-space: nowrap; }
 .app .badge.accent { background: var(--accent-tint); color: var(--accent); }
 .app .badge.warn { background: var(--warn-tint); color: var(--warn); }
@@ -771,7 +772,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <h2>Plan</h2>
       <ul class="changes">
         <li>The first segment becomes Your path: one answer against your own stop age, one chart from today to that age, then the four rows it rests on.</li>
-        <li>Life events stay in scenarios, and become easy to find: a What if… card on Your path offers templates (a home, a car, travel, a child, a raise, a windfall, a loan that ends). Picking one creates a scenario named after it and shows how it moves your FI age. Your plan stays what you have locked in.</li>
+        <li>Life events stay in scenarios, and become easy to find: a What if… card on Your path offers templates (a home, a car, travel, a child, a raise, a windfall, a loan that ends). Picking one creates a scenario named after it and shows how it moves your FI age. Your plan stays what you have locked in. Since C2 of the tax plan (2026-11-04) scenarios are copies: whole plans beside yours, listed in the Plans sheet, and Try it makes one.</li>
         <li>Words: "financial independence" and the FI terms stay as labels, plain words carry the meaning ("growth after inflation", "how much you'd draw each year", "you could stop saving now"), and nothing says "retire early".</li>
         <li>Each input is one row; how it was worked out is in its sheet behind Why?. Caveats stay on the figure: critical ones in full, lesser ones as one line that says how many and what kind.</li>
         <li>Every result keeps a short "Hypothetical, from US history" label; the full text and data sources are said once, in About these numbers.</li>
@@ -783,7 +784,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
+              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Plans (3)</span></div>
               <div class="seg"><span class="on">Your path</span><span>Drawdown</span><span>Portfolio</span></div>
             </div>
             <div class="hero-page">
@@ -821,22 +822,20 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are scenarios on the card below it, not pins. Since P of the tax plan it opens on Whole path: the line runs on past the stop to the plan's end, drawing your spending, with the wash and the FI number over the saving years only, and "To 55" (your own stop age) shows the saving years alone; under it, what the FI number leaves out that the path counts. Once the stop has come, the chart is the drawdown from today, with no switch. Home's FI line says the same words. The answer is on the page, not in a card, with how it is worked out in one line under it, said once (no Years to FI row); with no age typed, a ghost "Add your age" line under it asks for it, and What if… asks the same way before its choices. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
+        <figcaption><b>YOUR PATH</b>The answer is against your own stop age, so FI after it reads "3 years after you stop at 55". The chart has one line, the FI number, an FI marker and your stop age; what-ifs are copies, made from What if… below it, not pins. Since P of the tax plan it opens on Whole path: the line runs on past the stop to the plan's end, drawing your spending, with the wash and the FI number over the saving years only, and "To 55" (your own stop age) shows the saving years alone; under it, what the FI number leaves out that the path counts. Once the stop has come, the chart is the drawdown from today, with no switch. Home's FI line says the same words. The answer is on the page, not in a card, with how it is worked out in one line under it, said once (no Years to FI row); with no age typed, a ghost "Add your age" line under it asks for it, and What if… asks the same way before its choices. Under it, the figures it rests on, each a row that opens its sheet, where Why? says how it was worked out; what qualifies a figure is under its row, one note in full or a line that opens to every note (built in 6c); Assumptions opens one sheet of every rate and setting the plan uses (6d).</figcaption>
       </figure>
 
       <figure class="shot">
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Scenarios (3)</span></div>
+              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Plans (3)</span></div>
               <div class="seg"><span class="on">Your path</span><span>Drawdown</span><span>Portfolio</span></div>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>What if…</h2></div>
+              <div class="small muted" style="padding:0 14px 8px">Try a life choice with your own figures. It becomes a copy of your plan, and your plan stays as it is.</div>
               <div class="chips" style="padding:0 14px 10px"><span class="chip">Buy a home</span><span class="chip">A car</span><span class="chip">Travel</span><span class="chip">A child</span><span class="chip">A raise</span><span class="chip">More…</span></div>
-              <div class="row"><span class="row-ico info">H</span><div class="main"><span class="title">Buy a home at 38</span><span class="sub">FI around 42, 3 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><span class="row-ico info">C</span><div class="main"><span class="title">A child at 36</span><span class="sub">FI around 44, 5 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
-              <div class="row"><span class="row-ico info">B</span><div class="main"><span class="title">Sabbatical 2029</span><span class="sub">FI around 41, 2 years later</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
             </div>
             <div class="card flush">
               <div class="card-header"><h2>Income and one-offs</h2></div>
@@ -854,7 +853,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>YOUR PATH, SCROLLED</b>What if… lists your scenarios as life choices, each with how it moves your FI age; tapping one opens it under the scenario bar. A chip starts a new one from a template. Income and one-offs stay on your plan, unchanged. Progress, last, sets what was recorded against the plan you said is yours (8e), and the chart above draws both before today.</figcaption>
+        <figcaption><b>YOUR PATH, SCROLLED</b>What if… offers the templates; a chip opens one, and Try it makes a copy of your plan with it and opens it. Since C2 of the tax plan the copies are listed in the Plans sheet, from the bar, not on this card; while your plans load it says so, and when they couldn't be loaded, why, with Try again. Income and one-offs stay on your plan, unchanged. Progress, last, sets what was recorded against the plan you said is yours (8e), and the chart above draws both before today.</figcaption>
       </figure>
 
       <figure class="shot">
@@ -894,18 +893,18 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="section-title">Change in yearly spending from then: the mortgage, taxes and upkeep, less rent</div>
             <div class="btn-row" style="flex-wrap:nowrap"><div class="field" style="flex:1">$</div><span class="chip">More</span><span class="chip">Less</span></div>
             <div class="btn-row" style="flex-wrap:nowrap"><span class="chip">For good</span><div class="field" style="flex:1">for how many years</div></div>
-            <div class="notice info"><svg><use href="#i-info"/></svg><span>In this what-if, FI moves from around 39 to around 42 (3 years later). Try it makes this the scenario "Buy a home at 38", and opens it.</span></div>
+            <div class="notice info"><svg><use href="#i-info"/></svg><span>In this what-if, FI moves from around 39 to around 42 (3 years later). Try it makes the copy “Buy a home at 38” of your plan with it, and opens it.</span></div>
             <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn primary">Try it</span></div>
           </div>
         </div></div>
-        <figcaption><b>A TEMPLATE</b>Your own figures only: nothing is filled in but the event's name, and nothing is suggested (features.md). The form is the home life event's own: one change in yearly spending, for some years or for good (built in 8c). The effect shows as you type. "Try it" creates the scenario "Buy a home at 38" and opens it; "Back to your plan" returns.</figcaption>
+        <figcaption><b>A TEMPLATE</b>Your own figures only: nothing is filled in but the event's name, and nothing is suggested (features.md). The form is the home life event's own: one change in yearly spending, for some years or for good (built in 8c). The effect shows as you type. "Try it" makes a copy of your plan named "Buy a home at 38" with the life event, and opens it; "Back to your plan" returns.</figcaption>
       </figure>
 
       <figure class="shot">
         <div class="phone"><div class="app screen" data-app>
           <div class="scroll">
             <div class="sticky">
-              <div class="monthbar" style="justify-content:flex-start;gap:6px"><span class="arrow" aria-label="Back to your plan"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>Scenario: Sabbatical 2029</span></div>
+              <div class="monthbar" style="justify-content:flex-start;gap:6px"><span class="arrow" aria-label="Back to your plan"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>Copy: Sabbatical 2029</span></div>
               <div class="seg"><span>Your path</span><span class="on">Drawdown</span><span>Portfolio</span></div>
             </div>
             <div class="notice warn"><svg><use href="#i-alert"/></svg><span>Your annual spending may be low: it is missing transactions that couldn't be read, and the simulation withdraws it (Your path says which).</span></div>
@@ -926,7 +925,78 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>DRAWDOWN, IN A SCENARIO</b>Will it last? is the segment's hero, on the page (since P of the tax plan): the rate at the hero size, one line naming the starts, their length and the start age, and no method meta. Under it, a note when it starts from other than what the steady path has at the stop (a caution, as before, when it starts with more). The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. The grid by withdrawal rate and length is a card under it (scrolled past here). Assumptions is one row that opens the sheet holding every setting the plan uses, at Drawdown's part; About these numbers opens the full statement and the data, said once (built in 6d). Each card the notice is about has its badge. The back arrow returns to your plan; the scenario's card, with what it changes and Scenarios (3), sits under the bar above every segment (scrolled past here). When the spending or the invested assets the test uses may be low, the segment opens with one notice saying so (6c): Your path says it on the FI number and under the rows, and Portfolio's allocation reads holdings and says what it is short of itself.</figcaption>
+        <figcaption><b>DRAWDOWN, IN A COPY</b>Will it last? is the segment's hero, on the page (since P of the tax plan): the rate at the hero size, one line naming the starts, their length and the start age, and no method meta. Under it, a note when it starts from other than what the steady path has at the stop (a caution, as before, when it starts with more). The band stays here, not on Your path: a fan that starts at the stop age would suggest markets only matter after it. The grid by withdrawal rate and length is a card under it (scrolled past here). Assumptions is one row that opens the sheet holding every setting the plan uses, at Drawdown's part; About these numbers opens the full statement and the data, said once (built in 6d). Each card the notice is about has its badge. The back arrow returns to your plan; the copy's card, with how it differs from your plan, Make this your plan and Plans (3), sits under the bar above every segment (scrolled past here). When the spending or the invested assets the test uses may be low, the segment opens with one notice saying so (6c): Your path says it on the FI number and under the rows, and Portfolio's allocation reads holdings and says what it is short of itself.</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Plans (3)</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>Plans</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div class="small muted">Each plan is whole: a copy starts as your plan, and changes you make in it stay in it.</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">First plan</span><span class="sub">FI around 39</span></div><span class="badge accent">Your plan</span><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Sabbatical 2029</span><span class="sub">FI around 41, 2 years later · Adds “Sabbatical 2029”: From 40, for 1 year: saving <span class="money">$30,000</span> a year less.</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Stop at 52</span><span class="sub">FI around 39, the same as your plan · Stop age: 52 (your plan: 55)</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="sheet-foot"><span class="btn secondary">Compare</span><span class="btn primary">New copy</span></div>
+          </div>
+        </div></div>
+        <figcaption><b>PLANS</b>From the bar's Plans (3), or the open copy's card. Your plan first, with its badge, then the copies in the order they were made, each with when it reaches FI against your plan and how it first differs (a skeleton while the figures are measured). Each row opens the plan's own level. New copy makes a copy of your plan and opens it; Compare sets two to four side by side. At 11 plans a line says so and New copy is off; a plan that can't be read is a critical notice with Delete it (built in C2 of the tax plan).</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Plans (3)</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><h2>Stop at 52</h2></div>
+            <div class="small muted">Stop age: 52 (your plan: 55).</div>
+            <div class="card flush">
+              <div class="row"><div class="main"><span class="title">Open it</span></div></div>
+              <div class="row"><div class="main"><span class="title">Make this your plan</span></div></div>
+              <div class="row"><div class="main"><span class="title">Rename</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Duplicate</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title neg">Delete</span><span class="sub">Asks before it deletes</span></div></div>
+            </div>
+          </div>
+        </div></div>
+        <figcaption><b>A PLAN'S ACTIONS</b>Its level in the Plans sheet: how it differs, then its actions as one list of rows. Open it and Make this your plan act at once (no chevron); Rename and Duplicate open a name level. Delete is the destructive action row: last, its title in red, a line saying it asks first, and no chevron. Your plan's level has Open it, Rename and Duplicate, and a line under them: "Your plan can't be deleted: make another your plan first."</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Plans (3)</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:60%">
+            <div class="handle"></div>
+            <div class="sheet-head"><span class="ibtn" style="border:0"><svg><use href="#i-left"/></svg></span><h2>Delete</h2></div>
+            <div class="small muted">Delete “Stop at 52”? Your plan isn’t changed. This can’t be undone.</div>
+            <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn danger">Delete</span></div>
+          </div>
+        </div></div>
+        <figcaption><b>DELETE</b>The destructive row never acts at once: it opens this level, which says what goes and that it can't be undone. Cancel goes back to the plan's level; Delete removes it and returns to the list, focus on the row after it.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll"><div class="sticky"><div class="monthbar" style="justify-content:flex-start;gap:6px"><span class="arrow" aria-label="Back to your plan"><svg width="18" height="18"><use href="#i-left"/></svg></span><span>Copy: Stop at 52</span></div></div></div>
+          <div class="scrim"></div>
+          <div class="sheet" style="max-height:94%">
+            <div class="handle"></div>
+            <div class="sheet-head"><h2>Annual spending</h2><span class="ibtn" style="border:0"><svg><use href="#i-x"/></svg></span></div>
+            <div><span class="badge">Copy: Stop at 52</span></div>
+            <div class="section-title">A year, after tax</div>
+            <div class="field"><span class="money">$84,000</span></div>
+            <div class="section-title">Also change it in</div>
+            <div class="row"><span class="check"></span><div class="main"><span class="title">First plan (your plan)</span><span class="sub"><span class="money">$78,000</span> a year</span></div></div>
+            <div class="row"><span class="check"></span><div class="main"><span class="title">Sabbatical 2029</span><span class="sub">Nya’s figure</span></div></div>
+            <div class="sheet-foot"><span class="btn secondary">Cancel</span><span class="btn primary">Save</span></div>
+          </div>
+        </div></div>
+        <figcaption><b>ALSO CHANGE IT IN</b>A change saves to the plan shown; one meant for others too says so here. In a figure's sheet, every other plan with its figure there; editing an income, a one-off or a life event, the other plans holding it, each with it as it is there. Nothing is checked until you check it, each row is a 44px target, and the sheet's Save saves them all or none. Only plans in the same currency are offered (check rows, since C2 of the tax plan).</figcaption>
       </figure>
       <div class="note-box">
         <p><b>Left out of the first version, on purpose.</b> Actual history on the path chart (snapshots keep no daily invested total, and they are in nominal dollars while the plan is in today's), the stress band on the path, event pins, a year-by-year sheet, and an FI line that steps with lasting events. Each is in the ProjectionLab track in the master plan.</p>

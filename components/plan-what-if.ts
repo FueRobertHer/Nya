@@ -2,8 +2,8 @@
 //
 // The What if… card's templates and words (rollout phase 8c,
 // components/PlanWhatIf.tsx): a life choice as a template for a kind of life
-// event (lib/fire/events.ts), the name a scenario made from one takes, and
-// how a scenario moves the FI age against your plan. A template fills in
+// event (lib/fire/events.ts), the name a copy made from one takes, and how
+// a plan moves the FI age against your plan. A template fills in
 // nothing but the event's name: every amount, age and length is the
 // person's own. Kept apart from the component so the exact sentences can be
 // tested. Every amount goes through the `money` a caller gives.
@@ -23,29 +23,29 @@ export type WhatIfTemplate = {
   label: string;
   /** The event's name, as the form starts it. */
   name: string;
-  /** "Buy a home at 38": the scenario's name, from the event's age. */
-  scenarioName: (age: number) => string;
+  /** "Buy a home at 38": the copy's name, from the event's age. */
+  copyName: (age: number) => string;
 };
 
 /** The kinds that exist, as life choices. A kind may have more than one. */
 export const WHAT_IF_TEMPLATES: readonly WhatIfTemplate[] = [
-  { id: 'home', kind: 'house', label: 'Buy a home', name: 'Buying a home', scenarioName: (age) => `Buy a home at ${age}` },
-  { id: 'big-expense', kind: 'spending', label: 'Travel or a big expense', name: 'Travel or a big expense', scenarioName: (age) => `Travel or a big expense at ${age}` },
-  { id: 'child', kind: 'child', label: 'A child', name: 'A child', scenarioName: (age) => `A child at ${age}` },
-  { id: 'career-break', kind: 'sabbatical', label: 'A career break', name: 'A career break', scenarioName: (age) => `A career break at ${age}` },
-  { id: 'part-time', kind: 'part-time', label: 'Part-time work', name: 'Part-time work', scenarioName: (age) => `Part-time work from ${age}` },
-  { id: 'spending', kind: 'spending', label: 'A change in spending', name: 'A change in spending', scenarioName: (age) => `A change in spending at ${age}` },
+  { id: 'home', kind: 'house', label: 'Buy a home', name: 'Buying a home', copyName: (age) => `Buy a home at ${age}` },
+  { id: 'big-expense', kind: 'spending', label: 'Travel or a big expense', name: 'Travel or a big expense', copyName: (age) => `Travel or a big expense at ${age}` },
+  { id: 'child', kind: 'child', label: 'A child', name: 'A child', copyName: (age) => `A child at ${age}` },
+  { id: 'career-break', kind: 'sabbatical', label: 'A career break', name: 'A career break', copyName: (age) => `A career break at ${age}` },
+  { id: 'part-time', kind: 'part-time', label: 'Part-time work', name: 'Part-time work', copyName: (age) => `Part-time work from ${age}` },
+  { id: 'spending', kind: 'spending', label: 'A change in spending', name: 'A change in spending', copyName: (age) => `A change in spending at ${age}` },
   // Rollout 8d's kinds.
-  { id: 'car', kind: 'car', label: 'Buy a car', name: 'A car', scenarioName: (age) => `Buy a car at ${age}` },
-  { id: 'raise', kind: 'raise', label: 'A raise', name: 'A raise', scenarioName: (age) => `A raise at ${age}` },
-  { id: 'windfall', kind: 'windfall', label: 'A windfall', name: 'A windfall', scenarioName: (age) => `A windfall at ${age}` },
-  { id: 'loan-end', kind: 'loan-end', label: 'Pay off a loan', name: 'A loan paid off', scenarioName: (age) => `Pay off a loan at ${age}` },
+  { id: 'car', kind: 'car', label: 'Buy a car', name: 'A car', copyName: (age) => `Buy a car at ${age}` },
+  { id: 'raise', kind: 'raise', label: 'A raise', name: 'A raise', copyName: (age) => `A raise at ${age}` },
+  { id: 'windfall', kind: 'windfall', label: 'A windfall', name: 'A windfall', copyName: (age) => `A windfall at ${age}` },
+  { id: 'loan-end', kind: 'loan-end', label: 'Pay off a loan', name: 'A loan paid off', copyName: (age) => `Pay off a loan at ${age}` },
 ];
 
-/** The scenario's name for an event from a template: its own, or with
- *  " (2)", " (3)"... when another scenario has it already. */
+/** The copy's name for an event from a template: its own, or with " (2)",
+ *  " (3)"... when another plan has it already. */
 export function whatIfName(template: WhatIfTemplate, event: LifeEvent, others: readonly { id: string; name: string }[]): string {
-  const base = template.scenarioName(eventSpan(event).from).slice(0, SCENARIO_NAME_MAX);
+  const base = template.copyName(eventSpan(event).from).slice(0, SCENARIO_NAME_MAX);
   if (!nameTaken(others, base)) return base;
   for (let n = 2; ; n++) {
     const tail = ` (${n})`;
@@ -98,8 +98,8 @@ function moveText(age: number, planAge: number): string {
   return `${n} year${n === 1 ? '' : 's'} ${d > 0 ? 'later' : 'sooner'}`;
 }
 
-/** A scenario's line in the card: "FI around 42, 3 years later". No amount
- *  in it. */
+/** A plan's FI age against your plan's: "FI around 42, 3 years later". No
+ *  amount in it. */
 export function lifeChoiceText(when: FiWhen, plan: FiWhen): string {
   switch (when.kind) {
     case 'age':
@@ -119,31 +119,23 @@ export function lifeChoiceText(when: FiWhen, plan: FiWhen): string {
   }
 }
 
-/** A scenario's row in the card: its FI age, and how many life events it
- *  holds once it holds more than one ("FI around 47, 5 years sooner (3 life
- *  events)"), so a stack reads as one. */
-export function scenarioRowText(events: number, when: FiWhen, plan: FiWhen): string {
-  const fi = lifeChoiceText(when, plan);
-  return events > 1 ? `${fi} (${events} life events)` : fi;
-}
-
-/** A scenario's life events with a draft in them: in place of the one it
- *  edits (the same id), else added at the end. */
+/** A plan's life events with a draft in them: in place of the one it edits
+ *  (the same id), else added at the end. */
 export function withDraft(events: readonly LifeEvent[], draft: LifeEvent): LifeEvent[] {
   return events.some((e) => e.id === draft.id) ? events.map((e) => (e.id === draft.id ? draft : e)) : [...events, draft];
 }
 
 /** What a draft does, said in its sheet as it is typed: null while the form
  *  can't be saved (`missing`: a field is empty, else one is out of range).
- *  On your plan (`what-if`) against your plan; in an open scenario against
- *  that scenario as it is now. Part-time work counts from the stop age,
+ *  On your plan (`what-if`) against your plan; in an open copy against that
+ *  copy as it is now. Part-time work counts from the stop age,
  *  never in the FI date: when it leaves the age where it is, it says why. */
-export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kind: LifeEventKind | null = null, missing = true, where: 'what-if' | 'scenario' = 'what-if'): string {
+export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kind: LifeEventKind | null = null, missing = true, where: 'what-if' | 'copy' = 'what-if'): string {
   if (when === null) {
-    const whose = where === 'scenario' ? 'this scenario’s' : 'your';
+    const whose = where === 'copy' ? 'this copy’s' : 'your';
     return missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`;
   }
-  if (where === 'scenario') return scenarioPreviewText(when, plan, money, kind);
+  if (where === 'copy') return copyPreviewText(when, plan, money, kind);
   if (when.kind === 'age' && plan.kind === 'age') {
     if (when.age !== plan.age) return `In this what-if, FI moves from around ${plan.age} to around ${when.age} (${moveText(when.age, plan.age)}).`;
     return kind === 'part-time'
@@ -158,28 +150,28 @@ export function previewText(when: FiWhen | null, plan: FiWhen, money: Money, kin
   return `In this what-if: ${lifeChoiceText(when, plan)}.`;
 }
 
-/** The same, in an open scenario: `now` is the scenario as it is, so the
- *  move is this event's alone, among the others it holds. */
-function scenarioPreviewText(when: FiWhen, now: FiWhen, money: Money, kind: LifeEventKind | null): string {
+/** The same, in an open copy: `now` is the copy as it is, so the move is
+ *  this event's alone, among the others it holds. */
+function copyPreviewText(when: FiWhen, now: FiWhen, money: Money, kind: LifeEventKind | null): string {
   switch (when.kind) {
     case 'age':
-      if (now.kind !== 'age') return `In this scenario, FI comes around ${when.age}.`;
-      if (when.age !== now.age) return `In this scenario, FI moves from around ${now.age} to around ${when.age} (${moveText(when.age, now.age)}).`;
+      if (now.kind !== 'age') return `In this copy, FI comes around ${when.age}.`;
+      if (when.age !== now.age) return `In this copy, FI moves from around ${now.age} to around ${when.age} (${moveText(when.age, now.age)}).`;
       return kind === 'part-time'
-        ? `In this scenario, FI stays around ${now.age}: part-time work counts from the stop age on, in Will it last?, not in when you reach FI.`
-        : `In this scenario, FI stays around ${now.age}.`;
+        ? `In this copy, FI stays around ${now.age}: part-time work counts from the stop age on, in Will it last?, not in when you reach FI.`
+        : `In this copy, FI stays around ${now.age}.`;
     case 'now':
-      return 'In this scenario, you’re at FI.';
+      return 'In this copy, you’re at FI.';
     case 'never':
-      return 'In this scenario, FI isn’t reached at this savings rate.';
+      return 'In this copy, FI isn’t reached at this savings rate.';
     case 'short': {
-      if (!when.figures.short) return 'In this scenario: No FI age worked out.';
+      if (!when.figures.short) return 'In this copy: No FI age worked out.';
       const why = shortText(when.figures.short, when.figures.plan.age, money);
-      return `In this scenario, ${why.charAt(0).toLowerCase()}${why.slice(1)}`;
+      return `In this copy, ${why.charAt(0).toLowerCase()}${why.slice(1)}`;
     }
     case 'not-run':
-      return 'In this scenario, the figures can’t be worked out: a lasting change takes spending in retirement below zero.';
+      return 'In this copy, the figures can’t be worked out: a lasting change takes spending in retirement below zero.';
     default:
-      return `In this scenario: ${lifeChoiceText(when, now)}.`;
+      return `In this copy: ${lifeChoiceText(when, now)}.`;
   }
 }

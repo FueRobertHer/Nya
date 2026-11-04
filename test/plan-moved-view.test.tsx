@@ -9,7 +9,7 @@ import { simulateOnPage } from './plan-on-page';
 // (lib/flag-read.ts newUntil) Your path's answer says what it moved, and
 // Progress what its line now counts, until Got it, which hides both for the
 // session (the dashboard keeps it). The walk's words name one-offs and
-// income apart from a scenario's life events, and the income and one-off
+// income apart from a plan's life events, and the income and one-off
 // card's words follow the switch. Rendered as a person sees it
 // (react-dom/client over test/mini-dom.ts); every request is answered here.
 
@@ -65,7 +65,6 @@ function serve(plan: FirePlan, saved: unknown = null) {
     const key = `${init?.method ?? 'GET'} ${url}`;
     const answers: Record<string, [number, unknown]> = {
       'GET /api/plan-inputs': [200, { plan, currency: 'USD' }],
-      'GET /api/plan-scenarios': [200, { scenarios: [], unreadable_ids: [], unrecognised_ids: [] }],
       'GET /api/allocation-settings': [200, { settings: null }],
       'GET /api/saved-plan': [200, { saved, problem: null }],
       'POST /api/invested-history': [200, HISTORY],
@@ -269,14 +268,14 @@ describe('the answer’s words', () => {
       .replaceAll('&#x27;', "'")
       .replace(/\s+/g, ' ');
 
-  test('the walk names one-offs and income apart from a scenario’s life events, both joined when both', () => {
+  test('the walk names one-offs and income apart from a plan’s life events, both joined when both', () => {
     const f = figures(PLAN, true);
     expect(answer(f, { items: true, events: false })).toContain('Growing a steady 5% a year after inflation, with one-offs and income in their years.');
     expect(answer(f, { items: true, events: false })).toContain('with one-offs and income in the years they cover.');
-    // A scenario's life events alone: the words they always had.
-    expect(answer(f, { items: false, events: true })).toContain('Growing a steady 5% a year after inflation, with this scenario’s life events changing what is saved in their years.');
-    expect(answer(f, { items: false, events: true })).toContain('with this scenario’s life events in the years they cover.');
-    expect(answer(f, { items: true, events: true })).toContain('Growing a steady 5% a year after inflation, with one-offs, income and this scenario’s life events in their years.');
+    // A plan's life events alone: the words they always had.
+    expect(answer(f, { items: false, events: true })).toContain('Growing a steady 5% a year after inflation, with this plan’s life events changing what is saved in their years.');
+    expect(answer(f, { items: false, events: true })).toContain('with this plan’s life events in the years they cover.');
+    expect(answer(f, { items: true, events: true })).toContain('Growing a steady 5% a year after inflation, with one-offs, income and this plan’s life events in their years.');
   });
 
   const v2 = (over: Partial<FirePlanV2>) => planFigures({ ...planOf(PLAN), ...over }, NONE, { count: { planInWalk: true } }) as PlanFigures;

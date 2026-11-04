@@ -1,10 +1,11 @@
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer } from './fake-redis';
 
-// FirePlan version 2 at the storage seam (lib/fire-plan.ts, lib/saved-plan.ts,
-// lib/user-restore/check.ts): every store reads either version and keeps it
-// as stored, and this release writes version 1 only, through the route,
-// the saved plan's route and a restore alike.
+// FirePlan version 2 at the storage seam (lib/plan-copies.ts,
+// lib/fire-plan.ts, lib/saved-plan.ts, lib/user-restore/check.ts): every
+// store reads either version and keeps it as stored. This release saves your
+// plan in version 2 only, and the saved plan in either; a restore still
+// writes the plan before copies in version 1 only, as nothing reads it now.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -13,6 +14,8 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const route = await import('@/app/api/fire-plan/route');
 const { firePlanStore } = await import('@/lib/fire-plan');
+const { firePlansStore } = await import('@/lib/plan-copies');
+const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { DEFAULT_PLAN_V2, planOf } = await import('@/lib/fire/plan-v2');
 const { itemFromEvent } = await import('@/lib/fire/items');
@@ -31,34 +34,50 @@ const v2 = { ...DEFAULT_PLAN_V2, age: 40, targetAge: null, stopAtFi: true, items
 
 const put = (body: unknown) => route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }));
 
-describe('the Plan’s store and route', () => {
-  test('a version 2 plan stored reads back as stored, version 2, and the route answers it so', async () => {
-    await firePlanStore.set(TEST_CTX, v2);
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(v2);
+describe('the Plan’s stores and route', () => {
+  const AT = '2026-11-01T10:00:00.000Z';
+
+  test('a version 2 plan in your plan’s entry reads back as stored, version 2, and the route answers it so', async () => {
+    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: v2, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT });
+    expect((await firePlansStore.get(TEST_CTX, MAIN_ID))!.plan).toEqual(v2);
     expect((await (await route.GET()).json()).plan).toEqual(v2);
   });
 
-  test('the route saves version 1 as today, and refuses version 2 without writing', async () => {
-    expect((await put({ plan: v1 })).status).toBe(200);
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(v1);
-    const res = await put({ plan: v2 });
+  test('a version 1 plan in an entry, as the release before may have saved it, reads back version 1', async () => {
+    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: v1, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT });
+    expect((await (await route.GET()).json()).plan).toEqual(v1);
+  });
+
+  test('the plan before copies’ store still reads either version, as a restore may bring one', async () => {
+    await firePlanStore.set(TEST_CTX, v2);
+    expect(await firePlanStore.get(TEST_CTX)).toEqual(v2);
+  });
+
+  test('the route saves version 2, and refuses version 1 without writing', async () => {
+    const saved = await put({ plan: v2, currency: 'USD', facts_were: factsOf(DEFAULT_PLAN_V2), based_on: null });
+    expect(saved.status).toBe(200);
+    const { updated_at } = await saved.json();
+    expect((await firePlansStore.get(TEST_CTX, MAIN_ID))!.plan).toEqual(v2);
+    const res = await put({ plan: v1, currency: 'USD', facts_were: factsOf(v2), based_on: updated_at });
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('This plan holds what only a newer version of Nya can save');
-    expect(await firePlanStore.get(TEST_CTX)).toEqual(v1);
-    // So is one that converts back, still marked version 2.
-    expect((await put({ plan: planOf(v1) })).status).toBe(400);
+    expect((await res.json()).error).toStartWith('Invalid plan: ');
+    expect((await firePlansStore.get(TEST_CTX, MAIN_ID))!.plan).toEqual(v2);
+    // One that converts back to version 1 is saved as it is, version 2.
+    expect((await put({ plan: planOf(v1), currency: 'USD', facts_were: factsOf(v2), based_on: updated_at })).status).toBe(200);
+    expect((await firePlansStore.get(TEST_CTX, MAIN_ID))!.plan).toEqual(planOf(v1));
   });
 });
 
 describe('the saved plan', () => {
   const saved = (plan: unknown) => ({ version: 1, plan, savings: 30_000, currency: 'USD', inflation: 0.025, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: 'r1' });
 
-  test('reads either version, keeping it; a save takes version 1 only', () => {
+  test('reads either version, keeping it; a save takes either, each held to its own rules', () => {
     expect(isSavedPlan(saved(v1))).toBe(true);
     expect(isSavedPlan(saved(v2))).toBe(true);
     expect(upgradeSavedPlan(saved(v2))).toEqual(saved(v2));
     expect(parseSavedDraft({ plan: v1, savings: 1, currency: 'USD', inflation: 0.02 })).toMatchObject({ ok: { plan: v1 } });
-    expect(parseSavedDraft({ plan: v2, savings: 1, currency: 'USD', inflation: 0.02 })).toMatchObject({ error: expect.stringContaining('plan:') });
+    expect(parseSavedDraft({ plan: v2, savings: 1, currency: 'USD', inflation: 0.02 })).toMatchObject({ ok: { plan: v2 } });
+    expect(parseSavedDraft({ plan: { ...v2, partnerAge: 200 }, savings: 1, currency: 'USD', inflation: 0.02 })).toMatchObject({ error: expect.stringContaining('plan: partnerAge') });
   });
 });
 

@@ -3,16 +3,18 @@ import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PlanCompare from '@/components/PlanCompare';
 import { compareRows, fiDateText, pointsText, startsLine, type CompareColumn } from '@/components/plan-compare';
-import { ScenarioCard, ScenariosSheet, compareJobs, formFor, rememberResult, scenarioOutcome } from '@/components/PlanScenarios';
+import { CopyCard, PlanDetails, PlansSheet, REFUSED_TEXT, compareJobs, rememberResult, type PlanOutcome, type SheetPlan } from '@/components/PlansSheet';
 import { LifeEventsCard } from '@/components/PlanEvents';
 import { FiCard, InputsCard, SimulationCard } from '@/components/PlanTab';
 import { figureNotes, type FigureArgs } from '@/components/plan-figure-notes';
-import { INITIAL_SCENARIOS, createScenarioClient, type ScenarioEntry, type ScenariosState } from '@/components/plan-scenarios';
-import { currencyText, startLineText, startsWithText, shortText, changeText } from '@/components/plan-scenario-text';
+import { INITIAL_PLANS, createPlansClient, type PlanRow, type PlansState } from '@/components/plan-list';
+import { copyDiffParts } from '@/components/plan-diff';
+import { currencyText, startLineText, startsWithText, shortText } from '@/components/plan-scenario-text';
 import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
-import { NO_CHANGES, scenarioChanges, type ScenarioChanges } from '@/lib/fire/scenarios';
+import { planOf } from '@/lib/fire/plan-v2';
+import type { LifeEvent } from '@/lib/fire/events';
 import { runPlanJob } from '@/lib/fire/jobs';
 import { usMarket } from '@/lib/fire/us-market';
 import { HISTORY_COUNT, HISTORY_FIRST, historySpan } from '@/lib/fire/history-span';
@@ -21,28 +23,49 @@ import { MASK, setAmountsHidden } from '@/lib/format';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 import { figuresOf, OFF } from './plan-gen';
 
-// Compare mode (components/plan-compare.ts, PlanCompare.tsx) and the
-// scenario cards: one seed and one dataset, what each cell says, what a plan
-// that starts with money it wouldn't have says, and amounts hidden.
+// Compare mode (components/plan-compare.ts, PlanCompare.tsx), the open
+// copy's card and the Plans sheet (components/PlansSheet.tsx), and the list
+// of plans on the page (components/plan-list.ts): one seed and one dataset,
+// what each cell says, what a plan that starts with money it wouldn't have
+// says, and amounts hidden.
 
 const us = usMarket();
 const money = (n: number) => wholeMoney(n, 'USD');
 const TODAY = '2026-10-23';
 const plan = (over: Partial<FirePlan> = {}): FirePlan => ({ ...DEFAULT_PLAN, ...over });
 const measured: Measured = { spending: 40_000, savings: 30_000, assets: 300_000 };
-const figs = (p: FirePlan, events: ScenarioChanges['events'] = []): PlanFigures => figuresOf(p, measured, events) as PlanFigures;
-const entry = (over: Partial<ScenarioEntry> = {}): ScenarioEntry => ({
-  id: 's1',
-  version: 1,
-  name: 'Retire at 45',
+const figs = (p: FirePlan, events: LifeEvent[] = []): PlanFigures => figuresOf(p, measured, events) as PlanFigures;
+/** A plan as GET /api/plans lists it. */
+const row = (id: string, name: string, over: Partial<PlanRow> = {}): PlanRow => ({
+  id,
+  name,
+  plan: planOf(plan({ age: 40, targetAge: 55 })),
   currency: 'USD',
-  createdAt: '2026-10-01T00:00:00.000Z',
-  savedAt: '2026-10-01T00:00:00.000Z',
-  rev: 'r1',
-  ...NO_CHANGES,
-  set: { targetAge: 45 },
+  created_at: '2026-10-01T00:00:00.000Z',
+  updated_at: `u-${id}`,
   ...over,
 });
+const noop = async () => true as const;
+/** The open copy's card, as PlanTab draws it. */
+const copyCard = (over: Partial<ComponentProps<typeof CopyCard>> = {}) =>
+  renderToStaticMarkup(
+    <CopyCard
+      parts={['Stop age: 50 (your plan: 55)']}
+      other={null}
+      currencyLine={null}
+      confirmWhyNot={null}
+      planCurrency="USD"
+      problem={null}
+      repair={null}
+      notice={null}
+      editable
+      onRelabel={noop}
+      onMakeMain={noop}
+      plansCount={2}
+      onPlans={() => {}}
+      {...over}
+    />
+  );
 const text = (html: string) =>
   html
     .replace(/<[^>]+>/g, ' ')
@@ -68,11 +91,13 @@ describe('the history span', () => {
 describe('one seed and one dataset', () => {
   test('every job carries the Plan’s method and nothing else, and every answer the same seed, runs and blocks', () => {
     const base = plan({ age: 40, targetAge: 55, method: 'monte-carlo' });
-    const outcomes = [
-      { kind: 'figures' as const, figures: figs(base) },
-      scenarioOutcome(base, entry(), measured, OFF, 'USD'),
-      scenarioOutcome(base, entry({ id: 's2', name: 'Spend more', set: { spending: 50_000 } }), measured, OFF, 'USD'),
-      { kind: 'not-run' as const },
+    // Your plan, two copies, and one not worked out: each copy's figures are
+    // worked out as the tab does (components/PlanTab.tsx views).
+    const outcomes: PlanOutcome[] = [
+      { kind: 'figures', figures: figs(base) },
+      { kind: 'figures', figures: figs({ ...base, targetAge: 45 }) },
+      { kind: 'figures', figures: figs({ ...base, spending: 50_000 }) },
+      { kind: 'not-run', reason: currencyText('EUR', 'USD') },
     ];
     const jobs = compareJobs(outcomes, 'monte-carlo');
     expect(jobs.length).toBe(3);
@@ -184,8 +209,8 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(m.cells[1].diff).toBe('runs a different number of years, so not compared');
   });
 
-  test('with no age set, a scenario that sets a retirement age and runs as long is compared by length, not said to run another', () => {
-    // The scenario starts at 50 (its retirement age), the plan at no age: both 30 years.
+  test('with no age set, a copy that sets a retirement age and runs as long is compared by length, not said to run another', () => {
+    // The copy starts at 50 (its retirement age), your plan at no age: both 30 years.
     const noAge = figs(plan({ age: null, horizon: 30 }));
     const at50 = figs(plan({ age: null, targetAge: 50, horizon: 30 }));
     expect('sim' in at50.engine && at50.engine.startAge).toBe(50);
@@ -337,10 +362,14 @@ describe('the words', () => {
     expect(startsWithText(house.startsWith!, money, 'on Your path')).toEndWith(': it would never get that far (on Your path).');
   });
 
-  test('typed in another currency while the Plan’s isn’t known: it points at the question at the top of the Plan tab, on the card and in compare mode', () => {
+  test('typed in another currency while your plan’s isn’t known: it points at the question at the top of the Plan tab, on the card and in compare mode', () => {
     const said = 'Its amounts were typed in EUR, and which currency your plan’s figures are in isn’t known yet (at the top of the Plan tab). Nothing is converted, so it isn’t worked out until you have said.';
     expect(currencyText('EUR', 'USD', false)).toBe(said);
-    expect(scenarioOutcome(plan({ age: 40, targetAge: 55 }), entry({ currency: 'EUR', set: { spending: 45_000 } }), measured, OFF, 'USD', false)).toEqual({ kind: 'not-run', reason: said });
+    // The tab hands the same words to the copy's card and to compare mode
+    // (components/PlanTab.tsx sheetPlans).
+    expect(text(copyCard({ other: 'EUR', currencyLine: said, planCurrency: null, confirmWhyNot: 'Say which currency your plan’s figures are in first.' }))).toContain(said);
+    const copy: SheetPlan = { id: 'c1', name: 'In euros', isMain: false, updatedAt: 'u1', plan: planOf(plan({ age: 40, targetAge: 55, spending: 45_000 })), outcome: { kind: 'not-run', reason: said } };
+    expect(text(renderToStaticMarkup(<PlanDetails plan={copy} parts={[]} outcome={{ kind: 'not-run', reason: said }} money={money} />))).toContain(said);
   });
 
   test('a cost the walk can’t pay', () => {
@@ -348,114 +377,81 @@ describe('the words', () => {
       'You’d have about $653,750 at 42, less than the $800,000 it takes from your investments, so there is no FI date: change the cost, or when it comes.'
     );
   });
-
-  test('each change, with the Plan’s value beside it', () => {
-    const base = plan({ age: 40, targetAge: 55, income: [{ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true }] });
-    const s = entry({ set: { targetAge: 45, spending: null }, income: { leaveOut: ['ss'], add: [{ id: 'ss', label: 'Social Security', amount: 18_000, fromAge: 62, inflationAdjusted: true }] } });
-    expect(scenarioChanges(base, s).map((c) => changeText(c, base, s, money))).toEqual([
-      'Stop age: 45 (your plan: 55)',
-      'Annual spending: Nya’s measured figure (the same as your plan now)',
-      '“Social Security”: $18,000 a year from age 62, rising with inflation, instead of $24,000 a year from age 67, rising with inflation',
-    ]);
-  });
-
-  test('which form fixes a rule a scenario breaks', () => {
-    expect(formFor('targetAge')).toBe('about');
-    expect(formFor('withdrawalRate')).toBe('assumptions');
-    expect(formFor('spending')).toBe('spending');
-    expect(formFor('fee')).toBe('simulation');
-    expect(formFor('income[5]')).toBeNull();
-  });
 });
 
-describe('the scenario cards', () => {
-  const base = plan({ age: 52, targetAge: 55 });
-  const noop = async () => true as const;
+describe('the copy’s card and the Plans sheet', () => {
+  const base = planOf(plan({ age: 40, targetAge: 55 }));
 
-  /** The open scenario's card, as PlanTab draws it. */
-  const card = (over: Partial<ComponentProps<typeof ScenarioCard>> = {}) =>
-    renderToStaticMarkup(
-      <ScenarioCard
-        entry={entry({ set: { targetAge: 50 } })}
-        base={base}
-        problem={null}
-        other={null}
-        planCurrency="USD"
-        confirmWhyNot={null}
-        editable
-        money={money}
-        eventsCount={0}
-        eventsWhere="path"
-        onSave={noop}
-        onConfirmCurrency={noop}
-        onFix={() => {}}
-        scenariosCount={2}
-        onScenarios={() => {}}
-        {...over}
-      />
-    );
-
-  test('the open scenario’s card says that saves go to it, lists its changes, and says why it isn’t worked out; its name is the bar’s, and so is the way back', () => {
-    const html = card({ problem: { text: 'It stops working at 50, before your age now (52). Change its stop age, or use your plan’s.', field: 'targetAge' }, eventsCount: 2 });
+  test('the open copy’s card says how it differs and why it isn’t worked out; its name is the bar’s, and so is the way back', () => {
+    const html = copyCard({ problem: REFUSED_TEXT });
     const t = text(html);
     // No heading of its own, and no Back: the Plan's bar has both (test/plan-bar-view.test.tsx).
     expect(html).not.toContain('<h2');
     expect(html).not.toContain('tabindex="-1"');
-    expect(t).not.toContain('Scenario: Retire at 45');
+    expect(t).not.toContain('Copy: ');
     expect(t).not.toContain('Back to your plan');
-    expect(html).toContain('class="card plan-scenario-card"');
-    expect(t).toContain('changes you make here are saved to it, never to your plan');
-    expect(t).toContain('It stops working at 50, before your age now (52).');
-    expect(t).toContain('Change it');
-    expect(t).toContain('Stop age: 50 (your plan: 55)');
-    expect(t).toContain('Use your plan’s');
-    expect(t).toContain('2 life events, on Your path.');
+    expect(html).toContain('class="card stack tight plan-copy-card" aria-label="This copy"');
+    expect(t).toContain('Stop age: 50 (your plan: 55).');
+    expect(t).toContain(REFUSED_TEXT);
+    expect(t).toContain('Make this your plan');
+    // None differs: said so.
+    expect(text(copyCard({ parts: [] }))).toContain('The same as your plan.');
   });
 
-  test('its Scenarios button opens the sheet, and counts the scenarios once there are some', () => {
-    const scenarios = (html: string) => html.match(/<button[^>]*class="btn secondary"[^>]*>([^<]*)<\/button>/g) ?? [];
-    expect(scenarios(card())).toEqual(['<button class="btn secondary" aria-haspopup="dialog">Scenarios (2)</button>']);
-    // Not loaded yet, or none: no count.
-    expect(scenarios(card({ scenariosCount: null }))).toEqual(['<button class="btn secondary" aria-haspopup="dialog">Scenarios</button>']);
-    expect(scenarios(card({ scenariosCount: 0 }))).toEqual(['<button class="btn secondary" aria-haspopup="dialog">Scenarios</button>']);
-  });
-
-  test('its life events line says where their card is: on Your path, just below it (refused), or nowhere', () => {
-    expect(text(card({ eventsCount: 2, eventsWhere: 'path' }))).toContain('2 life events, on Your path.');
-    expect(text(card({ eventsCount: 1, eventsWhere: 'below' }))).toContain('1 life event, below.');
-    const none = text(card({ eventsCount: 3, eventsWhere: null }));
-    expect(none).toContain('3 life events.');
-    expect(none).not.toMatch(/3 life events, /);
+  test('its Plans button opens the sheet, and counts the plans once there are two or more', () => {
+    const plans = (html: string) => html.match(/<button[^>]*aria-haspopup="dialog"[^>]*>([^<]*)<\/button>/g) ?? [];
+    expect(plans(copyCard())).toEqual(['<button type="button" class="btn ghost" aria-haspopup="dialog">Plans (2)</button>']);
+    // Not loaded yet, or only one: no count.
+    expect(plans(copyCard({ plansCount: null }))).toEqual(['<button type="button" class="btn ghost" aria-haspopup="dialog">Plans</button>']);
+    expect(plans(copyCard({ plansCount: 1 }))).toEqual(['<button type="button" class="btn ghost" aria-haspopup="dialog">Plans</button>']);
   });
 
   test('“They’re in” is offered only once the accounts have loaded without a problem', () => {
-    const props = { entry: entry({ currency: 'USD', set: { spending: 45_000 } }), other: 'USD', planCurrency: 'EUR' };
-    expect(text(card({ ...props, confirmWhyNot: null }))).toContain('They’re in EUR');
-    const waiting = text(card({ ...props, confirmWhyNot: 'Your accounts haven’t all loaded.' }));
+    const props = { other: 'USD', planCurrency: 'EUR', currencyLine: currencyText('USD', 'EUR') };
+    expect(text(copyCard({ ...props, confirmWhyNot: null }))).toContain('They’re in EUR');
+    const waiting = text(copyCard({ ...props, confirmWhyNot: 'Your accounts haven’t all loaded.' }));
     expect(waiting).not.toContain('They’re in EUR');
     expect(waiting).toContain('Its amounts were typed in USD, and your plan is now in EUR.');
+    expect(waiting).toContain('Your accounts haven’t all loaded.');
   });
 
-  /** The Scenarios sheet, as PlanTab draws it, open at its list. */
-  const sheet = (over: Partial<ComponentProps<typeof ScenariosSheet>> = {}) => {
-    const state: ScenariosState = { ...INITIAL_SCENARIOS, status: 'ready', list: [entry(), entry({ id: 's2', name: 'Part time', set: {} })], unrecognised: ['later'] };
+  // In place of a scenario's rule broken, fixed field by field: a copy
+  // holding values that don't fit your plan as it is now is repaired whole,
+  // said on its card, and saved that way from there.
+  test('values that don’t fit your plan now are said on the card, with Save it this way, off while nothing can be saved', () => {
+    const repair = { text: 'Its stop age, 50, is before your age now: it is shown at 52.', onSave: noop };
+    const t = text(copyCard({ repair }));
+    expect(t).toContain('Its stop age, 50, is before your age now: it is shown at 52.');
+    expect(t).toContain('Save it this way');
+    expect(copyCard({ repair, editable: false })).toMatch(/<button type="button" class="btn secondary" disabled="">Save it this way<\/button>/);
+    expect(text(copyCard())).not.toContain('Save it this way');
+  });
+
+  /** The Plans sheet, as PlanTab draws it, open at its list. */
+  const sheet = (over: Partial<ComponentProps<typeof PlansSheet>> = {}) => {
+    const state: PlansState = { ...INITIAL_PLANS, status: 'ready', list: [row('main', 'First plan'), row('c1', 'Retire at 45'), row('c2', 'Part time')], unrecognised: ['later'] };
+    const at45 = planOf(plan({ age: 40, targetAge: 45 }));
+    const plans: SheetPlan[] = [
+      { id: 'main', name: 'First plan', isMain: true, updatedAt: 'u-main', plan: base, outcome: { kind: 'figures', figures: figs(plan({ age: 40, targetAge: 55 })) } },
+      { id: 'c1', name: 'Retire at 45', isMain: false, updatedAt: 'u-c1', plan: at45, outcome: { kind: 'figures', figures: figs(plan({ age: 40, targetAge: 45 })) } },
+      { id: 'c2', name: 'Part time', isMain: false, updatedAt: 'u-c2', plan: base, outcome: { kind: 'figures', figures: figs(plan({ age: 40, targetAge: 55 })) } },
+    ];
     return renderToStaticMarkup(
-      <ScenariosSheet
+      <PlansSheet
         open
         onClose={() => {}}
         state={state}
-        client={createScenarioClient(() => {})}
-        base={base}
-        count={OFF}
-        baseFigures={figs(base)}
-        measured={measured}
-        planCurrency="USD"
-        canOpen
+        plans={plans}
+        measuring={false}
         planState="ready"
         whyNot={null}
         openId={null}
         onOpen={() => {}}
-        onLeave={() => {}}
+        onCreate={noop}
+        onRename={noop}
+        onDelete={noop}
+        onMakeMain={noop}
+        onRetry={() => {}}
         run={async () => ({ ok: false, error: 'cancelled' })}
         cache={new Map()}
         method="historical"
@@ -466,37 +462,39 @@ describe('the scenario cards', () => {
     );
   };
 
-  test('the Scenarios sheet: titled Scenarios, New scenario first, each scenario with what it changes, the newer-version note, and Compare with its picks', () => {
+  test('the Plans sheet: titled Plans, your plan first with its badge, each copy with its FI age and how it differs, the newer-version note, and Compare and New copy', () => {
     const html = sheet();
     const t = text(html);
     expect(html).toContain('role="dialog"');
-    expect(html).toContain('aria-label="Scenarios"');
-    expect(html).toContain('<h2>Scenarios</h2>');
-    // The card's title row is gone: the sheet's title says it.
-    expect(html).not.toContain('inst-header');
-    expect(t.indexOf('New scenario')).toBeLessThan(t.indexOf('What-ifs beside your plan.'));
-    expect(html).toContain('aria-label="Open Retire at 45"');
-    expect(html).toContain('aria-label="Rename Part time"');
-    expect(t).toContain('Stop age: 45 (your plan: 55)');
-    expect(t).toContain('No changes yet');
-    expect(t).toContain('A scenario was saved by a newer version of Nya: kept, and not shown here.');
-    expect(t).toContain('Choose two to four plans.');
-    // The Plan and both scenarios are picked: the first four, until the person chooses.
-    expect(html.match(/aria-pressed="true"/g)?.length).toBe(3);
-    expect(html).toContain('class="plan-compare"');
+    expect(html).toContain('aria-label="Plans"');
+    expect(t).toContain('Each plan is whole: a copy starts as your plan, and changes you make in it stay in it.');
+    expect(html).toContain('aria-label="Your plans"');
+    expect(t.indexOf('First plan')).toBeLessThan(t.indexOf('Retire at 45'));
+    expect(t.indexOf('Retire at 45')).toBeLessThan(t.indexOf('Part time'));
+    expect(html.match(/class="badge accent">Your plan</g)?.length).toBe(1);
+    expect(t).toMatch(/First plan FI around 52 Your plan/);
+    // Stopping sooner moves no FI age: the FI number is reached when it is.
+    expect(t).toContain('Retire at 45 FI around 52, as in your plan · Stop age: 45 (your plan: 55)');
+    expect(t).toContain('Part time FI around 52, as in your plan · the same as your plan');
+    expect(t).toContain('A plan was saved by a newer version of Nya: kept, and not shown here.');
+    expect(html).toMatch(/<button[^>]*class="btn secondary"[^>]*>Compare<\/button>/);
+    expect(html).toMatch(/<button[^>]*class="btn"[^>]*>New copy<\/button>/);
   });
 
-  test('closed, the sheet draws nothing; while the Plan loads, its list is only why and its rows as placeholders, with nothing over the defaults', () => {
+  test('closed, the sheet draws nothing; while your plan loads, its list is only why and its rows as placeholders, with nothing over the defaults', () => {
     expect(sheet({ open: false })).toBe('');
-    const html = sheet({ planState: 'loading', whyNot: 'Your plan is still loading: scenarios open, and are compared, once it has.' });
+    const html = sheet({ planState: 'loading', plans: [], whyNot: 'Your plan is still loading: plans open, and are compared, once it has.' });
     const t = text(html);
-    expect(t).toContain('Your plan is still loading: scenarios open, and are compared, once it has.');
-    expect(html).toContain('role="status">Loading your plan</p>');
+    expect(t).toContain('Your plan is still loading: plans open, and are compared, once it has.');
+    expect(html).toContain('Loading your plans');
     expect(html).not.toContain('spinner');
-    for (const absent of ['New scenario', 'What-ifs beside your plan', 'Retire at 45', 'Retirement age: 45', 'No changes yet', 'Choose two to four plans.', 'newer version']) expect(t).not.toContain(absent);
+    for (const absent of ['Each plan is whole', 'Retire at 45', 'FI around', 'Choose two to four plans.', 'newer version']) expect(t).not.toContain(absent);
+    // Nothing to compare or copy yet.
+    expect(html).toMatch(/<button[^>]*class="btn secondary"[^>]*disabled=""[^>]*>Compare<\/button>/);
+    expect(html).toMatch(/<button[^>]*class="btn"[^>]*disabled=""[^>]*>New copy<\/button>/);
   });
 
-  test('every card says it is the scenario’s, and the method is the Plan’s', () => {
+  test('every card says it is the copy’s, and the method is your plan’s', () => {
     const p = plan({ age: 40, targetAge: 55 });
     const f = figs(p);
     const a: FigureArgs = {
@@ -518,27 +516,27 @@ describe('the scenario cards', () => {
       savingsRate: null,
       shareRates: null,
     };
-    const fi = renderToStaticMarkup(<FiCard scenarioName="Retire at 45" {...a} currencyNote={null} />);
-    expect(text(fi)).toContain('Scenario: Retire at 45');
+    const fi = renderToStaticMarkup(<FiCard copyName="Retire at 45" {...a} currencyNote={null} />);
+    expect(text(fi)).toContain('Copy: Retire at 45');
     // The figures the FI card rests on, under it on Your path (rollout phase
     // 6c), what they say worked out in the render as PlanTab does.
-    const Inputs = () => <InputsCard scenarioName="Retire at 45" figures={figureNotes(a)} view={f.view} money={money} onOpen={() => {}} />;
+    const Inputs = () => <InputsCard copyName="Retire at 45" figures={figureNotes(a)} view={f.view} money={money} onOpen={() => {}} />;
     const inputs = renderToStaticMarkup(<Inputs />);
-    expect(text(inputs)).toContain('Scenario: Retire at 45');
+    expect(text(inputs)).toContain('Copy: Retire at 45');
     const sim = renderToStaticMarkup(
-      <SimulationCard scenarioName="Retire at 45" plan={f.plan} notes={f.itemNotes} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />
+      <SimulationCard copyName="Retire at 45" plan={f.plan} notes={f.itemNotes} view={f.view} engine={f.engine} outcome={null} pending={false} money={money} currency="USD" onRetry={() => {}} />
     );
     const st = text(sim);
-    expect(st).toContain('Scenario: Retire at 45');
+    expect(st).toContain('Copy: Retire at 45');
     // The method is set in the Assumptions sheet, which says there that a
-    // scenario can't change it (rollout 6d); the answer's line names it, so
+    // copy can't change it (rollout 6d, C2); the answer's line names it, so
     // Drawdown's hero has no meta (the tax plan's P).
-    expect(st).toContain('Scenario: Retire at 45 Will it last?');
+    expect(st).toContain('Copy: Retire at 45 Will it last?');
     expect(sim).not.toContain('class="meta"');
     expect(sim).not.toContain('<button');
-    const events = renderToStaticMarkup(<LifeEventsCard scenarioName="Retire at 45" version="s1@r1" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
+    const events = renderToStaticMarkup(<LifeEventsCard copyName="Retire at 45" version="c1@u1" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
     const et = text(events);
-    expect(et).toContain('Scenario: Retire at 45');
+    expect(et).toContain('Copy: Retire at 45');
     expect(et).toContain('From 42: spending $15,000 a year more, for 18 years.');
     expect(et).toContain('Some of it is before today');
   });
@@ -564,46 +562,53 @@ describe('loading and saving the list', () => {
     };
     return { calls, fetcher };
   }
-  const s1 = entry();
+  const mine = row('main', 'First plan');
+  const c1 = row('c1', 'Retire at 45');
+  const listing = (plans: PlanRow[], unreadable: string[] = []) => ({ main: 'main', missing: false, plans, unreadable_ids: unreadable, unrecognised_ids: [] });
 
   test('nothing is saved before a load has succeeded', async () => {
     const { calls, fetcher } = server([]);
-    const client = createScenarioClient(() => {}, fetcher);
-    expect(await client.create({ name: 'x', currency: null, ...NO_CHANGES })).toEqual({ error: 'Your saved scenarios haven’t loaded yet.' });
+    const client = createPlansClient(() => {}, fetcher);
+    expect(await client.create({ from: 'main', name: 'x', plan: planOf(plan()), currency: null })).toEqual({ error: 'Your plans haven’t loaded yet. Try again in a moment.' });
     expect(calls).toEqual([]);
   });
 
   test('an edit names its version; one changed elsewhere is shown as it is now, and said', async () => {
-    const now = { ...s1, name: 'On my phone', rev: 'r2' };
+    const now = { ...c1, name: 'On my phone', updated_at: 'u2' };
     const { calls, fetcher } = server([
-      () => [200, { scenarios: [s1], unreadable_ids: [], unrecognised_ids: [] }],
-      () => [409, { error: 'This scenario was changed on another device: here it is as it is now.', stale: true, scenario: now }],
+      () => [200, listing([mine, c1])],
+      () => [409, { error: 'Changed on another device: load it again', stale: true }],
+      () => [200, listing([mine, now])],
     ]);
-    let state = INITIAL_SCENARIOS;
-    const client = createScenarioClient((s) => (state = s), fetcher);
+    let state = INITIAL_PLANS;
+    const client = createPlansClient((s) => (state = s), fetcher);
     await client.load();
-    const r = await client.save('s1', { name: 'On my laptop', currency: 'USD', ...NO_CHANGES }, 'r1');
-    expect(r).toEqual({ error: 'This scenario was changed on another device: here it is as it is now.', stale: true });
-    expect(calls[1]).toMatchObject({ method: 'PUT', body: { id: 's1', based_on: 'r1' } });
-    expect(state.list).toEqual([now]);
+    const r = await client.rename('c1', 'On my laptop', 'u-c1');
+    expect(r).toEqual({ error: 'Changed on another device: load it again', stale: true });
+    expect(calls[1]).toMatchObject({ method: 'PATCH', body: { id: 'c1', name: 'On my laptop', based_on: 'u-c1' } });
+    expect(calls[2]).toMatchObject({ method: 'GET' });
+    expect(state.list).toEqual([mine, now]);
+    expect(state.saving).toBe(false);
   });
 
   test('one request at a time, in order; a failed save reloads what is stored', async () => {
     const order: string[] = [];
+    const a = row('a', 'A');
     const { fetcher } = server([
-      () => [200, { scenarios: [], unreadable_ids: [], unrecognised_ids: [] }],
-      (c) => (order.push(`${c.method} ${(c.body as any).scenario.name}`), [200, { scenario: { ...s1, id: 'a', name: 'A' } }]),
-      (c) => (order.push(`${c.method} ${(c.body as any).scenario.name}`), [500, { error: 'Failed to save the scenario' }]),
-      (c) => (order.push(c.method), [200, { scenarios: [{ ...s1, id: 'a', name: 'A' }], unreadable_ids: ['bad'], unrecognised_ids: [] }]),
+      () => [200, listing([mine])],
+      (c) => (order.push(`${c.method} ${(c.body as any).name}`), [200, { plan: a }]),
+      (c) => (order.push(`${c.method} ${(c.body as any).name}`), [500, { error: 'Failed to make the plan' }]),
+      (c) => (order.push(c.method), [200, listing([mine, a], ['bad'])]),
     ]);
-    let state = INITIAL_SCENARIOS;
-    const client = createScenarioClient((s) => (state = s), fetcher);
+    let state = INITIAL_PLANS;
+    const client = createPlansClient((s) => (state = s), fetcher);
     void client.load();
-    const [a, b] = await Promise.all([client.create({ name: 'A', currency: null, ...NO_CHANGES }), client.create({ name: 'B', currency: null, ...NO_CHANGES })]);
-    expect('ok' in a).toBe(true);
-    expect(b).toEqual({ error: 'Failed to save the scenario' });
+    const made = (name: string) => client.create({ from: 'main', name, plan: planOf(plan()), currency: null });
+    const [ok, failed] = await Promise.all([made('A'), made('B')]);
+    expect('ok' in ok).toBe(true);
+    expect(failed).toEqual({ error: 'Failed to make the plan', stale: false });
     expect(order).toEqual(['POST A', 'POST B', 'GET']);
-    expect(state.list.map((s) => s.name)).toEqual(['A']);
+    expect(state.list.map((r) => r.name)).toEqual(['First plan', 'A']);
     expect(state.unreadable).toEqual(['bad']);
   });
 });
