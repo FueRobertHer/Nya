@@ -14,7 +14,7 @@ import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf } from '@/lib/fire/plan-v2';
-import { withEvents } from '@/lib/fire/items';
+import { itemFromEvent, withItem } from '@/lib/fire/items';
 import type { LifeEvent } from '@/lib/fire/events';
 import { runPlanJob } from '@/lib/fire/jobs';
 import { usMarket } from '@/lib/fire/us-market';
@@ -536,7 +536,7 @@ describe('the copy’s card and the Plans sheet', () => {
     expect(sim).not.toContain('class="meta"');
     expect(sim).not.toContain('<button');
     const events = renderToStaticMarkup(
-      <TimelineCard {...timelineProps(withEvents(planOf(p), [{ id: 'c', kind: 'child', label: 'A child', fromAge: 38, yearly: 15_000, years: 18 }]), measured, OFF)} copyName="Retire at 45" version="c1@u1" />
+      <TimelineCard {...timelineProps(withItem(planOf(p), itemFromEvent({ id: 'c', kind: 'child', label: 'A child', fromAge: 38, yearly: 15_000, years: 18 })), measured, OFF)} copyName="Retire at 45" version="c1@u1" />
     );
     const et = text(events);
     expect(et).toContain('Copy: Retire at 45');
