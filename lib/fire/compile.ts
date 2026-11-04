@@ -4,7 +4,7 @@
 // timeline, "Where each kind counts"), at the ages the steady path resolved
 // them to (lib/fire/steady.ts): the FI walk from today and the simulation from
 // its start age, as lib/fire/events.ts explains for life events, which are
-// items here with their own arithmetic unchanged (compileEvents).
+// items here with their own arithmetic unchanged.
 //
 // What items add to what life events did:
 //   - a plan's one-offs and income (version 1's lists) in the simulation as
@@ -21,13 +21,13 @@
 //     change between;
 //   - income given before tax at 1 - taxRate, in the walk and the simulation.
 //
-// One compile for the plan's items and an open scenario's together, so their
-// notes say which item by position (`at`), whatever their ids.
+// One compile for the plan's items and any life events run beside them, so
+// their notes say which item by position (`at`), whatever their ids.
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
-import { INCOME_KINDS, fixedEdges, itemFromEvent, type PlanItem } from './items';
-import type { CompiledEvents, EventNote, EventPart, LifeEvent } from './events';
+import { INCOME_KINDS, type PlanItem } from './items';
+import type { CompiledEvents, EventNote, EventPart } from './events';
 import { MAX_YEARS } from './simulate';
 
 /** An item's resolved ages: where it starts, and where it stops (null for
@@ -111,7 +111,7 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
       continue;
     }
 
-    // Life event kinds, as compileEvents counted them.
+    // Life event kinds.
     if (a === null && S === null) {
       note('no-age');
       continue;
@@ -245,25 +245,4 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
     }
   }
   return out;
-}
-
-/** The ages of items timed by ages alone (a scenario's life events, version
- *  1's lists): their own, an end for good null. */
-export function fixedAges(items: readonly PlanItem[]): ItemAges[] {
-  const edges = fixedEdges({ items: [...items], age: null, partnerAge: null, targetAge: null, stopAtFi: false });
-  return items.map((_, i) => {
-    const start = edges.get(`${i}:start`);
-    return start === undefined ? null : { start, end: edges.get(`${i}:end`) ?? null };
-  });
-}
-
-/**
- * Where each life event counts: in the FI walk from today (`age`), in the
- * simulation from its start age (`startAge`) for `years`. Either age may be
- * unknown; then that part is left out, and noted.
- */
-export function compileEvents(events: readonly LifeEvent[], at: { age: number | null; startAge: number | null; years: number }): CompiledEvents {
-  const items = events.map(itemFromEvent);
-  const { notes, inWalk: _inWalk, ...rest } = compileItems(items, fixedAges(items), { ...at, stop: null, taxRate: 0 }, { planInWalk: false });
-  return { ...rest, notes: notes.map(({ id, part }) => ({ id, part })) };
 }

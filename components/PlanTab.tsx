@@ -501,8 +501,8 @@ export default function PlanTab({
   const figures = fiFigures(basePlan, inputs, currency);
   // The plan's own currency once recorded, which everything above is in;
   // otherwise the accounts' (figures.currency), and with typed amounts and no
-  // record that holds, not known until the tab can tell it reliably or the
-  // person says (lib/fire/plan-currency.ts).
+  // record, not known until the tab can tell it reliably or the person says
+  // (lib/fire/plan-currency.ts).
   const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
   const currencyAnswer = confirmed.answer;
   const currencyState = planCurrencyState(planLoaded ? confirmed.plan : null, currencyAnswer, figures.currency);
@@ -571,12 +571,9 @@ export default function PlanTab({
   };
   // A plan saved before the currency was recorded (no record at all), shown
   // in one that can be told reliably: that is the one its figures were typed
-  // in, recorded once, and only while no save or answer is under way. A
-  // record that no longer fits, or can't be read, is never replaced but on
-  // the person's word. If it fails, the tab asks instead, and doesn't try
-  // again for that plan.
-  const autoCurrency =
-    currencyState.kind === 'unknown' && currencyState.problem === null && reliably.ok && !currencyBusy && confirmed.plan ? currencyState.shown : null;
+  // in, recorded once, and only while no save or answer is under way. If it
+  // fails, the tab asks instead, and doesn't try again for that plan.
+  const autoCurrency = currencyState.kind === 'unknown' && reliably.ok && !currencyBusy && confirmed.plan ? currencyState.shown : null;
   const autoKey = autoCurrency && confirmed.plan ? `${autoCurrency}:${JSON.stringify(typedAmounts(confirmed.plan))}` : null;
   const triedFor = useRef<string | null>(null);
   const [autoFailed, setAutoFailed] = useState<{ for: string; error: string } | null>(null);
@@ -590,17 +587,17 @@ export default function PlanTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoKey, autoCurrency]);
   const waitingOnAccounts = !reliably.ok && reliably.why === 'loading';
-  const offer = candidates(figures.currency, inputs, { was: currencyState.kind === 'unknown' ? currencyState.was : null, home });
+  const offer = candidates(figures.currency, inputs, home);
   const currencyMode: CurrencyCardMode =
     currencyState.kind === 'unknown'
       ? // Nothing said while the tab records it on its own; while it waits on
-        // the accounts to tell it, that it waits (a record there is asked
-        // about at once, and a load that failed is asked about too).
+        // the accounts to tell it, that it waits (a load that failed is asked
+        // about).
         autoKey !== null && autoFailed?.for !== autoKey
         ? { kind: 'none' }
-        : waitingOnAccounts && currencyState.problem === null
+        : waitingOnAccounts
           ? { kind: 'waiting', text: WAITING_TEXT }
-          : { kind: 'ask', text: askText(currencyState, reliably.ok ? null : reliably.why, from), offer, was: currencyState.was, canAnswer: currencyState.problem !== 'newer' }
+          : { kind: 'ask', text: askText(currencyState, reliably.ok ? null : reliably.why, from), offer }
       : currencyState.kind === 'recorded'
         ? {
             kind: 'recorded',

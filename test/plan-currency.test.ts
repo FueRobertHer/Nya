@@ -57,12 +57,10 @@ describe('what a record is for', () => {
   });
 
   test('the route’s answer, as the page reads it', () => {
-    expect(readCurrencyAnswer({ plan: null, currency: 'USD' })).toEqual({ currency: 'USD', problem: null, was: null });
-    expect(readCurrencyAnswer({ plan: null, currency: null, currency_problem: 'newer' })).toEqual({ currency: null, problem: 'newer', was: null });
-    // A record of other amounts: which currency it said, to offer first.
-    expect(readCurrencyAnswer({ plan: null, currency: null, currency_problem: 'stale', currency_was: 'USD' })).toEqual({ currency: null, problem: 'stale', was: 'USD' });
-    expect(readCurrencyAnswer({ currency: 'usd', currency_problem: 'odd', currency_was: 'USD' })).toEqual({ currency: null, problem: null, was: null });
-    expect(readCurrencyAnswer(null)).toEqual({ currency: null, problem: null, was: null });
+    expect(readCurrencyAnswer({ plan: null, currency: 'USD' })).toEqual({ currency: 'USD' });
+    expect(readCurrencyAnswer({ plan: null, currency: null })).toEqual({ currency: null });
+    expect(readCurrencyAnswer({ currency: 'usd' })).toEqual({ currency: null });
+    expect(readCurrencyAnswer(null)).toEqual({ currency: null });
   });
 });
 
@@ -174,35 +172,27 @@ describe('what the tab says', () => {
   const tie = { assets: investedAssets([inst([acct({ currency: 'EUR' }), acct()])], false), flows: null };
 
   test('the question names what is shown, why it can’t be taken, and the currencies to choose from; never an amount', () => {
-    const state = planCurrencyState(TYPED, { currency: null, problem: null, was: null }, 'EUR');
-    expect(state).toEqual({ kind: 'unknown', shown: 'EUR', problem: null, was: null });
+    const state = planCurrencyState(TYPED, { currency: null }, 'EUR');
+    expect(state).toEqual({ kind: 'unknown', shown: 'EUR' });
     const ask = askText(state as Extract<typeof state, { kind: 'unknown' }>, 'tie', 'accounts');
     expect(ask).toContain('Your plan’s figures were saved before Nya kept the currency they were typed in.');
     expect(ask).toContain('They’re shown in EUR for now, the currency most of your invested accounts are in, but as many of your invested accounts are in another currency');
     expect(ask).toContain('Nothing on the Plan can be saved until you say');
     expect(ask).not.toMatch(/\d/);
     expect(candidates('EUR', tie)).toEqual(['EUR', 'USD']);
-    // A record that no longer fits: said as that, its currency offered first.
-    const stale = askText({ kind: 'unknown', shown: 'EUR', problem: 'stale', was: 'USD' }, null, 'accounts');
-    expect(stale).toStartWith('Nya recorded your plan’s figures as USD, but they were changed since in a way that didn’t record a currency');
-    expect(stale).not.toContain('saved before Nya kept');
-    expect(candidates('EUR', tie, { was: 'USD' })).toEqual(['USD', 'EUR']);
-    // A record that can't be read, or a newer version's.
-    expect(askText({ kind: 'unknown', shown: 'USD', problem: 'unreadable', was: null }, null, 'accounts')).toStartWith('The record of the currency your plan’s figures are in couldn’t be read.');
-    expect(askText({ kind: 'unknown', shown: 'USD', problem: 'newer', was: null }, null, 'accounts')).toContain('recorded by a newer version of Nya');
+    expect(candidates('EUR', tie, 'CAD')).toEqual(['EUR', 'USD', 'CAD']);
     // Where the shown currency came from, as it is: never "your accounts" for the dashboard's, and nothing shown when there is none.
-    expect(askText({ kind: 'unknown', shown: 'USD', problem: null, was: null }, 'none', 'dashboard')).toContain('They’re shown in USD for now, your accounts’ main currency, but there are no accounts or transactions to tell it from.');
-    expect(askText({ kind: 'unknown', shown: null, problem: null, was: null }, 'none', null)).not.toContain('shown in');
+    expect(askText({ kind: 'unknown', shown: 'USD' }, 'none', 'dashboard')).toContain('They’re shown in USD for now, your accounts’ main currency, but there are no accounts or transactions to tell it from.');
+    expect(askText({ kind: 'unknown', shown: null }, 'none', null)).not.toContain('shown in');
     // Before a first amount.
     expect(firstText('EUR', 'tie', 'accounts')).toStartWith('Which currency will you type your plan’s figures in?');
   });
 
   test('recorded, nothing typed, or not known', () => {
-    expect(planCurrencyState(TYPED, { currency: 'USD', problem: null, was: null }, 'USD')).toEqual({ kind: 'recorded', currency: 'USD' });
-    expect(planCurrencyState(DEFAULT_PLAN, { currency: null, problem: null, was: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
-    expect(planCurrencyState(null, { currency: null, problem: null, was: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
-    expect(planCurrencyState(TYPED, { currency: null, problem: 'newer', was: null }, 'USD')).toEqual({ kind: 'unknown', shown: 'USD', problem: 'newer', was: null });
-    expect(planCurrencyState(TYPED, { currency: null, problem: 'stale', was: 'USD' }, 'EUR')).toEqual({ kind: 'unknown', shown: 'EUR', problem: 'stale', was: 'USD' });
+    expect(planCurrencyState(TYPED, { currency: 'USD' }, 'USD')).toEqual({ kind: 'recorded', currency: 'USD' });
+    expect(planCurrencyState(DEFAULT_PLAN, { currency: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
+    expect(planCurrencyState(null, { currency: null }, 'EUR')).toEqual({ kind: 'follows', currency: 'EUR' });
+    expect(planCurrencyState(TYPED, { currency: null }, 'USD')).toEqual({ kind: 'unknown', shown: 'USD' });
   });
 
   test('kept in its currency, the tab says so when what is measured is in another: converted, or, without a home currency, not counted', () => {
