@@ -106,13 +106,21 @@ export async function planPage() {
 
   const pass = fakeClock();
   simulateOnPage();
-  /** Lets `ms` pass on the fake clock, then more until no route is still
-   *  answering (a write's many Redis commands outlast the turns a step lets
-   *  settle), and what the answers start. */
+  /** Lets `ms` pass on the fake clock, then more until no route has been
+   *  answering for three steps, and what the answers start. A route seals what
+   *  it reads and writes on a real thread (crypto.subtle, lib/crypto.ts), so
+   *  however busy the machine, this waits for it, with no limit on the steps,
+   *  and the clock only creeps meanwhile (for a retry's backoff, lib/repo.ts).
+   *  An answer can start another request, so one look finding none answering
+   *  may fall between the two. A test that holds a request open takes it out
+   *  of `inflight`, or this waits until the test times out. */
   async function settle(ms = 30) {
     await pass(ms);
-    for (let i = 0; inflight > 0 && i < 1000; i++) await pass(10);
-    await pass(30);
+    for (let quiet = 0; ; ) {
+      if (inflight > 0) quiet = 0;
+      else if (++quiet > 3) return;
+      await pass(quiet > 0 ? 10 : 1);
+    }
   }
 
   const json = async (res: Response) => ({ status: res.status, body: await res.json() });
