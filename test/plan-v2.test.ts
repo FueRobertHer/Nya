@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, parsePlan, repairPlan, upgradePlan, type FirePlan } from '@/lib/fire/plan';
 import { DEFAULT_PLAN_V2, basePlanOf, isFirePlanV2, isStoredPlan, parsePlanV2, planOf, repairPlanV2, toStored, upgradeStoredPlan, type FirePlanV2 } from '@/lib/fire/plan-v2';
-import { expensesOf, incomeOf, itemFromEvent, itemFromExpense, itemFromIncome } from '@/lib/fire/items';
+import { expensesOf, incomeOf, itemFromExpense, itemFromIncome } from '@/lib/fire/items';
 import * as old from './fixtures/before-d15/fire/plan';
-import { genPlan, rand } from './plan-gen';
+import { genPlan, itemFromEvent, rand } from './plan-gen';
 
 // FirePlan version 2 (lib/fire/plan-v2.ts): read and checked, upgraded in
 // memory from version 1 and sent back as version 1, repaired, and the

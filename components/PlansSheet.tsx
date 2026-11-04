@@ -156,7 +156,7 @@ export function PlanDetails({ plan, parts, outcome, money }: { plan: SheetPlan; 
     const f = outcome.figures;
     // What of a life event is left out, and why.
     for (const n of f.itemNotes) {
-      const item = f.items[n.at];
+      const item = f.plan.items[n.at];
       if (!item || !asEvent(item)) continue;
       lines.push(
         <li key={`n${n.at}:${n.part}`}>

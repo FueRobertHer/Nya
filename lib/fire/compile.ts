@@ -21,8 +21,7 @@
 //     change between;
 //   - income given before tax at 1 - taxRate, in the walk and the simulation.
 //
-// One compile for the plan's items and any life events run beside them, so
-// their notes say which item by position (`at`), whatever their ids.
+// Notes say which item by position (`at`), whatever its id.
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
@@ -45,7 +44,7 @@ export type CompileAt = { age: number | null; startAge: number | null; stop: num
 
 export type ItemNote = EventNote & { at: number };
 
-export type CompiledItems = Omit<CompiledEvents, 'notes'> & {
+export type CompiledItems = CompiledEvents & {
   notes: ItemNote[];
   /** Whether each item put anything in the walk. */
   inWalk: boolean[];

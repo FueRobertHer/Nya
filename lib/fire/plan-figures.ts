@@ -1,11 +1,11 @@
 // lib/fire/plan-figures.ts
 //
-// One plan's figures, the Plan's or a scenario's, from the same functions:
-// the FI view (lib/fire/plan.ts fiView), the engine plan (enginePlan), and
-// the plan's items with an open scenario's life events (lib/fire/items.ts),
-// placed on the steady path (lib/fire/steady.ts) and counted where each kind
-// counts (lib/fire/compile.ts): the FI walk and their parts of the
-// simulation. Home and Your path both read this, so they say one answer.
+// One plan's figures, the Plan's or a copy's, from the same functions: the FI
+// view (lib/fire/plan.ts fiView), the engine plan (enginePlan), and the plan's
+// items (lib/fire/items.ts), placed on the steady path (lib/fire/steady.ts) and
+// counted where each kind counts (lib/fire/compile.ts): the FI walk and their
+// parts of the simulation. Home and Your path both read this, so they say one
+// answer.
 //
 // What items change, and how:
 //   - lasting changes in effect when the simulation starts are retirement
@@ -28,7 +28,7 @@
 import { projectBalance, projectionShort } from './fi';
 import { compileItems, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
 import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
-import { MONEY_KINDS, type PlanItem } from './items';
+import { MONEY_KINDS } from './items';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice } from './plan';
 import { planOf, type FirePlanV2 } from './plan-v2';
 import type { SavedItems, SavedPlan } from './saved-plan';
@@ -51,7 +51,7 @@ export type StartsWith = {
 };
 
 export type PlanFigures = {
-  /** The plan as run (the Plan, or a scenario resolved). */
+  /** The plan as run: the Plan, or a copy of it. */
   plan: FirePlanV2;
   /** For display: the inputs as typed or measured; the FI number and what
    *  follows from it from retirement spending; years to FI and the age then
@@ -62,16 +62,12 @@ export type PlanFigures = {
   engine: EnginePlan | { missing: Missing };
   /** What the items add: the walk, lasting and later changes, and their
    *  parts of the simulation, null when none counts anywhere but the
-   *  simulation's income and one-offs. Its notes are an open scenario's. */
+   *  simulation's income and one-offs. */
   events: CompiledEvents | null;
-  /** Every item run, the plan's first, then an open scenario's. */
-  items: readonly PlanItem[];
-  /** How many of `items` are the plan's. */
-  planItems: number;
   /** The plan's items' notes, by position. */
   itemNotes: ItemNote[];
-  /** What moved the walk: one-offs and income (a plan's, or a scenario's
-   *  added ones), life events (a scenario's, or a plan's of those kinds). */
+  /** What moved the walk: the plan's one-offs and income (`items`), its items
+   *  of the other kinds (`events`). */
   walkFrom: { items: boolean; events: boolean };
   /** Per item, by position: whether it put anything in the walk. */
   inWalk: boolean[];
@@ -93,9 +89,6 @@ export type PlanFigures = {
 export type FiguresRefused = { refused: 'below-zero'; spending: number; lasting: number };
 
 export type FiguresOptions = {
-  /** Life events run beside the plan's items, as items (lib/fire/items.ts
-   *  itemFromEvent). The Plan tab passes none; test/plan-gen.ts figuresOf does. */
-  events?: readonly PlanItem[];
   /** What counts where, by the release flags (lib/fire/compile.ts Count). */
   count: Count;
 };
@@ -126,11 +119,11 @@ function upTo(w: WalkChanges, last: number): WalkChanges {
  *  a search's candidate, leaves items out of the walk (only: what they change
  *  in retirement still sets the FI number it is tested against) and stops
  *  counting its changes after an age. */
-function build(plan: FirePlanV2, measured: Measured, items: readonly PlanItem[], ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }): Built | FiguresRefused {
+function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }): Built | FiguresRefused {
   const display = fiView(plan, measured, stop);
   const at = { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: plan.taxRate };
-  const compiled = compileItems(items, ages, at, count);
-  const changes = opts && opts.skip.size > 0 ? compileItems(items, ages.map((x, i) => (opts.skip.has(i) ? null : x)), at, count).walk : compiled.walk;
+  const compiled = compileItems(plan.items, ages, at, count);
+  const changes = opts && opts.skip.size > 0 ? compileItems(plan.items, ages.map((x, i) => (opts.skip.has(i) ? null : x)), at, count).walk : compiled.walk;
   const walk = opts && opts.through !== null && plan.age !== null ? upTo(changes, opts.through - plan.age) : changes;
   const lasting = compiled.lasting.reduce((s, x) => s + x.amount, 0);
   let core = display;
@@ -185,20 +178,17 @@ function build(plan: FirePlanV2, measured: Measured, items: readonly PlanItem[],
   return { view, core, engine, compiled, walk, retirement, short, walked, walkedSavings };
 }
 
-function assemble(plan: FirePlanV2, items: readonly PlanItem[], n: number, b: Built, resolution: Resolution): PlanFigures {
+function assemble(plan: FirePlanV2, b: Built, resolution: Resolution): PlanFigures {
   const { compiled } = b;
-  const notes = compiled.notes.filter((x) => x.at >= n).map(({ id, part }) => ({ id, part }));
   const counts = hasWalk(compiled.walk) || compiled.lasting.length > 0 || compiled.later.length > 0;
-  const events: CompiledEvents | null = items.length > n || counts ? { walk: compiled.walk, lasting: compiled.lasting, later: compiled.later, sim: compiled.sim, notes } : null;
-  const money = (i: number) => MONEY_KINDS.includes(items[i].kind);
+  const events: CompiledEvents | null = counts ? { walk: compiled.walk, lasting: compiled.lasting, later: compiled.later, sim: compiled.sim } : null;
+  const money = (i: number) => MONEY_KINDS.includes(plan.items[i].kind);
   return {
     plan,
     view: b.view,
     engine: b.engine,
     events,
-    items,
-    planItems: n,
-    itemNotes: compiled.notes.filter((x) => x.at < n),
+    itemNotes: compiled.notes,
     walkFrom: { items: compiled.inWalk.some((x, i) => x && money(i)), events: compiled.inWalk.some((x, i) => x && !money(i)) },
     inWalk: compiled.inWalk,
     resolution,
@@ -210,26 +200,24 @@ function assemble(plan: FirePlanV2, items: readonly PlanItem[], n: number, b: Bu
   };
 }
 
-export function planFigures(plan: FirePlanV2, measured: Measured, { events = [], count }: FiguresOptions): PlanFigures | FiguresRefused {
-  const items = events.length > 0 ? [...plan.items, ...events] : plan.items;
-  const n = plan.items.length;
+export function planFigures(plan: FirePlanV2, measured: Measured, { count }: FiguresOptions): PlanFigures | FiguresRefused {
   const world: SteadyWorld = {
     path(ages, stop) {
-      const b = build(plan, measured, items, ages, stop, count);
+      const b = build(plan, measured, ages, stop, count);
       if ('refused' in b) return null;
-      const p = planPath(assemble(plan, items, n, b, { ages, why: [], stop, fi: null, searched: 'none' }));
+      const p = planPath(assemble(plan, b, { ages, why: [], stop, fi: null, searched: 'none' }));
       if (p === null) return null;
       return [...p.points.map((x) => x.balance), ...(p.after?.points.slice(1).map((x) => x.balance) ?? [])];
     },
     fiAge(ages, stop, opts) {
-      const b = build(plan, measured, items, ages, stop, count, opts);
+      const b = build(plan, measured, ages, stop, count, opts);
       return 'refused' in b ? null : b.view.fiAge;
     },
   };
-  const resolution = resolveItems({ ...plan, items }, world);
-  const b = build(plan, measured, items, resolution.ages, resolution.stop, count);
+  const resolution = resolveItems(plan, world);
+  const b = build(plan, measured, resolution.ages, resolution.stop, count);
   if ('refused' in b) return b;
-  const f = assemble(plan, items, n, b, resolution);
+  const f = assemble(plan, b, resolution);
   if (resolution.searched === 'none' || plan.age === null) return f;
   // The search's answer is the date: the age found, or none by the end. With
   // none and no date without it either (a figure not measured, or a cost the

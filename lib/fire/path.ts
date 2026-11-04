@@ -4,8 +4,8 @@
 // FI figures already rest on, for the chart on Your path (rollout 8b) to
 // draw. From the same functions as the figures, so the point at the target
 // age is the view's atTargetAge exactly:
-//   - with life events that change the walk (lib/fire/events.ts), the walk's
-//     own balances (walkPath, which walkBalanceAt reads);
+//   - with items that change the walk (lib/fire/events.ts), the walk's own
+//     balances (walkPath, which walkBalanceAt reads);
 //   - otherwise projectBalance at each whole year (lib/fire/fi.ts), the
 //     closed form fiView projects the target age's balance with, stopping
 //     where a year would end below zero (projectionShort), as the walk does.
@@ -16,8 +16,8 @@
 //
 // After the stop (the tax plan's P, D13), the same steady return on to the
 // plan's end, where Will it last? ends: the plan's own rule drawing its
-// spending, with its items and a scenario's life events in the years they
-// cover, at the ages the figures resolved them to (steadyRun, below). It starts where the walk ends, at the
+// spending, with its items in the years they cover, at the ages the figures
+// resolved them to (steadyRun, below). It starts where the walk ends, at the
 // stop age's balance (today's once the stop has come). Not the simulation:
 // no fee, no cash and no mix, one return a year on the whole balance.
 //
@@ -54,8 +54,8 @@ export type PlanPath = {
    *  `short`, which is the FI date's: the walk to the FI number, which keeps
    *  going until it gets there and is only looked for with an FI number. */
   short: Shortfall | null;
-  /** The points are the walk's, with the scenario's life events. Not the
-   *  figures' `walked`, which says the FI date is (that needs an FI number;
+  /** The points are the walk's, with the plan's items. Not the figures'
+   *  `walked`, which says the FI date is (that needs an FI number;
    *  these points don't). */
   fromWalk: boolean;
   /** The years after the stop, to the plan's end: only for the path to the
@@ -77,10 +77,10 @@ export type PathAfter = {
   endAge: number;
   /** The age of the year it can't pay, or null when it lasts. */
   runsOutAt: number | null;
-  /** Within its own years only: nothing it never reaches. `events` says a
-   *  scenario's life events count here in a way the FI number doesn't. */
+  /** Within its own years only: nothing it never reaches. `events` says items
+   *  beyond income and one-offs count here in a way the FI number doesn't. */
   leftOut: { items: LeftOutItem[]; events: boolean };
-  /** A scenario's life events count in these years. */
+  /** Items beyond income and one-offs count in these years. */
   withEvents: boolean;
 };
 
@@ -206,7 +206,7 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   // Only the simulation's parts are read here, so the walk's switch is off.
   const at = { age: plan.age, startAge: d, stop: d, years, taxRate: plan.taxRate };
   const ages = f.resolution.ages;
-  const all = compileItems(f.items, ages, at, { planInWalk: false });
+  const all = compileItems(plan.items, ages, at, { planInWalk: false });
   const lasting = all.lasting.reduce((s, x) => s + x.amount, 0);
   const spending = spendingNow + lasting;
   if (spending < 0) return null;
@@ -222,8 +222,8 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
     ...(lowerSpending.length > 0 ? { lowerSpending } : {}),
   };
   // What the FI number leaves out beyond income and one-offs (listed below):
-  // the life events' parts in these years.
-  const life = compileItems(f.items, ages.map((x, i) => (MONEY_KINDS.includes(f.items[i].kind) ? null : x)), at, { planInWalk: false }).sim;
+  // the other items' parts in these years.
+  const life = compileItems(plan.items, ages.map((x, i) => (MONEY_KINDS.includes(plan.items[i].kind) ? null : x)), at, { planInWalk: false }).sim;
   const counted = life.oneOffs.some((o) => o.year < years) || life.income.some((s) => s.fromYear < years) || life.lowerSpending.some((l) => l.fromYear < years);
   let steady: ReturnType<typeof steadyRun>;
   try {
@@ -235,8 +235,7 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
     throw e;
   }
   const items: LeftOutItem[] = [];
-  for (let i = 0; i < f.planItems; i++) {
-    const x = f.items[i];
+  for (const [i, x] of plan.items.entries()) {
     const placed = ages[i];
     if (placed === null) continue;
     if (x.kind === 'one-off') {
