@@ -28,9 +28,13 @@ import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import { Why } from './Why';
 import { Segmented } from './Segmented';
 import FieldError from './FieldError';
+import { taxOnHoldText } from './plan-figure-notes';
 import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
+import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet } from './PlanBuckets';
+import { headLine } from './plan-buckets';
+import type { SavingsSplit } from '@/lib/fire/savings-split';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -53,6 +57,9 @@ type SaveProps = {
   /** D15's switch (the flag 'plan-items-in-fi'): one-offs and income count
    *  in the FI date, which the income and one-off forms say. */
   planInWalk?: boolean;
+  /** D7's switch (the flag 'plan-child-accounts'): a child's accounts are out
+   *  of invested assets, which that figure's form says. */
+  childOut?: boolean;
 };
 
 /** Said beside an input a copy can't change. */
@@ -433,6 +440,9 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
   },
 };
 
+/** Said after that note with a child's accounts out (D7). */
+const CHILD_ACCOUNTS_NOTE = ' Accounts for a child’s education are left out unless you count one.';
+
 type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null };
 
 export function FigureForm(
@@ -449,6 +459,12 @@ export function FigureForm(
     /** Savings: the workplace plans whose contributions are measured, each
      *  with how it is paid into. */
     workplacePlans?: { account_id: string; label: string }[];
+    /** Invested assets by tax bucket. */
+    buckets?: BucketSheet;
+    /** Where a year of savings goes. */
+    split?: SavingsSplit | null;
+    /** The mix at the start age, in a line; null when it can't be worked out. */
+    mix?: string | null;
   }
 ) {
   const { plan, kind } = props;
@@ -478,10 +494,19 @@ export function FigureForm(
   // cash box says otherwise.
   const why = props.why && (kind !== 'assets' || includeCash === plan.includeCash) ? props.why : null;
   const range = kind === 'savings' ? [-LIMITS.money, LIMITS.money] : kind === 'assets' ? [0, LIMITS.balance] : [0, LIMITS.money];
+  const sheet = props.buckets ?? null;
+  const today = kind === 'assets' && sheet ? sheet.bucketsFor(includeCash) : null;
+  const level = (kind === 'assets' && sheet?.level) || null;
+  const money = (n: number) => wholeMoney(n, props.currency);
   return (
     <>
+      {/* A level of the drawer over the form, which stays, so what was typed in
+          it is there on the way back. */}
+      {level && sheet && today && <BucketLevel level={level} today={today} sheet={sheet} money={money} />}
+      <div hidden={!!level}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {t.note}
+        {kind === 'assets' && props.childOut ? CHILD_ACCOUNTS_NOTE : ''}
       </p>
       <Choice
         label={t.title}
@@ -497,6 +522,10 @@ export function FigureForm(
           <p className="panel-note">
             {measured === null ? (
               'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
+            ) : today && sheet ? (
+              <>
+                <Masked>{headLine(measured, today.groups.reduce((n, g) => n + g.accounts.length, 0), sheet.asOf, money)}</Masked> Each account&rsquo;s bucket comes from its type; change one that is in another.
+              </>
             ) : (
               <>
                 <strong>
@@ -536,7 +565,13 @@ export function FigureForm(
             Count checking and savings accounts too
           </label>
           {props.copy && <p className="panel-note">Counting cash is how your figures are measured: {SAME_IN_EVERY_PLAN}</p>}
-          {live && live.accounts.length > 0 && mode === 'measured' && (
+          {today && sheet && (today.groups.length > 0 || today.leftOut.accounts.length > 0) && (
+            <>
+              {mode === 'typed' && <p className="panel-note">Your own figure is shared out as these accounts are.</p>}
+              <BucketGroups today={today} sheet={sheet} mix={props.mix ?? null} money={money} />
+            </>
+          )}
+          {!today && live && live.accounts.length > 0 && mode === 'measured' && (
             <ul className="plan-accounts">
               {live.accounts.map((a) => (
                 <li key={a.account_id}>
@@ -585,6 +620,7 @@ export function FigureForm(
           ))}
         </>
       )}
+      {kind === 'savings' && sheet && props.split && <SavingsSplitLines split={props.split} reading={sheet.reading} />}
       {s.error && (
         <Notice level="critical" role="alert">
           {s.error}
@@ -608,6 +644,7 @@ export function FigureForm(
           }))
         }
       />
+      </div>
     </>
   );
 }
@@ -626,7 +663,7 @@ function typedRate(text: string, [min, max]: readonly [number, number], saved: n
  *  number: your spending, grossed up for tax, as a share of the balance it
  *  starts with (lib/fire/plan.ts enginePlan); null when either isn't known. */
 function startRate(start: FirePlan['start'], props: { assets: number | null; spending: number | null }, typed: number, tax: number): number | null {
-  if (start === 'fi-number') return null;
+  if (start === 'fi-number' || start === 'at-stop') return null;
   const balance = start === 'assets' ? props.assets : Number.isFinite(typed) && typed > 0 ? typed : null;
   return props.spending !== null && balance ? props.spending / (1 - tax) / balance : null;
 }
@@ -651,7 +688,7 @@ function startConsequence(
     return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
   }
   const actual = startRate(start, props, typed, tax);
-  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your stop age with the balance you type`;
+  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;
   return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(actual, 1)} withdrawal rate${actual > rate * 1.001 ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
 
@@ -683,6 +720,9 @@ export function AssumptionsForm(
     allocationMix?: (PlanMix & { ok: true }) | null;
     /** The part to open at; null or left out, the top. */
     at?: AssumptionsAt | null;
+    /** Detailed tax is saved and can't be worked out here, so the rate below
+     *  is what counts (components/plan-figure-notes.ts). */
+    taxOnHold?: boolean;
   }
 ) {
   const { plan, at = null } = props;
@@ -803,6 +843,7 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('The tax rate')}
+        {props.taxOnHold && <Notice level="caution">{taxOnHoldText(plan.taxRate)}</Notice>}
         <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
@@ -895,6 +936,7 @@ export function AssumptionsForm(
               </option>
             ))}
             <option value="custom">A balance I type</option>
+            {plan.start === 'at-stop' && <option value="at-stop">What I’d have at my stop age</option>}
           </select>
         </label>
         <p className="helper">

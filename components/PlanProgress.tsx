@@ -152,6 +152,8 @@ export type ProgressViewProps = {
   /** D15's line may show: the switch on, still new, Got it not tapped. */
   moved?: boolean;
   onMovedSeen?: () => void;
+  /** D7's switch: its Why says a child's accounts are out. */
+  childOut?: boolean;
   series: SeriesState | null;
   /** The Plan as the tab shows it, for what changed since. */
   plan: PlanCore;
@@ -176,7 +178,7 @@ export function savingsBlock(savings: Input): string | null {
   return null;
 }
 
-export function ProgressView({ savedState, items = null, moved = false, onMovedSeen, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
+export function ProgressView({ savedState, items = null, moved = false, onMovedSeen, childOut = false, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
   const saved = savedState.kind === 'ready' ? savedState.saved : null;
   const why = blocked ?? savingsBlock(savings);
   const menu = saved ? [{ label: 'Stop comparing', danger: true, onSelect: () => onSheet('forget'), disabled: busy }] : [];
@@ -229,7 +231,7 @@ export function ProgressView({ savedState, items = null, moved = false, onMovedS
             )}
           </>
         )}
-        {saved && <SavedBody saved={saved} items={items} moved={moved} onMovedSeen={onMovedSeen} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
+        {saved && <SavedBody saved={saved} items={items} moved={moved} onMovedSeen={onMovedSeen} childOut={childOut} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
         {saved && changedSince(saved, plan).length > 0 && (
           <>
             <Notice level="info">
@@ -257,6 +259,7 @@ function SavedBody({
   items,
   moved,
   onMovedSeen,
+  childOut,
   series,
   money,
   nameOf,
@@ -266,6 +269,7 @@ function SavedBody({
   items: SavedItemsBoth | null;
   moved: boolean;
   onMovedSeen?: () => void;
+  childOut: boolean;
   series: SeriesState | null;
   money: (n: number) => string;
   nameOf: (id: string) => string;
@@ -306,7 +310,7 @@ function SavedBody({
       <Why>
         <p>
           Your invested assets are added up from the balances recorded each day, by your plan’s rules as you saved it (investment accounts{saved.plan.includeCash ? ', and checking and savings' : ''}, hidden ones
-          left out){saved.currency ? `, in ${saved.currency}` : ''}. Your plan starts from the first day every account it counts was recorded, grows that at its rate, adding its savings steadily through the year,
+          {childOut ? ' and accounts for a child’s education' : ''} left out){saved.currency ? `, in ${saved.currency}` : ''}. Your plan starts from the first day every account it counts was recorded, grows that at its rate, adding its savings steadily through the year,
           and is raised by the inflation rate, since balances are in each day’s money and the plan in the dollars of the day it starts.
         </p>
       </Why>
@@ -432,7 +436,9 @@ export type Progress = {
   retry: () => void;
 };
 
-export function useProgress(institutions: AssetInstitution[]): Progress {
+/** `countKey`: what else the answer turns on that the question doesn't say (the
+ *  accounts counted anyway, D7), so a change to it asks again. */
+export function useProgress(institutions: AssetInstitution[], countKey = ''): Progress {
   const [savedState, setSaved] = useState<SavedState>({ kind: 'loading' });
   const [series, setSeries] = useState<SeriesState | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -471,7 +477,7 @@ export function useProgress(institutions: AssetInstitution[]): Progress {
     return () => {
       live = false;
     };
-  }, [rev, question, attempt]);
+  }, [rev, question, countKey, attempt]);
   return { savedState, series, setSaved, setSeries, retry: () => setAttempt((n) => n + 1) };
 }
 
@@ -487,9 +493,10 @@ export type PlanProgressProps = {
   items?: SavedItemsBoth | null;
   moved?: boolean;
   onMovedSeen?: () => void;
+  childOut?: boolean;
 };
 
-export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, copyOpen, items = null, moved = false, onMovedSeen }: PlanProgressProps) {
+export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, copyOpen, items = null, moved = false, onMovedSeen, childOut = false }: PlanProgressProps) {
   const { savedState, series, setSaved, setSeries, retry } = progress;
   const [sheet, setSheet] = useState<ProgressSheet>(null);
   const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
@@ -594,6 +601,7 @@ export default function PlanProgress({ progress, plan, savings, currency, instit
         items={items}
         moved={moved}
         onMovedSeen={onMovedSeen}
+        childOut={childOut}
         series={series}
         plan={plan}
         blocked={blocked}

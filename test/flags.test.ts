@@ -55,6 +55,7 @@ describe('the registry', () => {
       'api-writes': 'API_WRITES_ENABLED',
       'plan-tax': null,
       'plan-items-in-fi': null,
+      'plan-child-accounts': null,
       csp: 'CSP_MODE',
       ops: 'OPS_ENABLED',
       'sign-in': 'CLERK_ALLOWED_USER_IDS',
@@ -69,6 +70,7 @@ describe('the registry', () => {
     }
     expect(flags.flagDef('plan-tax')).toMatchObject({ kind: 'release', removeBy: '2027-06-30', value: 'audience' });
     expect(flags.flagDef('plan-items-in-fi')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
+    expect(flags.flagDef('plan-child-accounts')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
   });
 
   test('every flag has a short plain name of its own, as the admin page titles it', () => {
@@ -348,7 +350,7 @@ describe('the cache', () => {
     await store('plan-tax', audience('nobody', [C1]));
     await store('sign-in', { ids: ['user_a'], emails: [], updatedAt: AT });
     const sent = await read.clientFlags(who(C1));
-    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': true, 'plan-items-in-fi': false });
+    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': true, 'plan-items-in-fi': false, 'plan-child-accounts': false });
   });
 });
 

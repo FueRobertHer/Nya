@@ -33,6 +33,10 @@
 //     request and adopt(), never the reload a failed save makes. Two saves
 //     at once leave the copy stale, since their answers can land in either
 //     order.
+//   - The last plan answered is kept apart from the last answer (lastPlan), so
+//     a failed request shows as failed without losing what is known: what is
+//     said about the accounts doesn't fall back to nothing, or move the
+//     figures, because a reload failed.
 //   - load() is called on events only (a screen shown, its plans changed,
 //     invalidate()), never because of the copy's state, so a copy that stays
 //     stale (a lasting failure) costs a request or two per screen shown,
@@ -59,6 +63,10 @@ export type PlanInputsCopy = {
    *  never answered) and its body without the rows. Null until the first
    *  answer. */
   plan: { status: number; body: Record<string, unknown> | null } | null;
+  /** The body of the last answer that gave the plan: a request's 200, or a
+   *  save's. Kept through a later failure; null until one came, so what the
+   *  plan's answer holds isn't known yet. */
+  lastPlan: Record<string, unknown> | null;
   /** Each plan's row, by id. */
   rows: Readonly<Record<string, PlanRow>>;
   /** Bumped by invalidate(): each screen showing the copy loads again. */
@@ -82,6 +90,13 @@ export type PlanInputsStore = {
   /** What the copy rests on changed (a refresh, a link, a restore): it goes
    *  stale, still shown, and every screen showing it loads once. */
   invalidate(): void;
+  /** Rows for accounts beyond the copy's plans, asked for when a sheet opens:
+   *  one missing or failed comes, one older than FRESH_MS refreshes. On top of
+   *  the copy, never its key, so Home's cost and the copy's freshness don't
+   *  change, and a later load keeps them. The copy's own plans are left to its
+   *  loads: their rows are the savings and the FI date, which a sheet opening
+   *  must not put at risk of a failed sync. */
+  fill(ids: readonly string[]): void;
 };
 
 type Fetcher = (input: string) => Promise<Response>;
@@ -113,7 +128,7 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
   // later (its sign-out watcher).
   const send = (url: string) => (opts.fetch ? opts.fetch(url) : fetch(url));
   const now = opts.now ?? Date.now;
-  let copy: PlanInputsCopy = { key: null, plan: null, rows: {}, asked: 0 };
+  let copy: PlanInputsCopy = { key: null, plan: null, lastPlan: null, rows: {}, asked: 0 };
   const listeners = new Set<() => void>();
   const set = (patch: Partial<PlanInputsCopy>) => {
     copy = { ...copy, ...patch };
@@ -135,6 +150,8 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
    *  tick its sync answered at. */
   let tick = 0;
   const filled = new Map<string, number>();
+  /** When each row came, for fill(). */
+  const cameAt = new Map<string, number>();
   let saves = 0;
   /** Two saves were under way at once. */
   let overlapped = false;
@@ -173,6 +190,7 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
         filled.set(id, at);
         const row = given?.get(id);
         rows[id] = row && !row.pending ? row : { id, failed: true };
+        cameAt.set(id, now());
       }
       set({ rows });
     })();
@@ -201,6 +219,7 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
       const patch: Partial<PlanInputsCopy> = {};
       if (newest && mine.gen === gen) {
         patch.plan = { status, body: body ? planPart : null };
+        if (status === 200 && body) patch.lastPlan = planPart;
         // A failure is shown (Home hides its line, as before), but never makes
         // the copy count as answered, then or after a save's answer.
         if (planAnswered(patch.plan)) {
@@ -218,8 +237,10 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
           // it did: its row stays, and isn't synced again.
           if ((filled.get(id) ?? 0) > mine.tick) continue;
           const row = given?.get(id);
-          if (row && !row.pending) rows[id] = row;
-          else {
+          if (row && !row.pending) {
+            rows[id] = row;
+            cameAt.set(id, now());
+          } else {
             const old = rows[id];
             rows[id] = old && !old.pending && !old.failed ? { ...old, refreshing: true } : { id, pending: true };
           }
@@ -258,7 +279,7 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
     adopt(body) {
       const { plans: _rows, ...planPart } = body;
       gen++;
-      set({ plan: { status: 200, body: planPart } });
+      set({ plan: { status: 200, body: planPart }, lastPlan: planPart });
     },
     beginSave() {
       if (saves++ === 0) saved = new Promise((resolve) => (release = resolve));
@@ -280,6 +301,25 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
       gen++;
       stale = true;
       set({ asked: copy.asked + 1 });
+    },
+    fill(ids) {
+      const own = new Set(copy.key?.split(',') ?? []);
+      const others = ids.filter((id) => !own.has(id));
+      const rows = { ...copy.rows };
+      let changed = false;
+      for (const id of others) {
+        const row = rows[id];
+        if (syncing.has(id) || row?.pending || row?.refreshing) continue;
+        if (!row || row.failed) {
+          rows[id] = { id, pending: true };
+          changed = true;
+        } else if (now() - (cameAt.get(id) ?? 0) >= FRESH_MS) {
+          rows[id] = { ...row, refreshing: true };
+          changed = true;
+        }
+      }
+      if (changed) set({ rows });
+      sync(others);
     },
   };
 }

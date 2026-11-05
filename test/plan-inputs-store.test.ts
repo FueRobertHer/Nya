@@ -177,6 +177,29 @@ describe('joining a request', () => {
 });
 
 describe('a save', () => {
+  test('the last plan answered stays through a failed request, and a save’s answer is one', async () => {
+    const answers: Answer[] = [[200, { ...PLAN, plans: IDS.map((id) => row(id)) }], [500, { error: 'down' }], 'throw'];
+    const store = createPlanInputsStore({ fetch: (u) => server(() => answers.shift()!).fetch(u), now: () => clock });
+    expect(store.get().lastPlan).toBeNull();
+    await store.load(IDS);
+    expect(store.get().lastPlan).toEqual(PLAN);
+    await store.load(IDS, { force: true });
+    expect(store.get().plan?.status).toBe(500); // shown as failed
+    expect(store.get().lastPlan).toEqual(PLAN);
+    await store.load(IDS, { force: true });
+    expect(store.get().plan?.status).toBe(0);
+    expect(store.get().lastPlan).toEqual(PLAN);
+    store.adopt({ plan: { age: 41 }, currency: 'USD' });
+    expect(store.get().lastPlan).toEqual({ plan: { age: 41 }, currency: 'USD' });
+  });
+
+  test('nothing answered yet, then a failure: nothing is known', async () => {
+    const store = createPlanInputsStore({ fetch: (u) => server(() => [500, { error: 'down' }]).fetch(u), now: () => clock });
+    await store.load(IDS);
+    expect(store.get().plan?.status).toBe(500);
+    expect(store.get().lastPlan).toBeNull();
+  });
+
   test('its answer replaces everything but the rows, and leaves freshness alone', async () => {
     let asked = 0;
     const answers: Answer[] = [[200, { plan: { age: 40 }, currency: null, updated_at: '2026-11-01T00:00:00.000Z', plans: IDS.map((id) => row(id)) }]];
@@ -382,6 +405,7 @@ describe('contributionsFrom: each plan’s row as its own request gave it', () =
   const copy = (rows: Record<string, unknown>[], key = plans.map(planId).join(',')): PlanInputsCopy => ({
     key,
     plan: { status: 200, body: PLAN },
+    lastPlan: PLAN,
     rows: Object.fromEntries(rows.map((r) => [r.id as string, r as never])),
     asked: 0,
   });
@@ -434,6 +458,96 @@ describe('contributionsFrom: each plan’s row as its own request gave it', () =
     expect(contributionsFrom(copy([row('i2:k3')]), plans)).toBeNull();
     expect(contributionsFrom(copy([row('i1:k1'), row('i2:k3')], 'i1:k1'), plans)).toBeNull();
     expect(contributionsFrom(copy([], ''), [])).toEqual([]);
-    expect(contributionsFrom({ key: null, plan: null, rows: {}, asked: 0 }, [])).toBeNull();
+    expect(contributionsFrom({ key: null, plan: null, lastPlan: null, rows: {}, asked: 0 }, [])).toBeNull();
+  });
+});
+
+// A sheet's other accounts (components/PlanTab.tsx): their rows sit on the copy
+// without being part of its key, so Home's cost and the copy's freshness don't
+// change.
+describe('rows beyond the copy’s plans', () => {
+  const OTHER = 'i1:brk';
+  const FILL_URL = '/api/plan-inputs?sync=1&plan=i1%3Abrk';
+  /** A store holding a copy of IDS, with every request after it held. */
+  async function loaded() {
+    let auto = true;
+    const held = server();
+    const s = server(() => ok());
+    const store = createPlanInputsStore({ fetch: (u) => (auto ? s.fetch(u) : held.fetch(u)), now: () => clock });
+    await store.load(IDS);
+    auto = false;
+    return { store, held };
+  }
+
+  test('one missing goes pending and is asked for once; the copy keeps its key and stays fresh', async () => {
+    const { store, held } = await loaded();
+    const key = store.get().key;
+    store.fill([OTHER]);
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, pending: true });
+    store.fill([OTHER]);
+    expect(held.urls()).toEqual([FILL_URL]);
+    held.sent[0].answer([200, { plans: [row(OTHER, 7)] }]);
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual(row(OTHER, 7));
+    expect(store.get().key).toBe(key);
+    await store.load(IDS);
+    expect(held.urls()).toEqual([FILL_URL]); // taken as it is
+  });
+
+  test('a row come within five minutes is left alone; one older keeps showing while it refreshes', async () => {
+    const { store, held } = await loaded();
+    store.fill([OTHER]);
+    held.sent[0].answer([200, { plans: [row(OTHER, 7)] }]);
+    await settle();
+    clock += FRESH_MS - 1;
+    store.fill([OTHER]);
+    expect(held.urls()).toEqual([FILL_URL]);
+    clock += 1;
+    store.fill([OTHER]);
+    expect(store.get().rows[OTHER]).toEqual({ ...row(OTHER, 7), refreshing: true });
+    expect(held.urls()).toEqual([FILL_URL, FILL_URL]);
+    held.sent[1].answer([200, { plans: [row(OTHER, 9)] }]);
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual(row(OTHER, 9));
+  });
+
+  test('one that failed is asked for again when a sheet opens, and not before', async () => {
+    const { store, held } = await loaded();
+    store.fill([OTHER]);
+    held.sent[0].answer('throw');
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, failed: true });
+    expect(held.urls()).toEqual([FILL_URL]);
+    store.fill([OTHER]);
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, pending: true });
+    expect(held.urls()).toEqual([FILL_URL, FILL_URL]);
+  });
+
+  test('a later load of the copy’s own plans keeps them, and its age isn’t theirs', async () => {
+    const { store, held } = await loaded();
+    store.fill([OTHER]);
+    held.sent[0].answer([200, { plans: [row(OTHER, 7)] }]);
+    await settle();
+    const later = store.load(IDS, { force: true });
+    held.sent[1].answer(ok());
+    await later;
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual(row(OTHER, 7));
+  });
+
+  test('a plan of the copy’s own is left to its loads, however old: a failed sync can’t take the savings', async () => {
+    const { store, held } = await loaded();
+    const rows = store.get().rows;
+    clock += FRESH_MS;
+    store.fill(IDS);
+    expect(held.urls()).toEqual([]);
+    expect(store.get().rows).toBe(rows);
+    // With another account, only that one is asked for.
+    store.fill([...IDS, OTHER]);
+    expect(held.urls()).toEqual([FILL_URL]);
+    held.sent[0].answer('throw');
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, failed: true });
+    for (const id of IDS) expect(store.get().rows[id]).toBe(rows[id]);
   });
 });

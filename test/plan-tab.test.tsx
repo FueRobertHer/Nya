@@ -52,8 +52,8 @@ const measured: Measured = { spending: 40_000, savings: 30_000, assets: 250_000 
 const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   total: 250_000,
   accounts: [
-    { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
-    { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
+    { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, value: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
+    { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, value: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
   ],
   unknown: 0,
   caveats: [],
@@ -166,6 +166,7 @@ describe('the FI card', () => {
     money,
     savingsRate: null,
     shareRates: null,
+    taxOnHold: false,
   });
   /** The FI card with the figures it rests on under it, as Your path draws them. */
   const cardHtml = (p: FirePlan, opts: Opts = {}) => renderToStaticMarkup(<YourPath a={args(p, opts)} currencyNote={opts.currencyNote ?? null} />);

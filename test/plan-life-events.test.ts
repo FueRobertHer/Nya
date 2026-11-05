@@ -7,13 +7,13 @@ import { makeMarket } from '@/lib/fire/market';
 import { historicalCycles, simulate, successGrid, MAX_YEARS } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
 import { projectBalance, yearsToTarget } from '@/lib/fire/fi';
-import { compileEvents, figuresOf } from './plan-gen';
+import { compileEvents, figuresOf, type GenPlan } from './plan-gen';
 
 /** The release before's engine plan, which placed the plan's income and
  *  one-offs itself (now planFigures adds them as items), without the lists
  *  it couldn't place (now the items' notes). */
 function enginePlan(p: FirePlan, view: FiView) {
-  const e = old.enginePlan(p, view);
+  const e = old.enginePlan(p as GenPlan, view);
   if ('missing' in e) return e;
   const { left: _left, beyond: _beyond, ...rest } = e;
   return rest;

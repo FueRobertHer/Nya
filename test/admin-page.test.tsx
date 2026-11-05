@@ -154,16 +154,28 @@ describe('the page', () => {
   test('its environment under the title, its cards in order, Needs attention only when something does, and what it leaves out', async () => {
     const quiet = await html();
     expect(text(quiet)).toStartWith('Nya Admin Preview. Only you see this page.');
-    expect(titles(quiet)).toEqual(['Feature switches', 'Jobs and storage', 'Demo accounts', 'Environment', 'Operations', 'Changes']);
+    expect(titles(quiet)).toEqual(['Feature switches', 'Jobs and storage', 'Demo accounts', 'Tax law', 'Environment', 'Operations', 'Changes']);
     expect(text(quiet)).toEndWith('Not on this page: any account’s financial data, or running an operation.');
-    expect(text(quiet)).not.toContain('Tax law');
     expect(quiet).toContain('href="/?settings=admin"');
     expect(quiet).toContain('href="/admin/jobs"');
     expect(quiet).toContain('href="/admin/storage"');
     expect(text(quiet)).toContain('Storage across accounts 2 accounts in use');
 
     process.env.VERCEL_ENV = 'production';
-    expect(titles(await html())).toEqual(['Feature switches', 'Jobs and storage', 'Environment', 'Operations', 'Changes']);
+    expect(titles(await html())).toEqual(['Feature switches', 'Jobs and storage', 'Tax law', 'Environment', 'Operations', 'Changes']);
+  });
+
+  test('the tax law card reads the tables by the day it is drawn, and a law year due joins Needs attention, linked to the card', async () => {
+    const data = await readAdminPage(TEST_CTX, NOW);
+    expect(data.law.years[0].sub).toStartWith('In use');
+    expect(card(renderToStaticMarkup(<AdminPage data={data} />), 'admin-law-title')).toContain('The Upkeep issue on GitHub lists what is due each week.');
+    const due = { ...data, law: { ...data.law, attention: { title: '2027 tax law is due by January 1', sub: 'Still to come: brackets.' } } };
+    const page = renderToStaticMarkup(<AdminPage data={due} />);
+    expect(titles(page)[0]).toBe('Needs attention');
+    const needs = card(page, 'admin-needs-title');
+    expect(text(needs)).toContain('2027 tax law is due by January 1');
+    expect(needs).toContain('href="/admin#tax-law"');
+    expect(page).toContain('id="tax-law"');
   });
 
   test('a nightly job that failed, and ops routes left on, need attention, each linked where it is done, its day as the server writes it', async () => {

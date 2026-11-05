@@ -31,6 +31,7 @@ const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { planOf } = await import('@/lib/fire/plan-v2');
 const { planFigures } = await import('@/lib/fire/plan-figures');
 const { wholeMoney } = await import('@/components/plan-text');
+const { childMovedText } = await import('@/components/plan-moved');
 const { timelineProps } = await import('./plan-gen');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type FirePlan = import('@/lib/fire/plan').FirePlan;
@@ -182,6 +183,73 @@ describe('Your path while D15 is new', () => {
     await tab.rerender({ movedSeen: false, planInWalk: false });
     expect(classed(tab.progress(), 'notice').map((n) => n.textContent)).toEqual([]);
     await tab.unmount();
+  });
+});
+
+describe('Your path while D7 is new', () => {
+  // 300,000 typed nowhere: the plan measures its assets, and a child's 200,000
+  // is out with the switch on.
+  const MEASURED: FirePlan = { ...PLAN, assets: null, expenses: [] };
+  const BROKER = { account_id: 'b', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 300_000, currency: 'USD' };
+  const COLLEGE = { account_id: 'c', name: 'College', type: 'investment', subtype: '529', balance: 200_000, currency: 'USD' };
+  const institutions = [{ name: 'Broker', item_id: 'i', accounts: [BROKER, COLLEGE] }] as unknown as PlanTabProps['institutions'];
+  const seenChild: string[] = [];
+  const child = { institutions, planInWalk: false, newUntil: null, childOut: true, childNewUntil: FAR, onChildMovedSeen: () => seenChild.push('seen') };
+  const expected = () => {
+    const figures = (assets: number) => planFigures(planOf(MEASURED), { ...NONE, assets }, { count: { planInWalk: false } }) as PlanFigures;
+    return { off: Math.round(figures(500_000).view.fiAge as number), on: Math.round(figures(300_000).view.fiAge as number) };
+  };
+
+  test('says what leaving them out moved, ages only, and its Got it is its own', async () => {
+    const { off, on } = expected();
+    expect(on).toBeGreaterThan(off);
+    const v = await render(MEASURED, child);
+    expect(v.moved()).toContain(`Your FI date moved from ${off} to ${on}: accounts for a child\u2019s education are now left out.`);
+    expect(v.moved()).not.toContain('$');
+    seenChild.length = 0;
+    await v.gotIt(v.hero());
+    expect(seenChild).toEqual(['seen']);
+    expect(v.seen).toEqual([]);
+    await v.rerender({ childMovedSeen: true });
+    expect(v.moved()).toBeNull();
+    await v.unmount();
+  });
+
+  test('not after it is new, nor with the switch off, nor where nothing moved or nothing is out', async () => {
+    for (const props of [{ childNewUntil: PAST }, { childOut: false }, { childNewUntil: null }]) {
+      const v = await render(MEASURED, { ...child, ...props });
+      expect(v.moved()).toBeNull();
+      await v.unmount();
+    }
+    // Your own assets typed: nothing moved.
+    const typed = await render({ ...MEASURED, assets: 300_000 }, child);
+    expect(typed.moved()).toBeNull();
+    await typed.unmount();
+    // No child's account held.
+    const none = await render(MEASURED, { ...child, institutions: [{ name: 'Broker', item_id: 'i', accounts: [BROKER] }] as unknown as PlanTabProps['institutions'] });
+    expect(none.moved()).toBeNull();
+    await none.unmount();
+  });
+
+  test('the other two forms, by the figures', () => {
+    const at = (fiAge: number | null) => ({ view: { fiAge } }) as unknown as PlanFigures;
+    expect(childMovedText(at(53.2), at(53.4))).toBeNull();
+    expect(childMovedText(at(53), at(54))).toBe('Your FI date moved from 53 to 54: accounts for a child\u2019s education are now left out.');
+    expect(childMovedText(at(53), at(null))).toBe('Your FI date was around 53 before accounts for a child\u2019s education were left out.');
+    expect(childMovedText(at(null), at(60))).toBe('Your FI date is around 60 now that accounts for a child\u2019s education are left out.');
+    expect(childMovedText(at(null), at(null))).toBeNull();
+  });
+
+  test('Home’s FI line counts the same accounts as the Plan', async () => {
+    serve(MEASURED);
+    const container = dom.document.createElement('div');
+    dom.document.body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    const home = { txns: [], txnNotes: [], institutions, currency: 'USD', onOpenPlan: () => {} } as unknown as React.ComponentProps<typeof FiProgressCard>;
+    await act(async () => root.render(<FiProgressCard {...home} childOut />));
+    await settle();
+    expect(container.textContent).toContain(`${expected().on}`);
+    await act(async () => root.unmount());
   });
 });
 

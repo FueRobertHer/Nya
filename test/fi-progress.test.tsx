@@ -56,7 +56,7 @@ const flows: TrailingFlows = {
 };
 const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   total: 250_000,
-  accounts: [{ account_id: 'a', name: 'Brokerage', type: 'investment', balance: 250_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' }],
+  accounts: [{ account_id: 'a', name: 'Brokerage', type: 'investment', balance: 250_000, value: 250_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' }],
   unknown: 0,
   caveats: [],
   currency: 'USD',
@@ -121,6 +121,7 @@ const planTabHtml = (p: FirePlan, i = inputs()) => {
     money: (n) => wholeMoney(n, f.currency),
     savingsRate: f.savingsRate,
     shareRates: i.rates ?? null,
+    taxOnHold: false,
   };
   return renderToStaticMarkup(<YourPath a={a} currencyNote={f.currencyNote} />);
 };

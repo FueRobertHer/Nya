@@ -516,6 +516,7 @@ describe('the copy’s card and the Plans sheet', () => {
       money,
       savingsRate: null,
       shareRates: null,
+      taxOnHold: false,
     };
     const fi = renderToStaticMarkup(<FiCard copyName="Retire at 45" {...a} currencyNote={null} />);
     expect(text(fi)).toContain('Copy: Retire at 45');

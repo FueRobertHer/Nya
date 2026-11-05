@@ -323,8 +323,9 @@ export function TimelineCard({
     const at = figures?.resolution.ages[i]?.start ?? null;
     const warn = figures ? itemWarnings(x, figures, i) : [];
     const plain: string[] = [];
-    if (at !== null && onSteadyPath(x, plan)) {
-      const every = everyRunText(at, plan);
+    const perRun = !!figures?.resolution.perRun?.edges[i];
+    if ((at !== null || perRun) && onSteadyPath(x, plan)) {
+      const every = everyRunText(at, plan, perRun);
       if (every) plain.push(every);
     }
     const why = figures?.resolution.why[i] ?? null;

@@ -151,6 +151,8 @@ export type KnownAccount = {
   /** "<name> at <institution>", for naming an account the dashboard no
    *  longer shows; null when the directory has no name for it. */
   label: string | null;
+  /** Its institution's kind for it, as last reported. */
+  subtype: string | null;
 };
 
 /**
@@ -173,7 +175,7 @@ export async function readKnownAccounts(ctx: Ctx): Promise<{ known: Map<string, 
     if (first === null) unreadable.add(id);
     const name = text(e.name) ?? text(e.official_name);
     const at = text(e.institution_name);
-    known.set(id, { first_seen: first, label: name ? (at ? `${name} at ${at}` : name) : null });
+    known.set(id, { first_seen: first, label: name ? (at ? `${name} at ${at}` : name) : null, subtype: text(e.subtype) });
   }
   return { known, unreadable };
 }

@@ -38,6 +38,7 @@ const START_NAMES: Record<FirePlan['start'], string> = {
   'fi-number': 'your FI number, at the stop age',
   assets: 'your invested assets, today',
   custom: 'a balance you typed, at the stop age',
+  'at-stop': 'what you’d have at the stop age',
 };
 
 /** A setting's value in words. */
@@ -134,7 +135,7 @@ export const EVENT_PART_TEXT: Record<EventPart, string> = {
  *  in compare mode; on Your path, from the simulation's card; or null, said
  *  here, from today's `age`, when nothing else says it. */
 export function startsWithText(sw: StartsWith, money: Money, shortWhere: string | null = 'below', age: number | null = null): string {
-  const from = sw.from === 'fi-number' ? 'your FI number' : sw.from === 'assets' ? 'your invested assets today' : 'the balance you typed';
+  const from = sw.from === 'fi-number' ? 'your FI number' : sw.from === 'assets' ? 'your invested assets today' : sw.from === 'at-stop' ? 'what you’d have' : 'the balance you typed';
   const at = sw.from === 'assets' ? '' : sw.atAge !== null ? ` at ${sw.atAge}` : ' at the stop age';
   const head = `${money(sw.balance)}, ${from}${at}`;
   if (sw.from === 'assets') return `${head}.`;

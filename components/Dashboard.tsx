@@ -64,6 +64,7 @@ import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
 import type { ClientFlags } from '@/lib/flag-read';
 import type { OpsOpen } from '@/lib/flag-view';
+import type { LawAttention } from '@/lib/law-card';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
@@ -284,7 +285,7 @@ const TAB_LABELS: Record<Tab, string> = {
 };
 
 /** Every feature switch off: what a page sent without them (a test) shows. */
-const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false, 'plan-items-in-fi': false };
+const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false, 'plan-items-in-fi': false, 'plan-child-accounts': false };
 
 export default function Dashboard({
   clerk = false,
@@ -294,7 +295,9 @@ export default function Dashboard({
   initialTab = 'home',
   initialSettings = null,
   adminOps = null,
+  adminLaw = null,
   newUntil = null,
+  childNewUntil = null,
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -314,10 +317,15 @@ export default function Dashboard({
    *  routes are open, and by what (lib/flag-view.ts OpsOpen), for Home's
    *  Admin card. */
   adminOps?: OpsOpen | null;
+  /** Set by the server (app/page.tsx), for the admin alone, so the law tables
+   *  stay out of this bundle: what Home's Admin card says of them. */
+  adminLaw?: LawAttention | null;
   /** Set by the server (app/page.tsx): the last day D15's change is new
    *  (lib/flag-read.ts newUntil), until which Your path and Progress say
    *  what it moved; null says nothing. */
   newUntil?: string | null;
+  /** The same for D7's (a child's accounts leaving invested assets). */
+  childNewUntil?: string | null;
 }) {
   // Whether to offer connecting a brokerage or retirement account
   // (lib/item-products.ts), and Lunch Flow (lib/connectors/switch.ts): a
@@ -350,6 +358,8 @@ export default function Dashboard({
   // Got it on D15's line (components/plan-moved.ts), on Your path or
   // Progress: hidden for the session, whichever tab is open.
   const [planMovedSeen, setPlanMovedSeen] = useState(false);
+  // And on D7's line, its own.
+  const [childMovedSeen, setChildMovedSeen] = useState(false);
   // The month Activity and Budgets show, shared between them and kept the
   // same way (components/view-month-state.ts); Home's links reset it.
   const viewMonth = useViewMonth();
@@ -2488,7 +2498,7 @@ export default function Dashboard({
                       fixed (rollout phase 4b); the admin's instructions for
                       the nightly jobs under it. */}
                   {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
-                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} ops={adminOps} />}
+                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} ops={adminOps} law={adminLaw} />}
 
                   <Insights
                     txns={txns}
@@ -2516,6 +2526,7 @@ export default function Dashboard({
                         balanceFx={base?.fx ?? null}
                         planInputs={planInputs}
                         planInWalk={flags['plan-items-in-fi']}
+                        childOut={flags['plan-child-accounts']}
                         onOpenPlan={() => {
                           window.scrollTo(0, 0);
                           setPlanSegment('path');
@@ -2879,6 +2890,10 @@ export default function Dashboard({
                   newUntil={newUntil}
                   movedSeen={planMovedSeen}
                   onMovedSeen={() => setPlanMovedSeen(true)}
+                  childOut={flags['plan-child-accounts']}
+                  childNewUntil={childNewUntil}
+                  childMovedSeen={childMovedSeen}
+                  onChildMovedSeen={() => setChildMovedSeen(true)}
                 />
               )}
             </>

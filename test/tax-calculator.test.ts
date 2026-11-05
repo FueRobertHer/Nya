@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import type { Filing } from '@/lib/fire/tax/law/types';
+import { COMMIT, LAST_KNOWN_YEAR, SHA256 } from './fixtures/taxcalc/pin';
 
 // A second source for the figures where typos are likeliest: PSL
 // Tax-Calculator's current-law parameters, copied byte for byte as a fixture
-// from the pinned commit below. Tax-Calculator is in the public domain in the
+// from the pinned commit (fixtures/taxcalc/pin.ts). Tax-Calculator is in the public domain in the
 // United States and dedicated worldwide under CC0 1.0 (its LICENSE). It can
 // lag the IRS by weeks, so it is compared only for the years it marks as
 // known (LAST_KNOWN_YEAR in taxcalc/policy.py at the same commit); a new law
@@ -15,10 +16,6 @@ import type { Filing } from '@/lib/fire/tax/law/types';
 // Tax-Calculator catches up (docs/operations.md, step 3). A parameter holds
 // its latest value at or before a year, as Tax-Calculator carries values
 // forward.
-
-const COMMIT = '3ae49a2216b0bbb1ec1be388623d272f9c7fc7ae'; // tag 6.9.0, October 30, 2026
-const SHA256 = '61d22cf6bd6d48ce9d41240cb7cfc032477b68c9f44fd14fd5d83b51364d222f';
-const LAST_KNOWN_YEAR = 2026;
 
 type Row = { year: number; MARS?: string; value: number | boolean };
 type Parameter = { indexed?: boolean; value: Row[] };

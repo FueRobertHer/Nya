@@ -79,7 +79,7 @@ const { forgetEpochs } = await import('@/lib/sessions');
 
 const CACHE = ctxKey('cache:inv-activity:v4');
 const PLANS = ['i1:k1', 'i1:k2', 'i2:k3'];
-const FIELDS = ['contributions_12m', 'contributions_12m_from', 'contributions_12m_partial', 'contributions_12m_rows', 'contributions_12m_activity_from', 'note'];
+const FIELDS = ['contributions_12m', 'contributions_12m_from', 'contributions_12m_partial', 'contributions_12m_rows', 'contributions_12m_activity_from', 'dividends_12m', 'note'];
 
 /** The commands sent, and the item each sync took its lock on (a sync
  *  refreshes its lock as it goes; only taking it is counted). */
