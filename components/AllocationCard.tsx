@@ -89,6 +89,7 @@ import {
 import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
 import type { PlanCore } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
+import type { LeaveOut } from '@/lib/fire/child-accounts';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
 import { Notice } from './TotalCaveats';
@@ -134,6 +135,7 @@ export function useAllocation({
   currency,
   includeCash,
   fx = null,
+  leaveOut = null,
 }: {
   institutions: AllocInstitution[];
   holdings: AllocHolding[];
@@ -142,6 +144,8 @@ export function useAllocation({
   /** With a home currency (/api/net-worth base.fx): what is in another
    *  currency converts into `currency` at the newest rates (inputsIn). */
   fx?: PageFx | null;
+  /** The accounts the Plan doesn't count (D7), out of `mix` and nothing else. */
+  leaveOut?: LeaveOut | null;
 }): AllocationState {
   const [settings, setSettings] = useState<ListState<AllocationSettings | null>>(initialListState<AllocationSettings | null>(null));
   const store = useMemo(
@@ -172,8 +176,18 @@ export function useAllocation({
   );
   const mix = useMemo(() => {
     const bank = includeCash ? bankCash(inputs.institutions, currency) : { amount: 0, otherCurrencies: [] };
-    return planMix(alloc, bank.amount, bank.otherCurrencies);
-  }, [alloc, includeCash, inputs, currency]);
+    // The Plan's mix is of what it counts, so without a child's accounts when
+    // they are out (D7): worked out on its own, since the card shows them all.
+    const out = new Set(leaveOut ? inputs.institutions.flatMap((i) => i.accounts.filter((a) => leaveOut(a)).map((a) => a.account_id)) : []);
+    if (out.size === 0) return planMix(alloc, bank.amount, bank.otherCurrencies);
+    const counted = allocate({
+      institutions: inputs.institutions.map((i) => ({ ...i, accounts: i.accounts.filter((a) => !out.has(a.account_id)) })),
+      holdings: inputs.holdings.filter((h) => !h.account_id || !out.has(h.account_id)),
+      settings: value,
+      currency,
+    });
+    return planMix(counted, bank.amount, bank.otherCurrencies);
+  }, [alloc, includeCash, inputs, currency, leaveOut, value]);
   return { settings, load: store.load, save: (next) => store.save(next), withSettings, alloc, mix };
 }
 
@@ -210,9 +224,12 @@ export type AllocationCardProps = {
   /** Every institution, for naming accounts missing from a recorded day. */
   institutions: AllocInstitution[];
   balancesAsOf: string | null;
+  /** A cost basis the person typed, by account (the tax facts), which wins over
+   *  what the positions say. */
+  typedBasis?: ReadonlyMap<string, number>;
 };
 
-export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, copyName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
+export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, copyName = null, planKey = 'plan', institutions, balancesAsOf, typedBasis = NO_BASIS }: AllocationCardProps) {
   const { alloc, mix, settings, withSettings } = allocation;
   const [view, setView] = useState<'class' | 'bucket'>('class');
   const [sheet, setSheet] = useState<SheetState | null>(null);
@@ -313,7 +330,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
             {view === 'class' ? (
               <ClassView alloc={alloc} money={money} editable={editable} settings={current} open={open} />
             ) : (
-              <BucketView alloc={alloc} money={money} editable={editable} open={open} />
+              <BucketView alloc={alloc} money={money} editable={editable} open={open} typedBasis={typedBasis} />
             )}
           </div>
           <AllocationNotes alloc={alloc} money={money} />
@@ -619,7 +636,16 @@ export function ClassView({
   );
 }
 
-export function BucketView({ alloc, money, editable, open }: { alloc: Allocation; money: (n: number) => string; editable: boolean; open: (s: SheetState) => void }) {
+const NO_BASIS: ReadonlyMap<string, number> = new Map();
+
+/** A taxable account's gain or loss, in words; empty when its basis isn't known. */
+export function gainNote(amount: number | null, basis: number | null, money: (n: number) => string): string {
+  if (amount === null || basis === null) return '';
+  const gain = amount - basis;
+  return gain < 0 ? `, loss ${money(-gain)}` : `, gain ${money(gain)}`;
+}
+
+export function BucketView({ alloc, money, editable, open, typedBasis = NO_BASIS }: { alloc: Allocation; money: (n: number) => string; editable: boolean; open: (s: SheetState) => void; typedBasis?: ReadonlyMap<string, number> }) {
   return (
     <>
       <ShareTable totals={alloc.buckets} order={BUCKET_SLOTS} colors={BUCKET_COLORS} label={(b) => BUCKET_NAMES[b]} money={money} />
@@ -644,7 +670,7 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
               key={a.account_id}
               label={`${a.name} · ${a.institution}`}
               value={BUCKET_NAMES[b.bucket]}
-              note={`${a.amount !== null ? `${money(a.amount)}${a.staleAsOf ? `, its balance on ${fmtDay(a.staleAsOf, a.staleAsOfAt)} (${a.institution} couldn't be reached since)` : ''}, ` : a.otherCurrency ? `in ${a.otherCurrency}, left out, ` : ''}${note}.`}
+              note={`${a.amount !== null ? `${money(a.amount)}${a.staleAsOf ? `, its balance on ${fmtDay(a.staleAsOf, a.staleAsOfAt)} (${a.institution} couldn't be reached since)` : ''}, ` : a.otherCurrency ? `in ${a.otherCurrency}, left out, ` : ''}${note}${b.bucket === 'taxable' ? gainNote(a.amount, typedBasis.get(a.account_id) ?? a.basis, money) : ''}.`}
               action={
                 <ActionButton onClick={() => open({ kind: 'bucket', account_id: a.account_id, label: a.name, bucket: b })} disabled={!editable} label={`Change the bucket of ${a.name}`}>
                   Change

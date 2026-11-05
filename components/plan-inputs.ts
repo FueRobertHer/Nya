@@ -14,6 +14,8 @@
 // disagree.
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import type { LeaveOut } from '@/lib/fire/child-accounts';
+import { DEFAULT_TAX_FACTS, isTaxFacts, type TaxFactOp, type TaxFacts } from '@/lib/fire/tax-facts';
 import type { Txn } from './MonthBreakdown';
 import { localDate } from '@/lib/local-date';
 import {
@@ -39,7 +41,9 @@ import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
 import { useCurrencySettings } from './currency-state';
 import { historyCount } from '@/lib/spending';
-import type { PlanInputsCopy, PlanInputsStore } from '@/lib/plan-inputs-store';
+import type { PlanInputsCopy, PlanInputsStore, PlanRow } from '@/lib/plan-inputs-store';
+import type { AccountYear } from '@/lib/fire/buckets-today';
+import { isInvestmentType } from '@/lib/balance';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -51,6 +55,46 @@ export function workplacePlansOf(institutions: AssetInstitution[]) {
           .map((a) => ({ item_id: i.item_id as string, account_id: a.account_id, name: a.name, institution: i.name }))
       : []
   );
+}
+
+/** The investment accounts whose last year the buckets' sheets ask for when they
+ *  open (lib/plan-inputs-store.ts fill): linked, not hidden, with a subtype, since
+ *  a connector's or SimpleFIN's account has none and no activity to read. At most
+ *  what one request may ask for. */
+export function planAccountsOf(institutions: AssetInstitution[]) {
+  return institutions
+    .flatMap((i) => (i.item_id ? i.accounts.filter((a) => !a.hidden && isInvestmentType(a.type) && !!a.subtype).map((a) => ({ item_id: i.item_id as string, account_id: a.account_id })) : []))
+    .slice(0, MAX_FILLED);
+}
+const MAX_FILLED = 100;
+
+/** An account's last year from its row: what isn't known yet (the row is still
+ *  coming, failed, or was cached before the field) is null. */
+export function yearFrom(row: PlanRow | undefined): AccountYear {
+  const known = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  if (!row || row.pending || row.failed) return { income: null, contributions: null };
+  return { income: known(row.dividends_12m), contributions: known(row.contributions_12m) };
+}
+
+/** Saves one tax fact. Through the shared copy, so a load waits for it and Home
+ *  and the Plan move together: true once the server has it, or why it wasn't. */
+export async function saveTaxFact(store: PlanInputsStore, op: TaxFactOp): Promise<true | string> {
+  const notSaved = 'It was not saved. Try again in a moment.';
+  const end = store.beginSave();
+  try {
+    const res = await fetch('/api/plan-facts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(op) });
+    const body: unknown = await res.json().catch(() => null);
+    const answer = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+    if (res.ok && answer) {
+      store.adopt(answer);
+      return true;
+    }
+    return typeof answer?.error === 'string' ? answer.error : notSaved;
+  } catch {
+    return notSaved;
+  } finally {
+    end();
+  }
 }
 
 /** A workplace plan's id in the Plan's inputs (lib/plan-inputs-store.ts):
@@ -90,12 +134,20 @@ export function contributionsFrom(copy: PlanInputsCopy, plans: ReturnType<typeof
   return out;
 }
 
+/** The tax facts in the plan's answer: the flat model and nothing given before
+ *  any were written, or before an answer has come (useSharedPlanInputs says
+ *  which: `factsKnown`). */
+export function taxFactsFrom(body: { tax_facts?: unknown } | null | undefined): TaxFacts {
+  const facts = body?.tax_facts;
+  return isTaxFacts(facts) ? facts : DEFAULT_TAX_FACTS;
+}
+
 /** The shared copy of the Plan's inputs, and the workplace plans'
- *  contributions from it. Loads when the screen is shown, when its plans
- *  change and when the copy is invalidated, and at no other time: a copy
- *  that stays stale costs a request a screen, never a loop. A copy for the
- *  same plans is shown while a newer one loads. */
-export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null } {
+ *  contributions and the tax facts from it. Loads when the screen is shown,
+ *  when its plans change and when the copy is invalidated, and at no other
+ *  time: a copy that stays stale costs a request a screen, never a loop. A copy
+ *  for the same plans is shown while a newer one loads. */
+export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; taxFacts: TaxFacts; factsKnown: boolean } {
   const copy = useSyncExternalStore(store.subscribe, store.get, store.get);
   const plans = useMemo(() => workplacePlansOf(institutions), [institutions]);
   const key = plans.map(planId).join(',');
@@ -105,7 +157,12 @@ export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetI
     void store.load(plansRef.current.map(planId));
   }, [store, key, copy.asked]);
   const contributions = useMemo(() => contributionsFrom(copy, plans), [copy, plans]);
-  return { copy, contributions };
+  // The last plan answered, so a failed reload moves nothing. `tax_facts: null`
+  // there is a known state, none written; before any answer, or with facts this
+  // page can't read (a newer release's), there is no knowing.
+  const body = copy.lastPlan;
+  const taxFacts = useMemo(() => taxFactsFrom(body), [body]);
+  return { copy, contributions, taxFacts, factsKnown: !!body && (body.tax_facts === null || isTaxFacts(body.tax_facts)) };
 }
 
 export type PlanInputs = FiInputs & {
@@ -143,6 +200,7 @@ export function usePlanInputs({
   balanceFx = null,
   currency = null,
   contributions,
+  leaveOut = null,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
@@ -164,6 +222,9 @@ export function usePlanInputs({
   /** What went into workplace plans (useSharedPlanInputs), null while it
    *  loads. */
   contributions: PlanContributions[] | null;
+  /** Accounts for a child's education out of invested assets (D7,
+   *  lib/fire/child-accounts.ts); null counts them, as before. */
+  leaveOut?: LeaveOut | null;
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
@@ -174,7 +235,7 @@ export function usePlanInputs({
   // The accounts first: their currency is the Plan's, which the year's
   // flows are converted into with a home currency (lib/fire/inputs.ts),
   // unless the Plan has its own, which both are in.
-  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx, Date.now(), currency), [institutions, includeCash, balanceFx, currency]);
+  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx, Date.now(), currency, leaveOut), [institutions, includeCash, balanceFx, currency, leaveOut]);
   const into = assets.currency;
   const flows = useMemo(
     () => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}) }) : null),

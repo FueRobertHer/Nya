@@ -4818,6 +4818,32 @@ button.plan-edit:disabled {
   font-size: var(--fs-2);
 }
 
+/* A tax bucket's head on the Invested assets sheet: its swatch, name and total. */
+.bucket-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.bucket-head i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.bucket-head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-3);
+  font-weight: 600;
+}
+
+.bucket-head .money {
+  font-weight: 600;
+}
+
 .plan-worst,
 .plan-assumptions,
 .plan-accounts {

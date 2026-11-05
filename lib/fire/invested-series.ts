@@ -26,6 +26,7 @@
 //
 // Pure. The route (app/api/invested-history) adds the days oldest first.
 
+import { isChildAccount } from './child-accounts';
 import { balancesIn } from '@/lib/fx/net-worth';
 import type { FxTable, NoRate } from '@/lib/fx/rates';
 import type { AssetInstitution } from './inputs';
@@ -129,22 +130,26 @@ export function isComplete(d: InvestedDay): d is InvestedDay & { total: number }
 
 /** An account as the page sends it (app/api/invested-history), which decides
  *  from the saved plan which of them count. */
-export type ProgressAccount = { account_id: string; type: string; currency: string | null };
+export type ProgressAccount = { account_id: string; type: string; currency: string | null; subtype?: string | null };
 
 /** Every account the dashboard knows, hidden ones aside, for the series:
  *  those it shows, and those an institution is known to have but can't show
  *  (lib/last-known.ts `unshown_accounts`), which are still the person's, so
  *  the days they are missing from are marked, never drawn whole. One with no
- *  type known is left out: nothing says it would count. */
+ *  type known is left out: nothing says it would count. One it shows says its
+ *  subtype if that is a child's education, and null if not, which is all the
+ *  route reads it for (a manual account's is free text, and the route takes only
+ *  a plain word), so the route counts what the browser does. One it can't show
+ *  says nothing, and the route asks its directory. */
 export function progressAccountsOf(institutions: readonly AssetInstitution[]): ProgressAccount[] {
   const out: ProgressAccount[] = [];
   const seen = new Set<string>();
-  const add = (account_id: string, type: string | null | undefined, currency: string | null | undefined) => {
+  const add = (account_id: string, type: string | null | undefined, currency: string | null | undefined, says: Pick<ProgressAccount, 'subtype'>) => {
     if (seen.has(account_id) || !type) return;
     seen.add(account_id);
-    out.push({ account_id, type, currency: currency ?? null });
+    out.push({ account_id, type, currency: currency ?? null, ...says });
   };
-  for (const i of institutions) for (const a of i.accounts) if (!a.hidden) add(a.account_id, a.type, a.currency);
-  for (const i of institutions) for (const a of i.unshown ?? []) add(a.account_id, a.type, a.currency);
+  for (const i of institutions) for (const a of i.accounts) if (!a.hidden) add(a.account_id, a.type, a.currency, { subtype: isChildAccount(a.subtype) ? a.subtype : null });
+  for (const i of institutions) for (const a of i.unshown ?? []) add(a.account_id, a.type, a.currency, {});
   return out;
 }

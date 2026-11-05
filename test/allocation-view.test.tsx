@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AllocationCard, {
+  useAllocation,
   AllocationHistoryChart,
   seriesAccountsOf,
   type HistoryAccount,
@@ -27,6 +28,7 @@ import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import { wholeMoney } from '@/components/plan-text';
 import { initialListState } from '@/lib/whole-list-store';
 import { planOf } from '@/lib/fire/plan-v2';
+import { leftOutOf, type LeaveOut } from '@/lib/fire/child-accounts';
 
 // Days are said as the design system says them (lib/format.ts formatDay):
 // without their year in this one, on a today held still.
@@ -296,6 +298,35 @@ describe('the target, while it isn’t known', () => {
     expect(unreadable).not.toContain('Set a target');
     // Loaded, with none set: the offer to set one.
     expect(text(renderToStaticMarkup(<DriftSection alloc={alloc()} target={null} money={money} editable onSet={noop} />))).toContain('Set the allocation you aim for');
+  });
+});
+
+describe('the plan’s mix, with a child’s accounts out (D7)', () => {
+  const accounts = [inst('Vanguard', [acct('brk', { name: 'Brokerage', balance: 75_000 }), acct('college', { name: 'College', subtype: '529', balance: 25_000 })])];
+  const held = [hold('brk', 'VTI', 75_000), hold('college', 'BND', 25_000, { security_type: 'bond fund' })];
+  const stateWith = (leaveOut: LeaveOut | null) => {
+    let got: AllocationState | null = null;
+    function Probe() {
+      got = useAllocation({ institutions: accounts, holdings: held, currency: 'USD', includeCash: false, leaveOut });
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    return got as unknown as AllocationState;
+  };
+
+  test('off: the mix of everything, as ever', () => {
+    expect(stateWith(null).mix).toEqual(planMix(stateWith(null).alloc));
+    expect(stateWith(null).mix.whole).toBe(100_000);
+  });
+
+  test('on: the mix is of what the plan counts, and Portfolio’s own view still shows them all', () => {
+    const { mix, alloc: all } = stateWith(leftOutOf(true, []));
+    expect(mix.whole).toBe(75_000);
+    expect(all.total).toBe(100_000);
+  });
+
+  test('on, with one counted anyway: back in the mix', () => {
+    expect(stateWith(leftOutOf(true, ['college'])).mix.whole).toBe(100_000);
   });
 });
 

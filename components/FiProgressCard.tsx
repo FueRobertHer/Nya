@@ -46,6 +46,7 @@
 
 import { useMemo } from 'react';
 import type { Txn } from './MonthBreakdown';
+import { leftOutOf } from '@/lib/fire/child-accounts';
 import { usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
@@ -86,6 +87,8 @@ export type FiProgressProps = {
   planInputs?: PlanInputsStore;
   /** D15's switch (the flag 'plan-items-in-fi'), as the Plan tab has it. */
   planInWalk?: boolean;
+  /** D7's switch (the flag 'plan-child-accounts'), as the Plan tab has it. */
+  childOut?: boolean;
 };
 
 /** What /api/plan-inputs answered of the plan: the saved plan, or null for
@@ -103,9 +106,10 @@ function loadedFrom(answered: PlanInputsCopy['plan']): Loaded {
   return (status === 409 && body?.unreadable === true) || (status === 200 && plan !== undefined) ? 'unreadable' : 'failed';
 }
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
   const shared = useSharedPlanInputs(own, institutions);
+  const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
   const answered = shared.copy.plan;
   const loaded = useMemo(() => loadedFrom(answered), [answered]);
   const stored = loaded && typeof loaded === 'object' ? loaded.plan : null;
@@ -125,6 +129,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     balanceFx,
     currency: answer.currency,
     contributions: shared.contributions,
+    leaveOut,
   });
   // The Plan's own figures: its items placed and counted as the Plan's are,
   // the answer the walk's and where the path runs out the path's.

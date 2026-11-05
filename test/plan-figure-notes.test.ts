@@ -48,8 +48,8 @@ const flows: TrailingFlows = {
 const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   total: 250_000,
   accounts: [
-    { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
-    { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
+    { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, value: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
+    { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, value: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
   ],
   unknown: 0,
   caveats: [],
@@ -105,6 +105,7 @@ function at(over: Over = {}): FigureArgs {
     money,
     savingsRate: figures.savingsRate,
     shareRates: null,
+    taxOnHold: false,
     ...rest,
   };
 }
@@ -413,6 +414,7 @@ describe('the notes’ kinds and keys', () => {
     } as WorkplaceSavings;
     const kinds = new Set(
       [
+        at({ taxOnHold: true }),
         at({ flows: gapped }),
         at({ flows: gapped, plan: { savings: 1 } }),
         at({ plan: { savings: 1 } }),
@@ -499,6 +501,8 @@ describe('Drawdown’s notice', () => {
 
   test('invested assets that may be low: when the simulation starts from them, or its card says it starts with more than they would grow to', () => {
     expect(notice({ assets: unreachable, plan: { start: 'assets' } })).toEqual([ASSETS_LOW]);
+    // What you'd have at your stop age walks from them too.
+    expect(notice({ assets: unreachable, plan: { start: 'at-stop' } })).toEqual([ASSETS_LOW]);
     // From the FI number at 42, two years from now: the walk from today's
     // assets comes to less, and the card says so, from them.
     expect(start({ assets: unreachable, plan: { targetAge: 42 } })).toMatchObject({ more: true, short: false });

@@ -61,6 +61,7 @@ const MISSING_TEXT: Record<Missing, string> = {
   spending: 'needs your annual spending',
   assets: 'needs your invested assets',
   balance: 'needs the balance to start with',
+  'stop-balance': 'needs what you’d have at your stop age',
 };
 
 const resultOf = (c: CompareColumn): SimResult | null => {

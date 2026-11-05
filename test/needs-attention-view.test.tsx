@@ -107,8 +107,16 @@ describe('the admin’s card: what to do about the nightly jobs and the ops rout
     expect(renderToStaticMarkup(<AdminAttention backup={null} files={null} ops={null} />)).toBe('');
   });
 
+  test('a law year due says so, linked to its card on the admin page', () => {
+    const html = renderToStaticMarkup(<AdminAttention backup={null} files={null} law={{ title: '2027 tax law is due by January 1', sub: 'Still to come: brackets.' }} />);
+    expect(text(html)).toContain('2027 tax law is due by January 1');
+    expect(text(html)).toContain('Still to come: brackets.');
+    expect(html).toContain('href="/admin#tax-law"');
+    expect(renderToStaticMarkup(<AdminAttention backup={null} files={null} law={null} />)).toBe('');
+  });
+
   test('the admin page passes how to write a day; Home writes it in the reader’s time', () => {
-    const rows = adminAttentionRows({ last_ok: '2026-10-20T03:00:00Z', reason: null }, { last_ok: '2026-10-19T03:00:00Z', reason: 'quota', held: false }, null, (iso) => `[${iso.slice(0, 10)}]`);
+    const rows = adminAttentionRows({ last_ok: '2026-10-20T03:00:00Z', reason: null }, { last_ok: '2026-10-19T03:00:00Z', reason: 'quota', held: false }, null, null, (iso) => `[${iso.slice(0, 10)}]`);
     expect(rows.map((r) => r.sub)).toEqual(['Last saved [2026-10-20] · Check the backup cron in Vercel.', 'Last finished [2026-10-19] · quota · Check the clean-up cron in Vercel.']);
   });
 });

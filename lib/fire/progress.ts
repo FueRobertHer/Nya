@@ -202,7 +202,7 @@ export function notMeasuredWhat(view: Pick<FiView, 'spending' | 'savings' | 'ass
  *  measured"), or null when it is simply not there. Said alike on the
  *  simulation card and in compare mode, never as none to count. */
 export function unmeasuredNeed(missing: Missing, view: Pick<FiView, 'spending' | 'assets'>): string | null {
-  if (missing === 'assets' && view.assets.source === 'unmeasured') return 'your invested assets, which aren’t measured';
+  if ((missing === 'assets' || missing === 'stop-balance') && view.assets.source === 'unmeasured') return 'your invested assets, which aren’t measured';
   if (missing === 'spending' && view.spending.source === 'unmeasured') return 'your annual spending, which isn’t measured';
   return null;
 }

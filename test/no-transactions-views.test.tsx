@@ -669,7 +669,7 @@ describe('the Plan', () => {
   };
   const assets: InvestedAssets = {
     total: 250_000,
-    accounts: [{ account_id: 'a', name: '401(k)', type: 'investment', subtype: '401k', balance: 250_000, currency: 'USD', institution: 'Empower', item_id: 'i1' }],
+    accounts: [{ account_id: 'a', name: '401(k)', type: 'investment', subtype: '401k', balance: 250_000, value: 250_000, currency: 'USD', institution: 'Empower', item_id: 'i1' }],
     unknown: 0,
     caveats: [],
     currency: 'USD',
@@ -709,6 +709,7 @@ describe('the Plan', () => {
       money,
       savingsRate: null,
       shareRates: null,
+      taxOnHold: false,
     };
     return renderToStaticMarkup(<YourPath a={a} />);
   };

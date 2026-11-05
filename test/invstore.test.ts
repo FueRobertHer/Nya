@@ -545,6 +545,7 @@ describe('/api/investment-activity', () => {
     expect(body.contributions_12m_from).toBe(daysAgo(364));
     expect(body.contributions_12m_partial).toBe(false);
     expect(body.contributions_12m_activity_from).toBeNull(); // activity from before the year
+    expect(body.dividends_12m).toBe(20); // the dividend, for the Plan's tax buckets
     // Each one, oldest first, so the tab can leave out one a bank transfer paid for.
     expect(body.contributions_12m_rows).toEqual([
       { date: daysAgo(100), amount: 500 },

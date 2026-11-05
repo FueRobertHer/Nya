@@ -88,17 +88,25 @@ import {
   walkWords,
   EVENTS_WORDS,
 } from './plan-text';
-import { fiMovedText, stillNew } from './plan-moved';
+import { childMovedText, fiMovedText, stillNew } from './plan-moved';
 import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { leftOutOf } from '@/lib/fire/child-accounts';
+import { bucketsToday, type AccountYear } from '@/lib/fire/buckets-today';
+import { savingsSplit } from '@/lib/fire/savings-split';
+import { mixShares, mixToday, projectMix } from '@/lib/fire/tax/mix';
+import { mixLine } from './plan-buckets';
+import type { BucketSheet, FigureLevel } from './PlanBuckets';
+import { fmtAsOf } from './accounts-format';
+import { EMPTY_SETTINGS, overridesOf, withBucket } from '@/lib/allocation/settings';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
-import { planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf } from './plan-inputs';
+import { planAccountsOf, planId, saveTaxFact, usePlanInputs, useSharedPlanInputs, workplacePlansOf, yearFrom } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding, PlanMix } from '@/lib/allocation/allocation';
@@ -129,6 +137,7 @@ import { TimelineCard } from './PlanTimeline';
 import { itemRuleText, itemSentence, reachesStart } from './plan-items';
 import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, type PlanSave, type PlansState } from './plan-list';
 import { planSavers, type Save } from './plan-savers';
+import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
 import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
@@ -284,6 +293,13 @@ export type PlanTabProps = {
    *  it stays hidden across tabs), and tapping it. */
   movedSeen?: boolean;
   onMovedSeen?: () => void;
+  /** D7's switch (the flag 'plan-child-accounts'): accounts for a child's
+   *  education are out of invested assets unless counted. */
+  childOut?: boolean;
+  /** The last day D7's change is new, and its own Got it, as D15's above. */
+  childNewUntil?: string | null;
+  childMovedSeen?: boolean;
+  onChildMovedSeen?: () => void;
 };
 
 /** Said by New copy, Duplicate and a rename of your plan while your plan
@@ -314,6 +330,10 @@ export default function PlanTab({
   newUntil = null,
   movedSeen = false,
   onMovedSeen,
+  childOut = false,
+  childNewUntil = null,
+  childMovedSeen = false,
+  onChildMovedSeen,
 }: PlanTabProps) {
   const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
   const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
@@ -485,6 +505,7 @@ export default function PlanTab({
   // them for the label. The workplace plans' contributions come from the
   // shared copy.
   const shared = useSharedPlanInputs(planInputs, institutions);
+  const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
   const inputs = usePlanInputs({
     txns,
     txnNotes,
@@ -496,6 +517,7 @@ export default function PlanTab({
     balanceFx,
     currency: ownCurrency,
     contributions: shared.contributions,
+    leaveOut,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
@@ -683,7 +705,7 @@ export default function PlanTab({
   // With a home currency: what was converted into the Plan's currency.
   const convertedNote = figures.convertedNote;
   // In the plan's currency, so its mix is of what the plan counts.
-  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx });
+  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx, leaveOut });
 
   // Every copy as the tab shows it: with your plan's facts in it, repaired
   // where a value no longer fits them (your age moved past its stop age,
@@ -864,6 +886,8 @@ export default function PlanTab({
   shownForRef.current = shownFor;
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [sheetFor, setSheetFor] = useState<string | null>(null);
+  // The drawer's level past a figure's sheet (components/PlanBuckets.tsx).
+  const [figureLevel, setFigureLevel] = useState<FigureLevel | null>(null);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
   // The figure's row a sheet was opened from (InputsCard), by its kind, set
@@ -895,10 +919,26 @@ export default function PlanTab({
     setOpened(openedNow.current);
     setSheetFor(shownForRef.current);
     setSheet(s);
+    setFigureLevel(null);
   };
   const close = () => setSheet(null);
+  // The other accounts' last year, asked for when a sheet that reads them opens,
+  // on top of the shared copy (lib/plan-inputs-store.ts fill): Home and the Plan
+  // ask for workplace plans alone.
+  const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
+  const typedBasis = useMemo(() => new Map(shared.taxFacts.basis.map((b) => [b.account_id, b.amount])), [shared.taxFacts.basis]);
+  useEffect(() => {
+    if (sheet?.kind === 'figure' && sheet.figure !== 'spending') planInputs.fill(yearRows);
+  }, [opened, planInputs, yearRows]); // eslint-disable-line react-hooks/exhaustive-deps
   const closeFor = (n: number) => () => {
     if (openedNow.current === n) setSheet(null);
+  };
+  // A level's save holds the drawer: what it answers belongs to that level, so
+  // the arrow, Escape and Close wait for it, as the level's own Cancel does.
+  const [levelSaves, setLevelSaves] = useState(0);
+  const heldBy = <T,>(saving: Promise<T>): Promise<T> => {
+    setLevelSaves((n) => n + 1);
+    return saving.finally(() => setLevelSaves((n) => n - 1));
   };
   useEffect(() => {
     setSheet(null);
@@ -1058,7 +1098,7 @@ export default function PlanTab({
   };
   // The plan saved as your plan and what was recorded since (rollout 8e), for
   // the Progress card and, with the Plan shown, the chart's lines before today.
-  const progress = useProgress(institutions);
+  const progress = useProgress(institutions, childOut ? shared.taxFacts.countAnyway.join(',') : '');
   const progressSaved = progress.savedState.kind === 'ready' ? progress.savedState.saved : null;
   // Only where both are of one thing: the saved plan's currency and include
   // cash are the path's (the Progress card says when they changed).
@@ -1077,6 +1117,12 @@ export default function PlanTab({
   const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
   const offFigures = movedNew && entry === null && baseFigures ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
   const movedText = offFigures && baseFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
+  // D7's the same way, with its own Got it: the plan's figures with a child's
+  // accounts counted again, on the Plan's answer alone, since a saved plan's
+  // Progress line leaves them out at both its ends.
+  const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
+  const childOffFigures = childMovedNew && baseFigures ? planFigures(basePlan, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) }), { count }) : null;
+  const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
       entry === null &&
@@ -1103,7 +1149,55 @@ export default function PlanTab({
               ? "Some of your transactions haven't loaded or couldn't be read, so Nya's savings figure may be off: save once they have, or type your savings in Your figures."
               : null;
   const copyName = entry?.name ?? null;
-  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk };
+  // Invested assets and Annual savings by tax bucket, worked out while one of
+  // them is open.
+  const bucketsFor = (includeCash: boolean) =>
+    bucketsToday({
+      assets: investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency, leaveOut),
+      holdings,
+      tax: shared.taxFacts,
+      overrides: overridesOf(allocation.settings.value ?? null).buckets,
+      yearOf: (a): AccountYear => (a.item_id ? yearFrom(shared.copy.rows[planId({ item_id: a.item_id, account_id: a.account_id })]) : { income: null, contributions: null }),
+      partner: plan.partnerAge !== null,
+    });
+  const bucketSheet = (kind: FigureKind): BucketSheet | undefined => {
+    if (kind === 'spending') return undefined;
+    const rows = shared.copy.rows;
+    return {
+      bucketsFor,
+      asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
+      reading: yearRows.some((id) => !rows[id] || rows[id].pending),
+      partner: plan.partnerAge !== null,
+      childOut,
+      tax: shared.taxFacts,
+      chosen: overridesOf(allocation.settings.value ?? null).buckets,
+      level: figureLevel,
+      // A save ending after its sheet was dismissed moves only that opening's level.
+      onLevel: (level) => {
+        if (openedNow.current === opened) setFigureLevel(level);
+      },
+      saveFact: (op) => heldBy(saveTaxFact(planInputs, op)),
+      factsLocked: !savers.taxFacts ? 'What is said about an account is the same in every plan: change it on your plan.' : !shared.factsKnown ? 'What’s saved about your accounts hasn’t loaded, so this can’t be changed yet.' : null,
+      saveBucket: (account_id, bucket) => heldBy(allocation.save(withBucket(allocation.settings.value ?? EMPTY_SETTINGS, account_id, bucket))),
+      bucketsEditable: savers.allocationSettings && allocation.withSettings && !allocation.settings.saving,
+    };
+  };
+  // Where a year of savings goes, and the mix by the start age of what the plan
+  // shown counts: apart from the sheet, since these rest on the plan's figures.
+  const splitFor = (kind: FigureKind) => {
+    if (kind !== 'savings') return null;
+    const split = savingsSplit(bucketsFor(plan.includeCash), view.savings.value);
+    return split.from === 'none' ? null : split;
+  };
+  const mixFor = (kind: FigureKind) => {
+    const startsAt = shown && 'sim' in shown.engine ? shown.engine.startAge : null;
+    if (kind !== 'assets' || !shown || startsAt === null || plan.age === null || view.assets.value === null) return null;
+    const today = bucketsFor(plan.includeCash);
+    const split = savingsSplit(today, view.savings.value);
+    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
+    return projected && mixLine(startsAt, mixShares(projected));
+  };
+  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk, childOut };
 
   // What each figure the plan shown rests on says, worked out once for the
   // rows under the FI card, their sheets' Why? and Drawdown's notice
@@ -1127,6 +1221,7 @@ export default function PlanTab({
     money,
     savingsRate: figures.savingsRate,
     shareRates: inputs.rates ?? null,
+    taxOnHold: shared.taxFacts.model === 'detailed',
   };
   const figureTexts = figureNotes(figureArgs);
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
@@ -1573,6 +1668,8 @@ export default function PlanTab({
               walkFrom={shown?.walkFrom}
               moved={movedText}
               onMovedSeen={onMovedSeen}
+              childMoved={childMoved}
+              onChildMovedSeen={onChildMovedSeen}
               fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
               stopShort={
                 stopShort && view.stopAge !== null
@@ -1639,6 +1736,7 @@ export default function PlanTab({
             items={savedItems}
             moved={movedNew}
             onMovedSeen={onMovedSeen}
+            childOut={childOut}
           />
         )}
         </>
@@ -1707,6 +1805,7 @@ export default function PlanTab({
             planKey={shownFor ?? 'plan'}
             institutions={institutions}
             balancesAsOf={balancesAsOf}
+            typedBasis={typedBasis}
           />
         )
       )}
@@ -1714,7 +1813,21 @@ export default function PlanTab({
           skeleton in none of them, of no segment's words. */}
       {segment === null && <PlanPanelSkeleton segment={null} />}
 
-      <Sheet open={!!sheet} title={shownSheet ? (shownSheet.kind === 'figure' ? FIGURE_TITLES[shownSheet.figure] : SHEET_TITLES[shownSheet.kind]) : ''} onClose={close}>
+      <Sheet
+        open={!!sheet}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : SHEET_TITLES[shownSheet.kind]) : ''}
+        onClose={() => {
+          if (levelSaves === 0) close();
+        }}
+        onBack={
+          figureLevel
+            ? () => {
+                if (levelSaves === 0) setFigureLevel(figureLevel.kind === 'bucket' ? { kind: 'account', account_id: figureLevel.account_id, title: figureLevel.back } : null);
+              }
+            : undefined
+        }
+        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : undefined}
+      >
         {/* Atop every sheet that edits the copy open, so one isn't taken for
             your plan. */}
         {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
@@ -1730,6 +1843,7 @@ export default function PlanTab({
             currency={displayCurrency}
             allocationMix={shownSheet.mix ?? mixToOffer(allocation)}
             at={shownSheet.at ?? null}
+            taxOnHold={figureArgs.taxOnHold}
           />
         )}
         {shownSheet?.kind === 'numbers' && <AboutNumbers />}
@@ -1742,9 +1856,12 @@ export default function PlanTab({
             measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
             why={figureTexts[shownSheet.figure].why}
-            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency)}
+            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency, leaveOut)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
             also={figureChoices(alsoTargets, shownSheet.figure, money)}
+            buckets={bucketSheet(shownSheet.figure)}
+            split={splitFor(shownSheet.figure)}
+            mix={mixFor(shownSheet.figure)}
           />
         )}
       </Sheet>
@@ -1868,6 +1985,8 @@ export function FiCard({
   walkFrom = { items: false, events: true },
   moved = null,
   onMovedSeen,
+  childMoved = null,
+  onChildMovedSeen,
   fiShort = null,
   stopShort = null,
   stopWalked = false,
@@ -1910,6 +2029,9 @@ export function FiCard({
    *  answer's lines with Got it, which hides it for the session. */
   moved?: string | null;
   onMovedSeen?: () => void;
+  /** D7's line while new (childMovedText), the same way with its own Got it. */
+  childMoved?: string | null;
+  onChildMovedSeen?: () => void;
   /** Why there is no FI date: a cost the walk can't pay. */
   fiShort?: string | null;
   /** Why there is no balance at the stop age: the walk can't get there. */
@@ -2022,7 +2144,7 @@ export function FiCard({
       figure={<Masked>{head.headline}</Masked>}
       figureClass="plan-answer"
       line={
-        (head.against || howLine || asks || moved) && (
+        (head.against || howLine || asks || moved || childMoved) && (
           <div className="stack tight plan-answer-lines">
             {head.against && (
               <p className="helper">
@@ -2040,6 +2162,16 @@ export function FiCard({
                 {moved}
                 <div className="btn-row">
                   <button type="button" className="btn ghost" onClick={onMovedSeen}>
+                    Got it
+                  </button>
+                </div>
+              </Notice>
+            )}
+            {childMoved && (
+              <Notice level="info">
+                {childMoved}
+                <div className="btn-row">
+                  <button type="button" className="btn ghost" onClick={onChildMovedSeen}>
                     Got it
                   </button>
                 </div>
@@ -2408,6 +2540,7 @@ const MISSING_TEXT: Record<Missing, string> = {
   spending: 'The simulation withdraws your annual spending, so it needs it. Type it on Your path, or connect accounts with transactions.',
   assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them on Your path, or start from your FI number (Assumptions, below).',
   balance: 'Type the balance to start with (Assumptions, below).',
+  'stop-balance': 'The simulation starts with what you’d have at your stop age, which needs your age, your stop age, and your invested assets or savings. If those are in, your path doesn’t get that far (Your path says why).',
 };
 
 /** Why the simulation can't run: what it needs, and when that is there but
@@ -2424,6 +2557,7 @@ const MISSING_FIGURE: Record<Missing, string> = {
   spending: SPENDING_NEED,
   assets: 'Needs your invested assets',
   balance: 'Needs a starting balance',
+  'stop-balance': 'Needs what you’d have at your stop age',
 };
 
 /** Drawdown's hero (the tax plan's P, Fue's call 2026-11-01): Will it last?,
@@ -2524,7 +2658,7 @@ export function SimulationCard({
     if (!at || unplaced.has(x.id)) return false;
     return startAge === null ? x.kind !== 'pay' : reachesStart(x, at, startAge) && at.start < startAge + sim.years;
   });
-  const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
+  const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : plan.start === 'at-stop' ? 'what you’d have' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;
   const vpw = plan.rule === 'vpw';

@@ -26,11 +26,16 @@
 //
 // Notes say which item by position (`at`), whatever its id.
 //
+// conditionalFlows, below, is D11's: an item that waits on a run's own balance
+// leaves the fixed simulation for flows relative to where it starts in that run,
+// each by what the fixed one does for that kind, and keeps its place in the walk.
+//
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import { INCOME_KINDS, type PlanItem } from './items';
 import type { CompiledEvents, EventNote, EventPart } from './events';
-import { MAX_YEARS } from './simulate';
+import { MAX_YEARS, type ConditionalEdge, type ConditionalFlows, type ConditionalItem } from './simulate';
+import type { PerRun, RunEdge } from './steady';
 
 /** An item's resolved ages: where it starts, and where it stops (null for
  *  good, or ignored for a kind that happens once); null when it isn't placed
@@ -278,4 +283,41 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
     }
   }
   return out;
+}
+
+/**
+ * The simulation's parts of the items that wait on a run's own balance
+ * (`perRun`, lib/fire/steady.ts), as what they add from where each starts in a
+ * run. `ages` is the steady path's, for what it put in lasting spending: a
+ * change begun by the start with an end that waits and never came on the steady
+ * path is in the spending the plan draws, so a run where it comes takes it back
+ * out from there. Pay is in the walk alone, as above.
+ */
+export function conditionalFlows(items: readonly PlanItem[], perRun: PerRun, ages: readonly ItemAges[], at: CompileAt): ConditionalFlows {
+  const S = at.startAge ?? 0;
+  const edge = (e: RunEdge | number): ConditionalEdge => (typeof e === 'number' ? { year: e - S } : e);
+  const out: ConditionalItem[] = [];
+  for (const [i, x] of items.entries()) {
+    const edges = perRun.edges[i];
+    if (!edges || x.kind === 'pay') continue;
+    const add = (over: Partial<ConditionalItem>) => out.push({ start: edge(edges.start), end: edges.end === null ? null : edge(edges.end), once: [], moneyIn: 0, income: null, yearly: 0, ...over });
+    const once = (x.once ?? 0) > 0 ? repeats(x, 0).map((after) => ({ amount: x.once as number, after })) : [];
+    const afterTax = (v: number) => (x.beforeTax ? v * (1 - at.taxRate) : v);
+    const yearly = x.yearly ?? 0;
+    if (x.kind === 'one-off' || x.kind === 'car') add({ end: null, once });
+    else if (x.kind === 'windfall') add({ end: null, moneyIn: x.once ?? 0 });
+    else if (x.kind === 'loan-end') add({ end: null, yearly: -yearly });
+    else if (INCOME_KINDS.includes(x.kind)) add({ income: { amount: afterTax(yearly), inflationAdjusted: x.inflationAdjusted } });
+    else {
+      // A home, a child or spending that changes for some years.
+      const steady = ages[i];
+      const lasting = typeof edges.start === 'number' && edges.start <= S && edges.end !== null && steady !== null && steady.end === null;
+      if (!lasting) add({ once, yearly });
+      else {
+        if (once.length > 0) out.push({ start: edge(edges.start), end: null, once, moneyIn: 0, income: null, yearly: 0 });
+        out.push({ start: edge(edges.end as RunEdge | number), end: null, once: [], moneyIn: 0, income: null, yearly: -yearly });
+      }
+    }
+  }
+  return { triggers: perRun.triggers, items: out };
 }

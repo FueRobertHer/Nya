@@ -16,11 +16,14 @@
 //     can't take as it is; it always saves the repaired plan, never the plan
 //     on screen;
 //   - allocationSettings: the allocation card's own settings (target, fund
-//     and account splits, tax buckets), which it saves itself.
+//     and account splits, tax buckets), which it saves itself;
+//   - taxFacts: what is said about an account or a person (the tax facts), which
+//     the Invested assets sheet saves through /api/plan-facts.
 // With a copy open, the forms save to it (the method, the same for every
-// plan, is a field the sheet disables there); the allocation settings are
-// the same for every plan and the repair is your plan's own, so those have
-// no saver (their controls are disabled, with the reason). No React here.
+// plan, is a field the sheet disables there); the allocation settings and the
+// tax facts are the same for every plan and the repair is your plan's own, so
+// those have no saver (their controls are disabled, with the reason). No React
+// here.
 
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 
@@ -35,6 +38,8 @@ export type PlanSavers = {
   repair: (() => void) | null;
   /** Whether the allocation card's own settings may be saved here. */
   allocationSettings: boolean;
+  /** Whether the tax facts may be saved here. */
+  taxFacts: boolean;
 };
 
 export function planSavers(o: {
@@ -51,6 +56,7 @@ export function planSavers(o: {
       form: save,
       repair: null,
       allocationSettings: false,
+      taxFacts: false,
     };
   }
   const { savePlan, repaired } = o;
@@ -58,5 +64,6 @@ export function planSavers(o: {
     form: savePlan,
     repair: repaired ? () => void savePlan(repaired) : null,
     allocationSettings: true,
+    taxFacts: true,
   };
 }

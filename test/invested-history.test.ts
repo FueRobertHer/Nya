@@ -30,6 +30,12 @@ const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { setAccountHidden } = await import('@/lib/hidden');
 const { investedSeries, progressAccountsOf } = await import('@/lib/fire/invested-series');
 const route = await import('@/app/api/invested-history/route');
+const { planFactsStore } = await import('@/lib/plan-copies');
+const { leftOutOf } = await import('@/lib/fire/child-accounts');
+const { DEFAULT_TAX_FACTS } = await import('@/lib/fire/tax-facts');
+const { factsOf } = await import('@/lib/fire/copies');
+const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
+const flagParts = { ...(await import('@/lib/flag-store')), ...(await import('@/lib/flag-cache')) };
 
 beforeEach(async () => {
   setSystemTime(new Date(NOW));
@@ -63,7 +69,7 @@ async function measured(date: string, balances: Record<string, number>, layer: '
 }
 
 /** An account as the account directory remembers it (lib/links.ts). */
-async function known(account_id: string, first_seen: string, name: string, type = 'investment') {
+async function known(account_id: string, first_seen: string, name: string, type = 'investment', subtype: string | null = null) {
   const entry = {
     provider: 'plaid',
     item_id: 'item_broker',
@@ -73,7 +79,7 @@ async function known(account_id: string, first_seen: string, name: string, type 
     official_name: null,
     mask: null,
     type,
-    subtype: null,
+    subtype,
     persistent_account_id: null,
     first_seen,
     last_seen: first_seen,
@@ -82,6 +88,7 @@ async function known(account_id: string, first_seen: string, name: string, type 
 }
 
 const acct = (account_id: string, type = 'investment', currency: string | null = 'USD') => ({ account_id, type, currency });
+const listedAs = (account_id: string, type = 'investment', currency: string | null = 'USD', subtype: string | null = null) => ({ ...acct(account_id, type, currency), subtype });
 
 const ask = async (body: unknown) => {
   const res = await route.POST(new Request('http://x/api/invested-history', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }));
@@ -151,6 +158,140 @@ describe('what counts, by the saved plan’s rules', () => {
     expect(body.anchor).toMatchObject({ date: '2026-10-01', total: 8_000, counted: 1 });
     // The id it is known by now first: 8,050, never 16,050.
     expect(body.latest).toMatchObject({ date: '2026-10-02', total: 8_050, counted: 1 });
+  });
+});
+
+describe('a child’s accounts (D7)', () => {
+  const { flagsStore } = flagParts;
+  const AT = '2026-10-01T00:00:00.000Z';
+  const turnOn = async () => {
+    await flagsStore.update('plan-child-accounts', () => ({ on: 'everyone', containers: [], updatedAt: AT }), 'local development', Date.parse(AT));
+    flagParts.flagCache.forget();
+  };
+  const facts = (countAnyway: string[]) =>
+    planFactsStore.set(ctx, { version: 2, main: 'main', ...factsOf(DEFAULT_PLAN_V2), tax: { ...DEFAULT_TAX_FACTS, countAnyway } });
+  const college = { ...acct('college'), subtype: '529' };
+
+  test('off: counted as ever, by every path', async () => {
+    await saved('2026-10-01');
+    await known('college', '2026-10-01', '529', 'investment', '529');
+    await measured('2026-10-01', { brk: 10_000, college: 4_000 });
+    expect((await ask({ accounts: [acct('brk'), college] })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+    // And without the question saying so, as a page before T2 asks.
+    expect((await ask({ accounts: [acct('brk'), acct('college')] })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+  });
+
+  test('on: out of every day, by the question’s subtype', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    await measured('2026-10-01', { brk: 10_000, college: 4_000 });
+    await measured('2026-10-02', { brk: 10_100, college: 4_100 });
+    const { body } = await ask({ accounts: [acct('brk'), college] });
+    expect(body.anchor).toMatchObject({ total: 10_000, counted: 1, missing: [] });
+    expect(body.latest).toMatchObject({ total: 10_100, counted: 1, missing: [] });
+    expect(body.accounts.map((a: any) => a.account_id)).toEqual(['brk']);
+  });
+
+  test('on: a page that says no subtype is told by the directory', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    await known('college', '2026-10-01', '529', 'investment', '529');
+    await measured('2026-10-01', { brk: 10_000, college: 4_000 });
+    expect((await ask({ accounts: [acct('brk'), acct('college')] })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
+  });
+
+  test('on: an ended one is out by the directory’s subtype, up to its end too', async () => {
+    await turnOn();
+    await saved('2026-09-30');
+    const { markEnded } = await import('@/lib/lifecycle');
+    await known('old529', '2026-09-30', '529', 'investment', '529');
+    await markEnded(ctx, 'old529', { state: 'closed', on: '2026-10-02' }, { type: 'investment', label: { name: '529', institution: 'Work', mask: null }, item_id: 'item_w', currency: 'USD' });
+    await measured('2026-10-01', { brk: 10_000, old529: 20_000 });
+    await measured('2026-10-02', { brk: 30_000 });
+    const { body } = await ask({ accounts: [acct('brk')] });
+    expect(body.anchor).toMatchObject({ date: '2026-10-01', total: 10_000, counted: 1 });
+    expect(body.accounts.find((a: any) => a.account_id === 'old529')).toBeUndefined();
+  });
+
+  test('on: one the page can’t show is out by the directory’s subtype', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    await known('unshown529', '2026-10-01', '529', 'investment', '529');
+    await known('unshown401k', '2026-10-01', '401(k)', 'investment', '401k');
+    await measured('2026-10-01', { brk: 10_000, unshown529: 4_000, unshown401k: 2_000 });
+    // Listed with nothing said, as a page lists what it can't show.
+    const accounts = [acct('brk'), acct('unshown529'), acct('unshown401k')];
+    expect((await ask({ accounts })).body.anchor).toMatchObject({ total: 12_000, counted: 2 });
+  });
+
+  test('on: what the page says of one it shows beats the directory, as the browser counts it', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    // An old id the directory knows as a 529, linked by hand to a brokerage account.
+    await known('old', '2026-10-01', '529', 'investment', '529');
+    await fake.hset(ctxKey('account-links'), { old: await encrypt(ctx, JSON.stringify({ to: 'live', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
+    await measured('2026-10-01', { brk: 10_000, live: 5_000 });
+    expect(leftOutOf(true, [])?.({ account_id: 'live', subtype: 'brokerage' })).toBe(false);
+    expect((await ask({ accounts: [acct('brk'), listedAs('live')] })).body.anchor).toMatchObject({ total: 15_000, counted: 2 });
+  });
+
+  test('on: counted under an id since replaced, it reads as out here as in the browser, until counted again', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    await facts(['old529']);
+    await fake.hset(ctxKey('account-links'), { old529: await encrypt(ctx, JSON.stringify({ to: 'new529', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
+    await measured('2026-10-01', { brk: 10_000, old529: 4_000 });
+    const listed = [acct('brk'), { ...acct('new529'), subtype: '529' }];
+    expect((await ask({ accounts: listed })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
+    expect(leftOutOf(true, ['old529'])?.({ account_id: 'new529', subtype: '529' })).toBe(true);
+    await facts(['old529', 'new529']);
+    expect((await ask({ accounts: listed })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+    expect(leftOutOf(true, ['old529', 'new529'])?.({ account_id: 'new529', subtype: '529' })).toBe(false);
+  });
+
+  test('on: one counted anyway stays, on every path', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    await facts(['college']);
+    await measured('2026-10-01', { brk: 10_000, college: 4_000 });
+    expect((await ask({ accounts: [acct('brk'), college] })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+  });
+
+  test('off: the facts aren’t read, so damaged ones cost nothing', async () => {
+    await saved('2026-10-01');
+    await fake.set(ctxKey('plan-facts'), 'not-a-ciphertext');
+    await measured('2026-10-01', { brk: 10_000 });
+    expect((await ask({ accounts: [acct('brk')] })).status).toBe(200);
+  });
+
+  test('the page’s list says the subtype of an account for a child, null for any other it shows (a manual one’s is free text), and nothing of one it can’t', async () => {
+    const list = progressAccountsOf([
+      {
+        name: 'Broker',
+        item_id: 'i',
+        error: false,
+        staleAsOf: null,
+        staleAsOfAt: null,
+        missing: 0,
+        accounts: [
+          { account_id: 'a', name: 'A', type: 'investment', subtype: '529', balance: 1, currency: 'USD' },
+          { account_id: 'b', name: 'B', type: 'investment', subtype: 'brokerage', balance: 1, currency: 'USD' },
+          { account_id: 'm', name: 'M', type: 'investment', subtype: 'Kid’s fund, mostly', balance: 1, currency: 'USD' },
+        ],
+        unshown: [{ account_id: 'u', name: 'U', type: 'investment', currency: 'USD' }],
+      },
+    ]);
+    expect(list).toEqual([listedAs('a', 'investment', 'USD', '529'), listedAs('b'), listedAs('m'), acct('u')]);
+    await saved('2026-10-01');
+    expect((await ask({ accounts: list })).status).toBe(200);
+  });
+
+  test('a question’s subtype is a word or null, and a fifth key is refused', async () => {
+    await saved('2026-10-01');
+    expect((await ask({ accounts: [{ ...acct('a'), subtype: null }] })).status).toBe(200);
+    expect((await ask({ accounts: [{ ...acct('a'), subtype: 'education savings account' }] })).status).toBe(200);
+    for (const subtype of [1, '', '<script>', 'x'.repeat(61)]) expect([subtype, (await ask({ accounts: [{ ...acct('a'), subtype }] })).status]).toEqual([subtype, 400]);
+    expect((await ask({ accounts: [{ ...acct('a'), subtype: '529', extra: 1 }] })).status).toBe(400);
   });
 });
 
@@ -314,6 +455,6 @@ describe('the pure series and the page’s list', () => {
         ],
       },
     ]);
-    expect(list).toEqual([acct('a'), acct('c', 'depository', null), acct('u', 'investment', 'EUR')]);
+    expect(list).toEqual([listedAs('a'), listedAs('c', 'depository', null), acct('u', 'investment', 'EUR')]);
   });
 });

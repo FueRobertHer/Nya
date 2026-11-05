@@ -29,6 +29,9 @@ describe('which law a plan uses', () => {
         expect(s.source.length).toBeGreaterThan(0);
         expect(s.due.length).toBeGreaterThan(0);
         expect(s.published === null).toBe(law[part] === undefined);
+        // A part not out says, for a program, the day its window opens.
+        if (s.published === null) expect(s.opens).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        else expect(s.opens).toBeUndefined();
       }
     }
   });

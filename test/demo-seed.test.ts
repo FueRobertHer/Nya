@@ -380,7 +380,20 @@ describe('seeding', () => {
     if (plan.version !== 2) throw new Error('expected a version 2 plan');
     expect([plan.age, plan.targetAge]).toEqual([38, 52]);
     expect(incomeOf(plan).map((i) => i.fromAge)).toEqual([67]);
-    expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...factsOf(plan) });
+    // Version 2, with the tax facts the profile holds: a partner's Roth, a basis
+    // typed for the joint brokerage, and the 529 left out, to show that group.
+    expect(plan.partnerAge).toBe(37);
+    const facts = await planFactsStore.get(ctx);
+    expect(facts).toMatchObject({ version: 2, main: MAIN_ID, ...factsOf(plan) });
+    if (facts?.version !== 2) throw new Error('expected version 2 facts');
+    expect(facts.tax.model).toBe('flat');
+    expect(facts.tax.owners.map((o) => o.owner)).toEqual(['partner', 'partner']);
+    expect(facts.tax.basis.map((b) => b.amount)).toEqual([88_000]);
+    expect(facts.tax.rothContributions).toEqual([
+      { owner: 'you', amount: 42_000 },
+      { owner: 'partner', amount: 31_000 },
+    ]);
+    expect(facts.tax.countAnyway).toEqual([]);
   });
 
   test('every profile’s plan is your plan alone, and holds a currency wherever it holds an amount', async () => {

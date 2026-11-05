@@ -26,14 +26,14 @@
 // Arithmetic only: no engine run, no market history.
 
 import { projectBalance, projectionShort } from './fi';
-import { compileItems, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
+import { compileItems, conditionalFlows, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
 import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
 import { MONEY_KINDS } from './items';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice } from './plan';
 import { planOf, type FirePlanV2 } from './plan-v2';
 import type { SavedItems, SavedPlan } from './saved-plan';
 import { planPath } from './path';
-import { resolveItems, type Resolution, type SteadyWorld } from './steady';
+import { resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
 
 export type StartsWith = {
   balance: number;
@@ -66,6 +66,9 @@ export type PlanFigures = {
   events: CompiledEvents | null;
   /** The plan's items' notes, by position. */
   itemNotes: ItemNote[];
+  /** The walk's changes by year, which the projected mix follows
+   *  (lib/fire/tax/mix.ts). */
+  walk: WalkChanges;
   /** What moved the walk: the plan's one-offs and income (`items`), its items
    *  of the other kinds (`events`). */
   walkFrom: { items: boolean; events: boolean };
@@ -119,7 +122,7 @@ function upTo(w: WalkChanges, last: number): WalkChanges {
  *  a search's candidate, leaves items out of the walk (only: what they change
  *  in retirement still sets the FI number it is tested against) and stops
  *  counting its changes after an age. */
-function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }): Built | FiguresRefused {
+function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }, perRun?: PerRun): Built | FiguresRefused {
   const display = fiView(plan, measured, stop);
   const at = { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: plan.taxRate };
   const compiled = compileItems(plan.items, ages, at, count);
@@ -136,11 +139,18 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
     runPlan = { ...plan, spending };
     core = fiView(runPlan, measured, stop);
   }
+  // The balance at the stop is the walk's whenever it changes, with an FI
+  // number or without one (the path, lib/fire/path.ts, is the same walk).
+  const from = projectFrom(plan, core);
+  const walkAtStop = from !== null && hasWalk(walk) ? walkBalanceAt(from.assets, from.savings, plan.realReturn, walk, from.years) : null;
+  const atStop = walkAtStop === null ? core.atTargetAge : 'balance' in walkAtStop ? walkAtStop.balance : null;
   // Built from retirement spending; the items' parts of the simulation added.
-  const built = enginePlan(runPlan, core);
+  const built = enginePlan(runPlan, { ...core, atTargetAge: atStop });
   let engine: Built['engine'] = built;
   if ('sim' in built) {
-    const { oneOffs, income, lowerSpending } = compiled.sim;
+    // What waits on a run's own balance goes per run instead (D11).
+    const fixed = perRun ? compileItems(plan.items, ages.map((x, i) => (perRun.edges[i] ? null : x)), at, count).sim : compiled.sim;
+    const { oneOffs, income, lowerSpending } = fixed;
     engine = {
       ...built,
       sim: {
@@ -148,6 +158,7 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
         oneOffs: [...built.sim.oneOffs, ...oneOffs],
         income: [...built.sim.income, ...income],
         ...(lowerSpending.length > 0 ? { lowerSpending } : {}),
+        ...(perRun ? { conditional: conditionalFlows(plan.items, perRun, ages, at) } : {}),
       },
     };
   }
@@ -168,13 +179,7 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
       view = { ...view, yearsToFi: w.years, fiAge: Number.isFinite(w.years) && plan.age !== null ? plan.age + w.years : null };
     }
   }
-  // The balance at the stop is the walk's whenever it changes, with an FI
-  // number or without one (the path, lib/fire/path.ts, is the same walk).
-  const from = projectFrom(plan, core);
-  if (from !== null && hasWalk(walk)) {
-    const at = walkBalanceAt(from.assets, from.savings, plan.realReturn, walk, from.years);
-    view = { ...view, atTargetAge: 'balance' in at ? at.balance : null };
-  }
+  if (walkAtStop !== null) view = { ...view, atTargetAge: atStop };
   return { view, core, engine, compiled, walk, retirement, short, walked, walkedSavings };
 }
 
@@ -196,6 +201,7 @@ function assemble(plan: FirePlanV2, b: Built, resolution: Resolution): PlanFigur
     short: b.short,
     walked: b.walked,
     walkedSavings: b.walkedSavings,
+    walk: b.walk,
     startsWith: startsWith(plan, b.core, b.engine, b.walk),
   };
 }
@@ -215,7 +221,7 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count }: Fig
     },
   };
   const resolution = resolveItems(plan, world);
-  const b = build(plan, measured, resolution.ages, resolution.stop, count);
+  const b = build(plan, measured, resolution.ages, resolution.stop, count, undefined, resolution.perRun);
   if ('refused' in b) return b;
   const f = assemble(plan, b, resolution);
   if (resolution.searched === 'none' || plan.age === null) return f;
@@ -264,7 +270,8 @@ function startsWith(plan: FirePlanV2, view: FiView, engine: EnginePlan | { missi
   const balance = engine.sim.startBalance;
   const atAge = engine.startAge;
   const base = { balance, from: plan.start, atAge, projected: null, short: null, more: false };
-  if (plan.start === 'assets' || plan.age === null || atAge === null || !formulasTake(plan)) return base;
+  // From what you'd have at the stop, it is that balance: nothing to set it against.
+  if (plan.start === 'assets' || plan.start === 'at-stop' || plan.age === null || atAge === null || !formulasTake(plan)) return base;
   if ((view.assets.value === null && view.savings.value === null) || unmeasuredOf(view).length > 0) return base;
   const a = view.assets.value ?? 0;
   const c = view.savings.value ?? 0;

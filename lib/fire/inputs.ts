@@ -79,7 +79,9 @@
 //
 // INVESTED ASSETS are the balances of investment accounts (and, if asked,
 // checking and savings), not hidden, as the Accounts tab shows them, with
-// what is stale or missing named.
+// what is stale or missing named. With the flag 'plan-child-accounts' on,
+// without accounts for a child's education, unless the person counts one
+// (lib/fire/child-accounts.ts).
 
 import { type Txn } from '@/components/MonthBreakdown';
 import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
@@ -88,8 +90,9 @@ import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { totalsIn, type Conversion } from '@/lib/fx/totals';
-import type { FxTable, NoRate } from '@/lib/fx/rates';
+import { convert, type FxTable, type NoRate } from '@/lib/fx/rates';
 import { balancesIn } from '@/lib/fx/net-worth';
+import type { LeaveOut } from './child-accounts';
 import { tableOf, type PageFx } from '@/lib/fx/view';
 
 /** The trailing window, in days (today included). */
@@ -526,7 +529,22 @@ export type AssetInstitution = {
   unshown?: { account_id: string; name: string; type: string | null; currency: string | null }[];
 };
 
-export type CountedAccount = AssetAccount & { institution: string; item_id: string | null; balance: number };
+export type CountedAccount = AssetAccount & {
+  institution: string;
+  item_id: string | null;
+  /** In the account's own currency. */
+  balance: number;
+  /** In the total's currency: what this account adds to it. */
+  value: number;
+};
+
+/** An account for a child's education left out of invested assets (D7). */
+export type ChildAccount = AssetAccount & {
+  institution: string;
+  item_id: string | null;
+  /** In the total's currency; null with no balance, or with no rate for it. */
+  value: number | null;
+};
 
 /** Why invested assets may be short or out of date. */
 export type AssetCaveat =
@@ -542,6 +560,8 @@ export type InvestedAssets = {
   total: number | null;
   /** The accounts summed, for the list under the figure. */
   accounts: CountedAccount[];
+  /** Accounts for a child's education left out of the total (D7). */
+  childAccounts?: ChildAccount[];
   /** Accounts that would count but have no balance to count. */
   unknown: number;
   /** Institutions whose problems may make the total short or old. */
@@ -594,20 +614,36 @@ const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type
  * at the newest rates (see the top of this file). `own`, the Plan's own
  * currency (lib/fire/plan-currency.ts), is the total's whatever most
  * accounts are in: converted into it with a home currency, and without one
- * only the accounts in it count, the rest left out and named.
+ * only the accounts in it count, the rest left out and named. `leaveOut` (D7,
+ * lib/fire/child-accounts.ts) takes accounts out, each named with its value in
+ * `childAccounts`, and says nothing about their institution: they aren't what
+ * could make the total short.
  */
-export function investedAssets(institutions: AssetInstitution[], includeCash: boolean, fx: PageFx | null = null, now: number = Date.now(), own: string | null = null): InvestedAssets {
+export function investedAssets(
+  institutions: AssetInstitution[],
+  includeCash: boolean,
+  fx: PageFx | null = null,
+  now: number = Date.now(),
+  own: string | null = null,
+  leaveOut: LeaveOut | null = null
+): InvestedAssets {
   const measured: CountedAccount[] = [];
   const caveats: AssetCaveat[] = [];
+  const children: Omit<ChildAccount, 'value'>[] = [];
   let unknown = 0;
   for (const inst of institutions) {
-    const relevant = inst.accounts.filter((a) => !a.hidden && holds(a, includeCash));
+    const relevant: AssetAccount[] = [];
+    for (const a of inst.accounts) {
+      if (a.hidden || !holds(a, includeCash)) continue;
+      if (leaveOut?.(a)) children.push({ ...a, institution: inst.name, item_id: inst.item_id });
+      else relevant.push(a);
+    }
     for (const a of relevant) {
       if (a.balance === null || !Number.isFinite(a.balance)) {
         unknown++;
         continue;
       }
-      measured.push({ ...a, institution: inst.name, item_id: inst.item_id, balance: a.balance });
+      measured.push({ ...a, institution: inst.name, item_id: inst.item_id, balance: a.balance, value: a.balance });
     }
     const mightHold = relevant.length > 0 || inst.accounts.length === 0;
     if (inst.error && !inst.staleAsOf && mightHold) caveats.push({ kind: 'unreachable', institution: inst.name });
@@ -621,11 +657,18 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
   const tally = new Map<string, number>();
   for (const a of measured) if (a.currency) tally.set(a.currency, (tally.get(a.currency) ?? 0) + 1);
   const byCurrency = [...tally].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1));
+  // Never a day before the newest publication (this device's clock may be behind).
+  const today = new Date(now).toISOString().slice(0, 10);
+  const day = fx?.latest && fx.latest.date > today ? fx.latest.date : today;
+  const childAccounts = children.map((a): ChildAccount => {
+    const balance = a.balance === null || !Number.isFinite(a.balance) ? null : a.balance;
+    if (balance === null || !a.currency || !currency || a.currency === currency) return { ...a, value: balance };
+    const r = fx ? convert(tableOf(fx), balance, a.currency, currency, day) : null;
+    return { ...a, value: r?.ok ? r.amount : null };
+  });
+  const left = leaveOut ? { childAccounts } : {};
   if (fx && currency && measured.some((a) => a.currency && a.currency !== currency)) {
-    // Each currency's subtotal converted once, as net worth is: never a day
-    // before the newest publication (this device's clock may be behind).
-    const today = new Date(now).toISOString().slice(0, 10);
-    const day = fx.latest && fx.latest.date > today ? fx.latest.date : today;
+    // Each currency's subtotal converted once, as net worth is.
     const b = balancesIn(
       measured.map((a) => ({ amount: a.balance, currency: a.currency })),
       tableOf(fx),
@@ -634,11 +677,15 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
       currency
     );
     const rated = new Set(b.parts.filter((p) => p.converted !== null).map((p) => p.currency));
-    const counted = measured.filter((a) => !a.currency || rated.has(a.currency));
+    // Each account's share of its currency's one conversion, so they add up to
+    // the total.
+    const ratio = new Map(b.parts.map((p) => [p.currency, p.amount !== 0 && p.converted !== null ? p.converted / p.amount : (p.rate?.value ?? 1)]));
+    const counted = measured.filter((a) => !a.currency || rated.has(a.currency)).map((a) => (a.currency && a.currency !== currency ? { ...a, value: a.balance * (ratio.get(a.currency) ?? 1) } : a));
     const from = b.parts.filter((p) => p.currency !== currency && p.converted !== null);
     return {
       total: counted.length > 0 ? b.total : null,
       accounts: counted,
+      ...left,
       unknown,
       caveats,
       currency,
@@ -664,6 +711,7 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
   return {
     total: counted.length > 0 ? counted.reduce((s, a) => s + a.balance, 0) : null,
     accounts: counted,
+    ...left,
     unknown,
     caveats,
     currency,
