@@ -17,7 +17,7 @@ const { DEFAULT_PLAN_V2, planOf } = await import('@/lib/fire/plan-v2');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const route = await import('@/app/api/fire-plan/route');
 const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, repairPlan, startAge, upgradePlan } = await import('@/lib/fire/plan');
-const { trailingFlows, investedAssets, planFlow, unreadTransactions, unreadNotesOf, isWorkplacePlan, workplaceSavings, transfersOut, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import(
+const { trailingFlows, investedAssets, planFlow, unreadTransactions, unreadNotesOf, isWorkplacePlan, workplaceSavings, transfersOut, toRetirementFunds, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import(
   '@/lib/fire/inputs'
 );
 const { isTransfer } = await import('@/components/MonthBreakdown');
@@ -944,12 +944,14 @@ describe('workplace plan contributions', () => {
       { date: '2026-05-15', amount: 500 },
     ];
     const k = plan({ account_id: 'k', name: '401(k)', institution: 'Fidelity', amount: 1_000, rows });
-    const toSavings = transfersOut(
-      [
-        txn({ date: '2026-05-01', amount: 500, category: 'transfer out', subcategory: 'savings' }),
-        txn({ date: '2026-05-15', amount: 500, category: 'transfer out', subcategory: 'account transfer' }),
-      ],
-      '2026-10-06'
+    const toSavings = toRetirementFunds(
+      transfersOut(
+        [
+          txn({ date: '2026-05-01', amount: 500, category: 'transfer out', subcategory: 'savings' }),
+          txn({ date: '2026-05-15', amount: 500, category: 'transfer out', subcategory: 'account transfer' }),
+        ],
+        '2026-10-06'
+      )
     );
     expect(toSavings).toEqual([]);
     expect(workplaceSavings([k], { transfersOut: toSavings, funding: [] }).total).toBe(1_000);
@@ -983,18 +985,20 @@ describe('workplace plan contributions', () => {
   });
 
   test('transfers out are moves to investment and retirement funds over the year, and nothing else', () => {
-    const out = transfersOut(
-      [
-        txn({ date: '2026-03-01', amount: 10_000, category: 'transfer out', subcategory: 'investment and retirement funds' }),
-        txn({ date: '2026-03-02', amount: 50, category: 'food and drink' }), // spending
-        txn({ date: '2026-03-03', amount: -10_000, category: 'transfer in', subcategory: 'investment and retirement funds' }), // money in
-        txn({ date: '2026-03-04', amount: 900, category: 'loan payments', subcategory: 'credit card payment' }), // a card payoff
-        txn({ date: '2026-03-05', amount: 700, category: 'transfer out', subcategory: 'savings' }), // to savings: never a contribution
-        // Recategorized as spending: it counts as spent, so it never paid for a contribution here.
-        txn({ date: '2026-03-06', amount: 300, category: 'general services', subcategory: 'investment and retirement funds' }),
-        txn({ date: '2025-01-01', amount: 7_000, category: 'transfer out', subcategory: 'investment and retirement funds' }), // older than a year
-      ],
-      '2026-10-06'
+    const out = toRetirementFunds(
+      transfersOut(
+        [
+          txn({ date: '2026-03-01', amount: 10_000, category: 'transfer out', subcategory: 'investment and retirement funds' }),
+          txn({ date: '2026-03-02', amount: 50, category: 'food and drink' }), // spending
+          txn({ date: '2026-03-03', amount: -10_000, category: 'transfer in', subcategory: 'investment and retirement funds' }), // money in
+          txn({ date: '2026-03-04', amount: 900, category: 'loan payments', subcategory: 'credit card payment' }), // a card payoff
+          txn({ date: '2026-03-05', amount: 700, category: 'transfer out', subcategory: 'savings' }), // to savings: never a contribution
+          // Recategorized as spending: it counts as spent, so it never paid for a contribution here.
+          txn({ date: '2026-03-06', amount: 300, category: 'general services', subcategory: 'investment and retirement funds' }),
+          txn({ date: '2025-01-01', amount: 7_000, category: 'transfer out', subcategory: 'investment and retirement funds' }), // older than a year
+        ],
+        '2026-10-06'
+      )
     );
     expect(out).toEqual([{ date: '2026-03-01', amount: 10_000 }]);
   });

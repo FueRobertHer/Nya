@@ -1,8 +1,9 @@
 // lib/plan-inputs-store.ts
 //
 // One copy, in the browser, of what GET /api/plan-inputs answers: the saved
-// plan and its currency, and each workplace plan's trailing year of
-// contributions. Home's FI line and the Plan tab both read it, so the two
+// plan and its currency, and the trailing year of contributions of each workplace
+// plan and, with 'plan-child-accounts' on, each account for a child's education,
+// since both move the savings figure. Home's FI line and the Plan tab both read it, so the two
 // screens ask once between them, and Home asks nothing when it comes back
 // within five minutes (D16). components/Dashboard.tsx makes one for each
 // signed-in account. No React here, and nothing from lib/fire, so its timing

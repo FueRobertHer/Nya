@@ -123,7 +123,7 @@ const NO_NOTES: readonly FigureNote[] = [];
 
 export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, planTax = false, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
-  const shared = useSharedPlanInputs(own, institutions);
+  const shared = useSharedPlanInputs(own, institutions, childOut);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
   const answered = shared.copy.plan;
   const loaded = useMemo(() => loadedFrom(answered), [answered]);
@@ -145,6 +145,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     balanceFx,
     currency: answer.currency,
     contributions: shared.contributions,
+    childContributions: shared.childContributions,
     leaveOut,
     paid: detailedOn ? shared.taxFacts.paidToday : null,
   });
@@ -199,7 +200,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
       txns,
       txnsLoading,
-      contributionsPending: inputs.contributions === null && workplacePlansOf(institutions).length > 0,
+      contributionsPending: (inputs.contributions === null && workplacePlansOf(institutions).length > 0) || shared.childPending,
     })
   ) {
     return null;

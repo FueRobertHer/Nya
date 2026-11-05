@@ -290,7 +290,7 @@ function AccountLevel({
       {showsCount && (
         <CheckRows
           legend="A child’s education"
-          rows={[{ key: 'count', title: 'Count it in your plan', sub: 'A 529 you’ll spend on yourself, say. Left out, it isn’t in invested assets.' }]}
+          rows={[{ key: 'count', title: 'Count it in your plan', sub: 'A 529 you’ll spend on yourself, say. Left out, it isn’t in invested assets, and what your bank pays into it isn’t in Annual savings.' }]}
           checked={counted ? ['count'] : []}
           onChange={(keys) => setCounted(keys.includes('count'))}
           disabled={saving || !!locked}

@@ -821,11 +821,11 @@ describe('the rows asked for', () => {
     const server = serve();
     const tab = await mount();
     await settle(60);
-    // Workplace plans alone, as Home asks.
-    expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak', '/api/plan-inputs?sync=1&plan=i1%3Ak']);
+    // Workplace plans and a child's account, whose rows move the savings, as Home asks.
+    expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak&plan=i2%3Ac', '/api/plan-inputs?sync=1&plan=i1%3Ak&plan=i2%3Ac']);
     await openAssets(tab);
     await settle(60);
-    expect(server.asked().slice(2)).toEqual(['/api/plan-inputs?sync=1&plan=i1%3Abrk&plan=i1%3Ar&plan=i1%3Ah&plan=i1%3Ao&plan=i2%3Ac']);
+    expect(server.asked().slice(2)).toEqual(['/api/plan-inputs?sync=1&plan=i1%3Abrk&plan=i1%3Ar&plan=i1%3Ah&plan=i1%3Ao']);
     expect(tab.store.get().rows['i1:brk'].dividends_12m).toBe(2_800);
     await act(async () => tab.store.invalidate());
     await settle(60);
@@ -833,14 +833,25 @@ describe('the rows asked for', () => {
     await tab.unmount();
   });
 
-  test('Home asks for none', async () => {
+  test('with a child’s accounts counted as before, workplace plans alone, the sheet’s asking for the rest', async () => {
+    const server = serve();
+    const tab = await mount({ childOut: false });
+    await settle(60);
+    expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak', '/api/plan-inputs?sync=1&plan=i1%3Ak']);
+    await openAssets(tab);
+    await settle(60);
+    expect(server.asked().slice(2)).toEqual(['/api/plan-inputs?sync=1&plan=i1%3Abrk&plan=i1%3Ar&plan=i1%3Ah&plan=i1%3Ao&plan=i2%3Ac']);
+    await tab.unmount();
+  });
+
+  test('Home asks for none but those', async () => {
     const server = serve();
     const container = dom.document.createElement('ul');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
     await act(async () => root.render(<FiProgressCard txns={[]} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={createPlanInputsStore()} childOut />));
     await settle(60);
-    expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak', '/api/plan-inputs?sync=1&plan=i1%3Ak']);
+    expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak&plan=i2%3Ac', '/api/plan-inputs?sync=1&plan=i1%3Ak&plan=i2%3Ac']);
     await act(async () => root.unmount());
   });
 

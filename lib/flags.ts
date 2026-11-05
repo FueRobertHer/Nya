@@ -134,12 +134,12 @@ export const FLAGS = {
   },
   'plan-child-accounts': {
     name: 'Child’s accounts out of invested assets',
-    about: 'Leaves accounts for a child’s education (a 529, UTMA, UGMA, Coverdell or RESP) out of invested assets, on Home, in the Plan and in a saved plan’s Progress line, unless the person counts one.',
+    about: 'Leaves accounts for a child’s education (a 529, UTMA, UGMA, Coverdell or RESP) out of invested assets, and what a bank paid into them out of Annual savings, on Home, in the Plan and in a saved plan’s Progress line, unless the person counts one.',
     kind: 'release',
     removeBy: '2027-04-30',
     value: 'audience',
     defaults: NOBODY,
-    offMeans: 'Those accounts count in invested assets, as before. Nothing stored changes.',
+    offMeans: 'Those accounts count in invested assets, and what goes into them in Annual savings, as before. Nothing stored changes.',
   },
   csp: {
     name: 'Content security policy',
