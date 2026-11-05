@@ -26,7 +26,7 @@
 
 import { projectBalance, projectionShort } from './fi';
 import { compileItems } from './compile';
-import { hasWalk, walkPath, type Shortfall } from './events';
+import { costIn, hasWalk, walkPath, type Shortfall } from './events';
 import { INCOME_KINDS, MONEY_KINDS } from './items';
 import { enginePlan, planYears, projectFrom, startAge, type FiView, type PlanCore } from './plan';
 import type { PlanFigures } from './plan-figures';
@@ -170,7 +170,7 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
     const moneyIn = walk ? sum(walk.moneyIn, k) : 0;
     if (!walk || moneyIn <= 0) return { age: age + k, balance };
     // In the walk's own order: money in, then the year's costs.
-    const cost = sum(walk.costs, k);
+    const cost = costIn(walk, k);
     const inHand = balance + moneyIn;
     return cost > 0 && cost > inHand + 1e-9 ? { age: age + k, balance } : { age: age + k, balance, inHand: inHand - cost };
   };

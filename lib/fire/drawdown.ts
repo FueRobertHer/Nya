@@ -40,7 +40,7 @@ import type { LowerSpending, OneOffExpense } from './simulate';
 import type { Owner } from './tax-facts';
 import type { Coverage, HealthStatus } from './tax/health';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
-import type { MixSlot } from './tax/mix';
+import { peopleOf, type MixSlot } from './tax/mix';
 import { checkYearInput, newPersonYear, newYearResult, runYear, type Drawn, type YearInput, type YearResult } from './tax/year';
 
 /** The share of a taxable yield that is qualified dividends: a broad stock fund's,
@@ -194,38 +194,6 @@ const isJoint = (inp: DrawdownInput) => inp.filing === 'joint' && inp.today.part
 export const foldsPartner = (inp: Pick<DrawdownInput, 'filing' | 'today' | 'slots' | 'income'>): boolean =>
   !(inp.filing === 'joint' && inp.today.partnerAge !== null) && (inp.slots.some((s) => s.owner === 'partner' && s.value > 0) || inp.income.some((r) => r.owner === 'partner'));
 
-function startPeople(inp: DrawdownInput): [ReturnType<typeof newPersonYear>, ReturnType<typeof newPersonYear>] {
-  const joint = isJoint(inp);
-  const people = [newPersonYear(), newPersonYear()] as [ReturnType<typeof newPersonYear>, ReturnType<typeof newPersonYear>];
-  for (const s of inp.slots) {
-    const i = joint && s.owner === 'partner' ? 1 : 0;
-    const p = people[i];
-    switch (s.bucket) {
-      case 'taxable':
-        p.taxable += s.value;
-        p.basis += Math.min(s.basis, s.value);
-        break;
-      case 'roth':
-        p.roth += s.value;
-        p.rothReachable += Math.min(s.reachable, s.value);
-        break;
-      case 'hsa':
-        p.hsa += s.value;
-        break;
-      // A counted education account stands in as tax-deferred, as an account in
-      // no bucket does: the most taxed, the least reachable.
-      case 'education':
-      case 'tax-deferred': {
-        const in457 = s.value * Math.min(1, Math.max(0, inp.share457[s.owner] ?? 0));
-        p.deferred += s.value - in457;
-        p.deferred457 += in457;
-        break;
-      }
-    }
-  }
-  return people;
-}
-
 const bucketsOf = (people: readonly { taxable: number; deferred: number; deferred457: number; roth: number; hsa: number }[]): BucketBalances => {
   const b: BucketBalances = { taxable: 0, deferred: 0, roth: 0, hsa: 0 };
   for (const p of people) {
@@ -261,7 +229,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
   const joint = isJoint(inp);
   const filing: Filing = joint ? 'joint' : 'single';
   const shortens = !canRunOut(rule.kind);
-  const people = startPeople(inp);
+  const people = peopleOf(inp.slots, inp.share457, joint);
   const oneOffs = new Array<number>(years).fill(0);
   for (const o of inp.oneOffs) if (o.year >= 0 && o.year < years) oneOffs[o.year] += o.amount;
   const lower = new Array<number>(years).fill(0);

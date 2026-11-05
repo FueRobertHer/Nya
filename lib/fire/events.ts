@@ -96,6 +96,9 @@ export type WalkChanges = {
   costs: { year: number; amount: number }[];
   /** [from, to) in years from today; `to` null for good. */
   spans: { from: number; to: number | null; delta: number }[];
+  /** The tax on what a year before the stop had to sell (lib/fire/tax/mix.ts
+   *  taxedMix), paid with that year's costs. Only in the detailed tax model. */
+  taxes?: { year: number; amount: number }[];
 };
 
 /** Why part of an event isn't counted somewhere, for the words beside it:
@@ -130,7 +133,7 @@ export type CompiledEvents = {
   sim: { oneOffs: OneOffExpense[]; income: OtherIncome[]; lowerSpending: LowerSpending[] };
 };
 
-export const hasWalk = (w: WalkChanges) => w.moneyIn.length > 0 || w.costs.length > 0 || w.spans.length > 0;
+export const hasWalk = (w: WalkChanges) => w.moneyIn.length > 0 || w.costs.length > 0 || w.spans.length > 0 || (w.taxes?.length ?? 0) > 0;
 
 /** A year's savings in the walk: the plan's, plus every change covering it. */
 export function savingsIn(w: WalkChanges, base: number, year: number): number {
@@ -141,7 +144,8 @@ export function savingsIn(w: WalkChanges, base: number, year: number): number {
 
 /** The last walk year with a change of its own: after it, savings stay as
  *  they are then (lasting changes included), and the walk ends in closed
- *  form. -1 when nothing changes after today's first year. */
+ *  form. -1 when nothing changes after today's first year. A tax isn't a change
+ *  of its own: walkToFi walks on through what is left of them. */
 export function lastChange(w: WalkChanges): number {
   let k = -1;
   for (const m of w.moneyIn) k = Math.max(k, m.year);
@@ -150,7 +154,9 @@ export function lastChange(w: WalkChanges): number {
   return k;
 }
 
-export const costIn = (w: WalkChanges, year: number) => w.costs.reduce((sum, c) => (c.year === year ? sum + c.amount : sum), 0);
+const inYear = (xs: readonly { year: number; amount: number }[], year: number) => xs.reduce((sum, x) => (x.year === year ? sum + x.amount : sum), 0);
+
+export const costIn = (w: WalkChanges, year: number) => inYear(w.costs, year) + (w.taxes ? inYear(w.taxes, year) : 0);
 export const moneyInAt = (w: WalkChanges, year: number) => w.moneyIn.reduce((sum, m) => (m.year === year ? sum + m.amount : sum), 0);
 
 /** Where the walk can't go on: a cost from investments larger than what it
@@ -191,8 +197,23 @@ export function walkToFi(assets: number, savings: number, realReturn: number, ta
     bal = end;
     if (reached !== null && bal < target) reached = null;
   }
+  // There through the last change is there, as it is with no taxes: a tax in a
+  // later year, of a saving below zero, doesn't take a date back.
   if (reached !== null) return { years: reached };
   const tail = savingsIn(w, savings, K + 1);
+  let end = K;
+  for (const x of w.taxes ?? []) end = Math.max(end, x.year);
+  for (let k = K + 1; k <= end; k++) {
+    const cost = costIn(w, k);
+    if (cost > 0 && cost > bal + 1e-9) return { short: { year: k, have: bal, need: cost, kind: 'cost' } };
+    bal -= cost;
+    if (bal >= target) return { years: k };
+    const t = yearsToTarget(bal, tail, realReturn, target);
+    if (t <= 1) return { years: k + t };
+    const next = bal * (1 + realReturn) + tail;
+    if (next < 0) return { short: { year: k, have: bal, need: -tail, kind: 'savings' } };
+    bal = next;
+  }
   const rest = yearsToTarget(bal, tail, realReturn, target);
   // Never there, with savings below zero after the last change: the balance
   // runs down, and the year it would go below zero is where it stops, as a
@@ -200,14 +221,14 @@ export function walkToFi(assets: number, savings: number, realReturn: number, ta
   // below zero exactly what it earns, is never there, and never short).
   if (rest === Infinity && tail < 0) {
     let b = bal;
-    for (let k = K + 1; k < K + 1 + 1000; k++) {
-      const end = b * (1 + realReturn) + tail;
-      if (end < 0) return { short: { year: k, have: b, need: -tail, kind: 'savings' } };
-      if (end >= b) break;
-      b = end;
+    for (let k = end + 1; k < end + 1 + 1000; k++) {
+      const next = b * (1 + realReturn) + tail;
+      if (next < 0) return { short: { year: k, have: b, need: -tail, kind: 'savings' } };
+      if (next >= b) break;
+      b = next;
     }
   }
-  return { years: K + 1 + rest };
+  return { years: end + 1 + rest };
 }
 
 /** The walk year by year: `balances[k]` is the balance at the start of year
