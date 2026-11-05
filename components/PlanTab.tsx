@@ -149,7 +149,7 @@ import { DrawdownCard, drawdownMarks, DrawdownMore, StageLevel, YearLevel } from
 import type { DrawdownMark } from './DrawdownChart';
 import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
 import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
-import { assumptionsLine, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, lawLabel, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxLine, yearTitle, type YearContext } from './plan-drawdown';
+import { ABOUT_DETAIL, assumptionsLine, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, lawLabel, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxLine, yearTitle, type YearContext } from './plan-drawdown';
 import { drawdownMovesFi, planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { lawFor } from '@/lib/fire/tax/law';
 import { householdOf, type TaxFactOp } from '@/lib/fire/tax-facts';
@@ -1095,16 +1095,17 @@ export default function PlanTab({
    *  it in, all together through /api/plans, each with the same change made
    *  in it (components/plan-diff.ts sameChange) from `before`, the plan the
    *  form was opened on. */
-  const saveShown = async (next: FirePlanV2, also: readonly string[] = [], before: FirePlanV2 = shownPlan): Promise<boolean | string> => {
+  const saveShown = async (next: FirePlanV2, also: readonly string[] = [], before: FirePlanV2 = shownPlan, tax?: TaxChoices): Promise<boolean | string> => {
     if (!entry && also.length === 0) return savePlanIn(next);
     if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
-    const wait = entry ? null : firstAmountWait(next);
+    const wait = entry ? null : firstAmountWait(next, tax);
     if (wait) return wait;
-    if (entry && shownCurrency === null && entryHoldsAmounts(next, entry.tax)) return NO_COPY_CURRENCY;
+    if (entry && shownCurrency === null && entryHoldsAmounts(next, tax ?? entry.tax)) return NO_COPY_CURRENCY;
+    const taxTo = tax ? { tax } : {};
     const saves: PlanSave[] = [
       entry
-        ? { id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at }
-        : { id: plansState.main, plan: next, currency: shownCurrency, based_on: stampRef.current },
+        ? { id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at, ...taxTo }
+        : { id: plansState.main, plan: next, currency: shownCurrency, based_on: stampRef.current, ...taxTo },
     ];
     const facts = factsOf(next);
     for (const id of also) {
@@ -1121,12 +1122,8 @@ export default function PlanTab({
   };
   /** The plan shown with what it says beside the plan, in one request: a copy holds its
    *  own choices, and your plan's save carries the household too. */
-  const saveMore: SaveMore = async (next, more) => {
-    if (entry) {
-      if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
-      if (shownCurrency === null && entryHoldsAmounts(next, more.tax ?? entry.tax)) return NO_COPY_CURRENCY;
-      return savePlans([{ id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at, ...(more.tax ? { tax: more.tax } : {}) }]);
-    }
+  const saveMore: SaveMore = async (next, more, also = []) => {
+    if (entry || also.length > 0) return saveShown(next, also, shownPlan, more.tax);
     sendMore.current = { ...(more.tax ? { tax: more.tax } : {}), ...(more.household ? { household: more.household, household_were: householdOf(shared.taxFacts) } : {}) };
     try {
       return await savePlanIn(next, more.tax);
@@ -1147,8 +1144,8 @@ export default function PlanTab({
       target === shownForRef.current ? saversRef.current.form(next, also) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
   const moreFor =
     (target: string | null): SaveMore =>
-    async (next, more) =>
-      target === shownForRef.current ? saversRef.current.more(next, more) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
+    async (next, more, also) =>
+      target === shownForRef.current ? saversRef.current.more(next, more, also) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
   const replaced = sheet !== null && !state.saving && state.status === 'ready' && storedKey !== openedOn.current;
   const formEditable = editable && !other && !copyFixing && sheetFor === shownFor && !replaced;
   // The figures' rows open their sheets whatever the state: while saving is
@@ -1265,6 +1262,7 @@ export default function PlanTab({
     if (kind === 'spending') return undefined;
     const rows = shared.copy.rows;
     return {
+      detail: shownInput ? { rmdAges: shownInput.rmdAges, cautions: rothCautions } : null,
       bucketsFor,
       asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
       reading: yearRows.some((id) => !rows[id] || rows[id].pending),
@@ -1387,6 +1385,16 @@ export default function PlanTab({
         }
       : null;
   // What the forms of a detailed plan read and save with. The shared parts lock in a copy.
+  // Taxes don't move a saved plan's assets before the stop, so a year your plan draws
+  // leaves its line above Your path.
+  const firstTax = baseFigures?.walk.taxes?.[0] ?? null;
+  const baseTax = baseFigures?.detail && !('failed' in baseFigures.detail) ? baseFigures.detail.walkTax : 0;
+  const progressFlatLine =
+    firstTax && baseTax >= 0.5 && basePlan.age !== null
+      ? `Your saved plan’s line takes no tax out before you stop, so from ${basePlan.age + firstTax.year} it runs ${money(baseTax)} above Your path, until you save it again.`
+      : null;
+  // What isn't known about a Roth, on the sheets it is about.
+  const rothCautions = honesty.filter((n) => n.kind.includes('Roth put-in')).map((n) => n.text);
   const detailForm: DetailForm | null = detailShown
     ? { choices: detailChoices, facts: shared.taxFacts, factsLocked: !savers.taxFacts, stateTaxes: lawNow.stateIncomeTax, statute: lawNow.statute, calendarYear, save: moreFor(sheetFor) }
     : null;
@@ -1670,7 +1678,8 @@ export default function PlanTab({
   const refused = !!openFigures && 'refused' in openFigures;
   const copyCard = entry && openView && (
     <CopyCard
-      parts={copyDiffParts(basePlan, openView.plan, money)}
+      parts={[...copyDiffParts(basePlan, openView.plan, money), ...(detailShown && entry.tax !== null && JSON.stringify(entry.tax) !== JSON.stringify(yourChoices) ? ['Other settings differ'] : [])]}
+      taxLine={detailShown && entry.tax === null ? 'It takes your plan’s tax settings.' : null}
       other={other}
       currencyLine={other && planCurrency ? currencyText(other, planCurrency, currencyKnown) : null}
       confirmWhyNot={confirmWhyNot}
@@ -1919,6 +1928,7 @@ export default function PlanTab({
             moved={movedNew}
             onMovedSeen={onMovedSeen}
             childOut={childOut}
+            flatLine={progressFlatLine}
           />
         )}
         </>
@@ -2083,7 +2093,7 @@ export default function PlanTab({
             measuredYield={detailBuckets ? measuredYield(detailBuckets) : null}
           />
         )}
-        {shownSheet?.kind === 'numbers' && <AboutNumbers />}
+        {shownSheet?.kind === 'numbers' && <AboutNumbers detailed={detailShown} />}
         {shownSheet?.kind === 'opt-in' && (
           <OptInSheet
             key={opened}
@@ -2094,7 +2104,7 @@ export default function PlanTab({
             onDone={closeFor(opened)}
           />
         )}
-        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} onYear={setYearLevel} />}
+        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} cautions={sheetStage.key === 'before-60' ? rothCautions : []} onYear={setYearLevel} />}
         {sheetYear && yearContext && <YearLevel year={sheetYear} context={yearContext} />}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
@@ -2111,6 +2121,7 @@ export default function PlanTab({
             buckets={bucketSheet(shownSheet.figure)}
             split={splitFor(shownSheet.figure)}
             mix={mixFor(shownSheet.figure)}
+            detail={detailForm}
           />
         )}
       </Sheet>
@@ -2280,7 +2291,7 @@ export function FiCard({
   walkedSavings?: number | null;
   /** What moved the walk (lib/fire/plan-figures.ts walkFrom), for its words;
    *  left out, the plan's items. */
-  walkFrom?: { items: boolean; events: boolean };
+  walkFrom?: { items: boolean; events: boolean; tax?: boolean };
   /** D15's line while new (components/plan-moved.ts fiMovedText), under the
    *  answer's lines with Got it, which hides it for the session. */
   moved?: string | null;
@@ -2350,6 +2361,7 @@ export function FiCard({
   const need = view.yearsToFi === null && !fiShort ? figuresNeed(view, takes) : null;
   // What moved the walk, in its words (never none where the walk counts).
   const words = walkWords(walkFrom) ?? EVENTS_WORDS;
+  const inTheirYears = walkFrom.items || walkFrom.events ? ' in their years' : '';
   let howLine = '';
   if (fiShort) {
     howLine = fiShort;
@@ -2357,12 +2369,12 @@ export function FiCard({
     howLine =
       words === EVENTS_WORDS
         ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this plan’s items changing what is saved in their years.`
-        : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words} in their years.`;
+        : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words}${inTheirYears}.`;
   } else if (walked && view.yearsToFi === Infinity) {
     howLine =
       words === EVENTS_WORDS
         ? `With this plan’s items you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
-        : `With ${words} in their years you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
+        : `With ${words}${inTheirYears} you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
     howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
@@ -2670,7 +2682,7 @@ export function StressRows({
 /** About these numbers: what every result is, the data and what it can't
  *  say, once (each result keeps its short label). The words are the card's
  *  before 6d. */
-export function AboutNumbers() {
+export function AboutNumbers({ detailed = false }: { detailed?: boolean }) {
   return (
     <div className="stack">
       <p className="helper">{HYPOTHETICAL}</p>
@@ -2679,11 +2691,29 @@ export function AboutNumbers() {
         returns, each from one month to the next, run from January 1871 to May 2023). Everything is in today&apos;s dollars: returns are after
         inflation, so a constant withdrawal keeps its buying power.
       </p>
-      <p className="helper">
-        What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account types or required
-        withdrawals), or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the
-        accounts you have connected.
-      </p>
+      {detailed ? (
+        <>
+          <p className="helper">
+            What this can&apos;t tell you: other countries&apos; markets, or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the accounts you have
+            connected.
+          </p>
+          <h3 className="section-label">How tax is worked out</h3>
+          <p className="helper">{ABOUT_DETAIL.how}</p>
+          <h3 className="section-label">What stands in for what</h3>
+          {ABOUT_DETAIL.standIns.map((line) => (
+            <p key={line} className="helper">
+              {line}
+            </p>
+          ))}
+          <p className="helper">{ABOUT_DETAIL.notModeled}</p>
+        </>
+      ) : (
+        <p className="helper">
+          What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account types or required
+          withdrawals), or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the
+          accounts you have connected.
+        </p>
+      )}
     </div>
   );
 }

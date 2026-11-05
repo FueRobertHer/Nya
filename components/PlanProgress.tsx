@@ -152,6 +152,8 @@ export type ProgressViewProps = {
   /** D15's line may show: the switch on, still new, Got it not tapped. */
   moved?: boolean;
   onMovedSeen?: () => void;
+  /** What a detailed plan's draw before the stop leaves between its line and Your path. */
+  flatLine?: string | null;
   /** D7's switch: its Why says a child's accounts are out. */
   childOut?: boolean;
   series: SeriesState | null;
@@ -178,7 +180,7 @@ export function savingsBlock(savings: Input): string | null {
   return null;
 }
 
-export function ProgressView({ savedState, items = null, moved = false, onMovedSeen, childOut = false, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
+export function ProgressView({ savedState, items = null, moved = false, onMovedSeen, childOut = false, flatLine = null, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
   const saved = savedState.kind === 'ready' ? savedState.saved : null;
   const why = blocked ?? savingsBlock(savings);
   const menu = saved ? [{ label: 'Stop comparing', danger: true, onSelect: () => onSheet('forget'), disabled: busy }] : [];
@@ -231,7 +233,7 @@ export function ProgressView({ savedState, items = null, moved = false, onMovedS
             )}
           </>
         )}
-        {saved && <SavedBody saved={saved} items={items} moved={moved} onMovedSeen={onMovedSeen} childOut={childOut} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
+        {saved && <SavedBody saved={saved} items={items} moved={moved} onMovedSeen={onMovedSeen} childOut={childOut} flatLine={flatLine} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
         {saved && changedSince(saved, plan).length > 0 && (
           <>
             <Notice level="info">
@@ -260,6 +262,7 @@ function SavedBody({
   moved,
   onMovedSeen,
   childOut,
+  flatLine,
   series,
   money,
   nameOf,
@@ -270,6 +273,7 @@ function SavedBody({
   moved: boolean;
   onMovedSeen?: () => void;
   childOut: boolean;
+  flatLine: string | null;
   series: SeriesState | null;
   money: (n: number) => string;
   nameOf: (id: string) => string;
@@ -306,6 +310,11 @@ function SavedBody({
       <p className="helper">
         <Masked>{assumed}</Masked>
       </p>
+      {flatLine && (
+        <p className="helper">
+          <Masked>{flatLine}</Masked>
+        </p>
+      )}
       <p className="plan-definition">Hypothetical: a steady return and steady prices, not a prediction, and not advice.</p>
       <Why>
         <p>
@@ -494,9 +503,11 @@ export type PlanProgressProps = {
   moved?: boolean;
   onMovedSeen?: () => void;
   childOut?: boolean;
+  /** What a detailed plan's draw before the stop leaves between its line and Your path. */
+  flatLine?: string | null;
 };
 
-export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, copyOpen, items = null, moved = false, onMovedSeen, childOut = false }: PlanProgressProps) {
+export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, copyOpen, items = null, moved = false, onMovedSeen, childOut = false, flatLine = null }: PlanProgressProps) {
   const { savedState, series, setSaved, setSeries, retry } = progress;
   const [sheet, setSheet] = useState<ProgressSheet>(null);
   const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
@@ -601,6 +612,7 @@ export default function PlanProgress({ progress, plan, savings, currency, instit
         items={items}
         moved={moved}
         onMovedSeen={onMovedSeen}
+        flatLine={flatLine}
         childOut={childOut}
         series={series}
         plan={plan}

@@ -14,8 +14,8 @@ async function flagged() {
   const { flagsStore } = await import('@/lib/flag-store');
   await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
 }
-async function optedIn(props: Parameters<typeof render>[0] = {}, plan = PLAN) {
-  await seedPlan(plan);
+async function optedIn(props: Parameters<typeof render>[0] = {}, plan = PLAN, seeded = false) {
+  if (!seeded) await seedPlan(plan);
   await flagged();
   const tab = await render({ planTax: true, ...props });
   await pick(tab.container, 'Drawdown');
@@ -39,6 +39,78 @@ const read = async () => {
 const planSaves = () => calls().filter((c) => c.method === 'PUT' && c.path === '/api/fire-plan');
 const lastSave = () => planSaves().at(-1)!.body;
 const subOf = (tab: Tab, title: string) => tab.row(title)?.findAll((e) => (e.getAttribute('class') ?? '').includes('list-row-sub'))[0]?.textContent;
+
+describe('Annual savings', () => {
+  test('flat, its split is read-only; detailed, it takes your own by bucket, in one request', async () => {
+    await seedPlan();
+    const flat = await render();
+    expect(field(await sheet(flat, 'Annual savings'), 'Taxable')).toBeFalsy();
+    await flat.unmount();
+    const tab = await optedIn({}, PLAN, true);
+    const form = await sheet(tab, 'Annual savings');
+    const mine = form.findAll((e) => e.getAttribute('role') === 'radio' && e.textContent === 'My own');
+    await press(mine[mine.length - 1]);
+    await fill(tab.dialog()!, 'Taxable', '30');
+    await fill(tab.dialog()!, 'Roth', '30');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(100);
+    expect(tab.dialog()!.textContent).toContain('These add up to 60%, not 100%.');
+    await fill(tab.dialog()!, 'Tax-deferred', '40');
+    await save(tab);
+    expect(lastSave().tax.savingsSplit).toEqual([
+      { bucket: 'taxable', share: 0.3 },
+      { bucket: 'tax-deferred', share: 0.4 },
+      { bucket: 'roth', share: 0.3 },
+    ]);
+    expect((await read()).tax.savingsSplit).toHaveLength(3);
+    await tab.unmount();
+  }, 30_000);
+});
+
+describe('Invested assets', () => {
+  const acct = (account_id: string, name: string, subtype: string, balance: number) => ({ account_id, name, type: 'investment', subtype, balance, currency: 'USD' });
+  const institutions = [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [acct('k', '401(k)', '401k', 260_000), acct('r', 'Roth IRA', 'roth', 50_000), acct('h', 'HSA', 'hsa', 25_000)] }] as never;
+
+  test('detailed, it says when required withdrawals start, what an HSA does, and what isn’t known of a Roth', async () => {
+    await seedPlan();
+    const flat = await render({ institutions });
+    const flatText = (await sheet(flat, 'Invested assets')).textContent;
+    expect(flatText).not.toContain('Required withdrawals start');
+    expect(flatText).not.toContain('reachable before 59½');
+    expect(flatText).toContain('With a flat tax rate these don’t change');
+    await flat.unmount();
+    const tab = await optedIn({ institutions }, PLAN, true);
+    const text = (await sheet(tab, 'Invested assets')).textContent;
+    expect(text).toContain('Required withdrawals start at');
+    expect(text).toContain('From 65 it pays Medicare Part B and IRMAA premiums untaxed');
+    expect(text).toContain('What went into your Roth isn’t given, so none of it counts as reachable before 59½. Say how much here.');
+    expect(text).not.toContain('With a flat tax rate these don’t change');
+    await tab.unmount();
+  }, 30_000);
+});
+
+describe('About these numbers', () => {
+  const about = async (tab: Tab) => {
+    await pick(tab.container, 'Drawdown');
+    return (await sheet(tab, 'About these numbers')).textContent;
+  };
+
+  test('flat, one flat rate; detailed, how tax is worked out and what isn’t modeled', async () => {
+    await seedPlan();
+    const flat = await render();
+    expect(await about(flat)).toContain('taxes beyond one flat rate');
+    await flat.unmount();
+    const tab = await optedIn({}, PLAN, true);
+    const text = await about(tab);
+    expect(text).not.toContain('taxes beyond one flat rate');
+    expect(text).toContain('How tax is worked out');
+    expect(text).toContain('75% counts as qualified');
+    expect(text).toContain('Only premiums count as health costs');
+    expect(text).toContain('An education account you count stands in as tax-deferred');
+    expect(text).toContain('Not modeled: the child tax credit');
+    await tab.unmount();
+  }, 30_000);
+});
 
 describe('Health coverage', () => {
   test('no row in the flat model, even with the flag', async () => {

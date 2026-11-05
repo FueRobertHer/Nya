@@ -706,6 +706,7 @@ function NameForm({
  *  heading of its own: the bar's names the copy. */
 export function CopyCard({
   parts,
+  taxLine = null,
   other,
   currencyLine,
   confirmWhyNot,
@@ -721,6 +722,8 @@ export function CopyCard({
 }: {
   /** How it differs from your plan (components/plan-diff.ts). */
   parts: string[];
+  /** Under a detailed plan, where it holds no tax settings of its own. */
+  taxLine?: string | null;
   /** The currency its amounts were typed in, when it isn't your plan's now. */
   other: string | null;
   /** That said, in words (components/plan-scenario-text.ts currencyText). */
@@ -753,6 +756,7 @@ export function CopyCard({
       <p className="helper">
         <Masked>{diffText(parts)}</Masked>
       </p>
+      {taxLine && <p className="helper">{taxLine}</p>}
       {other && currencyLine && (
         <>
           <Notice level="critical" role="alert">

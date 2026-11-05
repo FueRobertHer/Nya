@@ -393,6 +393,23 @@ export function householdNotes(a: { facts: Pick<TaxFacts, 'dependents'>; choices
   return notes;
 }
 
+/** About these numbers, under a detailed plan: how tax is worked out, what stands in
+ *  for what, and what isn't modeled. */
+export const ABOUT_DETAIL = {
+  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Will it last? then runs every start at one share of tax from those years, with each year’s health coverage as its own cost, so a tax that moves with the markets isn’t in it. Your FI number still uses your flat rate, and changes in a later version.',
+  standIns: [
+    'Of dividends and interest, 75% counts as qualified.',
+    'Only premiums count as health costs: deductibles, coinsurance, dental, vision and hearing don’t. Premiums are about 45% of a 65-year-old’s lifetime health costs (Fidelity’s 2026 estimate).',
+    'Your state takes one rate on ordinary income and gains, with Social Security left out. Washington’s tax on capital gains isn’t counted.',
+    'Medicare’s income surcharge (IRMAA) reads your income from two years before, and nothing for a year with no such year in the plan.',
+    'Where a flexible rule cuts spending below your average health cost in a run, coverage is cut with it, until a later version keeps them apart.',
+    'An education account you count stands in as tax-deferred.',
+    'What’s left at the end takes taxable at full value, Roth as it is, and tax-deferred and an HSA after tax at the last year’s top rate, which understates cashing out a large balance at once.',
+    'A year you’d draw before you stop has no wages counted beside it.',
+  ],
+  notModeled: 'Not modeled: the child tax credit and head of household filing; nondeductible IRA basis and its pro-rata rule; specific-lot sales; the chained-CPI drift of brackets; tax drag on taxable accounts before you stop; Roth 401(k) withdrawals before 59½, counted as not reachable unless you say; the self-employed health insurance deduction; rating only the three oldest children under 21; the 0.9% Additional Medicare Tax; the Roth five-year rule for earnings at 60, taken as met; the Medicaid work rule’s exemptions and month-by-month test; Basic Health Programs; children’s Medicaid and CHIP lines above 138%; the joint life table for a spouse more than 10 years younger; and putting the first required withdrawal off to April.',
+} as const;
+
 /** The Household row's line. */
 export function householdLine(facts: Pick<TaxFacts, 'filing'>, choices: Pick<TaxChoices, 'state'>): string {
   return [facts.filing === 'joint' ? 'joint' : 'single', choices.state ? STATE_NAMES[choices.state] : 'no state yet'].join(' · ');

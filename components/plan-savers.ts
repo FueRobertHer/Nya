@@ -37,7 +37,7 @@ export type Save = (next: FirePlanV2, also?: readonly string[]) => Promise<boole
 
 /** A save with what it says beside the plan (the tax plan's Saves): the plan's tax
  *  choices and, on your plan, the household, in one request. */
-export type SaveMore = (next: FirePlanV2, more: MoreSave) => Promise<boolean | string>;
+export type SaveMore = (next: FirePlanV2, more: MoreSave, also?: readonly string[]) => Promise<boolean | string>;
 
 export type PlanSavers = {
   form: Save;

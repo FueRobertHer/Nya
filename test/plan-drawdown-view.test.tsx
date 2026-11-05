@@ -18,15 +18,45 @@ const drawdown = async (tab: Tab) => {
 };
 const WAY_IN = 'Work it out from your accounts';
 
-async function detailed(plan = PLAN) {
+async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = {}) {
   await seedPlan(plan);
   await flagged();
-  const tab = await render({ planTax: true });
+  const tab = await render({ planTax: true, ...props });
   await drawdown(tab);
   await press(tab.row(WAY_IN));
   await press(button(tab.dialog(), 'Work it out'));
   return tab;
 }
+
+describe('the before-59½ stage', () => {
+  test('says what isn’t known of a Roth', async () => {
+    const acct = (account_id: string, name: string, subtype: string, balance: number) => ({ account_id, name, type: 'investment', subtype, balance, currency: 'USD' });
+    const institutions = [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [acct('k', '401(k)', '401k', 900_000), acct('r', 'Roth IRA', 'roth', 50_000)] }] as never;
+    const tab = await detailed({ ...PLAN, age: 40, targetAge: 50 }, { institutions });
+    const stage = tab.container.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row') && (e.textContent ?? '').includes('59½'))[0];
+    await press(stage);
+    expect(tab.dialog()!.textContent).toContain('What went into your Roth isn’t given, so none of it counts as reachable before 59½.');
+    await tab.unmount();
+  }, 30_000);
+});
+
+describe('a copy’s card', () => {
+  test('its choices are said once they differ from your plan’s', async () => {
+    const tab = await detailed();
+    await tab.unmount();
+    await seedCopy('Other', { spending: 50_000 });
+    const open = await render({ planTax: true });
+    await openCopy(open, 'Other');
+    expect(open.text()).not.toContain('Other settings differ');
+    await pick(open.container, 'Your path');
+    await press(open.row('Assumptions'));
+    await page.fill(open.dialog()!, 'Inflation', '4');
+    await press(button(open.dialog(), 'Save'));
+    await page.settle(300);
+    expect(open.text()).toContain('Other settings differ');
+    await open.unmount();
+  }, 30_000);
+});
 
 describe('marks on Whole path', () => {
   const summary = (tab: Tab) => tab.container.findAll((e) => e.getAttribute('role') === 'img' && (e.getAttribute('aria-label') ?? '').includes('Invested assets'))[0]?.getAttribute('aria-label') ?? '';

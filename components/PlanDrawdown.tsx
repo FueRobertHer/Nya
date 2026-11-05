@@ -8,6 +8,7 @@
 import type { DrawdownStage, DrawdownYear } from '@/lib/fire/drawdown';
 import type { PlanDetail } from '@/lib/fire/plan-detail';
 import { Masked } from './HideAmounts';
+import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import DrawdownChart, { type DrawdownMark } from './DrawdownChart';
 import { detailLines, lawLabel, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, yearBadges, yearHelper, yearSections, yearSub, yearValueLabel, type YearContext, type YearSection } from './plan-drawdown';
@@ -139,7 +140,7 @@ export function DrawdownMore({ onGoPath }: { onGoPath: () => void }) {
 }
 
 /** A stage's sheet: what it is, its years as rows, each opening its own sheet. */
-export function StageLevel({ stage, years, money, rmdAge, onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; onYear: (index: number) => void }) {
+export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; cautions?: readonly string[]; onYear: (index: number) => void }) {
   const sentence = stageSentence(stage, years, money);
   return (
     <div className="stack loose">
@@ -149,6 +150,11 @@ export function StageLevel({ stage, years, money, rmdAge, onYear }: { stage: Dra
           <Masked>{sentence}</Masked>
         </p>
       )}
+      {cautions.map((c) => (
+        <Notice key={c} level="caution">
+          {c}
+        </Notice>
+      ))}
       <ul className="list-rows">
         {years.slice(stage.first, stage.last).map((y, i) => {
           const badges = yearBadges(y, money);

@@ -38,8 +38,10 @@ import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
 import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet } from './PlanBuckets';
-import { headLine } from './plan-buckets';
-import type { SavingsSplit } from '@/lib/fire/savings-split';
+import { BUCKET_NAMES, type TaxBucket } from '@/lib/allocation/buckets';
+import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
+import type { SavingsBucket } from '@/lib/fire/tax-choices';
+import { headLine, splitNote } from './plan-buckets';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 export type SaveProps = {
@@ -84,7 +86,7 @@ export type DetailForm = {
   stateTaxes: Record<StateCode, boolean>;
   statute: Statute;
   calendarYear: number;
-  save: (next: FirePlanV2, more: MoreSave) => Promise<boolean | string>;
+  save: (next: FirePlanV2, more: MoreSave, also?: readonly string[]) => Promise<boolean | string>;
 };
 
 /** What was typed that can't be saved, and the fields it is about (each by
@@ -169,7 +171,7 @@ export function useDetailSave(props: SaveProps, detail: DetailForm | null) {
   const onSave: SaveProps['onSave'] = async (next, also) => {
     if (!detail) return props.onSave(next, also);
     if (!more.current.tax && !more.current.household && JSON.stringify(next) === JSON.stringify(props.plan)) return true;
-    return detail.save(next, more.current);
+    return detail.save(next, more.current, also);
   };
   return { s: useSave({ ...props, onSave }), more };
 }
@@ -617,6 +619,28 @@ const CHILD_ACCOUNTS_NOTE = ' Accounts for a child’s education are left out un
 
 type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null };
 
+const SAVINGS_BUCKETS: readonly SavingsBucket[] = ['taxable', 'tax-deferred', 'roth', 'hsa'];
+
+/** The measured split's buckets, for the override to start from. */
+const savingsByBucket = (split: SavingsSplit) => byBucket(split).filter((s): s is { bucket: SavingsBucket; share: number } => (SAVINGS_BUCKETS as readonly TaxBucket[]).includes(s.bucket));
+
+/** A split in its fields, as whole percents where it can be. */
+function splitFields(rows: readonly { bucket: SavingsBucket; share: number }[]): Record<SavingsBucket, string> {
+  const text = (b: SavingsBucket) => {
+    const row = rows.find((r) => r.bucket === b);
+    return row ? String(Math.round(row.share * 1000) / 10) : '';
+  };
+  return { taxable: text('taxable'), 'tax-deferred': text('tax-deferred'), roth: text('roth'), hsa: text('hsa') };
+}
+
+/** The split as typed, each share over 0, or what is wrong. */
+function readSplit(text: Record<SavingsBucket, string>): { bucket: SavingsBucket; share: number }[] {
+  const rows = SAVINGS_BUCKETS.map((bucket) => ({ bucket, share: readNumber(text[bucket], BUCKET_NAMES[bucket], 0, 1, { scale: 0.01, optional: true }) ?? 0 }));
+  const total = rows.reduce((sum, r) => sum + r.share, 0);
+  if (Math.abs(total - 1) > 1e-6) throw new FieldProblem(`These add up to ${Math.round(total * 1000) / 10}%, not 100%.`, SAVINGS_BUCKETS.map((b) => BUCKET_NAMES[b]));
+  return rows.filter((r) => r.share > 0);
+}
+
 export function FigureForm(
   props: SaveProps & {
     kind: FigureKind;
@@ -637,6 +661,8 @@ export function FigureForm(
     split?: SavingsSplit | null;
     /** The mix at the start age, in a line; null when it can't be worked out. */
     mix?: string | null;
+    /** Under a detailed plan: Annual savings' override per bucket. */
+    detail?: DetailForm | null;
   }
 ) {
   const { plan, kind } = props;
@@ -657,7 +683,12 @@ export function FigureForm(
     });
     return [...here, ...plan.planFunding.filter((f) => !listed.has(f.account_id))].slice(0, LIMITS.planFunding);
   };
-  const s = useSave(props);
+  const detail = kind === 'savings' ? (props.detail ?? null) : null;
+  const { s, more } = useDetailSave(props, detail);
+  // Where a year of savings goes: as measured, or your own by bucket.
+  const chosenSplit = detail?.choices.savingsSplit ?? null;
+  const [splitMode, setSplitMode] = useState<'measured' | 'typed'>(chosenSplit ? 'typed' : 'measured');
+  const [splitText, setSplitText] = useState<Record<SavingsBucket, string>>(() => splitFields(chosenSplit ?? (props.split ? savingsByBucket(props.split) : [])));
   const t = FIGURE_TEXT[kind];
   const live = kind === 'assets' && props.assetsFor ? props.assetsFor(includeCash) : null;
   const measured = live ? live.total : props.measured;
@@ -792,7 +823,51 @@ export function FigureForm(
           ))}
         </>
       )}
-      {kind === 'savings' && sheet && props.split && <SavingsSplitLines split={props.split} reading={sheet.reading} />}
+      {kind === 'savings' && sheet && props.split && !detail && <SavingsSplitLines split={props.split} reading={sheet.reading} />}
+      {kind === 'savings' && sheet && detail && (
+        <section className="stack tight">
+          <h3 className="section-label">Where it goes</h3>
+          <Choice
+            label="Where it goes"
+            value={splitMode}
+            onChange={setSplitMode}
+            disabled={s.saving}
+            options={[
+              ['measured', 'Nya’s figure'],
+              ['typed', 'My own'],
+            ]}
+          />
+          {splitMode === 'measured' ? (
+            props.split ? (
+              <SavingsSplitLines split={props.split} reading={sheet.reading} heading={false} />
+            ) : (
+              <p className="helper">{splitNote('none')}</p>
+            )
+          ) : (
+            <>
+              <div className="sheet-form">
+                {SAVINGS_BUCKETS.map((b) => (
+                  <label className="field" key={b}>
+                    {BUCKET_NAMES[b]}
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      data-percent
+                      step="1"
+                      value={splitText[b]}
+                      onChange={(e) => setSplitText((m) => ({ ...m, [b]: e.target.value }))}
+                      {...s.field(BUCKET_NAMES[b])}
+                      disabled={s.saving}
+                    />
+                    {s.under(BUCKET_NAMES[b])}
+                  </label>
+                ))}
+              </div>
+              <p className="helper">Each bucket’s share of what you save, adding up to 100%. A plan’s own: only this plan takes it.</p>
+            </>
+          )}
+        </section>
+      )}
       {s.error && (
         <Notice level="critical" role="alert">
           {s.error}
@@ -808,12 +883,18 @@ export function FigureForm(
         disabled={s.disabled}
         saving={s.saving}
         onSave={() =>
-          s.save(() => ({
-            ...plan,
-            [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
-            includeCash: kind === 'assets' ? includeCash : plan.includeCash,
-            planFunding: kind === 'savings' ? planFunding() : plan.planFunding,
-          }))
+          s.save(() => {
+            if (detail) {
+              const savingsSplit = splitMode === 'measured' ? null : readSplit(splitText);
+              more.current = JSON.stringify(savingsSplit) === JSON.stringify(detail.choices.savingsSplit) ? {} : { tax: { ...detail.choices, savingsSplit } };
+            }
+            return {
+              ...plan,
+              [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
+              includeCash: kind === 'assets' ? includeCash : plan.includeCash,
+              planFunding: kind === 'savings' ? planFunding() : plan.planFunding,
+            };
+          })
         }
       />
       </div>

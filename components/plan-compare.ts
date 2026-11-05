@@ -230,7 +230,8 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
           const res = r as SimResult;
           const flexible = fig.plan.rule !== 'constant';
           const low = flexible && res.lowestSpending ? `, the lowest year ${money(res.lowestSpending.amount)}` : flexible ? ', and no start lasted' : '';
-          const value = `${money(res.firstYearSpending)} a year after tax${low}`;
+          const coverage = fig.detail && !('failed' in fig.detail) ? ', with health coverage' : '';
+          const value = `${money(res.firstYearSpending)} a year after tax${coverage}${low}`;
           if (!base || !baseFigures) return { value };
           return { value, diff: apart(fig, baseFigures) ?? amountDiffText(res.firstYearSpending - base.firstYearSpending, money) };
         })

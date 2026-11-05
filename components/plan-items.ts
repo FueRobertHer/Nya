@@ -504,8 +504,10 @@ export function everyRunText(start: number | null, plan: Pick<FirePlanV2, 'start
 /** The Honesty table's cautions on an item (screens.md): part-time work
  *  before you stop that doesn't say what it replaces, and income before FI
  *  given before tax. */
-export function itemCautions(x: PlanItem, at: { start: number | null; stop: number | null; inFi: boolean; taxRate: number }): string[] {
+export function itemCautions(x: PlanItem, at: { start: number | null; stop: number | null; inFi: boolean; taxRate: number; detailed?: boolean }): string[] {
   const out: string[] = [];
+  if (at.detailed && !x.beforeTax && (x.kind === 'pension' || x.kind === 'social-security' || x.kind === 'other-income')) out.push('Give it before tax, so its tax and its part in your ACA income count.');
+  if (at.detailed && !x.beforeTax && x.kind === 'part-time') out.push('Given after tax, it may hide a year over the ACA limit.');
   if (x.kind === 'part-time' && x.replaces === null && at.start !== null && at.stop !== null && at.start < at.stop) out.push('Say what take-home it replaces, so it counts in your FI date.');
   if (INCOME_KINDS.includes(x.kind) && x.beforeTax && at.inFi) {
     out.push(`In your FI date after ${Math.round(at.taxRate * 1000) / 10}% tax, your plan’s rate on withdrawals. It may keep less: give its take-home for a closer date.`);
@@ -773,6 +775,6 @@ export function previewLines(p: PreviewInput): PreviewLines {
   }
   if (why === 'no-years') lines.push('Ends before it starts, so it runs no years.');
 
-  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.plan.taxRate });
+  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.plan.taxRate, detailed: !!f.detail && !('failed' in f.detail) });
   return { rows, lines, cautions, warnings: i >= 0 ? itemWarnings(x, f, i) : [] };
 }
