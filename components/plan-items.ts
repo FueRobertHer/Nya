@@ -510,7 +510,7 @@ export function itemCautions(x: PlanItem, at: { start: number | null; stop: numb
   if (at.detailed && !x.beforeTax && x.kind === 'part-time') out.push('Given after tax, it may hide a year over the ACA limit.');
   if (x.kind === 'part-time' && x.replaces === null && at.start !== null && at.stop !== null && at.start < at.stop) out.push('Say what take-home it replaces, so it counts in your FI date.');
   if (INCOME_KINDS.includes(x.kind) && x.beforeTax && at.inFi) {
-    out.push(`In your FI date after ${Math.round(at.taxRate * 1000) / 10}% tax, your plan’s rate on withdrawals. It may keep less: give its take-home for a closer date.`);
+    out.push(`In your FI date after ${Math.round(at.taxRate * 1000) / 10}% tax, ${at.detailed ? 'your plan’s tax after you stop' : 'your plan’s rate on withdrawals'}. It may keep less: give its take-home for a closer date.`);
   }
   return out;
 }
@@ -724,7 +724,7 @@ export function previewLines(p: PreviewInput): PreviewLines {
   // Part-time work before the stop: what it pays, less what it replaces. Begun
   // before today it is in the saving this would be measured against.
   if (x.kind === 'part-time' && p.savings !== null && x.yearly !== null && x.replaces !== null && ages && stop !== null && ages.start < stop && today !== null && ages.start >= today) {
-    const pays = x.yearly * (x.beforeTax ? 1 - f.plan.taxRate : 1);
+    const pays = x.yearly * (x.beforeTax ? 1 - (f.shares?.t ?? f.plan.taxRate) : 1);
     rows.push({ key: 'You’d save', value: `${p.money(Math.max(0, p.savings + pays - x.replaces))} a year, not ${p.money(p.savings)}` });
   }
 
@@ -775,6 +775,6 @@ export function previewLines(p: PreviewInput): PreviewLines {
   }
   if (why === 'no-years') lines.push('Ends before it starts, so it runs no years.');
 
-  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.plan.taxRate, detailed: !!f.detail && !('failed' in f.detail) });
+  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.shares?.t ?? f.plan.taxRate, detailed: !!f.detail && !('failed' in f.detail) });
   return { rows, lines, cautions, warnings: i >= 0 ? itemWarnings(x, f, i) : [] };
 }

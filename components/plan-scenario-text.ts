@@ -9,7 +9,7 @@
 
 import { allocationOf, type FirePlan, type PlanExpense, type PlanIncome } from '@/lib/fire/plan';
 import { carAges, type EventPart, type LifeEvent, type Shortfall } from '@/lib/fire/events';
-import type { StartsWith } from '@/lib/fire/plan-figures';
+import type { PlanFigures, StartsWith } from '@/lib/fire/plan-figures';
 import type { SetField } from '@/lib/fire/plan-list';
 import { RULE_NAMES, REBALANCE_TEXT, pct } from './plan-text';
 
@@ -175,6 +175,16 @@ export function shortText(short: Shortfall, age: number | null, money: Money, wh
   return short.kind === 'cost'
     ? `You’d have about ${money(short.have)} ${when}, less than the ${money(short.need)} it takes from your investments, so ${what}: change the cost, or when it comes.`
     : `You’d have about ${money(short.have)} ${when}, and that year takes ${money(short.need)} out, more than there is, so ${what}.`;
+}
+
+/** The lasting changes in the FI number. Worked out, those are the ones at the
+ *  stop, which a plan starting from today hasn't all reached where its own
+ *  `retirement` reads them. */
+export function numberSpending(f: Pick<PlanFigures, 'retirement' | 'shares' | 'view'>): PlanFigures['retirement'] {
+  if (!f.shares) return f.retirement;
+  const today = f.view.spending.value;
+  if (today === null || f.shares.spending === today) return null;
+  return { spending: f.shares.spending, lasting: f.shares.spending - today };
 }
 
 /** Retirement spending with lasting changes, beside the FI number. */

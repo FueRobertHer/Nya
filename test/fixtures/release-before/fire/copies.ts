@@ -22,7 +22,7 @@ import { DEFAULT_PLAN, isFirePlan, type FirePlan, type PlanFunding } from './pla
 import { isStoredPlan, planOf, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 import { MAX_PLAN_SCENARIOS } from './plan-list';
 import { hasTypedAmounts } from './plan-currency';
-import { isTaxChoices, type TaxChoices } from './tax-choices';
+import { isTaxChoices, taxHoldsAmounts, type TaxChoices } from './tax-choices';
 import { isTaxFacts, type TaxFacts } from './tax-facts';
 
 /** One plan, as `fire-plans` stores it. */
@@ -140,6 +140,11 @@ export function holdsAmounts(plan: StoredPlan): boolean {
   if (hasTypedAmounts(plan)) return true;
   return plan.version === 2 && (plan.fiNumber !== null || plan.items.some((x) => x.once !== null || x.yearly !== null || x.replaces !== null));
 }
+
+/** Whether an entry holds an amount someone typed: its plan's, or its choices'
+ *  (a benchmark), so a plan whose only amount is a benchmark doesn't follow the
+ *  accounts' currency unasked. */
+export const entryHoldsAmounts = (plan: StoredPlan, tax: TaxChoices | null): boolean => holdsAmounts(plan) || taxHoldsAmounts(tax);
 
 /** Which entry is your plan: the one `plan-facts` names; else `main`; else
  *  the oldest by `createdAt` (then id). `missing` when it isn't the one

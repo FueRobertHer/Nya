@@ -1,16 +1,13 @@
 // components/plan-detailed.ts
 //
 // A detailed plan's figures on the page, by one flow for every caller, the Plan's
-// answer, a copy's row and a sheet's preview, and Home's line when the drawdown can
-// move it, so the two say one answer:
+// answer, a copy's row, a sheet's preview and Home's line, so they say one answer:
 //
 //   1. Flat, as always: a plan in the flat model stops here, and costs nothing new.
-//   2. Where the drawdown can't move the answer (drawdownMovesFi): the flat answer's
-//      resolution, with `detail` and the bridge added.
-//   3. Where it can, and nothing is searched for: worked out here and now.
-//   4. Where it can, and something is: the job (lib/fire/search-job.ts). Meanwhile the
-//      last answer for these same items, or the flat one, dimmed. Ages go by position,
-//      so an answer found for other items is never used.
+//   2. Nothing searched for: worked out here and now.
+//   3. Something is: the job (lib/fire/search-job.ts). Meanwhile the last answer for
+//      these same items, or the flat one's, dimmed. Ages go by position, so an answer
+//      found for other items is never used.
 //
 // Loads the law, so Home imports it only for a plan that needs it.
 
@@ -20,7 +17,7 @@ import type { InvestedAssets } from '@/lib/fire/inputs';
 import type { Count } from '@/lib/fire/compile';
 import type { DetailWork, DetailedInput } from '@/lib/fire/plan-detail';
 import { detailWork } from '@/lib/fire/plan-detail';
-import { drawdownMovesFi, planFigures, type FiguresRefused, type PlanFigures } from '@/lib/fire/plan-figures';
+import { planFigures, type FiguresRefused, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { Measured } from '@/lib/fire/plan';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import { anchoredOn, type Resolution } from '@/lib/fire/steady';
@@ -111,6 +108,7 @@ export function detailedInput({ plan, tax, facts, today, paid, calendarYear }: {
     state,
     stateRate: state !== null && !law.stateIncomeTax[state] ? 0 : choices.stateRate,
     paidToday: paid,
+    strategy: choices.strategy,
     law,
     lawYear: { year: law.year, behind },
   };
@@ -154,10 +152,6 @@ export function createDetailedFigures(search: Pick<PlanSearch, 'answer' | 'drop'
       figures.set(key, made);
       return made;
     };
-    if (!drawdownMovesFi(plan, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge)) {
-      search.drop(slot);
-      return { figures: worked(flat.resolution), working: false, failed: false };
-    }
     if (!searches(plan)) {
       search.drop(slot);
       return { figures: worked(), working: false, failed: false };

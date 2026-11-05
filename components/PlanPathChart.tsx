@@ -160,7 +160,7 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     marker = fiAge <= points[0].age && points[0].balance >= fiNumber ? { x: x(points[0].age), y: y(points[0].balance) } : { x: x(Math.max(fiAge, points[0].age)), y: y(fiNumber) };
   }
   // On Whole path, inside the axis; the stop has its own line.
-  const tickXs = after ? (p.ticks ?? []).filter((t) => t.age > first && t.age < last && t.age !== stopAge).map((t) => ({ x: x(t.age), short: t.short })) : [];
+  const tickXs = after ? (p.ticks ?? []).filter((t) => t.age > first && t.age < last && t.age !== stopAge).map((t) => ({ x: x(t.age), short: t.short, label: t.label })) : [];
   const span = (t: XLabel) => {
     const w = labelWidth(t.label);
     return t.anchor === 'start' ? [t.x, t.x + w] : t.anchor === 'end' ? [t.x - w, t.x] : [t.x - w / 2, t.x + w / 2];
@@ -220,7 +220,10 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     if (fiX2 - PAD_X >= nameW && (!after || keepsTo(lines, x, fiX2 - nameW, fiX2, fiNumber, under))) fiName = { x: fiX2, y: under ? fiY + 14 : fiY - 5, rule: false };
     else fiName = { x: PAD_X, y: fiY - RULE_LABEL_GAP - RULE_LABEL_HEIGHT >= 0 ? fiY - RULE_LABEL_GAP : fiY + RULE_LABEL_GAP + RULE_LABEL_HEIGHT, rule: true };
   }
-  return { x, y, baseY, line, area, marker, labels, ticks: tickXs, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
+  // A mark whose age had no room: all of them are named under the chart, so none goes unsaid.
+  const unnamed = after ? tickXs.some((t) => !labels.some((l) => l.label === t.short)) : false;
+  const named = unnamed ? tickXs.map((t) => t.label) : [];
+  return { x, y, baseY, line, area, marker, labels, named, ticks: tickXs, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
 }
 
 /** What the chart shows, in words, for a screen reader: built when drawn,
@@ -311,6 +314,11 @@ export default function PlanPathChart(props: PathChartProps) {
           </text>
         ))}
       </svg>
+      {geo.named.length > 0 && (
+        <p className="helper">
+          <Masked>{`Marked: ${geo.named.join(', ')}.`}</Masked>
+        </p>
+      )}
       {switchable && (
         <Segmented
           compact

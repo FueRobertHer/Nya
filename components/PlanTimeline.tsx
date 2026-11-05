@@ -366,7 +366,7 @@ export function TimelineCard({
     }
     const why = figures?.resolution.why[i] ?? null;
     if (why === 'no-years') plain.push('Ends before it starts, so it runs no years.');
-    const caution = figures ? itemCautions(x, { start: at, stop, inFi: countsInFiDate(figures, i), taxRate: plan.taxRate, detailed: !!figures.detail && !('failed' in figures.detail) }) : [];
+    const caution = figures ? itemCautions(x, { start: at, stop, inFi: countsInFiDate(figures, i), taxRate: figures.shares?.t ?? plan.taxRate, detailed: !!figures.detail && !('failed' in figures.detail) }) : [];
     return { warn, caution, plain };
   };
 

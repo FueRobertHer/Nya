@@ -185,5 +185,19 @@ describe('the cost of the year', () => {
     if (process.env.TAX_TIMING) console.log(JSON.stringify({ drawdownMs: +(ms / 50).toFixed(2), rounds }));
     expect(rounds).toBeGreaterThan(1);
     expect(ms / 50).toBeLessThan(40);
+
+    // A rule that fills a ceiling searches around each year it converts,
+    // which G's grid and T5's paths will multiply. It must stay the same order.
+    let converted = 0;
+    const filling = readMs(() => {
+      for (let i = 0; i < 50; i++) {
+        const d = runDrawdown({ ...inp, strategy: { order: 'standard', conversions: { kind: 'aca-then-bracket', top: 0.12 }, convertUntil: null } });
+        if ('failed' in d) throw new Error(d.failed);
+        converted = d.years.reduce((sum, y) => sum + y.conversion, 0);
+      }
+    });
+    if (process.env.TAX_TIMING) console.log(JSON.stringify({ fillingMs: +(filling / 50).toFixed(2), converted: Math.round(converted) }));
+    expect(converted).toBeGreaterThan(0);
+    expect(filling / 50).toBeLessThan(80);
   }, 60_000);
 });

@@ -227,6 +227,13 @@ describe('the FI card on Home', () => {
   test('labels its figures as estimates, with the Plan’s note about pay that never reaches a bank', () => {
     const t = home(plan());
     expect(t).toContain('Estimates, from your plan: a 4% withdrawal rate and 5% growth after inflation.');
+    // A detailed plan's tax in its FI number, in place of a typed rate.
+    const worked = renderToStaticMarkup(<FiProgressView figures={fiFigures(plan({ taxRate: 0.15 }), inputs(), 'USD')} plan={plan({ taxRate: 0.15 })} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} taxAfterStop={0.092} />);
+    expect(worked).toContain('a 4% withdrawal rate, 9.2% tax after you stop');
+    expect(worked).not.toContain('15% tax on withdrawals');
+    // A detailed plan still being worked out says no flat rate that would then move.
+    const working = renderToStaticMarkup(<FiProgressView figures={fiFigures(plan({ taxRate: 0.15 }), inputs(), 'USD')} plan={plan({ taxRate: 0.15 })} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} working />);
+    expect(working).not.toContain('15% tax on withdrawals');
     expect(t).toContain('savings rate, last 12 months');
     expect(t).toContain(PAYROLL_NOTE);
     // Under the Plan's savings row, amber as it was.

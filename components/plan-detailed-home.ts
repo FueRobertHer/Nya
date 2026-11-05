@@ -1,9 +1,8 @@
 // components/plan-detailed-home.ts
 //
-// Home's FI line for a detailed plan the drawdown can move (drawdownMovesFi), so it
-// says what the Plan says. Only then does Home load the law and the tax year and ask
-// for the other accounts' last year. Any other plan's line is its flat figures, which
-// this leaves alone at no cost.
+// Home's FI line for a detailed plan, so it says what the Plan says. Only then does
+// Home load the law and the tax year and ask for the other accounts' last year. A flat
+// plan's line is its flat figures, which this leaves alone at no cost.
 //
 // A detailed plan's Home reads the allocation settings for itself (useAllocation loads
 // on mount, which every Home shouldn't pay for), since what Needs attention says of

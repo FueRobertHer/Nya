@@ -55,10 +55,11 @@ function itemWords(x: PlanItem, plan: FirePlanV2, money: Money): string {
 /** Every way `copy` differs from `main`, a sentence each, in this order: the
  *  stop, the settings, your own FI number, the items (the copy's in its
  *  order, then those it leaves out), and other settings. */
-export function copyDiffParts(main: FirePlanV2, copy: FirePlanV2, money: Money): string[] {
+export function copyDiffParts(main: FirePlanV2, copy: FirePlanV2, money: Money, { taxWorked = false }: { /** Tax is worked out from the accounts, so a typed rate isn't read. */ taxWorked?: boolean } = {}): string[] {
   const parts: string[] = [];
   if (copy.stopAtFi !== main.stopAtFi || stopOf(copy) !== stopOf(main)) parts.push(`${SETTING_NAMES.targetAge}: ${stopText(copy)} (your plan: ${stopText(main)})`);
   for (const f of SETTINGS) {
+    if (taxWorked && f === 'taxRate') continue;
     const a = valueOf(copy, f);
     const b = valueOf(main, f);
     if (!same(a, b)) parts.push(`${SETTING_NAMES[f]}: ${settingText(f, a, money)} (your plan: ${settingText(f, b, money)})`);

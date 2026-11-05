@@ -325,6 +325,14 @@ The tax plan's T3, on the Plan's Drawdown and its sheets. No new tokens.
 - `.plan-answer-pending`, under the shared `.plan-working-line`: what an answer said keeps its place, dimmed to 0.6, while a detailed plan's search is out, since it is close and the forms still act on it. Also Home's FI row.
 - `.chart-legend-wrap`: a chart legend whose names wrap, for four buckets on a phone. `.plan-table-scroll`: Show as a table, when it is wider than a phone, scrolls on its own.
 
+### How you draw and Compare's parts
+
+The tax plan's T4, on the Plan's Drawdown and its sheets. No new tokens.
+
+- `.th-sort`: a button filling a table's heading cell at 44px, its chevron showing only once sorted, with `aria-sort` on the `th`. A row's first cell uses it too, in `--accent`, to open that row's sheet. Nothing is sorted until a heading is tapped: highest first, then lowest.
+- `.plan-rules-table` on a `.plan-compare-table`: its first column as wide as its words, wider than a phone so it scrolls in `.plan-table-scroll`, its figures clear of the 44px name beside them. Nothing in it is marked best: `Your plan` is the only badge.
+- Years that read the same: a `.list-row` with `aria-expanded` and an open `.section-chevron`, drawing its years under it in the same list. From three up.
+
 ### The pages outside the tabs
 
 The public pages (Security, Privacy, Developers, Open a protected download, the weekly summary's Turn off) are documents, so they read as prose under headings, not in cards: each part an `<h2>` at `--fs-5`, 32px apart (`.info-body`), code on `--surface` with a hairline. A page of five parts or more opens with a contents list (**On this page**), a 44px link to each part, two columns from 600px wide; its parts and the list are drawn from one list in the page, so they can't drift. A plain-language note said first (Privacy's, the download's) is an information notice before the contents. A form on one of them is a control and keeps its card. Every page outside the tabs (these, Your data, Reports, the admin's pages) has the same header, `components/PageHeader.tsx`: the logo and name as a 44px link back into the app (Reports' back to Activity, named "Back to Nya"), and Reports' hide amounts at the other end.

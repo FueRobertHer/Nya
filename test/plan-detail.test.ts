@@ -1,16 +1,17 @@
 // One plan's figures in the detailed tax model (lib/fire/plan-detail.ts, read by
-// lib/fire/plan-figures.ts): the two drawdowns, the walk's tax, and the promise
-// Home rests on: a plan drawdownMovesFi calls false has the flat answer exactly.
+// lib/fire/plan-figures.ts): the drawdowns, the walk's tax, and the FI number's own
+// run, whose tax and health go in that number.
 
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, type Measured } from '@/lib/fire/plan';
-import { drawdownMovesFi, planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { detailWork, type DetailedInput, type PlanDetail } from '@/lib/fire/plan-detail';
 import { planPath } from '@/lib/fire/path';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { BucketsToday } from '@/lib/fire/buckets-today';
 import type { PlanItem } from '@/lib/fire/items';
 import { lawFor } from '@/lib/fire/tax/law';
+import { NO_STRATEGY } from '@/lib/fire/tax/rules';
 import { genEvents, genMeasured, genPlan, itemFromEvent, ON, rand } from './plan-gen';
 
 const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket });
@@ -35,6 +36,7 @@ const input: DetailedInput = {
   state: null,
   stateRate: 0,
   paidToday: 0,
+  strategy: NO_STRATEGY,
   law: lawFor(2026).law,
   lawYear: { year: 2026, behind: false },
 };
@@ -139,7 +141,7 @@ describe('spending, and what measured spending already holds of coverage', () =>
     expect(detailOf(f).start.years[0].living).toBeCloseTo(72_000, 4);
   });
 
-  test('what’s already paid comes off measured spending, in the drawdown only', () => {
+  test('what’s already paid comes off measured spending', () => {
     const m: Measured = { spending: 60_000, savings: 40_000, assets: 1_000_000 };
     const p = plan({ spending: null, savings: null, assets: null });
     const run = (paidToday: number) => {
@@ -149,7 +151,7 @@ describe('spending, and what measured spending already holds of coverage', () =>
     };
     expect(detailOf(run(0)).start.years[0].living).toBeCloseTo(60_000, 4);
     expect(detailOf(run(9_000)).start.years[0].living).toBeCloseTo(51_000, 4);
-    expect(run(9_000).view.fiNumber).toBe(run(0).view.fiNumber);
+    expect(run(9_000).view.fiNumber as number).toBeLessThan(run(0).view.fiNumber as number);
   });
 
   test('a typed spending isn’t measured, so nothing comes off it', () => {
@@ -172,8 +174,6 @@ describe('the walk’s tax', () => {
     expect(f.view.atTargetAge as number).toBeLessThan(flat.view.atTargetAge as number);
     const p = planPath(f)!;
     expect(p.points[p.points.length - 1].balance).toBe(f.view.atTargetAge as number);
-    // The FI number stays flat until T4.
-    expect(f.view.fiNumber).toBe(flat.view.fiNumber);
     const atStop = figures({ ...below, start: 'at-stop' });
     expect(total(detailOf(atStop).start.years[0].start)).toBeCloseTo(f.view.atTargetAge as number, 4);
   });
@@ -244,72 +244,159 @@ describe('Whole path from the drawdown', () => {
   });
 });
 
-describe('drawdownMovesFi', () => {
-  const walk = { moneyIn: [], costs: [], spans: [] };
-  const p = { age: 40, items: [] as PlanItem[] };
+const rounded = (d: { t: number; h: number }) => ({ t: Math.round(d.t * 1000) / 1000, h: Math.round(d.h) });
 
-  test('a year before the stop that can’t pay for itself moves it', () => {
-    expect(drawdownMovesFi(p, walk, 1_000, 50)).toBe(false);
-    expect(drawdownMovesFi(p, walk, -1, 50)).toBe(true);
-    expect(drawdownMovesFi(p, { ...walk, costs: [{ year: 3, amount: 50_000 }] }, 50_000, 50)).toBe(false);
-    expect(drawdownMovesFi(p, { ...walk, costs: [{ year: 3, amount: 50_001 }] }, 50_000, 50)).toBe(true);
-    expect(drawdownMovesFi(p, { ...walk, costs: [{ year: 3, amount: 50_001 }], moneyIn: [{ year: 3, amount: 1 }] }, 50_000, 50)).toBe(false);
-    expect(drawdownMovesFi(p, { ...walk, spans: [{ from: 5, to: 6, delta: -2_000 }] }, 1_000, 50)).toBe(true);
+describe('the FI number in the detailed model', () => {
+  const sharesOf = (f: PlanFigures) => {
+    if (f.shares === null) throw new Error('no shares');
+    return f.shares;
+  };
+
+  test('its own run: from the number, at the stop, giving the pair the number rests on', () => {
+    const f = figures(plan());
+    const s = sharesOf(f);
+    expect(s.settled).toBe(true);
+    expect(s.drawn.years[0].age).toBe(55);
+    expect(total(s.drawn.years[0].start)).toBeCloseTo(f.view.workedOut as number, 4);
+    expect(rounded(s.drawn)).toEqual({ t: s.t, h: s.h });
+    expect(f.view.workedOut as number).toBeCloseTo((60_000 + s.h) / (1 - s.t) / 0.04, 6);
+    expect(f.view.fiNumber).toBe(f.view.workedOut);
+    // Measured to a tenth of a percent and a dollar.
+    expect(s.t * 1000).toBeCloseTo(Math.round(s.t * 1000), 9);
+    expect(s.h).toBe(Math.round(s.h));
   });
 
-  test('a year at or after the stop doesn’t', () => {
-    expect(drawdownMovesFi(p, { ...walk, costs: [{ year: 10, amount: 1_000_000 }] }, 1_000, 50)).toBe(false);
-    expect(drawdownMovesFi(p, { ...walk, costs: [{ year: 9, amount: 1_000_000 }] }, 1_000, 50)).toBe(true);
+  test('a flat plan has none, and keeps its typed rate', () => {
+    const f = figures(plan({ taxRate: 0.1 }), { detailed: false });
+    expect(f.shares).toBeNull();
+    expect(f.view.workedOut as number).toBeCloseTo(60_000 / 0.9 / 0.04, 6);
   });
 
-  test('a balance milestone does, at any age or stop', () => {
-    const milestone = item({ kind: 'one-off', from: { anchor: { at: 'balance', amount: 1 }, offset: 0 }, once: 1 });
-    expect(drawdownMovesFi({ age: null, items: [milestone] }, walk, 1_000, null)).toBe(true);
-    const ended = item({ kind: 'spending', yearly: 1, until: { anchor: { at: 'balance', amount: 1 }, offset: 0 } });
-    expect(drawdownMovesFi({ age: 40, items: [ended] }, walk, 1_000, 50)).toBe(true);
+  test('a typed rate has no part in it', () => {
+    expect(figures(plan({ taxRate: 0.3 })).view.workedOut).toBe(figures(plan()).view.workedOut);
   });
 
-  test('with no age or stop, the rest can’t be placed', () => {
-    expect(drawdownMovesFi({ age: null, items: [] }, walk, -1, 50)).toBe(false);
-    expect(drawdownMovesFi(p, walk, -1, null)).toBe(false);
+  test('it doesn’t move with what the plan starts from', () => {
+    const number = figures(plan()).view.workedOut;
+    expect(figures(plan({ start: 'assets' })).view.workedOut).toBeCloseTo(number as number, 6);
+    expect(figures(plan({ start: 'at-stop' })).view.workedOut).toBeCloseTo(number as number, 6);
+    expect(figures(plan({ start: 'custom', startBalance: 300_000 })).view.workedOut).toBeCloseTo(number as number, 6);
+    expect(figures(plan({ assets: 300_000, start: 'assets' })).shares?.settled).toBe(true);
   });
-});
 
-describe('a plan it calls false has the flat answer, exactly', () => {
-  test('on generated plans, with and without the search kept', () => {
-    let held = 0;
-    let moved = 0;
-    for (let seed = 1; seed <= 400; seed++) {
+  test('your own number stands beside it, and doesn’t move it', () => {
+    const own = figures(plan({ fiNumber: 1_500_000 }));
+    expect(own.view.fiNumber).toBe(1_500_000);
+    expect(own.view.workedOut).toBeCloseTo(figures(plan()).view.workedOut as number, 6);
+    // Your own number is what Will it last? starts from.
+    expect(total(detailOf(own).start.years[0].start)).toBeCloseTo(1_500_000, 4);
+  });
+
+  test('what measured spending already holds of coverage comes off it; a typed spending keeps all of it', () => {
+    const noCare = { ...input, health: { ...input.health, coverage: null } };
+    const m: Measured = { spending: 60_000, savings: 40_000, assets: 1_000_000 };
+    const measured = (paidToday: number) => {
+      const f = planFigures(plan({ spending: null, savings: null, assets: null }), m, { count: ON, detailed: detailWork({ ...noCare, paidToday }) });
+      if ('refused' in f) throw new Error('refused');
+      return f;
+    };
+    const at = measured(9_000);
+    expect(sharesOf(at).paid).toBe(9_000);
+    expect(at.view.workedOut as number).toBeCloseTo((51_000 + sharesOf(at).h) / (1 - sharesOf(at).t) / 0.04, 6);
+    // Shown as measured: what's paid comes off only inside the number.
+    expect(at.view.spending.value).toBe(60_000);
+    const typed = planFigures(plan(), M, { count: ON, detailed: detailWork({ ...noCare, paidToday: 9_000 }) });
+    if ('refused' in typed) throw new Error('refused');
+    expect(sharesOf(typed).paid).toBe(0);
+  });
+
+  test('a lasting change counts at the stop, whatever the plan starts from', () => {
+    const change = item({ kind: 'spending', from: when(50), yearly: 12_000 });
+    const fromStop = figures(plan({ items: [change] }));
+    const fromToday = figures(plan({ items: [change], start: 'assets' }));
+    expect(sharesOf(fromToday).spending).toBe(72_000);
+    expect(fromToday.view.workedOut).toBeCloseTo(fromStop.view.workedOut as number, 6);
+    // And Will it last? still starts from today's spending.
+    expect(detailOf(fromToday).start.years[0].living).toBeCloseTo(60_000, 4);
+    // It is in the number, so nothing says the number leaves it out.
+    expect(fromToday.events?.later ?? []).toEqual([]);
+    expect(planPath(fromToday)!.after!.leftOut.events).toBe(false);
+    // A change after the stop still is left out.
+    const afterStop = figures(plan({ items: [item({ kind: 'spending', from: when(60), yearly: 12_000 })], start: 'assets' }));
+    expect(afterStop.events?.later.map((l) => l.fromAge)).toEqual([60]);
+    expect(planPath(afterStop)!.after!.leftOut.events).toBe(true);
+  });
+
+  test('Barista: what part-time work leaves, with health, grossed up for tax', () => {
+    const f = figures(plan({ partTimeIncome: 20_000 }));
+    const s = sharesOf(f);
+    expect(f.view.barista?.number as number).toBeCloseTo((40_000 + s.h) / (1 - s.t) / 0.04, 6);
+  });
+
+  test('Coast: through the FI number', () => {
+    const f = figures(plan());
+    expect(f.view.coast?.number as number).toBeCloseTo((f.view.fiNumber as number) / 1.05 ** 10, 6);
+  });
+
+  test('the walk’s income keeps what the tax share leaves', () => {
+    const pension = item({ kind: 'pension', from: when(50), until: when(54), yearly: 30_000, beforeTax: true });
+    const f = figures(plan({ items: [pension], taxRate: 0.3 }));
+    const s = sharesOf(f);
+    expect(s.t).toBeGreaterThan(0);
+    expect(f.walk.spans[0].delta).toBeCloseTo(30_000 * (1 - s.t), 4);
+  });
+
+  test('nothing to work it out from: the flat model carries the plan, and says nothing of shares', () => {
+    expect(figures(plan({ age: null })).shares).toBeNull();
+    expect(figures(plan({ spending: null })).shares).toBeNull();
+    const bad = planFigures(plan({ taxRate: 0.1 }), M, { count: ON, detailed: detailWork({ ...input, stateRate: 2 }) });
+    if ('refused' in bad) throw new Error('refused');
+    expect(bad.shares).toBeNull();
+    expect(bad.view.workedOut as number).toBeCloseTo(60_000 / 0.9 / 0.04, 6);
+  });
+
+  test('stop when I reach FI: the stop found reaches its own number', () => {
+    const f = figures(plan({ stopAtFi: true, targetAge: null }));
+    const s = sharesOf(f);
+    const stop = f.view.stopAge as number;
+    expect(s.drawn.years[0].age).toBe(stop);
+    const p = planPath(f)!;
+    expect(p.points[p.points.length - 1].age).toBe(stop);
+    // A year before it, the walk hasn't reached the number found at it, to the half year it rounds to.
+    expect(p.points[p.points.length - 2].balance).toBeLessThan(f.view.fiNumber as number);
+    expect(Math.round(f.view.fiAge as number)).toBe(stop);
+  });
+
+  test('on generated plans: a settled number reproduces its pair, nothing thrown', () => {
+    let settled = 0;
+    let unsettled = 0;
+    let none = 0;
+    for (let seed = 1; seed <= 300; seed++) {
       const g = rand(seed);
       const base = planOf(genPlan(g));
       const p: FirePlanV2 = { ...base, start: g.chance(0.3) ? 'at-stop' : base.start, items: [...base.items, ...genEvents(g).map(itemFromEvent)] };
       const m = genMeasured(g);
-      const flat = planFigures(p, m, { count: ON });
-      if ('refused' in flat) continue;
-      const stop = flat.view.stopAge;
-      const savings = flat.view.savings.value ?? 0;
-      if (drawdownMovesFi(p, flat.walk, savings, stop)) {
-        moved++;
+      const f = planFigures(p, m, { count: ON, detailed: work });
+      if ('refused' in f) continue;
+      if (f.shares === null) {
+        none++;
         continue;
       }
-      held++;
-      const f = planFigures(p, m, { count: ON, detailed: work, resolved: flat.resolution });
-      if ('refused' in f) throw new Error('refused where the flat plan wasn’t');
       const label = `seed ${seed}`;
-      expect([label, f.view]).toEqual([label, flat.view]);
-      expect([label, f.walk]).toEqual([label, flat.walk]);
-      expect([label, f.short]).toEqual([label, flat.short]);
-      expect([label, f.resolution]).toEqual([label, flat.resolution]);
-      expect([label, f.walked]).toEqual([label, flat.walked]);
-      expect([label, f.walkFrom]).toEqual([label, flat.walkFrom]);
-      expect([label, f.startsWith]).toEqual([label, flat.startsWith]);
-      // And the search needn't have been kept: it finds what the flat one found.
-      const searched = planFigures(p, m, { count: ON, detailed: work });
-      if ('refused' in searched) throw new Error('refused where the flat plan wasn’t');
-      expect([label, searched.view]).toEqual([label, flat.view]);
-      expect([label, searched.resolution]).toEqual([label, flat.resolution]);
+      const number = f.view.workedOut as number;
+      if (f.shares.settled) {
+        settled++;
+        expect([label, rounded(f.shares.drawn)]).toEqual([label, { t: f.shares.t, h: f.shares.h }]);
+        expect(f.shares.gap).toBe(0);
+      } else {
+        unsettled++;
+        expect(f.shares.gap).toBeGreaterThan(0);
+      }
+      expect(total(f.shares.drawn.years[0].start)).toBeCloseTo(number, 3);
+      expect(number).toBeCloseTo((Math.max(0, f.shares.spending - f.shares.paid) + f.shares.h) / (1 - f.shares.t) / p.withdrawalRate, 3);
     }
-    expect(held).toBeGreaterThan(150);
-    expect(moved).toBeGreaterThan(20);
+    expect(settled).toBeGreaterThan(100);
+    expect(unsettled).toBeLessThan(settled / 5);
+    expect(none).toBeGreaterThan(0);
   });
 });

@@ -49,7 +49,7 @@
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import { monthLabel, yearFactors, type Market } from './market';
-import { plannedWithdrawal, withRate, type RuleSpec, type YearState } from './rules';
+import { canRunOut, plannedWithdrawal, withRate, type RuleSpec, type YearState } from './rules';
 import { seededRandom } from './random';
 
 export type Allocation = { stocks: number; bonds: number; cash: number };
@@ -110,8 +110,10 @@ export type ConditionalItem = {
  *  before that year's money in and costs, and fires once. */
 export type ConditionalFlows = { triggers: number[]; items: ConditionalItem[] };
 
-/** The most conditional items a plan runs: a comparison each per path-year. */
-export const MAX_CONDITIONAL = 25;
+/** The most conditional items a plan runs: a comparison each per path-year.
+ *  Twice the items a plan holds (ITEM_LIMITS), as a home with a waiting end
+ *  compiles to two. */
+export const MAX_CONDITIONAL = 50;
 
 export type SimPlan = {
   startBalance: number;
@@ -130,6 +132,12 @@ export type SimPlan = {
   /** Lower costs (life events in a scenario, lib/fire/events.ts); absent for
    *  the Plan's own plans, which then run exactly as they always have. */
   lowerSpending?: LowerSpending[];
+  /** The drawdown's plan (lib/fire/bridge.ts). A year with money to spare invests it
+   *  divided by `1 - taxRate`, since its income went in at `1 - taxRate` too. A rule
+   *  that can't run out gives up living spending, what it pays over `h`, the yearly
+   *  health cost it holds, before a year comes up short, as the drawdown's year does.
+   *  Absent otherwise: the rest of a year's money is invested as it is. */
+  bridged?: { h: number };
   /** Items that wait on a run's own balance; absent for every plan but one
    *  starting from what you'd have at your stop age, and then they cost nothing. */
   conditional?: ConditionalFlows;
@@ -318,16 +326,21 @@ type RunOutput = {
   lowestSpending: Float64Array;
   endBalance: Float64Array;
   firstYearSpending: number;
+  /** The year the watched trigger fired in each path, -1 where it never did. */
+  firedYear: Int32Array | null;
 };
 
 const EPS = 1e-9;
 
-function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boolean): RunOutput {
+function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boolean, watch: number | null = null): RunOutput {
   checkPlan(plan);
   const years = plan.years;
   const count = source.count;
   const g = growthTables(plan, market);
   const tax = plan.taxRate;
+  const bridged = plan.bridged !== undefined;
+  const healthIn = plan.bridged && !canRunOut(plan.rule.kind) ? plan.bridged.h : null;
+  const atLeast = plan.bridged ? plan.bridged.h : 0;
   const afterFee = 1 - plan.fee;
   const w = plan.allocation;
   const drift = plan.rebalance === 'none';
@@ -348,6 +361,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
     lowestSpending: new Float64Array(count),
     endBalance: new Float64Array(count),
     firstYearSpending: 0,
+    firedYear: watch === null ? null : new Int32Array(count).fill(-1),
   };
   // The price level at the start of each year, relative to the start of the
   // plan, for income that does not keep up with inflation.
@@ -397,7 +411,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const planned = Number.isFinite(raw) && raw > 0 ? raw : 0;
       if (y === 0) initial = planned;
       previous = planned;
-      const spend = planned * (1 - tax);
+      const spend = Math.max(planned * (1 - tax), atLeast);
       if (y === 0 && p === 0) out.firstYearSpending = spend;
 
       let income = 0;
@@ -427,7 +441,8 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const need = (less > 0 ? Math.max(0, cost - less) : cost) - income;
       if (need > 0) {
         const gross = need / (1 - tax);
-        if (gross > bal * (1 + EPS) + EPS) {
+        const gives = healthIn === null ? 0 : Math.max(0, spend - healthIn - less);
+        if ((need - gives) / (1 - tax) > bal * (1 + EPS) + EPS) {
           failed = y;
           break;
         }
@@ -440,19 +455,20 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
         }
         bal = left;
       } else if (need < 0) {
+        const spare = bridged ? -need / (1 - tax) : -need;
         if (drift) {
           if (bal > 0) {
-            const k = (bal - need) / bal;
+            const k = (bal + spare) / bal;
             hs *= k;
             hb *= k;
             hc *= k;
           } else {
-            hs = -need * w.stocks;
-            hb = -need * w.bonds;
-            hc = -need * w.cash;
+            hs = spare * w.stocks;
+            hb = spare * w.bonds;
+            hc = spare * w.cash;
           }
         }
-        bal -= need;
+        bal += spare;
       }
       if (out.spending) out.spending[p * years + y] = spend;
       if (spend < lowest) lowest = spend;
@@ -477,6 +493,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
     out.lowestSpending[p] = lowest === Infinity ? 0 : lowest;
     // A plan that ran out holds 0 from then on; the arrays start at 0.
     out.endBalance[p] = failed >= 0 ? 0 : bal;
+    if (out.firedYear && firedIn) out.firedYear[p] = firedIn[watch as number];
     if (out.balances && failed < 0) out.balances[p * (years + 1) + years] = bal;
   }
   return out;
@@ -667,6 +684,25 @@ export function monteCarlo(plan: SimPlan, market: Market, opts: MonteCarloOption
 /** Either method by name. */
 export function simulate(method: Method, plan: SimPlan, market: Market, opts: MonteCarloOptions = {}): SimResult {
   return method === 'historical' ? historicalCycles(plan, market) : monteCarlo(plan, market, opts);
+}
+
+/** How an item that waits on a run's own balance falls across the runs. */
+export type FiredResult = {
+  /** Paths run. */
+  runs: number;
+  /** Those where it starts before the plan ends. */
+  fired: number;
+  /** The year by which half of those have it, from the plan's start; null with none. */
+  byHalf: number | null;
+};
+
+/** Where trigger `trigger`, `offset` years on, falls across the plan's own runs. */
+export function firedAcross(method: Method, plan: SimPlan, market: Market, trigger: number, offset: number, opts: MonteCarloOptions = {}): FiredResult {
+  if (!plan.conditional || trigger < 0 || trigger >= plan.conditional.triggers.length) fail('no such trigger');
+  const source = method === 'historical' ? historicalSource(market, plan.years) : monteCarloSource(market, opts);
+  const years = (runPaths(plan, market, source, false, trigger).firedYear as Int32Array).filter((y) => y >= 0 && y + offset < plan.years).map((y) => y + offset);
+  years.sort();
+  return { runs: source.count, fired: years.length, byHalf: years.length > 0 ? years[Math.ceil(years.length / 2) - 1] : null };
 }
 
 export type GridCell = {
