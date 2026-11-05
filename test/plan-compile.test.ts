@@ -182,3 +182,33 @@ describe('part-time work that overlaps, for one person', () => {
     });
   });
 });
+
+describe('what income is (incomeBy)', () => {
+  const pick = ({ amount, fromYear, toYear, inflationAdjusted }: { amount: number; fromYear: number; toYear?: number; inflationAdjusted: boolean }) => ({ amount, fromYear, ...(toYear === undefined ? {} : { toYear }), inflationAdjusted });
+
+  test('is sim.income, row for row, whatever the plan holds', () => {
+    let rows = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const g = rand(seed);
+      const p = genPlan(g, true);
+      const items = [...p.income.map(itemFromIncome), ...p.expenses.map(itemFromExpense), ...genEvents(g).map(itemFromEvent)];
+      const at: CompileAt = { age: g.chance(0.9) ? g.int(25, 70) : null, startAge: g.chance(0.9) ? g.int(30, 75) : null, stop: g.chance(0.9) ? g.int(30, 75) : null, years: g.int(10, 60), taxRate: g.chance(0.5) ? 0.15 : 0 };
+      const c = compileItems(items, fixedAges(items), at, on);
+      expect(c.incomeBy.map(pick)).toEqual(c.sim.income.map(pick));
+      rows += c.incomeBy.length;
+    }
+    expect(rows).toBeGreaterThan(100);
+  });
+
+  test('keeps the kind, the owner, before tax and the amount typed', () => {
+    const items: PlanItem[] = [
+      { ...itemFromEvent({ id: 's', kind: 'part-time', label: 'Barista', fromAge: 52, toAge: 60, yearly: 20_000 }), owner: 'you', beforeTax: true },
+      { ...itemFromEvent({ id: 'w', kind: 'windfall', label: 'Gift', atAge: 55, amount: 100_000 }) },
+    ];
+    const c = compileItems(items, fixedAges(items), { age: 40, startAge: 50, stop: 50, years: 45, taxRate: 0.1 }, on);
+    expect(c.incomeBy).toEqual([
+      { amount: 18_000, fromYear: 2, toYear: 10, inflationAdjusted: true, kind: 'part-time', owner: 'you', beforeTax: true, gross: 20_000 },
+      { amount: 100_000, fromYear: 5, toYear: 6, inflationAdjusted: true, kind: 'windfall', owner: null, beforeTax: false, gross: 100_000 },
+    ]);
+  });
+});

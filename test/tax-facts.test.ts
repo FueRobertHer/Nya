@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_TAX_FACTS, isTaxFacts, type TaxFacts } from '@/lib/fire/tax-facts';
+import { DEFAULT_TAX_FACTS, MAX_DEPENDENTS, applyTaxFactOp, householdOf, isTaxFacts, parseHousehold, parseTaxFactOp, sameHousehold, type TaxFacts } from '@/lib/fire/tax-facts';
 
 // The tax facts as `plan-facts` version 2 holds them (lib/fire/tax-facts.ts):
 // every field and enum value read, a release before anything writes them, and
@@ -99,5 +99,51 @@ describe('what doesn’t', () => {
     expect(isTaxFacts({ ...FULL, paidToday: { kind: 'tag' } })).toBe(false);
     expect(isTaxFacts({ ...FULL, paidToday: { kind: 'tag', name: 7 } })).toBe(false);
     expect(isTaxFacts({ ...FULL, paidToday: { kind: 'tag', name: 'x', extra: 1 } })).toBe(false);
+  });
+});
+
+describe('the model', () => {
+  test('the opt-in and back to flat are ops, and nothing else moves the model', () => {
+    expect(parseTaxFactOp({ kind: 'opt-in' })).toEqual({ op: { kind: 'opt-in' } });
+    expect(parseTaxFactOp({ kind: 'model', model: 'flat' })).toEqual({ op: { kind: 'model', model: 'flat' } });
+    expect('error' in parseTaxFactOp({ kind: 'model', model: 'detailed' })).toBe(true);
+    expect('error' in parseTaxFactOp({ kind: 'opt-in', extra: 1 })).toBe(true);
+    expect(applyTaxFactOp(DEFAULT_TAX_FACTS, { kind: 'opt-in' }).model).toBe('detailed');
+    expect(applyTaxFactOp({ ...FULL, model: 'detailed' }, { kind: 'model', model: 'flat' })).toEqual({ ...FULL, model: 'flat' });
+  });
+});
+
+describe('the household', () => {
+  const HOME = { filing: 'joint', birthYears: [{ owner: 'you', year: 1960 }], dependents: [{ id: 'kid-1', untilAge: 55 }], paidToday: { kind: 'category', name: 'Health insurance' } };
+  const taken = (v: unknown) => 'household' in parseHousehold(v);
+
+  test('what a page may write', () => {
+    expect(parseHousehold(HOME)).toEqual({ household: HOME as never });
+    expect(taken({ filing: null, birthYears: [], dependents: [], paidToday: null })).toBe(true);
+  });
+
+  test('every rule', () => {
+    expect(taken({ ...HOME, filing: 'separate' })).toBe(false);
+    expect(taken({ ...HOME, extra: 1 })).toBe(false);
+    const { paidToday: _gone, ...missing } = HOME;
+    expect(taken(missing)).toBe(false);
+    expect(taken({ ...HOME, birthYears: [{ owner: 'you', year: 1960 }, { owner: 'you', year: 1961 }] })).toBe(false);
+    expect(taken({ ...HOME, birthYears: [{ owner: 'you', year: 1960.5 }] })).toBe(false);
+    expect(taken({ ...HOME, birthYears: [{ owner: 'them', year: 1960 }] })).toBe(false);
+    expect(taken({ ...HOME, dependents: [{ id: 'a', untilAge: 50 }, { id: 'a', untilAge: 51 }] })).toBe(false);
+    expect(taken({ ...HOME, dependents: [{ id: 'a b', untilAge: 50 }] })).toBe(false);
+    expect(taken({ ...HOME, dependents: [{ id: 'a', untilAge: 200 }] })).toBe(false);
+    expect(taken({ ...HOME, dependents: Array.from({ length: MAX_DEPENDENTS + 1 }, (_, i) => ({ id: `d${i}`, untilAge: 50 })) })).toBe(false);
+    expect(taken({ ...HOME, paidToday: { kind: 'tag', name: '' } })).toBe(false);
+    expect(taken({ ...HOME, paidToday: { kind: 'account', name: 'x' } })).toBe(false);
+    expect(taken({ ...HOME, paidToday: { kind: 'tag', name: 'x', extra: 1 } })).toBe(false);
+  });
+
+  test('two households are the same whatever the lists’ order', () => {
+    const a = householdOf(FULL);
+    expect(sameHousehold(a, { ...a, birthYears: [...a.birthYears].reverse() })).toBe(true);
+    expect(sameHousehold(a, { ...a, filing: 'single' })).toBe(false);
+    expect(sameHousehold(a, { ...a, paidToday: null })).toBe(false);
+    expect(sameHousehold(a, { ...a, dependents: [] })).toBe(false);
   });
 });

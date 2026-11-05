@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ACCOUNT_LINKS_TITLE, attentionItems, type AttentionInput, type Placed } from '@/components/attention';
+import { attentionNotes } from '@/components/plan-drawdown';
 import { fmtStaleDay, type Institution } from '@/components/accounts-format';
 import { budgetAlerts, paymentAlerts, type PaymentAccount } from '@/components/Insights';
 import { severityOf } from '@/lib/accounts-status';
@@ -229,6 +230,21 @@ describe('the rest', () => {
     ]);
     // Settings > Connections, on the Reconnected accounts card's title.
     expect(attentionItems({ ...NOTHING, now, linkOffer: ['A ••1'] })[0].go).toEqual({ to: 'connections', focus: ACCOUNT_LINKS_TITLE });
+  });
+
+  test('a detailed plan’s gaps, each its two sentences, go to the Plan', () => {
+    const today = { groups: [{ bucket: 'unclassified' as const, total: 2, accounts: [{}, {}] as never }, { bucket: 'roth' as const, total: 1, accounts: [{ owner: 'partner' }] as never }], roth: [{ owner: 'partner' as const, amount: null }] };
+    const income = { kind: 'pension' as const, beforeTax: false, label: 'St. Mary pension' };
+    const plan = attentionNotes({ today, items: [income] });
+    expect(rows({ plan })).toEqual([
+      ['caution', '2 accounts have no tax bucket, counted as tax-deferred', 'Set them on Invested assets', 'plan'],
+      ['caution', 'What went into your partner’s Roth isn’t given, so none of it counts as reachable before 59½', 'Say how much on Invested assets', 'plan'],
+      ['caution', 'St. Mary pension is given after tax, so it isn’t in your ACA income', 'Give it before tax on your Timeline', 'plan'],
+    ]);
+    // Nothing to say, or a gap that is said where it is read: no row.
+    const said = { groups: [{ bucket: 'taxable' as const, total: 1, accounts: [{ basisFrom: 'none' }] as never }], roth: [{ owner: 'you' as const, amount: 5 }] };
+    expect(attentionNotes({ today: said, items: [{ kind: 'part-time', beforeTax: false, label: 'Work' }] })).toEqual([]);
+    expect(rows({ plan: [] })).toEqual([]);
   });
 
   test('worst first, each level in its order', () => {

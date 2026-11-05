@@ -474,6 +474,30 @@ describe('the FI line’s title, for every case (rollout phase 4c)', () => {
   });
 });
 
+describe('a detailed plan’s line while it is worked out', () => {
+  const at = (extra: { working?: boolean; failed?: boolean }) => {
+    const i = inputs();
+    return renderToStaticMarkup(<FiProgressView figures={fiFigures(plan({ age: 40 }), i, 'USD')} plan={plan({ age: 40 })} saved repaired={false} inputs={hookInputs(i)} onOpenPlan={noop} {...extra} />);
+  };
+
+  test('working: what it said stays, dimmed, under one line that says so', () => {
+    const html = at({ working: true });
+    expect(html).toContain('plan-answer-pending');
+    expect(html).toContain('aria-busy="true"');
+    expect(text(html)).toContain('Working it out');
+    expect(text(html)).toContain(text(at({})));
+  });
+
+  test('failed: says it, never the flat line left for good', () => {
+    expect(text(at({ failed: true })).trim()).toBe('FI isn’t worked out Tax on your plan couldn’t be worked out on this page: the Plan tab can try again.');
+  });
+
+  test('neither: nothing new', () => {
+    expect(at({})).not.toContain('plan-answer-pending');
+    expect(at({})).not.toContain('aria-busy');
+  });
+});
+
 describe('each note in its level, the summary naming the worst first', () => {
   test('explanations neutral, what may be off amber; an amber line names its amber note', () => {
     // Estimates, payroll and excluded (neutral), and spending missing a bank's

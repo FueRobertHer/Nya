@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { mainAnswer, readPlanAnswer } from '@/lib/plan-copies';
-import { CHANGED, Refused, factsWere, isBasedOn, recordMain, saveMain } from '@/lib/plan-writes';
+import { CHANGED, Refused, factsWere, isBasedOn, recordMain, saveMain, type HouseholdChange } from '@/lib/plan-writes';
 import { parsePlanV2 } from '@/lib/fire/plan-v2';
+import { parseHousehold } from '@/lib/fire/tax-facts';
 import { CURRENCY_CODE, isTypedAmounts } from '@/lib/fire/plan-currency';
 
 // Your plan (lib/plan-copies.ts): GET answers { id, plan, currency,
@@ -21,7 +22,9 @@ import { CURRENCY_CODE, isTypedAmounts } from '@/lib/fire/plan-currency';
 // age back) and `based_on` (the stamp the page loaded, null before your plan
 // is saved). A body without `based_on` or `facts_were` is a page from before
 // plans were copies, still open: refused, so it loads again. The other plans
-// are saved through /api/plans.
+// are saved through /api/plans. Behind `plan-tax`, and only when they changed:
+// `tax`, the plan's tax choices, and `household` with `household_were`, what the
+// page loaded, which goes with the facts.
 //
 // POST records your plan's currency alone: when the person says which it is
 // (`answered`), or, with none there, when the tab can tell it.
@@ -63,7 +66,7 @@ export async function PUT(req: Request) {
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return bad('Invalid plan');
     const b = body as Record<string, unknown>;
-    const extra = Object.keys(b).find((k) => !['plan', 'currency', 'facts_were', 'based_on'].includes(k));
+    const extra = Object.keys(b).find((k) => !['plan', 'currency', 'facts_were', 'based_on', 'tax', 'household', 'household_were'].includes(k));
     if (extra) return bad(`${extra.slice(0, 40)} isn’t taken here`);
     // A page from before copies sends neither: it loads again.
     if (!Object.hasOwn(b, 'based_on') || !Object.hasOwn(b, 'facts_were')) return NextResponse.json({ error: CHANGED, stale: true }, { status: 409 });
@@ -74,7 +77,15 @@ export async function PUT(req: Request) {
     if (!isBasedOn(b.based_on)) return bad('based_on is the version (updated_at) the plan was loaded at');
     const parsed = parsePlanV2(b.plan);
     if ('error' in parsed) return bad(`Invalid plan: ${parsed.error}`);
-    const main = await saveMain(await dataCtx(), parsed.plan, currency, loaded, b.based_on);
+    let household: HouseholdChange | undefined;
+    if (Object.hasOwn(b, 'household')) {
+      const to = parseHousehold(b.household);
+      if ('error' in to) return bad(to.error);
+      const were = parseHousehold(b.household_were);
+      if ('error' in were) return bad('household_were is the household the page loaded');
+      household = { to: to.household, were: were.household };
+    } else if (Object.hasOwn(b, 'household_were')) return bad('household_were goes with household');
+    const main = await saveMain(await dataCtx(), parsed.plan, currency, loaded, b.based_on, { ...(Object.hasOwn(b, 'tax') ? { tax: b.tax } : {}), ...(household ? { household } : {}) });
     return NextResponse.json(mainAnswer(main));
   } catch (err) {
     return failure(err, 'save');

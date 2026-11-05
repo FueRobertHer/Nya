@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { walkWords } from '@/components/plan-text';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { PlanItem } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -64,6 +65,34 @@ const figures = (over: Partial<FirePlanV2>, count = OFF): PlanFigures => {
   if ('refused' in f) throw new Error('refused');
   return f;
 };
+
+describe('an income given after tax, under a detailed plan', () => {
+  const pension = { id: 'p', label: 'Pension', kind: 'pension', from: { anchor: { at: 'age', age: 60 }, offset: 0 }, until: null, once: null, yearly: 10_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false } as const;
+  const at = { start: 60, stop: 50, inFi: false, taxRate: 0.1 };
+
+  test('asks for it before tax', () => {
+    expect(itemCautions(pension, { ...at, detailed: true })).toContain('Give it before tax, so its tax and its part in your ACA income count.');
+    expect(itemCautions({ ...pension, beforeTax: true }, { ...at, detailed: true })).toEqual([]);
+  });
+
+  test('part-time work says what it may hide', () => {
+    expect(itemCautions({ ...pension, kind: 'part-time', replaces: 0 }, { ...at, detailed: true })).toContain('Given after tax, it may hide a year over the ACA limit.');
+  });
+
+  test('says nothing in the flat model, where every income is after tax', () => {
+    expect(itemCautions(pension, at)).toEqual([]);
+    expect(itemCautions({ ...pension, kind: 'part-time', replaces: 0 }, at)).toEqual([]);
+  });
+});
+
+describe('what moved the walk', () => {
+  test('its tax is said, alone or with what drew it', () => {
+    expect(walkWords({ items: false, events: false, tax: true })).toBe('the tax on what you draw');
+    expect(walkWords({ items: true, events: false, tax: true })).toBe('one-offs and income, and the tax on what they draw');
+    expect(walkWords({ items: true, events: false })).toBe('one-offs and income');
+    expect(walkWords({ items: false, events: false })).toBeNull();
+  });
+});
 
 describe('templates', () => {
   test('13 in three groups, five as chips; a career break is pay down for some years', () => {

@@ -28,12 +28,12 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
 //     and its export and restore carry them;
-//   - its Plan (test/fixtures/release-before/fire, the readers at 8a3bcd2b, TF's
-//     merge, its plans as copies in fire/copies.ts) reads every plan this release writes:
+//   - its Plan (test/fixtures/release-before/fire, the readers at c6579849, the
+//     merge of T2 and its Forget fix, its plans as copies in fire/copies.ts) reads every plan this release writes:
 //     each entry of `fire-plans` and `plan-facts`, your plan the one it
 //     picks, each with its currency where it holds an amount, and every saved
 //     plan (test/release-before-plans.test.ts, through the routes);
-//   - its restore (test/fixtures/release-before/user-restore/parts.ts, at 8a3bcd2b)
+//   - its restore (test/fixtures/release-before/user-restore/parts.ts, at c6579849)
 //     knows every part of a download this release makes
 //     (test/release-before-plans.test.ts).
 
@@ -145,13 +145,13 @@ describe('the release before’s own code', () => {
       'release-before/export.ts': '5906750754885798848a4dff583f00219bacb519',
       'release-before/restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
       'release-before/key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
-      // The Plan's readers as at 8a3bcd2b, TF's merge, the last before T2
+      // The Plan's readers as at c6579849, T2 and its Forget fix, the last before T3
       // (fire/inputs.ts and fire/compile.ts are type stubs).
-      'release-before/fire/plan.ts': '09a04fb5168f733447323518044d6d63bd718574',
+      'release-before/fire/plan.ts': '17a2b5ca8d372b32fd6d5a0e682b237c761a3a79',
       'release-before/fire/plan-v2.ts': '7ce5398f73be0791744c28f39d3d4ce616cf384f',
       'release-before/fire/items.ts': '5d51b8eb120686c90e421f10531a1572bdf4aac0',
-      'release-before/fire/events.ts': '9cbf34971f287b6722512b2bcb6ac8d04b85d103',
-      'release-before/fire/simulate.ts': 'd5b59775c87c553773658ddb4abfee429a054f78',
+      'release-before/fire/events.ts': 'c0eac06db90a381691f9e33c7de9d6127086f269',
+      'release-before/fire/simulate.ts': 'a702582fd8e7da39b179431a78520032ade13499',
       'release-before/fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
       'release-before/fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
       'release-before/fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
@@ -159,10 +159,13 @@ describe('the release before’s own code', () => {
       'release-before/fire/saved-plan.ts': '517a6e34e3c9592a7d47deddc9b9c2bc45668f3b',
       'release-before/fire/plan-currency.ts': '9ab60fc3919e193395b9c13265fd42db2339ca32',
       'release-before/fire/plan-list.ts': 'cb9bbdbe536b1e8c0469a3be1ae9e538792ae12b',
-      // The plans as copies' reader and the tax facts', as at 8a3bcd2b.
-      'release-before/fire/copies.ts': '9d779729f27ac248b8120be04c6df7abdee66d52',
-      'release-before/fire/tax-facts.ts': 'a9e43b1583229436d5a9d61ae0a14ba90ff05065',
-      // The parts of a download its restore knows, as at 8a3bcd2b.
+      // The plans as copies' reader, the tax facts' and the tax choices', with
+      // what the choices import, as at c6579849.
+      'release-before/fire/copies.ts': 'ab7237d070467c59e751fc74847c3fbf71ad6f37',
+      'release-before/fire/tax-facts.ts': 'a8bc1acd01a4e939bc4acd05f82edc10191b75ec',
+      'release-before/fire/tax-choices.ts': 'b5a6cc56914304d569eb71db0b386f73a1497bb6',
+      'release-before/fire/tax/law/types.ts': 'ac5f42e26a8132a8cd09f20ae1bf2ea2727807b4',
+      // The parts of a download its restore knows, as at c6579849.
       'release-before/user-restore/parts.ts': 'e4c438f75f43597e8df8752307da97163c3bd85a',
       'release-before/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
       'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',

@@ -20,6 +20,7 @@
 
 import { isStoredPlan, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
 import type { Facts } from '@/lib/fire/copies';
+import { isTaxChoices, type TaxChoices } from '@/lib/fire/tax-choices';
 
 /** One plan as GET /api/plans answers it, the facts every plan shares in
  *  its fields. Your plan before its entry is made has no plan (the
@@ -31,6 +32,8 @@ export type PlanRow = {
   currency: string | null;
   created_at: string | null;
   updated_at: string | null;
+  /** Its own tax choices; null takes your plan's. */
+  tax: TaxChoices | null;
 };
 
 export type PlansState = {
@@ -56,7 +59,7 @@ export const plansCount = (s: PlansState) => s.list.length + s.unreadable.length
 export const copiesOf = (s: PlansState) => s.list.filter((r) => r.id !== s.main);
 
 /** A save of one plan whole, at the stamp it was loaded at. */
-export type PlanSave = { id: string; plan: FirePlanV2; currency: string | null; based_on: string | null };
+export type PlanSave = { id: string; plan: FirePlanV2; currency: string | null; based_on: string | null; tax?: TaxChoices };
 
 /** Done, or why not; `stale` when what is stored stopped it, and the list was
  *  read again. */
@@ -103,7 +106,7 @@ export function rowFrom(v: unknown): PlanRow | null {
   const r = v as Record<string, unknown>;
   if (typeof r.id !== 'string' || typeof r.name !== 'string') return null;
   if (r.plan !== null && !isStoredPlan(r.plan)) return null;
-  return { id: r.id, name: r.name, plan: r.plan as StoredPlan | null, currency: stringOrNull(r.currency), created_at: stringOrNull(r.created_at), updated_at: stringOrNull(r.updated_at) };
+  return { id: r.id, name: r.name, plan: r.plan as StoredPlan | null, currency: stringOrNull(r.currency), created_at: stringOrNull(r.created_at), updated_at: stringOrNull(r.updated_at), tax: isTaxChoices(r.tax) ? r.tax : null };
 }
 
 /** Your plan as an answer gives it, or null when it isn't one. */

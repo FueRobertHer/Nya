@@ -4,7 +4,7 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from './fixtures/release-before/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (the last merge before this one, 8a3bcd2b, TF's, whose readers
+// The release before (the last merge before this one, c6579849, T2 and its Forget fix, whose readers
 // of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
 // for byte, pinned by test/release-before.test.ts) reading what this release
 // writes, so a rollback to it loses no plan. Every write this release makes
@@ -19,7 +19,8 @@ import type { PlanItem } from '@/lib/fire/items';
 // every kind on every anchor, the stop at FI, your partner's age and your own
 // FI number, all of which it reads, and the tax facts (`plan-facts` version 2),
 // with or without a plan, which TF read a release before this one writes them
-// and which its saves keep.
+// and which its saves keep. Behind `plan-tax` it writes what T2 read a release
+// ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) takes a
 // download this release makes, plans and all: it refuses a file with a part it
 // doesn't know, or without one of its header parts, and reads each store part
@@ -50,6 +51,7 @@ const planRoute = await import('@/app/api/fire-plan/route');
 const factsRoute = await import('@/app/api/plan-facts/route');
 const plansRoute = await import('@/app/api/plans/route');
 const savedRoute = await import('@/app/api/saved-plan/route');
+const { flagsStore } = await import('@/lib/flag-store');
 
 beforeEach(async () => {
   fake.reset();
@@ -72,7 +74,7 @@ const ok = <T extends { status: number; body: unknown }>(r: T): T['body'] => {
   expect([r.status, r.body]).toEqual([200, r.body]);
   return r.body;
 };
-const save = (plan: FirePlanV2, based_on: string | null, facts_were: unknown, currency: string | null = 'USD') => call(planRoute.PUT, 'fire-plan', 'PUT', { plan, currency, facts_were, based_on });
+const save = (plan: FirePlanV2, based_on: string | null, facts_were: unknown, currency: string | null = 'USD', more: object = {}) => call(planRoute.PUT, 'fire-plan', 'PUT', { plan, currency, facts_were, based_on, ...more });
 const plans = (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: unknown) => call(plansRoute[method], 'plans', method, body);
 
 /** Every entry and the facts as its stores read their bytes: opened, then
@@ -112,8 +114,8 @@ async function readsAll(main: string, what: string) {
   }
   const mine = entries.get(main)!;
   const before = { id: main, plan: oCopies.withFacts(mine.plan, f), currency: oCopies.holdsAmounts(mine.plan) ? mine.currency : null, updated_at: mine.updatedAt };
-  // Its GET answers no tax facts, which it holds without showing.
-  const { tax_facts: _facts, ...answered } = await (await planRoute.GET()).json();
+  // Its GET answers no tax facts or choices, which it holds without showing.
+  const { tax_facts: _facts, tax: _tax, ...answered } = await (await planRoute.GET()).json();
   expect([what, answered]).toEqual([what, before]);
   return entries;
 }
@@ -297,6 +299,89 @@ describe('the tax facts this release writes, as the release before reads them', 
     expect(oCopies.isPlanFacts(saved)).toBe(true);
     expect(saved).toMatchObject({ version: 2, age: 44, main: MAIN_ID });
     expect(saved.version === 2 && saved.tax).toEqual(facts.version === 2 && facts.tax);
+  });
+});
+
+describe('what the detailed model writes, as the release before reads it', () => {
+  const give = (op: unknown) => call(factsRoute.POST, 'plan-facts', 'POST', op);
+  const HOUSEHOLD = { filing: 'joint', birthYears: [{ owner: 'you', year: 1986 }, { owner: 'partner', year: 1987 }], dependents: [{ id: 'd1', untilAge: 55 }], paidToday: { kind: 'tag', name: 'Health' } };
+  const NONE = { filing: null, birthYears: [], dependents: [], paidToday: null };
+  const CHOICES = {
+    version: 1,
+    state: null,
+    stateRate: 0,
+    inflation: 0.03,
+    health: { beforeMedicare: null, medicareExtra: 0, meetsMedicaidRule: [], countMedicaid: false, acaLaw: '2026', growth: null },
+    strategy: { order: 'standard', conversions: { kind: 'none' }, convertUntil: null },
+    savingsSplit: null,
+    taxableYield: null,
+  };
+  const health = (over: object) => ({ ...CHOICES, health: { ...CHOICES.health, ...over } });
+  const EVERY = [
+    CHOICES,
+    { ...CHOICES, state: 'NV' },
+    { ...CHOICES, state: 'CO', stateRate: 0.044, inflation: 0.025, taxableYield: 0.02 },
+    { ...CHOICES, savingsSplit: [{ bucket: 'taxable', share: 0.25 }, { bucket: 'tax-deferred', share: 0.25 }, { bucket: 'roth', share: 0.25 }, { bucket: 'hsa', share: 0.25 }] },
+    health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null } }),
+    health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: 3_000 }, acaLaw: 'enhanced' }),
+    health({ beforeMedicare: { kind: 'other', yearly: 6_000 }, medicareExtra: 2_400 }),
+    health({ meetsMedicaidRule: ['you', 'partner'], countMedicaid: true, growth: 0.015 }),
+  ];
+  beforeEach(() => flagsStore.update('plan-tax', (async () => ({ on: 'nobody', containers: [ctx.container], updatedAt: new Date().toISOString() })) as never, ctx.container));
+
+  test('the opt-in: every entry, the model, and the plan it reads', async () => {
+    ok(await save(TYPED, null, DEFAULTS));
+    ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
+    ok(await give({ kind: 'opt-in' }));
+    const entries = await readsAll(MAIN_ID, 'opted in');
+    expect([...entries.values()].every((e) => e.tax !== null)).toBe(true);
+    const { facts } = await readAsBefore();
+    expect((facts as Extract<PlanFacts, { version: 2 }>).tax.model).toBe('detailed');
+    ok(await give({ kind: 'model', model: 'flat' }));
+    await readsAll(MAIN_ID, 'back to flat');
+  });
+
+  test('the opt-in with no plan saved: your plan’s entry it made, at your stop age', async () => {
+    ok(await give({ kind: 'opt-in' }));
+    const entries = await readsAll(MAIN_ID, 'opted in with none');
+    expect(entries.get(MAIN_ID)!.plan.start).toBe('at-stop');
+  });
+
+  test('choices of every shape this writer takes', async () => {
+    let stamp = (ok(await save(TYPED, null, DEFAULTS)) as { updated_at: string }).updated_at;
+    for (const tax of EVERY) {
+      stamp = (ok(await save(TYPED, stamp, factsOf(TYPED), 'USD', { tax })) as { updated_at: string }).updated_at;
+      const entries = await readsAll(MAIN_ID, JSON.stringify(tax));
+      expect(entries.get(MAIN_ID)!.tax as unknown).toEqual(tax);
+    }
+  });
+
+  test('a household on a save and on a first save, its dependents and what pays for coverage', async () => {
+    ok(await save(TYPED, null, DEFAULTS, 'USD', { household: HOUSEHOLD, household_were: NONE }));
+    await readsAll(MAIN_ID, 'first save');
+    const { facts } = await readAsBefore();
+    expect((facts as Extract<PlanFacts, { version: 2 }>).tax).toMatchObject(HOUSEHOLD);
+    const stamp = (ok(await planRoute.GET().then(async (r) => ({ status: r.status, body: await r.json() }))) as { updated_at: string }).updated_at;
+    ok(await save(TYPED, stamp, factsOf(TYPED), 'USD', { household: { ...HOUSEHOLD, filing: 'single', paidToday: { kind: 'category', name: 'Health' } }, household_were: HOUSEHOLD }));
+    await readsAll(MAIN_ID, 'a later save');
+  });
+
+  test('a plan on at-stop, and a copy of it', async () => {
+    const stamp = (ok(await save(TYPED, null, DEFAULTS)) as { updated_at: string }).updated_at;
+    const at = { ...TYPED, start: 'at-stop' };
+    ok(await save(at as FirePlanV2, stamp, factsOf(TYPED)));
+    ok(await plans('POST', { from: MAIN_ID, name: 'Copy', plan: at, currency: 'USD' }));
+    const entries = await readsAll(MAIN_ID, 'at-stop');
+    expect([...entries.values()].map((e) => e.plan.start)).toEqual(['at-stop', 'at-stop']);
+  });
+
+  test('a benchmark alone: it reads the plan, with no amount it knows of', async () => {
+    const blank = { ...DEFAULT_PLAN_V2, age: 40 };
+    ok(await save(blank, null, DEFAULTS, 'USD', { tax: EVERY[4] }));
+    const { entries, refused } = await readAsBefore();
+    expect(refused).toEqual([]);
+    expect(entries.get(MAIN_ID)!.currency).toBe('USD');
+    expect(oCopies.holdsAmounts(entries.get(MAIN_ID)!.plan)).toBe(false);
   });
 });
 

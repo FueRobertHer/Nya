@@ -635,7 +635,7 @@ Your [plans](features.md#plans-and-compare-mode) (`lib/fire/copies.ts`, `lib/pla
 | --- | --- |
 | `name` | Its name. |
 | `plan` | The whole plan ([its fields below](#a-plans-fields)), version 2 (`lib/fire/plan-v2.ts`). An entry saved before may hold version 1 (`lib/fire/plan.ts`). Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here, and every save keeps them the same here too. |
-| `tax` | The plan's own tax choices (`lib/fire/tax-choices.ts`), or `null`. Nothing writes them yet (the tax plan's T3); a restore takes them only whole. |
+| `tax` | The plan's own tax choices (`lib/fire/tax-choices.ts`), or `null`: written by opting in to working tax out from your accounts, and by the Health, Household, Annual savings and Assumptions sheets. A restore takes them only whole. |
 | `currency` | The currency its amounts are in, or `null` for a plan that holds none. |
 | `createdAt`, `updatedAt` | When it was made, and last changed: a page names the `updatedAt` a change was made on, so one made from a version changed since is refused. Every save gives the entries it writes an `updatedAt` no other entry holds. |
 
@@ -820,15 +820,15 @@ What every plan in [`fire-plans`](#fire-plans) shares, and which of them is your
 | Field | Meaning |
 | --- | --- |
 | `version` | Its shape's version: 1. |
-| `model` | `flat` or `detailed`. Only `flat` is written yet. |
-| `filing` | `single`, `joint`, or `null`. Not asked yet. |
-| `birthYears[]` | `owner` (`you` or `partner`) and `year`. Not asked yet. |
-| `dependents[]` | `id` and `untilAge`. Not asked yet. |
+| `model` | `flat` or `detailed`: whether Nya works tax out from your accounts, once you said so. |
+| `filing` | `single`, `joint`, or `null`. |
+| `birthYears[]` | `owner` (`you` or `partner`) and `year`, when a birthday decides when required withdrawals start. |
+| `dependents[]` | `id` and `untilAge`, the age you are when they leave. |
 | `rothContributions[]` | `owner` and `amount`: what that person has put into a Roth. |
 | `owners[]` | `account_id` and `owner`, for an account that isn't yours alone. |
 | `basis[]` | `account_id` and `amount`: a cost basis you typed. |
 | `countAnyway[]` | The accounts for a child you count in your plan. |
-| `paidToday` | `kind` (`category` or `tag`) and `name`. Not asked yet. |
+| `paidToday` | `kind` (`category` or `tag`) and `name`: what already pays for coverage. |
 
 An account can be left out of these lists, which is the same as the default (yours, the basis from its holdings, left out if it is for a child). An account is taken out of them when it leaves Nya: forgotten, a manual or connected account removed, or its Plaid connection disconnected. A file that brings plans back without `plan-facts` leaves the account none.
 

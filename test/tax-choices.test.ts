@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isTaxChoices, type TaxChoices } from '@/lib/fire/tax-choices';
+import { DEFAULT_TAX_CHOICES, isTaxChoices, parseTaxChoices, taxHoldsAmounts, type TaxChoices } from '@/lib/fire/tax-choices';
 import { isPlanEntry } from '@/lib/fire/copies';
 import { DEFAULT_PLAN_V2 } from '@/lib/fire/plan-v2';
 import { STATE_CODES } from '@/lib/fire/tax/law/types';
@@ -116,5 +116,71 @@ describe('an entry', () => {
   test('refuses anything else, as a newer release’s', () => {
     expect(isPlanEntry({ ...entry, tax: { filing: 'single' } })).toBe(false);
     expect(isPlanEntry({ ...entry, tax: { ...FULL, version: 2 } })).toBe(false);
+  });
+});
+
+describe('what a page may write', () => {
+  const taken = (v: unknown, stored: TaxChoices | null = null) => 'choices' in parseTaxChoices(v, stored);
+
+  test('the defaults, which read as stored choices too', () => {
+    expect(isTaxChoices(DEFAULT_TAX_CHOICES)).toBe(true);
+    expect(taken(DEFAULT_TAX_CHOICES)).toBe(true);
+  });
+
+  test('every range', () => {
+    const health = (over: object) => ({ ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, ...over } });
+    expect(taken({ ...DEFAULT_TAX_CHOICES, stateRate: 0.2 })).toBe(true);
+    expect(taken({ ...DEFAULT_TAX_CHOICES, stateRate: 0.21 })).toBe(false);
+    expect(taken({ ...DEFAULT_TAX_CHOICES, stateRate: -0.01 })).toBe(false);
+    expect(taken({ ...DEFAULT_TAX_CHOICES, inflation: 0.3 })).toBe(false);
+    expect(taken({ ...DEFAULT_TAX_CHOICES, taxableYield: 0.018 })).toBe(true);
+    expect(taken({ ...DEFAULT_TAX_CHOICES, taxableYield: 0.5 })).toBe(false);
+    expect(taken(health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null } }))).toBe(true);
+    expect(taken(health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 65, child: null } }))).toBe(false);
+    expect(taken(health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50.5, child: null } }))).toBe(false);
+    expect(taken(health({ beforeMedicare: { kind: 'aca', adult: -1, quotedAge: 50, child: null } }))).toBe(false);
+    expect(taken(health({ beforeMedicare: { kind: 'aca', adult: 1, quotedAge: 50, child: -1 } }))).toBe(false);
+    expect(taken(health({ beforeMedicare: { kind: 'other', yearly: 2_000_000 } }))).toBe(false);
+    expect(taken(health({ medicareExtra: -1 }))).toBe(false);
+    expect(taken(health({ meetsMedicaidRule: ['you', 'you'] }))).toBe(false);
+    expect(taken(health({ growth: 0.021 }))).toBe(true);
+    expect(taken(health({ growth: 2.1 }))).toBe(false);
+  });
+
+  test('a split is each bucket once, and adds up', () => {
+    const split = (savingsSplit: unknown) => ({ ...DEFAULT_TAX_CHOICES, savingsSplit });
+    expect(taken(split([{ bucket: 'roth', share: 0.4 }, { bucket: 'taxable', share: 0.6 }]))).toBe(true);
+    expect(taken(split([{ bucket: 'roth', share: 0.4 }, { bucket: 'taxable', share: 0.5 }]))).toBe(false);
+    expect(taken(split([{ bucket: 'roth', share: 0.5 }, { bucket: 'roth', share: 0.5 }]))).toBe(false);
+    expect(taken(split([]))).toBe(false);
+  });
+
+  test('anything but the closed shape', () => {
+    for (const v of [null, 'tax', [], { ...DEFAULT_TAX_CHOICES, extra: 1 }, { ...DEFAULT_TAX_CHOICES, version: 2 }, { ...DEFAULT_TAX_CHOICES, state: 'PR' }]) expect(taken(v)).toBe(false);
+  });
+
+  test('a change of strategy waits for T4; one already stored is no change, and going back is one', () => {
+    const later = { ...DEFAULT_TAX_CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 65 } } as TaxChoices;
+    expect(taken(later)).toBe(false);
+    expect(taken(later, DEFAULT_TAX_CHOICES)).toBe(false);
+    expect(taken(later, later)).toBe(true);
+    expect(taken(DEFAULT_TAX_CHOICES, later)).toBe(true);
+    const other = { ...later, strategy: { ...later.strategy, convertUntil: 70 } };
+    expect(taken(other, later)).toBe(false);
+  });
+});
+
+describe('holding amounts', () => {
+  test('a benchmark, a typed cost, Part D or a fixed conversion; a rate is none', () => {
+    expect(taxHoldsAmounts(null)).toBe(false);
+    expect(taxHoldsAmounts(DEFAULT_TAX_CHOICES)).toBe(false);
+    expect(taxHoldsAmounts({ ...DEFAULT_TAX_CHOICES, state: 'CA', stateRate: 0.05, taxableYield: 0.02 })).toBe(false);
+    const health = (over: object) => ({ ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, ...over } }) as TaxChoices;
+    expect(taxHoldsAmounts(health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null } }))).toBe(true);
+    expect(taxHoldsAmounts(health({ beforeMedicare: { kind: 'aca', adult: 0, quotedAge: 50, child: 3_000 } }))).toBe(true);
+    expect(taxHoldsAmounts(health({ beforeMedicare: { kind: 'aca', adult: 0, quotedAge: 50, child: null } }))).toBe(false);
+    expect(taxHoldsAmounts(health({ beforeMedicare: { kind: 'other', yearly: 9_600 } }))).toBe(true);
+    expect(taxHoldsAmounts(health({ medicareExtra: 2_400 }))).toBe(true);
+    expect(taxHoldsAmounts({ ...DEFAULT_TAX_CHOICES, strategy: { order: 'standard', conversions: { kind: 'fixed', yearly: 10_000 }, convertUntil: null } })).toBe(true);
   });
 });

@@ -34,6 +34,7 @@ import {
   itemsFull,
   onSteadyPath,
   previewLines,
+  waitingStart,
   rowSub,
   templateOf,
   timelinePoints,
@@ -46,7 +47,9 @@ import { itemRules, withItem, withoutItem, type PlanItem } from '@/lib/fire/item
 import { planPath } from '@/lib/fire/path';
 import { stopOf, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import type { DetailedAnswer } from './plan-detailed';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
+import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
 
 type Money = (n: number) => string;
 
@@ -65,7 +68,7 @@ export type TimelineTry = {
 type Level = { at: 'add' } | { at: 'item' } | { at: 'starts' } | { at: 'ends' } | { at: 'remove' };
 
 /** The draft with its preview's figures, kept by what was checked. */
-type Worked = { key: string; f: PlanFigures | 'refused'; without: PlanFigures | null; runsOutAt: number | null; most: { amount: number; age: number } | null; points: readonly { age: number; balance: number }[] };
+type Worked = { key: string; f: PlanFigures | 'refused'; without: PlanFigures | null; runsOutAt: number | null; most: { amount: number; age: number } | null; points: readonly { age: number; balance: number }[]; working: boolean; failed: boolean };
 
 export function TimelineCard({
   plan,
@@ -73,6 +76,9 @@ export function TimelineCard({
   refused = false,
   measured,
   count,
+  figuresFor = null,
+  figuresVersion = '',
+  firedFor = null,
   copyName,
   version,
   editable,
@@ -97,6 +103,14 @@ export function TimelineCard({
   refused?: boolean;
   measured: Measured;
   count: Count;
+  /** The Plan's flow for a draft's figures (components/plan-detailed.ts); left out,
+   *  the flat ones. */
+  figuresFor?: ((slot: string, plan: FirePlanV2) => DetailedAnswer) | null;
+  /** Moves as a job's answer arrives, so the preview takes it. */
+  figuresVersion?: string;
+  /** Runs a start that waits on a run's own balance through the runs, in the Plan's
+   *  worker; null when it couldn't be run. */
+  firedFor?: ((ask: { sim: SimPlan; trigger: number; offset: number }, signal: AbortSignal) => Promise<FiredResult | null>) | null;
   /** The open copy's name; null on your plan. */
   copyName: string | null;
   /** The plan's version: the sheet closes when it changes, and never saves
@@ -232,21 +246,43 @@ export function TimelineCard({
     if (!checked || !('ok' in checked) || !open) return;
     const item = checked.ok;
     const timer = setTimeout(() => {
-      const f = planFigures(withItem(plan, item), measured, { count });
+      const run = (slot: string, p: FirePlanV2): DetailedAnswer => figuresFor?.(slot, p) ?? { figures: planFigures(p, measured, { count }), working: false, failed: false };
+      const answer = run('preview', withItem(plan, item));
+      const f = answer.figures;
       if ('refused' in f) {
-        setWorked({ key: checkedKey, f: 'refused', without: null, runsOutAt: null, most: null, points: [] });
+        setWorked({ key: checkedKey, f: 'refused', without: null, runsOutAt: null, most: null, points: [], working: false, failed: false });
         return;
       }
       const path = planPath(f);
       const points = [...(path?.points ?? []), ...(path?.after?.points ?? [])];
       const top = points.reduce<{ amount: number; age: number } | null>((m, p) => (m && m.amount >= p.balance ? m : { amount: p.balance, age: p.age }), null);
-      const off = item.from.anchor.at === 'fi' ? planFigures(withoutItem(plan, item.id), measured, { count }) : null;
-      setWorked({ key: checkedKey, f, without: off && !('refused' in off) ? off : null, runsOutAt: path?.after?.runsOutAt ?? null, most: top, points });
+      const off = item.from.anchor.at === 'fi' ? run('preview-without', withoutItem(plan, item.id)).figures : null;
+      setWorked({ key: checkedKey, f, without: off && !('refused' in off) ? off : null, runsOutAt: path?.after?.runsOutAt ?? null, most: top, points, working: answer.working, failed: answer.failed });
     }, 200);
     return () => clearTimeout(timer);
     // checkedKey stands for checked; measured is a new object each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkedKey, plan, count, open]);
+  }, [checkedKey, plan, count, open, figuresVersion]);
+
+  // Across history, once the steady path's answer for this draft is in.
+  const [across, setAcross] = useState<{ key: string; fired: FiredResult | null } | null>(null);
+  const waiting = worked?.key === checkedKey && worked.f !== 'refused' && !worked.working && checked && 'ok' in checked ? waitingStart(worked.f, checked.ok.id) : null;
+  useEffect(() => {
+    if (!open || !firedFor || !waiting) return;
+    let live = true;
+    const stop = new AbortController();
+    const key = checkedKey;
+    void firedFor(waiting, stop.signal).then((fired) => {
+      if (live) setAcross({ key, fired });
+    });
+    return () => {
+      live = false;
+      stop.abort();
+    };
+    // `worked` stands for what is run: it is new each time this draft is worked out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worked, open]);
+  const acrossNow = !waiting || !firedFor ? null : across?.key !== checkedKey ? { working: true as const } : across.fired ? { fired: across.fired, startAge: waiting.startAge } : null;
 
   /** Saves on the version the sheet opened on, while saves can go. */
   const guarded = async (run: () => Promise<boolean | string>): Promise<boolean> => {
@@ -330,7 +366,7 @@ export function TimelineCard({
     }
     const why = figures?.resolution.why[i] ?? null;
     if (why === 'no-years') plain.push('Ends before it starts, so it runs no years.');
-    const caution = figures ? itemCautions(x, { start: at, stop, inFi: countsInFiDate(figures, i), taxRate: plan.taxRate }) : [];
+    const caution = figures ? itemCautions(x, { start: at, stop, inFi: countsInFiDate(figures, i), taxRate: plan.taxRate, detailed: !!figures.detail && !('failed' in figures.detail) }) : [];
     return { warn, caution, plain };
   };
 
@@ -536,6 +572,8 @@ export function TimelineCard({
           draft: checked,
           before: figures,
           after: 'ok' in checked && worked?.key === checkedKey ? worked.f : null,
+          working: worked?.key === checkedKey && worked.working,
+          failed: worked?.key === checkedKey && worked.failed,
           without: 'ok' in checked && worked?.key === checkedKey ? worked.without : null,
           where: copyName ? 'copy' : 'plan',
           money,
@@ -544,6 +582,7 @@ export function TimelineCard({
           points: worked?.key === checkedKey ? worked.points : [],
           savings,
           runsOutAt: worked?.key === checkedKey ? worked.runsOutAt : null,
+          across: acrossNow,
         })
       : null;
   const changed = !!(editing && checked && 'ok' in checked && JSON.stringify(checked.ok) !== JSON.stringify(editing));

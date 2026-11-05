@@ -119,7 +119,7 @@ describe('with no plan saved', () => {
     const r = await give(account('acc_529', { count: true }));
     expect(r.status).toBe(200);
     const tax = { ...DEFAULT_TAX_FACTS, countAnyway: ['acc_529'] };
-    expect(r.body).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: tax });
+    expect(r.body).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax: null, tax_facts: tax });
     expect(await firePlansStore.count(ctx)).toBe(0);
     expect((await get()).body).toEqual(r.body);
     const inputs = await json(await inputsRoute.GET(new Request('http://localhost/api/plan-inputs')));
@@ -315,11 +315,11 @@ describe('a plan’s tax choices', () => {
     expect((await firePlansStore.get(ctx, copy.body.plan.id))!.tax).toEqual(CHOICES);
   });
 
-  test('never reach the page: a plan’s answer holds none', async () => {
+  test('reach the page: your plan’s answer and its row hold them', async () => {
     await save(TYPED, null);
     const entry = (await firePlansStore.get(ctx, MAIN_ID))!;
     await firePlansStore.set(ctx, MAIN_ID, { ...entry, tax: CHOICES });
-    expect(JSON.stringify((await get()).body)).not.toContain('stateRate');
-    expect(JSON.stringify((await json(await plansRoute.GET())).body)).not.toContain('stateRate');
+    expect((await get()).body.tax).toEqual(CHOICES);
+    expect((await json(await plansRoute.GET())).body.plans[0].tax).toEqual(CHOICES);
   });
 });

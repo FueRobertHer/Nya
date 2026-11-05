@@ -176,7 +176,7 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
   return { ages, why, onFi, follows, ends };
 }
 
-const anchoredOn = (plan: Plan, at: 'fi' | 'balance') =>
+export const anchoredOn = (plan: Pick<Plan, 'items'>, at: 'fi' | 'balance') =>
   plan.items.some((x) => x.from.anchor.at === at || (x.until !== null && !('years' in x.until) && x.until.anchor.at === at));
 
 /** The balance milestones by node, with what they wait for. */

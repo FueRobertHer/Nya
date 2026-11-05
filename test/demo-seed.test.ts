@@ -95,7 +95,6 @@ const { loadBudgets } = await import('@/lib/budget-store');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { firePlansStore, planFactsStore, readPlanAnswer } = await import('@/lib/plan-copies');
 const { parsePlanV2, planOf } = await import('@/lib/fire/plan-v2');
-const { incomeOf } = await import('@/lib/fire/items');
 const { MAIN_ID, factsOf, holdsAmounts } = await import('@/lib/fire/copies');
 const { readStoredTxns } = await import('@/lib/transactions');
 const { secretsStore } = await import('@/lib/connectors/store');
@@ -375,11 +374,13 @@ describe('seeding', () => {
     // Seeded as your plan's entry, version 2 as this release saves, in USD
     // (the sandbox's currency) since it types an income; then the facts.
     const mine = await firePlansStore.get(ctx, MAIN_ID);
-    expect(mine).toMatchObject({ name: 'First plan', tax: null, currency: 'USD' });
+    expect(mine).toMatchObject({ name: 'First plan', currency: 'USD' });
     const plan = mine!.plan;
     if (plan.version !== 2) throw new Error('expected a version 2 plan');
     expect([plan.age, plan.targetAge]).toEqual([38, 52]);
-    expect(incomeOf(plan).map((i) => i.fromAge)).toEqual([67]);
+    // What working tax out reads is said, so Preview offers it and then shows everything.
+    expect(mine!.tax).toMatchObject({ state: 'NV', stateRate: 0, health: { beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null } } });
+    expect(plan.items.map((x) => [x.kind, x.beforeTax, x.from])).toEqual([['social-security', true, { anchor: { at: 'age', age: 67 }, offset: 0 }]]);
     // Version 2, with the tax facts the profile holds: a partner's Roth, a basis
     // typed for the joint brokerage, and the 529 left out, to show that group.
     expect(plan.partnerAge).toBe(37);
@@ -387,6 +388,7 @@ describe('seeding', () => {
     expect(facts).toMatchObject({ version: 2, main: MAIN_ID, ...factsOf(plan) });
     if (facts?.version !== 2) throw new Error('expected version 2 facts');
     expect(facts.tax.model).toBe('flat');
+    expect(facts.tax.filing).toBe('joint');
     expect(facts.tax.owners.map((o) => o.owner)).toEqual(['partner', 'partner']);
     expect(facts.tax.basis.map((b) => b.amount)).toEqual([88_000]);
     expect(facts.tax.rothContributions).toEqual([

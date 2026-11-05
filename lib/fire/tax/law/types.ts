@@ -149,6 +149,8 @@ export type TaxLaw = {
   /** The poverty guidelines Medicaid uses: this year's. */
   medicaidPoverty: PovertyGuidelines;
   medicaidStates: Record<StateCode, MedicaidLine | null>;
+  /** Whether a state taxes wages and other ordinary income. */
+  stateIncomeTax: Record<StateCode, boolean>;
   medicare: Medicare;
   /** The Social Security contribution and benefit base. Indexed. */
   wageBase: number;
@@ -163,7 +165,7 @@ export type TaxLaw = {
 export type LawPart = Exclude<keyof TaxLaw, 'year' | 'sources'>;
 
 export const LAW_PARTS: readonly LawPart[] = [
-  'brackets', 'statute', 'aca', 'creditPoverty', 'medicaidPoverty', 'medicaidStates',
+  'brackets', 'statute', 'aca', 'creditPoverty', 'medicaidPoverty', 'medicaidStates', 'stateIncomeTax',
   'medicare', 'wageBase', 'uniform', 'curve', 'healthGrowth',
 ];
 

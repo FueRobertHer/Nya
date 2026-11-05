@@ -168,10 +168,10 @@ export function fiHeadline(
  *  income (a plan's, with D15's switch) apart from its life events, both
  *  joined when both. Null when nothing
  *  did. */
-export function walkWords(from: { items: boolean; events: boolean }): string | null {
-  if (from.items && from.events) return 'one-offs, income and this plan’s items';
-  if (from.items) return 'one-offs and income';
-  return from.events ? EVENTS_WORDS : null;
+export function walkWords(from: { items: boolean; events: boolean; tax?: boolean }): string | null {
+  const moved = from.items && from.events ? 'one-offs, income and this plan’s items' : from.items ? 'one-offs and income' : from.events ? EVENTS_WORDS : null;
+  if (!from.tax) return moved;
+  return moved ? `${moved}, and the tax on what they draw` : 'the tax on what you draw';
 }
 
 /** A plan's life events, as the walk's words name them. */

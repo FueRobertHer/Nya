@@ -1016,11 +1016,11 @@ describe('the route', () => {
   };
 
   test('loads the defaults, with no stamp, before anything is saved, then what was saved', async () => {
-    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: null });
+    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax: null, tax_facts: null });
     const res = await first(v2({ age: 30 }));
     expect(res.status).toBe(200);
     const { updated_at } = await res.json();
-    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: v2({ age: 30 }), currency: null, updated_at, tax_facts: null });
+    expect(await (await route.GET()).json()).toEqual({ id: MAIN_ID, plan: v2({ age: 30 }), currency: null, updated_at, tax: null, tax_facts: null });
   });
 
   test('refuses an invalid plan with the reason, and stores nothing', async () => {

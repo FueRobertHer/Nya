@@ -34,7 +34,7 @@ beforeEach(async () => {
 
 const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...DEFAULT_PLAN_V2, ...over });
 const TYPED = plan({ age: 40, targetAge: 55, spending: 40_000, savings: 30_000 });
-const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: null };
+const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null, tax: null, tax_facts: null };
 const put = (body: unknown) => route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify(body) }));
 const post = (body: unknown) => route.POST(new Request('http://x', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }));
 const get = async () => (await route.GET()).json();
@@ -64,7 +64,7 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
 describe('each save', () => {
   test('records the currency in your plan’s entry, in the same write as its amounts, and answers it', async () => {
     const saved = await first(TYPED, 'EUR');
-    expect(saved).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'EUR', updated_at: saved.updated_at, tax_facts: null });
+    expect(saved).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'EUR', updated_at: saved.updated_at, tax: null, tax_facts: null });
     expect(await mine()).toMatchObject({ plan: TYPED, currency: 'EUR', updatedAt: saved.updated_at });
     expect(await get()).toEqual(saved);
   });
@@ -141,7 +141,7 @@ describe('recording the currency alone', () => {
     const res = await post({ currency: 'USD', amounts: typedAmounts(TYPED) });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'USD', updated_at: body.updated_at, tax_facts: null });
+    expect(body).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'USD', updated_at: body.updated_at, tax: null, tax_facts: null });
     expect(body.updated_at > saved.updated_at).toBe(true);
     // The plan itself is untouched.
     expect((await mine()).plan).toEqual(TYPED);

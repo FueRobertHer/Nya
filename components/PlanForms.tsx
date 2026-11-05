@@ -21,6 +21,11 @@ import type { PathAfter } from '@/lib/fire/path';
 import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
+import { MAX_STATE_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
+import { householdOf, MAX_DEPENDENTS, sameHousehold, type Owner, type TaxFacts, type TaxHousehold } from '@/lib/fire/tax-facts';
+import { rmdAge } from '@/lib/fire/tax/rmd';
+import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fire/tax/law/types';
+import { FILING_NAMES, householdNotes, STATE_NAMES } from './plan-drawdown';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
@@ -33,11 +38,13 @@ import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
 import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet } from './PlanBuckets';
-import { headLine } from './plan-buckets';
-import type { SavingsSplit } from '@/lib/fire/savings-split';
+import { BUCKET_NAMES, type TaxBucket } from '@/lib/allocation/buckets';
+import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
+import type { SavingsBucket } from '@/lib/fire/tax-choices';
+import { headLine, splitNote } from './plan-buckets';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
-type SaveProps = {
+export type SaveProps = {
   plan: FirePlanV2;
   /** Resolves true once the server has the plan (and the plans checked in
    *  Also change it in, `also`, the same change), false when it didn't take
@@ -63,12 +70,29 @@ type SaveProps = {
 };
 
 /** Said beside an input a copy can't change. */
-const SAME_IN_EVERY_PLAN = 'the same in every plan: change it on your plan.';
+export const SAME_IN_EVERY_PLAN = 'the same in every plan: change it on your plan.';
+
+/** What a save carries beside the plan: its tax choices and, on your plan, the
+ *  household. Each only when it changed, so a release before still takes every other save. */
+export type MoreSave = { tax?: TaxChoices; household?: TaxHousehold };
+
+/** What a detailed plan's fields start from and save through. */
+export type DetailForm = {
+  /** The plan's, or your plan's where it has none. */
+  choices: TaxChoices;
+  facts: TaxFacts;
+  /** In a copy: the household is the same in every plan. */
+  factsLocked: boolean;
+  stateTaxes: Record<StateCode, boolean>;
+  statute: Statute;
+  calendarYear: number;
+  save: (next: FirePlanV2, more: MoreSave, also?: readonly string[]) => Promise<boolean | string>;
+};
 
 /** What was typed that can't be saved, and the fields it is about (each by
  *  the name `readNumber` is given): said under the last of them, and named
  *  by each (`useSave`'s `field` and `under`). */
-class FieldProblem extends Error {
+export class FieldProblem extends Error {
   constructor(
     message: string,
     readonly fields: readonly string[]
@@ -78,7 +102,7 @@ class FieldProblem extends Error {
 }
 
 /** A number typed in a field: null when empty, an error when not a number in range. */
-function readNumber(text: string, what: string, min: number, max: number, opts: { integer?: boolean; optional?: boolean; scale?: number } = {}): number | null {
+export function readNumber(text: string, what: string, min: number, max: number, opts: { integer?: boolean; optional?: boolean; scale?: number } = {}): number | null {
   const t = text.trim();
   if (t === '') {
     if (opts.optional) return null;
@@ -140,7 +164,19 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
   return { error, saving, save, field, under, alsoIn, setAlsoIn, disabled: saving || !editable };
 }
 
-function Buttons({
+/** As useSave, for a form that says more than the plan, which its `build` sets in
+ *  `more`. Nothing to say and nothing changed in the plan: nothing to send. */
+export function useDetailSave(props: SaveProps, detail: DetailForm | null) {
+  const more = useRef<MoreSave>({});
+  const onSave: SaveProps['onSave'] = async (next, also) => {
+    if (!detail) return props.onSave(next, also);
+    if (!more.current.tax && !more.current.household && JSON.stringify(next) === JSON.stringify(props.plan)) return true;
+    return detail.save(next, more.current, also);
+  };
+  return { s: useSave({ ...props, onSave }), more };
+}
+
+export function Buttons({
   onDone,
   disabled,
   saving,
@@ -215,16 +251,152 @@ function ages(age: number | null, targetAge: number | null): { age: number | nul
  *  still ahead of `age`. */
 const stopAhead = (target: string, age: string) => (target.trim() !== '' && age.trim() !== '' && Number(target) < Number(age) ? '' : target);
 
+/** Whether a birthday decides this age's RMD age: this year's age is one of two birth
+ *  years, and the statute's line falls between them. */
+const birthdayDecides = (age: number | null, calendarYear: number, statute: Statute) => age !== null && rmdAge(calendarYear - age - 1, statute) !== rmdAge(calendarYear - age, statute);
+
+/** What Household says beyond the ages, in a detailed plan: filing and dependents, the
+ *  same in every plan; the state and its rate, a plan's own; a year of birth only where
+ *  a birthday decides the RMD age. */
+function useHouseholdFields(d: DetailForm | null, age: string, partner: string, s: Pick<ReturnType<typeof useSave>, 'saving' | 'field' | 'under'>) {
+  const [filing, setFiling] = useState<Filing | ''>(d?.facts.filing ?? '');
+  const [state, setState] = useState<StateCode | ''>(d?.choices.state ?? '');
+  const [rate, setRate] = useState(d ? pctText(d.choices.stateRate) : '');
+  const [dependents, setDependents] = useState(() => (d?.facts.dependents ?? []).map((x) => ({ id: x.id, untilAge: String(x.untilAge) })));
+  const bornIn = (owner: Owner) => d?.facts.birthYears.find((b) => b.owner === owner)?.year ?? null;
+  const [youBorn, setYouBorn] = useState(asText(bornIn('you')));
+  const [partnerBorn, setPartnerBorn] = useState(asText(bornIn('partner')));
+  if (!d) return { fields: null, read: (): MoreSave => ({}) };
+
+  const locked = d.factsLocked || s.saving;
+  const taxes = state !== '' && d.stateTaxes[state];
+  const askYou = birthdayDecides(age.trim() === '' ? null : Number(age), d.calendarYear, d.statute);
+  const askPartner = birthdayDecides(partner.trim() === '' ? null : Number(partner), d.calendarYear, d.statute);
+  const notes = householdNotes({ facts: { dependents: dependents.map((x) => ({ id: x.id, untilAge: Number(x.untilAge) })) }, choices: { state: state || null } });
+
+  const read = (): MoreSave => {
+    const code = state === '' ? null : state;
+    const stateRate = code !== null && d.stateTaxes[code] ? (readNumber(rate, 'The state’s rate', 0, MAX_STATE_RATE, { scale: 0.01, optional: true }) ?? 0) : 0;
+    const tax: TaxChoices | null = code === d.choices.state && stateRate === d.choices.stateRate ? null : { ...d.choices, state: code, stateRate };
+    if (d.factsLocked) return tax ? { tax } : {};
+    if (filing === 'joint' && partner.trim() === '') throw new FieldProblem('Filing jointly needs your partner’s age, above.', ['Your partner’s age']);
+    const year = (owner: Owner, text: string, asked: boolean, what: string) => {
+      const held = bornIn(owner);
+      const y = asked ? readNumber(text, what, 1900, d.calendarYear, { integer: true, optional: true }) : held;
+      return y === null ? [] : [{ owner, year: y }];
+    };
+    const household: TaxHousehold = {
+      ...householdOf(d.facts),
+      filing: filing === '' ? null : filing,
+      birthYears: [...year('you', youBorn, askYou, 'Your year of birth'), ...year('partner', partnerBorn, askPartner, 'Your partner’s year of birth')],
+      dependents: dependents.map((x, i) => ({ id: x.id, untilAge: readNumber(x.untilAge, `Dependent ${i + 1}`, 0, 120, { integer: true }) as number })),
+    };
+    return { ...(tax ? { tax } : {}), ...(sameHousehold(household, householdOf(d.facts)) ? {} : { household }) };
+  };
+
+  const fields = (
+    <>
+      <label className="field">
+        Filing status
+        <select value={filing} onChange={(e) => setFiling(e.target.value as Filing | '')} disabled={locked}>
+          <option value="">Not said (counted as single)</option>
+          <option value="single">{FILING_NAMES.single}</option>
+          <option value="joint">{FILING_NAMES.joint}</option>
+        </select>
+      </label>
+      <label className="field">
+        State
+        <select value={state} onChange={(e) => setState(e.target.value as StateCode | '')} disabled={s.saving}>
+          <option value="">Not said (no state tax, no Medicaid expansion)</option>
+          {[...STATE_CODES].sort((a, b) => STATE_NAMES[a].replace(/^the /, '').localeCompare(STATE_NAMES[b].replace(/^the /, ''))).map((c) => (
+            <option key={c} value={c}>
+              {STATE_NAMES[c].replace(/^the /, '')}
+            </option>
+          ))}
+        </select>
+      </label>
+      {taxes ? (
+        <>
+          <label className="field">
+            {STATE_NAMES[state]} income tax (% of income)
+            <input type="number" inputMode="decimal" data-percent step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} {...s.field('The state’s rate')} />
+          </label>
+          {s.under('The state’s rate')}
+          {Number(rate || 0) === 0 ? <Notice level="caution">With no rate here, no state tax is counted.</Notice> : <p className="helper">One rate on income and gains, for the years you draw.</p>}
+        </>
+      ) : (
+        state !== '' && <p className="helper">{STATE_NAMES[state]} has no income tax on what you’d draw.</p>
+      )}
+      <div className="stack tight">
+        <h4 className="section-label">Dependents</h4>
+        {dependents.map((x, i) => (
+          <div key={x.id}>
+            <label className="field">
+              {`Dependent ${i + 1} leaves your household when you’re`}
+              <input
+                type="number"
+                inputMode="numeric"
+                value={x.untilAge}
+                onChange={(e) => setDependents((list) => list.map((y) => (y.id === x.id ? { ...y, untilAge: e.target.value } : y)))}
+                disabled={locked}
+                {...s.field(`Dependent ${i + 1}`)}
+              />
+            </label>
+            {s.under(`Dependent ${i + 1}`)}
+            <button type="button" className="btn ghost" onClick={() => setDependents((list) => list.filter((y) => y.id !== x.id))} disabled={locked} aria-label={`Remove dependent ${i + 1}`}>
+              Remove
+            </button>
+          </div>
+        ))}
+        {dependents.length < MAX_DEPENDENTS && (
+          <div>
+            <button type="button" className="btn ghost" onClick={() => setDependents((list) => [...list, { id: crypto.randomUUID(), untilAge: '' }])} disabled={locked}>
+              Add a dependent
+            </button>
+          </div>
+        )}
+      </div>
+      {askYou && (
+        <>
+          <label className="field">
+            Your year of birth
+            <input type="number" inputMode="numeric" value={youBorn} onChange={(e) => setYouBorn(e.target.value)} placeholder="Not set" disabled={locked} {...s.field('Your year of birth')} />
+          </label>
+          {s.under('Your year of birth')}
+        </>
+      )}
+      {askPartner && (
+        <>
+          <label className="field">
+            Your partner’s year of birth
+            <input type="number" inputMode="numeric" value={partnerBorn} onChange={(e) => setPartnerBorn(e.target.value)} placeholder="Not set" disabled={locked} {...s.field('Your partner’s year of birth')} />
+          </label>
+          {s.under('Your partner’s year of birth')}
+        </>
+      )}
+      {(askYou || askPartner) && <p className="helper">At this age, a birthday decides when required withdrawals start.</p>}
+      {d.factsLocked && <p className="panel-note">Filing, dependents and years of birth are {SAME_IN_EVERY_PLAN}</p>}
+      {notes.map((n) => (
+        <Notice key={n.key} level={n.level}>
+          {n.text}
+        </Notice>
+      ))}
+    </>
+  );
+  return { fields, read };
+}
+
 /** The Household sheet (the tax plan's E2; T3 adds filing and state): your
  *  age and your partner's, the same in every plan, and when you stop: at an
  *  age, or when you reach FI, which keeps the age hidden for going back. */
-export function AboutForm(props: SaveProps) {
+export function AboutForm(props: SaveProps & { detail?: DetailForm | null }) {
   const { plan } = props;
   const [age, setAge] = useState(asText(plan.age));
   const [partner, setPartner] = useState(asText(plan.partnerAge));
   const [atFi, setAtFi] = useState(plan.stopAtFi);
   const [target, setTarget] = useState(plan.stopAtFi ? stopAhead(asText(plan.targetAge), asText(plan.age)) : asText(plan.targetAge));
-  const s = useSave(props);
+  const { s, more } = useDetailSave(props, props.detail ?? null);
+  const household = useHouseholdFields(props.detail ?? null, age, partner, s);
   const [min, max] = LIMITS.age;
   const passed = !atFi && plan.stopAtFi && plan.targetAge !== null && target === '';
   return (
@@ -297,6 +469,7 @@ export function AboutForm(props: SaveProps) {
         {s.under('Your partner’s age')}
         <p className="helper">For the items that are your partner&apos;s, timed by their age.</p>
         {props.copy && <p className="panel-note">Both ages are {SAME_IN_EVERY_PLAN}</p>}
+        {household.fields}
       </div>
       {s.error && (
         <Notice level="critical" role="alert">
@@ -313,6 +486,7 @@ export function AboutForm(props: SaveProps) {
           s.save(() => {
             const a = readNumber(age, 'Your age', min, max, { integer: true, optional: true });
             const p = readNumber(partner, 'Your partner’s age', min, max, { integer: true, optional: true });
+            more.current = household.read();
             // Under FI the stop age is hidden, and may be behind you: kept.
             if (atFi) return { ...plan, age: a, partnerAge: p, stopAtFi: true };
             return { ...plan, ...ages(a, readNumber(target, 'Stop age', min, max, { integer: true, optional: true })), partnerAge: p, stopAtFi: false };
@@ -445,6 +619,31 @@ const CHILD_ACCOUNTS_NOTE = ' Accounts for a child’s education are left out un
 
 type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null };
 
+const SAVINGS_BUCKETS: readonly SavingsBucket[] = ['taxable', 'tax-deferred', 'roth', 'hsa'];
+
+/** The measured split's buckets, for the override to start from. */
+const savingsByBucket = (split: SavingsSplit) => byBucket(split).filter((s): s is { bucket: SavingsBucket; share: number } => (SAVINGS_BUCKETS as readonly TaxBucket[]).includes(s.bucket));
+
+/** A split in its fields, as percents to two places, whole where it can be. */
+function splitFields(rows: readonly { bucket: SavingsBucket; share: number }[]): Record<SavingsBucket, string> {
+  const text = (b: SavingsBucket) => {
+    const row = rows.find((r) => r.bucket === b);
+    return row ? String(Math.round(row.share * 10000) / 100) : '';
+  };
+  return { taxable: text('taxable'), 'tax-deferred': text('tax-deferred'), roth: text('roth'), hsa: text('hsa') };
+}
+
+/** The split as typed, each share over 0, or what is wrong. Thirds shown to two places
+ *  come to 99.99%, so a rounding's worth goes on the largest. */
+function readSplit(text: Record<SavingsBucket, string>): { bucket: SavingsBucket; share: number }[] {
+  const rows = SAVINGS_BUCKETS.map((bucket) => ({ bucket, share: readNumber(text[bucket], BUCKET_NAMES[bucket], 0, 1, { scale: 0.01, optional: true }) ?? 0 }));
+  const total = rows.reduce((sum, r) => sum + r.share, 0);
+  if (Math.abs(total - 1) > 0.0005) throw new FieldProblem(`These add up to ${Math.round(total * 10000) / 100}%, not 100%.`, SAVINGS_BUCKETS.map((b) => BUCKET_NAMES[b]));
+  const largest = rows.reduce((a, b) => (b.share > a.share ? b : a));
+  largest.share = Number((largest.share + 1 - total).toFixed(6));
+  return rows.filter((r) => r.share > 0);
+}
+
 export function FigureForm(
   props: SaveProps & {
     kind: FigureKind;
@@ -465,6 +664,8 @@ export function FigureForm(
     split?: SavingsSplit | null;
     /** The mix at the start age, in a line; null when it can't be worked out. */
     mix?: string | null;
+    /** Under a detailed plan: Annual savings' override per bucket. */
+    detail?: DetailForm | null;
   }
 ) {
   const { plan, kind } = props;
@@ -485,7 +686,12 @@ export function FigureForm(
     });
     return [...here, ...plan.planFunding.filter((f) => !listed.has(f.account_id))].slice(0, LIMITS.planFunding);
   };
-  const s = useSave(props);
+  const detail = kind === 'savings' ? (props.detail ?? null) : null;
+  const { s, more } = useDetailSave(props, detail);
+  // Where a year of savings goes: as measured, or your own by bucket.
+  const chosenSplit = detail?.choices.savingsSplit ?? null;
+  const [splitMode, setSplitMode] = useState<'measured' | 'typed'>(chosenSplit ? 'typed' : 'measured');
+  const [splitText, setSplitText] = useState<Record<SavingsBucket, string>>(() => splitFields(chosenSplit ?? (props.split ? savingsByBucket(props.split) : [])));
   const t = FIGURE_TEXT[kind];
   const live = kind === 'assets' && props.assetsFor ? props.assetsFor(includeCash) : null;
   const measured = live ? live.total : props.measured;
@@ -620,7 +826,51 @@ export function FigureForm(
           ))}
         </>
       )}
-      {kind === 'savings' && sheet && props.split && <SavingsSplitLines split={props.split} reading={sheet.reading} />}
+      {kind === 'savings' && sheet && props.split && !detail && <SavingsSplitLines split={props.split} reading={sheet.reading} />}
+      {kind === 'savings' && sheet && detail && (
+        <section className="stack tight">
+          <h3 className="section-label">Where it goes</h3>
+          <Choice
+            label="Where it goes"
+            value={splitMode}
+            onChange={setSplitMode}
+            disabled={s.saving}
+            options={[
+              ['measured', 'Nya’s figure'],
+              ['typed', 'My own'],
+            ]}
+          />
+          {splitMode === 'measured' ? (
+            props.split ? (
+              <SavingsSplitLines split={props.split} reading={sheet.reading} heading={false} />
+            ) : (
+              <p className="helper">{splitNote('none')}</p>
+            )
+          ) : (
+            <>
+              <div className="sheet-form">
+                {SAVINGS_BUCKETS.map((b) => (
+                  <label className="field" key={b}>
+                    {BUCKET_NAMES[b]}
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      data-percent
+                      step="0.01"
+                      value={splitText[b]}
+                      onChange={(e) => setSplitText((m) => ({ ...m, [b]: e.target.value }))}
+                      {...s.field(BUCKET_NAMES[b])}
+                      disabled={s.saving}
+                    />
+                    {s.under(BUCKET_NAMES[b])}
+                  </label>
+                ))}
+              </div>
+              <p className="helper">Each bucket’s share of what you save, adding up to 100%. A plan’s own: only this plan takes it.</p>
+            </>
+          )}
+        </section>
+      )}
       {s.error && (
         <Notice level="critical" role="alert">
           {s.error}
@@ -636,12 +886,18 @@ export function FigureForm(
         disabled={s.disabled}
         saving={s.saving}
         onSave={() =>
-          s.save(() => ({
-            ...plan,
-            [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
-            includeCash: kind === 'assets' ? includeCash : plan.includeCash,
-            planFunding: kind === 'savings' ? planFunding() : plan.planFunding,
-          }))
+          s.save(() => {
+            if (detail) {
+              const savingsSplit = splitMode === 'measured' ? null : readSplit(splitText);
+              more.current = JSON.stringify(savingsSplit) === JSON.stringify(detail.choices.savingsSplit) ? {} : { tax: { ...detail.choices, savingsSplit } };
+            }
+            return {
+              ...plan,
+              [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
+              includeCash: kind === 'assets' ? includeCash : plan.includeCash,
+              planFunding: kind === 'savings' ? planFunding() : plan.planFunding,
+            };
+          })
         }
       />
       </div>
@@ -679,10 +935,17 @@ function startConsequence(
   props: { assets: number | null; spending: number | null; currency: string | null },
   typed: number,
   rate: number,
-  tax: number
+  tax: number,
+  /** A detailed plan's rate at this start, once worked out: what it withdraws isn't
+   *  your spending alone. */
+  drawn: number | null = null
 ): string {
   const money = (n: number) => wholeMoney(n, props.currency);
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
+  if (drawn !== null) {
+    const how = start === 'fi-number' ? 'at your stop age with your FI number' : start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : 'at your stop age with the balance you type';
+    return `Stops working ${how}, withdrawing ${pct(drawn, 1)} of it a year: ${spend} and health coverage, with their tax${drawn > rate * 1.001 ? `. Your FI number assumes ${pct(rate)}` : ''}.`;
+  }
   if (start === 'fi-number') {
     const stop = stopOf(plan);
     return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
@@ -691,6 +954,9 @@ function startConsequence(
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;
   return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(actual, 1)} withdrawal rate${actual > rate * 1.001 ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
+
+/** Whether the starting balance field still says what is saved. */
+const startBalanceSame = (typed: string, plan: Pick<PlanCore, 'startBalance'>) => typed === asText(plan.startBalance);
 
 /** Which part of the Assumptions sheet to open at: the stress test's
  *  settings, or its mix (filled in from your allocation). */
@@ -723,6 +989,18 @@ export function AssumptionsForm(
     /** Detailed tax is saved and can't be worked out here, so the rate below
      *  is what counts (components/plan-figure-notes.ts). */
     taxOnHold?: boolean;
+    /** A detailed plan's fields. */
+    detail?: DetailForm | null;
+    /** The rate a detailed plan withdraws at, as stored: null until worked out. */
+    drawnRate?: number | null;
+    /** Back to one flat rate, for every plan; null in a copy. */
+    onFlatRate?: (() => Promise<true | string>) | null;
+    /** The flag is on: What I'd have at my stop age can be chosen. */
+    planTax?: boolean;
+    /** The default growth, in points. */
+    defaultGrowth?: number;
+    /** What the accounts' year measured as a yield, for the field's placeholder. */
+    measuredYield?: number | null;
   }
 ) {
   const { plan, at = null } = props;
@@ -743,7 +1021,13 @@ export function AssumptionsForm(
   const [fee, setFee] = useState(pctText(plan.fee));
   const [floor, setFloor] = useState(pctText(plan.floor));
   const [ceiling, setCeiling] = useState(pctText(plan.ceiling));
-  const s = useSave(props);
+  const detail = props.detail ?? null;
+  const [inflation, setInflation] = useState(detail ? pctText(detail.choices.inflation) : '');
+  const [growth, setGrowth] = useState(detail?.choices.health.growth != null ? String(Number((detail.choices.health.growth * 100).toFixed(4))) : '');
+  const [taxableYield, setTaxableYield] = useState(detail?.choices.taxableYield != null ? pctText(detail.choices.taxableYield) : '');
+  const [flatting, setFlatting] = useState(false);
+  const [flatError, setFlatError] = useState<string | null>(null);
+  const { s, more } = useDetailSave(props, detail);
   const cash = 100 - (Number(stocks) || 0) - (Number(bonds) || 0);
   const mix = { ...plan, stocksPct: Number(stocks) || 0, bondsPct: Number(bonds) || 0 };
   const expected = cash >= 0 ? vpwExpectedReturn(allocationOf(mix)) : 0;
@@ -754,7 +1038,9 @@ export function AssumptionsForm(
   const rateNow = typedRate(rate, LIMITS.withdrawalRate, plan.withdrawalRate);
   const taxNow = typedRate(tax, LIMITS.taxRate, plan.taxRate);
   const fiNumber = props.fiSpending === null ? null : fiNumberOf(props.fiSpending, rateNow, taxNow);
-  const ruleRate = startRate(start, props, Number(balance), taxNow) ?? rateNow;
+  // A detailed plan's as it stands: another start's isn't worked out until it is saved.
+  const drawnNow = detail && start === plan.start && startBalanceSame(balance, plan) ? (props.drawnRate ?? null) : null;
+  const ruleRate = drawnNow ?? startRate(start, props, Number(balance), taxNow) ?? rateNow;
 
   // Opened at a part: the sheet's body is scrolled to it. Set on the body
   // alone (never scrollIntoView, which would scroll the page behind too, as
@@ -775,6 +1061,15 @@ export function AssumptionsForm(
     const stocksPct = readNumber(stocks, 'Stocks', 0, 100, { integer: true }) as number;
     const bondsPct = readNumber(bonds, 'Bonds', 0, 100, { integer: true }) as number;
     if (stocksPct + bondsPct > 100) throw new FieldProblem('Stocks and bonds add up to more than 100%.', ['Stocks', 'Bonds']);
+    if (detail) {
+      const tax: TaxChoices = {
+        ...detail.choices,
+        inflation: readNumber(inflation, 'Inflation', 0, 0.2, { scale: 0.01 }) as number,
+        taxableYield: readNumber(taxableYield, 'The taxable yield', 0, 0.2, { scale: 0.01, optional: true }),
+        health: { ...detail.choices.health, growth: readNumber(growth, 'How fast health costs rise', -0.05, 0.1, { scale: 0.01, optional: true }) },
+      };
+      more.current = JSON.stringify(tax) === JSON.stringify(detail.choices) ? {} : { tax };
+    }
     return {
       ...plan,
       withdrawalRate: readNumber(rate, 'The withdrawal rate', ...LIMITS.withdrawalRate, { scale: 0.01 }) as number,
@@ -813,7 +1108,11 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('The withdrawal rate')}
-        <p className="helper">How much you&apos;d draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests.</p>
+        <p className="helper">
+          {detail
+            ? 'How much you’d draw each year, as a share of what you have: it sets the FI number (spending divided by it). What the simulation withdraws comes from your spending, health coverage and their tax.'
+            : "How much you'd draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests."}
+        </p>
         <label className="field">
           Growth after inflation until FI (% a year)
           <input
@@ -844,7 +1143,39 @@ export function AssumptionsForm(
         </label>
         {s.under('The tax rate')}
         {props.taxOnHold && <Notice level="caution">{taxOnHoldText(plan.taxRate)}</Notice>}
-        <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
+        {detail ? (
+          <>
+            <p className="helper">Your FI number still uses this rate. Drawdown works tax out from your accounts.</p>
+            {props.onFlatRate ? (
+              <div>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={flatting || s.saving}
+                  onClick={async () => {
+                    setFlatting(true);
+                    setFlatError(null);
+                    const r = await props.onFlatRate!();
+                    setFlatting(false);
+                    if (r === true) props.onDone();
+                    else setFlatError(r);
+                  }}
+                >
+                  {flatting ? 'Saving…' : 'Use a flat rate instead'}
+                </button>
+              </div>
+            ) : (
+              <p className="helper">Working tax out from your accounts is {SAME_IN_EVERY_PLAN}</p>
+            )}
+            {flatError && (
+              <Notice level="critical" role="alert">
+                {flatError}
+              </Notice>
+            )}
+          </>
+        ) : (
+          <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
+        )}
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
           <input
@@ -865,6 +1196,28 @@ export function AssumptionsForm(
         Drawdown
       </h3>
       <div className="sheet-form">
+        {detail && (
+          <>
+            <label className="field">
+              Inflation (% a year)
+              <input type="number" inputMode="decimal" data-percent step="0.5" value={inflation} onChange={(e) => setInflation(e.target.value)} {...s.field('Inflation')} disabled={s.saving} />
+            </label>
+            {s.under('Inflation')}
+            <p className="helper">For what the tax law doesn’t index, and income that doesn’t keep up with prices.</p>
+            <label className="field">
+              Health costs rise faster than prices by (points a year)
+              <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth ?? '')} data-percent {...s.field('How fast health costs rise')} disabled={s.saving} />
+            </label>
+            {s.under('How fast health costs rise')}
+            <p className="helper">Empty is the default, from CMS’s projections, the same field as on Health coverage.</p>
+            <label className="field">
+              Dividends and interest on taxable accounts (% a year)
+              <input type="number" inputMode="decimal" data-percent step="0.1" value={taxableYield} onChange={(e) => setTaxableYield(e.target.value)} placeholder={props.measuredYield != null ? pct(props.measuredYield, 1) : 'None measured'} {...s.field('The taxable yield')} disabled={s.saving} />
+            </label>
+            {s.under('The taxable yield')}
+            <p className="helper">{props.measuredYield != null ? 'Empty is what your accounts paid over the last year.' : 'Empty counts none: nothing over the last year says what they pay, so taxes on it are left out.'}</p>
+          </>
+        )}
         <label className="field">
           Method
           <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving || !!props.copy}>
@@ -936,11 +1289,11 @@ export function AssumptionsForm(
               </option>
             ))}
             <option value="custom">A balance I type</option>
-            {plan.start === 'at-stop' && <option value="at-stop">What I’d have at my stop age</option>}
+            {(props.planTax || plan.start === 'at-stop') && <option value="at-stop">What I’d have at my stop age</option>}
           </select>
         </label>
         <p className="helper">
-          <Masked>{startConsequence(start, plan, props, Number(balance), rateNow, taxNow)}</Masked>
+          <Masked>{startConsequence(start, plan, props, Number(balance), rateNow, taxNow, drawnNow)}</Masked>
         </p>
         {start === 'custom' && (
           <label className="field">

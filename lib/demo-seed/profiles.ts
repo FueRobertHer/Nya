@@ -23,6 +23,8 @@
 // purchase, a bill), negative is money in (a paycheck, a payment to a card).
 
 import type { FirePlan } from '../fire/plan';
+import type { BeforeMedicare } from '../fire/tax-choices';
+import type { Filing, StateCode } from '../fire/tax/law/types';
 import type { DEMO_NAMES } from '../demo';
 
 export type DemoName = (typeof DEMO_NAMES)[number];
@@ -79,6 +81,9 @@ export type DemoProfile = {
     partnerAge: number;
     accounts: { mask: string; owner: 'you' | 'partner'; basis: number | null }[];
     roth: { owner: 'you' | 'partner'; amount: number }[];
+    /** What working tax out from the accounts reads, said while the plan stays flat:
+     *  `socialSecurity` is the income that is Social Security, given before tax. */
+    detail?: { filing: Filing; state: StateCode; beforeMedicare: BeforeMedicare; socialSecurity: string };
   };
 };
 
@@ -544,6 +549,7 @@ function sam(today: string): DemoProfile {
         { owner: 'you', amount: 42_000 },
         { owner: 'partner', amount: 31_000 },
       ],
+      detail: { filing: 'joint', state: 'NV', beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, socialSecurity: 'social-security' },
     },
   };
 }

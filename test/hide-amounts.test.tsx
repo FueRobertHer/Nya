@@ -1239,7 +1239,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       <PlansSheet
         open
         onClose={() => {}}
-        state={{ ...INITIAL_PLANS, status: 'ready', list: plans.map((p) => ({ id: p.id, name: p.name, plan: p.plan, currency: 'USD', created_at: null, updated_at: null })) }}
+        state={{ ...INITIAL_PLANS, status: 'ready', list: plans.map((p) => ({ id: p.id, name: p.name, plan: p.plan, currency: 'USD', created_at: null, updated_at: null, tax: null })) }}
         plans={plans}
         measuring={false}
         planState="ready"
