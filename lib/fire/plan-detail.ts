@@ -135,7 +135,14 @@ export function detailWork(input: DetailedInput): DetailWork {
     const paid = f.view.spending.source === 'measured' ? input.paidToday : 0;
     const spending = spendingNow + lasting;
     if (spending < 0) return null;
-    const { slots, noMix } = slotsAt(f, age, balance);
+    let placed: ReturnType<typeof slotsAt>;
+    try {
+      placed = slotsAt(f, age, balance);
+    } catch (e) {
+      // As runDrawdown says it of its own years, so the flat model carries the plan.
+      return { drawn: { failed: e instanceof Error ? e.message : 'The years couldn’t be worked out' }, noMix: false };
+    }
+    const { slots, noMix } = placed;
     const drawn = runDrawdown({
       startAge: age,
       years,

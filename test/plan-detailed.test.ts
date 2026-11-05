@@ -66,6 +66,11 @@ describe('what the page knows, as the drawdown’s input', () => {
     expect(input({ tax: { ...DEFAULT_TAX_CHOICES, taxableYield: 0 } }).taxableYield).toBe(0);
     const none = { ...TODAY, groups: [group('roth', account('roth', 100_000, { income: 500 }))] } as unknown as BucketsToday;
     expect(measuredYield(none)).toBeNull();
+    // An account just emptied, or a year of reversals, says nothing about what the rest pays.
+    const odd = (income: number) => ({ ...TODAY, groups: [group('taxable', account('a', 100_000, { income: 2_000 }), account('b', 2_000, { income }))] }) as unknown as BucketsToday;
+    expect(measuredYield(odd(5_000))).toBeCloseTo(0.02);
+    expect(measuredYield(odd(-40))).toBeCloseTo(0.02);
+    expect(measuredYield(odd(40))).toBeCloseTo(0.02);
     expect(input({ today: none }).taxableYield).toBe(0);
   });
 

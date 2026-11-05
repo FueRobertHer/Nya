@@ -15,6 +15,12 @@
 //     end high.
 //   - A year with money to spare invests it divided by `1 - t` too (SimPlan's
 //     `bridged`), or `t` of every surplus would be lost.
+//   - A rule that can't run out gives up living spending before a year comes up
+//     short (`bridged` again), as the drawdown's year does: VPW's last year takes
+//     all there is, and health over `h` comes on top of it.
+//   - A lower cost comes off living spending and one-offs, never off health, but the
+//     engine's cost holds `h`: what a year's lower costs had nothing left to lower
+//     goes back on.
 //
 // On a steady market at the drawdown's own inflation this ends where the drawdown
 // ends, to the dollar (test/drawdown-bridge.test.ts). `spend < h` inside a run
@@ -49,15 +55,17 @@ export function bridgedEngine(plan: PlanCore, engine: EnginePlan, start: Drawdow
     // no drawdown of their own, so nothing differs from `h`.
     const i = startAge + y - first;
     if (i < 0) continue;
-    const difference = start.years[Math.min(i, start.years.length - 1)].health - start.h;
+    const row = start.years[Math.min(i, start.years.length - 1)];
+    const difference = row.health - start.h;
     if (difference > CENT) oneOffs.push({ amount: difference, year: y });
     else if (difference < -CENT) lowerSpending.push({ amount: -difference, fromYear: y, toYear: y + 1 });
+    if (row.lowerLeft > CENT) oneOffs.push({ amount: row.lowerLeft, year: y });
   }
   const { conditional: _flat, ...rest } = sim;
   return {
     ...engine,
     rate: start.rate,
     rateFrom: 'spending',
-    sim: { ...rest, taxRate: start.t, rule: ruleSpec(plan, start.rate), income, oneOffs, lowerSpending, bridged: true, ...(conditional ? { conditional } : {}) },
+    sim: { ...rest, taxRate: start.t, rule: ruleSpec(plan, start.rate), income, oneOffs, lowerSpending, bridged: { h: start.h }, ...(conditional ? { conditional } : {}) },
   };
 }

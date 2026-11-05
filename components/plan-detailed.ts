@@ -24,7 +24,7 @@ import { drawdownMovesFi, planFigures, type FiguresRefused, type PlanFigures } f
 import type { Measured } from '@/lib/fire/plan';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import { anchoredOn, type Resolution } from '@/lib/fire/steady';
-import { DEFAULT_TAX_CHOICES, type TaxChoices } from '@/lib/fire/tax-choices';
+import { DEFAULT_TAX_CHOICES, MAX_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
 import type { Owner, TaxFacts } from '@/lib/fire/tax-facts';
 import { lawFor } from '@/lib/fire/tax/law';
 import { HEALTH_GROWTH } from '@/lib/fire/tax/law/2026';
@@ -46,14 +46,16 @@ export function pageBuckets({ assets, holdings, facts, settings, rows, partner }
 }
 
 /** What a year's yield is measured as: the last year's dividends and interest over
- *  what taxable accounts hold, for those whose year is known. Null with none. */
+ *  what taxable accounts hold, for those whose year is known. Null with none. An
+ *  account a yield can't be typed for (one that has just been emptied, or a reversal
+ *  over the year) says nothing about what the rest pays, and is left out. */
 export function measuredYield(today: Pick<BucketsToday, 'groups'>): number | null {
   let income = 0;
   let value = 0;
   for (const g of today.groups) {
     if (g.bucket !== 'taxable') continue;
     for (const a of g.accounts) {
-      if (a.income !== null && a.value > 0) {
+      if (a.income !== null && a.value > 0 && a.income >= 0 && a.income / a.value <= MAX_RATE) {
         income += a.income;
         value += a.value;
       }

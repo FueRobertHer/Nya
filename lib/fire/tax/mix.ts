@@ -49,7 +49,9 @@ const empty = (owner: Owner, bucket: TaxBucket): MixSlot => ({ owner, bucket, va
 
 /** Today's buckets as slots, scaled to `assets`, the plan's figure, which may be
  *  the person's own. A basis not known counts as all gain, as a position with
- *  none does. With no accounts to go by, it is all taxable. */
+ *  none does. With no accounts to go by, it is all taxable. An overdrawn account
+ *  can take a bucket, or what was paid for it, below zero, which a year can't read:
+ *  that slot is left out and the others come to `assets`, and a basis stops at 0. */
 export function mixToday(today: Pick<BucketsToday, 'groups' | 'roth' | 'total'>, assets: number): MixSlot[] {
   if (today.total <= 0) return assets > 0 ? [{ ...empty('you', 'taxable'), value: assets }] : [];
   const scale = assets / today.total;
@@ -68,7 +70,15 @@ export function mixToday(today: Pick<BucketsToday, 'groups' | 'roth' | 'total'>,
     const slot = slots.get(`${r.owner}:roth`);
     if (slot && r.amount !== null) slot.reachable = Math.min(r.amount, slot.value);
   }
-  return [...slots.values()];
+  const all = [...slots.values()];
+  const held = all.filter((s) => s.value >= 0);
+  const k = held.length < all.length ? assets / totalOf(held) : 1;
+  for (const s of held) {
+    s.value *= k;
+    s.basis = Math.max(0, s.basis) * k;
+    s.reachable *= k;
+  }
+  return held;
 }
 
 export type ProjectedMix = { slots: MixSlot[]; total: number };

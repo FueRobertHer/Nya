@@ -49,7 +49,7 @@
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import { monthLabel, yearFactors, type Market } from './market';
-import { plannedWithdrawal, withRate, type RuleSpec, type YearState } from './rules';
+import { canRunOut, plannedWithdrawal, withRate, type RuleSpec, type YearState } from './rules';
 import { seededRandom } from './random';
 
 export type Allocation = { stocks: number; bonds: number; cash: number };
@@ -132,10 +132,12 @@ export type SimPlan = {
   /** Lower costs (life events in a scenario, lib/fire/events.ts); absent for
    *  the Plan's own plans, which then run exactly as they always have. */
   lowerSpending?: LowerSpending[];
-  /** A year with money to spare invests it divided by `1 - taxRate`, since its
-   *  income went in at `1 - taxRate` too (lib/fire/bridge.ts); absent otherwise,
-   *  and the rest of a year's money is invested as it is. */
-  bridged?: boolean;
+  /** The drawdown's plan (lib/fire/bridge.ts). A year with money to spare invests it
+   *  divided by `1 - taxRate`, since its income went in at `1 - taxRate` too. A rule
+   *  that can't run out gives up living spending, what it pays over `h`, the yearly
+   *  health cost it holds, before a year comes up short, as the drawdown's year does.
+   *  Absent otherwise: the rest of a year's money is invested as it is. */
+  bridged?: { h: number };
   /** Items that wait on a run's own balance; absent for every plan but one
    *  starting from what you'd have at your stop age, and then they cost nothing. */
   conditional?: ConditionalFlows;
@@ -336,7 +338,8 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
   const count = source.count;
   const g = growthTables(plan, market);
   const tax = plan.taxRate;
-  const bridged = plan.bridged === true;
+  const bridged = plan.bridged !== undefined;
+  const healthIn = plan.bridged && !canRunOut(plan.rule.kind) ? plan.bridged.h : null;
   const afterFee = 1 - plan.fee;
   const w = plan.allocation;
   const drift = plan.rebalance === 'none';
@@ -437,7 +440,8 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const need = (less > 0 ? Math.max(0, cost - less) : cost) - income;
       if (need > 0) {
         const gross = need / (1 - tax);
-        if (gross > bal * (1 + EPS) + EPS) {
+        const gives = healthIn === null ? 0 : Math.max(0, spend - healthIn - less);
+        if ((need - gives) / (1 - tax) > bal * (1 + EPS) + EPS) {
           failed = y;
           break;
         }

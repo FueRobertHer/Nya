@@ -133,7 +133,7 @@ export const DEFAULT_TAX_CHOICES: TaxChoices = {
 export const MAX_HEALTH_AMOUNT = 1_000_000;
 /** More than any state's top rate. */
 export const MAX_STATE_RATE = 0.2;
-const MAX_RATE = 0.2;
+export const MAX_RATE = 0.2;
 /** A year over prices, as a fraction as the law tables hold it: far past any projection. */
 const HEALTH_GROWTH_RANGE = { low: -0.05, high: 0.1 };
 /** The age curve's last age, where a benchmark can be quoted. */

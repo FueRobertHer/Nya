@@ -12,7 +12,7 @@ import { DEFAULT_PLAN, type EnginePlan, type Measured } from '@/lib/fire/plan';
 import { detailWork, type DetailedInput, type PlanDetail } from '@/lib/fire/plan-detail';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
-import { historicalCycles, MAX_YEARS, type SimPlan } from '@/lib/fire/simulate';
+import { checkPlan, historicalCycles, MAX_YEARS, type SimPlan } from '@/lib/fire/simulate';
 import { lawFor } from '@/lib/fire/tax/law';
 import { ON } from './plan-gen';
 
@@ -81,6 +81,8 @@ describe('on a steady market it ends where the drawdown ends', () => {
     ['a windfall far over the year’s need', [item({ kind: 'windfall', from: when(55), once: 900_000 })]],
     ['income over the year’s need, for years', [item({ kind: 'other-income', from: when(52), until: when(58), yearly: 180_000, beforeTax: false })]],
     ['a lower cost', [item({ kind: 'loan-end', from: when(60), yearly: 12_000 })]],
+    ['a lower cost over all of living spending', [item({ kind: 'loan-end', from: when(60), yearly: 90_000 })]],
+    ['a lower cost over living spending and a one-off', [item({ kind: 'loan-end', from: when(60), yearly: 90_000 }), item({ id: 'o', kind: 'one-off', from: when(65), once: 5_000 })]],
     ['part-time work', [item({ kind: 'part-time', from: when(50), until: when(55), yearly: 30_000, beforeTax: true })]],
     ['all of them', [item({ id: 'a', kind: 'social-security', from: when(67), yearly: 30_000, beforeTax: true }), item({ id: 'b', kind: 'other-income', from: when(55), until: when(60), yearly: 20_000 }), item({ id: 'c', kind: 'one-off', from: when(58), once: 120_000 }), item({ id: 'd', kind: 'windfall', from: when(70), once: 200_000 }), item({ id: 'e', kind: 'loan-end', from: when(62), yearly: 12_000 })]],
   ];
@@ -95,9 +97,110 @@ describe('on a steady market it ends where the drawdown ends', () => {
       // And the tax share and health cost say so.
       expect(d.start.t).toBeGreaterThan(0);
       expect(engineOf(f).sim.taxRate).toBe(d.start.t);
-      expect(engineOf(f).sim.bridged).toBe(true);
+      expect(engineOf(f).sim.bridged).toEqual({ h: detailOf(f).start.h });
     });
   }
+});
+
+describe('a rule that can’t run out', () => {
+  const other = { health: { ...input.health, coverage: { kind: 'other' as const, yearly: 4_000 } } };
+
+  test('VPW’s last year gives up living spending for health over `h`, and lasts, as the drawdown says', () => {
+    const f = figures(plan({ rule: 'vpw' }), other);
+    const d = detailOf(f).start;
+    const last = d.years[d.years.length - 1];
+    expect(last.health).toBeGreaterThan(d.h);
+    expect(d.runsOutAt).toBeNull();
+    const { sim } = engineOf(f);
+    expect(steadyRun(sim, 0.05).failedYear).toBeNull();
+    expect(historicalCycles(sim, still(sim.years + 2)).successRate).toBe(1);
+  });
+
+  test('percent of what is there does too', () => {
+    const f = figures(plan({ rule: 'percent' }), other);
+    expect(detailOf(f).start.runsOutAt).toBeNull();
+    expect(steadyRun(engineOf(f).sim, 0.05).failedYear).toBeNull();
+  });
+
+  test('a cost living spending can’t cover still comes up short, in both', () => {
+    const f = figures(plan({ rule: 'vpw', items: [item({ kind: 'one-off', from: when(80), once: 90_000_000 })] }), other);
+    const d = detailOf(f).start;
+    expect(d.runsOutAt).toBe(80);
+    expect(steadyRun(engineOf(f).sim, 0.05).failedYear).toBe(30);
+  });
+
+  test('a rule that can run out isn’t let off', () => {
+    const f = figures(plan({ spending: 200_000 }), other);
+    expect(detailOf(f).start.runsOutAt).not.toBeNull();
+    expect(steadyRun(engineOf(f).sim, 0.05).failedYear).not.toBeNull();
+  });
+});
+
+describe('a plan that runs out', () => {
+  const short = (spending: number, assets: number) => figures(plan({ age: 50, targetAge: 50, spending, savings: 0, assets }), { buckets: buckets(assets * 0.2, assets * 0.7, assets * 0.1, assets * 0.05), savingsSplit: null });
+
+  test('its tax share is of what the years paid, so the bridge runs out when the drawdown does', () => {
+    for (const [spending, assets, age] of [
+      [120_000, 1_100_000, 57],
+      [70_000, 1_100_000, 67],
+    ]) {
+      const f = short(spending, assets);
+      const d = detailOf(f).start;
+      expect(d.runsOutAt).toBe(age);
+      expect(50 + (steadyRun(engineOf(f).sim, 0.05).failedYear as number)).toBe(age);
+      // Not thinned by the years that couldn't pay.
+      const paying = d.years.filter((y) => !y.short);
+      const share = paying.reduce((s, y) => s + y.tax, 0) / paying.reduce((s, y) => s + y.tax + y.living + y.health + y.oneOffs, 0);
+      expect(d.t).toBeGreaterThan(share * 0.9);
+    }
+  });
+
+  test('tax and health in all are of the years that paid', () => {
+    const d = detailOf(short(120_000, 1_100_000)).start;
+    expect(d.taxAndHealth).toBeCloseTo(d.years.filter((y) => !y.short).reduce((s, y) => s + y.tax + y.health, 0), 6);
+    expect(d.taxAndHealth).toBeLessThan(d.years.reduce((s, y) => s + y.tax + y.health, 0));
+  });
+});
+
+describe('what can’t be worked out', () => {
+  const overdrawn = () => {
+    const checking = { owner: 'you', value: -200, basis: -200, account_id: 'checking', bucket: 'taxable' };
+    return { groups: [group('taxable', checking, account('taxable', 300_000)), group('tax-deferred', account('tax-deferred', 700_000))], roth: [], total: 999_800 } as unknown as Pick<BucketsToday, 'groups' | 'roth' | 'total'>;
+  };
+
+  test('an overdrawn account is no reason not to', () => {
+    for (const p of [plan({ savings: -60_000, assets: 999_800 }), plan({ savings: 0, assets: 999_800, start: 'assets' })]) {
+      const f = figures(p, { buckets: overdrawn(), savingsSplit: null });
+      expect(detailOf(f).start.years.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('a mix that can’t be projected says so, rather than throwing on the page', () => {
+    const f = figures(plan({ savings: -60_000 }), { stateRate: 1 });
+    expect(f.detail).toMatchObject({ failed: expect.any(String) });
+    // And the flat model carries the plan.
+    expect(engineOf(f).sim.bridged).toBeUndefined();
+  });
+
+  test('a plan with no tax to pay has a share of none, never a hair under, so the stress test runs', () => {
+    // Adding and taking away leave this plan's tax a hair below zero in years with none.
+    const accounts = (owner: string, values: Record<string, number | [number, number]>) => Object.entries(values).map(([bucket, v]) => ({ owner, bucket, account_id: `${owner}${bucket}`, value: Array.isArray(v) ? v[0] : v, basis: Array.isArray(v) ? v[1] : null }));
+    const you = accounts('you', { taxable: [679_000, 256_104.75035523996], 'tax-deferred': 764_000, roth: 261_000 });
+    const partner = accounts('partner', { taxable: [82_000, 49_726.71040846035], 'tax-deferred': 1_153_000, roth: 445_000, hsa: 32_000 });
+    const by = (bucket: string) => group(bucket, ...([...you, ...partner].filter((a) => a.bucket === bucket) as never[]));
+    const today = { groups: ['taxable', 'tax-deferred', 'roth', 'hsa'].map(by), roth: [{ owner: 'you', amount: 162_000 }, { owner: 'partner', amount: 114_000 }], total: 3_416_000 } as unknown as Pick<BucketsToday, 'groups' | 'roth' | 'total'>;
+    const once = item({ id: 'car', kind: 'one-off', from: when(53), once: 231_000 });
+    const rent = item({ id: 'rent', kind: 'other-income', from: when(61), yearly: 32_000, inflationAdjusted: false, owner: 'partner', beforeTax: true });
+    const p = { ...plan({ age: 38, targetAge: 61, partnerAge: 69, spending: 28_000, savings: 35_000, assets: null, withdrawalRate: 0.045, realReturn: 0.04, taxRate: 0, rule: 'vpw', startBalance: 932_000, horizon: 46, fee: 0.001, floor: 0.9, ceiling: 1.25, stocksPct: 75, bondsPct: 25, items: [rent, once] }), partTimeIncome: 10_000 };
+    const f = planFigures(p as FirePlanV2, { spending: 60_000, savings: null, assets: null }, {
+      count: ON,
+      detailed: detailWork({ ...input, filing: 'joint', rmdAges: { you: 73, partner: 73 }, buckets: today, savingsSplit: [{ bucket: 'taxable', share: 0.5 }, { bucket: 'roth', share: 0.5 }], share457: { you: 0.3, partner: 0 }, inflation: 0.02, taxableYield: 0.01, health: { coverage: { kind: 'aca', adult: 11_000, quotedAge: 50, child: 4_000 }, medicareExtra: 2_000, meetsRule: ['you'], countMedicaid: false, acaLaw: '2026', growth: 0.021, incomeGrowth: 0.011 }, paidToday: 5_000 }),
+    }) as PlanFigures;
+    const d = detailOf(f).start;
+    expect(d.t).toBeGreaterThanOrEqual(0);
+    for (const y of d.years) expect(y.tax).toBeGreaterThanOrEqual(0);
+    expect(() => checkPlan(engineOf(f).sim)).not.toThrow();
+  });
 });
 
 describe('the engine it hands over', () => {
@@ -191,13 +294,13 @@ describe('a year with money to spare', () => {
   const sim = (over: Partial<SimPlan> = {}): SimPlan => ({ startBalance: 1_000_000, years: 1, allocation: { stocks: 1, bonds: 0, cash: 0 }, rebalance: 'annual', fee: 0, taxRate: 0.1, rule: { kind: 'constant', rate: 0.06 }, income: [{ amount: 180_000, fromYear: 0, inflationAdjusted: true }], oneOffs: [], cashRealReturn: 0, ...over });
 
   test('at 10%, $200,000 of money in against $54,000 of spending invests $140,000, in a steady run', () => {
-    expect(steadyRun(sim({ bridged: true }), 0).balances[1]).toBeCloseTo(1_140_000, 6);
+    expect(steadyRun(sim({ bridged: { h: 0 } }), 0).balances[1]).toBeCloseTo(1_140_000, 6);
     expect(steadyRun(sim(), 0).balances[1]).toBeCloseTo(1_126_000, 6);
   });
 
   for (const rebalance of ['annual', 'none'] as const) {
     test(`and in the engine, rebalanced ${rebalance}`, () => {
-      const on = historicalCycles(sim({ bridged: true, rebalance }), still(2));
+      const on = historicalCycles(sim({ bridged: { h: 0 }, rebalance }), still(2));
       const off = historicalCycles(sim({ rebalance }), still(2));
       expect(on.balance.p50[1]).toBeCloseTo(1_140_000, 6);
       expect(off.balance.p50[1]).toBeCloseTo(1_126_000, 6);
@@ -205,8 +308,8 @@ describe('a year with money to spare', () => {
   }
 
   test('with `t` at zero the switch changes nothing, in the engine and in a steady run', () => {
-    expect(steadyRun(sim({ bridged: true, taxRate: 0 }), 0)).toEqual(steadyRun(sim({ taxRate: 0 }), 0));
-    expect(historicalCycles(sim({ bridged: true, taxRate: 0 }), still(2)).balance.p50).toEqual(historicalCycles(sim({ taxRate: 0 }), still(2)).balance.p50);
+    expect(steadyRun(sim({ bridged: { h: 0 }, taxRate: 0 }), 0)).toEqual(steadyRun(sim({ taxRate: 0 }), 0));
+    expect(historicalCycles(sim({ bridged: { h: 0 }, taxRate: 0 }), still(2)).balance.p50).toEqual(historicalCycles(sim({ taxRate: 0 }), still(2)).balance.p50);
   });
 });
 

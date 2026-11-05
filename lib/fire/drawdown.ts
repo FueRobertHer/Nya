@@ -110,6 +110,8 @@ export type DrawdownYear = {
   /** The rule's spending fell under `h`, so living spending was held at zero. */
   heldAtZero: boolean;
   oneOffs: number;
+  /** What the year's lower costs had nothing left to lower: they don't come off health. */
+  lowerLeft: number;
   health: number;
   /** Federal, state, the penalty and FICA. */
   tax: number;
@@ -264,6 +266,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
     const off = Math.min(lower[y], living);
     living -= off;
     const once = Math.max(0, oneOffs[y] - (lower[y] - off));
+    const lowerLeft = Math.max(0, lower[y] - off - oneOffs[y]);
 
     const socialSecurity = [0, 0];
     const pension = [0, 0];
@@ -349,8 +352,10 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
       living: input.spending,
       heldAtZero,
       oneOffs: once,
+      lowerLeft,
       health: care.total.v,
-      tax: fed.total.v,
+      // Adding and taking away can leave a tax of nothing a hair below zero.
+      tax: Math.max(0, fed.total.v),
       withdrawal: out.withdrawal,
       surplus: out.surplus,
       short: out.short,
@@ -417,9 +422,11 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
   return { rows, t: shares.t, h: shares.h, held, irmaaUnknown };
 }
 
-/** Tax's share of what the years cost, and the level yearly health cost, by when
- *  each dollar is paid. From the rows, so a test can work them out again. */
-export function taxShares(rows: readonly Pick<DrawdownYear, 'living' | 'oneOffs' | 'health' | 'tax'>[], realReturn: number): { t: number; h: number } {
+/** Tax's share of what the years paid, and the level yearly health cost, by when
+ *  each dollar is paid. What a year couldn't pay is no part of the share: it has no
+ *  tax on it, and would thin the tax of the years that did pay. From the rows, so a
+ *  test can work them out again. */
+export function taxShares(rows: readonly Pick<DrawdownYear, 'living' | 'oneOffs' | 'health' | 'tax' | 'shortfall'>[], realReturn: number): { t: number; h: number } {
   let pvTax = 0;
   let pvCost = 0;
   let pvHealth = 0;
@@ -427,7 +434,7 @@ export function taxShares(rows: readonly Pick<DrawdownYear, 'living' | 'oneOffs'
   let d = 1;
   for (const r of rows) {
     pvTax += r.tax * d;
-    pvCost += (r.living + r.oneOffs + r.health + r.tax) * d;
+    pvCost += Math.max(0, r.living + r.oneOffs + r.health + r.tax - r.shortfall) * d;
     pvHealth += r.health * d;
     pvOne += d;
     d /= 1 + realReturn;
@@ -517,7 +524,7 @@ export function runDrawdown(inp: DrawdownInput): Drawdown | { failed: string } {
       rounds,
       settled,
       leftAtEnd: left,
-      taxAndHealth: rows.reduce((sum, r) => sum + r.tax + r.health, 0),
+      taxAndHealth: rows.reduce((sum, r) => (r.short ? sum : sum + r.tax + r.health), 0),
       runsOutAt: firstShort ? firstShort.age : null,
       stages: stagesOf(rows, inp.rmdAges.you),
       notes,

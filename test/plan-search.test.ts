@@ -78,7 +78,7 @@ describe('runSearchJob', () => {
   });
 
   test('what throws is an error, never the job’s end', () => {
-    expect(runSearchJob({ ...jobFor(SEARCHING), detailed: null as unknown as DetailedInput })).toMatchObject({ ok: false });
+    expect(runSearchJob({ ...jobFor(SEARCHING), plan: null as unknown as SearchJob['plan'] })).toMatchObject({ ok: false });
   });
 });
 
