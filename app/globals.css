@@ -2335,6 +2335,12 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   margin-top: 4px;
 }
 
+/* Four names, more than a phone's line holds. */
+.chart-legend-wrap {
+  flex-wrap: wrap;
+  row-gap: var(--sp-1);
+}
+
 .chart-legend-item {
   display: flex;
   align-items: center;
@@ -2739,6 +2745,64 @@ span.meter-fill {
   margin: 0;
   min-width: 0;
   word-break: break-word;
+}
+
+/* A year's sheet (components/PlanDrawdown.tsx): labels too long for the column above,
+   so each takes the room its figure leaves, the figure at the line's end. A sum's line
+   is set apart. */
+.txn-detail-wide .txn-detail-row {
+  justify-content: space-between;
+}
+
+.txn-detail-wide .txn-detail-row dt {
+  flex: 1 1 auto;
+}
+
+.txn-detail-wide .txn-detail-row dd {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.txn-detail-sum {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--sp-1);
+  font-weight: 600;
+}
+
+/* A year's badges under its row's sub: plan outcomes, neutral. */
+.row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+
+/* Income against the poverty line, with the ACA's limit marked. The mark stands out of
+   the track, so the track doesn't clip it. */
+.fpl {
+  position: relative;
+  overflow: visible;
+}
+
+.fpl .meter-fill {
+  border-radius: var(--r-pill);
+}
+
+.fpl-limit {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text-1);
+}
+
+.fpl-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-1);
 }
 
 /* Account last-4 and credit-utilization meter on the Accounts tab. */
@@ -4730,6 +4794,11 @@ button.plan-edit:disabled {
   cursor: pointer;
   padding: 0;
   line-height: var(--tap);
+}
+
+/* A table wider than a phone scrolls on its own. */
+.plan-table-scroll {
+  overflow-x: auto;
 }
 
 .plan-table-view td,

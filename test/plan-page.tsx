@@ -45,6 +45,7 @@ export async function planPage() {
   const firePlan = await import('@/app/api/fire-plan/route');
   const plansRoute = await import('@/app/api/plans/route');
   const planInputs = await import('@/app/api/plan-inputs/route');
+  const planFacts = await import('@/app/api/plan-facts/route');
   type FirePlanV2 = import('@/lib/fire/plan-v2').FirePlanV2;
   type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 
@@ -70,6 +71,7 @@ export async function planPage() {
     new Request(`http://nya.test${path}`, { method, ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) });
   const ROUTES: Record<string, (r: Request) => Promise<Response>> = {
     'GET /api/plan-inputs': (r) => planInputs.GET(r),
+    'POST /api/plan-facts': (r) => planFacts.POST(r),
     'GET /api/fire-plan': () => firePlan.GET(),
     'PUT /api/fire-plan': (r) => firePlan.PUT(r),
     'POST /api/fire-plan': (r) => firePlan.POST(r),
@@ -94,7 +96,7 @@ export async function planPage() {
       if (answers[key]) return await answers[key]();
       const route = ROUTES[key];
       if (!route) return Response.json(STUBS[key] ?? { error: 'not here' }, { status: key in STUBS ? 200 : 404 });
-      return await route(new Request(url, { method, body: init?.body }));
+      return await route(new Request(url, { method, headers: init?.headers, body: init?.body }));
     } finally {
       inflight--;
     }

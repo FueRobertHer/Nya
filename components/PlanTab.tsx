@@ -144,7 +144,12 @@ import { planSavers, type Save } from './plan-savers';
 import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
 import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
-import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { DrawdownCard, DrawdownMore, StageLevel, YearLevel } from './PlanDrawdown';
+import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
+import { lawLabel, stageTitle, taxLine, yearTitle, type YearContext } from './plan-drawdown';
+import { drawdownMovesFi, planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { lawFor } from '@/lib/fire/tax/law';
+import type { TaxFactOp } from '@/lib/fire/tax-facts';
 import { planPath, type PathRange, type PlanPath } from '@/lib/fire/path';
 import PlanPathChart, { wholeShown } from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
@@ -212,7 +217,11 @@ export type SheetState =
   // when "Use my allocation in the plan" was pressed.
   | { kind: 'assumptions'; at?: AssumptionsAt; mix?: PlanMix & { ok: true } }
   | { kind: 'numbers' }
-  | { kind: 'fi-number' };
+  | { kind: 'fi-number' }
+  // Work it out from your accounts, and a stage of Year by year, with its
+  // years as a level (drawn over it, as a figure's accounts are).
+  | { kind: 'opt-in' }
+  | { kind: 'stage'; at: number };
 
 const SHEET_TITLES: Record<SheetState['kind'], string> = {
   about: 'Household',
@@ -220,6 +229,8 @@ const SHEET_TITLES: Record<SheetState['kind'], string> = {
   assumptions: 'Assumptions',
   numbers: 'About these numbers',
   'fi-number': 'FI number',
+  'opt-in': OPT_IN_TITLE,
+  stage: '',
 };
 
 const FIGURE_TITLES: Record<FigureKind, string> = {
@@ -940,6 +951,8 @@ export default function PlanTab({
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   // The drawer's level past a figure's sheet (components/PlanBuckets.tsx).
   const [figureLevel, setFigureLevel] = useState<FigureLevel | null>(null);
+  // A stage's year, by its place in Year by year's years, drawn over the stage.
+  const [yearLevel, setYearLevel] = useState<number | null>(null);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
   // The figure's row a sheet was opened from (InputsCard), by its kind, set
@@ -972,6 +985,7 @@ export default function PlanTab({
     setSheetFor(shownForRef.current);
     setSheet(s);
     setFigureLevel(null);
+    setYearLevel(null);
   };
   const close = () => setSheet(null);
   const typedBasis = useMemo(() => new Map(shared.taxFacts.basis.map((b) => [b.account_id, b.amount])), [shared.taxFacts.basis]);
@@ -1008,6 +1022,9 @@ export default function PlanTab({
     // The Timeline's goes once the age is saved: then to its Add
     // (components/PlanTimeline.tsx).
     if (openedFrom.current === 'ask-timeline' && !row?.isConnected) row = inputRows.current.get('timeline-first') ?? null;
+    // Work it out goes once it is chosen: then to Year by year, or the rows under it
+    // while its years are worked out.
+    if (openedFrom.current === 'opt-in' && !row?.isConnected) row = inputRows.current.get('years') ?? inputRows.current.get('stress-assumptions') ?? null;
     if (!closed || !row?.isConnected) return;
     let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
@@ -1280,6 +1297,35 @@ export default function PlanTab({
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
   // Design-system rule 3: a badge on each card the notice is about.
   const stressBadge = stressNotes.length === 0 ? null : stressNotes.length === 1 ? 'An input may be low' : 'Inputs may be low';
+
+  // A detailed plan's years, and what the sheets over them are worked out with.
+  const drawn = shown?.detail && !('failed' in shown.detail) ? shown.detail : null;
+  const shownChoices = entry ? entry.tax : yourChoices;
+  const shownInput = drawn ? inputOf(shownPlan, shownChoices) : null;
+  const yearContext: YearContext | null =
+    drawn && shownInput
+      ? {
+          money,
+          realReturn: plan.realReturn,
+          healthGrowth: shownInput.health.growth,
+          acaLaw: shownInput.health.acaLaw,
+          lawYear: drawn.law.year,
+          state: shownInput.state,
+          stateTaxes: shownInput.state ? shownInput.law.stateIncomeTax[shownInput.state] : null,
+          rmdAge: shownInput.rmdAges.you,
+        }
+      : null;
+  const sheetStage = shownSheet?.kind === 'stage' ? (drawn?.start.stages[shownSheet.at] ?? null) : null;
+  const sheetYear = sheetStage && yearLevel !== null ? (drawn?.start.years[yearLevel] ?? null) : null;
+  // The way in, while a plan in dollars is flat, once the facts have been read.
+  const offerDetail = planTax && shared.factsKnown && shared.taxFacts.model === 'flat' && taxInDollars;
+  /** A choice of model moves every plan's stamp, so all of them are read again, however
+   *  it went: a later save names what is stored now. */
+  const chooseModel = async (op: TaxFactOp): Promise<true | string> => {
+    const r = await heldBy(saveTaxFact(planInputs, op));
+    await Promise.all([store.load(), plansClient.load()]);
+    return r;
+  };
 
   // The bar, its heading and its Plans button, the copy's card (with
   // the Timeline that fixes it, when it is refused) and the panel shown:
@@ -1820,11 +1866,40 @@ export default function PlanTab({
               outcome={outcome}
               pending={pending}
               failed={shownFailed}
+              detail={drawn ? { t: drawn.start.t, lawYear: drawn.law.year } : null}
               money={money}
               currency={displayCurrency}
               badge={stressBadge}
               onRetry={retry}
               onRetryDetail={search.retry}
+            />
+          )}
+
+          {/* A detailed plan's years at a steady growth; a flat plan's way to them. */}
+          {worked && drawn && yearContext && (
+            <>
+              <DrawdownCard
+                detail={drawn}
+                realReturn={plan.realReturn}
+                money={money}
+                rmdAge={yearContext.rmdAge}
+                joint={shared.taxFacts.filing === 'joint' && plan.partnerAge !== null}
+                held={reloading}
+                working={shownWorking}
+                onStage={(at) => open({ kind: 'stage', at }, `stage-${at}`)}
+                stageRef={(at, el) => inputRowRef(`stage-${at}`, el)}
+                titleRef={(el) => inputRowRef('years', el)}
+              />
+              <DrawdownMore onGoPath={() => switchSegment('path')} />
+            </>
+          )}
+          {worked && offerDetail && (
+            <OptInRow
+              copy={entry !== null}
+              noAge={plan.age === null}
+              held={reloading}
+              onOpen={() => (plan.age === null ? open({ kind: 'about' }, 'opt-in') : open({ kind: 'opt-in' }, 'opt-in'))}
+              rowRef={(el) => inputRowRef('opt-in', el)}
             />
           )}
 
@@ -1875,7 +1950,7 @@ export default function PlanTab({
 
       <Sheet
         open={!!sheet}
-        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : SHEET_TITLES[shownSheet.kind]) : ''}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : SHEET_TITLES[shownSheet.kind]) : ''}
         onClose={() => {
           if (levelSaves === 0) close();
         }}
@@ -1884,13 +1959,15 @@ export default function PlanTab({
             ? () => {
                 if (levelSaves === 0) setFigureLevel(figureLevel.kind === 'bucket' ? { kind: 'account', account_id: figureLevel.account_id, title: figureLevel.back } : null);
               }
-            : undefined
+            : sheetYear
+              ? () => setYearLevel(null)
+              : undefined
         }
-        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : undefined}
+        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : sheetYear ? `year:${sheetYear.age}` : undefined}
       >
         {/* Atop every sheet that edits the copy open, so one isn't taken for
             your plan. */}
-        {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
+        {shownSheet && shownSheet.kind !== 'numbers' && shownSheet.kind !== 'stage' && <CopyTag name={copyName} />}
         {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
         {shownSheet?.kind === 'fi-number' && <FiNumberForm key={opened} {...formProps} view={view} retirementSpending={shown?.retirement?.spending ?? null} leftOut={path?.after?.leftOut ?? null} money={money} />}
         {shownSheet?.kind === 'assumptions' && (
@@ -1907,6 +1984,18 @@ export default function PlanTab({
           />
         )}
         {shownSheet?.kind === 'numbers' && <AboutNumbers />}
+        {shownSheet?.kind === 'opt-in' && (
+          <OptInSheet
+            key={opened}
+            moves={!!shown && drawdownMovesFi(plan, shown.walk, view.savings.value ?? 0, view.stopAge)}
+            lawYear={lawFor(calendarYear).law.year}
+            paused={formEditable ? null : (paused ?? 'This can’t be saved yet.')}
+            onConfirm={() => chooseModel({ kind: 'opt-in' })}
+            onDone={closeFor(opened)}
+          />
+        )}
+        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} onYear={setYearLevel} />}
+        {sheetYear && yearContext && <YearLevel year={sheetYear} context={yearContext} />}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
             key={opened}
@@ -2415,7 +2504,7 @@ export type InputKind = 'fi-number' | 'spending' | 'savings' | 'assets' | 'about
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Drawdown's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how';
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how' | 'opt-in' | 'years' | `stage-${number}`;
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {
@@ -2671,6 +2760,7 @@ export function SimulationCard({
   outcome,
   pending,
   failed = false,
+  detail = null,
   money,
   currency,
   badge = null,
@@ -2699,6 +2789,9 @@ export function SimulationCard({
   pending: boolean;
   /** A detailed plan's date couldn't be worked out, so nothing was run on it. */
   failed?: boolean;
+  /** A detailed plan's share of tax and its law: withdrawals pay health coverage and
+   *  that tax, not just your spending. */
+  detail?: { t: number; lawYear: number } | null;
   money: (n: number) => string;
   currency: string | null;
   /** Drawdown's notice is about this answer's inputs: its badge. */
@@ -2777,6 +2870,13 @@ export function SimulationCard({
   let setup: React.ReactNode;
   if (vpw) {
     setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.`;
+  } else if (detail) {
+    setup = (
+      <>
+        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), withdrawing <strong>{pct(rate, 1)}</strong> of it a year, your spending and health coverage with their tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}
+        {rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+      </>
+    );
   } else if (rateFrom === 'spending') {
     setup = (
       <>
@@ -2846,8 +2946,10 @@ export function SimulationCard({
       <p className="plan-definition">
         {successDefinition(sim.years)}
         {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
+        {detail ? ` ${taxLine(detail.t)}` : ''}
       </p>
       <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
+      {detail && <p className="plan-definition">{lawLabel(detail.lawYear)}</p>}
     </div>,
     <>
       {startNote}
@@ -2864,7 +2966,7 @@ export function SimulationCard({
         )}
         {vpw && spendingNow !== null && (
           <p className="panel-note">
-            Its first year spends <Masked>{money(r.firstYearSpending)}</Masked> after tax, against the <Masked>{money(spendingNow)}</Masked> you spend now.
+            Its first year spends <Masked>{money(r.firstYearSpending)}</Masked> after tax{detail ? ', health coverage included' : ''}, against the <Masked>{money(spendingNow)}</Masked> you spend now{detail ? ' before coverage' : ''}.
           </p>
         )}
 
@@ -2907,7 +3009,7 @@ export function SimulationCard({
               note={
                 lowShare === null
                   ? `No ${r.method === 'historical' ? 'start' : 'run'} lasted, so there is no spending to compare.`
-                  : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}`
+                  : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}${detail ? ', health coverage included' : ''}`
               }
             />
           </div>
