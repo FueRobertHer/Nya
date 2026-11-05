@@ -195,9 +195,12 @@ describe('what a detailed plan says it can’t know', () => {
   });
 
   test('a Roth put-in not given, for whom', () => {
-    const notes = honestyNotes({ ...none, today: { groups: [], roth: [{ owner: 'you', amount: 5 }, { owner: 'partner', amount: null }] } });
-    expect(notes[0].text).toContain('your partner’s Roth');
-    expect(notes[0].text).toContain('none of it counts as reachable before 59½');
+    const roth = (...owners: string[]) => ({ bucket: 'roth', total: owners.length, accounts: owners.map((owner) => ({ owner })) }) as never;
+    const said = (groups: never[]) => honestyNotes({ ...none, today: { groups, roth: [{ owner: 'you', amount: 5 }, { owner: 'partner', amount: null }] } }).filter((n) => n.text.includes('Roth'));
+    expect(said([roth('you', 'partner')])[0].text).toContain('your partner’s Roth');
+    // Nothing to say of a Roth they don't have.
+    expect(said([roth('you')])).toEqual([]);
+    expect(said([roth('you', 'partner')])[0].text).toContain('none of it counts as reachable before 59½');
   });
 
   test('income given after tax is named, part-time apart', () => {

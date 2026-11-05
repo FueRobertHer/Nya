@@ -177,10 +177,10 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   const shown = deep?.figures ?? flat;
   // Null while they aren't known, so coming back to Home keeps the rows it had.
   const notes = useMemo(() => {
-    if (!shared.factsKnown) return null;
+    if (!shared.factsKnown || !loaded || typeof loaded !== 'object') return null;
     if (!worked) return NO_NOTES;
     return settings && detailAttention({ assets: inputs.assets, holdings, facts: shared.taxFacts, settings: settings.value, plan });
-  }, [shared.factsKnown, worked, settings, inputs.assets, holdings, shared.taxFacts, plan]);
+  }, [shared.factsKnown, loaded, worked, settings, inputs.assets, holdings, shared.taxFacts, plan]);
   const notesKey = notes && JSON.stringify(notes);
   useEffect(() => {
     if (notes) onAttention?.(notes);

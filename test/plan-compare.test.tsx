@@ -134,6 +134,20 @@ describe('one seed and one dataset', () => {
   });
 });
 
+describe('a detailed plan still at work in compare mode', () => {
+  const f = figs(plan({ age: 40, targetAge: 50 }));
+
+  test('no job is run on its flat figures', () => {
+    expect(compareJobs([{ kind: 'figures', figures: f, working: true }], 'historical')).toEqual([]);
+    expect(compareJobs([{ kind: 'figures', figures: f }], 'historical')).toHaveLength(1);
+  });
+
+  test('every cell waits, the FI date too', () => {
+    const { rows } = compareRows([{ id: 'p', name: 'p', isPlan: true, outcome: { kind: 'figures', figures: f, result: 'pending', working: true } }], money, TODAY);
+    for (const r of rows) expect(r.cells[0].pending).toBe(true);
+  });
+});
+
 describe('what the cells say (review: retiring before the FI date)', () => {
   const base = plan({ age: 40, targetAge: 55 });
   const early = plan({ age: 40, targetAge: 45 });
@@ -463,6 +477,19 @@ describe('the copy’s card and the Plans sheet', () => {
       />
     );
   };
+
+  test('a detailed plan still at work: its row waits, as a copy’s against it does', () => {
+    const at45 = planOf(plan({ age: 40, targetAge: 45 }));
+    const f = (p: Partial<FirePlan>) => figs(plan(p));
+    const list = (mainWorking: boolean, copyWorking: boolean): SheetPlan[] => [
+      { id: 'main', name: 'First plan', isMain: true, updatedAt: 'u-main', plan: base, outcome: { kind: 'figures', figures: f({ age: 40, targetAge: 55 }), working: mainWorking } },
+      { id: 'c1', name: 'Retire at 45', isMain: false, updatedAt: 'u-c1', plan: at45, outcome: { kind: 'figures', figures: f({ age: 40, targetAge: 45 }), working: copyWorking } },
+    ];
+    const skeletons = (html: string) => (html.match(/rows-skeleton-sub/g) ?? []).length;
+    expect(skeletons(sheet({ plans: list(false, false) }))).toBe(0);
+    expect(skeletons(sheet({ plans: list(false, true) }))).toBe(1);
+    expect(skeletons(sheet({ plans: list(true, false) }))).toBe(2);
+  });
 
   test('the Plans sheet: titled Plans, your plan first with its badge, each copy with its FI age and how it differs, the newer-version note, and Compare and New copy', () => {
     const html = sheet();

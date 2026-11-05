@@ -233,7 +233,7 @@ describe('the rest', () => {
   });
 
   test('a detailed plan’s gaps, each its two sentences, go to the Plan', () => {
-    const today = { groups: [{ bucket: 'unclassified' as const, total: 2, accounts: [{}, {}] as never }], roth: [{ owner: 'partner' as const, amount: null }] };
+    const today = { groups: [{ bucket: 'unclassified' as const, total: 2, accounts: [{}, {}] as never }, { bucket: 'roth' as const, total: 1, accounts: [{ owner: 'partner' }] as never }], roth: [{ owner: 'partner' as const, amount: null }] };
     const income = { kind: 'pension' as const, beforeTax: false, label: 'St. Mary pension' };
     const plan = attentionNotes({ today, items: [income] });
     expect(rows({ plan })).toEqual([

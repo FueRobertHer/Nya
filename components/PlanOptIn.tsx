@@ -78,7 +78,7 @@ export function OptInSheet({ moves, lawYear, paused = null, onConfirm, onDone }:
       <div className="stack tight">
         <h3 className="section-label">What changes</h3>
         <p className="helper">Drawdown works tax and health coverage out year by year, and Will it last? runs on them. Your FI number changes when this reaches it, in a later version.</p>
-        {moves && <p className="helper">A year on your plan spends more than it saves, and that sale is taxed now, so your FI date can move.</p>}
+        {moves && <p className="helper">Your plan has a year that spends more than it saves, or a milestone on a balance. Tax reaches those now, so your FI date can move.</p>}
       </div>
       <div className="stack tight">
         <h3 className="section-label">What it reads</h3>

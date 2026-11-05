@@ -624,20 +624,23 @@ const SAVINGS_BUCKETS: readonly SavingsBucket[] = ['taxable', 'tax-deferred', 'r
 /** The measured split's buckets, for the override to start from. */
 const savingsByBucket = (split: SavingsSplit) => byBucket(split).filter((s): s is { bucket: SavingsBucket; share: number } => (SAVINGS_BUCKETS as readonly TaxBucket[]).includes(s.bucket));
 
-/** A split in its fields, as whole percents where it can be. */
+/** A split in its fields, as percents to two places, whole where it can be. */
 function splitFields(rows: readonly { bucket: SavingsBucket; share: number }[]): Record<SavingsBucket, string> {
   const text = (b: SavingsBucket) => {
     const row = rows.find((r) => r.bucket === b);
-    return row ? String(Math.round(row.share * 1000) / 10) : '';
+    return row ? String(Math.round(row.share * 10000) / 100) : '';
   };
   return { taxable: text('taxable'), 'tax-deferred': text('tax-deferred'), roth: text('roth'), hsa: text('hsa') };
 }
 
-/** The split as typed, each share over 0, or what is wrong. */
+/** The split as typed, each share over 0, or what is wrong. Thirds shown to two places
+ *  come to 99.99%, so a rounding's worth goes on the largest. */
 function readSplit(text: Record<SavingsBucket, string>): { bucket: SavingsBucket; share: number }[] {
   const rows = SAVINGS_BUCKETS.map((bucket) => ({ bucket, share: readNumber(text[bucket], BUCKET_NAMES[bucket], 0, 1, { scale: 0.01, optional: true }) ?? 0 }));
   const total = rows.reduce((sum, r) => sum + r.share, 0);
-  if (Math.abs(total - 1) > 1e-6) throw new FieldProblem(`These add up to ${Math.round(total * 1000) / 10}%, not 100%.`, SAVINGS_BUCKETS.map((b) => BUCKET_NAMES[b]));
+  if (Math.abs(total - 1) > 0.0005) throw new FieldProblem(`These add up to ${Math.round(total * 10000) / 100}%, not 100%.`, SAVINGS_BUCKETS.map((b) => BUCKET_NAMES[b]));
+  const largest = rows.reduce((a, b) => (b.share > a.share ? b : a));
+  largest.share = Number((largest.share + 1 - total).toFixed(6));
   return rows.filter((r) => r.share > 0);
 }
 
@@ -1020,7 +1023,7 @@ export function AssumptionsForm(
   const [ceiling, setCeiling] = useState(pctText(plan.ceiling));
   const detail = props.detail ?? null;
   const [inflation, setInflation] = useState(detail ? pctText(detail.choices.inflation) : '');
-  const [growth, setGrowth] = useState(detail?.choices.health.growth != null ? String(Number((detail.choices.health.growth * 100).toFixed(2))) : '');
+  const [growth, setGrowth] = useState(detail?.choices.health.growth != null ? String(Number((detail.choices.health.growth * 100).toFixed(4))) : '');
   const [taxableYield, setTaxableYield] = useState(detail?.choices.taxableYield != null ? pctText(detail.choices.taxableYield) : '');
   const [flatting, setFlatting] = useState(false);
   const [flatError, setFlatError] = useState<string | null>(null);
@@ -1063,7 +1066,7 @@ export function AssumptionsForm(
         ...detail.choices,
         inflation: readNumber(inflation, 'Inflation', 0, 0.2, { scale: 0.01 }) as number,
         taxableYield: readNumber(taxableYield, 'The taxable yield', 0, 0.2, { scale: 0.01, optional: true }),
-        health: { ...detail.choices.health, growth: readNumber(growth, 'How fast health costs rise', -5, 10, { scale: 0.01, optional: true }) },
+        health: { ...detail.choices.health, growth: readNumber(growth, 'How fast health costs rise', -0.05, 0.1, { scale: 0.01, optional: true }) },
       };
       more.current = JSON.stringify(tax) === JSON.stringify(detail.choices) ? {} : { tax };
     }
@@ -1203,7 +1206,7 @@ export function AssumptionsForm(
             <p className="helper">For what the tax law doesn’t index, and income that doesn’t keep up with prices.</p>
             <label className="field">
               Health costs rise faster than prices by (points a year)
-              <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth ?? '')} {...s.field('How fast health costs rise')} disabled={s.saving} />
+              <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth ?? '')} data-percent {...s.field('How fast health costs rise')} disabled={s.saving} />
             </label>
             {s.under('How fast health costs rise')}
             <p className="helper">Empty is the default, from CMS’s projections, the same field as on Health coverage.</p>

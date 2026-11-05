@@ -83,12 +83,21 @@ export function stageHelper(s: Pick<DrawdownStage, 'key' | 'to'>, rmdAge: number
     case 'before-60':
       return 'Before 59½ only taxable money, Roth contributions and a 457(b) from a job you’ve left can be reached without a penalty.';
     case 'before-65':
-      return 'Any account can be drawn without a penalty now. Health coverage is yours to pay until Medicare at 65.';
+      return 'Tax-deferred and Roth money can be drawn without a penalty now, and an HSA from 65. Health coverage is yours to pay until Medicare at 65.';
     case 'before-rmd':
       return `Medicare from 65. Until required withdrawals start at ${rmdAge}, what you draw each year is up to you.`;
     case 'rmd':
       return 'The law now sets a smallest amount to take from tax-deferred money each year: a required minimum distribution (RMD). It counts as income whether or not you spend it.';
   }
+}
+
+/** What the years of a penalty drew early. */
+function earlyKinds(years: readonly DrawdownYear[]): string {
+  const kinds: string[] = [];
+  if (years.some((y) => some(y.drawn.penalized))) kinds.push('tax-deferred');
+  if (years.some((y) => y.age < 60 && some(y.drawn.young + y.drawn.earnings))) kinds.push('Roth');
+  if (years.some((y) => some(y.drawn.hsaEarly))) kinds.push('HSA');
+  return words(kinds);
 }
 
 /** The stage in a sentence: when each kind of money runs out, and what that costs. */
@@ -101,7 +110,7 @@ export function stageSentence(s: DrawdownStage, years: readonly DrawdownYear[], 
   const penalties = early.reduce((n, y) => n + y.law.penalty, 0);
   const sentences: string[] = [];
   if (early.length > 0) {
-    const years_ = `${early.length} year${early.length === 1 ? '' : 's'} ${early.length === 1 ? 'draws' : 'draw'} tax-deferred money early, with ${money(penalties)} in penalties`;
+    const years_ = `${early.length} year${early.length === 1 ? '' : 's'} ${early.length === 1 ? 'draws' : 'draw'} ${earlyKinds(early)} money early, with ${money(penalties)} in penalties`;
     sentences.push(parts.length > 0 ? `${parts[0]}, so ${years_}.` : `${years_.charAt(0).toUpperCase()}${years_.slice(1)}.`);
   } else if (parts.length > 0) {
     sentences.push(`${parts[0]}.`);
@@ -109,6 +118,12 @@ export function stageSentence(s: DrawdownStage, years: readonly DrawdownYear[], 
   const short = rows.find((y) => y.short);
   if (short) sentences.push(`At ${short.age} there isn’t enough left to pay the year.`);
   return sentences.length > 0 ? sentences.join(' ') : null;
+}
+
+/** How much faster than prices health costs rise. */
+function points(growth: number): string {
+  const n = Number((growth * 100).toFixed(2));
+  return `${n} point${n === 1 ? '' : 's'}`;
 }
 
 /** A year's row in its stage: the year, where its money comes from, its income
@@ -121,7 +136,10 @@ export function yearSub(y: DrawdownYear): string {
   if (some(d.penalized)) from.push('tax-deferred, early');
   if (some(d.roth + d.young + d.earnings)) from.push('Roth');
   if (some(d.hsaPremiums + d.hsaTaxed + d.hsaEarly)) from.push('HSA');
-  const parts = [from.length > 0 ? `From ${words(from)}` : some(y.income.socialSecurity + y.income.pension + y.income.wages + y.income.afterTax) ? 'Income covers it' : 'Nothing drawn'];
+  const parts: string[] = [];
+  if (from.length > 0) parts.push(`From ${words(from)}`);
+  if (some(y.rmd)) parts.push('Required withdrawals');
+  if (parts.length === 0) parts.push(some(y.income.socialSecurity + y.income.pension + y.income.wages + y.income.afterTax) ? 'Income covers it' : 'Nothing drawn');
   if (onAca(y)) parts.push(`${Math.round(y.care.povertyPercent)}% of the poverty line`);
   return parts.join(' · ');
 }
@@ -185,7 +203,7 @@ export function yearHelper(y: DrawdownYear, c: YearContext): string {
   if (y.partnerAge !== null) parts.push(`Your partner is ${y.partnerAge}.`);
   const covered = coverageWords(y);
   if (covered) parts.push(covered);
-  parts.push(`At a steady ${pct(c.realReturn)} after inflation, health costs ${Number((c.healthGrowth * 100).toFixed(2))} points a year faster than prices, ${c.lawYear} tax law. Hypothetical, not tax advice.`);
+  parts.push(`At a steady ${pct(c.realReturn)} after inflation, health costs ${points(c.healthGrowth)} a year faster than prices, ${c.lawYear} tax law. Hypothetical, not tax advice.`);
   return parts.join(' ');
 }
 
@@ -259,7 +277,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
     ],
   };
   if (some(gains) && !some(y.law.gainsTax)) tax.why = { label: 'Why are the gains taxed at 0%?', text: 'Gains sit on top of ordinary income. Up to a limit set for each filing status, taxable income takes gains at 0%, and this year’s stay under it.' };
-  else if (some(y.law.penalty)) tax.why = { label: 'Why a penalty?', text: 'Tax-deferred money drawn before 59½ pays 10% on top of its tax, once the money that can be reached without one has run out. Nya knows your age in whole years, so the year you turn 59 counts as before 59½.' };
+  else if (some(y.law.penalty)) tax.why = { label: 'Why a penalty?', text: 'Money drawn early pays a penalty on top of its tax, once the money that can be reached without one has run out: 10% from tax-deferred money or a Roth’s earnings before 59½, 20% from an HSA before 65. Nya knows your age in whole years, so the year you turn 59 counts as before 59½.' };
 
   const [you, them] = y.care.people;
   const people = y.partnerAge === null ? [you] : [you, them];
@@ -338,7 +356,7 @@ export function stageHealthLines(stages: readonly DrawdownStage[], years: readon
 }
 
 /** What the Assumptions row says of a detailed plan, beside its flat rate. */
-export const assumptionsLine = (choices: Pick<TaxChoices, 'inflation'>, growth: number) => `${pct(choices.inflation)} inflation · health costs +${Number((growth * 100).toFixed(2))} points`;
+export const assumptionsLine = (choices: Pick<TaxChoices, 'inflation'>, growth: number) => `${pct(choices.inflation)} inflation · health costs ${growth < 0 ? '' : '+'}${points(growth)}`;
 
 /** Under measured spending, a name for what could already be paying for coverage. */
 export const namesCoverage = (name: string) => /\b(health|medical|dental)\b/i.test(name) && /\b(insurance|premiums?|coverage)\b/i.test(name);
@@ -367,8 +385,9 @@ function accountNotes(a: Pick<NoteArgs, 'today' | 'items'>): FigureNote[] {
   if (unclassified > 0) add('caution', 'no tax bucket', `${counted(unclassified, 'account has', 'accounts have')} no tax bucket, counted as tax-deferred. Set ${unclassified === 1 ? 'it' : 'them'} on Invested assets.`);
   const noBasis = groups.find((g) => g.bucket === 'taxable')?.accounts.filter((x) => x.basisFrom === 'none').length ?? 0;
   if (noBasis > 0) add('caution', 'no cost basis', `${counted(noBasis, 'taxable account has', 'taxable accounts have')} no cost basis, so all of ${noBasis === 1 ? 'it' : 'them'} counts as gain. Say what you paid on Invested assets.`);
+  const rothOwners = new Set(groups.find((g) => g.bucket === 'roth')?.accounts.map((x) => x.owner));
   for (const r of a.today?.roth ?? []) {
-    if (r.amount !== null) continue;
+    if (r.amount !== null || !rothOwners.has(r.owner)) continue;
     const who = r.owner === ('you' satisfies Owner) ? 'your' : 'your partner’s';
     add('caution', r.owner === 'you' ? 'Roth put-in not given' : 'partner’s Roth put-in not given', `What went into ${who} Roth isn’t given, so none of it counts as reachable before 59½. Say how much on Invested assets.`);
   }
@@ -399,6 +418,7 @@ export function honestyNotes(a: NoteArgs): FigureNote[] {
 /** Household's own, since these name what can't be set there. */
 export function householdNotes(a: { facts: Pick<TaxFacts, 'dependents'>; choices: Pick<TaxChoices, 'state'> }): FigureNote[] {
   const notes: FigureNote[] = [];
+  if (a.choices.state === null) notes.push({ key: 'detail:no-state', level: 'caution', kind: 'no household', text: 'No state given: counted with no state tax and no Medicaid expansion.' });
   if (a.choices.state === 'WA') notes.push({ key: 'detail:washington', level: 'info', kind: 'Washington', text: 'Washington taxes capital gains only, which isn’t counted here.' });
   if (a.facts.dependents.length > 0) notes.push({ key: 'detail:dependents', level: 'caution', kind: 'dependents', text: 'Dependents count in your household’s size. The child tax credit and head of household aren’t counted.' });
   return notes;

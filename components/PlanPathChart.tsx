@@ -230,7 +230,7 @@ function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): 
   const start = points[0];
   const end = points[points.length - 1];
   const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this plan’s items' : '';
-  const marks = after ? (p.ticks ?? []).filter((t) => t.age < after.endAge && t.age !== stopAge).map((t) => t.label) : [];
+  const marks = after ? (p.ticks ?? []).filter((t) => t.age > start.age && t.age < after.endAge && t.age !== stopAge).map((t) => t.label) : [];
   const marked = marks.length > 0 ? ` Marks at ${marks.slice(0, -1).join(', ')}${marks.length > 1 ? ' and ' : ''}${marks[marks.length - 1]}.` : '';
   const wrap = (path: string) => `${p.recorded ? `${recordedWords(p.recorded, currency)} ` : ''}${path}${marked}`;
   const last = after ? after.points[after.points.length - 1] : null;
@@ -303,7 +303,7 @@ export default function PlanPathChart(props: PathChartProps) {
           </text>
         )}
         {geo.ticks.map((t) => (
-          <line key={t.short} x1={t.x} x2={t.x} y1={geo.baseY - TICK} y2={geo.baseY} stroke="var(--text-3)" strokeWidth={1} />
+          <line key={t.x} x1={t.x} x2={t.x} y1={geo.baseY - TICK} y2={geo.baseY} stroke="var(--text-3)" strokeWidth={1} />
         ))}
         {geo.labels.map((t) => (
           <text key={t.label} className="chart-xlabel" x={t.x} y={H - 6} textAnchor={t.anchor}>

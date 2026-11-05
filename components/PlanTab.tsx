@@ -133,7 +133,7 @@ import type { GridCell, SimResult } from '@/lib/fire/simulate';
 import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
-import { CopyCard, PlansSheet, REFUSED_TEXT, rememberResult, type PlanOutcome, type SheetPlan } from './PlansSheet';
+import { CopyCard, JOB_FAILED_TEXT, PlansSheet, REFUSED_TEXT, rememberResult, type PlanOutcome, type SheetPlan } from './PlansSheet';
 import PlanBar, { openingSegment, planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
@@ -746,10 +746,14 @@ export default function PlanTab({
   }, [detailedOn, planInputs, yearRows]);
   // What a detailed plan's years rest on. They wait for all of it to settle, a failed
   // part counting as settled with its stand-ins and their words, so the stress test
-  // below never runs on a guess and then again. The law is in dollars.
+  // below never runs on a guess and then again. The law is in dollars. Once settled it
+  // stays so for these accounts: a failed row asked for again when a sheet opens reads
+  // as it did until it answers, and doesn't take the answer back to a flat one.
   const taxInDollars = displayCurrency === 'USD';
-  const rowsSettled = !detailedOn || yearRows.every((id) => shared.copy.rows[id] && !shared.copy.rows[id].pending);
-  const detailReady = detailedOn && taxInDollars && rowsSettled && allocation.settings.status !== 'loading';
+  const yearRowsKey = yearRows.join();
+  const settledFor = useRef<string | null>(null);
+  if (detailedOn && taxInDollars && allocation.settings.status !== 'loading' && yearRows.every((id) => shared.copy.rows[id] && !shared.copy.rows[id].pending)) settledFor.current = yearRowsKey;
+  const detailReady = detailedOn && taxInDollars && settledFor.current === yearRowsKey;
   const detailBuckets = useMemo(
     () => (detailReady ? pageBuckets({ assets, holdings, facts: shared.taxFacts, settings: allocation.settings.value ?? null, rows: shared.copy.rows, partner: basePlan.partnerAge !== null }) : null),
     [detailReady, assets, holdings, shared.taxFacts, allocation.settings.value, shared.copy.rows, basePlan.partnerAge]
@@ -768,7 +772,10 @@ export default function PlanTab({
   const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null, m: Measured = measured, c: Count = count): DetailedAnswer => {
     const flat = planFigures(p, m, { count: c });
     const input = inputOf(p, tax);
-    return input ? detailedRun(slot, p, m, c, input, flat) : { figures: flat, working: false, failed: false };
+    if (input) return detailedRun(slot, p, m, c, input, flat);
+    // What it rests on hasn't settled: a plan the drawdown can move isn't at its answer yet.
+    const waits = detailedOn && taxInDollars && !detailReady && p.age !== null && !('refused' in flat) && drawdownMovesFi(p, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
+    return { figures: flat, working: waits, failed: false };
   };
   // The Plan's figures by the same function a copy's come from
   // (lib/fire/plan-figures.ts).
@@ -802,7 +809,7 @@ export default function PlanTab({
     // measuredKey stands for measured, a new object each render; detailKey for what
     // a detailed plan's years rest on, and searchVersion for a job's answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count, detailKey, searchVersion]);
+  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count, detailedOn, detailKey, searchVersion]);
   const openView = entry ? (views.get(entry.id) ?? null) : null;
   const other = openView?.other ?? null;
   const copyFixing = !!openView && openView.fixed.length > 0;
@@ -1370,6 +1377,7 @@ export default function PlanTab({
 
   // A detailed plan's years, and what the sheets over them are worked out with.
   const drawn = shown?.detail && !('failed' in shown.detail) ? shown.detail : null;
+  const detailStuck = !!shown?.detail && 'failed' in shown.detail;
   const shownInput = drawn ? inputOf(shownPlan, shownChoices) : null;
   const yearContext: YearContext | null =
     drawn && shownInput
@@ -1390,7 +1398,7 @@ export default function PlanTab({
   const baseTax = baseFigures?.detail && !('failed' in baseFigures.detail) ? baseFigures.detail.walkTax : 0;
   const progressFlatLine =
     firstTax && baseTax >= 0.5 && basePlan.age !== null
-      ? `Your saved plan’s line takes no tax out before you stop, so from ${basePlan.age + firstTax.year} it runs ${money(baseTax)} above Your path, until you save it again.`
+      ? `Your saved plan’s line takes no tax out before you stop, so from ${basePlan.age + firstTax.year} it runs ${money(baseTax)} above Your path.`
       : null;
   // What isn't known about a Roth, on the sheets it is about.
   const rothCautions = honesty.filter((n) => n.kind.includes('Roth put-in')).map((n) => n.text);
@@ -1623,20 +1631,18 @@ export default function PlanTab({
     const r = await plansClient.relabel(entry.id, planCurrency, entry.updated_at);
     return 'error' in r ? r.error : true;
   };
+  const outcomeOf = (f: PlanFigures | FiguresRefused | null, a: Pick<DetailedAnswer, 'working' | 'failed'>): PlanOutcome =>
+    !f || 'refused' in f ? { kind: 'not-run', reason: REFUSED_TEXT } : a.failed ? { kind: 'not-run', reason: JOB_FAILED_TEXT } : { kind: 'figures', figures: f, working: a.working };
   // Every plan that reads, as the sheet lists it: yours first, then the
   // copies, each with its figures (the sheet words how each differs).
   const sheetPlans: SheetPlan[] =
     !planLoaded || plansState.status !== 'ready'
       ? []
       : plansState.list.flatMap((row): SheetPlan[] => {
-          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: baseFigures ? { kind: 'figures', figures: baseFigures } : { kind: 'not-run', reason: REFUSED_TEXT } }];
+          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: outcomeOf(baseRun, baseAnswer) }];
           const v = views.get(row.id);
           if (!v) return [];
-          const outcome: PlanOutcome = v.other
-            ? { kind: 'not-run', reason: currencyText(v.other, planCurrency ?? v.other, currencyKnown) }
-            : v.figures && !('refused' in v.figures)
-              ? { kind: 'figures', figures: v.figures }
-              : { kind: 'not-run', reason: REFUSED_TEXT };
+          const outcome: PlanOutcome = v.other ? { kind: 'not-run', reason: currencyText(v.other, planCurrency ?? v.other, currencyKnown) } : outcomeOf(v.figures, v);
           return [{ id: row.id, name: row.name, isMain: false, updatedAt: row.updated_at, plan: v.plan, outcome }];
         });
   // Mounted always, closed or open, from its first render: the plans picked
@@ -1747,7 +1753,7 @@ export default function PlanTab({
       count={count}
       figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
       searchVersion={searchVersion}
-      firedFor={({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
+      firedFor={!planTax ? null : ({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
       editable={timelineEditable}
@@ -1960,12 +1966,13 @@ export default function PlanTab({
               badge={stressBadge}
               onRetry={retry}
               onRetryDetail={search.retry}
-              startAtStop={planTax && formEditable && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
+              startAtStop={planTax && editable && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
             />
           )}
 
           {/* A detailed plan's years at a steady growth; a flat plan's way to them. */}
-          {worked && drawn && yearContext && (
+          {worked && detailStuck && <Notice level="caution">Tax couldn’t be worked out for this plan, so it uses the flat rate.</Notice>}
+          {worked && drawn && yearContext && !shownFailed && (
             <>
               <DrawdownCard
                 detail={drawn}
@@ -2064,7 +2071,7 @@ export default function PlanTab({
             {...formProps}
             detail={detailForm}
             stateName={detailChoices.state ? STATE_NAMES[detailChoices.state] : null}
-            medicaid={detailChoices.state === null || lawNow.medicaidStates[detailChoices.state] !== null}
+            medicaid={detailChoices.state === null ? null : lawNow.medicaidStates[detailChoices.state]}
             defaultGrowth={HEALTH_GROWTH.overPrices * 100}
             partner={plan.partnerAge !== null}
             paidChoices={paidChoices}

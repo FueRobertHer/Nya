@@ -67,6 +67,26 @@ describe('Annual savings', () => {
   }, 30_000);
 });
 
+describe('a split in thirds', () => {
+  test('to two places it still comes to 100%, saves, and opens as it was saved', async () => {
+    const tab = await optedIn();
+    const form = await sheet(tab, 'Annual savings');
+    const mine = form.findAll((e) => e.getAttribute('role') === 'radio' && e.textContent === 'My own');
+    await press(mine[mine.length - 1]);
+    for (const b of ['Taxable', 'Tax-deferred', 'Roth']) await fill(tab.dialog()!, b, '33.33');
+    await save(tab);
+    expect(tab.dialog()).toBeNull();
+    const shares: { share: number }[] = lastSave().tax.savingsSplit;
+    expect(shares.reduce((s, r) => s + r.share, 0)).toBeCloseTo(1, 9);
+    const before = planSaves().length;
+    await sheet(tab, 'Annual savings');
+    await save(tab);
+    expect(tab.dialog()).toBeNull();
+    expect(planSaves().length).toBe(before);
+    await tab.unmount();
+  }, 30_000);
+});
+
 describe('Invested assets', () => {
   const acct = (account_id: string, name: string, subtype: string, balance: number) => ({ account_id, name, type: 'investment', subtype, balance, currency: 'USD' });
   const institutions = [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [acct('k', '401(k)', '401k', 260_000), acct('r', 'Roth IRA', 'roth', 50_000), acct('h', 'HSA', 'hsa', 25_000)] }] as never;
@@ -184,6 +204,68 @@ describe('Health coverage', () => {
     expect((await read()).tax_facts.paidToday).toEqual({ kind: 'category', name: 'Health insurance' });
     await tab.unmount();
   }, 30_000);
+
+  test('how fast it rises is in points, to 10', async () => {
+    const tab = await optedIn();
+    await sheet(tab, 'Health coverage');
+    await fill(tab.dialog()!, 'Health costs rise faster', '11');
+    await save(tab);
+    expect(tab.dialog()?.textContent).toContain('How fast it rises');
+    await fill(tab.dialog()!, 'Health costs rise faster', '2.5');
+    await save(tab);
+    expect(tab.dialog()).toBeNull();
+    expect(lastSave().tax.health.growth).toBeCloseTo(0.025, 9);
+    await tab.unmount();
+  }, 30_000);
+
+  test('something else at no cost opens as it was saved', async () => {
+    const tab = await optedIn();
+    await pick(await sheet(tab, 'Health coverage'), 'Something else');
+    await fill(tab.dialog()!, 'What it costs', '0');
+    await save(tab);
+    expect(lastSave().tax.health.beforeMedicare).toEqual({ kind: 'other', yearly: 0 });
+    expect(field(await sheet(tab, 'Health coverage'), 'What it costs')?.value).toBe('0');
+    await tab.unmount();
+  }, 30_000);
+
+  test('coverage already paid, with spending typed: nothing is taken out of it', async () => {
+    const tab = await optedIn();
+    await pick(await sheet(tab, 'Health coverage'), 'You already pay for coverage');
+    expect(tab.dialog()!.textContent).toContain('Your FI number still counts it, for now.');
+    expect(tab.dialog()!.textContent).toContain('Your spending is typed, so nothing is taken out of it: leave coverage out of what you type.');
+    await tab.unmount();
+  }, 30_000);
+
+  describe('Medicaid, by the state’s own line', () => {
+    const wordsIn = async (state: string | null) => {
+      const tab = await optedIn();
+      if (state) {
+        await sheet(tab, 'Household');
+        await fill(tab.dialog()!, 'State', state);
+        await save(tab);
+      }
+      await pick(await sheet(tab, 'Health coverage'), 'ACA marketplace');
+      const text = tab.dialog()!.textContent;
+      await tab.unmount();
+      return text;
+    };
+    test('the usual line, with the work rule from 2027', async () => {
+      const text = await wordsIn('CA');
+      expect(text).toContain('Under 138% of the poverty line California covers adults through Medicaid. From 2027 that needs 80 hours a month');
+    }, 30_000);
+    test('a state’s higher line', async () => {
+      expect(await wordsIn('DC')).toContain('Under 215% of the poverty line');
+    }, 30_000);
+    test('a state that doesn’t expand, up to the poverty line', async () => {
+      expect(await wordsIn('WI')).toContain('Under 100% of the poverty line Wisconsin covers adults');
+    }, 30_000);
+    test('a state with its own work rule says so, and for how long', async () => {
+      expect(await wordsIn('GA')).toContain('Under 100% of the poverty line Georgia covers adults through Medicaid if they meet its own work rule, through 2026.');
+    }, 30_000);
+    test('a state with no line says nothing of it', async () => {
+      expect(await wordsIn('TX')).not.toContain('poverty line Texas covers');
+    }, 30_000);
+  });
 
   test('a save with nothing changed sends nothing', async () => {
     const tab = await optedIn();

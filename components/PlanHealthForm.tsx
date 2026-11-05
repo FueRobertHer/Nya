@@ -10,6 +10,7 @@ import { useId, useMemo, useState } from 'react';
 import { stopOf } from '@/lib/fire/plan';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import { MAX_HEALTH_AMOUNT } from '@/lib/fire/tax-choices';
+import type { MedicaidLine } from '@/lib/fire/tax/law/types';
 import { householdOf, sameHousehold, type Owner, type TaxFacts, type TaxHousehold } from '@/lib/fire/tax-facts';
 import { plainNumber } from '@/lib/format';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
@@ -38,7 +39,15 @@ function readMoney(text: string, what: string, optional = false): number | null 
   return n;
 }
 
-const asMoneyText = (n: number | null | undefined) => (n ? String(n) : '');
+/** What Medicaid does in the state, by the law's own line. */
+function medicaidWords(line: MedicaidLine, state: string): string {
+  const under = `Under ${Math.round(line.line * 100)}% of the poverty line ${state} covers adults through Medicaid`;
+  const noCredit = 'Without it there is no credit either, so coverage is at full price.';
+  if (line.ownRule) return `${under} if they meet its own work rule${line.through === null ? '' : `, through ${line.through}`}. ${noCredit}`;
+  return `${under}. From 2027 that needs 80 hours a month of work, school or volunteering, or an exemption, and an income of about $580 a month counts, which Nya works out. ${noCredit}`;
+}
+
+const asMoneyText = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
 export default function PlanHealthForm(
   props: SaveProps & {
@@ -46,7 +55,8 @@ export default function PlanHealthForm(
     /** The state's name, and whether it covers adults through Medicaid under 138% of the
      *  poverty line; with no state, whether is not known. */
     stateName: string | null;
-    medicaid: boolean;
+    /** The state's Medicaid line: null where it has none, or no state is given. */
+    medicaid: MedicaidLine | null;
     /** The default growth, in points, for the field's placeholder. */
     defaultGrowth: number;
     partner: boolean;
@@ -67,8 +77,8 @@ export default function PlanHealthForm(
   const [acaLaw, setAcaLaw] = useState(stored.acaLaw);
   const [rule, setRule] = useState<Owner[]>(stored.meetsMedicaidRule);
   const [fullPrice, setFullPrice] = useState(stored.countMedicaid);
-  const [extra, setExtra] = useState(asMoneyText(stored.medicareExtra));
-  const [growth, setGrowth] = useState(stored.growth === null ? '' : String(Number((stored.growth * 100).toFixed(2))));
+  const [extra, setExtra] = useState(stored.medicareExtra > 0 ? String(stored.medicareExtra) : '');
+  const [growth, setGrowth] = useState(stored.growth === null ? '' : String(Number((stored.growth * 100).toFixed(4))));
   const [paysNow, setPaysNow] = useState(detail.facts.paidToday !== null);
   const [paid, setPaid] = useState(paidKey(detail.facts.paidToday));
   const { s, more } = useDetailSave(props, detail);
@@ -102,7 +112,7 @@ export default function PlanHealthForm(
         meetsMedicaidRule: rule,
         countMedicaid: fullPrice,
         acaLaw,
-        growth: readNumber(growth, 'How fast it rises', -5, 10, { optional: true, scale: 0.01 }),
+        growth: readNumber(growth, 'How fast it rises', -0.05, 0.1, { optional: true, scale: 0.01 }),
       },
     };
     if (paysNow && !chosen) throw new FieldProblem('Pick the category or tag that pays for it.', ['What pays for it']);
@@ -187,7 +197,7 @@ export default function PlanHealthForm(
                 disabled={s.saving}
                 rows={[{ key: 'you', title: 'You' }, ...(props.partner ? [{ key: 'partner', title: 'Your partner' }] : [])]}
               />
-              <p className="helper">Under 138% of the poverty line {props.stateName ?? 'your state'} covers adults through Medicaid. From 2027 that needs 80 hours a month of work, school or volunteering, or an exemption, and an income of about $580 a month counts, which Nya works out. Without it there is no credit either, so coverage is at full price.</p>
+              <p className="helper">{medicaidWords(props.medicaid, props.stateName ?? 'your state')}</p>
               <CheckRows legend="If you’d qualify" checked={fullPrice ? ['full'] : []} onChange={(keys) => setFullPrice(keys.includes('full'))} disabled={s.saving} rows={[{ key: 'full', title: 'Count full price anyway', sub: 'For a plan that doesn’t lean on Medicaid' }]} />
             </div>
           )}
@@ -206,7 +216,7 @@ export default function PlanHealthForm(
           checked={paysNow ? ['paid'] : []}
           onChange={(keys) => setPaysNow(keys.includes('paid'))}
           disabled={s.saving || detail.factsLocked}
-          rows={[{ key: 'paid', title: 'You already pay for coverage from your accounts', sub: 'COBRA, a plan of your own, a retired spouse’s. Nya leaves its category out of your spending as it measures it, so it isn’t counted twice.' }]}
+          rows={[{ key: 'paid', title: 'You already pay for coverage from your accounts', sub: 'COBRA, a plan of your own, a retired spouse’s. Drawdown leaves its category out of your measured spending, so it isn’t counted twice. Your FI number still counts it, for now.' }]}
         />
         {detail.factsLocked && <p className="helper">What already pays for coverage is {SAME_IN_EVERY_PLAN}</p>}
         {paysNow && (
@@ -223,10 +233,15 @@ export default function PlanHealthForm(
               </select>
             </label>
             {s.under('What pays for it')}
-            {chosen && found !== null && (
-              <p className="helper">
-                <Masked>{`${chosen.label} in your spending: ${money(found)} a year, replaced by the coverage below.`}</Masked>
-              </p>
+            {props.plan.spending !== null ? (
+              <p className="helper">Your spending is typed, so nothing is taken out of it: leave coverage out of what you type.</p>
+            ) : (
+              chosen &&
+              found !== null && (
+                <p className="helper">
+                  <Masked>{`${chosen.label} in your spending: ${money(found)} a year, which Drawdown leaves out, since the coverage above replaces it.`}</Masked>
+                </p>
+              )
             )}
           </>
         )}
@@ -234,7 +249,7 @@ export default function PlanHealthForm(
       <div className="sheet-form">
         <label className="field">
           Health costs rise faster than prices by (points a year)
-          <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth)} disabled={s.saving} {...s.field('How fast it rises')} />
+          <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth)} data-percent disabled={s.saving} {...s.field('How fast it rises')} />
         </label>
         {s.under('How fast it rises')}
         <p className="helper">Empty is the default, {props.defaultGrowth} points, from CMS’s projections of health spending, kept with the tax law and reviewed each year. It applies to premiums, Medicare and IRMAA; the ACA’s share of income rises with it, as the law indexes it.</p>

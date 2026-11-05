@@ -36,8 +36,9 @@ export type ColumnOutcome =
   /** Not worked out, and why, in words. */
   | { kind: 'not-run'; reason: string }
   /** Its figures, and its simulation's answer: still being worked out, or
-   *  why there is none (the simulation can't start: `missing`), or the error. */
-  | { kind: 'figures'; figures: PlanFigures; result: SimResult | 'pending' | { missing: Missing } | { error: string } };
+   *  why there is none (the simulation can't start: `missing`), or the error.
+   *  `working`: a detailed plan's date isn't in yet, so nothing is said from them. */
+  | { kind: 'figures'; figures: PlanFigures; result: SimResult | 'pending' | { missing: Missing } | { error: string }; working?: boolean };
 
 export type CompareColumn = { id: string; name: string; isPlan: boolean; outcome: ColumnOutcome };
 
@@ -127,6 +128,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
   const cell = (c: CompareColumn, f: (fig: PlanFigures, r: SimResult | null) => { value: string | null; diff?: string | null; caveat?: string | null }, needsResult = true): Cell => {
     const empty = { id: c.id, name: c.name, value: null, diff: null, caveat: null, pending: false };
     if (c.outcome.kind === 'not-run') return { ...empty, value: 'not worked out (below)' };
+    if (c.outcome.working) return { ...empty, pending: true };
     const r = c.outcome.result;
     if (needsResult && r === 'pending') return { ...empty, pending: true };
     if (needsResult && typeof r === 'object' && r !== null && 'missing' in r) {
@@ -146,7 +148,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
   // at it (lib/fire/plan.ts startAge). Plans of both
   // kinds are compared by how long they run, as plans with no age are.
   const ends = columns.flatMap((c) => {
-    if (c.outcome.kind !== 'figures' || !('sim' in c.outcome.figures.engine)) return [];
+    if (c.outcome.kind !== 'figures' || c.outcome.working || !('sim' in c.outcome.figures.engine)) return [];
     const { startAge, sim } = c.outcome.figures.engine;
     return [{ age: startAge === null ? null : startAge + sim.years, years: sim.years }];
   });

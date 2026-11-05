@@ -52,7 +52,107 @@ describe('Progress, on a plan a year’s tax moves', () => {
     const tab = await detailed(plan, { institutions, planInWalk: true });
     await pick(tab.container, 'Your path');
     const progress = tab.container.findAll((e) => e.getAttribute('aria-labelledby') === 'plan-progress-title')[0];
-    expect(progress.textContent).toMatch(/Your saved plan’s line takes no tax out before you stop, so from 45 it runs \$[\d,]+ above Your path, until you save it again\./);
+    expect(progress.textContent).toMatch(/Your saved plan’s line takes no tax out before you stop, so from 45 it runs \$[\d,]+ above Your path\./);
+    await tab.unmount();
+  }, 30_000);
+});
+
+describe('while what a plan’s years rest on is out', () => {
+  const home = { id: 'home', label: 'Home', kind: 'one-off', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: 200_000, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+  const moved = { ...PLAN, items: [home] } as typeof PLAN;
+  const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
+  const props = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }], planInWalk: true } as never;
+  /** Holds what `path` asks for, outside the page's own count, until it is let go. */
+  const holding = async (path: string, run: (letGo: () => void) => Promise<void>) => {
+    const real = globalThis.fetch;
+    const waiting: (() => void)[] = [];
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith(path) ? new Promise<Response>((resolve) => waiting.push(() => resolve(real(input, init)))) : real(input, init)) as typeof fetch;
+    try {
+      await run(() => waiting.splice(0).forEach((go) => go()));
+    } finally {
+      globalThis.fetch = real;
+    }
+  };
+
+  test('a plan the drawdown moves is dimmed, not a flat date that then jumps', async () => {
+    await (await detailed(moved, props)).unmount();
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      expect(tab.said()).toContain('Working it out');
+      expect(tab.text()).not.toContain('Year by year, at');
+      letGo();
+      await page.settle(200);
+      expect(tab.said()).not.toContain('Working it out');
+      expect(tab.text()).toContain('Year by year, at');
+      await tab.unmount();
+    });
+  }, 30_000);
+
+  test('a plan it can’t move has no reason to wait', async () => {
+    await (await detailed(PLAN, props)).unmount();
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      expect(tab.said()).not.toContain('Working it out');
+      letGo();
+      await page.settle(200);
+      await tab.unmount();
+    });
+  }, 30_000);
+
+  test('a failed row asked for again takes nothing back', async () => {
+    const brk = { account_id: 'brk', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 100_000, currency: 'USD' };
+    const both = { ...(props as object), institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k, brk] }] } as never;
+    await (await detailed(moved, both)).unmount();
+    // Its row can't be had, so the page goes on with the stand-ins and says so.
+    const real = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => (String(input).includes('sync=1') ? Promise.resolve(Response.json({ error: 'no' }, { status: 500 })) : real(input, init))) as typeof fetch;
+    const tab = await render({ planTax: true, ...(both as object) });
+    await page.settle(200);
+    globalThis.fetch = real;
+    expect(tab.text()).toContain('Year by year, at');
+    await holding('/api/plan-inputs?sync=1', async (letGo) => {
+      await press(tab.row('Invested assets'));
+      await press(closeOf(tab.dialog()!));
+      expect(calls().some((c) => c.path === '/api/plan-inputs')).toBe(true);
+      expect(tab.said()).not.toContain('Working it out');
+      expect(tab.text()).toContain('Year by year, at');
+      letGo();
+      await page.settle(200);
+      await tab.unmount();
+    });
+  }, 30_000);
+});
+
+describe('a plan whose years can’t be worked out', () => {
+  test('a job that can’t run: says so, offers it again, and draws no years', async () => {
+    const { planSearch } = await import('@/components/plan-search');
+    const search = planSearch();
+    const real = search.answer;
+    search.answer = () => ({ ok: false, error: 'nope' });
+    try {
+      const home = { id: 'home', label: 'Home', kind: 'one-off', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: 200_000, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+      const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
+      const tab = await detailed({ ...PLAN, stopAtFi: true, items: [home] } as typeof PLAN, { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }], planInWalk: true } as never);
+      expect(tab.text()).not.toContain('Year by year, at');
+      expect(button(tab.container, 'Try again')).not.toBeNull();
+      await tab.unmount();
+    } finally {
+      search.answer = real;
+    }
+  }, 30_000);
+
+  test('a year the tax can’t read: Drawdown says it uses the flat rate', async () => {
+    await (await detailed()).unmount();
+    // A reader checks only a value's shape, so a later version can write what this one wouldn't.
+    const { GET } = await import('@/app/api/plan-inputs/route');
+    answers['GET /api/plan-inputs'] = async () => {
+      const body = await (await GET(new Request('http://nya.test/api/plan-inputs'))).json();
+      return Response.json({ ...body, tax: { ...body.tax, taxableYield: 5 } });
+    };
+    const tab = await render({ planTax: true });
+    expect(tab.text()).toContain('Tax couldn’t be worked out for this plan, so it uses the flat rate.');
+    expect(tab.text()).not.toContain('Year by year, at');
     await tab.unmount();
   }, 30_000);
 });
